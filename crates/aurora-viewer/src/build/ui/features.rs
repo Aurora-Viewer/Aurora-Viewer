@@ -2,13 +2,13 @@
 //! originally LGPL 2.1): animated mesh, flexible path, light (and its
 //! projector texture), reflection probe, physics shape and material.
 
-use super::common::{Edit, check, color_swatch, combo, label, linear_to_srgb, row, small, spin, srgb_to_linear};
+use super::common::{Edit, check, color_swatch, combo, label, linear_to_srgb, row, small, spin};
 use super::{Confirm, Env, FeaturesClip, PickTarget};
 use crate::build::edits::{CLICK_ACTION_SIT, CLICK_ACTION_TOUCH, Extra, FLEX_DEFAULT, LIGHT_DEFAULT, LIGHT_IMAGE_DEFAULT, PROBE_DEFAULT};
 use crate::build::{BuildSettings, BuildTool};
 use crate::theme::Palette;
 use crate::world::World;
-use aurora_prim::extra::{EXTENDED_MESH_ANIMATED, LightParams, ReflectionProbeParams};
+use aurora_prim::extra::{EXTENDED_MESH_ANIMATED, ReflectionProbeParams};
 use aurora_prim::params::{LL_PCODE_PATH_FLEXIBLE, LL_PCODE_PATH_LINE};
 
 /// LL_MCODE_* in the « Matériau » combo order (material_codes.h).
@@ -277,12 +277,9 @@ fn light_section(
         ui.add_space(12.0);
         // the swatch shows sRGB; the wire carries linear (setLightSRGBColor)
         let srgb = [linear_to_srgb(l.color[0]), linear_to_srgb(l.color[1]), linear_to_srgb(l.color[2])];
-        if let Some(c) = color_swatch(ui, p, srgb, aurora_i18n::tr!("common-color"), 40.0, on) {
-            let nl = LightParams {
-                color: [srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2]), l.color[3]],
-                ..l
-            };
-            tool.set_extra(world, idx, Extra::Light(Some(nl)));
+        let swatch = color_swatch(ui, p, srgb, aurora_i18n::tr!("common-color"), 40.0, on);
+        if let Some(object) = world.objects.get(idx) {
+            tool.color_swatch_response(world, env, super::ColorTarget::Light(object.full_id), srgb, swatch);
         }
         let r = super::common::swatch(
             ui,

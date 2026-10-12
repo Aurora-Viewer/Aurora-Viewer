@@ -122,10 +122,17 @@ struct TerrainOut {
 @vertex
 fn vs_terrain(in: VsIn) -> TerrainOut {
     let rec = records[in.instance];
-    let wp = rec.model * vec4<f32>(in.pos, 1.0);
+    // The position of vs_depth, operation for operation: the depth prepass
+    // draws the terrain with it, and without multisampling the scene pass
+    // tests the terrain against that very depth. Computed in region
+    // coordinates here, the depth differed by a rounding and patches of
+    // terrain were rejected, showing the sky.
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(in.pos, 1.0);
     var out: TerrainOut;
-    out.clip = frame.view_proj * wp;
-    out.world_pos = wp.xyz;
+    out.clip = frame.eye_view_proj * ep;
+    // (lighting, shadows and fog keep region coordinates)
+    out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = in.normal.xyz;
     out.uv = in.uv;
     // composition 0..3 packed in normal.w (-1..1)
@@ -199,10 +206,11 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
     let sh = shadow_factor(in.world_pos, n, dist);
     if (is_classic_sky() && !camera_underwater()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-        return ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a), a);
+        let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a), a);
+        return light_tiles_checked(hazed, in.world_pos, in.clip.xy);
     }
     let col = shade_pbr(albedo, 0.0, 0.92, n, v, in.world_pos, sh, in.clip.xy);
-    return apply_fog(col, in.world_pos);
+    return light_tiles_checked(apply_fog(col, in.world_pos), in.world_pos, in.clip.xy);
 }
 
 @fragment

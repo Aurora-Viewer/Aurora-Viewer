@@ -26,6 +26,101 @@ fn id(n: u128) -> Uuid {
     Uuid::from_u128(n)
 }
 
+fn nested_folder_fixture() -> Inventory {
+    let mut inv = fixture();
+    for (number, parent) in [(8200, id(8001)), (8201, id(8200)), (8300, inv.root)] {
+        let folder = Folder {
+            info: InvFolder {
+                id: id(number),
+                parent,
+                name: format!("Folder {number}"),
+                type_default: -1,
+                version: 1,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: FetchState::Fetched,
+            library: false,
+        };
+        inv.folders.insert(folder.info.id, folder);
+        inv.folders.get_mut(&parent).expect("parent").children.push(id(number));
+    }
+    let items = [(8210, 8001), (8211, 8200), (8212, 8201)]
+        .into_iter()
+        .map(|(number, parent)| {
+            let mut item = inv.items[&id(8104)].clone();
+            item.id = id(number);
+            item.parent = id(parent);
+            item.name = format!("Item {number}");
+            item
+        })
+        .collect();
+    inv.add_items(items);
+    inv
+}
+
+#[test]
+fn copying_a_selected_folder_keeps_all_three_levels_and_their_contents() {
+    use aurora_net::inventory::operations::Operation;
+    let inv = nested_folder_fixture();
+    let change = paste(&inv, &[id(8001)], id(8300), false, false, &HashSet::new(), &HashSet::new()).expect("recursive copy");
+    assert_eq!(change.operations.len(), 3);
+    assert_eq!(change.copies.len(), 3);
+    let mut parent = id(8300);
+    for (operation, item) in change.operations.iter().zip([8210, 8211, 8212]) {
+        let Operation::Folder {
+            id: new_folder,
+            parent: destination,
+            ..
+        } = operation
+        else {
+            panic!("folder creation")
+        };
+        assert_eq!(*destination, parent);
+        assert_ne!(*new_folder, id(8001));
+        assert!(change.copies.iter().any(|copy| copy.item == id(item) && copy.parent == *new_folder));
+        parent = *new_folder;
+    }
+    assert_eq!(inv.items[&id(8212)].parent, id(8201));
+}
+
+#[test]
+fn cutting_a_selected_folder_moves_its_complete_hierarchy_without_copying_items() {
+    use aurora_net::inventory::operations::Operation;
+    let mut inv = nested_folder_fixture();
+    inv.items.get_mut(&id(8212)).expect("deep item").owner_mask &= !COPY;
+    let change = paste(&inv, &[id(8001)], id(8300), true, false, &HashSet::new(), &HashSet::new()).expect("whole folder move");
+    assert!(
+        matches!(&change.operations[..], [Operation::Patch { id: folder, folder: true, body }] if *folder == id(8001) && body["parent_id"].as_uuid() == id(8300))
+    );
+    assert!(change.copies.is_empty());
+    demo_mutate(&mut inv, id(2), change).expect("moved hierarchy");
+    for item in [8210, 8211, 8212] {
+        assert!(under(&inv, id(item), id(8300)));
+    }
+    assert_eq!(inv.items[&id(8212)].parent, id(8201));
+    assert_eq!(inv.folders[&id(8201)].info.parent, id(8200));
+}
+
+#[test]
+fn copying_a_folder_refuses_an_unloaded_descendant_instead_of_creating_an_empty_copy() {
+    let mut inv = nested_folder_fixture();
+    inv.folders.get_mut(&id(8201)).expect("descendant").state = FetchState::Unknown;
+    assert!(!paste_allowed(
+        &inv,
+        &[id(8001)],
+        id(8300),
+        false,
+        false,
+        &HashSet::new(),
+        &HashSet::new()
+    ));
+    assert!(paste(&inv, &[id(8001)], id(8300), false, false, &HashSet::new(), &HashSet::new()).is_err());
+    assert!(!request_tree(&mut inv, id(8001)));
+    assert!(inv.queue.iter().any(|(folder, _)| *folder == id(8201)));
+}
+
 #[test]
 fn clipboard_refuses_no_copy_but_allows_a_link_without_changing_the_original() {
     let mut inv = fixture();

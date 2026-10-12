@@ -27,7 +27,7 @@ pub struct InvFolder {
     pub thumbnail: Uuid,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct InvItem {
     pub id: Uuid,
     pub parent: Uuid,

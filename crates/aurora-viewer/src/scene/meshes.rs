@@ -135,6 +135,13 @@ impl MeshStreamer {
         self.fail(id, Duration::from_secs(600), true);
     }
 
+    pub fn insert_demo_static(&mut self, id: Uuid) {
+        self.insert_demo_skin(id, SkinInfo::default());
+        if let Some(entry) = self.entries.get_mut(&id) {
+            entry.skin = None;
+        }
+    }
+
     /// The mesh asset is not expected any more: missing on the asset server
     /// or invalid (LLMeshHeaderHandler::processFailure marks every LOD
     /// unavailable at once), or its download failed again and again.

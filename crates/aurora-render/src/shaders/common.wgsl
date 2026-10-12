@@ -18,6 +18,9 @@ struct Light {
 struct Frame {
     view_proj: mat4x4<f32>,
     inv_view_proj: mat4x4<f32>,
+    // view-projection for positions relative to `eye` (object vertices)
+    eye_view_proj: mat4x4<f32>,
+    eye: vec4<f32>,             // xyz: at or near the camera
     camera_pos: vec4<f32>,      // xyz, w = time (s)
     sun_dir: vec4<f32>,         // xyz towards the light, w = sun visible (0..1)
     sun_color: vec4<f32>,       // rgb radiance
@@ -55,8 +58,18 @@ struct Frame {
     sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier
     sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1)
     anim_clock: vec4<u32>,      // texture animation clock: x ms (wrapping), y sub-ms fraction (f32 bits)
+    selection_color: vec4<f32>, // selected-face overlay, from the UI palette
     cascade_vp: array<mat4x4<f32>, 3>,
     lights: array<Light, 64>,
+    // which of `lights` a fragment walks (light_tiles.rs, LightSets)
+    light_grid: vec4<f32>,      // x, y: columns and rows per pixel
+    light_forward: vec4<f32>,   // camera forward axis (fragment depth)
+    light_mode: vec4<u32>,      // x: 1 = the list narrowed by the sets below, y: 1 = checked
+    // lights that cover each screen column, each screen row and each slice
+    // of depth: two sets per element, each its low then its high 32 lights
+    light_columns: array<vec4<u32>, 16>,
+    light_rows: array<vec4<u32>, 16>,
+    light_slices: array<vec4<u32>, 16>,
 };
 
 struct DrawRecord {
@@ -66,7 +79,7 @@ struct DrawRecord {
     uv_st: vec4<f32>,         // scale s, scale t, offset s, offset t
     params: vec4<f32>,        // x rotation, y metallic, z roughness, w alpha cutoff
     tex: vec4<u32>,           // base, normal, metallic-roughness, emissive
-    flags: vec4<u32>,         // x low 16 flags / high 16 HUD zoom ×4096 (0 = 1), y palette base, z skin binds, w texture animation mode | size x << 8 | size y << 16
+    flags: vec4<u32>,         // x low 16 flags / high 16 HUD zoom ×4096 (0 = 1), y palette base (anchored: anchor matrix), z skin binds, w texture animation mode | size x << 8 | size y << 16
     mat_uv: vec4<f32>,        // normal map: scale s, t, offset s, t
     spec_uv: vec4<f32>,       // legacy specular / PBR metallic-roughness map: scale s, t, offset s, t
     legacy: vec4<f32>,        // x normal rot, y spec / MR rot, z glossiness (PBR: emissive rot), w env intensity
@@ -87,6 +100,11 @@ const FLAG_LEGACY_MAT: u32 = 256u;
 const FLAG_EMISSIVE_MASK: u32 = 512u;
 const FLAG_TEX_ANIM: u32 = 1024u;
 const FLAG_DOUBLE_SIDED: u32 = 2048u;
+// placed by the GPU: model relative to the anchor matrix palettes[flags.y]
+// (worn objects); skinned: skeleton placed by its own anchor
+const FLAG_ANCHORED: u32 = 4096u;
+// a skeleton's own anchor (skeleton space to world), from its first joint
+const SKELETON_ANCHOR: u32 = 160u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 // atlas of 2x2 tiles, cascade i in tile (i % 2, i / 2)
@@ -132,6 +150,92 @@ struct SkinBind {
 @group(2) @binding(0) var tex_pages: binding_array<texture_2d_array<f32>>;
 @group(2) @binding(1) var tex_sampler: sampler;
 @group(2) @binding(2) var<storage, read> tex_loc: array<u32>;
+
+// Local lights of a fragment (light_tiles.rs). In the main view, the lights
+// that cover its screen column, its screen row and its slice of depth at
+// once (bit i for `frame.lights[i]`); in the others (reflections, probe
+// faces, impostor pictures), the whole list.
+const LIGHT_TILES: u32 = 32u;
+const LIGHT_SLICE_NEAR: f32 = 0.25;
+const LIGHT_SLICES_PER_OCTAVE: f32 = 3.0;
+
+// Set `i` of a table that holds two sets per element.
+fn light_table_set(pair: vec4<u32>, i: u32) -> vec2<u32> {
+    return select(pair.xy, pair.zw, (i & 1u) == 1u);
+}
+
+// The lights of the main view's sets for a fragment.
+fn light_set(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
+    let column = min(u32(frag.x * frame.light_grid.x), LIGHT_TILES - 1u);
+    let row = min(u32(frag.y * frame.light_grid.y), LIGHT_TILES - 1u);
+    let depth = dot(world_pos - frame.camera_pos.xyz, frame.light_forward.xyz);
+    let octaves = log2(max(depth, LIGHT_SLICE_NEAR) / LIGHT_SLICE_NEAR);
+    let slice = min(u32(octaves * LIGHT_SLICES_PER_OCTAVE), LIGHT_TILES - 1u);
+    return light_table_set(frame.light_columns[column >> 1u], column)
+        & light_table_set(frame.light_rows[row >> 1u], row)
+        & light_table_set(frame.light_slices[slice >> 1u], slice);
+}
+
+// The lights a fragment walks: those left in `held`, or, without the sets,
+// the list from `at` to `end`.
+struct LightWalk {
+    held: vec2<u32>,
+    at: u32,
+    end: u32,
+};
+
+fn light_walk(world_pos: vec3<f32>, frag: vec2<f32>) -> LightWalk {
+    var walk: LightWalk;
+    if (frame.light_mode.x != 0u) {
+        walk.held = light_set(world_pos, frag);
+    } else {
+        walk.end = u32(frame.params.w);
+    }
+    return walk;
+}
+
+// Next light of the walk, in the order of the frame's list either way (the
+// lights are summed in that order); -1 at its end.
+fn next_light(walk: ptr<function, LightWalk>) -> i32 {
+    let at = (*walk).at;
+    if (at < (*walk).end) {
+        (*walk).at = at + 1u;
+        return i32(at);
+    }
+    let lo = (*walk).held.x;
+    if (lo != 0u) {
+        (*walk).held.x = lo & (lo - 1u);
+        return i32(firstTrailingBit(lo));
+    }
+    let hi = (*walk).held.y;
+    if (hi != 0u) {
+        (*walk).held.y = hi & (hi - 1u);
+        return i32(32u + firstTrailingBit(hi));
+    }
+    return -1;
+}
+
+// AURORA_LIGHT_TILES=check: `col`, or magenta where a light of the frame's
+// list reaches the fragment without being in its set. That never happens:
+// the image is the one the whole list gives.
+fn light_tiles_checked(col: vec3<f32>, world_pos: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
+    if (frame.light_mode.y == 0u) {
+        return col;
+    }
+    let held = light_set(world_pos, frag);
+    let count = u32(frame.params.w);
+    for (var i = 0u; i < count; i++) {
+        let lt = frame.lights[i];
+        var bit = held.x >> (i & 31u);
+        if (i >= 32u) {
+            bit = held.y >> (i & 31u);
+        }
+        if (distance(lt.pos_radius.xyz, world_pos) < lt.pos_radius.w && (bit & 1u) == 0u) {
+            return vec3<f32>(1.0, 0.0, 1.0);
+        }
+    }
+    return col;
+}
 
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     let lo = c / 12.92;
@@ -558,11 +662,23 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     return sum / 16.0;
 }
 
-fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32) -> f32 {
+fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
     if (frame.params.z < 0.5) {
         return 1.0;
     }
     let splits = frame.cascade_splits;
+    // The cascade comes from the pixel's own distance to the camera, as for
+    // the terrain and the water (and as Firestorm, which reads each pixel's
+    // position: sampleDirectionalShadow, deferred/shadowUtil.glsl). The
+    // distance interpolated from the vertices is longer inside a triangle
+    // that spans a range of distances: on a large floor, the pixels near
+    // the camera read a far cascade, and no caster could be left out of a
+    // far cascade for being near (shadow_cull.rs). splits.w == 0 keeps that
+    // distance, to compare (AURORA_SHADOW_LEGACY).
+    var view_depth = vertex_depth;
+    if (splits.w > 0.5) {
+        view_depth = distance(world_pos, frame.camera_pos.xyz);
+    }
     var cascade = 0u;
     if (view_depth > splits.x) { cascade = 1u; }
     if (view_depth > splits.y) { cascade = 2u; }
@@ -665,8 +781,8 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v:
         col += (kd + spec) * frame.sun_color.rgb * nl * shadow;
     }
     // local lights
-    let count = u32(frame.params.w);
-    for (var i = 0u; i < count; i++) {
+    var lights = light_walk(world_pos, frag);
+    for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
         let lt = frame.lights[i];
         let to_l = lt.pos_radius.xyz - world_pos;
         let dist = length(to_l);
@@ -937,11 +1053,11 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
 
 // Local lights on a classic surface (multiPointLightF): light color x n.l x
 // attenuation x albedo, with its final_scale.
-fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     var local = vec3<f32>(0.0);
     // our colors carry the 3.25 PBR factor
-    let count = u32(frame.params.w);
-    for (var i = 0u; i < count; i++) {
+    var lights = light_walk(world_pos, frag);
+    for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
         let lt = frame.lights[i];
         let to_l = lt.pos_radius.xyz - world_pos;
         let dist = length(to_l);
@@ -959,7 +1075,7 @@ fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>) -> vec3
 // Diffuse lighting of a classic surface without specular or emissive (the
 // terrain): sun and sky with the final scale, plus the local lights.
 fn ll_classic_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, shadow: f32, frag: vec2<f32>, a: LLAtmos) -> vec3<f32> {
-    return ll_classic_sun_ambient(base, n, shadow, frag, a) * ll_final_scale() + ll_local_diffuse(base, n, world_pos);
+    return ll_classic_sun_ambient(base, n, shadow, frag, a) * ll_final_scale() + ll_local_diffuse(base, n, world_pos, frag);
 }
 
 // calcDiffuseSpecular (deferredUtil.glsl): base x (1 - F0) x (1 - metallic).
@@ -1015,15 +1131,15 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32
 
 // Local lights on a PBR surface (multiPointLightF -> pbrCalcPointLightOrSpotLight),
 // with multiPointLightF's final_scale.
-fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     let roughness = clamp(roughness_in, 0.04, 1.0);
     let ra = roughness * roughness;
     let f0 = mix(vec3<f32>(0.04), base, metallic);
     let diffuse_color = ll_pbr_diffuse_color(base, metallic);
     let nv = max(dot(n, v), 1e-4);
     var col = vec3<f32>(0.0);
-    let count = u32(frame.params.w);
-    for (var i = 0u; i < count; i++) {
+    var lights = light_walk(world_pos, frag);
+    for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
         let lt = frame.lights[i];
         let to_l = lt.pos_radius.xyz - world_pos;
         let dist = length(to_l);

@@ -220,9 +220,17 @@ fn item_row(
             tool.ui.contents_selected = Some((object_id, item.item_id));
         }
         let item_modify = item.owner_mask & perm::MODIFY != 0;
+        crate::ui::inventory::task_drop::source(
+            ui,
+            &r,
+            world,
+            object_id,
+            item,
+            crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
+        );
         let script = item.asset_type == AT_LSL_TEXT;
-        let can_take = item.owner_mask & perm::COPY != 0 && item.owner_mask & perm::TRANSFER != 0
-            || tool.props.get(&object_id).is_some_and(|pr| pr.owner_id == world.agent_id);
+        let transfer = tool.task_transfer_kind(world, object_id, item);
+        let can_take = transfer.is_ok();
         r.context_menu(|ui| {
             if ui
                 .add_enabled(script || item.asset_type == 7, egui::Button::new(aurora_i18n::tr!("common-open")))
@@ -260,7 +268,14 @@ fn item_row(
                 ui.close();
             }
             if ui
-                .add_enabled(can_take, egui::Button::new(aurora_i18n::tr!("build-ui-contents-copy-to-inventory")))
+                .add_enabled(
+                    can_take,
+                    egui::Button::new(if matches!(transfer, Ok(crate::build::task_inventory::TransferKind::Move { .. })) {
+                        aurora_i18n::tr!("task-transfer-move-menu")
+                    } else {
+                        aurora_i18n::tr!("build-ui-contents-copy-to-inventory")
+                    }),
+                )
                 .on_hover_text(aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory"))
                 .clicked()
             {

@@ -52,14 +52,7 @@ pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: 
     bulk_perms(ctx, p, tool, world);
     item_properties(ctx, p, tool, world);
     confirm(ctx, p, tool, world, env);
-    if let Some(id) = tool.ui.picker.show(ctx, p, world, env.images)
-        && let Some(target) = tool.ui.pick_target.take()
-    {
-        tool.on_texture_picked(world, env, target, id);
-    }
-    if !tool.ui.picker.open {
-        tool.ui.pick_target = None;
-    }
+    super::texture_preview::show(ctx, p, tool, world, env);
     // the picker's previews are wanted images too
     let w: Vec<uuid::Uuid> = tool.ui.picker.wanted_images.drain().collect();
     tool.ui.wanted_images.extend(w);

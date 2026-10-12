@@ -4,7 +4,7 @@ use aurora_net::RegionHandle;
 use aurora_net::objects::{ObjectUpdate, ParticleUpdate, TerseUpdate, TextureAnim};
 use aurora_prim::{ExtraParams, TextureEntry, VolumeParams};
 use glam::{Quat, Vec3};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -108,6 +108,8 @@ pub struct Object {
     pub acceleration: Vec3,
     pub angular_velocity: Vec3,
     pub update_time: Instant,
+    /// Full updates carry parentage; terse motion packets do not confirm it.
+    pub full_update_serial: u64,
     pub volume: VolumeParams,
     pub te: Option<Arc<TextureEntry>>,
     pub extra: ExtraParams,
@@ -199,6 +201,7 @@ impl Object {
             acceleration: u.acceleration,
             angular_velocity: u.angular_velocity,
             update_time: Instant::now(),
+            full_update_serial: 1,
             volume: u.volume,
             te: u.texture_entry,
             extra: u.extra,
@@ -236,6 +239,7 @@ impl Object {
             self.render.local_scale = None;
             self.render.local_appearance.clear();
         }
+        self.full_update_serial = self.full_update_serial.wrapping_add(1);
         match &u.particles {
             ParticleUpdate::Keep => {}
             p => self.particle_update = Some(p.clone()),
@@ -431,6 +435,19 @@ impl ChangeFeed {
 /// The media manager runs after the sync has taken those changes, so it has
 /// its own feed (`take_media_changes`): the same objects, plus the slots of
 /// removed objects.
+///
+/// A new object that is not an avatar is also marked as an arrival
+/// (`is_arrival`) until the scene has synced it once (`settle`): the sync
+/// tells the objects it never saw from the changed ones without reading
+/// each of them, when they arrive by thousands.
+///
+/// The interface labels few of the objects (name tags of the avatars, hover
+/// text of the prims, dots of the maps): `avatars` and `texted` list them,
+/// kept from a third feed, so that no window walks every object each frame.
+///
+/// A full update may carry a particle system or an attached sound for their
+/// managers (`particle_update`, `sound_update`): two more feeds list those
+/// objects (`take_particle_changes`, `take_sound_changes`).
 #[derive(Default)]
 pub struct ObjectStore {
     pub slots: Vec<Option<Object>>,
@@ -446,9 +463,21 @@ pub struct ObjectStore {
     pub removed_slots: Vec<usize>,
     /// Objects changed since the scene last took them, each once.
     touched: ChangeFeed,
+    /// By slot: a new object the scene has not synced yet.
+    arrival: Vec<bool>,
     /// Objects changed, added or removed since the media manager last took
     /// them (a slot may hold another object since, or none).
     media_changes: ChangeFeed,
+    /// The same, since `refresh_labelled`.
+    label_changes: ChangeFeed,
+    /// Objects whose `particle_update` / `sound_update` waits for its
+    /// manager (a slot may hold another object since, or none).
+    particle_changes: ChangeFeed,
+    sound_changes: ChangeFeed,
+    /// Slots of the avatars, and of the other objects with a hover text
+    /// (llSetText), as of the last `refresh_labelled`.
+    avatar_slots: BTreeSet<usize>,
+    texted_slots: BTreeSet<usize>,
 }
 
 impl ObjectStore {
@@ -479,6 +508,8 @@ impl ObjectStore {
         }
         self.touched.note(idx);
         self.media_changes.note(idx);
+        self.label_changes.note(idx);
+        self.note_carried(idx);
     }
 
     /// The objects changed since the scene sync last took them.
@@ -491,10 +522,92 @@ impl ObjectStore {
         self.touched.take(out);
     }
 
+    /// Whether the slot holds a new object, not an avatar, that the scene
+    /// has not synced yet.
+    pub fn is_arrival(&self, idx: usize) -> bool {
+        self.arrival.get(idx).copied().unwrap_or(false)
+    }
+
+    /// The scene has synced the object once: no longer an arrival.
+    pub fn settle(&mut self, idx: usize) {
+        if let Some(a) = self.arrival.get_mut(idx) {
+            *a = false;
+        }
+    }
+
     /// The slots changed, filled or emptied since the last call (appended to
     /// `out`), for the media manager.
     pub fn take_media_changes(&mut self, out: &mut Vec<usize>) {
         self.media_changes.take(out);
+    }
+
+    /// The slots whose object got a particle system change since the last
+    /// call (appended to `out`): the only ones with a `particle_update`.
+    pub fn take_particle_changes(&mut self, out: &mut Vec<usize>) {
+        self.particle_changes.take(out);
+    }
+
+    /// The slots whose object got a full update since the last call
+    /// (appended to `out`): the only ones with `sound_update` set.
+    pub fn take_sound_changes(&mut self, out: &mut Vec<usize>) {
+        self.sound_changes.take(out);
+    }
+
+    /// Note what a full update left on an object for the particle and
+    /// sound managers.
+    fn note_carried(&mut self, idx: usize) {
+        let Some(o) = self.slots.get(idx).and_then(|o| o.as_ref()) else {
+            return;
+        };
+        if o.particle_update.is_some() {
+            self.particle_changes.note(idx);
+        }
+        if o.sound_update {
+            self.sound_changes.note(idx);
+        }
+    }
+
+    /// Bring the lists behind [`Self::avatars`] and [`Self::texted`] up to
+    /// date with the objects changed, added or removed since the last call.
+    /// Once a frame, before the interface.
+    pub fn refresh_labelled(&mut self) {
+        for i in 0..self.label_changes.list.len() {
+            let idx = self.label_changes.list[i];
+            self.label_changes.mark[idx] = false;
+            let (avatar, texted) = match self.slots.get(idx).and_then(|o| o.as_ref()) {
+                Some(o) => (o.is_avatar(), !o.is_avatar() && !o.text.is_empty()),
+                None => (false, false),
+            };
+            for (set, member) in [(&mut self.avatar_slots, avatar), (&mut self.texted_slots, texted)] {
+                if member {
+                    set.insert(idx);
+                } else {
+                    set.remove(&idx);
+                }
+            }
+        }
+        self.label_changes.list.clear();
+    }
+
+    /// Listed slots that still satisfy `keep`, in slot order, then the
+    /// slots changed since the last `refresh_labelled` that do: right at
+    /// any time, in slot order once refreshed.
+    fn labelled<'a>(&'a self, listed: &'a BTreeSet<usize>, keep: fn(&Object) -> bool) -> impl Iterator<Item = (usize, &'a Object)> {
+        let changed = self.label_changes.list.iter().filter(move |idx| !listed.contains(idx));
+        listed
+            .iter()
+            .chain(changed)
+            .filter_map(move |&idx| self.get(idx).filter(|o| keep(o)).map(|o| (idx, o)))
+    }
+
+    /// The avatars, without a walk over every object.
+    pub fn avatars(&self) -> impl Iterator<Item = (usize, &Object)> {
+        self.labelled(&self.avatar_slots, Object::is_avatar)
+    }
+
+    /// The objects with a hover text (llSetText) that are not avatars.
+    pub fn texted(&self) -> impl Iterator<Item = (usize, &Object)> {
+        self.labelled(&self.texted_slots, |o| !o.is_avatar() && !o.text.is_empty())
     }
 
     pub fn index_of(&self, key: &ObjKey) -> Option<usize> {
@@ -507,6 +620,36 @@ impl ObjectStore {
 
     pub fn children_of(&self, key: &ObjKey) -> &[usize] {
         self.children.get(key).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// Object updates carry parent IDs, not link numbers. Once every parent
+    /// change is confirmed, retain the ordered ObjectLink instruction issued
+    /// by this viewer instead of using UDP arrival order as a link number.
+    /// Never apply it to missing, extra, duplicated or differently parented prims.
+    pub fn remember_link_order(&mut self, root: Uuid, children: &[Uuid]) -> bool {
+        let Some(root_idx) = self.index_of_uuid(&root) else { return false };
+        let Some(root_obj) = self.get(root_idx).filter(|o| o.parent_id == 0) else {
+            return false;
+        };
+        let key = root_obj.key;
+        let Some(indices) = children.iter().map(|id| self.index_of_uuid(id)).collect::<Option<Vec<_>>>() else {
+            return false;
+        };
+        let existing = self.children_of(&key);
+        if existing.len() != indices.len()
+            || indices.iter().collect::<std::collections::HashSet<_>>().len() != indices.len()
+            || indices.iter().any(|idx| {
+                !existing.contains(idx)
+                    || self
+                        .get(*idx)
+                        .is_none_or(|o| o.parent_id != key.local_id || o.key.region != key.region)
+            })
+        {
+            return false;
+        }
+        self.children.insert(key, indices);
+        self.touched.note(root_idx);
+        true
     }
 
     fn link(&mut self, idx: usize) {
@@ -609,6 +752,10 @@ impl ObjectStore {
                 self.slots.len() - 1
             }
         };
+        if self.arrival.len() <= idx {
+            self.arrival.resize(idx + 1, false);
+        }
+        self.arrival[idx] = !obj.is_avatar();
         self.by_uuid.insert(obj.full_id, idx);
         self.slots[idx] = Some(obj);
         self.by_key.insert(key, idx);
@@ -628,8 +775,10 @@ impl ObjectStore {
             self.by_uuid.remove(&obj.full_id);
         }
         self.free.push(idx);
+        self.settle(idx);
         self.removed_slots.push(idx);
         self.media_changes.note(idx);
+        self.label_changes.note(idx);
         self.count -= 1;
         // Children of a removed object are removed too (linkset / attachments).
         let kids = self.children.remove(&obj.key).unwrap_or_default();
@@ -687,6 +836,163 @@ mod tests {
     }
 
     const SMOOTH_ON: u8 = TextureAnim::ON | TextureAnim::SMOOTH | TextureAnim::LOOP;
+
+    fn update(local_id: u32, pcode: u8, text: &str) -> ObjectUpdate {
+        ObjectUpdate {
+            local_id,
+            full_id: Uuid::from_u128(local_id as u128),
+            parent_id: 0,
+            pcode,
+            state: 0,
+            crc: 0,
+            material: 3,
+            click_action: 0,
+            scale: Vec3::ONE,
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            velocity: Vec3::ZERO,
+            acceleration: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            update_flags: 0,
+            owner_id: Uuid::nil(),
+            volume: VolumeParams::default(),
+            texture_entry: None,
+            extra: ExtraParams::default(),
+            name_values: String::new(),
+            text: text.to_owned(),
+            text_color: [255; 4],
+            media_url: String::new(),
+            tree_species: None,
+            texture_anim: None,
+            foot_plane: None,
+            particles: Default::default(),
+            sound: Default::default(),
+        }
+    }
+
+    #[test]
+    fn avatars_and_texted_objects_are_listed_without_a_walk() {
+        use aurora_prim::params::{LL_PCODE_LEGACY_AVATAR as AVATAR, LL_PCODE_VOLUME as PRIM};
+        let ids = |it: &mut dyn Iterator<Item = (usize, &Object)>| it.map(|(_, o)| o.key.local_id).collect::<Vec<_>>();
+        let mut s = ObjectStore::default();
+        s.upsert(1, update(10, PRIM, ""));
+        s.upsert(1, update(11, AVATAR, ""));
+        s.upsert(1, update(12, PRIM, "Vendor"));
+        // an avatar's own text is not a hover text
+        s.upsert(1, update(13, AVATAR, "ignored"));
+        // right before the first refresh, and the same after it
+        for refreshed in [false, true] {
+            if refreshed {
+                s.refresh_labelled();
+                assert!(s.label_changes.list.is_empty());
+            }
+            assert_eq!(ids(&mut s.avatars()), [11, 13], "refreshed: {refreshed}");
+            assert_eq!(ids(&mut s.texted()), [12], "refreshed: {refreshed}");
+        }
+        // changes through `get_mut` and full updates are seen at once: a
+        // text set, a text cleared, an avatar gone
+        let plain = s.index_of(&ObjKey { region: 1, local_id: 10 }).unwrap();
+        s.get_mut(plain).unwrap().text = "Open".into();
+        s.upsert(1, update(12, PRIM, ""));
+        s.remove(&ObjKey { region: 1, local_id: 11 });
+        assert_eq!(ids(&mut s.avatars()), [13]);
+        assert_eq!(ids(&mut s.texted()), [10]);
+        // the freed slot goes to a prim: it is not taken for the avatar
+        let reused = s.upsert(1, update(14, PRIM, ""));
+        assert_eq!(s.get(reused).unwrap().key.local_id, 14);
+        assert_eq!(ids(&mut s.avatars()), [13]);
+        s.refresh_labelled();
+        assert_eq!(ids(&mut s.avatars()), [13]);
+        assert_eq!(ids(&mut s.texted()), [10]);
+        assert_eq!((s.avatar_slots.len(), s.texted_slots.len()), (1, 1));
+        // a region left takes its objects out of the lists
+        s.remove_region(1);
+        s.refresh_labelled();
+        assert_eq!(s.avatars().count() + s.texted().count(), 0);
+        assert!(s.avatar_slots.is_empty() && s.texted_slots.is_empty());
+    }
+
+    #[test]
+    fn particle_and_sound_changes_are_listed_without_a_walk() {
+        use aurora_prim::params::LL_PCODE_VOLUME as PRIM;
+        let taken = |s: &mut ObjectStore, particles: bool| {
+            let mut out = Vec::new();
+            if particles {
+                s.take_particle_changes(&mut out);
+            } else {
+                s.take_sound_changes(&mut out);
+            }
+            out
+        };
+        let with = |local_id: u32, particles: ParticleUpdate| ObjectUpdate {
+            particles,
+            ..update(local_id, PRIM, "")
+        };
+        let mut s = ObjectStore::default();
+        let plain = s.upsert(1, with(10, ParticleUpdate::Keep));
+        let emitter = s.upsert(1, with(11, ParticleUpdate::Set(vec![1, 2, 3])));
+        // every full update carries the attached sound; only one a particle
+        // system
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert_eq!(taken(&mut s, false), [plain, emitter]);
+        // what the managers have not handled yet stays listed once, whatever
+        // touches the object meanwhile
+        s.touch(emitter);
+        s.get_mut(emitter).unwrap().text = "x".into();
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert_eq!(taken(&mut s, false), [emitter]);
+        // handled: no longer listed, until the next change
+        for idx in [plain, emitter] {
+            let o = s.get_mut_untracked(idx).unwrap();
+            o.particle_update = None;
+            o.sound_update = false;
+        }
+        s.touch(emitter);
+        s.touch(plain);
+        assert!(taken(&mut s, true).is_empty() && taken(&mut s, false).is_empty());
+        // a system stopped by an update that keeps the object, a full update
+        // without particles
+        s.upsert(1, with(11, ParticleUpdate::Clear));
+        s.upsert(1, with(10, ParticleUpdate::Keep));
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert_eq!(taken(&mut s, false), [emitter, plain]);
+        // a slot freed and filled again before the managers ran: listed once
+        s.remove(&ObjKey { region: 1, local_id: 11 });
+        let reused = s.upsert(1, with(12, ParticleUpdate::Set(vec![4])));
+        assert_eq!(reused, emitter);
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert!(s.get(reused).unwrap().particle_update.is_some());
+    }
+
+    #[test]
+    fn new_objects_are_arrivals_until_settled() {
+        use aurora_prim::params::{LL_PCODE_LEGACY_AVATAR as AVATAR, LL_PCODE_VOLUME as PRIM};
+        let mut s = ObjectStore::default();
+        let prim = s.upsert(1, update(10, PRIM, ""));
+        let avatar = s.upsert(1, update(11, AVATAR, ""));
+        // an avatar is never put off
+        assert!(s.is_arrival(prim) && !s.is_arrival(avatar) && !s.is_arrival(999));
+        // updated again before its first sync: still new
+        s.upsert(1, update(10, PRIM, "text"));
+        assert!(s.is_arrival(prim));
+        s.settle(prim);
+        s.settle(999);
+        assert!(!s.is_arrival(prim));
+        // an update of a known object does not make it new again
+        s.upsert(1, update(10, PRIM, ""));
+        assert!(!s.is_arrival(prim));
+        // removed before its first sync: the slot is no arrival, until a
+        // new object takes it
+        let gone = s.upsert(1, update(12, PRIM, ""));
+        s.remove(&ObjKey { region: 1, local_id: 12 });
+        assert!(!s.is_arrival(gone));
+        let again = s.upsert(1, update(13, AVATAR, ""));
+        assert_eq!(again, gone);
+        assert!(!s.is_arrival(again));
+        s.remove(&ObjKey { region: 1, local_id: 13 });
+        let again = s.upsert(1, update(14, PRIM, ""));
+        assert!(again == gone && s.is_arrival(again));
+    }
 
     #[test]
     fn tex_anim_clock_follows_firestorm() {

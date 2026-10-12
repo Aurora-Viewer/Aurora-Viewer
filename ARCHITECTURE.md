@@ -75,7 +75,7 @@ commande en une ligne (`scripts/setup.ps1`, puis les outils) :
 | `aurora-llsd` | Type LLSD et ses formats XML / binaire / notation |
 | `aurora-prim` | Modèle des prims : paramètres de volume, faces, paramètres étendus, génération de la géométrie (port de `llvolume`) |
 | `aurora-assets` | Décodeurs d'assets : JPEG2000, mesh, animations, matériaux, maillages d'avatar `.llm`, squelette |
-| `aurora-render` | Moteur de rendu wgpu / Vulkan : textures bindless regroupées en pages (texture arrays), géométrie sous-allouée, multi-draw-indirect, ombres, reflets, post-traitement ; animations de texture (`tex_anim.rs` : référence CPU et paramètres des enregistrements, évaluées par les vertex shaders) ; listes de dessin pilotées par le GPU (`gpu_cull.rs`, `shaders/cull.wgsl` : tables des faces et des objets tenues par la scène, culling et compactage en compute pour chaque vue, dessin par `multi_draw_indexed_indirect_count`) ; occlusion Hi-Z en deux phases (`occlusion.rs`, `shaders/occlusion.wgsl`, test commun `shaders/hiz_test.wgsl`) ; envois du streaming sans copie sur le thread principal (`upload.rs` : mémoire de transit mappée où écrivent les tâches de fond, copies GPU enregistrées dans un encodeur soumis en tête de l'image) ; rien qui grandisse ou se libère d'un coup dans une image (`arena.rs` : plages de géométrie allouées au meilleur ajustement par un index des tailles, enregistrements de dessin gardés par blocs et tampon GPU agrandi par une copie GPU ; `textures.rs` : substitut gris partagé par les textures en attente, pages vidées détruites quelques-unes par image par un thread à part) ; mode de présentation de la swapchain (`present.rs` : une seule règle à la création de la surface et à chaque bascule de la synchronisation verticale, mode forcé par `AURORA_PRESENT_MODE`) ; deux moitiés, voir « Threads et propriété des données » : `main_thread.rs` (le `Renderer` vu par la scène : ses stores, la clôture de l'image), `writes.rs` (journal des écritures GPU de l'image), `packet.rs` (paquet d'image et résultat), `render_thread.rs` (thread de rendu, remise des paquets en rendez-vous), `renderer.rs` (`Backend` : surface, pipelines, cibles, passes), `helpers.rs` (threads auxiliaires de `finish`) |
+| `aurora-render` | Moteur de rendu wgpu / Vulkan : textures bindless regroupées en pages (texture arrays), géométrie sous-allouée, multi-draw-indirect, ombres, reflets, post-traitement ; animations de texture (`tex_anim.rs` : référence CPU et paramètres des enregistrements, évaluées par les vertex shaders) ; listes de dessin pilotées par le GPU (`gpu_cull.rs`, `shaders/cull.wgsl` : tables des faces et des objets tenues par la scène, culling et compactage en compute pour chaque vue, dessin par `multi_draw_indexed_indirect_count`) ; lumières locales triées par case d'écran et par profondeur (`light_tiles.rs` : pour chaque colonne, rangée et tranche de profondeur de la vue principale, l'ensemble des lumières qui la couvrent, calculé à chaque image sur le thread de rendu ; un fragment ne parcourt que les lumières communes aux trois, `light_walk` dans `shaders/common.wgsl`, au lieu des 64 de la liste) ; occlusion Hi-Z en deux phases (`occlusion.rs`, `shaders/occlusion.wgsl`, test commun `shaders/hiz_test.wgsl`) ; ombres dessinées, dans chaque cascade, avec les seuls objets dont l'ombre peut tomber sur ce que la vue y lit (`shadow_cull.rs` : volume des pixels qui lisent la cascade, étiré vers la lumière, que testent le culling GPU et les listes du CPU ; faces opaques sans fragment shader) ; envois du streaming sans copie sur le thread principal (`upload.rs` : mémoire de transit mappée où écrivent les tâches de fond, copies GPU enregistrées dans un encodeur soumis en tête de l'image) ; textures compressées en BC7 quand elles le supportent sans dommage (`bc7.rs` : encodeur Intel ISPC et contrôle de qualité de chaque niveau ; les pages sont en RGBA8 ou en BC7 selon le format de la chaîne, `TexelFormat`) ; rien qui grandisse ou se libère d'un coup dans une image (`arena.rs` : plages de géométrie allouées au meilleur ajustement par un index des tailles, enregistrements de dessin gardés par blocs et tampon GPU agrandi par une copie GPU ; `textures.rs` : réduction d'une texture par copie de ses niveaux vers une couche plus petite, substitut gris partagé par les textures en attente, pages vidées détruites quelques-unes par image par un thread à part) ; mode de présentation de la swapchain (`present.rs` : une seule règle à la création de la surface et à chaque bascule de la synchronisation verticale, mode forcé par `AURORA_PRESENT_MODE`) ; deux moitiés, voir « Threads et propriété des données » : `main_thread.rs` (le `Renderer` vu par la scène : ses stores, la clôture de l'image), `writes.rs` (journal des écritures GPU de l'image), `packet.rs` (paquet d'image et résultat), `ui_frame.rs` (formes d'egui remises au thread de rendu, qui les tesselle comme `egui::Context::tessellate`), `thread_cpu.rs` (temps processeur d'un thread, pour le profil), `render_thread.rs` (thread de rendu, remise des paquets en rendez-vous), `renderer.rs` (`Backend` : surface, pipelines, cibles, passes), `helpers.rs` (threads auxiliaires de `finish`) |
 | `aurora-audio` | Sortie audio : mixeur avec les canaux de volume SL, streams de musique, sons du monde |
 | `aurora-voice` | Voix SL en WebRTC (réception et émission) |
 | `aurora-media` | Hôte des plugins médias SLPlugin (CEF pour le web, LibVLC pour la vidéo) |
@@ -99,6 +99,26 @@ dans les scripts d'objets ; `aurora-net/src/scripts/experiences.rs` charge
 GetMetadata / GetCreatorExperiences / GetExperienceInfo en arrière-plan.
 L'association choisie fait partie du document et de l'instantané enregistré :
 la sauvegarde n'a plus besoin de relire les métadonnées.
+
+La saisie de `}` aligne son retrait sur le `{` correspondant, hors chaînes,
+commentaires et directives. `ui/scripts/colors.rs` affiche des pastilles
+près des vecteurs numériques entre 0 et 1 inclus, détectés et mis en cache
+par `syntax.rs`. Le nuancier commun garde un identifiant de fenêtre propre
+à chaque document et partage les préférences de palette avec la construction.
+L'aperçu est local, Annuler restaure les octets d'origine et OK forme une seule
+action dans l'historique natif. La saisie de la source et l'enregistrement
+attendent la fermeture du nuancier ; une modification externe ferme la session
+sans écraser le nouveau texte.
+
+`ui/scripts/editing.rs` regroupe les transformations sur les lignes sélectionnées
+et les bascules de commentaires, avec une seule étape Annuler / Rétablir et
+conservation du sens de la sélection. Les commandes clavier arrivées après une
+saisie ou un déplacement natif attendent le curseur réellement calculé par egui.
+`ui/scripts/folding.rs` suit les paires d'accolades hors commentaires / chaînes,
+remappe les replis après les modifications et réduit à zéro la hauteur des lignes
+cachées dans le layout. Le texte et ses indices restent complets ; les actions
+de copie, sauvegarde, compilation et annulation n'utilisent aucune projection.
+La navigation / recherche vers un caractère caché rouvre son bloc.
 
 `ui/scripts/syntax.rs` colore la source LSL des deux éditeurs, aussi en lecture
 seule. Le catalogue des noms natifs de Firestorm est embarqué dans
@@ -142,11 +162,12 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `aurora-assets/src/import_*` | Validation et conversion pures : dimensions / alpha / JPEG2000, WAV vers Vorbis, BVH vers animation, cartes PBR RGB / ORM, ressources glTF / GLB partagées, géométrie Collada / glTF, LOD par meshoptimizer, transfert spatial des poids, enveloppes convexes et sérialisation du mesh en sections LLSD comprimées. `import_mesh/vhacd.rs` et `native/vhacd/` encapsulent V-HACD 4.1 : allocations bornées, exceptions contenues, annulation / progression atomiques ; chaque modèle tourne sur un worker Rust |
 | `aurora-net/src/inventory/{upload,mesh_upload}.rs`, `session/asset_imports.rs` | Protocole d’import à deux étapes, coût attendu, relecture de l’élément créé ; matériaux créés puis enregistrés par leur capability dédiée. Les URL de transfert mesh restent privées à la session, associées à un jeton local consommé une seule fois et expirant après cinq minutes |
 | `aurora-render/src/preview.rs`, `shaders/preview.wgsl` | Aperçus 3D dans les fenêtres : rendu PBR et skinning sur le thread GPU, cibles hors écran reliées directement à egui, déduplication des cartes partagées, aucune lecture GPU ni attente du GPU dans la boucle d’interface |
+| `build/replace.rs`, `build/replace/`, `build/ui/replace.rs` | Remplacement guidé d'une partie liée : cible verrouillée, sélection du remplaçant, options et avancement ; étapes confirmées par le serveur, copie du contenu via l'inventaire du résident, conservation des états des scripts, récupération de la configuration initiale et simulateur hors ligne |
 | `ui/inventory/document.rs`, `aurora-net/src/inventory/notecard.rs` | Cycle d’édition des documents : brouillon et sauvegarde corrélés à la fenêtre, fermeture après confirmation, refus conservant le texte ; import des notecards v1 / v2, export v2 avec longueur UTF-8 bornée et conservation des permissions des pièces jointes encore référencées |
 | `ui/inventory/embedded.rs` | Éléments intégrés aux notes : icône et nom dans le texte, aperçu / ouverture et copie dans l’inventaire, dépôt à la position du pointeur ; un caractère par élément pour conserver la sélection, la suppression et l’annulation |
 | `aurora-net/src/session/inventory_preview.rs` | Lecture des notes et scripts protégés par transfert d’inventaire du simulateur (identifiants de l’agent, de session, du propriétaire, de l’objet, de l’élément et de l’asset) ; réassemblage borné des paquets désordonnés, corrélation au simulateur et expiration |
 | `app/task_notecards.rs`, `aurora-net/src/session/task_notecard.rs` | Notes du contenu des objets : double-clic / Ouvrir, éditeur commun avec état propre à l’objet et à l’élément ; droits de l’objet et de la note, transfert d’asset autorisé par l’inventaire, sauvegarde via UpdateNotecardTaskInventory, relecture et brouillon conservé en cas de refus |
-| `main.rs`, `app.rs`, `app/` | Démarrage, boucle d'événements, une image du viewer, actions de l'interface ; commandes de la barre de chat (`app/chat_commands.rs`), menus clic droit (`app/context_menu.rs` : ouverture, droits sur l'objet, actions choisies), geste de déplacement des HUDs avec touche configurable (ALT par défaut) et clic gauche et scénario hors ligne (`app/hud_drag.rs`) |
+| `main.rs`, `app.rs`, `app/` | Démarrage, boucle d'événements, une image du viewer, actions de l'interface ; commandes de la barre de chat (`app/chat_commands.rs`), menus clic droit (`app/context_menu.rs` : ouverture, droits sur l'objet, actions choisies), clics sur le monde sans attente du GPU (`app/click_pick.rs` : la profondeur sous le clic est demandée au rendu, le clic est traité à l'arrivée de la réponse avec le curseur et les touches qu'il avait, et ce qui le suit — relâchement, autres boutons, mouvement de souris qui déplace la caméra — attend derrière lui dans l'ordre ; contrôle `AURORA_CLICK_PICK`, clics de démo `AURORA_DEMO_CLICKS`), geste de déplacement des HUDs avec touche configurable (ALT par défaut) et clic gauche et scénario hors ligne (`app/hud_drag.rs`) |
 | `cli.rs` | Arguments de ligne de commande (`--title`, `--fps-limit`, `--language`, `--version`) ; titre avec la version commune et le profil de compilation |
 | `cmdline/` | Barre de chat comme ligne de commande (FSCmdLine) : analyse des commandes, calculatrice (LLCalc), dés ; exécutées par `app/chat_commands.rs` |
 | `agent.rs` | Notre avatar (AgentUpdate, extrapolation depuis vitesse / accélération serveur, lissage comme LLDrawable) |
@@ -155,11 +176,13 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `world/` | État du monde reçu du réseau : objets, régions, terrain, environnement (EEP : cycles et assets de réglages dans `eep.rs`, choix local > parcelle > région > jour par défaut, environnement local et fondus dans `eep_env.rs`, listes du sélecteur d'environnement et chargement des dossiers dans `env_select.rs`), parcelle sélectionnée d'« À propos du terrain » et ses droits (`land.rs`), social, profils des avatars, inventaire, groupes (actif, épinglés), cercles de contacts et surnoms (`contact_sets.rs`), blocages, messages du bridge LSL de Firestorm (cachés), orientation des corps, regard (LookAt), carte, profils de lieux de « Lieux » et des fenêtres séparées (`place_details.rs` : région par son nom, repère, RemoteParcelRequest, ParcelInfoRequest), assets des repères et handles de leurs régions (`landmarks.rs`), historique de téléportation daté et enregistré (`tphistory.rs`)… |
 | `scene/` | Ce qu'on envoie au GPU : géométrie et LOD, textures (streaming), avatars (squelette, animations, silhouette), particules, eau, sondes de reflets, sons du monde, imposteurs, assets de réglages d'environnement (`settings.rs` : ciel, eau, cycle du jour) |
 | `ui/` | Interface egui : barres, fenêtres, options, chat, contacts (amis, groupes, cercles : `contacts.rs`), profils des avatars, « Lieux » (`places.rs` : favoris, repères, historique de téléportation) et profils de lieux (`place_details.rs`, aussi en fenêtres séparées), « À propos du terrain » (`land/`, un fichier par onglet, dialogues), choix d'un résident (`avatar_picker.rs`), page web dans une fenêtre (`web_view.rs`), choix d'une texture, inventaire, sélecteur d'environnement et « Éclairage personnel » (`environment.rs`), cartes, overlays de débogage ; sons causés par les widgets (`sound_cues.rs` : clics, touches refusées, fenêtres) ; menus clic droit : apparence commune (`menu.rs` : icône Phosphor, sous-menus, cases cochées) et entrées comme Firestorm (`context.rs` : monde, noms d'avatars, groupes) |
-| `build/` | Outils de construction comme LLFloaterTools : sélection et manipulateurs (`manip.rs`), parcours de la sélection sous le pointeur avec CTRL + molette (`cycle.rs` : unités par linkset ou prims d’un même objet, molette de haute précision), déplacement direct des HUDs (`hud_drag.rs` : racine du linkset, conversion écran / point d’attachement, écho local et MultipleObjectUpdate de position au relâchement), outils Déplacer (`grab.rs`) et Aligner (`align.rs`), terrain (`land.rs`), modifications de la sélection (`edits.rs`), matériaux et médias (`materials.rs`), contenu des objets (`contents.rs`), impact et poids (`costs.rs`), simulateur de démo (`demo_sim.rs`) ; la fenêtre et ses onglets dans `build/ui/` |
+| `build/` | Outils de construction comme LLFloaterTools : sélection et manipulateurs (`manip.rs`), régressions de sélection des parties liées et des objets entiers (`selection_tests.rs`), parcours de la sélection sous le pointeur avec CTRL + molette (`cycle.rs` : unités par linkset ou prims d’un même objet, molette de haute précision), déplacement direct des HUDs (`hud_drag.rs` : racine du linkset, conversion écran / point d’attachement, écho local et MultipleObjectUpdate de position au relâchement), outils Déplacer (`grab.rs`) et Aligner (`align.rs`), terrain (`land.rs`), modifications de la sélection (`edits.rs`), matériaux et médias (`materials.rs`), contenu des objets (`contents.rs`), impact et poids (`costs.rs`), simulateur de démo (`demo_sim.rs`) ; la fenêtre et ses onglets dans `build/ui/` |
 | `interaction.rs`, `cursors.rs`, `ui/object_actions.rs` | Règles des actions de clic 0–9, héritage, permissions, curseurs natifs Firestorm, fenêtres d'achat / paiement et liste du contenu ; transaction après confirmation |
 | `app/object_actions.rs` | Déclenchement des actions, toucher maintenu, déplacement physique, lecture de parcelle, ouverture de média et cadrage de caméra |
 | `scene/picking.rs` | Rayons contre les triangles partagés avec la géométrie affichée (prims, sculpts, meshes) ; prim réellement visée au survol et au clic gauche malgré des boîtes recouvrantes, IGNORE traverse la géométrie hors construction, informations de surface pour les scripts de toucher ; les mêmes tests sur les seuls candidats de l'index de survol |
-| `scene/hover.rs` | Objet sous le curseur sans recherche à chaque image : index compact des sphères englobantes tenu par la synchro (candidats proches du rayon du curseur ou du point de profondeur), réponse gardée tant que le rayon, la profondeur lue sur le GPU et les objets alentour ne changent pas, refaite au moins toutes les 100 ms ; jamais pour les clics. Contrôle : `AURORA_HOVER_CHECK` |
+| `scene/drawn.rs` | Ce qu'un clic désigne d'après les faces que le GPU a dessinées sous son pixel (`aurora-render/src/drawn_pick.rs`) : les objets que le CPU ne sait pas trouver là où ils sont affichés — animesh, mesh riggés portés, mesh portés — sont désignés tels que le GPU les pose, pour le clic gauche, le clic droit et la construction. Règle isolée et testée (`reaches` : geste × statut de l'objet), informations de surface d'un toucher (face, position, ST / UV, normale et binormale de la surface posée). Écart voulu avec Firestorm, qui n'atteint un mesh riggé qu'au clic droit et avec l'outil Déplacer |
+| `scene/hover.rs` | Objet sous le curseur sans recherche à chaque image : index compact des sphères englobantes tenu par la synchro (candidats proches du rayon du curseur ou du point de profondeur), réponse gardée tant que le rayon, la profondeur lue sur le GPU et les objets alentour ne changent pas, refaite au moins toutes les 100 ms ; jamais pour les clics. Les objets testés quel que soit le rayon (avatars, mesh riggés : des milliers dans une foule) ont une classe, établie depuis l'objet à la première recherche qui suit son arrivée ou son changement, qui les écarte des étapes où ils ne peuvent rien changer. Contrôle : `AURORA_HOVER_CHECK` ; comparaison : `AURORA_HOVER_LEGACY` ; ligne `hover summary` du profil |
+| `scene/pick_accel.rs` | Triangles d'une face de picking rangés en hiérarchie de volumes englobants, pour la recherche de survol : même distance que le test de chaque triangle (même calcul sur ceux qu'elle n'écarte pas), construite par une tâche de fond la première fois que le survol teste une grande face de mesh ou de sculpt ; les clics testent toujours chaque triangle |
 | `media/` | Médias des prims et des parcelles (objets à médias tenus à jour par le flux de changements de l'`ObjectStore`, sans passe sur tous les objets), cookie OpenID des pages web de la grille (`openid.rs`) |
 | `demo.rs`, `demo_land.rs`, `demo_place.rs`, `demo_eep.rs`, `demo_env.rs`, `demo_stream.rs`, `demo_glyphs.rs` | Le mode démo : une scène locale qui simule un serveur (et ses réponses à « À propos du terrain », aux profils de lieux, repères et historique de « Lieux » et à ExtEnvironment, une bibliothèque d'environnements pour le sélecteur) ; `demo_stream.rs` : objets et textures qui arrivent par vagues (test des à-coups du streaming, AURORA_DEMO_STREAM) ; `demo_glyphs.rs` : résidents dont le titre, le nom et le message utilisent les caractères étendus des noms d'affichage (AURORA_DEMO_GLYPHS) |
 | `settings.rs`, `keybinds.rs`, `keybinds/layout.rs`, `theme.rs` | Réglages enregistrés, raccourcis, disposition Windows et touches de déplacement par défaut, palette |
@@ -172,18 +195,26 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `ui/fonts.rs`, `ui/fonts/fallback.rs` | Polices de l'interface : police principale embarquée ou choisie, celles d'egui, puis les polices de repli du système pour les caractères que les autres n'ont pas (noms d'affichage, titres, chat : géorgien, CJK, arabe, lettres mathématiques…). `fallback.rs` : liste par écriture, première police installée qui dessine le caractère témoin, fichiers mappés en mémoire et vérifiés sur le thread `aurora-fonts`, alignement de leur ligne de base sur la police principale ; installées à l'image suivante si la recherche n'était pas finie. `AURORA_FONT_FALLBACK=0` les retire |
 | `ui/exit.rs` | Modale de fermeture traduite : quitter, déconnecter vers le login, annuler ; fond flouté sur le GPU et interactions bloquées ; attente non bloquante de la fin de session, avec le délai de secours de six secondes de Firestorm |
 | `updater.rs`, `ui/update.rs` | Contrôleur asynchrone et fenêtre de mise à jour : notes, progression, relance et erreurs ; recherche manuelle dans Aide / connexion, tag ignoré et choix Demander / Automatique / Obligatoires uniquement. Démo synthétique isolée via `AURORA_DEMO_UPDATE`. |
-| `ui/inventory.rs`, `ui/inventory/view.rs`, `ui/inventory/controls.rs`, `ui/inventory/context.rs`, `ui/inventory/dialogs.rs`, `ui/inventory/properties.rs`, `ui/inventory/thumbnail.rs`, `app/inventory.rs`, `app/inventory_thumbnail.rs` | Inventaire : tri / filtres purs et cache de vues par génération dans `view.rs` (index, tri et filtrage parallèles avec rayon), commandes et préférences persistantes dans `controls.rs`, arborescence filtrée incluant les dossiers parents, états de dépliage par onglet, résultats dessinés selon la zone visible sans limite de 500 et zone de statut de hauteur fixe ; défilement sur les deux axes, largeur des noms mesurée dans la zone visible puis conservée pour les résultats virtuels, commandes adaptées aux petites largeurs ; menus par type, sélection multiple avec ajout / détachement groupés, renommage dans la ligne après création ou sur demande, fenêtres de dossiers limitées à leurs descendants avec un filtre propre, presse-papiers partagé entre fenêtres, propriétés et confirmations, aperçus / édition des notes et scripts, lecture des statistiques d’animation ; éditeur d’image à six actions, choix en arbre et capture de la scène sans interface ; décodage / redimensionnement / encodage hors du thread de rendu et exécution des actions après dessin de l’interface |
+| `ui/inventory.rs`, `ui/inventory/view.rs`, `ui/inventory/controls.rs`, `ui/inventory/context.rs`, `ui/inventory/clipboard.rs`, `ui/inventory/delete.rs`, `ui/inventory/dialogs.rs`, `ui/inventory/properties.rs`, `ui/inventory/thumbnail.rs`, `app/inventory.rs`, `app/inventory_thumbnail.rs` | Inventaire : tri / filtres purs et cache de vues par génération dans `view.rs` (index, tri et filtrage parallèles avec rayon), commandes et préférences persistantes dans `controls.rs`, arborescence filtrée incluant les dossiers parents, états de dépliage par onglet, résultats dessinés selon la zone visible sans limite de 500 et zone de statut de hauteur fixe ; défilement sur les deux axes, largeur des noms mesurée dans la zone visible puis conservée pour les résultats virtuels, commandes adaptées aux petites largeurs ; menus par type, sélection multiple avec ajout / détachement groupés, renommage dans la ligne après création ou sur demande, fenêtres de dossiers limitées à leurs descendants avec un filtre propre, presse-papiers partagé entre fenêtres et raccourcis natifs Ctrl+C / Ctrl+X / Ctrl+V selon le focus de la liste dans `clipboard.rs`, Suppr et corbeille de bas de fenêtre via la suppression partagée dans `delete.rs`, propriétés et confirmations, aperçus / édition des notes et scripts, lecture des statistiques d’animation ; éditeur d’image à six actions, choix en arbre et capture de la scène sans interface ; décodage / redimensionnement / encodage hors du thread de rendu et exécution des actions après dessin de l’interface |
 | `world/inventory/actions.rs`, `world/inventory/wearable.rs`, `world/inventory/demo.rs`, `world/inventory/preview.rs`, `world/inventory/tests.rs` | Règles de permissions, déplacements / copies / liens et offres, préparation des annonces Place du marché, assets de vêtements par défaut et scénario synthétique ; cache d’inventaire v2 avec permissions complètes |
 | `aurora-net/src/inventory/operations.rs`, `aurora-net/src/inventory/thumbnail.rs`, `aurora-net/src/session/inventory_upload.rs` | Mutations AIS avec relecture, remappage des UUID attribués par le serveur, créations / copies UDP et accusés avec expiration, sauvegarde des documents par capabilities ; chargement AssetUpload / Xfer des vêtements avant création de l’élément ; vignettes gratuites par InventoryThumbnailUpload, POST JPEG2000 puis AIS et relecture |
 | `aurora-assets/src/j2k/encode.rs` | Encodeur OpenJPEG borné en mémoire, vignettes RGB / RGBA carrées de 64 à 256 pixels et conservation de l’alpha |
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs, cache disque, mot de passe retenu (coffre de l'OS) |
 | `bug_report/`, `ui/bug_report.rs`, `ui/bug_report/tests.rs`, `app/bug_report.rs` | Rapport de bug : instantané explicite des données autorisées, formulaire avec onglets Description / Image / Données, valeurs localisées et décochables, export aux titres anglais ; diagnostics publics à vocabulaire fermé et images réencodées hors du thread principal. Export local avec dossiers public / privé séparés ; lien GitHub prérempli avec repli presse-papiers, ou création d’issue après Device Flow d’une GitHub App. `uploads.rs` déclare les empreintes et envoie l’image publique et le ZIP privé facultatif vers l’API PHP / Cellar, puis ajoute les liens ; échec partiel repris sur la même issue. L’autorisation GitHub reste uniquement en mémoire dans `github.rs` et n’est pas transmise à l’API Aurora. Aucun secret de connexion SL, chat ou IM n’entre dans le modèle public. |
 | `screen_rate.rs` | Fréquence de l'écran sous la fenêtre, relue une fois par seconde (déplacement de la fenêtre, changement de mode de l'écran) : plafond de l'écran de connexion et images déjà cadencées par la synchronisation verticale |
-| `frame_profile.rs` | Profil des images (AURORA_PROFILE) : temps de chaque étape de l'image, ligne de synthèse par seconde dans le log (moyenne et maximum de chaque étape, nombre d'images lentes ; détail du streaming sur le thread principal, `s_*` ; rencontre du thread principal et du thread de rendu, segment `thread`) |
+| `frame_profile.rs` | Profil des images (AURORA_PROFILE) : temps de chaque étape de l'image, ligne de synthèse par seconde dans le log (moyenne et maximum de chaque étape, nombre d'images lentes ; détail du streaming sur le thread principal, `s_*`, des paramètres de l'image, `p_*`, et de l'interface par groupe de fenêtres, `u_*` ; temps passé hors du processeur par étape, `off_cpu:` ; rencontre du thread principal et du thread de rendu, segment `thread`) |
 | `scene/animesh.rs` | Squelettes autonomes des objets animés, animations du linkset, limites des poses pour le culling et les ombres, scénario de démo |
 | `scene/skin_binds.rs` | Liaisons de skin envoyées au GPU (matrice inverse et os de la palette de chaque os d'un mesh riggé, squelette par défaut en tête) : une plage par mesh, rendue quand sa dernière géométrie est libérée et reprise par les mesh suivants ; seules les plages modifiées sont envoyées |
-| `scene/sync_sets.rs` | Objets que la synchro de la scène visite à chaque image, tenus à jour par événements (objets modifiés notés par `ObjectStore`, ensemble des objets qui bougent d'eux-mêmes et de ce qui les suit, géométries en attente, tranche de LOD) au lieu d'un parcours de tous les objets ; file d'attente des synchros complètes qui n'ont pas tenu dans le budget de temps de l'image, servie du plus proche au plus lointain (`Backlog`, `FullSyncBudget`) |
-| `scene/sync_plan.rs` | Placement en parallèle (rayon) des objets de l'image, niveau par niveau des chaînes de parents : transformation, LOD, limites ; mise à jour de la seule matrice ou synchro complète |
+| `scene/sync_sets.rs` | Objets que la synchro de la scène visite à chaque image, tenus à jour par événements (objets modifiés notés par `ObjectStore`, ensemble des objets qui bougent d'eux-mêmes et de ce qui les suit, géométries en attente, contrôles du niveau de détail : objets immobiles dus quand la caméra a assez bougé, objets placés par le GPU à tour de rôle (toutes les 24 images si la caméra bouge, toutes les 0,4 s sinon), tout objet toutes les 10 s ; HUDs portés listés à leurs changements et non avec leur porteur) au lieu d'un parcours de tous les objets ; l'ancienne tranche de LOD de tous les objets reste derrière `AURORA_SYNC_SLICE` ; file d'attente des synchros complètes qui n'ont pas tenu dans le budget de temps de l'image, servie du plus proche au plus lointain (`Backlog`, `FullSyncBudget`) ; file des nouveaux objets, qui attendent leur première synchro dans l'ordre d'arrivée sans passer par la liste de l'image (`Arrivals`, marqués par l'`ObjectStore` jusqu'à cette première synchro) |
+| `scene/lod_watch.rs` | Quand revoir le niveau de détail d'un objet immobile : chaque contrôle lui laisse la distance que la caméra peut encore parcourir avant que `lod_for` puisse changer de niveau (`lod_slack`, arrondie par défaut), et l'objet redevient dû quand la caméra l'a parcourue (file triée par échéance) ; un changement de réglage (facteur de LOD, champ de vision) rend tout dû. Le contrôle lui-même reste celui de la synchro : mêmes niveaux aux mêmes distances |
+| `scene/sync_check.rs` | Diagnostic `AURORA_SYNC_CHECK` : par seconde, les objets que la synchro visite par image, selon ce qui les a listés et leur nature, et ce qu'il en est sorti (vérifié, replacé, synchro complète) |
+| `scene/still_check.rs` | Diagnostic `AURORA_STILL_CHECK` : par seconde, ce qui a changé alors que l'image devrait être immobile (caméra, notre avatar, faces reconstruites et leur raison, objets posés replacés) |
+| `scene/sync_plan.rs` | Placement en parallèle (`frame_par.rs`) des objets de l'image, niveau par niveau des chaînes de parents : transformation, LOD, limites ; mise à jour de la seule matrice ou synchro complète |
+| `frame_par.rs` | Boucles parallèles de l'image auxquelles le thread appelant participe (placement de la synchro, listes de dessin, poses, prims flexibles) : il commence la boucle aussitôt, quelques workers du pool rayon la rejoignent à mesure qu'ils se réveillent, et ceux qui arrivent trop tard ne sont pas attendus. Le nombre d'aides suit la quantité de travail (`Grain`) ; une boucle courte reste sur le thread appelant |
+| `scene/anchors.rs` | Ce que portent les avatars, placé par le GPU : chaque palette d'os se termine par des ancres, matrices monde rigides écrites à chaque image — la première place le squelette (espace du squelette vers le monde), les suivantes les points d'attache du corps tels qu'ils sont posés. L'enregistrement d'un prim porté contient son placement par rapport à l'ancre de son point (`flags::ANCHORED`), celui d'un mesh riggé (mesh porté, bento, animesh porté ou au sol) et du corps d'un avatar lit l'ancre de son squelette : les vertex shaders composent. Le culling GPU compose de même la sphère des prims portés (`CullObject::anchor`) et calcule à chaque image celle des mesh riggés à partir des boîtes par os de leur géométrie (`JointBoxes`, `object_flags::POSED`). La synchro écrit les ancres utilisées, les envoie avec les palettes posées, tient à jour le centre des objets ancrés pour le CPU (tri des faces transparentes, survol, lumières, imposteurs ; les listes que le CPU construit encore testent un mesh riggé avec l'étendue de son squelette) et ne visite plus ces objets tant que seul leur porteur bouge. Restent à la synchro : HUDs, prims flexibles, objets qui bougent d'eux-mêmes et ce qui leur est lié |
+| `scene/texture_cache.rs` | Cache disque des textures transcodées (`cache/tex/<id>.bc7`) : chaîne de mips BC7 produite par une tâche de décodage, classe alpha, masque de picking et en-tête de l'image JPEG2000 ; relue au niveau voulu sans décodage au retour dans une région, écrite par le thread `aurora-texcache` ; un fichier sans niveaux retient qu'une texture doit rester en RGBA8 |
+| `scene/texture_load.rs` | Mesure des chargements de textures : temps des tâches de décodage par étape (codec, conversion, RGBA, mips, mémoire de transit) et ligne `texture load:` du journal à la fin de chaque chargement (durée, décodages par niveau, octets téléchargés, cache disque) |
+| `scene/texture_budget.rs` | Budget mémoire des textures : cible du moment (le réglage, moins quand le reste de ce que le viewer tient sur la carte laisse moins de place sous le budget que le pilote lui accorde, `aurora-render/src/vram.rs`), et palier de pression quand les pages la dépassent. Sous pression, `scene/textures.rs` réduit les textures chargées plus finement que leur taille à l'écran, hors champ d'abord, par copie de leurs niveaux sur le GPU (`TextureTable::shrink`), sans les redécoder ; les pages qu'elles quittent sont compactées sans attendre. Forçage : `AURORA_TEXTURE_BUDGET_MB` |
 
 Les indicateurs vocaux des étiquettes sont dessinés par `ui/voice_tag.rs` :
 contour lissé selon le niveau de parole, couleurs calibrées sur l'échelle
@@ -193,6 +224,43 @@ micro local, même sans écho de sa présence par le serveur vocal.
 
 ## Déroulement d'une image
 
+`build/task_inventory.rs` centralise les permissions et les destinations du
+transfert du contenu d’un objet vers l’inventaire personnel ;
+`ui/inventory/task_drop.rs` fournit la source commune aux deux fenêtres de
+contenu, les cibles de dépôt et la confirmation des retraits. `app/inventory.rs`
+revérifie les permissions avant le message `MoveTaskInventory`, avec deux
+préférences d’avertissement persistantes (objet ordinaire ou contenant des scripts).
+
+La sélection de faces garde un masque d’indices TextureEntry par prim dans
+`scene/mod.rs`. Les listes de dessin monde et HUD portent une passe de surlignage
+des faces visibles, colorées par la palette, sans modifier les matériaux. Chaque dessin
+conserve son véritable indice de face, même quand des faces transparentes sont
+omises. Sélectionner une face opaque ne reconstruit pas ses enregistrements ;
+une face totalement transparente sélectionnée reçoit temporairement un
+enregistrement destiné au seul surlignage.
+
+`aurora-render/src/selection.rs` et `shaders/selection.wgsl` calculent un halo
+extérieur à partir de la couverture des triangles sélectionnés, avec la profondeur
+du monde ou du HUD et la géométrie posée habituelle. Deux passes séparables sur
+le GPU suivent les silhouettes, les trous et les morceaux discontinus, y compris
+une face fermée sans arête de bord. Le halo est composé après le post-traitement,
+sans toucher à l’intérieur des faces ; une brève teinte au clic s’efface en 0,7 s.
+« Revoir la sélection » relance cette teinte sans modifier les objets.
+`scene/selection_demo.rs` fournit le mesh hors ligne à îlots courbes séparés
+du scénario `faces-complex`, à côté d’une primitive torique fermée.
+
+`ui/texture_picker/tree.rs` partage le cache de recherche et l’arborescence virtuelle
+de `ui/inventory/view.rs`. Les dossiers se chargent par lots bornés ; les états
+dépliés de recherche et de navigation restent séparés. `ui/texture_picker.rs`
+présente les lignes visibles, les noms longs tronqués avec infobulle, un aperçu
+borné, une séparation ajustable et les commandes en bas de la fenêtre.
+Ses choix intentionnels sont distincts de la confirmation :
+`build/ui/texture_preview.rs` applique l’aperçu immédiat à la sélection capturée,
+conserve les textures et matériaux d’origine de chaque face, confirme sans
+renvoi avec « OK » ou restaure avec « Annuler ». Les autres utilisateurs du
+sélecteur gardent leur confirmation habituelle ; les textures d’inventaire
+non copiables ne produisent pas d’aperçu, comme dans Firestorm.
+
 Le sélecteur `ui/inventory/move_to.rs` propose les destinations de
 « Déplacer vers… » pour la sélection d’origine, avec filtre par nom et
 chemins. La liste est calculée en parallèle, gardée par génération et dessinée
@@ -201,9 +269,36 @@ d’inventaire existantes, avec vérification des droits à la validation.
 
 Les changements de parent passent par `aurora-net/src/session/inventory_moves.rs`
 (MoveInventoryItem / MoveInventoryFolder UDP fiables, comme Firestorm).
-`inventory/operations.rs` conserve l’ordre avec les créations AIS et confirme
-le déplacement par relecture des dossiers, avec attente bornée si le stockage
-renvoie encore l’ancien parent. Les autres champs restent modifiés par AIS.
+Les déplacements seuls publient `InventoryMoved` dès l'envoi : l'arborescence
+change immédiatement, sans attendre une relecture HTTP. Le statut indique
+« Déplacement demandé » ; les mises à jour serveur réconcilient le modèle.
+Les mutations mêlant déplacements et métadonnées gardent leur vérification AIS.
+
+`inventory/operations.rs` remappe les UUID des dossiers confirmés par AIS et
+retourne leurs métadonnées, sans relire des dossiers encore vides. Le modèle
+peut ainsi recevoir leurs items immédiatement. `session/inventory_copies.rs`
+envoie les copies fiables et suit leurs confirmations ; le nom vide est encodé
+avec une longueur nulle, comme `LLTemplateMessageBuilder::addString(std::string)`.
+La réception des items complète la copie, sans imposer un second snapshot HTTP.
+Les créations sans copie des appelants de `mutate` / `mutate_with_moves`,
+notamment le remplacement de prims, gardent leur confirmation par relecture
+avant de poursuivre leur travail.
+Les dossiers publiés directement dans l'inventaire utilisent le nom normalisé
+envoyé au serveur, avec les mêmes règles de caractères et de longueur.
+
+`session/inventory_updates.rs` reçoit `UpdateCreateInventoryItem` et
+`BulkUpdateInventory` directement par HTTP, comme `LLEventPollImpl` de Firestorm,
+et les variantes LLSD de `LargeGenericMessage` / `GenericMessage`, en plus du
+transport UDP. `InventoryUpdated` applique items et dossiers dès leur arrivée.
+`world/inventory.rs` avance les versions des parents chargés, ignore les
+réponses plus anciennes et évite de recompter les enregistrements répétés.
+
+`ui/inventory/progress.rs` distingue la soumission d'une mutation du suivi des
+copies en arrière-plan : plusieurs copies peuvent être suivies sans désactiver
+les autres commandes. `InventoryProgress` transmet étapes et compteurs ; la
+ligne de statut, partagée entre fenêtres, indique l'activité et le temps écoulé,
+puis la confirmation de fin. Les erreurs gardent la possibilité de recharger
+les dossiers concernés, sans rejouer les copies ni les déplacements.
 
 ### Surfaces des fenêtres
 
@@ -211,6 +306,30 @@ renvoie encore l’ancien parent. Les autres champs restent modifiés par AIS.
 dialogues et les lignes de l'inventaire utilisateur et des contenus d'objets
 (densité, survol, sélection et style du nom). `build/ui/compact.rs` agence la
 construction en six sections dans un inspecteur étroit.
+`ui/color_picker.rs` compose le sélecteur commun (RVB / LSL / Hexa, TSL,
+aperçus, palette de 32 cases et pipette) ; `ui/color_picker/model.rs` garde
+les conversions et préférences sérialisées, `demo.rs` les gestes hors ligne.
+`build/ui/color.rs` capture les couleurs par objet et face, applique les
+aperçus et restaure seulement le RGB à l'annulation. Les envois intermédiaires
+sont regroupés dans `build/edits.rs` jusqu'au relâchement. `app/color_picker.rs`
+route la pipette vers `Scene::color_at_ray` : candidats de l'index spatial,
+triangles réels en parallèle et teinte de la face, sans lecture GPU ni effet
+de l'éclairage. Elle ne change pas la sélection.
+Le sélecteur conserve l'identité de sa fenêtre appelante : placement contre son
+bord droit, aligné en haut, ou à gauche si l'espace manque, recalculé à chaque
+déplacement de la fenêtre ou changement de taille de l'écran. Sa taille mesurée
+garde les commandes visibles et le déplacement conserve son état réduit.
+Déplacer la palette la détache ; au relâchement, une proximité de 10 points
+avec une position accolée à gauche ou à droite rétablit le suivi. Le côté
+choisi reste stable tant qu'il tient à l'écran. Le lien vers la couleur d'origine
+reste présent quand les fenêtres sont indépendantes. « Appliquer » est coché
+par défaut, puis le dernier choix est sérialisé avec la palette enregistrée.
+Les pastilles transmettent leur rectangle visible à chaque passage : un cône
+dégradé les relie à la palette pendant qu'elle est déplacée séparément, sans
+surface interactive supplémentaire. Un second clic sur la même pastille ferme
+la transaction ; une autre pastille restaure la précédente avant de s'ouvrir.
+`cursors.rs` garde le curseur pipette Phosphor en mémoire, avec la pointe comme
+point de prélèvement et le contour contrasté de la skin, comme le curseur HUD.
 `aurora-render/src/ui_glass.rs` produit un fond dépoli partagé
 par les fenêtres visibles : copie et deux passes de flou sur le GPU, puis
 échantillonnage dans leurs seuls rectangles arrondis. Les ressources sont
@@ -284,12 +403,40 @@ Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâc
    encode les passes (ombres, prépasse, scène, eau, reflets,
    post-traitement) avec des draws indirects dont le nombre est écrit par le
    GPU. Sans `MULTI_DRAW_INDIRECT_COUNT` (ou avec `AURORA_CPU_CULL=1`),
-   `build_lists` prépare toutes les listes sur le CPU comme avant. Le thread
+   `build_lists` prépare toutes les listes sur le CPU comme avant. La passe
+   de scène part toujours d'une profondeur déjà écrite, pour ne calculer la
+   couleur que de ce qui se voit : celle de la prépasse à un échantillon
+   sans MSAA ; avec le MSAA, celle d'une seconde prépasse dans sa propre
+   profondeur multi-échantillonnée (terrain et faces opaques, les dessins
+   mêmes de la passe de scène ; les faces masquées par alpha, dont le bord
+   vient alors de l'`alpha to coverage`, n'y sont pas). Les
+   sommets des objets et du terrain sont calculés relativement à la caméra
+   (les objets et le terrain comme les prépasses de profondeur, opération
+   pour opération : la passe de scène les teste contre cette profondeur, et
+   un écart d'un arrondi montrerait le ciel à travers le sol) : le vertex
+   shader retire sa position de la translation du modèle (les
+   enregistrements restent en coordonnées de région), et la matrice de vue
+   de la caméra principale se réduit à sa rotation (`eye_view_proj` dans
+   `renderer.rs`) ; en altitude, la simple précision ne suffit pas en
+   coordonnées de région. Le thread
    principal s'arrête à la clôture de l'image (`Renderer::render`) : le
    reste de cette étape est fait par le thread de rendu à partir du paquet
    d'image, pendant que l'image suivante commence (voir « Threads et
    propriété des données »).
-5. **Interface.** egui dessine les fenêtres par-dessus.
+5. **Interface.** egui compose les fenêtres sur le thread principal ; ses
+   formes partent telles quelles dans le paquet d'image, et le thread de
+   rendu les découpe en triangles (`aurora-render/src/ui_frame.rs`) puis les
+   dessine par-dessus la scène. Les étiquettes des avatars, les textes
+   flottants et les points des cartes lisent les listes d'avatars et d'objets
+   à texte de l'`ObjectStore` (`world/objects.rs`), tenues à jour par les
+   changements : aucune fenêtre ne parcourt tous les objets à chaque image.
+
+Les autres passes de l'image suivent la même règle. Les systèmes de
+particules et les sons attachés qu'apportent les mises à jour d'objets sont
+relevés par deux flux de l'`ObjectStore` (`take_particle_changes`,
+`take_sound_changes`) ; les miroirs sont listés par la synchro comme les
+lumières ; l'orientation des corps et le chargement des avatars lisent la
+liste des avatars.
 
 Les traitements lourds (décodage d'images, maillage, sons) passent par des
 tâches en arrière-plan (`scene/jobs.rs`, rayon, en priorité basse) pour
@@ -314,9 +461,11 @@ thread principal (comparaison, débogage).
 
 | Thread | Ce qu'il possède |
 |---|---|
-| **Principal** (boucle winit, `App::frame`) | Le monde, la scène, l'interface egui (jusqu'à la tessellation), la fenêtre. Dans `aurora-render`, le `Renderer` (`main_thread.rs`) : *quoi* dessiner — enregistrements de dessin et table des faces (`RecordStore`), table des objets du culling (`CullTables`), allocateurs de l'arène de géométrie, pages, emplacements et positions des textures (`TextureTable`), palettes d'os et liaisons de skin, mémoire de transit et copies en transit (`UploadQueue`), réglages et taille de la fenêtre. Il crée des ressources GPU (la création n'a pas d'ordre) mais **n'écrit jamais dans la file GPU et ne soumet rien** |
-| **Rendu** (`aurora-render`, `render_thread.rs`) | Le `Backend` (`renderer.rs`) : *comment* dessiner — surface et swapchain, pipelines, cibles de rendu, uniformes de l'image, renderer egui, culling compute et ses cases, occlusion, sondes, atlas des imposteurs, relectures (profondeur sous le curseur, compteurs du culling, chronos GPU, captures). **Seul utilisateur de la file** (`write_*`, `submit`, `present`) ; deux threads auxiliaires finissent les encodeurs en parallèle (`helpers.rs`) |
+| **Principal** (boucle winit, `App::frame`) | Le monde, la scène, l'interface egui (jusqu'aux formes à dessiner, non tessellées), la fenêtre. Dans `aurora-render`, le `Renderer` (`main_thread.rs`) : *quoi* dessiner — enregistrements de dessin et table des faces (`RecordStore`), table des objets du culling (`CullTables`), allocateurs de l'arène de géométrie, pages, emplacements et positions des textures (`TextureTable`), palettes d'os et liaisons de skin, mémoire de transit et copies en transit (`UploadQueue`), réglages et taille de la fenêtre. Il crée des ressources GPU (la création n'a pas d'ordre) mais **n'écrit jamais dans la file GPU et ne soumet rien** |
+| **Rendu** (`aurora-render`, `render_thread.rs`) | Le `Backend` (`renderer.rs`) : *comment* dessiner — surface et swapchain, pipelines, cibles de rendu, uniformes de l'image, tessellation des formes d'egui (`ui_frame.rs`) et renderer egui, culling compute et ses cases, occlusion, sondes, atlas des imposteurs, relectures (profondeur sous le curseur, compteurs du culling, chronos GPU, captures). **Seul utilisateur de la file** (`write_*`, `submit`, `present`) ; deux threads auxiliaires finissent les encodeurs en parallèle (`helpers.rs`) |
+| Aides de l'image (pool rayon global, `aurora-worker-<i>`) | Rien : elles prêtent main-forte au thread principal dans ses boucles parallèles (`frame_par.rs`), sur les données qu'il leur prête le temps de la boucle. Le thread principal fait sa part sans les attendre : une aide réveillée trop tard ne retarde pas l'image |
 | Tâches de fond (`scene/jobs.rs`, priorité basse) | Décodages, maillages ; écrivent dans la mémoire de transit mappée, jamais dans la file |
+| Cache des textures transcodées (`aurora-texcache`, `scene/texture_cache.rs`) | Écrit les fichiers `.bc7` que les tâches de décodage lui remettent : créer un fichier prend des millisecondes, que les tâches ne passent pas à attendre le disque. File bornée à 256 Mo ; au-delà, le fichier n'est pas écrit et la texture sera décodée de nouveau |
 | Libérations (`aurora-trash` : `Jobs::discard`) et pages de textures (`aurora-pages`, `textures.rs`) | Libèrent hors du thread principal la mémoire et les pages de textures que plus rien n'utilise. Une page n'est remise à `aurora-pages` qu'après la reconstruction du groupe de textures qui la contenait ; les poignées étant comptées, une image encore en cours sur le thread de rendu (son paquet tient l'ancien groupe) la garde en vie jusqu'à sa fin, et ces threads ne touchent jamais la file. `aurora-pages` crée aussi les pages des textures en streaming (une page qui demande un nouveau bloc de mémoire vidéo attend le pilote 1 ms ou plus) : le thread principal demande la page d'une taille en avance sur les envois en file pour elle (`TextureTable::prepare_page`) et la reçoit prête, l'envoi qui arrive avant elle attend une image |
 | Réseau (`aurora-net`, runtime tokio) | Circuits, capabilities, téléchargements |
 
@@ -337,22 +486,41 @@ Ce qui passe d'un thread à l'autre :
   remapper après la soumission, les poignées des tampons de la scène tels
   qu'ils sont pour cette image (le thread principal peut les remplacer
   ensuite), caméra et environnement (`FrameParams`), listes de dessin CPU
-  (`DrawLists`, copiées) et vue du culling GPU, primitives et textures
-  egui, taille de la fenêtre / vsync / réglages à appliquer, demandes de
-  relecture (pixel survolé, capture).
+  (`DrawLists`, copiées) et vue du culling GPU, formes d'egui encore à
+  tesseller et changements de ses textures (`ui_frame.rs`), taille de la
+  fenêtre / vsync / réglages à appliquer, demandes de relecture (pixel
+  survolé, pixels cliqués, capture).
 - **Remise en rendez-vous** (`render_thread::handoff`) : le thread de rendu tient au plus un
   paquet, aucun n'attend derrière. Si le rendu est en retard, le thread
   principal attend (contre-pression) au lieu d'empiler des images ; chaque
   côté mesure son attente (`wait_render`, `rt_idle` du profil).
 - **Résultat d'image**, rendu à la remise suivante : statistiques du rendu,
   réponse au survol (gardée avec la caméra de l'image qui l'a demandée),
-  compteurs du culling, capture, tampons du paquet à réutiliser.
+  réponses aux clics, compteurs du culling, capture, tampons du paquet à
+  réutiliser.
 
-Deux choses attendent le thread de rendu : l'image qui porte une capture
-(même image capturée qu'avant, lue juste après) et la profondeur sous un
-clic (`Renderer::pick_world`, exécutée après l'image en cours). Si le thread
-de rendu disparaît (panique), toute attente se termine et le viewer se
-ferme proprement.
+Une seule chose attend le thread de rendu : l'image qui porte une capture
+(même image capturée qu'avant, lue juste après). La profondeur sous un clic
+ne l'attend plus (`Renderer::request_pick`) : la demande part dans le paquet
+de l'image suivante, le thread de rendu copie le texel avant d'encoder cette
+image — la profondeur et la caméra sont encore celles de l'image sur
+laquelle le clic a été fait — dans des commandes soumises à part, et la
+réponse revient avec un résultat d'image, une à trois images plus tard (le
+résultat d'une image que le thread de rendu a déjà finie est pris sans
+attendre la remise suivante)
+(`aurora-render/src/pick.rs`, `aurora-viewer/src/app/click_pick.rs`).
+Le même clic demande aussi ce qui est dessiné sous son pixel
+(`Renderer::request_drawn`, `aurora-render/src/drawn_pick.rs`) : l'image
+qui porte la demande redessine les faces de la vue par une caméra resserrée
+sur ce pixel et ses voisins, avec le vertex shader de la scène, dans une
+cible de 2 × 2 texels (enregistrement de dessin, profondeur, coordonnées de
+surface) : faces opaques et masquées, puis faces transparentes devant
+elles. Rien n'est dessiné ni alloué par image hors d'un clic.
+L'ancienne lecture, qui attendait l'image en cours puis tout ce que le GPU
+avait en file (`Renderer::pick_world`), ne sert plus qu'à la comparaison
+(`AURORA_CLICK_PICK=wait` ou `check`). Si le thread de rendu disparaît
+(panique), toute attente se termine, les clics en attente reçoivent une
+réponse vide et le viewer se ferme proprement.
 
 Les HUDs portés passent par `scene/hud.rs` (listes de notre avatar, intérêt des textures, picking de triangles) et la projection partagée `aurora-render/src/hud.rs`. Les points d’attachement dans `Scene::object_transform` sont relatifs à l’écran, avec l’aspect de `mScreen`, sans position ni orientation de l’avatar. Le renderer dessine les faces opaques / masquées puis transparentes après le post-traitement, dans une profondeur indépendante, avant egui ; il réutilise la géométrie, les textures bindless, les matériaux et les animations UV du monde. `demo_hud.rs` fournit les mises à jour et réponses de toucher hors ligne.
 

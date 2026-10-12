@@ -416,7 +416,7 @@ impl App {
             }
         }
         self.update_import_avatar_preview();
-        if let Some(asset) = self.imports.map_picker.show(ctx, palette, &self.world, &self.ui_images)
+        if let Some(asset) = self.imports.map_picker.show(ctx, palette, &mut self.world, &self.ui_images)
             && let Some((id, slot)) = self.imports.map_target.take()
         {
             self.imports.select_map(id, slot, asset);

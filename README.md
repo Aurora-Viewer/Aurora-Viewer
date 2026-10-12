@@ -51,6 +51,10 @@ upscaling and DLAA anti-aliasing are planned (see the [roadmap](#roadmap)).
 - Texture and mesh decoding runs on background threads and writes straight
   into GPU staging memory, so arriving in a busy region doesn't freeze the
   picture.
+- Textures are kept BC7-compressed in video memory when that leaves them
+  visually intact (each one is checked), about half the texture memory
+  overall, and cached that way on disk: back in a place already visited,
+  they go to the GPU without being decoded again.
 - Same look as Firestorm: PBR and legacy materials, EEP sky, shadows,
   reflection probes, mirrors, water, glow and particles, checked side by
   side on the main grid.
@@ -187,8 +191,8 @@ exemple ; l’envoi est simulé et le navigateur reste fermé. Voir
 
 - NVIDIA DLSS upscaling and DLAA anti-aliasing.
 - Frame Generation (under investigation).
-- Faster texture loading: a GPU-compressed texture cache, so revisited
-  places skip JPEG2000 decoding, and about 4× less VRAM per texture.
+- Compression for the textures that fast BC7 encoding would harm (they
+  stay uncompressed and are decoded at each visit).
 - PBR terrain, projector lights and a full pass on water rendering.
 - Maybe a VR mode with controller support.
 
@@ -315,6 +319,18 @@ cargo run -p aurora-viewer
 | `AURORA_DEMO_PIE=1` / `0` | Force le menu circulaire / en liste dans la démo, sans modifier la préférence ; à combiner avec `AURORA_DEMO_RCLICK` |
 | `AURORA_CAPTURE=<file.png>` | Saves a capture of a frame |
 | `AURORA_PROFILE=1` | Writes one profiling line per second to the log |
+
+Les démos d'éditeur de scripts (`AURORA_DEMO_SCRIPTS`) : `close-brace` /
+`object-close-brace` vérifient le retrait des accolades fermantes ; `colors`,
+`color-picker`, `color-accept` et `color-cancel` montrent les vecteurs RVB et
+le nuancier partagé. Les scénarios complets sont dans [docs/TESTING.md](docs/TESTING.md).
+
+L'éditeur propose aussi `Ctrl+K` (ou `Ctrl+/`) pour les commentaires de lignes,
+`Ctrl+Maj+K` pour les commentaires de bloc, et Tab / Maj+Tab pour le retrait des
+lignes sélectionnées. Les flèches de la marge replient les blocs entre accolades ;
+le menu Édition propose Tout replier / Tout déplier. Les démos `comment-lines`,
+`comment-block`, `multiline-indent`, `multiline-outdent`, `folding` et
+`object-folding` permettent de vérifier ces actions hors ligne.
 
 Le menu clic droit de l’inventaire propose « Déplacer vers… » pour un dossier,
 un élément ou une sélection multiple. Saisir un nom dans le filtre de la

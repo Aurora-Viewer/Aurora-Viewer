@@ -74,7 +74,18 @@ pub mod flags {
     pub const TEX_ANIM: u32 = 1024;
     /// glTF doubleSided: HUD fragments keep back faces only when requested.
     pub const DOUBLE_SIDED: u32 = 2048;
+    /// Placed by the GPU. Not skinned: `model` is relative to the anchor
+    /// matrix `palettes[flags[1]]` (the posed attachment point of the
+    /// wearer), composed by the vertex shaders. Skinned: the skeleton is
+    /// placed by its own anchor, `palettes[flags[1] + SKELETON_ANCHOR]`,
+    /// and `model` (the identity) is not read.
+    pub const ANCHORED: u32 = 4096;
 }
+
+/// Layout of a skeleton's palette in the palettes buffer: its joints, then
+/// its anchors. The first anchor places the skeleton itself (skeleton space
+/// to world); the scene gives the others to the attachment points.
+pub const SKELETON_ANCHOR: u32 = 160;
 
 /// Per-face GPU record (must match `DrawRecord` in common.wgsl).
 #[repr(C)]
@@ -145,6 +156,40 @@ impl DrawRecord {
         };
         self.flags[0] = (self.flags[0] & 0xffff) | (packed << 16);
     }
+
+    /// Index of the anchor matrix that places the record (flag `ANCHORED`):
+    /// the one its model is relative to, or its skeleton's when skinned.
+    pub fn anchor(&self) -> Option<u32> {
+        if self.flags[0] & flags::ANCHORED == 0 {
+            return None;
+        }
+        Some(if self.flags[0] & flags::SKINNED != 0 {
+            self.flags[1] + SKELETON_ANCHOR
+        } else {
+            self.flags[1]
+        })
+    }
+
+    /// Place the record from anchor matrix `anchor`, or in the world. A
+    /// skinned record keeps its palette in `flags[1]`: its anchor is that
+    /// palette's own (`SKELETON_ANCHOR`), whatever is asked.
+    pub fn set_anchor(&mut self, anchor: Option<u32>) {
+        let skinned = self.flags[0] & flags::SKINNED != 0;
+        match anchor {
+            Some(a) => {
+                self.flags[0] |= flags::ANCHORED;
+                if !skinned {
+                    self.flags[1] = a;
+                }
+            }
+            None => {
+                self.flags[0] &= !flags::ANCHORED;
+                if !skinned {
+                    self.flags[1] = 0;
+                }
+            }
+        }
+    }
 }
 
 /// One indexed draw referring to a record slot.
@@ -193,6 +238,9 @@ pub struct ShadowCaster {
     pub cmd: DrawCmd,
     pub center: Vec3,
     pub radius: f32,
+    /// Shadow casters: the face is masked or blended, its shadow is alpha
+    /// tested (`fs_shadow`); the others are drawn depth only.
+    pub alpha: bool,
 }
 
 /// Visible draws for a frame, built by the world.
@@ -243,6 +291,9 @@ pub struct DrawLists {
     /// in yellow, other prims of the linkset in blue.
     pub select_root: Vec<DrawCmd>,
     pub select_child: Vec<DrawCmd>,
+    /// Selected texture faces (LLPipeline::renderSelectedFaces).
+    pub select_faces: Vec<DrawCmd>,
+    pub hud_select_faces: Vec<DrawCmd>,
     /// Impostor pictures to take this frame (at most `IMPOSTOR_CAPTURES`).
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
@@ -276,11 +327,17 @@ pub struct ImpostorCapture {
     pub blend: Vec<DrawCmd>,
 }
 
+/// Flag of `ImpostorSprite::tile`: the picture is all fullbright (the
+/// silhouette of an avatar over the complexity limit), so its card takes no
+/// haze on a classic sky, as the silhouette drawn in full.
+pub const IMPOSTOR_FULLBRIGHT: u32 = 1 << 31;
+
 /// Impostor card: `center ± right ± up` (half extents, world space).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct ImpostorSprite {
     pub center: [f32; 3],
+    /// Atlas tile, with `IMPOSTOR_FULLBRIGHT`.
     pub tile: u32,
     pub right: [f32; 3],
     pub up: [f32; 3],
@@ -312,6 +369,8 @@ impl DrawLists {
         self.debug_blue.clone_from(&src.debug_blue);
         self.select_root.clone_from(&src.select_root);
         self.select_child.clone_from(&src.select_child);
+        self.select_faces.clone_from(&src.select_faces);
+        self.hud_select_faces.clone_from(&src.hud_select_faces);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
         self.gpu = src.gpu;
@@ -340,6 +399,8 @@ impl DrawLists {
         self.debug_blue.clear();
         self.select_root.clear();
         self.select_child.clear();
+        self.select_faces.clear();
+        self.hud_select_faces.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
         self.gpu = None;
@@ -601,6 +662,12 @@ pub struct MirrorParams {
 /// Camera and environment for one frame.
 #[derive(Debug, Clone)]
 pub struct FrameParams {
+    /// Linear RGBA from the UI palette for selected-face overlays.
+    pub selection_color: [f32; 4],
+    /// Brief coverage highlight, zero once the material can be read unaltered.
+    pub selection_pulse: f32,
+    /// Logical halo width scaled to display pixels.
+    pub selection_scale: f32,
     pub view: Mat4,
     pub proj: Mat4,
     pub camera_pos: Vec3,
@@ -635,6 +702,36 @@ pub struct FrameParams {
     pub wireframe: bool,
     /// Debug: glow amount view (red = glow x10, green x2) instead of the image.
     pub debug_glow: bool,
+    /// Comparison ([`BlendDiscard::Alternate`]): this frame lights the
+    /// invisible fragments of the blended faces before dropping them.
+    pub blend_late_discard: bool,
+    /// Comparison ([`crate::light_tiles::LightCulling::Alternate`]): this
+    /// frame's fragments walk the whole light list.
+    pub all_lights: bool,
+}
+
+/// Where the blended faces drop their invisible fragments (`fs_blend` in
+/// object.wgsl; AURORA_BLEND_EARLY_DISCARD). The image is the same.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlendDiscard {
+    /// Before the lighting (the default).
+    Early,
+    /// After it, as before (`0`).
+    Late,
+    /// Both pipelines, each frame choosing with
+    /// [`FrameParams::blend_late_discard`] (`alt`).
+    Alternate,
+}
+
+impl BlendDiscard {
+    pub fn from_env() -> BlendDiscard {
+        static MODE: std::sync::OnceLock<BlendDiscard> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| match std::env::var("AURORA_BLEND_EARLY_DISCARD").as_deref().map(str::trim) {
+            Ok("0") => BlendDiscard::Late,
+            Ok("alt") => BlendDiscard::Alternate,
+            _ => BlendDiscard::Early,
+        })
+    }
 }
 
 /// One reflection probe as the scene shaders see it (reflectionProbeF.glsl
@@ -677,6 +774,24 @@ pub struct ProbeFrame {
     pub capture: Option<ProbeCapture>,
 }
 
+/// The shadow pass of a frame, by cascade (near to far).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShadowStats {
+    /// Casters drawn in each cascade.
+    pub draws: [u32; 3],
+    /// Of which those of the CPU lists (with the GPU lists: the terrain).
+    pub cpu_draws: [u32; 3],
+    /// With AURORA_PROFILE and the GPU lists: triangles of the GPU casters,
+    /// then the rigged ones (avatars, rigged meshes) and their triangles.
+    pub triangles: [u32; 3],
+    pub rigged_draws: [u32; 3],
+    pub rigged_triangles: [u32; 3],
+    /// What `GpuElement::ShadowsDepth` is made of (ms): the GPU culling,
+    /// the three cascades, then the depth prepass with the occlusion; None
+    /// without in-pass timestamps.
+    pub gpu_ms: Option<[f32; 5]>,
+}
+
 /// Per-frame statistics reported by the renderer.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RenderStats {
@@ -687,6 +802,7 @@ pub struct RenderStats {
     pub present_mode: Option<wgpu::PresentMode>,
     pub draws: u32,
     pub shadow_draws: u32,
+    pub shadow: ShadowStats,
     pub triangles: u64,
     pub textures: u32,
     pub texture_bytes: u64,
@@ -714,16 +830,46 @@ pub struct RenderStats {
     /// GPU time by kind of element (ms), in [`GpuElement::ALL`] order;
     /// None without in-pass timestamps.
     pub gpu_elements: Option<[f32; GpuElement::ALL.len()]>,
+    /// Triangles of the blended faces of the scene pass.
+    pub blend_triangles: u64,
+    /// Local lights of the frame's list and its reflection probes: what a
+    /// lit fragment may have to walk.
+    pub lights: u32,
+    pub probes: u32,
+    /// The frame's fragments walked the lights of their screen tile and
+    /// depth only (light_tiles.rs).
+    pub light_tiles: bool,
+    /// The frame's blended faces dropped their invisible fragments before
+    /// the lighting ([`BlendDiscard`]).
+    pub blend_early_discard: bool,
+    /// GPU time of the depth prepasses alone (ms), both part of
+    /// [`GpuElement::ShadowsDepth`]: the single-sample prepass with the
+    /// occlusion culling, and with MSAA the prepass of the multisampled
+    /// depth the scene pass starts from (0 otherwise).
+    pub gpu_depth: Option<[f32; 2]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those
     /// of the frame before: its result comes back with the next hand-over).
     pub cpu_phases: [f32; RENDER_PHASES.len()],
+    /// Part of each step above its thread spent off the processor (ms):
+    /// waiting for a lock, or for a core. Measured with AURORA_PROFILE,
+    /// where the thread's CPU time is known (thread_cpu.rs); 0 otherwise.
+    pub cpu_waits: [f32; RENDER_PHASES.len()],
+    /// Interface: egui shapes of the frame, the meshes tessellated from
+    /// them (one draw each) and their vertices.
+    pub ui_shapes: u32,
+    pub ui_meshes: u32,
+    pub ui_vertices: u32,
     /// Draw commands recorded (multi-draws, fullscreen and sprite draws).
     pub draw_calls: u32,
     /// Bytes of draw records and joint palettes sent to the GPU this frame.
     pub records_uploaded: u64,
     pub palettes_uploaded: u64,
+    /// Bytes of the culling tables (faces, objects, joint boxes) and of the
+    /// vertices deformed in place (flexible prims) sent this frame.
+    pub cull_uploaded: u64,
+    pub vertices_uploaded: u64,
     /// The frame was drawn by the render thread (render_thread.rs); false
     /// with AURORA_RENDER_THREAD=0.
     pub render_thread: bool,
@@ -745,8 +891,9 @@ pub struct RenderStats {
 
 /// Steps of the renderer's frame (`Backend::render`), in frame order
 /// (AURORA_PROFILE).
-pub const RENDER_PHASES: [&str; 16] = [
+pub const RENDER_PHASES: [&str; 17] = [
     "acquire",
+    "tessellate",
     "resources",
     "lists",
     "setup",
@@ -838,6 +985,8 @@ mod tests {
         scene.blend_glow.extend([false, true, false]);
         scene.glow.push(cmd(4));
         scene.select_root.push(cmd(5));
+        scene.select_faces.push(cmd(6));
+        scene.hud_select_faces.push(cmd(22));
         scene.particles.push(ParticleInstance::default());
         scene.impostor_sprites.push(ImpostorSprite {
             center: [1.0, 2.0, 3.0],
@@ -877,6 +1026,8 @@ mod tests {
         assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
         assert_eq!(packet.blend_glow, [false, true, false]);
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
+        assert_eq!(packet.select_faces[0].record, 6);
+        assert_eq!(packet.hud_select_faces[0].record, 22);
         assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));
         assert_eq!(packet.impostor_captures[0].blend[0].record, 12);
         assert_eq!(packet.gpu.map(|g| g.draw_distance), Some(128.0));
@@ -889,6 +1040,8 @@ mod tests {
         assert_eq!(packet.blend.len(), 3);
         assert!(scene.hud_view.is_none());
         assert!(scene.hud_opaque.is_empty());
+        assert!(scene.select_faces.is_empty());
+        assert!(scene.hud_select_faces.is_empty());
         assert!(packet.hud_view.is_some());
         assert_eq!(packet.hud_opaque[0].record, 20);
         assert!(packet.gpu.is_some());
@@ -928,6 +1081,34 @@ mod tests {
                 "anim_xf"
             ]
         );
+    }
+
+    #[test]
+    fn anchored_flag_matches_wgsl_and_spares_skinned_records() {
+        let wgsl = include_str!("shaders/common.wgsl");
+        assert!(wgsl.contains(&format!("const FLAG_ANCHORED: u32 = {}u;", flags::ANCHORED)));
+        assert!(wgsl.contains(&format!("const FLAG_SKINNED: u32 = {}u;", flags::SKINNED)));
+        let mut record = DrawRecord::default();
+        assert_eq!(record.anchor(), None);
+        record.set_anchor(Some(371));
+        assert_eq!(record.anchor(), Some(371));
+        record.set_hud_zoom(2.0);
+        assert_eq!(record.anchor(), Some(371));
+        record.set_anchor(None);
+        assert_eq!((record.anchor(), record.flags[1]), (None, 0));
+        // a skinned record keeps its palette base: its anchor is its
+        // skeleton's
+        assert!(wgsl.contains(&format!("const SKELETON_ANCHOR: u32 = {SKELETON_ANCHOR}u;")));
+        let mut skinned = DrawRecord {
+            flags: [flags::SKINNED, 208, 7, 0],
+            ..Default::default()
+        };
+        assert_eq!(skinned.anchor(), None);
+        skinned.set_anchor(Some(208 + SKELETON_ANCHOR));
+        assert_eq!(skinned.flags, [flags::SKINNED | flags::ANCHORED, 208, 7, 0]);
+        assert_eq!(skinned.anchor(), Some(208 + SKELETON_ANCHOR));
+        skinned.set_anchor(None);
+        assert_eq!(skinned.flags, [flags::SKINNED, 208, 7, 0]);
     }
 
     #[test]

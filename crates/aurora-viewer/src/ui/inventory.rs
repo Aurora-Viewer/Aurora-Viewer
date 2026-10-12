@@ -8,17 +8,23 @@ use aurora_net::inventory::operations::{Mutation, NewItem};
 use egui::{RichText, Vec2};
 use std::collections::HashSet;
 use uuid::Uuid;
+mod clipboard;
+pub use clipboard::demo_events as clipboard_demo_events;
 mod context;
 mod controls;
+mod delete;
+pub use delete::demo_events as delete_demo_events;
 mod dialogs;
 mod document;
 mod embedded;
 mod move_to;
 pub use document::document_demo_events;
 pub(crate) mod permissions;
+mod progress;
 mod properties;
+pub(crate) mod task_drop;
 pub mod thumbnail;
-mod view;
+pub(crate) mod view;
 pub use controls::preferences;
 pub use view::InventoryPreferences;
 
@@ -52,6 +58,7 @@ pub fn show_document(
 }
 
 pub enum InvAction {
+    TakeTask(Box<crate::build::task_inventory::TransferRequest>),
     TeleportLandmark(Uuid),
     /// « À propos du repère » (LLLandmarkBridge "about"): its profile, as
     /// item and asset.
@@ -97,6 +104,7 @@ pub enum InvAction {
     },
 }
 
+#[derive(Default)]
 pub struct Facts {
     pub agent: Uuid,
     pub worn: HashSet<Uuid>,
@@ -260,6 +268,9 @@ pub struct InventoryUi {
     pub merchant_requested: bool,
     pub merchant: bool,
     pub pending: Option<Uuid>,
+    progress: Option<progress::State>,
+    copy_jobs: progress::CopyJobs,
+    notice: Option<(String, std::time::Instant)>,
     pub message: String,
     pub dialog: Option<EditDialog>,
     move_to: Option<move_to::MoveTo>,
@@ -371,6 +382,7 @@ impl InventoryUi {
         ids
     }
     fn select(&mut self, ui: &egui::Ui, id: Uuid, secondary: bool) {
+        ui.memory_mut(|m| m.request_focus(clipboard::focus_id(self)));
         if secondary && self.selection.contains(&id) {
             self.selected = Some(id);
             return;
@@ -489,6 +501,8 @@ fn item_row(
         // One response handles clicks and dragging; a separate drag-source
         // interaction overlay used to consume secondary clicks on the label.
         r.dnd_set_drag_payload(InvDrag(it.id));
+        clipboard::demo_row(&r, st, it.id);
+        task_drop::target(ui, p, &r, inv, it.parent, prefs, actions);
         super::widgets::demo::rez_row(&r, it.id);
         let date = if it.created_at > 0 {
             aurora_net::inventory::created_date(it.created_at)
@@ -589,6 +603,7 @@ fn folder_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let (r, resp) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::click());
+        clipboard::demo_caret(&resp, state, id);
         let c = r.center();
         let pts = if *open {
             vec![c + egui::vec2(-4.0, -2.0), c + egui::vec2(4.0, -2.0), c + egui::vec2(0.0, 3.0)]
@@ -615,6 +630,8 @@ fn folder_row(
                 .left_text(RichText::new(label).size(13.0).color(p.ink))
                 .wrap_mode(egui::TextWrapMode::Extend),
         );
+        clipboard::demo_row(&r, state, id);
+        task_drop::target(ui, p, &r, inv, id, prefs, actions);
         if first_open {
             scroll_to_row(ui, &r, egui::Align::Min);
         }
@@ -729,7 +746,8 @@ fn folder_window_contents(
         );
     }
     let list_h = list_height(ui);
-    egui::Frame::new().fill(p.field).show(ui, |ui| {
+    let zone = egui::Frame::new().fill(p.field).show(ui, |ui| {
+        clipboard::list_focus(ui, st, list_h);
         if filtered {
             prepare_result_tree(st, inv, root);
             search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
@@ -740,7 +758,9 @@ fn folder_window_contents(
             folder_contents(ui, p, icons, inv, root, 1, expand, st, prefs, facts, actions);
         });
     });
-    status(ui, p, inv, st, prefs, actions, filtered);
+    task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
+    status(ui, p, inv, st, prefs, facts, actions, filtered);
+    clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
 
 fn tree_spacing(ui: &mut egui::Ui) {
@@ -796,13 +816,20 @@ fn status(
     inv: &Inventory,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
+    facts: &Facts,
     actions: &mut Vec<InvAction>,
     filtered: bool,
 ) {
+    let now = std::time::Instant::now();
+    let pending_message = st.busy().then(|| st.pending_status(now));
     let (message, color) = if !st.message.is_empty() {
         (st.message.as_str(), p.warn)
-    } else if st.pending.is_some() {
-        (aurora_i18n::tr!("ui-inventory-changing"), p.muted)
+    } else if let Some(message) = &pending_message {
+        (message.as_str(), p.ink)
+    } else if let Some((message, finished)) = &st.notice
+        && now.duration_since(*finished) < progress::NOTICE_DURATION
+    {
+        (message.as_str(), p.success)
     } else if st.fetch_all {
         (aurora_i18n::tr!("ui-inventory-search-loading-folders"), p.muted)
     } else {
@@ -841,12 +868,13 @@ fn status(
                 .color(p.muted),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            delete::button(ui, p, inv, st, prefs, facts);
+            if st.busy() {
+                ui.add(egui::Spinner::new().size(14.0).color(p.violet));
+            }
             let label = if message.is_empty() { &count } else { &message };
-            ui.add_sized(
-                [ui.available_width(), 20.0],
-                egui::Label::new(RichText::new(label).size(11.0).color(color)).truncate(),
-            )
-            .on_hover_text(if message.is_empty() { count } else { format!("{message}\n{count}") });
+            ui.add(egui::Label::new(RichText::new(label).size(11.0).color(color)).truncate())
+                .on_hover_text(if message.is_empty() { count } else { format!("{message}\n{count}") });
         });
     });
 }
@@ -1145,12 +1173,13 @@ fn inventory_contents(
     }
     ui.add_space(6.0);
     let list_h = list_height(ui);
-    egui::Frame::new()
+    let zone = egui::Frame::new()
         .fill(p.field.gamma_multiply(0.72))
         .corner_radius(3)
         .inner_margin(4)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            clipboard::list_focus(ui, st, list_h);
             if root.is_nil() {
                 list_scroll(ui, list_h).show(ui, |ui| {
                     let text = if st.tab == RECEIVED_TAB {
@@ -1176,7 +1205,9 @@ fn inventory_contents(
                 }
             });
         });
-    status(ui, p, inv, st, prefs, actions, filtered);
+    task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
+    status(ui, p, inv, st, prefs, facts, actions, filtered);
+    clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
 
 pub fn show(
@@ -1288,6 +1319,9 @@ pub fn show(
         w.state.clipboard.clone_from(&st.clipboard);
         w.state.cut = st.cut;
         w.state.pending = st.pending;
+        w.state.progress.clone_from(&st.progress);
+        w.state.copy_jobs.clone_from(&st.copy_jobs);
+        w.state.notice.clone_from(&st.notice);
         w.state.merchant = st.merchant;
         w.state.playing = st.playing;
         let before = (w.state.clipboard.clone(), w.state.cut);

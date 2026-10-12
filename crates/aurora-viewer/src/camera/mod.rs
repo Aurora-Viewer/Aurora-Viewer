@@ -1059,7 +1059,10 @@ impl Camera {
                 if fraction < finish {
                     self.anim = Some(a);
                     let k = smoothstep(fraction);
-                    (a.start_camera.lerp(camera_target, k), a.start_focus.lerp(focus_target, k))
+                    (
+                        a.start_camera.lerp_monotonic(camera_target, k),
+                        a.start_focus.lerp_monotonic(focus_target, k),
+                    )
                 } else {
                     self.anim = None;
                     (camera_target, focus_target)
@@ -1069,7 +1072,11 @@ impl Camera {
         };
 
         // smoothing: relative to the avatar when following it (the avatar
-        // moves too jerkily in world space to smooth there)
+        // moves too jerkily in world space to smooth there). `lerp_monotonic`
+        // and not `lerp`: glam's `lerp` (a * (1 - k) + b * k) does not give
+        // back `a` when both ends are equal, and which neighbor it rounds to
+        // depends on `k`, so on the frame time: a camera at rest then moved
+        // by one step of its coordinates in about one frame out of four.
         let agent_pos = self.avatar.position;
         let mut relative = camera - agent_pos;
         self.smoothing_stop |= f.build_mode;
@@ -1077,11 +1084,11 @@ impl Camera {
             let k = interpolant(s.smoothing * SMOOTHING_HALF_LIFE, dt);
             if self.focus_on_avatar && self.focus_object.is_none() {
                 if (relative - self.smoothing_last_agent).length() < MAX_CAMERA_SMOOTH_DISTANCE {
-                    relative = self.smoothing_last_agent.lerp(relative, k);
+                    relative = self.smoothing_last_agent.lerp_monotonic(relative, k);
                     camera = relative + agent_pos;
                 }
             } else if (camera - self.smoothing_last_global).length() < MAX_CAMERA_SMOOTH_DISTANCE {
-                camera = self.smoothing_last_global.lerp(camera, k);
+                camera = self.smoothing_last_global.lerp_monotonic(camera, k);
             }
         }
         self.smoothing_last_global = camera;
@@ -1257,7 +1264,7 @@ impl Camera {
             } else {
                 agent.velocity * s.dynamic_strength / 30.0
             };
-            self.lag = self.lag.lerp(target_lag, interpolant(CAMERA_LAG_HALF_LIFE, dt) * u);
+            self.lag = self.lag.lerp_monotonic(target_lag, interpolant(CAMERA_LAG_HALF_LIFE, dt) * u);
             let lag = self.lag.length();
             if lag > MAX_CAMERA_LAG {
                 self.lag *= MAX_CAMERA_LAG / lag;
@@ -1269,7 +1276,7 @@ impl Camera {
                 self.lag -= (dot + min) * at;
             }
         } else {
-            self.lag = self.lag.lerp(Vec3::ZERO, interpolant(0.15, dt));
+            self.lag = self.lag.lerp_monotonic(Vec3::ZERO, interpolant(0.15, dt));
         }
         camera - self.lag
     }
@@ -1457,6 +1464,42 @@ mod tests {
         assert!(cam.position.distance(Vec3::new(125.0, 128.0, 26.75)) < 0.01, "{:?}", cam.position);
         // FocusOffsetRearView (1, 0, 1)
         assert!(cam.target.distance(Vec3::new(129.0, 128.0, 26.0)) < 0.01, "{:?}", cam.target);
+    }
+
+    /// A camera at rest must not move at all, whatever the frame times: high
+    /// above the ground the smallest change of the view shows on the edges
+    /// of close objects. Coordinates and frame times of the report (alt
+    /// camera at 2 106 m, 110 to 180 frames per second); several views,
+    /// since only some coordinates were unstable (about four in ten).
+    #[test]
+    fn a_camera_at_rest_stays_bit_identical_whatever_the_frame_time() {
+        let s = CameraSettings::default();
+        let avatar = Vec3::new(108.2, 187.6, 2105.8);
+        for view in 0..24 {
+            let mut w = world_at(avatar);
+            let mut cam = Camera::default();
+            settle(&mut cam, &mut w, &s);
+            // even views: the alt camera on a point; odd ones: the rear view
+            if view % 2 == 0 {
+                let v = view as f32;
+                let focus = avatar + Vec3::new(3.1 + 0.37 * v, -2.3 - 0.21 * v, 0.4 + 0.013 * v);
+                cam.set_view(focus + Vec3::new(-0.21, 0.33 + 0.01 * v, 0.12), focus, &mut w.agent, &s);
+            } else {
+                w.agent.position += Vec3::new(0.731, 0.517, 0.0) * view as f32;
+            }
+            // (longer than the animation to the new view, then a long frame
+            // so that the smoothing has nothing left to catch up)
+            settle(&mut cam, &mut w, &s);
+            cam.update(&mut w, &s, &frame(0.1));
+            let rest = (cam.position, cam.target, cam.fov_y);
+            let mut moved = 0;
+            for i in 0..500 {
+                let dt = 0.0055 + 0.0035 * ((i * 37 % 101) as f32 / 100.0);
+                cam.update(&mut w, &s, &frame(dt));
+                moved += usize::from((cam.position, cam.target, cam.fov_y) != rest);
+            }
+            assert_eq!(moved, 0, "frames away from the rest position in view {view}: {:?}", cam.position);
+        }
     }
 
     #[test]

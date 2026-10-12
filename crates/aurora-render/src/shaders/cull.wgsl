@@ -1,9 +1,13 @@
-// GPU-driven draw lists (gpu_cull.rs). Every drawable face (one per draw
-// record, table kept up to date by the scene) is tested against each view
-// of the frame and appended to the bins it belongs to:
-//   0..3  main view: opaque, opaque two-sided, masked, masked two-sided
-//   4..6  shadow cascades
-//   7..9  water reflection, mirror, reflection probe face
+// GPU-driven draw lists (gpu_cull.rs). The world sphere of every object is
+// computed first (cs_spheres): what an avatar wears follows it, and a rigged
+// mesh is enclosed as its skeleton poses it, without the scene sending new
+// bounds. Every drawable face (one per draw record, table kept up to date by
+// the scene) is then tested against each view of the frame and appended to
+// the bins it belongs to:
+//   0..3    main view: opaque, opaque two-sided, masked, masked two-sided
+//   4..6    shadow cascades, casters drawn depth only (opaque faces)
+//   7..9    water reflection, mirror, reflection probe face
+//   10..12  shadow cascades, casters drawn with the alpha test
 // Bins keep the record order (no atomics on the slots): coplanar faces drawn
 // in the same pass keep the same winner from one frame to the next.
 //   cs_classify: bin mask of each face, face count of each bin per workgroup;
@@ -17,28 +21,37 @@
 // The tests mirror Scene::build_lists (CPU path) and `gpu_cull::face_bins`.
 // The Hi-Z sphere test (hiz_test.wgsl) is prepended to this module.
 
-const BINS: u32 = 10u;
+const BINS: u32 = 13u;
 const MAIN_BINS: u32 = 4u;
 const BIN_SHADOW: u32 = 4u;
 const BIN_REFL_WATER: u32 = 7u;
 const BIN_REFL_MIRROR: u32 = 8u;
 const BIN_PROBE: u32 = 9u;
+const BIN_SHADOW_ALPHA: u32 = 10u;
 // argument regions after the bins: occlusion phase 1 and phase 2 prepass
 // lists of each main bin (own counts)
-const REGION_PRE1: u32 = 10u;
-const REGION_PRE2: u32 = 14u;
+const REGION_PRE1: u32 = 13u;
+const REGION_PRE2: u32 = 17u;
 
 // counts: bin sizes, then statistics
-const COUNT_VISIBLE: u32 = 10u;
-const COUNT_TRIANGLES: u32 = 11u;
-const COUNT_HIDDEN: u32 = 12u;
+const COUNT_VISIBLE: u32 = 13u;
+const COUNT_TRIANGLES: u32 = 14u;
+const COUNT_HIDDEN: u32 = 15u;
 const COUNT_PRE1: u32 = 16u;
 const COUNT_PRE2: u32 = 20u;
+// profile (F_SHADOW_STATS), per cascade: triangles of its casters, then its
+// rigged casters (avatars and rigged meshes), then their triangles
+const COUNT_SHADOW: u32 = 24u;
+const SHADOW_STATS: u32 = 9u;
+
+// planes of a cascade's caster volume (CullFrame.shadow_planes)
+const SHADOW_PLANES: u32 = 12u;
 
 // CullFace.bits
 const PASS_BITS: u32 = 7u;
 const PASS_HIDDEN: u32 = 0u;
 const PASS_OPAQUE: u32 = 1u;
+const PASS_OPAQUE_2S: u32 = 2u;
 const PASS_MASK_2S: u32 = 4u;
 const PASS_BLEND: u32 = 5u;
 const FACE_FIRST: u32 = 8u;
@@ -49,6 +62,13 @@ const OBJ_AVATAR: u32 = 2u;
 const OBJ_RIGGED: u32 = 4u;
 const OBJ_HUD: u32 = 8u;
 const OBJ_NO_PROBE: u32 = 16u;
+const OBJ_POSED: u32 = 32u;
+
+// a skeleton's own anchor, from the first joint of its palette (common.wgsl)
+const SKELETON_ANCHOR: u32 = 160u;
+// a posed sphere beyond these comes from a palette that is not a pose
+const POSED_RADIUS_MAX: f32 = 64.0;
+const POSED_COORD_MAX: f32 = 1.0e6;
 
 // CullObject.state (avatars)
 const AV_FULL: u32 = 1u;
@@ -62,6 +82,9 @@ const F_WATER: u32 = 4u;
 const F_MIRROR: u32 = 8u;
 const F_PROBE: u32 = 16u;
 const F_OCCLUSION: u32 = 32u;
+const F_SHADOW_STATS: u32 = 64u;
+// every caster drawn with the alpha test (AURORA_SHADOW_LEGACY)
+const F_SHADOW_ALPHA_ALL: u32 = 128u;
 
 struct CullFace {
     index_count: u32,
@@ -75,13 +98,34 @@ struct CullFace {
 }
 
 struct CullObject {
-    // bounding sphere (avatars: their posed body)
+    // bounding sphere (avatars: their posed body), in the world or in the
+    // space of `anchor`
     sphere: vec4<f32>,
     flags: u32,
     // avatar whose state applies (itself, or the wearer), or none
     avatar: u32,
     state: u32,
+    // worn object placed by the GPU: index + 1 of its anchor matrix in
+    // `palettes` (0: none); a posed object's is its skeleton's
+    anchor: u32,
+    // posed objects: joint boxes of the geometry, skin bindings of the mesh
+    boxes: u32,
+    box_count: u32,
+    binds: u32,
     _p: u32,
+}
+
+// bind-space box of the vertices a mesh joint influences
+struct JointBox {
+    min: vec3<f32>,
+    joint: u32,
+    max: vec3<f32>,
+    _p: u32,
+}
+
+struct SkinBind {
+    inverse_bind: mat4x4<f32>,
+    joint: vec4<u32>,
 }
 
 struct CullFrame {
@@ -91,6 +135,10 @@ struct CullFrame {
     mirror: array<vec4<f32>, 6>,
     probe: array<vec4<f32>, 6>,
     cascades: array<mat4x4<f32>, 3>,
+    // per cascade, SHADOW_PLANES planes (inside: positive) around what can
+    // cast a shadow the main view samples in that cascade
+    // (gpu_cull::caster_planes)
+    shadow_planes: array<vec4<f32>, 36>,
     // xyz camera, w draw distance
     eye: vec4<f32>,
     // x shadow distance, y reflection distance,
@@ -117,11 +165,80 @@ struct OcclParams {
 @group(0) @binding(4) var<storage, read_write> masks: array<u32>;
 // per workgroup and bin: face count, then (after cs_scan) offset
 @group(0) @binding(5) var<storage, read_write> group_data: array<u32>;
-@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 32>;
+@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 40>;
 // DrawIndexedIndirect: index_count, instance_count, first_index, base_vertex, first_instance
 @group(0) @binding(7) var<storage, read_write> args: array<u32>;
 @group(0) @binding(8) var<uniform> occl: OcclParams;
 @group(0) @binding(9) var hiz: texture_2d<f32>;
+// joint palettes, with the anchors of what the skeletons wear
+@group(0) @binding(10) var<storage, read> palettes: array<mat4x4<f32>>;
+@group(0) @binding(11) var<storage, read> skin_binds: array<SkinBind>;
+@group(0) @binding(12) var<storage, read> joint_boxes: array<JointBox>;
+// world sphere of each object this frame (cs_spheres)
+@group(0) @binding(13) var<storage, read_write> spheres: array<vec4<f32>>;
+
+// World bounding sphere of an object (kept line for line with
+// CullObject::world_sphere). A worn object's follows its anchor (a rigid
+// matrix: the radius is kept). A posed object's encloses its joint boxes as
+// its skeleton poses them, or is the anchored sphere when that gives
+// nothing sane.
+fn world_sphere(o: CullObject) -> vec4<f32> {
+    if (o.anchor == 0u || o.anchor > arrayLength(&palettes)) {
+        return o.sphere;
+    }
+    let anchor = palettes[o.anchor - 1u];
+    let rest = vec4<f32>((anchor * vec4<f32>(o.sphere.xyz, 1.0)).xyz, o.sphere.w);
+    if ((o.flags & OBJ_POSED) == 0u || o.anchor - 1u < SKELETON_ANCHOR || o.box_count == 0u) {
+        return rest;
+    }
+    let base = o.anchor - 1u - SKELETON_ANCHOR;
+    var lo = vec3<f32>(3.4e38);
+    var hi = vec3<f32>(-3.4e38);
+    var sane = true;
+    for (var k = 0u; k < o.box_count; k++) {
+        if (o.boxes + k >= arrayLength(&joint_boxes)) {
+            return rest;
+        }
+        let b = joint_boxes[o.boxes + k];
+        if (o.binds + b.joint >= arrayLength(&skin_binds)) {
+            return rest;
+        }
+        let bind = skin_binds[o.binds + b.joint];
+        if (base + bind.joint.x >= arrayLength(&palettes)) {
+            return rest;
+        }
+        let m = anchor * palettes[base + bind.joint.x] * bind.inverse_bind;
+        for (var corner = 0u; corner < 8u; corner++) {
+            let local = vec3<f32>(
+                select(b.min.x, b.max.x, (corner & 1u) != 0u),
+                select(b.min.y, b.max.y, (corner & 2u) != 0u),
+                select(b.min.z, b.max.z, (corner & 4u) != 0u),
+            );
+            let p = (m * vec4<f32>(local, 1.0)).xyz;
+            // (a NaN fails the comparison)
+            sane = sane && all(abs(p) < vec3<f32>(POSED_COORD_MAX));
+            lo = min(lo, p);
+            hi = max(hi, p);
+        }
+    }
+    if (!sane) {
+        return rest;
+    }
+    let center = (lo + hi) * 0.5;
+    let radius = max(length((hi - lo) * 0.5), 0.05);
+    if (radius < POSED_RADIUS_MAX && distance(center, rest.xyz) < POSED_RADIUS_MAX) {
+        return vec4<f32>(center, radius);
+    }
+    return rest;
+}
+
+@compute @workgroup_size(64)
+fn cs_spheres(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i < frame.sizes.y && i < arrayLength(&spheres)) {
+        spheres[i] = world_sphere(objects[i]);
+    }
+}
 
 fn sphere_in(planes: array<vec4<f32>, 6>, c: vec3<f32>, r: f32) -> bool {
     var p = planes;
@@ -140,8 +257,21 @@ fn in_cascade(m: mat4x4<f32>, c: vec3<f32>, r: f32) -> bool {
     return !(p.x + rr < -1.0 || p.x - rr > 1.0 || p.y + rr < -1.0 || p.y - rr > 1.0 || p.z - rr > 1.0);
 }
 
+// A caster outside one of the cascade's planes casts no shadow that the main
+// view samples in it (gpu_cull::casts_into).
+fn casts_into(k: u32, c: vec3<f32>, r: f32) -> bool {
+    for (var j = 0u; j < SHADOW_PLANES; j++) {
+        let p = frame.shadow_planes[k * SHADOW_PLANES + j];
+        if (dot(p.xyz, c) + p.w < -r) {
+            return false;
+        }
+    }
+    return true;
+}
+
 var<workgroup> wg_bins: array<atomic<u32>, BINS>;
 var<workgroup> wg_stats: array<atomic<u32>, 2>;
+var<workgroup> wg_shadow: array<atomic<u32>, SHADOW_STATS>;
 
 // Bins of face `i` this frame (0: not drawn anywhere).
 fn face_mask(i: u32) -> u32 {
@@ -163,8 +293,9 @@ fn face_mask(i: u32) -> u32 {
             return 0u;
         }
     }
-    let c = o.sphere.xyz;
-    let r = o.sphere.w;
+    let sphere = spheres[f.object];
+    let c = sphere.xyz;
+    let r = sphere.w;
     let d = length(c - frame.eye.xyz);
     if (d - r > frame.eye.w && !is_avatar) {
         return 0u;
@@ -190,10 +321,22 @@ fn face_mask(i: u32) -> u32 {
     }
     var m = 0u;
     // LLDrawPoolAvatar::renderShadow: blended rigged faces cast too
-    if (casts && (fp != PASS_BLEND || (o.flags & (OBJ_RIGGED | OBJ_AVATAR)) != 0u)) {
+    let rigged = (o.flags & (OBJ_RIGGED | OBJ_AVATAR)) != 0u;
+    if (casts && (fp != PASS_BLEND || rigged)) {
+        // fs_shadow only tests the alpha of masked and blended faces: the
+        // others are drawn without a fragment shader
+        let depth_only = (fp == PASS_OPAQUE || fp == PASS_OPAQUE_2S) && (fl & F_SHADOW_ALPHA_ALL) == 0u;
+        let bin = select(BIN_SHADOW_ALPHA, BIN_SHADOW, depth_only);
         for (var k = 0u; k < 3u; k++) {
-            if (in_cascade(frame.cascades[k], c, r)) {
-                m |= 1u << (BIN_SHADOW + k);
+            if (in_cascade(frame.cascades[k], c, r) && casts_into(k, c, r)) {
+                m |= 1u << (bin + k);
+                if ((fl & F_SHADOW_STATS) != 0u) {
+                    atomicAdd(&wg_shadow[k], f.index_count / 3u);
+                    if (rigged) {
+                        atomicAdd(&wg_shadow[3u + k], 1u);
+                        atomicAdd(&wg_shadow[6u + k], f.index_count / 3u);
+                    }
+                }
             }
         }
     }
@@ -228,6 +371,9 @@ fn cs_classify(
     if (lid < 2u) {
         atomicStore(&wg_stats[lid], 0u);
     }
+    if (lid < SHADOW_STATS) {
+        atomicStore(&wg_shadow[lid], 0u);
+    }
     workgroupBarrier();
     let i = gid.x;
     var m = 0u;
@@ -247,6 +393,9 @@ fn cs_classify(
     if (lid == 0u) {
         atomicAdd(&counts[COUNT_VISIBLE], atomicLoad(&wg_stats[0]));
         atomicAdd(&counts[COUNT_TRIANGLES], atomicLoad(&wg_stats[1]));
+    }
+    if (lid < SHADOW_STATS && (frame.sizes.w & F_SHADOW_STATS) != 0u) {
+        atomicAdd(&counts[COUNT_SHADOW + lid], atomicLoad(&wg_shadow[lid]));
     }
 }
 
@@ -376,7 +525,7 @@ fn cs_occlude(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(workgroup_
     let f = faces[rec];
     var vis = true;
     if (f.object < frame.sizes.y) {
-        vis = hiz_sphere_visible(hiz, objects[f.object].sphere, occl.view_proj, occl.screen, occl.levels);
+        vis = hiz_sphere_visible(hiz, spheres[f.object], occl.view_proj, occl.screen, occl.levels);
     }
     args[a + 1u] = select(0u, 1u, vis);
     // drawn by phase 1 = visible last frame (cs_scatter)

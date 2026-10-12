@@ -35,7 +35,7 @@
 
 use crate::arena::{GeometryArena, MeshAlloc, RecordStore};
 use crate::gpu_cull::{CullTables, GpuCull};
-use crate::packet::{EguiFrame, FramePacket, FrameResult, SceneGpu, Spent, SurfaceState, capture_for};
+use crate::packet::{FramePacket, FrameResult, SceneGpu, Spent, SurfaceState, capture_for};
 use crate::render_thread::{Done, Host, Job, thread_wanted};
 use crate::renderer::{Backend, BackendInit, RenderError};
 use crate::textures::{MipLevel, TextureTable};
@@ -87,6 +87,7 @@ fn scene_gpu(
         face_count: records.faces.len(),
         objects: cull.objects.buffer().clone(),
         object_count: cull.objects.len(),
+        joint_boxes: cull.boxes.buffer().clone(),
         record_slots: records.slot_count(),
         textures: textures.bind_group.clone(),
         vertices: geometry.vertex_buffer.clone(),
@@ -107,6 +108,9 @@ pub struct Renderer {
     pub uploads: UploadQueue,
     pub records: RecordStore,
     pub textures: TextureTable,
+    /// Video memory budget and use of the moment, as the driver reports
+    /// them (vram.rs).
+    pub video_memory: crate::vram::VideoMemoryProbe,
     /// The scene's tables of the GPU-driven draw lists (gpu_cull.rs).
     pub cull: CullTables,
     /// Queue writes of the frame being built (writes.rs).
@@ -114,6 +118,8 @@ pub struct Renderer {
     palette_buffer: wgpu::Buffer,
     /// Palette bytes written since the last frame (AURORA_PROFILE).
     palettes_uploaded: u64,
+    /// Bytes of vertices deformed in place this frame (profile).
+    vertices_uploaded: u64,
     skin_bind_buffer: wgpu::Buffer,
     /// Bumped when the palette or skin binding buffer is reallocated (the
     /// render thread rebuilds the records bind group).
@@ -133,6 +139,14 @@ pub struct Renderer {
     /// Pixel to read the depth of in the next frame, and the last answer.
     hover_request: Option<(u32, u32)>,
     hover_latest: Option<Vec3>,
+    /// Clicks whose depth leaves with the next frame, the answers that
+    /// came back, and the ticket of the next click.
+    pick_requests: Vec<crate::pick::ClickRequest>,
+    pick_answers: Vec<crate::pick::ClickAnswer>,
+    pick_ticket: u64,
+    /// The same for the faces drawn under a pixel (`request_drawn`).
+    drawn_requests: Vec<crate::drawn_pick::DrawnRequest>,
+    drawn_answers: Vec<crate::drawn_pick::DrawnAnswer>,
     /// Frames handed over.
     frames: u64,
     /// The renderer's side of the last frame result, and whether it came
@@ -223,6 +237,11 @@ impl Renderer {
         if afeat.contains(wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY) {
             features |= wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY;
         }
+        // BC7 texture pages (textures.rs): a quarter of the video memory of
+        // RGBA8 for the streamed textures; without it they stay RGBA8
+        if afeat.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+            features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+        }
         // GPU draw lists (gpu_cull.rs): draw counts written by the GPU
         if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
             features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
@@ -275,6 +294,7 @@ impl Renderer {
             }
         );
         let anim_clock = crate::tex_anim::AnimClock::new(Instant::now());
+        let video_memory = crate::vram::VideoMemoryProbe::new(adapter.clone());
         let backend = Backend::new(BackendInit {
             device: device.clone(),
             queue,
@@ -309,10 +329,12 @@ impl Renderer {
             uploads,
             records,
             textures,
+            video_memory,
             cull,
             writes,
             palette_buffer,
             palettes_uploaded: 0,
+            vertices_uploaded: 0,
             skin_bind_buffer,
             bind_generation: 0,
             gpu_cull,
@@ -325,6 +347,11 @@ impl Renderer {
             last_inv_vp: Mat4::IDENTITY,
             hover_request: None,
             hover_latest: None,
+            pick_requests: Vec::new(),
+            pick_answers: Vec::new(),
+            pick_ticket: 0,
+            drawn_requests: Vec::new(),
+            drawn_answers: Vec::new(),
             frames: 0,
             last_stats: RenderStats::default(),
             fresh: false,
@@ -442,6 +469,22 @@ impl Renderer {
         }
     }
 
+    /// Upload one range of the palette matrices (the anchors of the objects
+    /// an avatar wears, when its joints were not posed again). Everything
+    /// when the buffer must grow.
+    pub fn set_palette_range(&mut self, mats: &[[[f32; 4]; 4]], range: std::ops::Range<usize>) {
+        if (mats.len() * 64) as u64 > self.palette_buffer.size() {
+            self.set_palettes(mats);
+            return;
+        }
+        let (a, b) = (range.start.min(mats.len()), range.end.min(mats.len()));
+        if a < b {
+            self.writes
+                .write_buffer(&self.palette_buffer, (a * 64) as u64, bytemuck::cast_slice(&mats[a..b]));
+            self.palettes_uploaded += ((b - a) * 64) as u64;
+        }
+    }
+
     pub fn size(&self) -> (u32, u32) {
         self.size
     }
@@ -532,6 +575,7 @@ impl Renderer {
             mesh.vertex_offset as u64 * std::mem::size_of::<Vertex>() as u64,
             bytemuck::cast_slice(vertices),
         );
+        self.vertices_uploaded += std::mem::size_of_val(vertices) as u64;
         true
     }
 
@@ -579,8 +623,19 @@ impl Renderer {
     }
 
     /// Take in what a frame gave back.
-    fn apply(&mut self, r: FrameResult) {
+    fn apply(&mut self, mut r: FrameResult) {
         self.hover_latest = r.hover;
+        self.pick_answers.append(&mut r.picks);
+        self.drawn_answers.append(&mut r.drawn);
+        // (the answer of a click given up while it was in flight is never
+        // taken: the next ones push it out)
+        const KEPT: usize = 16;
+        if self.pick_answers.len() > KEPT {
+            self.pick_answers.drain(..self.pick_answers.len() - KEPT);
+        }
+        if self.drawn_answers.len() > KEPT {
+            self.drawn_answers.drain(..self.drawn_answers.len() - KEPT);
+        }
         self.cull.last = r.cull;
         if let Some(c) = r.captured {
             self.captured = Some(c);
@@ -598,6 +653,16 @@ impl Renderer {
         if !std::mem::replace(&mut self.failed, true) {
             log::error!("the render thread is gone: nothing can be drawn any more");
         }
+        self.fail_picks();
+    }
+
+    /// Nobody will read the depth under the clicks still asked: they are
+    /// answered like a click on nothing.
+    fn fail_picks(&mut self) {
+        let asked = self.pick_requests.drain(..).map(|(ticket, _, _)| (ticket, None));
+        self.pick_answers.extend(asked);
+        let asked = self.drawn_requests.drain(..).map(|(ticket, _, _)| (ticket, Default::default()));
+        self.drawn_answers.extend(asked);
     }
 
     /// Close the frame and have it drawn: with a render thread the packet
@@ -605,16 +670,19 @@ impl Renderer {
     /// returns at once, with the statistics of that frame before; without,
     /// the frame is drawn here. A frame that carries a capture is waited
     /// for: `captured` holds it when this returns.
-    pub fn render(&mut self, params: FrameParams, lists: &DrawLists, ui: Option<EguiFrame>) -> RenderStats {
+    pub fn render(&mut self, params: FrameParams, lists: &DrawLists, ui: Option<crate::EguiFrame>) -> RenderStats {
         let t0 = Instant::now();
         // ---- the scene's mirrors join the journal of this frame
         self.records.flush(&self.device, &mut self.writes);
         self.cull.objects.flush(&self.device, &mut self.writes);
+        self.cull.boxes.flush(&self.device, &mut self.writes);
         self.textures.maintain(&self.device, &mut self.writes, &mut self.uploads, false);
         let uploads = self.uploads.take_frame();
         let mut stats = RenderStats {
             records_uploaded: self.records.uploaded,
             palettes_uploaded: std::mem::take(&mut self.palettes_uploaded),
+            cull_uploaded: self.records.faces.uploaded + self.cull.objects.uploaded + self.cull.boxes.uploaded,
+            vertices_uploaded: std::mem::take(&mut self.vertices_uploaded),
             journal_bytes: self.writes.bytes() as u64,
             textures: self.textures.live(),
             texture_bytes: self.textures.bytes(),
@@ -629,6 +697,7 @@ impl Renderer {
         if self.failed {
             // nobody replays any more
             self.writes.clear();
+            self.fail_picks();
             return stats;
         }
         // ---- the packet: this frame's journal leaves, an empty one (with
@@ -654,6 +723,8 @@ impl Renderer {
             },
             settings: self.settings,
             hover: self.hover_request.take(),
+            picks: std::mem::take(&mut self.pick_requests),
+            drawn: std::mem::take(&mut self.drawn_requests),
             capture,
         };
         self.frames += 1;
@@ -711,6 +782,11 @@ impl Renderer {
             stats = RenderStats {
                 gpu_ms: self.last_stats.gpu_ms,
                 gpu_elements: self.last_stats.gpu_elements,
+                shadow: ShadowStats {
+                    gpu_ms: self.last_stats.shadow.gpu_ms,
+                    ..Default::default()
+                },
+                gpu_depth: self.last_stats.gpu_depth,
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,
@@ -722,6 +798,8 @@ impl Renderer {
         }
         stats.records_uploaded = main.records_uploaded;
         stats.palettes_uploaded = main.palettes_uploaded;
+        stats.cull_uploaded = main.cull_uploaded;
+        stats.vertices_uploaded = main.vertices_uploaded;
         stats.journal_bytes = main.journal_bytes;
         stats.textures = main.textures;
         stats.texture_bytes = main.texture_bytes;
@@ -745,10 +823,96 @@ impl Renderer {
         stats
     }
 
-    /// World position of the opaque surface under a pixel of the last frame
-    /// (depth prepass read-back; None for the sky). Blocks on the GPU for one
-    /// tiny copy, and for the frame in flight on the render thread: call it
-    /// on clicks only.
+    /// Ask for the world position of the opaque surface under a pixel of
+    /// the last frame built (depth prepass read-back; None for the sky),
+    /// without waiting for it: the request leaves with the next frame, the
+    /// render thread copies the texel before it draws that frame, and
+    /// [`Self::take_pick`] gives the answer one to three frames later. The
+    /// ticket returned names the request.
+    pub fn request_pick(&mut self, x: f32, y: f32) -> u64 {
+        let ticket = self.pick_ticket;
+        self.pick_ticket += 1;
+        let (w, h) = self.size;
+        if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 || self.failed {
+            self.pick_answers.push((ticket, None));
+        } else {
+            self.pick_requests.push((ticket, x as u32, y as u32));
+        }
+        ticket
+    }
+
+    /// The answer to a [`Self::request_pick`], once: None while it has not
+    /// come back. When the render thread has already finished the frame
+    /// handed over, its result is taken in now instead of with the next
+    /// hand-over: with a frame cap or vertical sync the render thread is
+    /// done long before the next frame starts, and the click is answered
+    /// one frame after it was made instead of two.
+    pub fn take_pick(&mut self, ticket: u64) -> Option<Option<Vec3>> {
+        if !self.pick_answers.iter().any(|(t, _)| *t == ticket) {
+            self.collect();
+        }
+        let i = self.pick_answers.iter().position(|(t, _)| *t == ticket)?;
+        Some(self.pick_answers.swap_remove(i).1)
+    }
+
+    /// Take in the result of the frame handed over if the render thread is
+    /// done with it, without waiting for it.
+    fn collect(&mut self) {
+        let Host::Thread { owner, .. } = &mut self.host else {
+            return;
+        };
+        match owner.take_ready() {
+            Ok(Some(Done::Frame(r))) => self.apply(*r),
+            Ok(_) => {}
+            Err(_) => self.fail(),
+        }
+    }
+
+    /// Give up a [`Self::request_pick`] nobody waits for any more.
+    pub fn forget_pick(&mut self, ticket: u64) {
+        self.pick_requests.retain(|(t, _, _)| *t != ticket);
+        self.pick_answers.retain(|(t, _)| *t != ticket);
+    }
+
+    /// Ask what the next frame draws under a pixel: the draw record and
+    /// the surface point of the nearest opaque or masked face and of the
+    /// nearest blended face in front of it, posed and placed as shown
+    /// (a rigged mesh is where the GPU skins it). Nothing waits: the frame
+    /// draws its faces once more through a camera narrowed to that pixel
+    /// (drawn_pick.rs), and [`Self::take_drawn`] gives the answer a few
+    /// frames later. Costs that pass, in that frame only.
+    pub fn request_drawn(&mut self, x: f32, y: f32) -> u64 {
+        let ticket = self.pick_ticket;
+        self.pick_ticket += 1;
+        let (w, h) = self.size;
+        if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 || self.failed {
+            self.drawn_answers.push((ticket, Default::default()));
+        } else {
+            self.drawn_requests.push((ticket, x as u32, y as u32));
+        }
+        ticket
+    }
+
+    /// The answer to a [`Self::request_drawn`], once: None while it has
+    /// not come back.
+    pub fn take_drawn(&mut self, ticket: u64) -> Option<crate::Drawn> {
+        if !self.drawn_answers.iter().any(|(t, _)| *t == ticket) {
+            self.collect();
+        }
+        let i = self.drawn_answers.iter().position(|(t, _)| *t == ticket)?;
+        Some(self.drawn_answers.swap_remove(i).1)
+    }
+
+    /// Give up a [`Self::request_drawn`] nobody waits for any more.
+    pub fn forget_drawn(&mut self, ticket: u64) {
+        self.drawn_requests.retain(|(t, _, _)| *t != ticket);
+        self.drawn_answers.retain(|(t, _)| *t != ticket);
+    }
+
+    /// Like [`Self::request_pick`], waiting for the answer: for the frame in
+    /// flight on the render thread, then for everything the GPU has in its
+    /// queue (16 to 20 ms in a region that keeps it busy). What a click did
+    /// before; kept to compare the two (AURORA_CLICK_PICK).
     pub fn pick_world(&mut self, x: f32, y: f32) -> Option<Vec3> {
         let (w, h) = self.size;
         if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 || self.failed {

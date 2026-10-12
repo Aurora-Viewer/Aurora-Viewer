@@ -2,6 +2,7 @@
 //! this frame (a transform-only update, or the full sync), computed in
 //! parallel over a read-only view of the world and the scene.
 
+use super::anchors::{self, AnchorRef};
 use super::meshes::MeshStreamer;
 use super::sync_sets::{SyncState, Xf, XfCache};
 use super::textures::TextureStreamer;
@@ -42,19 +43,37 @@ pub(super) struct MoveSync {
     pub(super) radius: f32,
     pub(super) owner_avatar: Option<usize>,
     pub(super) mirror: bool,
-    /// Some face record holds another model matrix.
+    /// Placed by the GPU: `model` is relative to this anchor (a rigged
+    /// mesh: its skeleton's, and the identity).
+    pub(super) anchor: Option<AnchorRef>,
+    pub(super) local_center: Vec3,
+    pub(super) posed_rest: Option<[f32; 4]>,
+    /// Some face record holds another model matrix or another anchor.
     pub(super) changed: bool,
     /// Updated (`needs_records`): the flag is cleared once applied.
     pub(super) clear_flags: bool,
+    /// (radius, distance) its detail level was checked with (a HUD
+    /// attachment: no size, it never changes level); None when it was not.
+    pub(super) lod: Option<(f32, f32)>,
 }
 
 /// Model matrix and culling bounds of an object on its bound geometry.
 pub(super) struct Placement {
+    /// In the world, or relative to `anchor`.
     pub(super) model: Mat4,
+    /// World bounds.
     pub(super) center: Vec3,
     pub(super) radius: f32,
     pub(super) rigged: bool,
     pub(super) skeleton_owner: Option<(Uuid, usize)>,
+    /// Placed by the GPU (anchors.rs): a worn object from its attachment
+    /// point, a rigged mesh from its skeleton's anchor.
+    pub(super) anchor: Option<AnchorRef>,
+    /// `center` in the anchor's space.
+    pub(super) local_center: Vec3,
+    /// Rigged mesh posed by the GPU: the sphere of its skeleton in the
+    /// anchor's space, which stands for its bounds without a sane pose.
+    pub(super) posed_rest: Option<[f32; 4]>,
 }
 
 /// Scene state the frame list consults (sync_sets.rs).
@@ -63,11 +82,22 @@ pub(super) struct FrameState<'a> {
     pub(super) geoms: &'a HashMap<GeomKey, GeomEntry>,
     pub(super) textures: &'a TextureStreamer,
     pub(super) mat_gen: u64,
+    /// HUD attachments are placed when they change, not with their wearer
+    /// at each frame (false with AURORA_SYNC_SLICE).
+    pub(super) still_huds: bool,
 }
 
 impl SyncState for FrameState<'_> {
     fn rigged(&self, idx: usize) -> bool {
-        self.gpu.get(idx).is_some_and(|g| g.rigged)
+        self.gpu.get(idx).is_some_and(|g| g.moves_with_skeleton())
+    }
+
+    fn hud(&self, idx: usize) -> bool {
+        self.still_huds && self.gpu.get(idx).is_some_and(|g| g.hud)
+    }
+
+    fn anchored(&self, idx: usize) -> bool {
+        self.gpu.get(idx).is_some_and(|g| g.anchor.is_some())
     }
 
     fn needs_sync(&self, idx: usize, o: &Object) -> bool {
@@ -144,7 +174,11 @@ impl SyncCtx<'_> {
             {
                 // avatars: diagonal of the animated extents (~2.2 m);
                 // animesh: half of it (LL uses the dynamic box)
-                let radius = if ow.is_avatar() { 2.2 } else { (ow.scale.length() * 0.5).max(0.5) };
+                let radius = if ow.is_avatar() {
+                    2.2
+                } else {
+                    (ow.visual_scale().length() * 0.5).max(0.5)
+                };
                 return (radius, op.distance(eye));
             }
             return ((o.visual_scale() * 0.5).length(), pos.distance(eye));
@@ -172,49 +206,71 @@ impl SyncCtx<'_> {
         let rigged = matches!(geom_key, GeomKey::Mesh { id, .. } if self.meshes.meta(&id).is_some_and(|m| m.skin.is_some()));
         let skeleton_owner = rigged.then(|| Scene::skeleton_owner(world, idx)).flatten();
         let owner_xf = skeleton_owner.and_then(|(_, owner_idx)| self.transform(owner_idx));
-        let model = match (skeleton_owner, owner_xf) {
-            // Rigged meshes are already in avatar skeleton space (bind pose):
-            // place them relative to the avatar that wears them.
-            (Some((_, owner_idx)), Some((ap, mut ar, _))) => {
-                // LLControlAvatar::matchVolumeTransform: ground animesh
-                // also follow their root mesh's unscaled bind rotation.
-                if let Some(root) = world.objects.get(owner_idx)
-                    && !root.is_avatar()
-                    && Scene::wearer_avatar(world, owner_idx).is_none()
-                    && let Some(skin) = root
-                        .visual_volume()
-                        .sculpt
-                        .and_then(|s| self.meshes.meta(&s.texture))
-                        .and_then(|m| m.skin)
-                {
-                    let (_, bind_rot, _) = skin.bind_shape.to_scale_rotation_translation();
-                    if bind_rot.is_finite() {
-                        ar = (ar * bind_rot).normalize();
-                    }
-                }
-                Mat4::from_scale_rotation_translation(Vec3::splat(if xf.2 { world.hud_scale(idx) } else { 1.0 }), ar, ap)
-                    * Mat4::from_translation(-world.avatar_lib.pelvis)
+        let on_gpu = !xf.2 && anchors::enabled();
+        // Rigged meshes are already in avatar skeleton space (bind pose):
+        // placed with the skeleton of the avatar that wears them.
+        let skeleton = match (skeleton_owner, owner_xf) {
+            (Some((_, owner_idx)), Some((ap, ar, _))) => {
+                let hud_scale = if xf.2 { world.hud_scale(idx) } else { 1.0 };
+                Some((
+                    owner_idx,
+                    ap,
+                    anchors::skeleton_model(world, self.meshes, owner_idx, ap, ar, hud_scale),
+                ))
             }
-            _ => Mat4::from_scale_rotation_translation(scale, rot, pos),
+            _ => None,
+        };
+        // its records read the skeleton's place in its palette: nothing to
+        // write again when the wearer moves
+        let skeleton_anchor = skeleton.filter(|_| on_gpu).and_then(|(owner_idx, ..)| {
+            let owner = world.objects.get(owner_idx)?;
+            let matrix = Scene::anchor_matrix(self.palette_slots, self.palettes.len(), owner, 0)?;
+            Some(AnchorRef {
+                wearer: owner_idx as u32,
+                slot: 0,
+                matrix,
+            })
+        });
+        // a worn object that only follows its attachment point: placed
+        // relative to it once, the GPU does the rest
+        let point_anchor = (!rigged && on_gpu)
+            .then(|| {
+                anchors::anchored(world, o, |wearer, slot| {
+                    Scene::anchor_matrix(self.palette_slots, self.palettes.len(), wearer, slot)
+                })
+            })
+            .flatten();
+        let world_model = match skeleton {
+            Some((_, _, model)) => model,
+            None => Mat4::from_scale_rotation_translation(scale, rot, pos),
+        };
+        let model = match (skeleton_anchor, point_anchor) {
+            (Some(_), _) => Mat4::IDENTITY,
+            (None, Some((_, local_pos, local_rot))) => Mat4::from_scale_rotation_translation(scale, local_rot, local_pos),
+            (None, None) => world_model,
         };
         let center_local = (geom.min + geom.max) * 0.5;
         let half = (geom.max - geom.min) * 0.5;
-        let mut center = model.transform_point3(center_local);
-        let col_scale = model
+        let mut center = world_model.transform_point3(center_local);
+        let col_scale = world_model
             .x_axis
             .truncate()
             .length()
-            .max(model.y_axis.truncate().length())
-            .max(model.z_axis.truncate().length());
+            .max(world_model.y_axis.truncate().length())
+            .max(world_model.z_axis.truncate().length());
         let mut radius = (half.length() * col_scale).max(0.05);
+        let mut posed_rest = None;
         // the bind-pose bounds can be anywhere (the bones bring the mesh
         // onto the skeleton): cull with the wearer's extent, as LL does
-        if let (Some((_, owner_idx)), Some((ap, _, _))) = (skeleton_owner, owner_xf)
+        if let Some((owner_idx, ap, _)) = skeleton
             && let Some(ow) = world.objects.get(owner_idx)
         {
             center = ap;
-            radius = if ow.is_avatar() { 2.5 } else { (ow.scale.length() * 0.75).max(1.0) };
+            radius = anchors::skeleton_extent(ow);
+            let pelvis = world.avatar_lib.pelvis;
+            posed_rest = skeleton_anchor.map(|_| [pelvis.x, pelvis.y, pelvis.z, radius]);
         }
+        let model_for_bounds = world_model;
         if let Some((owner, _)) = skeleton_owner
             && let Some(&slot) = self.palette_slots.get(&owner)
             && let Some(binds) = match geom_key {
@@ -224,19 +280,41 @@ impl SyncCtx<'_> {
             && let Some((c, r)) = animesh::posed_bounds(&geom.joint_bounds, |j| {
                 let b = self.skin_binds.list().get(binds as usize + j as usize)?;
                 let p = self.palettes.get(slot as usize * anim::PALETTE_JOINTS + b.joint[0] as usize)?;
-                Some(model * Mat4::from_cols_array_2d(p) * Mat4::from_cols_array_2d(&b.inverse_bind))
+                Some(model_for_bounds * Mat4::from_cols_array_2d(p) * Mat4::from_cols_array_2d(&b.inverse_bind))
             })
         {
             center = c;
             radius = r;
         }
+        let local_center = match (skeleton_anchor, point_anchor) {
+            (Some(_), _) => world_model.inverse().transform_point3(center),
+            (None, Some(_)) => model.transform_point3(center_local),
+            (None, None) => center,
+        };
         Placement {
             model,
             center,
             radius,
             rigged,
             skeleton_owner,
+            anchor: skeleton_anchor.or(point_anchor.map(|a| a.0)),
+            local_center,
+            posed_rest,
         }
+    }
+
+    /// The geometry the object's place and the camera ask for at this
+    /// moment (what a check of its detail level would want); None when it
+    /// cannot be placed.
+    pub(super) fn wanted_now(&self, idx: usize, o: &Object) -> Option<Option<GeomKey>> {
+        let (pos, _, hud) = self.transform(idx)?;
+        let lod = if hud {
+            3
+        } else {
+            let (radius, distance) = self.lod_metrics(idx, o, pos);
+            lod_for(radius, distance, self.lod_factor, self.fov_y)
+        };
+        Some(Scene::object_geom_key(o, lod))
     }
 
     /// What this frame's sync does with an object. A transform-only update
@@ -276,11 +354,11 @@ impl SyncCtx<'_> {
             return full();
         }
         let (pos, _, hud) = xf;
+        let metrics = if hud { (0.0, 0.0) } else { self.lod_metrics(idx, o, pos) };
         let lod = if hud {
             3
         } else {
-            let (radius, distance) = self.lod_metrics(idx, o, pos);
-            lod_for(radius, distance, self.lod_factor, self.fov_y)
+            lod_for(metrics.0, metrics.1, self.lod_factor, self.fov_y)
         };
         let Some(key) = Scene::object_geom_key(o, lod) else {
             return full();
@@ -304,7 +382,7 @@ impl SyncCtx<'_> {
             return full();
         }
         let model = p.model.to_cols_array_2d();
-        let changed = g.hud != hud || g.faces.iter().any(|f| self.records.get(f.record).is_some_and(|r| r.model != model));
+        let changed = g.hud != hud || self.records_differ(g, &model, p.anchor);
         Plan::Move(MoveSync {
             xf,
             model,
@@ -313,8 +391,24 @@ impl SyncCtx<'_> {
             owner_avatar: Scene::wearer_avatar(world, idx).map(|(_, i)| i),
             // reflection probe with the box and mirror flags (LLReflectionProbeParams)
             mirror: o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0),
+            anchor: p.anchor,
+            local_center: p.local_center,
+            posed_rest: p.posed_rest,
             changed,
             clear_flags: o.render.needs_records,
+            lod: Some(metrics),
+        })
+    }
+
+    /// Some face record of the object holds another model matrix, or is
+    /// placed from another anchor.
+    fn records_differ(&self, g: &ObjGpu, model: &[[f32; 4]; 4], anchor: Option<AnchorRef>) -> bool {
+        let anchor = anchor.map(|a| a.matrix);
+        g.faces.iter().any(|f| {
+            self.records
+                .get(f.record)
+                // (a skinned record has its palette there, never an anchor)
+                .is_some_and(|r| r.model != *model || r.anchor() != anchor)
         })
     }
 
@@ -336,7 +430,7 @@ impl SyncCtx<'_> {
             return None;
         }
         let model = p.model.to_cols_array_2d();
-        let changed = g.faces.iter().any(|f| self.records.get(f.record).is_some_and(|r| r.model != model));
+        let changed = self.records_differ(g, &model, p.anchor);
         changed.then(|| MoveSync {
             xf,
             model,
@@ -344,8 +438,12 @@ impl SyncCtx<'_> {
             radius: p.radius,
             owner_avatar: Scene::wearer_avatar(self.world, idx).map(|(_, i)| i),
             mirror: g.mirror,
+            anchor: p.anchor,
+            local_center: p.local_center,
+            posed_rest: p.posed_rest,
             changed,
             clear_flags: false,
+            lod: None,
         })
     }
 }

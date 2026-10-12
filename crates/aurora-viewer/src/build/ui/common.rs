@@ -134,11 +134,40 @@ pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i3
 /// Check box that can show a mixed state; returns the new value when clicked.
 pub fn check(ui: &mut egui::Ui, value: bool, tentative: bool, label: &str, enabled: bool) -> Option<bool> {
     let mut v = value && !tentative;
-    let r = ui.add_enabled(
-        enabled,
-        egui::Checkbox::new(&mut v, RichText::new(label).size(12.0)).indeterminate(tentative),
-    );
-    r.clicked().then_some(v)
+    ui.scope(|ui| {
+        // Keep checkbox geometry distinct from rounded buttons, using the
+        // current theme's field, outline and selection colors. The native
+        // checkbox retains focus, accessibility and its mixed-state marker.
+        let visuals = ui.visuals_mut();
+        let fill = if v || tentative {
+            visuals.selection.bg_fill
+        } else {
+            visuals.extreme_bg_color
+        };
+        let outline = visuals.widgets.noninteractive.fg_stroke.color;
+        let ink = visuals.widgets.inactive.fg_stroke.color;
+        for state in [
+            &mut visuals.widgets.noninteractive,
+            &mut visuals.widgets.inactive,
+            &mut visuals.widgets.hovered,
+            &mut visuals.widgets.active,
+        ] {
+            state.corner_radius = egui::CornerRadius::same(2);
+            state.bg_fill = fill;
+            state.fg_stroke.width = 2.0;
+        }
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, outline);
+        // Disabled permissions still need a visible square after egui fades it.
+        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, ink);
+        ui.spacing_mut().icon_width = 16.0;
+        ui.spacing_mut().icon_width_inner = 10.0;
+        let r = ui.add_enabled(
+            enabled,
+            egui::Checkbox::new(&mut v, RichText::new(label).size(12.0)).indeterminate(tentative),
+        );
+        r.clicked().then_some(v)
+    })
+    .inner
 }
 
 /// Combo box over a list of (label, value); returns the chosen value.
@@ -238,24 +267,30 @@ pub fn swatch(
     .inner
 }
 
-/// A color swatch (LLColorSwatchCtrl) with egui's color picker; returns
-/// the new color (sRGB 0..1) when changed, and whether the picker closed.
-pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str, size: f32, enabled: bool) -> Option<[f32; 3]> {
-    let mut out = None;
+/// LLColorSwatchCtrl: clicking opens the shared color dialog. The stored
+/// value is sRGB, not egui's linear-RGB color button input.
+pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str, size: f32, enabled: bool) -> egui::Response {
     ui.vertical(|ui| {
-        let mut c = rgb;
-        ui.add_enabled_ui(enabled, |ui| {
-            ui.spacing_mut().interact_size = Vec2::new(size, size);
-            if egui::color_picker::color_edit_button_rgb(ui, &mut c).changed() {
-                out = Some(c);
-            }
-        });
+        let response = ui
+            .add_enabled_ui(enabled, |ui| {
+                let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
+                ui.painter().rect_filled(rect, 3.0, crate::ui::color_picker::color(rgb));
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    egui::Stroke::new(1.0, if response.hovered() { p.violet } else { p.raised }),
+                    egui::StrokeKind::Inside,
+                );
+                response.on_hover_text(aurora_i18n::tr!("color-picker-open"))
+            })
+            .inner;
         ui.add_sized(
             [size, 14.0],
             egui::Label::new(RichText::new(caption).size(11.0).color(if enabled { p.muted } else { p.muted_dim })),
         );
-    });
-    out
+        response
+    })
+    .inner
 }
 
 pub use crate::ui::widgets::icon_button;

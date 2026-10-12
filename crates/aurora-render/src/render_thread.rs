@@ -111,6 +111,19 @@ impl<J, R> Owner<J, R> {
         Ok(s.result.take())
     }
 
+    /// The result of the job handed over when the worker is already done
+    /// with it, without waiting; None while it is not (or once taken).
+    pub fn take_ready(&self) -> Result<Option<R>, WorkerGone> {
+        let mut s = self.0.state.lock();
+        if s.worker_gone {
+            return Err(WorkerGone);
+        }
+        if s.busy || s.job.is_some() {
+            return Ok(None);
+        }
+        Ok(s.result.take())
+    }
+
     /// Ask the worker to stop: its wait for a job ends, a job not taken
     /// yet is dropped.
     pub fn close(&self) {
@@ -308,6 +321,38 @@ mod tests {
         // already taken
         assert_eq!(owner.finish(), Ok(None));
         assert_eq!(owner.submit(4).map(|s| s.previous), Ok(None));
+        drop(owner);
+        t.join().expect("worker");
+    }
+
+    #[test]
+    fn a_finished_result_can_be_taken_early_without_waiting() {
+        let (owner, worker) = handoff::<u32, u32>();
+        let (release, gate) = mpsc::channel::<()>();
+        let (done, finished) = mpsc::channel::<()>();
+        let t = std::thread::spawn(move || {
+            while let Some((job, _)) = worker.next() {
+                let _ = gate.recv();
+                worker.complete(job * 10);
+                let _ = done.send(());
+            }
+        });
+        // nothing handed over: nothing to take
+        assert_eq!(owner.take_ready(), Ok(None));
+        owner.submit(1).expect("worker alive");
+        // the frame is still being drawn: no wait, no result
+        let t0 = Instant::now();
+        assert_eq!(owner.take_ready(), Ok(None));
+        assert!(t0.elapsed() < TICK, "waited for the worker");
+        release.send(()).expect("worker on its job");
+        finished.recv().expect("job done");
+        // done: its result now, and not a second time with the next job
+        assert_eq!(owner.take_ready(), Ok(Some(10)));
+        assert_eq!(owner.take_ready(), Ok(None));
+        assert_eq!(owner.submit(2).map(|s| s.previous), Ok(None));
+        release.send(()).expect("worker on its job");
+        assert_eq!(owner.finish(), Ok(Some(20)));
+        drop(release);
         drop(owner);
         t.join().expect("worker");
     }

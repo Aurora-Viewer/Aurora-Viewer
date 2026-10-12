@@ -10,7 +10,7 @@
 use super::common::{Edit, check, color_swatch, combo, label, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
 use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
-use crate::build::{BuildSettings, BuildTool};
+use crate::build::{BuildSettings, BuildTool, EditMode};
 use crate::scene::legacy_mat::{LegacyMaterial, alpha_mode};
 use crate::theme::Palette;
 use crate::ui::widgets::tabs;
@@ -80,10 +80,10 @@ const TEX_GEN_PLANAR: u8 = 0x02;
 
 /// One selected face.
 #[derive(Debug, Clone, Copy)]
-struct Sel {
-    idx: usize,
-    face: u8,
-    te: TextureFace,
+pub(super) struct Sel {
+    pub idx: usize,
+    pub face: u8,
+    pub te: TextureFace,
 }
 
 const W: f32 = 64.0;
@@ -118,7 +118,7 @@ impl BuildTool {
     /// Blinn-Phong material of a face as the panel sees it: the one just
     /// sent (until the simulator's new material id arrives), else the
     /// region's, else none.
-    fn face_legacy(&self, env: &Env, world: &World, idx: usize, face: u8, te: &TextureFace) -> Option<LegacyMaterial> {
+    pub(super) fn face_legacy(&self, env: &Env, world: &World, idx: usize, face: u8, te: &TextureFace) -> Option<LegacyMaterial> {
         let id = world.objects.get(idx)?.full_id;
         if let Some((old, m)) = self.ui.legacy_pending.get(&(id, face))
             && *old == te.material_id
@@ -175,13 +175,12 @@ impl BuildTool {
         }
     }
 
-    /// A texture chosen in the picker for the Texture tab.
-    pub fn on_texture_picked(&mut self, world: &mut World, env: &mut Env, target: PickTarget, id: Uuid) {
-        let sel = selected(self, world);
+    /// Apply a picker choice to the dialog's original faces.
+    pub(super) fn apply_texture(&mut self, world: &mut World, env: &mut Env, target: PickTarget, id: Uuid, sel: &[Sel]) {
         match target {
-            PickTarget::Diffuse => self.edit_faces(world, |f, _, _| f.texture = id),
-            PickTarget::Normal => self.edit_legacy(env, world, &sel, |m| m.normal_map = id),
-            PickTarget::Specular => self.edit_legacy(env, world, &sel, |m| m.specular_map = id),
+            PickTarget::Diffuse => self.set_diffuse(world, sel, |_, f| f.texture = id),
+            PickTarget::Normal => self.edit_legacy(env, world, sel, |m| m.normal_map = id),
+            PickTarget::Specular => self.edit_legacy(env, world, sel, |m| m.specular_map = id),
             PickTarget::PbrMaterial => {
                 // keep the transform of the override, else the Blinn-Phong one
                 let updates = sel
@@ -214,7 +213,7 @@ impl BuildTool {
             }
             PickTarget::PbrMap(i) => {
                 let tex = if id.is_nil() { OVERRIDE_NULL_UUID } else { id };
-                self.edit_gltf(world, &sel, |o| o.textures[i] = tex);
+                self.edit_gltf(world, sel, |o| o.textures[i] = tex);
             }
             PickTarget::Sculpt => {
                 if let Some(idx) = sel.first().map(|s| s.idx)
@@ -243,7 +242,7 @@ impl BuildTool {
 }
 
 /// The selected faces of modifiable volume prims.
-fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
+pub(super) fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
     tool.sel_te(world)
         .into_iter()
         .filter(|(i, _)| tool.can_modify(world, *i))
@@ -255,60 +254,71 @@ fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
 }
 
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
-    let sel = selected(tool, world);
+    let mut sel = selected(tool, world);
+    super::compact::heading(ui, p, "paint-brush", aurora_i18n::tr!("build-compact-materials"), |ui| {
+        if super::common::icon_button(
+            ui,
+            p,
+            "eye",
+            aurora_i18n::tr!("build-review-face-selection"),
+            tool.edit_mode == EditMode::Face && s.show_highlight && !tool.sel_te(world).is_empty(),
+        ) {
+            tool.ui.reveal_faces = true;
+        }
+        if super::common::icon_button(
+            ui,
+            p,
+            "clipboard-text",
+            aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
+            !sel.is_empty() && tool.ui.face_clipboard.is_some(),
+        ) {
+            paste_faces(tool, world, &sel);
+        }
+        let one_object = !sel.is_empty() && sel.iter().all(|x| x.idx == sel[0].idx);
+        if super::common::icon_button(
+            ui,
+            p,
+            "copy",
+            aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
+            one_object,
+        ) {
+            let clip = sel
+                .iter()
+                .map(|x| FaceClip {
+                    face: x.te,
+                    legacy: tool.face_legacy(env, world, x.idx, x.face, &x.te),
+                    gltf: BuildTool::gltf_asset(world, x.idx, x.face).map(|a| (a, BuildTool::gltf_override(world, x.idx, x.face))),
+                })
+                .collect();
+            tool.ui.face_clipboard = Some(clip);
+        }
+    });
+    // Face selection is a material operation in Aurora's section layout.
+    if let Some(face) = check(
+        ui,
+        tool.edit_mode == EditMode::Face,
+        false,
+        aurora_i18n::tr!("build-compact-face"),
+        true,
+    ) {
+        tool.set_edit_mode(world, s, if face { EditMode::Face } else { EditMode::Move });
+        sel = selected(tool, world);
+    }
+    ui.add_space(6.0);
     if sel.is_empty() {
         small(ui, p, aurora_i18n::tr!("build-ui-texture-no-editable-face-selected"));
         return;
     }
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(aurora_i18n::tr!("build-compact-materials"))
-                .size(13.0)
-                .strong()
-                .color(p.ink),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let items = [
-                ("PBR", 0usize),
-                (aurora_i18n::tr!("build-ui-texture-blinn-phong"), 1),
-                (aurora_i18n::tr!("extra-media"), 2),
-            ];
-            if let Some(tab) = combo(ui, "material_type", Some(tool.ui.tex_tab), &items, 115.0, true) {
-                tool.ui.tex_tab = tab;
-            }
-        });
-    });
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if super::common::icon_button(
-                ui,
-                p,
-                "clipboard-text",
-                aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
-                tool.ui.face_clipboard.is_some(),
-            ) {
-                paste_faces(tool, world, &sel);
-            }
-            let one_object = sel.iter().all(|x| x.idx == sel[0].idx);
-            if super::common::icon_button(
-                ui,
-                p,
-                "copy",
-                aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
-                one_object,
-            ) {
-                let clip = sel
-                    .iter()
-                    .map(|x| FaceClip {
-                        face: x.te,
-                        legacy: tool.face_legacy(env, world, x.idx, x.face, &x.te),
-                        gltf: BuildTool::gltf_asset(world, x.idx, x.face).map(|a| (a, BuildTool::gltf_override(world, x.idx, x.face))),
-                    })
-                    .collect();
-                tool.ui.face_clipboard = Some(clip);
-            }
-        });
-    });
+    tabs(
+        ui,
+        p,
+        &mut tool.ui.tex_tab,
+        &[
+            ("PBR", true),
+            (aurora_i18n::tr!("build-ui-texture-classic"), true),
+            (aurora_i18n::tr!("extra-media"), true),
+        ],
+    );
     ui.add_space(4.0);
     match tool.ui.tex_tab {
         0 => pbr(ui, p, tool, world, env, &sel),
@@ -481,14 +491,8 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                     super::common::linear_to_srgb(bc[1]),
                     super::common::linear_to_srgb(bc[2]),
                 ];
-                if let Some(c) = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-                    let lin = [
-                        super::common::srgb_to_linear(c[0]),
-                        super::common::srgb_to_linear(c[1]),
-                        super::common::srgb_to_linear(c[2]),
-                    ];
-                    tool.edit_gltf(world, sel, |o| o.base_color_factor = Some([lin[0], lin[1], lin[2], bc[3]]));
-                }
+                let swatch = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable);
+                tool.color_swatch_response(world, env, super::ColorTarget::PbrBase, srgb, swatch);
             });
             ui.horizontal(|ui| {
                 let maps: [(Option<Uuid>, &str, usize); 2] = [
@@ -518,14 +522,8 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                     super::common::linear_to_srgb(e[1]),
                     super::common::linear_to_srgb(e[2]),
                 ];
-                if let Some(c) = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-                    let lin = [
-                        super::common::srgb_to_linear(c[0]),
-                        super::common::srgb_to_linear(c[1]),
-                        super::common::srgb_to_linear(c[2]),
-                    ];
-                    tool.edit_gltf(world, sel, |o| o.emissive_factor = Some(lin));
-                }
+                let swatch = color_swatch(ui, p, srgb, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable);
+                tool.color_swatch_response(world, env, super::ColorTarget::PbrEmissive, srgb, swatch);
             });
         });
     egui::CollapsingHeader::new(aurora_i18n::tr!("build-c3-texture-transform"))
@@ -631,14 +629,8 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
         }
         let (col, _) = same(sel.iter().map(|x| [x.te.color[0], x.te.color[1], x.te.color[2]]));
         let col = col.unwrap_or([1.0; 3]);
-        if let Some(c) = color_swatch(ui, p, col, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable) {
-            // selectionSetColorOnly: the alpha stays
-            tool.edit_faces(world, |f, _, _| {
-                f.color[0] = c[0];
-                f.color[1] = c[1];
-                f.color[2] = c[2];
-            });
-        }
+        let swatch = color_swatch(ui, p, col, aurora_i18n::tr!("build-ui-texture-tint"), 40.0, editable);
+        tool.color_swatch_response(world, env, super::ColorTarget::Diffuse, col, swatch);
         ui.vertical(|ui| {
             let (fb, fb_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright & TEM_FULLBRIGHT != 0));
             if let Some(v) = check(
@@ -799,17 +791,15 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
                 }
                 let sc = legacy[0].as_ref().map(|m| m.specular_color).unwrap_or([255; 4]);
                 let rgb = [sc[0] as f32 / 255.0, sc[1] as f32 / 255.0, sc[2] as f32 / 255.0];
-                if let Some(c) = color_swatch(
+                let swatch = color_swatch(
                     ui,
                     p,
                     rgb,
                     aurora_i18n::tr!("build-ui-texture-tint"),
                     40.0,
                     editable && spec.is_some(),
-                ) {
-                    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-                    tool.edit_legacy(env, world, sel, |m| m.specular_color = [b(c[0]), b(c[1]), b(c[2]), sc[3]]);
-                }
+                );
+                tool.color_swatch_response(world, env, super::ColorTarget::Specular, rgb, swatch);
                 ui.vertical(|ui| {
                     let (gl, gl_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_exp).unwrap_or(51)));
                     let (env_i, env_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.env_intensity).unwrap_or(0)));

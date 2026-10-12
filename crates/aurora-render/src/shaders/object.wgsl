@@ -29,11 +29,46 @@ fn skin_matrix(rec: DrawRecord, j: vec4<u32>, w: vec4<f32>) -> mat4x4<f32> {
     return m * (1.0 / ws);
 }
 
-fn skinned_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
+// `m` with its translation counted from `eye`.
+fn from_eye(m: mat4x4<f32>, eye: vec3<f32>) -> mat4x4<f32> {
+    var r = m;
+    r[3] = vec4<f32>(r[3].xyz - eye, r[3].w);
+    return r;
+}
+
+// Matrix of a vertex, placed relative to `eye`. What an avatar wears
+// follows it without its records being written again: the scene keeps,
+// beside each joint palette, the matrix that places the skeleton and the
+// posed attachment points (rigid world matrices). A rigged mesh reads the
+// first, a worn prim holds its placement relative to its point. The eye is
+// taken away from the translation of the matrix that holds the place in
+// the world (the record's, or its anchor's) before anything is multiplied.
+fn placed_model(rec: DrawRecord, in: VsIn, eye: vec3<f32>) -> mat4x4<f32> {
     if ((rec.flags.x & FLAG_SKINNED) != 0u) {
-        return rec.model * skin_matrix(rec, in.joints, in.weights);
+        let skin = skin_matrix(rec, in.joints, in.weights);
+        if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+            return from_eye(palettes[rec.flags.y + SKELETON_ANCHOR], eye) * skin;
+        }
+        return from_eye(rec.model, eye) * skin;
     }
-    return rec.model;
+    if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+        return from_eye(palettes[rec.flags.y], eye) * rec.model;
+    }
+    return from_eye(rec.model, eye);
+}
+
+// World matrix of a vertex.
+fn skinned_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
+    return placed_model(rec, in, vec3<f32>(0.0));
+}
+
+// The same, placed relative to the frame's eye, so the skinning, the vertex
+// and the view work on distances from the camera. In region coordinates,
+// single precision is too coarse high above the ground (0.24 mm steps above
+// 2048 m: up to a pixel on close objects, different whenever the view
+// changes).
+fn eye_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
+    return placed_model(rec, in, frame.eye.xyz);
 }
 
 struct VsOut {
@@ -276,10 +311,12 @@ fn diffuse_uv(st: vec2<f32>, rec: DrawRecord, clock: vec2<u32>) -> vec2<f32> {
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     let rec = records[in.instance];
-    let model = skinned_model(rec, in);
-    let wp = model * vec4<f32>(in.pos, 1.0);
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(in.pos, 1.0);
+    // (lighting, shadows and fog keep region coordinates)
+    let wp = vec4<f32>(ep.xyz + frame.eye.xyz, ep.w);
     var out: VsOut;
-    out.clip = frame.view_proj * wp;
+    out.clip = frame.eye_view_proj * ep;
     out.world_pos = wp.xyz;
     out.normal = cofactor(model) * in.normal.xyz;
     var st = face_st(in, rec);
@@ -310,7 +347,7 @@ fn vs_main(in: VsIn) -> VsOut {
         out.uv_e = pbr_uv(st, rec.spec_color, rec.legacy.z);
     }
     out.record = in.instance;
-    out.view_depth = distance(wp.xyz, frame.camera_pos.xyz);
+    out.view_depth = distance(ep.xyz, frame.camera_pos.xyz - frame.eye.xyz);
     return out;
 }
 
@@ -343,10 +380,10 @@ fn fs_hud(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
 @vertex
 fn vs_depth(in: VsIn) -> DepthOut {
     let rec = records[in.instance];
-    let model = skinned_model(rec, in);
-    let wp = model * vec4<f32>(in.pos, 1.0);
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(in.pos, 1.0);
     var out: DepthOut;
-    out.clip = frame.view_proj * wp;
+    out.clip = frame.eye_view_proj * ep;
     return out;
 }
 
@@ -490,13 +527,13 @@ fn legacy_light(col_in: vec3<f32>, spec: vec4<f32>, env: f32, n: vec3<f32>, v: v
 // Local light highlights of legacy materials (multiPointLightF). Our light
 // colors are PBR radiances (diffuse divided by pi): SL's classic light
 // colors are those over pi.
-fn legacy_local_spec(spec: vec4<f32>, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+fn legacy_local_spec(spec: vec4<f32>, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     var col = vec3<f32>(0.0);
     if (spec.a <= 0.0) {
         return col;
     }
-    let count = u32(frame.params.w);
-    for (var i = 0u; i < count; i++) {
+    var lights = light_walk(world_pos, frag);
+    for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
         let lt = frame.lights[i];
         let to_l = lt.pos_radius.xyz - world_pos;
         let dist = length(to_l);
@@ -518,8 +555,14 @@ struct Shaded {
 };
 
 fn shade(in: VsOut, front: bool) -> Shaded {
+    return shade_material(in, eval_material(in, front));
+}
+
+// Lighting, haze and fog of an evaluated material. Nothing here takes a
+// screen-space derivative (explicit levels and comparisons only): a fragment
+// may be discarded between `eval_material` and this (fs_blend).
+fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
-    let m = eval_material(in, front);
     var col: vec3<f32>;
     let classic = is_classic_sky() && !camera_underwater();
     var hazed = false;
@@ -536,14 +579,14 @@ fn shade(in: VsOut, front: bool) -> Shaded {
         if ((rec.flags.x & FLAG_PBR) != 0u) {
             col = ll_classic_pbr(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, sh, in.clip.xy, a);
             col = (col + m.emissive) * ll_final_scale()
-                + ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos);
+                + ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, in.clip.xy);
         } else {
             col = ll_classic_sun_ambient(m.color.rgb, m.n, sh, in.clip.xy, a);
             if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0) {
                 col = legacy_light(col, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, ll_sun_linear(a), 1.0);
             }
-            col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos)
-                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos) * ll_local_scale();
+            col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
+                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
         }
         col = ll_haze(col, a);
         hazed = true;
@@ -553,7 +596,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
         col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, sh, in.clip.xy) + m.emissive;
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0) {
             col = legacy_light(col - m.emissive, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, frame.sun_color.rgb / PI, 1.0 / PI)
-                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos) + m.emissive;
+                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos, in.clip.xy) + m.emissive;
         }
     }
     if ((rec.flags.x & FLAG_HIGHLIGHT) != 0u) {
@@ -563,7 +606,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
         col = apply_fog(col, in.world_pos);
     }
     var s: Shaded;
-    s.color = vec4<f32>(col, m.color.a);
+    s.color = vec4<f32>(light_tiles_checked(col, in.world_pos, in.clip.xy), m.color.a);
     s.n = m.n;
     s.roughness = m.roughness;
     s.metallic = m.metallic;
@@ -649,9 +692,21 @@ fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec
     return vec4<f32>(s.color.rgb, 1.0);
 }
 
+// Blended faces: invisible fragments leave before the lighting, as in
+// Firestorm's alphaF.glsl / pbralphaF.glsl (`final_alpha < minimum_alpha`,
+// LLDrawPoolAlpha MINIMUM_ALPHA = 0.004, tested before the atmospherics, the
+// probes and the lights). The empty texels of hair, lashes and lace cost
+// their texture samples only. `false` lights them first, as before, for
+// comparison (AURORA_BLEND_EARLY_DISCARD=0): same image.
+override BLEND_EARLY_DISCARD: bool = true;
+
 @fragment
 fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let c = shade(in, front).color;
+    let m = eval_material(in, front);
+    if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
+        discard;
+    }
+    let c = shade_material(in, m).color;
     if (c.a < 0.004) {
         discard;
     }
@@ -695,6 +750,18 @@ fn fs_debug_flat(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(debug_r, debug_g, debug_b, debug_a);
 }
 
+// Selection is a separate coverage mask, never an interior grid. Keep
+// masked texture holes but retain invisible faces for editing their TE.
+@fragment
+fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
+        let alpha = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
+        if (rec.base_color.a >= 0.004 && alpha < rec.params.w) { discard; }
+    }
+    return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+}
+
 // Glow suppression of a face LL draws in its alpha pool: the glow under it
 // is scaled by (1 - its alpha) before it adds its own (fs_glow).
 @fragment
@@ -705,6 +772,51 @@ fn fs_glow_suppress(in: VsOut) -> @location(0) vec4<f32> {
         discard;
     }
     return vec4<f32>(0.0, 0.0, 0.0, a);
+}
+
+// ---------------------------------------------- what is drawn under a pixel
+
+// The faces of the view drawn once more through a camera narrowed to a
+// clicked pixel (drawn_pick.rs): placed and posed by the same code as the
+// scene, so a rigged mesh is found where it is shown.
+struct PickOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    // surface coordinates before the texture transform (a touch's ST)
+    @location(1) st: vec2<f32>,
+    @location(2) @interpolate(flat) record: u32,
+};
+
+@vertex
+fn vs_pick(in: VsIn) -> PickOut {
+    let rec = records[in.instance];
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(in.pos, 1.0);
+    var out: PickOut;
+    out.clip = frame.eye_view_proj * ep;
+    let st = face_st(in, rec);
+    out.st = st;
+    out.uv = diffuse_uv(st, rec, frame.anim_clock.xy);
+    out.record = in.instance;
+    return out;
+}
+
+// Record + 1, depth and surface coordinates of the face shown: a masked
+// face where it passes its alpha test (fs_depth_mask), a blended one where
+// it draws anything (fs_blend).
+@fragment
+fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
+    let rec = records[in.record];
+    if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
+        // (the level the scene samples: each texel of the target is a
+        // pixel of the screen)
+        let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
+        let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u;
+        if (a < select(0.004, max(rec.params.w, 0.01), masked)) {
+            discard;
+        }
+    }
+    return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
 }
 
 // ------------------------------------------------------------- shadow pass
@@ -883,11 +995,16 @@ struct SpriteIn {
     @builtin(vertex_index) vid: u32,
 };
 
+// High bit of a card's tile: its picture is all fullbright (the silhouette
+// of an avatar over the complexity limit).
+const IMPOSTOR_FULLBRIGHT: u32 = 0x80000000u;
+
 struct SpriteOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) world_pos: vec3<f32>,
     @location(2) normal: vec3<f32>,
+    @location(3) @interpolate(flat) fullbright: u32,
 };
 
 @vertex
@@ -899,12 +1016,14 @@ fn vs_impostor(in: SpriteIn) -> SpriteOut {
     let c = corners[in.vid % 6u];
     let p = in.center + in.right * c.x + in.up * c.y;
     let per = u32(impostor_tiles_per_row);
-    let origin = vec2<f32>(f32(in.tile % per), f32(in.tile / per));
+    let tile = in.tile & ~IMPOSTOR_FULLBRIGHT;
+    let origin = vec2<f32>(f32(tile % per), f32(tile / per));
     var out: SpriteOut;
     out.clip = frame.view_proj * vec4<f32>(p, 1.0);
     out.uv = (origin + vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5)) / impostor_tiles_per_row;
     out.world_pos = p;
     out.normal = normalize(cross(in.right, in.up));
+    out.fullbright = in.tile & IMPOSTOR_FULLBRIGHT;
     return out;
 }
 
@@ -913,8 +1032,19 @@ fn impostor_color(in: SpriteOut) -> vec4<f32> {
     if (t.a < 0.5) {
         discard;
     }
-    // the picture was taken lit and unfogged: fog it at its real distance
-    return vec4<f32>(apply_fog(t.rgb / max(t.a, 1e-3), in.world_pos), 1.0);
+    // the picture was taken lit, without haze or fog: the card takes those
+    // of its real distance, as `shade` gives them to the avatar drawn in
+    // full (the haze of a classic sky, which a fullbright face does not
+    // take; the fog of the others)
+    var col = t.rgb / max(t.a, 1e-3);
+    if (is_classic_sky() && !camera_underwater()) {
+        if (in.fullbright == 0u) {
+            col = ll_haze(col, ll_atmos(in.world_pos - frame.camera_pos.xyz));
+        }
+    } else {
+        col = apply_fog(col, in.world_pos);
+    }
+    return vec4<f32>(col, 1.0);
 }
 
 @fragment

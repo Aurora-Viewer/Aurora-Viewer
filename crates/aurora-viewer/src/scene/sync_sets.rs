@@ -6,25 +6,140 @@
 //!   them (linkset children, attachments and their prims). Only the objects
 //!   moving by themselves are stored; the followers are found each frame
 //!   through the store's child lists, so links, unlinks, attachments and
-//!   detachments need no bookkeeping.
+//!   detachments need no bookkeeping. What the GPU places from its wearer's
+//!   attachment point (anchors.rs) follows without a visit.
 //! - **Dirty**: objects changed through the store (`ObjectStore::take_touched`),
 //!   material users on a new material generation, and objects whose last
 //!   sync could not finish. An object updated with `needs_records` brings
 //!   its whole subtree along (its children are placed relative to it).
 //! - **Pending**: objects whose wanted geometry is not bound yet; visited
 //!   when that geometry can make progress (ready, or to be requested again).
-//! - **LOD slice**: each object is visited every [`LOD_PERIOD`] frames
-//!   (detail level, and a safety net for state changed behind the store's
-//!   back). Only that frame's slice of the slab is walked.
+//!   Beyond [`PENDING_PER_FRAME`] of them, a frame only looks at a part.
+//! - **Detail level checks** ([`LodChecks::Events`]): an object at rest is
+//!   visited when the camera has travelled far enough for its level to
+//!   change (lod_watch.rs); what the GPU places from an avatar moves with
+//!   it, and is visited in turn: every [`LOD_PERIOD`] frames while the
+//!   camera moves, as by the slice below, every [`LOD_SECONDS`] while it
+//!   rests; and every object every [`SWEEP_SECONDS`], a safety net for
+//!   state changed behind the store's back. Never more per frame than the
+//!   slice below.
+//! - **LOD slice** ([`LodChecks::Slice`], `AURORA_SYNC_SLICE=1`): each
+//!   object visited every [`LOD_PERIOD`] frames, as before the checks
+//!   above. Only that frame's slice of the slab is walked.
 //! - **Backlog**: objects whose full sync did not fit the frame's time
 //!   budget; the sync takes them back, nearest first ([`Backlog`]).
+//! - **Arrivals**: new objects, which wait for their first sync without
+//!   being listed; the sync takes them in arrival order, within the same
+//!   budget ([`Arrivals`]).
 
+use super::lod_watch::LodWatch;
+use super::sync_check::Sources;
 use crate::world::objects::{Object, ObjectStore};
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
-/// Frames between two detail-level checks of an object.
+/// Frames between two detail-level checks of an object by the slice; with
+/// the checks by events, the most a frame visits is still a slice of this.
 pub const LOD_PERIOD: u32 = 24;
+
+/// Time between two visits of an object the GPU places from an avatar
+/// (worn, rigged) while the camera rests: the slice's period at 60 frames
+/// per second, which a higher frame rate no longer shortens.
+pub const LOD_SECONDS: f32 = LOD_PERIOD as f32 / 60.0;
+
+/// Time between two visits of any object, whatever happened to it.
+pub const SWEEP_SECONDS: f32 = 10.0;
+
+/// How the sync comes back to the objects nothing brought to it.
+pub enum LodChecks<'a> {
+    /// Every object in turn, a slice of the slab per frame.
+    Slice,
+    /// When their detail level can have changed (see the module
+    /// documentation). `anchored`: the objects the GPU places; `dt`: time
+    /// since the last frame (s); `camera_moved`: since the last frame.
+    Events {
+        anchored: &'a [usize],
+        dt: f32,
+        camera_moved: bool,
+    },
+}
+
+/// AURORA_SYNC_SLICE: the scene sync as before the checks by events (LOD
+/// slice of every object, HUD attachments placed at each frame, whole
+/// chunks of records uploaded), to compare. `1`: always; `alt`: one second
+/// in three, the app switching at each line of the frame profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SliceEnv {
+    Off,
+    On,
+    Alternate,
+}
+
+pub fn slice_env() -> SliceEnv {
+    static ENV: std::sync::OnceLock<SliceEnv> = std::sync::OnceLock::new();
+    *ENV.get_or_init(|| match std::env::var("AURORA_SYNC_SLICE").as_deref() {
+        Ok("alt") => SliceEnv::Alternate,
+        Ok("0") | Ok("") | Err(_) => SliceEnv::Off,
+        Ok(_) => SliceEnv::On,
+    })
+}
+
+static SLICE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SLICE_SET: std::sync::Once = std::sync::Once::new();
+
+/// Whether the sync works as before the checks by events, at the moment.
+pub fn slice_mode() -> bool {
+    SLICE_SET.call_once(|| set_slice_mode(slice_env() != SliceEnv::Off));
+    SLICE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Switch between the two ways; the renderer's uploads follow.
+fn set_slice_mode(on: bool) {
+    SLICE.store(on, std::sync::atomic::Ordering::Relaxed);
+    aurora_render::set_whole_chunk_uploads(on);
+}
+
+/// `AURORA_SYNC_SLICE=alt`: switch to the way of second `n` of the run and
+/// tell which it is (true: as before). The old way one second in three, so
+/// that work done every other second falls on both. None without `alt`.
+pub fn alternate_slice(n: u64) -> Option<bool> {
+    (slice_env() == SliceEnv::Alternate).then(|| {
+        let on = n.is_multiple_of(3);
+        // (after the first read of the variable, which would undo it)
+        slice_mode();
+        set_slice_mode(on);
+        on
+    })
+}
+
+/// Objects a round visits in this frame, for a round of `period` seconds
+/// over `len` objects: what `dt` owes, never more than a slice of them.
+/// `credit` carries the fractions from frame to frame.
+fn round_share(credit: &mut f32, len: usize, dt: f32, period: f32) -> usize {
+    if len == 0 {
+        *credit = 0.0;
+        return 0;
+    }
+    let most = len.div_ceil(LOD_PERIOD as usize);
+    *credit = (*credit + len as f32 * dt.clamp(0.0, 1.0) / period).min(most as f32);
+    let n = *credit as usize;
+    *credit -= n as f32;
+    n
+}
+
+/// Objects waiting for their geometry that a frame asks about at most,
+/// unless that would take more than [`PENDING_ROUND`] frames to see them
+/// all: after a teleport, 12 000 objects waiting cost the frame list over
+/// 1 ms in every frame until their geometry was there.
+pub const PENDING_PER_FRAME: usize = 2048;
+/// Frames in which every object waiting for its geometry is asked about,
+/// however many there are.
+pub const PENDING_ROUND: usize = 4;
+
+/// How many of `waiting` objects a frame asks about.
+fn pending_checks(waiting: usize) -> usize {
+    waiting.min(waiting.div_ceil(PENDING_ROUND).max(PENDING_PER_FRAME))
+}
 
 /// Parent chains longer than this are cut (as `Scene::object_transform`).
 pub const MAX_DEPTH: u8 = 16;
@@ -115,6 +230,10 @@ impl FrameMarks {
         self.stamp[idx] = self.frame;
         first
     }
+
+    fn is_marked(&self, idx: usize) -> bool {
+        self.stamp.get(idx) == Some(&self.frame)
+    }
 }
 
 /// Transforms computed this frame, so the prims of an attachment or a
@@ -177,6 +296,10 @@ pub fn depth(objects: &ObjectStore, mut idx: usize) -> u8 {
 #[derive(Default)]
 pub struct FrameList {
     pub items: Vec<(usize, u8)>,
+    /// How many of them each set listed (AURORA_SYNC_CHECK).
+    pub sources: Sources,
+    /// Objects the detail level check looked at.
+    pub lod_checked: usize,
 }
 
 impl FrameList {
@@ -196,8 +319,18 @@ impl FrameList {
 
 /// What the frame list needs to know about objects beyond the store.
 pub trait SyncState {
-    /// Rigged mesh: deformed by its skeleton, placed again every frame.
+    /// Rigged mesh the sync places again every frame with its skeleton
+    /// (not one the GPU places).
     fn rigged(&self, idx: usize) -> bool;
+    /// Attachment placed on a HUD point of its wearer (in the HUD's own
+    /// space): it does not follow the wearer through the world.
+    fn hud(&self, idx: usize) -> bool;
+    /// Placed by the GPU from an anchor of its wearer's palette (a worn
+    /// object from its attachment point, a rigged mesh from its skeleton):
+    /// neither it nor what is linked below it follows a moving ancestor
+    /// through the sync (what moves by itself below it is listed on its
+    /// own).
+    fn anchored(&self, idx: usize) -> bool;
     /// Must be synced: changed, or its last sync could not finish.
     fn needs_sync(&self, idx: usize, o: &Object) -> bool;
     /// Pending geometry: None when nothing is pending any more, else
@@ -278,6 +411,78 @@ impl Backlog {
     }
 }
 
+/// New objects waiting for their first sync, in arrival order.
+///
+/// An object that was never synced has nothing on screen to keep in place:
+/// its first sync can wait a few frames. Listed like a changed object, it
+/// went through the frame list and the parallel placement only for the
+/// sync to find that out, and thousands arriving together (the region's
+/// object cache answering, a region coming into view) made that frame
+/// several milliseconds long whatever the budget of the full syncs. Here
+/// an arrival costs a push; the frame list leaves these objects alone, and
+/// the sync takes them within its time budget, as it does the [`Backlog`].
+#[derive(Default)]
+pub struct Arrivals {
+    /// An entry whose object is no longer queued (removed) is skipped when
+    /// it comes up.
+    queue: std::collections::VecDeque<u32>,
+    queued: Vec<bool>,
+    len: usize,
+}
+
+impl Arrivals {
+    /// Queue an object. False when it was already waiting (it keeps its
+    /// place).
+    pub fn push(&mut self, idx: usize) -> bool {
+        if self.queued.len() <= idx {
+            self.queued.resize(idx + 1, false);
+        }
+        if std::mem::replace(&mut self.queued[idx], true) {
+            return false;
+        }
+        self.len += 1;
+        self.queue.push_back(idx as u32);
+        true
+    }
+
+    pub fn contains(&self, idx: usize) -> bool {
+        self.queued.get(idx).copied().unwrap_or(false)
+    }
+
+    /// The object was removed.
+    pub fn remove(&mut self, idx: usize) {
+        if let Some(q) = self.queued.get_mut(idx)
+            && std::mem::replace(q, false)
+        {
+            self.len -= 1;
+            if self.len == 0 {
+                // nothing but skipped entries left
+                self.queue.clear();
+            }
+        }
+    }
+
+    /// The object that has waited longest.
+    pub fn pop(&mut self) -> Option<usize> {
+        while let Some(idx) = self.queue.pop_front() {
+            let idx = idx as usize;
+            if self.contains(idx) {
+                self.remove(idx);
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
 /// Main-thread time a frame still has for the full syncs that can wait.
 /// Only their own time counts: what the frame must do anyway (moves,
 /// avatars) does not eat it.
@@ -295,7 +500,17 @@ impl FullSyncBudget {
     /// always the first of the frame (the backlog advances whatever the
     /// budget).
     pub fn allows(&self) -> bool {
-        !self.left.is_zero() || self.done == 0
+        self.allows_beyond(std::time::Duration::ZERO)
+    }
+
+    /// The same, for work that must leave `reserve` of the budget to what
+    /// comes after it.
+    pub fn allows_beyond(&self, reserve: std::time::Duration) -> bool {
+        self.left > reserve || self.done == 0
+    }
+
+    pub fn left(&self) -> std::time::Duration {
+        self.left
     }
 
     /// A full sync took `spent`.
@@ -318,8 +533,26 @@ pub struct SyncSets {
     pub seen_mat_gen: u64,
     /// Objects whose full sync waits for a frame with time left.
     pub backlog: Backlog,
+    /// New objects waiting for their first sync.
+    pub arrivals: Arrivals,
+    /// Objects at rest, due for a detail level check when the camera has
+    /// travelled enough.
+    pub lod: LodWatch,
+    /// Where the next frame goes on in `pending`, in the objects the GPU
+    /// places and in the slab (the sweep), with what the rounds are owed.
+    pending_next: usize,
+    anchored_next: usize,
+    anchored_credit: f32,
+    sweep_next: usize,
+    sweep_credit: f32,
     listed: FrameMarks,
+    /// Listed this frame by a detail level check and nothing else.
+    checked: FrameMarks,
+    /// Subtrees listed this frame: but for what the GPU places, and whole.
     expanded: FrameMarks,
+    expanded_whole: FrameMarks,
+    /// Stack of `push_tree`, kept for its room.
+    tree_stack: Vec<(usize, u8)>,
 }
 
 impl SyncSets {
@@ -334,6 +567,20 @@ impl SyncSets {
         self.pending.remove(idx);
         self.material_users.remove(idx);
         self.backlog.remove(idx);
+        self.arrivals.remove(idx);
+        self.lod.forget(idx);
+    }
+
+    /// Listed in this frame because it follows something that moves: it
+    /// will be again in the next one.
+    pub fn follows_motion(&self, idx: usize) -> bool {
+        self.expanded.is_marked(idx)
+    }
+
+    /// Listed in this frame only because its turn had come for a detail
+    /// level check: nothing is known to have changed for it.
+    pub fn only_checked(&self, idx: usize) -> bool {
+        self.checked.is_marked(idx)
     }
 
     /// An object changed through the store: synced this frame, and moving
@@ -357,17 +604,28 @@ impl SyncSets {
 
     /// Objects to sync this frame `frame` (slab of `n` slots): moving
     /// subtrees, dirty objects (subtrees of the updated ones), pending
-    /// geometry that can progress and the frame's LOD slice. Each once.
-    pub fn frame_list(&mut self, objects: &ObjectStore, agent: Uuid, frame: u32, n: usize, state: &impl SyncState) -> FrameList {
+    /// geometry that can progress and the frame's detail level checks.
+    /// Each once.
+    pub fn frame_list(
+        &mut self,
+        objects: &ObjectStore,
+        agent: Uuid,
+        frame: u32,
+        n: usize,
+        state: &impl SyncState,
+        checks: LodChecks,
+    ) -> FrameList {
         self.listed.next_frame(n);
+        self.checked.next_frame(n);
         self.expanded.next_frame(n);
+        self.expanded_whole.next_frame(n);
         let mut list = FrameList::default();
         let mut i = 0;
         while i < self.own_moving.len() {
             let idx = self.own_moving.items[i];
             match objects.get(idx) {
                 Some(o) if moves_by_itself(o, agent, state.rigged(idx)) => {
-                    self.push_tree(objects, idx, &mut list);
+                    self.push_followers(objects, idx, &mut list, state);
                     i += 1;
                 }
                 // stopped, or removed: swap-removed, the next one takes its place
@@ -376,6 +634,7 @@ impl SyncSets {
                 }
             }
         }
+        list.sources.moving = list.items.len();
         for idx in self.dirty.take() {
             let Some(o) = objects.get(idx) else {
                 continue;
@@ -383,21 +642,36 @@ impl SyncSets {
             if !state.needs_sync(idx, o) {
                 continue;
             }
-            if o.render.needs_records {
-                self.push_tree(objects, idx, &mut list);
+            if o.render.needs_records && o.is_avatar() {
+                // what it wears is placed relative to its attachment
+                // points, not to it: the anchored objects stay put
+                self.push_followers(objects, idx, &mut list, state);
+            } else if o.render.needs_records {
+                // (anchored objects too: they are placed relative to it)
+                self.push_whole(objects, idx, &mut list);
             } else {
                 self.push_one(objects, idx, &mut list);
             }
         }
-        let mut i = 0;
-        while i < self.pending.len() {
-            let idx = self.pending.items[i];
+        list.sources.dirty = list.items.len() - list.sources.moving;
+        let before_pending = list.items.len();
+        // (all of them while they are few; else a part, the next frame
+        // going on where this one stops)
+        let mut i = self.pending_next;
+        for _ in 0..pending_checks(self.pending.len()) {
+            if i >= self.pending.len() {
+                i = 0;
+            }
+            let Some(&idx) = self.pending.items.get(i) else {
+                break;
+            };
             // already waiting for its full sync: not planned again each frame
             if self.backlog.contains(idx) {
                 i += 1;
                 continue;
             }
             match state.pending_due(idx) {
+                // (swap-removed: the last one takes its place)
                 None => {
                     self.pending.remove(idx);
                     continue;
@@ -407,18 +681,75 @@ impl SyncSets {
             }
             i += 1;
         }
-        // LOD slice: (frame + idx) is a multiple of LOD_PERIOD
-        let start = ((LOD_PERIOD - frame % LOD_PERIOD) % LOD_PERIOD) as usize;
-        for idx in (start..n).step_by(LOD_PERIOD as usize) {
-            let Some(o) = objects.get(idx) else {
-                continue;
-            };
-            if moves_by_itself(o, agent, state.rigged(idx)) {
-                self.own_moving.insert(idx);
+        self.pending_next = i;
+        list.sources.pending = list.items.len() - before_pending;
+        let before_lod = list.items.len();
+        match checks {
+            LodChecks::Slice => {
+                // (frame + idx) is a multiple of LOD_PERIOD
+                let start = ((LOD_PERIOD - frame % LOD_PERIOD) % LOD_PERIOD) as usize;
+                for idx in (start..n).step_by(LOD_PERIOD as usize) {
+                    self.push_check(objects, agent, idx, &mut list, state);
+                }
             }
-            self.push_one(objects, idx, &mut list);
+            LodChecks::Events {
+                anchored,
+                dt,
+                camera_moved,
+            } => {
+                let most = n.div_ceil(LOD_PERIOD as usize);
+                // at rest: those the camera has travelled enough for
+                for _ in 0..most {
+                    let Some(idx) = self.lod.pop_due() else {
+                        break;
+                    };
+                    self.push_check(objects, agent, idx, &mut list, state);
+                }
+                // placed by the GPU from an avatar: in turn, at the slice's
+                // pace while the camera moves
+                let turn = if camera_moved {
+                    anchored.len().div_ceil(LOD_PERIOD as usize)
+                } else {
+                    round_share(&mut self.anchored_credit, anchored.len(), dt, LOD_SECONDS)
+                };
+                for _ in 0..turn {
+                    if self.anchored_next >= anchored.len() {
+                        self.anchored_next = 0;
+                    }
+                    self.push_check(objects, agent, anchored[self.anchored_next], &mut list, state);
+                    self.anchored_next += 1;
+                }
+                // everything, slowly
+                for _ in 0..round_share(&mut self.sweep_credit, n, dt, SWEEP_SECONDS) {
+                    if self.sweep_next >= n {
+                        self.sweep_next = 0;
+                    }
+                    self.push_check(objects, agent, self.sweep_next, &mut list, state);
+                    self.sweep_next += 1;
+                }
+            }
         }
+        list.sources.lod = list.items.len() - before_lod;
         list
+    }
+
+    /// An object whose turn has come for a detail level check.
+    fn push_check(&mut self, objects: &ObjectStore, agent: Uuid, idx: usize, list: &mut FrameList, state: &impl SyncState) {
+        // (its first sync chooses its detail level)
+        if self.arrivals.contains(idx) {
+            return;
+        }
+        let Some(o) = objects.get(idx) else {
+            return;
+        };
+        if moves_by_itself(o, agent, state.rigged(idx)) {
+            self.own_moving.insert(idx);
+        }
+        list.lod_checked += 1;
+        if self.listed.mark(idx) {
+            self.checked.mark(idx);
+            list.items.push((idx, depth(objects, idx)));
+        }
     }
 
     fn push_one(&mut self, objects: &ObjectStore, idx: usize, list: &mut FrameList) {
@@ -427,12 +758,46 @@ impl SyncSets {
         }
     }
 
-    /// An object and everything below it (children, attachments, their prims).
-    fn push_tree(&mut self, objects: &ObjectStore, root: usize, list: &mut FrameList) {
-        if !self.expanded.mark(root) {
+    /// A moving object and what follows it through the sync: everything
+    /// below it (children, attachments, their prims) but the subtrees of
+    /// the objects the GPU places.
+    fn push_followers(&mut self, objects: &ObjectStore, root: usize, list: &mut FrameList, state: &impl SyncState) {
+        if self.expanded_whole.is_marked(root) || !self.expanded.mark(root) {
             return;
         }
-        let mut stack = vec![(root, depth(objects, root))];
+        // (one allocation per call showed when thousands of objects arrive
+        // in the same frame)
+        let mut stack = std::mem::take(&mut self.tree_stack);
+        stack.push((root, depth(objects, root)));
+        while let Some((idx, d)) = stack.pop() {
+            if self.listed.mark(idx) {
+                list.items.push((idx, d));
+            }
+            let Some(o) = objects.get(idx) else {
+                continue;
+            };
+            if d >= MAX_DEPTH {
+                continue;
+            }
+            // (what is on a HUD point stays where it is on the screen)
+            let wearer = o.is_avatar();
+            for &c in objects.children_of(&o.key) {
+                // a subtree already listed (another moving object)
+                if !state.anchored(c) && !(wearer && state.hud(c)) && !self.expanded_whole.is_marked(c) && self.expanded.mark(c) {
+                    stack.push((c, d + 1));
+                }
+            }
+        }
+        self.tree_stack = stack;
+    }
+
+    /// An object and everything below it, the objects the GPU places too.
+    fn push_whole(&mut self, objects: &ObjectStore, root: usize, list: &mut FrameList) {
+        if !self.expanded_whole.mark(root) {
+            return;
+        }
+        let mut stack = std::mem::take(&mut self.tree_stack);
+        stack.push((root, depth(objects, root)));
         while let Some((idx, d)) = stack.pop() {
             if self.listed.mark(idx) {
                 list.items.push((idx, d));
@@ -444,12 +809,13 @@ impl SyncSets {
                 continue;
             }
             for &c in objects.children_of(&o.key) {
-                // a subtree already listed whole (another moving object)
-                if self.expanded.mark(c) {
+                // a subtree already listed whole (another updated object)
+                if self.expanded_whole.mark(c) {
                     stack.push((c, d + 1));
                 }
             }
         }
+        self.tree_stack = stack;
     }
 }
 
@@ -468,19 +834,32 @@ mod tests {
     #[derive(Default)]
     struct State {
         rigged: HashSet<usize>,
+        hud: HashSet<usize>,
+        anchored: HashSet<usize>,
         extra: HashSet<usize>,
         pending: Vec<(usize, bool)>,
+        /// Answer for the objects that are not in `pending`.
+        pending_else: Option<bool>,
+        /// Calls of `pending_due`.
+        asked: std::cell::Cell<usize>,
     }
 
     impl SyncState for State {
         fn rigged(&self, idx: usize) -> bool {
             self.rigged.contains(&idx)
         }
+        fn hud(&self, idx: usize) -> bool {
+            self.hud.contains(&idx)
+        }
+        fn anchored(&self, idx: usize) -> bool {
+            self.anchored.contains(&idx)
+        }
         fn needs_sync(&self, idx: usize, o: &Object) -> bool {
             o.render.needs_records || o.shape_dirty || o.material_dirty || self.extra.contains(&idx)
         }
         fn pending_due(&self, idx: usize) -> Option<bool> {
-            self.pending.iter().find(|p| p.0 == idx).map(|p| p.1)
+            self.asked.set(self.asked.get() + 1);
+            self.pending.iter().find(|p| p.0 == idx).map(|p| p.1).or(self.pending_else)
         }
     }
 
@@ -552,7 +931,42 @@ mod tests {
                 self.sets.touched(&self.world.objects, agent, idx, state.rigged(idx));
             }
             let n = self.world.objects.slots.len();
-            let list = self.sets.frame_list(&self.world.objects, agent, self.frame, n, state);
+            let list = self
+                .sets
+                .frame_list(&self.world.objects, agent, self.frame, n, state, LodChecks::Slice);
+            let mut out: Vec<usize> = list.items.iter().map(|i| i.0).collect();
+            for &idx in &out {
+                if let Some(o) = self.world.objects.get_mut_untracked(idx) {
+                    o.render.needs_records = false;
+                    o.shape_dirty = false;
+                    o.material_dirty = false;
+                }
+            }
+            out.sort_unstable();
+            out
+        }
+
+        /// One frame with the detail level checks by events, `dt` after
+        /// the last one; nothing is watched again by itself.
+        fn frame_events(&mut self, state: &State, anchored: &[usize], dt: f32) -> Vec<usize> {
+            self.frame_checks(state, anchored, dt, false)
+        }
+
+        fn frame_checks(&mut self, state: &State, anchored: &[usize], dt: f32, camera_moved: bool) -> Vec<usize> {
+            self.frame += 1;
+            let agent = self.world.agent_id;
+            let mut touched = Vec::new();
+            self.world.objects.take_touched(&mut touched);
+            for idx in touched {
+                self.sets.touched(&self.world.objects, agent, idx, state.rigged(idx));
+            }
+            let n = self.world.objects.slots.len();
+            let checks = LodChecks::Events {
+                anchored,
+                dt,
+                camera_moved,
+            };
+            let list = self.sets.frame_list(&self.world.objects, agent, self.frame, n, state, checks);
             let mut out: Vec<usize> = list.items.iter().map(|i| i.0).collect();
             for &idx in &out {
                 if let Some(o) = self.world.objects.get_mut_untracked(idx) {
@@ -716,6 +1130,109 @@ mod tests {
         assert_eq!(f.quiet_frame(&[still], &state), Vec::<usize>::new());
     }
 
+    /// What the GPU places from its wearer's attachment point is not
+    /// visited while only the wearer moves; it is when it changes itself,
+    /// or an object between it and the point.
+    #[test]
+    fn anchored_attachments_are_left_to_the_gpu() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let avatar = f.add(9000, 0, true);
+        let att = f.add(9001, 9000, false);
+        let att_child = f.add(9002, 9001, false);
+        let hud = f.add(9003, 9000, false);
+        let all = [avatar, att, att_child, hud];
+        f.frame(&state);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att, att_child, hud]);
+        // the sync anchored the linkset (not the HUD)
+        state.anchored.extend([att, att_child]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, hud]);
+        // the avatar is updated (it walks): what it wears stays put
+        f.update(avatar, |u| u.velocity = Vec3::X);
+        assert_eq!(f.frame(&state), vec![avatar, hud]);
+        // the attachment is moved on its point: its prims are placed again
+        if let Some(o) = f.world.objects.get_mut(att) {
+            o.render.needs_records = true;
+        }
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att, att_child, hud]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, hud]);
+        // a prim alone changes
+        if let Some(o) = f.world.objects.get_mut(att_child) {
+            o.material_dirty = true;
+        }
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att_child, hud]);
+        // the detail level check still comes round
+        while !(f.frame + 1 + att_child as u32).is_multiple_of(LOD_PERIOD) {
+            f.frame(&state);
+        }
+        assert!(f.frame(&state).contains(&att_child));
+        // the attachment starts spinning: the sync takes the linkset back
+        f.update(att, |u| u.angular_velocity = Vec3::Z);
+        assert_eq!(f.frame(&state), vec![avatar, att, att_child, hud]);
+        state.anchored.clear();
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, att, att_child, hud]);
+    }
+
+    /// A rigged root moves by itself and its plain prims are anchored: an
+    /// update of the root still reaches them, though the root was already
+    /// listed with its followers.
+    #[test]
+    fn an_updated_moving_root_reaches_its_anchored_prims() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let avatar = f.add(9000, 0, true);
+        let mesh = f.add(9001, 9000, false);
+        let prim = f.add(9002, 9001, false);
+        let all = [avatar, mesh, prim];
+        f.frame(&state);
+        state.rigged.insert(mesh);
+        f.sets.synced(&f.world.objects, f.world.agent_id, mesh, true);
+        state.anchored.insert(prim);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh]);
+        if let Some(o) = f.world.objects.get_mut(mesh) {
+            o.render.needs_records = true;
+        }
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh, prim]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh]);
+    }
+
+    /// A rigged mesh the GPU places stops being visited at each frame,
+    /// with the prims anchored below it; one the sync places is back.
+    #[test]
+    fn rigged_meshes_placed_by_the_gpu_are_not_visited() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let avatar = f.add(9000, 0, true);
+        let mesh = f.add(9001, 9000, false);
+        let prim = f.add(9002, 9001, false);
+        let all = [avatar, mesh, prim];
+        f.frame(&state);
+        // found rigged, placed by the sync (no palette yet, a HUD...)
+        state.rigged.insert(mesh);
+        f.sets.synced(&f.world.objects, f.world.agent_id, mesh, true);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh, prim]);
+        // then by the GPU, with its prim
+        state.rigged.remove(&mesh);
+        state.anchored.extend([mesh, prim]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar]);
+        assert!(!f.sets.own_moving.contains(mesh));
+        // its texture changes: it alone
+        if let Some(o) = f.world.objects.get_mut(mesh) {
+            o.material_dirty = true;
+        }
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh]);
+        // the sync takes it back (its palette changed place): the detail
+        // level check finds it moving again
+        state.anchored.clear();
+        state.rigged.insert(mesh);
+        while !(f.frame + 1 + mesh as u32).is_multiple_of(LOD_PERIOD) {
+            f.frame(&state);
+        }
+        f.frame(&state);
+        assert!(f.sets.own_moving.contains(mesh));
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, mesh, prim]);
+    }
+
     #[test]
     fn link_and_unlink_follow_a_moving_root() {
         let mut f = Fixture::new();
@@ -768,6 +1285,43 @@ mod tests {
         state.pending = vec![(b, false)];
         assert_eq!(f.quiet_frame(&[a, b], &state), Vec::<usize>::new());
         assert!(!f.sets.pending.contains(a) && f.sets.pending.contains(b));
+    }
+
+    #[test]
+    fn many_pending_objects_are_asked_about_over_a_few_frames() {
+        assert_eq!(pending_checks(0), 0);
+        assert_eq!(pending_checks(100), 100);
+        assert_eq!(pending_checks(PENDING_PER_FRAME), PENDING_PER_FRAME);
+        assert_eq!(pending_checks(PENDING_PER_FRAME + 500), PENDING_PER_FRAME);
+        assert_eq!(pending_checks(12_000), 3000);
+
+        let mut f = Fixture::new();
+        let n = PENDING_PER_FRAME * 2 + 500;
+        let objs: Vec<usize> = (0..n).map(|i| f.add(10_000 + i as u32, 0, false)).collect();
+        let mut state = State {
+            pending_else: Some(false),
+            ..State::default()
+        };
+        f.frame(&state);
+        for &i in &objs {
+            f.sets.pending.insert(i);
+        }
+        // nothing can progress: a part of them is asked about each frame
+        state.asked.set(0);
+        f.frame(&state);
+        assert_eq!(state.asked.get(), PENDING_PER_FRAME);
+        // one becomes ready, wherever the round is: listed within the round
+        let ready = objs[n - 7];
+        state.pending = vec![(ready, true)];
+        let listed = (0..n.div_ceil(PENDING_PER_FRAME)).any(|_| f.quiet_frame(&[ready], &state).contains(&ready));
+        assert!(listed);
+        // resolved ones leave the set as the round meets them
+        state.pending.clear();
+        state.pending_else = None;
+        for _ in 0..n.div_ceil(PENDING_PER_FRAME) {
+            f.frame(&state);
+        }
+        assert_eq!(f.sets.pending.len(), 0);
     }
 
     #[test]
@@ -850,6 +1404,86 @@ mod tests {
     }
 
     #[test]
+    fn arrivals_are_served_in_arrival_order() {
+        let mut a = Arrivals::default();
+        assert!(a.pop().is_none() && a.is_empty());
+        assert!(a.push(12));
+        assert!(a.push(3));
+        assert!(a.push(40));
+        // already waiting: it keeps its place
+        assert!(!a.push(3));
+        assert_eq!(a.len(), 3);
+        assert!(a.contains(40) && !a.contains(4) && !a.contains(999));
+        // removed while it waits, twice, and one that never waited
+        a.remove(3);
+        a.remove(3);
+        a.remove(999);
+        assert_eq!(a.len(), 2);
+        // its slot taken again by a new object: served once, at the place
+        // of the first entry met
+        a.push(3);
+        let order: Vec<usize> = std::iter::from_fn(|| a.pop()).collect();
+        assert_eq!(order, [12, 3, 40]);
+        assert!(a.is_empty() && !a.contains(12));
+        // emptied by removals alone: nothing left to skip
+        a.push(8);
+        a.remove(8);
+        assert!(a.queue.is_empty() && a.pop().is_none());
+    }
+
+    #[test]
+    fn arrivals_wait_out_of_the_frame_list() {
+        let mut f = Fixture::new();
+        let state = State::default();
+        let objs: Vec<usize> = (0..50).map(|i| f.add(9000 + i, 0, false)).collect();
+        f.frame(&state);
+        // a new object waiting for its first sync: the LOD slice passes it
+        let waiting = objs[7];
+        f.sets.arrivals.push(waiting);
+        let mut seen = vec![0u32; objs.len()];
+        for _ in 0..LOD_PERIOD {
+            for idx in f.frame(&state) {
+                seen[idx] += 1;
+            }
+        }
+        assert_eq!(seen[waiting], 0);
+        assert!(objs.iter().all(|&i| i == waiting || seen[i] == 1), "{seen:?}");
+        // served: visited like the others from then on
+        assert_eq!(f.sets.arrivals.pop(), Some(waiting));
+        let visits: usize = (0..LOD_PERIOD)
+            .map(|_| f.frame(&state).iter().filter(|&&i| i == waiting).count())
+            .sum();
+        assert_eq!(visits, 1);
+        // a removed object leaves the arrivals with the other sets
+        f.sets.arrivals.push(waiting);
+        f.sets.forget(waiting);
+        assert!(f.sets.arrivals.is_empty() && f.sets.arrivals.pop().is_none());
+    }
+
+    #[test]
+    fn full_sync_budget_keeps_a_reserve() {
+        let us = std::time::Duration::from_micros;
+        // the first half of the budget, then what is left of it
+        let mut b = FullSyncBudget::new(us(1000));
+        let reserve = b.left() / 2;
+        let mut first = 0;
+        while b.allows_beyond(reserve) {
+            b.spend(us(100));
+            first += 1;
+        }
+        assert_eq!((first, b.left()), (5, us(500)));
+        let mut rest = 0;
+        while b.allows() {
+            b.spend(us(100));
+            rest += 1;
+        }
+        assert_eq!(rest, 5);
+        // no time at all: the first of the frame is still done
+        let b = FullSyncBudget::new(us(0));
+        assert!(b.allows_beyond(us(0)) && b.allows_beyond(us(400)));
+    }
+
+    #[test]
     fn objects_waiting_in_the_backlog_are_not_listed_for_their_geometry() {
         let mut f = Fixture::new();
         let mut state = State::default();
@@ -887,6 +1521,175 @@ mod tests {
     }
 
     #[test]
+    fn rounds_visit_each_object_once_per_period_whatever_the_frame_rate() {
+        // 60 frames per second: the slice's share; faster: less per frame
+        for (dt, frames) in [(1.0 / 60.0, 24), (1.0 / 160.0, 64), (1.0 / 240.0, 96)] {
+            let mut credit = 0.0;
+            let total: usize = (0..frames).map(|_| round_share(&mut credit, 1200, dt, LOD_SECONDS)).sum();
+            assert!((1199..=1201).contains(&total), "{total} in {frames} frames");
+        }
+        // slower, or after a stall: never more than a slice of them
+        let mut credit = 0.0;
+        for dt in [1.0 / 20.0, 0.5, 30.0, f32::NAN] {
+            assert!(round_share(&mut credit, 1200, dt, LOD_SECONDS) <= 50);
+        }
+        assert_eq!(round_share(&mut credit, 0, 0.1, LOD_SECONDS), 0);
+        // a few objects: one now and then
+        let mut credit = 0.0;
+        let total: usize = (0..600).map(|_| round_share(&mut credit, 3, 1.0 / 60.0, SWEEP_SECONDS)).sum();
+        assert!((2..=3).contains(&total), "{total}");
+    }
+
+    /// Checks by events: objects at rest are listed when the camera has
+    /// travelled their slack, a slice of them at most per frame.
+    #[test]
+    fn objects_at_rest_are_checked_when_the_camera_has_moved() {
+        let mut f = Fixture::new();
+        let state = State::default();
+        let objs: Vec<usize> = (0..100).map(|i| f.add(9000 + i, 0, false)).collect();
+        f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0);
+        assert_eq!(f.frame_events(&state, &[], 0.0), objs);
+        for &idx in &objs {
+            f.sets.lod.watch(idx, if idx % 2 == 0 { 1.0 } else { 30.0 });
+        }
+        // the camera at rest: nobody, frame after frame
+        for _ in 0..3 * LOD_PERIOD {
+            f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0);
+            assert_eq!(f.frame_events(&state, &[], 0.0), Vec::<usize>::new());
+        }
+        // 2 m: those 1 m from a change of level, a slice of the slab per frame
+        f.sets.lod.advance(Vec3::X * 2.0, 2.0, 1.0);
+        let n = f.world.objects.slots.len();
+        let most = n.div_ceil(LOD_PERIOD as usize);
+        let mut seen = Vec::new();
+        for _ in 0..LOD_PERIOD {
+            let listed = f.frame_events(&state, &[], 0.0);
+            assert!(listed.len() <= most, "{} listed for a slice of {most}", listed.len());
+            seen.extend(listed);
+        }
+        seen.sort_unstable();
+        assert_eq!(seen, objs.iter().copied().filter(|i| i % 2 == 0).collect::<Vec<_>>());
+        // (their checks watch them again; until then they are not listed)
+        assert_eq!(f.frame_events(&state, &[], 0.0), Vec::<usize>::new());
+        // one waits for its first sync: its turn does not list it
+        f.sets.arrivals.push(objs[1]);
+        f.sets.lod.advance(Vec3::X * 40.0, 2.0, 1.0);
+        let mut seen = Vec::new();
+        for _ in 0..LOD_PERIOD {
+            seen.extend(f.frame_events(&state, &[], 0.0));
+        }
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            objs.iter().copied().filter(|&i| i % 2 == 1 && i != objs[1]).collect::<Vec<_>>()
+        );
+        // an updated object is listed by its update, whatever its wait
+        f.sets.lod.watch(objs[4], 500.0);
+        f.update(objs[4], |u| u.position += Vec3::X);
+        assert_eq!(f.frame_events(&state, &[], 0.0), vec![objs[4]]);
+        assert!(!f.sets.only_checked(objs[4]));
+        // a removed one leaves the watch with the other sets
+        f.sets.forget(objs[4]);
+        assert!(!f.sets.lod.is_watched(objs[4]));
+    }
+
+    /// Checks by events: what the GPU places from an avatar is visited in
+    /// turn every `LOD_SECONDS`, and every object every `SWEEP_SECONDS`.
+    #[test]
+    fn anchored_objects_and_the_sweep_come_round_by_time() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let avatar = f.add(9000, 0, true);
+        let worn: Vec<usize> = (0..60).map(|i| f.add(9001 + i, 9000, false)).collect();
+        let still = f.add(9900, 0, false);
+        f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0);
+        f.frame_events(&state, &[], 0.0);
+        state.anchored.extend(worn.iter().copied());
+        f.sets.lod.watch(still, 100.0);
+        let n = f.world.objects.slots.len();
+        // 240 frames per second: one round of the worn objects in 0.4 s
+        let dt = 1.0 / 240.0;
+        let frames = (LOD_SECONDS / dt).round() as usize;
+        let mut seen = vec![0u32; n];
+        let mut most = 0;
+        for _ in 0..frames {
+            let listed = f.frame_events(&state, &worn, dt);
+            assert!(listed.contains(&avatar));
+            most = most.max(listed.len() - 1);
+            for idx in listed {
+                seen[idx] += 1;
+                assert!(idx == avatar || f.sets.only_checked(idx));
+            }
+        }
+        // (the sweep adds a visit to a few of them)
+        assert!(worn.iter().all(|&i| (1..=2).contains(&seen[i])), "{seen:?}");
+        assert!(most <= 2, "{most} checks in a frame");
+        // the object at rest: by the sweep alone, once in ten seconds
+        let mut seen = vec![0u32; n];
+        for _ in 0..(SWEEP_SECONDS / dt).round() as usize {
+            for idx in f.frame_events(&state, &worn, dt) {
+                seen[idx] += 1;
+            }
+        }
+        assert!((1..=2).contains(&seen[still]), "{}", seen[still]);
+        assert!(seen[worn[7]] >= 24);
+        // at 30 frames per second: not more per frame than the slice gave
+        let mut seen = vec![0u32; n];
+        for _ in 0..LOD_PERIOD {
+            let listed = f.frame_events(&state, &worn, 1.0 / 30.0);
+            assert!(listed.len() - 1 <= 2 * n.div_ceil(LOD_PERIOD as usize));
+            for idx in listed {
+                seen[idx] += 1;
+            }
+        }
+        assert!(worn.iter().all(|&i| seen[i] >= 1), "{seen:?}");
+        // while the camera moves: every 24 frames whatever the frame rate,
+        // as by the slice
+        let mut seen = vec![0u32; n];
+        for _ in 0..LOD_PERIOD {
+            for idx in f.frame_checks(&state, &worn, dt, true) {
+                seen[idx] += 1;
+            }
+        }
+        assert!(worn.iter().all(|&i| (1..=2).contains(&seen[i])), "{seen:?}");
+    }
+
+    /// A HUD attachment stays where it is on the screen: it does not
+    /// follow its wearer through the sync. What moves by itself on it
+    /// still brings what is linked below, and an update brings the HUD.
+    #[test]
+    fn hud_attachments_do_not_follow_their_wearer() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let avatar = f.add(9000, 0, true);
+        let hud = f.add(9001, 9000, false);
+        let button = f.add(9002, 9001, false);
+        let needle = f.add(9003, 9002, false);
+        let hat = f.add(9010, 9000, false);
+        let all = [avatar, hud, button, needle, hat];
+        f.frame(&state);
+        // the slice way (AURORA_SYNC_SLICE): with the wearer at each frame
+        assert_eq!(f.quiet_frame(&all, &state), all.to_vec());
+        // found on a HUD point by their sync
+        state.hud.extend([hud, button, needle]);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, hat]);
+        // the wearer walks: still not
+        f.update(avatar, |u| u.velocity = Vec3::X);
+        assert_eq!(f.frame(&state), vec![avatar, hat]);
+        // the HUD is moved on the screen: placed again with its prims, once
+        if let Some(o) = f.world.objects.get_mut(hud) {
+            o.render.needs_records = true;
+        }
+        assert_eq!(f.quiet_frame(&all, &state), all.to_vec());
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, hat]);
+        // a button starts spinning: it and what is linked below it, at
+        // each frame; the rest of the HUD stays
+        f.update(button, |u| u.angular_velocity = Vec3::Z);
+        f.frame(&state);
+        assert_eq!(f.quiet_frame(&all, &state), vec![avatar, button, needle, hat]);
+    }
+
+    #[test]
     fn frame_list_levels_put_parents_first() {
         let mut f = Fixture::new();
         let state = State::default();
@@ -896,7 +1699,9 @@ mod tests {
         f.frame(&state);
         f.frame += 1;
         let n = f.world.objects.slots.len();
-        let list = f.sets.frame_list(&f.world.objects, f.world.agent_id, f.frame, n, &state);
+        let list = f
+            .sets
+            .frame_list(&f.world.objects, f.world.agent_id, f.frame, n, &state, LodChecks::Slice);
         let levels = list.levels();
         assert_eq!(levels.len(), 3);
         assert!(levels[0].contains(&avatar) && levels[1] == vec![att] && levels[2] == vec![prim]);

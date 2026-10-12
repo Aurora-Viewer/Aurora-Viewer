@@ -6,6 +6,81 @@ use crate::world::inventory::actions as rules;
 use uuid::Uuid;
 
 impl App {
+    fn take_task_inventory(&mut self, mut request: crate::build::task_inventory::TransferRequest) {
+        use crate::build::task_inventory::{self, TransferKind};
+        // Both object inventory windows receive the same TaskInventory events.
+        // Refresh the item before accepting a confirmation: permissions or the
+        // contents can have changed while the dialog was open.
+        if let Some(inv) = self.build.contents.objects.get(&request.object) {
+            let Some(item) = inv.items.iter().find(|item| item.item_id == request.item.item_id) else {
+                self.inventory_ui.message = aurora_i18n::tr!("task-transfer-unavailable").into();
+                return;
+            };
+            request.item = item.clone();
+        }
+        if !task_inventory::destination(
+            &self.world.inventory,
+            request.folder,
+            &request.item,
+            &self.settings.inventory.protected,
+        ) {
+            self.inventory_ui.message = aurora_i18n::tr!("task-transfer-destination").into();
+            return;
+        }
+        let kind = match self.build.task_transfer_kind(&self.world, request.object, &request.item) {
+            Ok(kind) => kind,
+            Err(error) => {
+                self.inventory_ui.message = error.into();
+                self.build.status = error.into();
+                return;
+            }
+        };
+        if let TransferKind::Move { scripted } = kind {
+            let prefs = &mut self.settings.inventory;
+            let warn = if scripted {
+                &mut prefs.warn_scripted_task_move
+            } else {
+                &mut prefs.warn_task_move
+            };
+            if *warn && !task_inventory::approved(request.approved, scripted) {
+                self.task_transfer = Some(ui::inventory::task_drop::PendingTransfer { request, scripted });
+                return;
+            }
+            if request.ignore_warning && request.approved == Some(scripted) {
+                *warn = false;
+                self.settings.save();
+            }
+        }
+        let Some(o) = self
+            .world
+            .objects
+            .index_of_uuid(&request.object)
+            .and_then(|i| self.world.objects.get(i))
+        else {
+            return;
+        };
+        self.build.send(aurora_net::build::BuildCmd::MoveTaskInventory {
+            handle: o.key.region,
+            local_id: o.key.local_id,
+            item_id: request.item.item_id,
+            folder_id: request.folder,
+        });
+        if matches!(kind, TransferKind::Move { .. }) {
+            if let Some(inv) = self.build.contents.objects.get_mut(&request.object) {
+                inv.items.retain(|i| i.item_id != request.item.item_id);
+            }
+            if let Some(c) = self.interactions.contents.as_mut().filter(|c| c.target.object == request.object)
+                && let Some(Ok(items)) = c.result.as_mut()
+            {
+                items.retain(|i| i.id != request.item.item_id);
+            }
+            self.build.contents_changed(request.object);
+        }
+        self.flush_build();
+        self.world.inventory.request(request.folder);
+        self.inventory_ui.message = aurora_i18n::tr!("task-transfer-requested").into();
+    }
+
     fn document_state(&mut self, editor: Uuid) -> Option<&mut crate::ui::inventory::InventoryUi> {
         if self.inventory_ui.ui_id == editor {
             return Some(&mut self.inventory_ui);
@@ -117,7 +192,8 @@ impl App {
 
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         match action {
-            InvAction::Edit(change) => {
+            InvAction::TakeTask(request) => self.take_task_inventory(*request),
+            InvAction::Edit(mut change) => {
                 if self.inventory_ui.pending.is_some() {
                     return;
                 }
@@ -129,7 +205,13 @@ impl App {
                     return;
                 }
                 let request = Uuid::new_v4();
-                self.inventory_ui.pending = Some(request);
+                change.defer_folder_contents = true;
+                log::info!(
+                    "inventory mutation: {} operations, {} item copies",
+                    change.operations.len(),
+                    change.copies.len()
+                );
+                self.inventory_ui.begin_mutation(request, &change);
                 self.inventory_ui.pending_refresh.clone_from(&change.refresh);
                 self.inventory_ui.created_selection = change.operations.iter().find_map(|op| {
                     if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
@@ -334,15 +416,47 @@ impl App {
     }
 
     pub(super) fn inventory_result(&mut self, request: Uuid, result: Result<aurora_net::inventory::operations::Reply, String>) {
+        if let Some(refresh) = self.inventory_ui.finish_copy(request, result.is_ok()) {
+            if let Err(reason) = result {
+                self.inventory_ui.message = reason;
+                for id in refresh {
+                    if let Some(folder) = self.world.inventory.folders.get(&id) {
+                        self.world.inventory.queue.push((id, folder.library));
+                    }
+                }
+            }
+            for w in &mut self.inventory_ui.windows {
+                w.state.message.clone_from(&self.inventory_ui.message);
+            }
+            return;
+        }
         if self.inventory_ui.pending != Some(request) {
             return;
         }
-        self.inventory_ui.pending = None;
+        let result = match result {
+            Ok(reply) if !reply.copies.is_empty() => {
+                self.world.inventory.remove(&reply.removed);
+                self.world.inventory.apply(reply.contents.clone());
+                self.world.inventory.created_folders(reply.folders.clone());
+                if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id)) {
+                    self.inventory_ui.show_original(&self.world.inventory, *id);
+                }
+                self.inventory_ui.watch_copy(request, &reply);
+                self.send(NetCommand::FinishInventoryCopies { request, reply });
+                return;
+            }
+            result => result,
+        };
+        self.inventory_ui.finish_mutation(result.is_ok());
+        if result.as_ref().is_ok_and(|reply| reply.moves_queued) {
+            self.inventory_ui.moves_queued_notice();
+        }
         self.finish_inventory_image(request, result.as_ref().err().cloned());
         match result {
             Ok(reply) => {
                 self.world.inventory.remove(&reply.removed);
                 self.world.inventory.apply(reply.contents);
+                self.world.inventory.created_folders(reply.folders);
                 if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| self.inventory_ui.pending_refresh.contains(&id)) {
                     for cmd in crate::world::appearance::sync_commands(
                         &self.world.inventory,
@@ -355,9 +469,6 @@ impl App {
                 if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id)) {
                     self.inventory_ui.show_original(&self.world.inventory, *id);
                     self.inventory_ui.begin_rename(&self.world.inventory, *id);
-                }
-                if !reply.copies.is_empty() {
-                    self.send(NetCommand::CopyInventoryItems(reply.copies));
                 }
                 if self.inventory_ui.consume_clipboard {
                     self.inventory_ui.clipboard.clear();

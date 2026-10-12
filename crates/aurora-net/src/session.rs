@@ -5,8 +5,10 @@
 
 mod asset_imports;
 mod build_cmds;
+mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
+mod inventory_updates;
 mod inventory_upload;
 mod object_actions;
 mod scripts;
@@ -165,6 +167,7 @@ struct Session<'a> {
     inventory_previews: inventory_preview::Previews,
     script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
+    inventory_copies: inventory_copies::Pending,
     inventory_merchant_pending: bool,
     next_inventory_callback: u32,
 }
@@ -268,6 +271,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_previews: Default::default(),
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
+        inventory_copies: inventory_copies::Pending::default(),
         notecard_copy_tx,
         inventory_move_tx,
         notecard_copies: HashMap::new(),
@@ -684,6 +688,9 @@ impl Session<'_> {
         self.expire_inventory_uploads();
         self.expire_asset_imports();
         self.expire_inventory_previews();
+        for completion in self.inventory_copies.expire(Instant::now()) {
+            self.finish_inventory_copies(completion);
+        }
         let before = self.inventory_callbacks.len();
         self.inventory_callbacks
             .retain(|_, (sent, _)| sent.elapsed() < Duration::from_secs(60));
@@ -1313,7 +1320,65 @@ impl Session<'_> {
             NetCommand::FetchInventory { folders, owner, library } => self.fetch_inventory(folders, owner, library),
             NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner),
             NetCommand::EditInventory { request, change } => {
-                let Some((cap, fetch_cap)) = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventoryDescendents2")) else {
+                if change.operations.is_empty() && !change.copies.is_empty() && change.copies.len() <= 2048 && !change.refresh.is_empty() {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryEdited {
+                            request,
+                            result: Ok(crate::inventory::operations::Reply {
+                                contents: Vec::new(),
+                                folders: Vec::new(),
+                                moves_queued: false,
+                                refresh: change.refresh,
+                                copies: change.copies,
+                                removed: change.removed,
+                                created: HashMap::new(),
+                            }),
+                        },
+                    );
+                    return;
+                }
+                if change.move_only() {
+                    let result = change
+                        .operations
+                        .iter()
+                        .try_for_each(|op| {
+                            let crate::inventory::operations::Operation::Patch { id, folder, body } = op else {
+                                return Ok(());
+                            };
+                            let parent = body["parent_id"].as_uuid();
+                            if id.is_nil() || parent.is_nil() {
+                                return Err(aurora_i18n::tr!("inventory-move-invalid-target").into());
+                            }
+                            self.queue_inventory_move(crate::inventory::operations::InventoryMove {
+                                id: *id,
+                                parent,
+                                folder: *folder,
+                            })
+                        })
+                        .map(|()| crate::inventory::operations::Reply {
+                            contents: Vec::new(),
+                            folders: Vec::new(),
+                            moves_queued: true,
+                            refresh: change.refresh,
+                            copies: Vec::new(),
+                            removed: change.removed,
+                            created: HashMap::new(),
+                        });
+                    emit(self.sh, NetEvent::InventoryEdited { request, result });
+                    return;
+                }
+                let folder_creation = (change.defer_folder_contents || !change.copies.is_empty())
+                    && change
+                        .operations
+                        .iter()
+                        .all(|op| matches!(op, crate::inventory::operations::Operation::Folder { .. }));
+                let fetch = if folder_creation {
+                    Some(String::new())
+                } else {
+                    self.main_cap("FetchInventoryDescendents2")
+                };
+                let Some((cap, fetch_cap)) = self.main_cap("InventoryAPIv3").zip(fetch) else {
                     emit(
                         self.sh,
                         NetEvent::InventoryEdited {
@@ -1328,9 +1393,17 @@ impl Session<'_> {
                 let owner = self.agent_id();
                 let moves = self.inventory_move_tx.clone();
                 tokio::spawn(async move {
-                    let result = crate::inventory::operations::mutate_with_moves(&http, &cap, &fetch_cap, owner, change, |movement| {
-                        inventory_moves::submit(moves.clone(), movement)
-                    })
+                    let result = crate::inventory::operations::mutate_with_progress(
+                        &http,
+                        &cap,
+                        &fetch_cap,
+                        owner,
+                        change,
+                        |movement| inventory_moves::submit(moves.clone(), movement),
+                        |progress| {
+                            let _ = events.send(NetEvent::InventoryProgress { request, progress });
+                        },
+                    )
                     .await;
                     let _ = events.send(NetEvent::InventoryEdited { request, result });
                 });
@@ -1538,19 +1611,12 @@ impl Session<'_> {
             }
             NetCommand::CopyInventoryItems(items) => {
                 for it in items {
-                    let mut m = CopyInventoryItem::default();
-                    m.agent_data.agent_id = self.agent_id();
-                    m.agent_data.session_id = self.session_id();
-                    m.inventory_data = vec![copy_inventory_item::InventoryData {
-                        callback_id: self.inventory_callback(false),
-                        old_agent_id: it.owner,
-                        old_item_id: it.item,
-                        new_folder_id: it.parent,
-                        new_name: str_field(&it.name),
-                    }];
+                    let callback = self.inventory_callback(false);
+                    let m = inventory_copies::message(self.agent_id(), self.session_id(), callback, &it);
                     self.send_main(&m, true);
                 }
             }
+            NetCommand::FinishInventoryCopies { request, reply } => self.start_inventory_copies(request, reply),
             NetCommand::CopyNotecardInventory {
                 editor,
                 open,
@@ -2137,6 +2203,9 @@ impl Session<'_> {
     fn on_eq_event(&mut self, e: EqEvent) {
         log::debug!("EQ {} from {}", e.message, e.sim);
         let b = &e.body;
+        if self.on_inventory_eq(&e) {
+            return;
+        }
         if self.on_social_eq(&e.message, b) || self.on_land_eq(&e.message, b) || self.on_build_eq(&e.message, b) {
             return;
         }
@@ -2996,6 +3065,16 @@ impl Session<'_> {
                     online: false,
                 },
             );
+        } else if id == GenericMessage::ID {
+            let m: GenericMessage = pkt.decode()?;
+            if let Some(parameter) = m.param_list.first() {
+                self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+            }
+        } else if id == LargeGenericMessage::ID {
+            let m: LargeGenericMessage = pkt.decode()?;
+            if let Some(parameter) = m.param_list.first() {
+                self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+            }
         } else if id == UpdateCreateInventoryItem::ID {
             let m: UpdateCreateInventoryItem = pkt.decode()?;
             if m.agent_data.agent_id == self.agent_id() {
@@ -3006,6 +3085,7 @@ impl Session<'_> {
                     .map(|it| {
                         let item = crate::inventory::operations::item_from_udp(it);
                         self.asset_created(it.callback_id, &item);
+                        self.accept_inventory_copy(it.callback_id, &item);
                         if let Some((editor, notecard, open)) = self.notecard_copies.remove(&it.callback_id) {
                             emit(
                                 self.sh,
@@ -3023,7 +3103,13 @@ impl Session<'_> {
                         item
                     })
                     .collect();
-                emit(self.sh, NetEvent::InventoryItems(items));
+                emit(
+                    self.sh,
+                    NetEvent::InventoryUpdated {
+                        folders: Vec::new(),
+                        items,
+                    },
+                );
                 for item in created {
                     emit(self.sh, NetEvent::InventoryCreated(item));
                 }
@@ -3031,14 +3117,13 @@ impl Session<'_> {
         } else if id == BulkUpdateInventory::ID {
             let m: BulkUpdateInventory = pkt.decode()?;
             if m.agent_data.agent_id == self.agent_id() {
-                let mut parents = Vec::new();
                 let mut created = Vec::new();
                 let items = m
                     .item_data
                     .iter()
                     .map(|it| {
                         let new = self.inventory_callbacks.remove(&it.callback_id).is_some_and(|(_, new)| new);
-                        parents.push(it.folder_id);
+
                         let item = crate::inventory::InvItem {
                             id: it.item_id,
                             parent: it.folder_id,
@@ -3062,6 +3147,7 @@ impl Session<'_> {
                             created_at: i64::from(it.creation_date),
                             ..Default::default()
                         };
+                        self.accept_inventory_copy(it.callback_id, &item);
                         if new {
                             created.push(item.clone());
                         }
@@ -3080,15 +3166,22 @@ impl Session<'_> {
                         item
                     })
                     .collect();
-                emit(self.sh, NetEvent::InventoryItems(items));
+                let folders = m
+                    .folder_data
+                    .iter()
+                    .filter(|f| !f.folder_id.is_nil())
+                    .map(|f| crate::inventory::InvFolder {
+                        id: f.folder_id,
+                        parent: f.parent_id,
+                        name: field_str(&f.name),
+                        type_default: i32::from(f.type_),
+                        version: -1,
+                        ..Default::default()
+                    })
+                    .collect();
+                emit(self.sh, NetEvent::InventoryUpdated { folders, items });
                 for item in created {
                     emit(self.sh, NetEvent::InventoryCreated(item));
-                }
-                parents.extend(m.folder_data.iter().map(|f| f.parent_id).filter(|id| !id.is_nil()));
-                parents.sort();
-                parents.dedup();
-                if !parents.is_empty() {
-                    self.fetch_inventory(parents, self.agent_id(), false);
                 }
             }
         } else if id == AvatarAnimation::ID {

@@ -25,7 +25,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 
-use crate::types::DrawIndexedIndirect;
+use crate::shadow_cull::{SHADOW_PLANES, casts_into};
+use crate::types::{DrawIndexedIndirect, SKELETON_ANCHOR, SkinBind};
 use crate::writes::GpuWrites;
 
 /// `CullFace::object` / `CullObject::avatar` of nothing.
@@ -55,6 +56,9 @@ pub mod object_flags {
     pub const HUD: u32 = 8;
     /// Avatars, their attachments and animesh: not in reflection probes.
     pub const NO_PROBE: u32 = 16;
+    /// Rigged mesh posed by the GPU: its sphere is computed each frame from
+    /// its joint boxes (`CullObject::boxes`) and its skeleton's palette.
+    pub const POSED: u32 = 32;
 }
 
 /// `CullObject::state` of an avatar entry, set every frame by the scene.
@@ -67,25 +71,35 @@ pub mod avatar_state {
     pub const LOADING: u32 = 4;
 }
 
-pub const BINS: usize = 10;
+pub const BINS: usize = 13;
 pub const MAIN_BINS: usize = 4;
+/// Shadow casters of each cascade drawn depth only: opaque faces, which
+/// `fs_shadow` never discards.
 pub const BIN_SHADOW: usize = 4;
 pub const BIN_REFL_WATER: usize = 7;
 pub const BIN_REFL_MIRROR: usize = 8;
 pub const BIN_PROBE: usize = 9;
+/// Shadow casters of each cascade drawn with the alpha test of `fs_shadow`
+/// (masked faces, blended rigged faces).
+pub const BIN_SHADOW_ALPHA: usize = 10;
 /// Argument regions: the bins, then the occlusion's phase 1 and phase 2
 /// prepass lists of the main bins (depth only, in no particular order).
-pub const REGION_PRE1: usize = 10;
-pub const REGION_PRE2: usize = 14;
-const REGIONS: usize = 18;
+pub const REGION_PRE1: usize = 13;
+pub const REGION_PRE2: usize = 17;
+const REGIONS: usize = 21;
 
-const COUNT_VISIBLE: usize = 10;
-const COUNT_TRIANGLES: usize = 11;
-const COUNT_HIDDEN: usize = 12;
+const COUNT_VISIBLE: usize = 13;
+const COUNT_TRIANGLES: usize = 14;
+const COUNT_HIDDEN: usize = 15;
 /// Counts of the phase 1 and phase 2 prepass lists of each main bin.
 pub const COUNT_PRE1: usize = 16;
 pub const COUNT_PRE2: usize = 20;
-const COUNTS: usize = 32;
+/// Profile (`frame_flags::SHADOW_STATS`), per cascade: triangles of its
+/// casters, then its rigged casters, then their triangles.
+const COUNT_SHADOW: usize = 24;
+#[cfg(test)]
+const SHADOW_STATS: usize = 9;
+const COUNTS: usize = 40;
 
 /// `CullFrame::sizes.w`.
 pub mod frame_flags {
@@ -95,9 +109,16 @@ pub mod frame_flags {
     pub const MIRROR: u32 = 8;
     pub const PROBE: u32 = 16;
     pub const OCCLUSION: u32 = 32;
+    /// Count the casters' triangles and the rigged casters of each cascade
+    /// (AURORA_PROFILE).
+    pub const SHADOW_STATS: u32 = 64;
+    /// Every caster drawn with the alpha test, none depth only
+    /// (AURORA_SHADOW_LEGACY).
+    pub const SHADOW_ALPHA_ALL: u32 = 128;
 }
 
 const CLASSIFY_GROUP: u32 = 128;
+const SPHERE_GROUP: u32 = 64;
 
 /// One drawable face, indexed by its draw record (must match `CullFace` in
 /// cull.wgsl).
@@ -131,7 +152,8 @@ impl CullFace {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable, PartialEq)]
 pub struct CullObject {
-    /// Bounding sphere (center, radius).
+    /// Bounding sphere (center, radius), in the world or in the space of
+    /// `anchor`.
     pub sphere: [f32; 4],
     pub flags: u32,
     /// Avatar whose state applies: itself, the wearer of an attachment, or
@@ -139,7 +161,38 @@ pub struct CullObject {
     pub avatar: u32,
     /// `avatar_state` of an avatar entry.
     pub state: u32,
+    /// Worn object placed by the GPU: index + 1 of the anchor matrix its
+    /// sphere is relative to (joint palettes buffer, `flags::ANCHORED`
+    /// records); 0: the sphere is in the world. A posed object's anchor is
+    /// its skeleton's (`SKELETON_ANCHOR` after the palette's first joint).
+    pub anchor: u32,
+    /// Posed objects: first joint box of its geometry, their count, and
+    /// the first skin binding of its mesh.
+    pub boxes: u32,
+    pub box_count: u32,
+    pub binds: u32,
     pub _pad: u32,
+}
+
+/// Bind-space box of the vertices one mesh joint influences (must match
+/// `JointBox` in cull.wgsl): the posed boxes of a rigged mesh enclose it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable, PartialEq)]
+pub struct JointBox {
+    pub min: [f32; 3],
+    /// Mesh joint (index into the mesh's skin bindings).
+    pub joint: u32,
+    pub max: [f32; 3],
+    pub _pad: u32,
+}
+
+impl JointBox {
+    pub const NONE: JointBox = JointBox {
+        min: [0.0; 3],
+        joint: 0,
+        max: [0.0; 3],
+        _pad: 0,
+    };
 }
 
 impl CullObject {
@@ -148,8 +201,81 @@ impl CullObject {
         flags: 0,
         avatar: NO_OBJECT,
         state: 0,
+        anchor: 0,
+        boxes: 0,
+        box_count: 0,
+        binds: 0,
         _pad: 0,
     };
+
+    /// World bounding sphere (reference of `cs_spheres` in cull.wgsl). An
+    /// anchored object's follows its anchor (a rigid matrix: the radius is
+    /// kept). A posed object's encloses its joint boxes as its skeleton
+    /// poses them (as `LLVOAvatar::calculateSpatialExtents` stretches the
+    /// extents by the rigged attachments), or is the anchored sphere when
+    /// that gives nothing sane.
+    pub fn world_sphere(&self, palettes: &[[[f32; 4]; 4]], binds: &[SkinBind], boxes: &[JointBox]) -> (Vec3, f32) {
+        let c = Vec3::new(self.sphere[0], self.sphere[1], self.sphere[2]);
+        let Some(anchor) = self.anchor.checked_sub(1).and_then(|a| palettes.get(a as usize)) else {
+            return (c, self.sphere[3]);
+        };
+        let anchor = Mat4::from_cols_array_2d(anchor);
+        let rest = (anchor.transform_point3(c), self.sphere[3]);
+        let Some(base) = (self.anchor - 1)
+            .checked_sub(SKELETON_ANCHOR)
+            .filter(|_| self.flags & object_flags::POSED != 0)
+        else {
+            return rest;
+        };
+        let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        let mut sane = self.box_count > 0;
+        for k in 0..self.box_count {
+            let Some(b) = boxes.get((self.boxes + k) as usize) else {
+                return rest;
+            };
+            let Some(bind) = binds.get((self.binds + b.joint) as usize) else {
+                return rest;
+            };
+            let Some(joint) = palettes.get((base + bind.joint[0]) as usize) else {
+                return rest;
+            };
+            let m = anchor * Mat4::from_cols_array_2d(joint) * Mat4::from_cols_array_2d(&bind.inverse_bind);
+            for corner in 0..8u32 {
+                let pick = |bit: u32, lo: f32, hi: f32| if corner & bit != 0 { hi } else { lo };
+                let p = m.transform_point3(Vec3::new(
+                    pick(1, b.min[0], b.max[0]),
+                    pick(2, b.min[1], b.max[1]),
+                    pick(4, b.min[2], b.max[2]),
+                ));
+                // (a NaN fails the comparison)
+                sane &= p.abs().cmplt(Vec3::splat(POSED_COORD_MAX)).all();
+                min = min.min(p);
+                max = max.max(p);
+            }
+        }
+        if !sane {
+            return rest;
+        }
+        let center = (min + max) * 0.5;
+        let radius = ((max - min) * 0.5).length().max(0.05);
+        if radius < POSED_RADIUS_MAX && center.distance(rest.0) < POSED_RADIUS_MAX {
+            (center, radius)
+        } else {
+            rest
+        }
+    }
+}
+
+/// A posed sphere larger than this, or this far from its skeleton, comes
+/// from a palette that is not a pose (not sized yet, garbage): the anchored
+/// sphere is kept.
+pub const POSED_RADIUS_MAX: f32 = 64.0;
+/// Posed corners beyond this (or NaN) are no pose either.
+pub const POSED_COORD_MAX: f32 = 1.0e6;
+
+/// World sphere of every object (reference of `cs_spheres`).
+pub fn world_spheres(objects: &[CullObject], palettes: &[[[f32; 4]; 4]], binds: &[SkinBind], boxes: &[JointBox]) -> Vec<(Vec3, f32)> {
+    objects.iter().map(|o| o.world_sphere(palettes, binds, boxes)).collect()
 }
 
 /// Per-frame culling parameters (must match `CullFrame` in cull.wgsl).
@@ -161,6 +287,9 @@ pub struct CullFrame {
     pub mirror: [[f32; 4]; 6],
     pub probe: [[f32; 4]; 6],
     pub cascades: [[[f32; 4]; 4]; 3],
+    /// Per cascade: planes around what can cast a shadow the main view
+    /// samples in it (`caster_planes`).
+    pub shadow_planes: [[[f32; 4]; SHADOW_PLANES]; 3],
     /// Camera, draw distance.
     pub eye: [f32; 4],
     /// Shadow distance, reflection distance, pixel scale.
@@ -172,10 +301,17 @@ pub struct CullFrame {
 }
 
 impl CullFrame {
-    /// Frame parameters from the scene's view, the cascade matrices and the
-    /// water reflection, mirror and probe face view-projections (`flags`
-    /// says which are drawn); sizes are filled by `GpuCull::prepare`.
-    pub fn new(view: &GpuCullView, cascades: &[Mat4; 3], [water, mirror, probe]: [Mat4; 3], flags: u32) -> CullFrame {
+    /// Frame parameters from the scene's view, the cascade matrices with
+    /// their caster planes and the water reflection, mirror and probe face
+    /// view-projections (`flags` says which are drawn); sizes are filled by
+    /// `GpuCull::prepare`.
+    pub fn new(
+        view: &GpuCullView,
+        cascades: &[Mat4; 3],
+        shadow_planes: &[[[f32; 4]; SHADOW_PLANES]; 3],
+        [water, mirror, probe]: [Mat4; 3],
+        flags: u32,
+    ) -> CullFrame {
         let planes = |vp: Mat4| view_planes(vp).map(|p| p.to_array());
         CullFrame {
             planes: view.planes.map(|p| p.to_array()),
@@ -183,6 +319,7 @@ impl CullFrame {
             mirror: planes(mirror),
             probe: planes(probe),
             cascades: cascades.map(|m| m.to_cols_array_2d()),
+            shadow_planes: *shadow_planes,
             eye: view.eye.extend(view.draw_distance).to_array(),
             dist: [view.shadow_distance, view.reflection_distance, view.pixel_scale, 0.0],
             sizes: [0, 0, 0, flags],
@@ -235,8 +372,9 @@ pub fn in_cascade(m: &Mat4, c: Vec3, r: f32) -> bool {
 }
 
 /// Reference of `face_mask` in cull.wgsl (kept line for line): the bins of
-/// face `i`, and whether it counts as a visible object.
-pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], i: usize) -> (u32, bool) {
+/// face `i`, and whether it counts as a visible object. `spheres`: the
+/// world sphere of each object (`world_spheres`).
+pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], spheres: &[(Vec3, f32)], i: usize) -> (u32, bool) {
     let Some(f) = faces.get(i) else {
         return (0, false);
     };
@@ -255,8 +393,7 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
             return (0, false);
         }
     }
-    let c = Vec3::new(o.sphere[0], o.sphere[1], o.sphere[2]);
-    let r = o.sphere[3];
+    let (c, r) = spheres[f.object as usize];
     let d = (c - Vec3::new(frame.eye[0], frame.eye[1], frame.eye[2])).length();
     if d - r > frame.eye[3] && !is_avatar {
         return (0, false);
@@ -279,9 +416,11 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
     }
     let mut m = 0u32;
     if casts && (p != pass::BLEND || o.flags & (object_flags::RIGGED | object_flags::AVATAR) != 0) {
+        let depth_only = (p == pass::OPAQUE || p == pass::OPAQUE_2S) && fl & frame_flags::SHADOW_ALPHA_ALL == 0;
+        let bin = if depth_only { BIN_SHADOW } else { BIN_SHADOW_ALPHA };
         for (k, cm) in frame.cascades.iter().enumerate() {
-            if in_cascade(&Mat4::from_cols_array_2d(cm), c, r) {
-                m |= 1 << (BIN_SHADOW + k);
+            if in_cascade(&Mat4::from_cols_array_2d(cm), c, r) && casts_into(&frame.shadow_planes[k], c, r) {
+                m |= 1 << (bin + k);
             }
         }
     }
@@ -336,49 +475,86 @@ pub fn workgroup_ranks(masks: &[u32]) -> Vec<[u32; BINS]> {
         .collect()
 }
 
-/// Elements per dirty chunk of a `GpuTable`.
-const CHUNK: usize = 64;
+/// Elements per dirty chunk of a mirrored table: small enough that
+/// scattered updates (worn attachments, avatars) do not drag big untouched
+/// ranges along; neighbouring chunks are still uploaded in one write.
+pub(crate) const CHUNK: usize = 64;
 
-/// Dirty chunks of a mirrored table, coalesced into upload ranges.
+/// AURORA_SYNC_SLICE: whole chunks are uploaded, as before the uploads
+/// were cut to the changed elements (comparison).
+static WHOLE_CHUNKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Upload whole dirty chunks of the mirrored tables (draw records, culling
+/// tables) instead of their changed elements only.
+pub fn set_whole_chunk_uploads(on: bool) {
+    WHOLE_CHUNKS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Changed elements of a mirrored table, by chunk: the span they cover in
+/// each chunk, coalesced into upload ranges.
+///
+/// A range runs from the first changed element of a run of dirty chunks to
+/// the last one: as many writes as with whole chunks, without the untouched
+/// elements before and after (one record that moves alone in its chunk was
+/// sent with its 63 neighbours, 16 KB for 256 bytes).
 #[derive(Default, Debug)]
-struct DirtyChunks {
-    dirty: Vec<bool>,
+pub(crate) struct DirtyChunks {
+    /// First changed element of each chunk and the one after the last,
+    /// within the chunk; equal: nothing changed.
+    spans: Vec<(u8, u8)>,
     any: bool,
 }
 
 impl DirtyChunks {
-    fn mark(&mut self, i: usize) {
-        let c = i / CHUNK;
-        if self.dirty.len() <= c {
-            self.dirty.resize(c + 1, false);
+    pub(crate) fn mark(&mut self, i: usize) {
+        let (c, at) = (i / CHUNK, (i % CHUNK) as u8);
+        if self.spans.len() <= c {
+            self.spans.resize(c + 1, (0, 0));
         }
-        self.dirty[c] = true;
+        let s = &mut self.spans[c];
+        *s = if s.0 == s.1 { (at, at + 1) } else { (s.0.min(at), s.1.max(at + 1)) };
         self.any = true;
     }
 
-    fn clear(&mut self) {
-        self.dirty.iter_mut().for_each(|d| *d = false);
+    pub(crate) fn clear(&mut self) {
+        self.spans.iter_mut().for_each(|s| *s = (0, 0));
         self.any = false;
     }
 
+    pub(crate) fn any(&self) -> bool {
+        self.any
+    }
+
     /// Element ranges to upload (clipped to `len`); clears the marks.
-    fn take_ranges(&mut self, len: usize) -> Vec<std::ops::Range<usize>> {
+    pub(crate) fn take_ranges(&mut self, len: usize) -> Vec<std::ops::Range<usize>> {
+        self.take_ranges_as(len, WHOLE_CHUNKS.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    fn take_ranges_as(&mut self, len: usize, whole: bool) -> Vec<std::ops::Range<usize>> {
         let mut out = Vec::new();
         if !self.any {
             return out;
         }
         let mut c = 0;
-        while c < self.dirty.len() {
-            if !self.dirty[c] {
+        while c < self.spans.len() {
+            if self.spans[c].0 == self.spans[c].1 {
                 c += 1;
                 continue;
             }
             let start = c;
-            while c < self.dirty.len() && self.dirty[c] {
-                self.dirty[c] = false;
+            let first = self.spans[c].0 as usize;
+            let mut last = 0;
+            while c < self.spans.len() && self.spans[c].0 != self.spans[c].1 {
+                last = self.spans[c].1 as usize;
+                self.spans[c] = (0, 0);
                 c += 1;
             }
-            let (a, b) = (start * CHUNK, (c * CHUNK).min(len));
+            let (a, b) = if whole {
+                (start * CHUNK, c * CHUNK)
+            } else {
+                (start * CHUNK + first, (c - 1) * CHUNK + last)
+            };
+            let b = b.min(len);
             if a < b {
                 out.push(a..b);
             }
@@ -509,6 +685,12 @@ pub struct CullCounts {
     pub triangles: u32,
     /// Main-bin draws hidden by the occlusion.
     pub hidden: u32,
+    /// With `frame_flags::SHADOW_STATS`, per cascade: triangles of its
+    /// casters, its rigged casters (avatars and rigged meshes) and their
+    /// triangles.
+    pub shadow_triangles: [u32; 3],
+    pub shadow_rigged: [u32; 3],
+    pub shadow_rigged_triangles: [u32; 3],
 }
 
 impl CullCounts {
@@ -516,8 +698,13 @@ impl CullCounts {
         self.bins[..MAIN_BINS].iter().sum()
     }
 
+    /// Casters drawn in cascade `k`, depth only and alpha tested.
+    pub fn cascade_draws(&self, k: usize) -> u32 {
+        self.bins[BIN_SHADOW + k] + self.bins[BIN_SHADOW_ALPHA + k]
+    }
+
     pub fn shadow_draws(&self) -> u32 {
-        self.bins[BIN_SHADOW..BIN_SHADOW + 3].iter().sum()
+        (0..3).map(|k| self.cascade_draws(k)).sum()
     }
 }
 
@@ -558,6 +745,9 @@ fn entry(binding: u32, b: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
 pub struct CullTables {
     /// Objects table (indexed like the scene's object slab).
     pub objects: GpuTable<CullObject>,
+    /// Joint boxes of the rigged geometries the GPU poses (a range each,
+    /// `CullObject::boxes`).
+    pub boxes: GpuTable<JointBox>,
     /// Last counts read back by the render thread (a few frames old).
     pub last: CullCounts,
 }
@@ -566,14 +756,26 @@ impl CullTables {
     pub fn new(device: &wgpu::Device) -> Self {
         CullTables {
             objects: GpuTable::new(device, "cull objects", 4096, CullObject::NONE),
+            boxes: GpuTable::new(device, "cull joint boxes", 1024, JointBox::NONE),
             last: CullCounts::default(),
         }
     }
 }
 
+/// The scene's buffers the culling reads (handles of the frame's packet).
+pub struct CullInputs<'a> {
+    pub faces: &'a wgpu::Buffer,
+    pub objects: &'a wgpu::Buffer,
+    pub palettes: &'a wgpu::Buffer,
+    pub skin_binds: &'a wgpu::Buffer,
+    pub boxes: &'a wgpu::Buffer,
+}
+
 pub struct GpuCull {
+    spheres_layout: wgpu::BindGroupLayout,
     lists_layout: wgpu::BindGroupLayout,
     occlude_layout: wgpu::BindGroupLayout,
+    sphere_pass: wgpu::ComputePipeline,
     classify: wgpu::ComputePipeline,
     scan: wgpu::ComputePipeline,
     scatter: wgpu::ComputePipeline,
@@ -595,6 +797,12 @@ pub struct GpuCull {
     /// Last counts read back.
     pub last: CullCounts,
     max_groups: u32,
+    /// World sphere of each object this frame (`cs_spheres`), and the
+    /// objects it has room for.
+    spheres: wgpu::Buffer,
+    sphere_cap: u32,
+    /// This frame: objects of the scene's table.
+    objects: u32,
 }
 
 impl GpuCull {
@@ -615,6 +823,17 @@ impl GpuCull {
                 format!("{}\n{}", include_str!("shaders/hiz_test.wgsl"), include_str!("shaders/cull.wgsl")).into(),
             ),
         });
+        let spheres_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("cull spheres"),
+            entries: &[
+                uniform(0),
+                storage(2, true),
+                storage(10, true),
+                storage(11, true),
+                storage(12, true),
+                storage(13, false),
+            ],
+        });
         let lists_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("cull lists"),
             entries: &[
@@ -626,6 +845,7 @@ impl GpuCull {
                 storage(5, false),
                 storage(6, false),
                 storage(7, false),
+                storage(13, false),
             ],
         });
         let occlude_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -648,6 +868,7 @@ impl GpuCull {
                     },
                     count: None,
                 },
+                storage(13, false),
             ],
         });
         let pipeline = |layout: &wgpu::BindGroupLayout, entry: &str| {
@@ -665,6 +886,7 @@ impl GpuCull {
                 cache: None,
             })
         };
+        let sphere_pass = pipeline(&spheres_layout, "cs_spheres");
         let classify = pipeline(&lists_layout, "cs_classify");
         let scan = pipeline(&lists_layout, "cs_scan");
         let scatter = pipeline(&lists_layout, "cs_scatter");
@@ -683,8 +905,10 @@ impl GpuCull {
         });
         let cap = 4096;
         let mut s = GpuCull {
+            spheres_layout,
             lists_layout,
             occlude_layout,
+            sphere_pass,
             classify,
             scan,
             scatter,
@@ -701,6 +925,9 @@ impl GpuCull {
             copied: std::cell::Cell::new(None),
             last: CullCounts::default(),
             max_groups: device.limits().max_compute_workgroups_per_dimension,
+            spheres: Self::make_storage(device, "cull spheres", 4096 * 16),
+            sphere_cap: 4096,
+            objects: 0,
         };
         s.readback = (0..3)
             .map(|_| {
@@ -747,37 +974,56 @@ impl GpuCull {
             self.group_data = Self::make_storage(device, "cull groups", self.cap.div_ceil(CLASSIFY_GROUP) as u64 * BINS as u64 * 4);
             log::info!("GPU culling: {} slots per bin", self.cap);
         }
+        let objects = (objects as u32).min(self.max_groups.saturating_mul(SPHERE_GROUP));
+        if objects > self.sphere_cap {
+            self.sphere_cap = objects.next_power_of_two();
+            self.spheres = Self::make_storage(device, "cull spheres", self.sphere_cap as u64 * 16);
+        }
+        self.objects = objects;
         self.faces = faces;
         self.groups = faces.div_ceil(CLASSIFY_GROUP).max(1);
         frame.sizes[0] = faces;
-        frame.sizes[1] = objects as u32;
+        frame.sizes[1] = objects;
         frame.sizes[2] = self.cap;
         frame.groups = [self.groups, 0, 0, 0];
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
     }
 
-    /// Classify, scan and scatter: this frame's bins.
+    /// The objects' world spheres, then classify, scan and scatter: this
+    /// frame's bins.
     pub fn encode(
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        faces: &wgpu::Buffer,
-        objects: &wgpu::Buffer,
+        scene: &CullInputs,
         visibility: &wgpu::Buffer,
         timestamps: Option<wgpu::ComputePassTimestampWrites>,
     ) {
+        let spheres_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cull spheres"),
+            layout: &self.spheres_layout,
+            entries: &[
+                entry(0, &self.frame),
+                entry(2, scene.objects),
+                entry(10, scene.palettes),
+                entry(11, scene.skin_binds),
+                entry(12, scene.boxes),
+                entry(13, &self.spheres),
+            ],
+        });
         let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cull lists"),
             layout: &self.lists_layout,
             entries: &[
                 entry(0, &self.frame),
-                entry(1, faces),
-                entry(2, objects),
+                entry(1, scene.faces),
+                entry(2, scene.objects),
                 entry(3, visibility),
                 entry(4, &self.masks),
                 entry(5, &self.group_data),
                 entry(6, &self.counts),
                 entry(7, &self.args),
+                entry(13, &self.spheres),
             ],
         });
         encoder.clear_buffer(&self.counts, 0, None);
@@ -785,6 +1031,9 @@ impl GpuCull {
             label: Some("gpu culling"),
             timestamp_writes: timestamps,
         });
+        pass.set_pipeline(&self.sphere_pass);
+        pass.set_bind_group(0, &spheres_bg, &[]);
+        pass.dispatch_workgroups(self.objects.div_ceil(SPHERE_GROUP).max(1), 1, 1);
         pass.set_bind_group(0, &bg, &[]);
         pass.set_pipeline(&self.classify);
         pass.dispatch_workgroups(self.groups, 1, 1);
@@ -796,7 +1045,6 @@ impl GpuCull {
 
     /// Occlusion test of the main bins (after the Hi-Z pyramid of the phase
     /// 1 prepass): hidden draws get instance_count 0, phase 2 arguments.
-    #[allow(clippy::too_many_arguments)]
     pub fn encode_occlusion(
         &self,
         device: &wgpu::Device,
@@ -822,6 +1070,7 @@ impl GpuCull {
                     binding: 9,
                     resource: wgpu::BindingResource::TextureView(hiz),
                 },
+                entry(13, &self.spheres),
             ],
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -866,6 +1115,10 @@ impl GpuCull {
                     c.visible_objects = n[COUNT_VISIBLE];
                     c.triangles = n[COUNT_TRIANGLES];
                     c.hidden = n[COUNT_HIDDEN];
+                    let stat = |i: usize| std::array::from_fn(|k| n[COUNT_SHADOW + i * 3 + k]);
+                    c.shadow_triangles = stat(0);
+                    c.shadow_rigged = stat(1);
+                    c.shadow_rigged_triangles = stat(2);
                     self.last = c;
                 }
                 buf.unmap();
@@ -922,14 +1175,40 @@ mod tests {
             wgsl_fields(src, "CullFace"),
             ["index_count", "first_index", "base_vertex", "object", "bits", "_p0", "_p1", "_p2"]
         );
-        assert_eq!(std::mem::size_of::<CullObject>(), 32);
-        assert_eq!(wgsl_fields(src, "CullObject"), ["sphere", "flags", "avatar", "state", "_p"]);
-        // uniform layout: 4 x 6 planes, 3 matrices, 4 vectors
-        assert_eq!(std::mem::size_of::<CullFrame>(), 4 * 6 * 16 + 3 * 64 + 4 * 16);
+        assert_eq!(std::mem::size_of::<CullObject>(), 48);
+        assert_eq!(
+            wgsl_fields(src, "CullObject"),
+            ["sphere", "flags", "avatar", "state", "anchor", "boxes", "box_count", "binds", "_p"]
+        );
+        assert_eq!(std::mem::size_of::<JointBox>(), 32);
+        assert_eq!(wgsl_fields(src, "JointBox"), ["min", "joint", "max", "_p"]);
+        assert_eq!(std::mem::size_of::<SkinBind>(), 80);
+        assert_eq!(wgsl_fields(src, "SkinBind"), ["inverse_bind", "joint"]);
+        assert!(src.contains(&format!("const POSED_RADIUS_MAX: f32 = {POSED_RADIUS_MAX:?};")));
+        assert!(src.contains("const POSED_COORD_MAX: f32 = 1.0e6;") && POSED_COORD_MAX == 1.0e6);
+        // uniform layout: 4 x 6 planes, 3 matrices, 3 x 12 planes, 4 vectors
+        assert_eq!(
+            std::mem::size_of::<CullFrame>(),
+            4 * 6 * 16 + 3 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
+        );
         assert_eq!(
             wgsl_fields(src, "CullFrame"),
-            ["planes", "water", "mirror", "probe", "cascades", "eye", "dist", "sizes", "groups"]
+            [
+                "planes",
+                "water",
+                "mirror",
+                "probe",
+                "cascades",
+                "shadow_planes",
+                "eye",
+                "dist",
+                "sizes",
+                "groups"
+            ]
         );
+        assert!(src.contains(&format!("shadow_planes: array<vec4<f32>, {}>,", 3 * SHADOW_PLANES)));
+        assert!(src.contains(&format!("counts: array<atomic<u32>, {COUNTS}>;")));
+        const { assert!(COUNT_SHADOW + SHADOW_STATS <= COUNTS && COUNT_PRE2 + MAIN_BINS <= COUNT_SHADOW) };
     }
 
     /// The constants shared with the shader have the same values.
@@ -950,7 +1229,14 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 28] = [
+        let pairs: [(&str, u32); 37] = [
+            ("BIN_SHADOW_ALPHA", BIN_SHADOW_ALPHA as u32),
+            ("COUNT_SHADOW", COUNT_SHADOW as u32),
+            ("SHADOW_STATS", SHADOW_STATS as u32),
+            ("SHADOW_PLANES", SHADOW_PLANES as u32),
+            ("PASS_OPAQUE_2S", pass::OPAQUE_2S),
+            ("F_SHADOW_STATS", frame_flags::SHADOW_STATS),
+            ("F_SHADOW_ALPHA_ALL", frame_flags::SHADOW_ALPHA_ALL),
             ("BINS", BINS as u32),
             ("MAIN_BINS", MAIN_BINS as u32),
             ("BIN_SHADOW", BIN_SHADOW as u32),
@@ -975,6 +1261,8 @@ mod tests {
             ("OBJ_RIGGED", object_flags::RIGGED),
             ("OBJ_HUD", object_flags::HUD),
             ("OBJ_NO_PROBE", object_flags::NO_PROBE),
+            ("OBJ_POSED", object_flags::POSED),
+            ("SKELETON_ANCHOR", SKELETON_ANCHOR),
             ("AV_FULL", avatar_state::FULL),
             ("AV_TOO_COMPLEX", avatar_state::TOO_COMPLEX),
             ("AV_LOADING", avatar_state::LOADING),
@@ -998,12 +1286,65 @@ mod tests {
     #[test]
     fn dirty_chunks_coalesce_and_clip() {
         let mut d = DirtyChunks::default();
-        assert!(d.take_ranges(1000).is_empty());
+        assert!(d.take_ranges_as(1000, true).is_empty());
         d.mark(3);
         d.mark(70);
         d.mark(300);
-        assert_eq!(d.take_ranges(310), vec![0..128, 256..310]);
-        assert!(d.take_ranges(310).is_empty());
+        assert_eq!(d.take_ranges_as(310, true), vec![0..128, 256..310]);
+        assert!(d.take_ranges_as(310, true).is_empty());
+    }
+
+    /// The same writes as with whole chunks, cut to the changed elements.
+    #[test]
+    fn dirty_ranges_stop_at_the_changed_elements() {
+        let mut d = DirtyChunks::default();
+        assert!(d.take_ranges_as(1000, false).is_empty() && !d.any());
+        // one element alone, the last of a chunk, the first of the table
+        d.mark(300);
+        assert_eq!(d.take_ranges_as(1000, false), vec![300..301]);
+        d.mark(63);
+        d.mark(0);
+        assert_eq!(d.take_ranges_as(1000, false), vec![0..64]);
+        // neighbouring chunks in one write, from the first changed element
+        // of the first to the last changed one of the last; marked in any
+        // order, and twice
+        for i in [200, 70, 75, 70, 3, 5, 600, 640] {
+            d.mark(i);
+        }
+        assert!(d.any());
+        assert_eq!(d.take_ranges_as(1000, false), vec![3..76, 200..201, 600..641]);
+        assert!(d.take_ranges_as(1000, false).is_empty());
+        // clipped to the table
+        d.mark(310);
+        d.mark(319);
+        assert_eq!(d.take_ranges_as(315, false), vec![310..315]);
+        d.mark(400);
+        assert!(d.take_ranges_as(315, false).is_empty());
+        // forgotten without an upload (the table was sent whole)
+        d.mark(9);
+        d.clear();
+        assert!(d.take_ranges_as(1000, false).is_empty() && !d.any());
+        // never more writes, never an element less than the changed ones
+        let mut seed = 12345u32;
+        let mut rand = |n: u32| {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 8) % n
+        };
+        for _ in 0..200 {
+            let (mut exact, mut whole) = (DirtyChunks::default(), DirtyChunks::default());
+            let marks: Vec<usize> = (0..rand(40)).map(|_| rand(2000) as usize).collect();
+            for &i in &marks {
+                exact.mark(i);
+                whole.mark(i);
+            }
+            let (e, w) = (exact.take_ranges_as(2000, false), whole.take_ranges_as(2000, true));
+            assert_eq!(e.len(), w.len());
+            for (e, w) in e.iter().zip(&w) {
+                assert!(w.start <= e.start && e.end <= w.end);
+                assert!(marks.contains(&e.start) && marks.contains(&(e.end - 1)));
+            }
+            assert!(marks.iter().all(|i| e.iter().any(|r| r.contains(i))));
+        }
     }
 
     /// Packed 8-bit counters never carry into the next bin for a full
@@ -1052,6 +1393,7 @@ mod tests {
             mirror: planes,
             probe: planes,
             cascades: [cascade.to_cols_array_2d(); 3],
+            shadow_planes: [crate::shadow_cull::CASTER_PLANES_ALL; 3],
             eye: [0.0, 0.0, 0.0, 64.0],
             dist: [64.0, 32.0, 1000.0 / 0.5, 0.0],
             sizes: [0, 4, 0, frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER],
@@ -1093,19 +1435,137 @@ mod tests {
             face(0, pass::HIDDEN),
         ];
         let shadows = 0b111 << BIN_SHADOW;
-        assert_eq!(face_bins(&frame, &faces, &objects, 0), (1 | shadows | 1 << BIN_REFL_WATER, true));
+        let spheres = world_spheres(&objects, &[], &[], &[]);
+        assert_eq!(
+            face_bins(&frame, &faces, &objects, &spheres, 0),
+            (1 | shadows | 1 << BIN_REFL_WATER, true)
+        );
         // blended: the CPU draws it, not a caster unless rigged
-        assert_eq!(face_bins(&frame, &faces, &objects, 1), (0, true));
-        // behind the camera: casts only
-        assert_eq!(face_bins(&frame, &faces, &objects, 2).0, shadows);
-        assert_eq!(face_bins(&frame, &faces, &objects, 3), (0, false));
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 1), (0, true));
+        // behind the camera: casts only; masked: with the alpha test
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 2).0, 0b111 << BIN_SHADOW_ALPHA);
+        // the old path draws every caster with the alpha test
+        let mut legacy = frame;
+        legacy.sizes[3] |= frame_flags::SHADOW_ALPHA_ALL;
+        assert_eq!(
+            face_bins(&legacy, &faces, &objects, &spheres, 0).0,
+            1 | 0b111 << BIN_SHADOW_ALPHA | 1 << BIN_REFL_WATER
+        );
+        // a cascade whose receivers the caster cannot shadow leaves it out
+        let mut tight = frame;
+        tight.shadow_planes[1][0] = [-1.0, 0.0, 0.0, 5.0];
+        assert_eq!(face_bins(&tight, &faces, &objects, &spheres, 0).0 >> BIN_SHADOW & 7, 0b101);
+        assert_eq!(face_bins(&tight, &faces, &objects, &spheres, 2).0, 0b111 << BIN_SHADOW_ALPHA);
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 3), (0, false));
         // an avatar not among the nearest: impostor, nothing on the GPU
-        assert_eq!(face_bins(&frame, &faces, &objects, 4), (0, false));
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 4), (0, false));
         objects[3].state = avatar_state::FULL;
-        assert_eq!(face_bins(&frame, &faces, &objects, 4).0 & 1, 1);
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 4).0 & 1, 1);
         objects[3].state = avatar_state::FULL | avatar_state::LOADING;
-        assert_eq!(face_bins(&frame, &faces, &objects, 4).0, 0);
-        assert_eq!(face_bins(&frame, &faces, &objects, 5), (0, true));
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 4).0, 0);
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 5), (0, true));
+    }
+
+    /// A worn object is tested where its anchor puts it: the sphere of the
+    /// table is relative to the anchor matrix.
+    #[test]
+    fn anchored_spheres_follow_their_anchor() {
+        let frame = frame_for_tests();
+        let worn = CullObject {
+            sphere: [0.0, 1.0, 0.0, 1.0],
+            flags: object_flags::ACTIVE,
+            anchor: 2,
+            ..CullObject::NONE
+        };
+        let faces = [CullFace {
+            index_count: 30,
+            object: 0,
+            bits: pass::OPAQUE | FACE_FIRST,
+            ..CullFace::NONE
+        }];
+        // a quarter turn about Z, then 10 m ahead of the camera
+        let ahead = Mat4::from_rotation_translation(glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), Vec3::new(11.0, 0.0, 0.0));
+        let behind = Mat4::from_translation(Vec3::new(-10.0, 0.0, 0.0));
+        let (c, r) = worn.world_sphere(&[behind.to_cols_array_2d(), ahead.to_cols_array_2d()], &[], &[]);
+        assert!(c.distance(Vec3::new(10.0, 0.0, 0.0)) < 1e-5 && r == 1.0);
+        let shadows = 0b111 << BIN_SHADOW;
+        let palettes = [behind.to_cols_array_2d(), ahead.to_cols_array_2d()];
+        assert_eq!(
+            face_bins(&frame, &faces, &[worn], &world_spheres(&[worn], &palettes, &[], &[]), 0),
+            (1 | shadows | 1 << BIN_REFL_WATER, true)
+        );
+        // the wearer turned its back to the camera: casts only
+        let palettes = [behind.to_cols_array_2d(), behind.to_cols_array_2d()];
+        assert_eq!(
+            face_bins(&frame, &faces, &[worn], &world_spheres(&[worn], &palettes, &[], &[]), 0).0,
+            shadows
+        );
+        // an anchor the buffer does not hold: the sphere as it is
+        assert_eq!(worn.world_sphere(&[], &[], &[]).0, Vec3::new(0.0, 1.0, 0.0));
+    }
+
+    /// A rigged mesh posed by the GPU is enclosed where its skeleton puts
+    /// its joint boxes; without a sane pose, its anchored sphere stands.
+    #[test]
+    fn posed_spheres_enclose_the_joint_boxes() {
+        let skeleton = SKELETON_ANCHOR as usize;
+        let mut palettes = vec![Mat4::IDENTITY.to_cols_array_2d(); skeleton + 1];
+        // the skeleton stands 20 m east; joint 3 raises its box by 2 m and
+        // turns it a quarter turn about Z
+        palettes[skeleton] = Mat4::from_translation(Vec3::new(20.0, 0.0, 0.0)).to_cols_array_2d();
+        palettes[3] = Mat4::from_rotation_translation(glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), Vec3::new(0.0, 0.0, 2.0))
+            .to_cols_array_2d();
+        let binds = [
+            SkinBind {
+                inverse_bind: Mat4::IDENTITY.to_cols_array_2d(),
+                joint: [0; 4],
+            },
+            // (bind pose: the joint sits 1 m up)
+            SkinBind {
+                inverse_bind: Mat4::from_translation(Vec3::new(0.0, 0.0, -1.0)).to_cols_array_2d(),
+                joint: [3, 0, 0, 0],
+            },
+        ];
+        let boxes = [
+            JointBox::NONE,
+            JointBox {
+                min: [0.0, -0.1, 1.0],
+                joint: 1,
+                max: [1.0, 0.1, 1.2],
+                _pad: 0,
+            },
+        ];
+        let mesh = CullObject {
+            // (rest: around the skeleton's root)
+            sphere: [0.0, 0.0, 1.0, 2.5],
+            flags: object_flags::ACTIVE | object_flags::RIGGED | object_flags::POSED,
+            anchor: skeleton as u32 + 1,
+            boxes: 1,
+            box_count: 1,
+            binds: 0,
+            ..CullObject::NONE
+        };
+        // box x 0..1 turned onto y 0..1, z 1..1.2 lowered by the bind and
+        // raised by the joint to 2..2.2, then moved with the skeleton
+        let (c, r) = mesh.world_sphere(&palettes, &binds, &boxes);
+        assert!(c.distance(Vec3::new(20.0, 0.5, 2.1)) < 1e-4, "{c}");
+        assert!((r - Vec3::new(0.1, 0.5, 0.1).length()).abs() < 1e-4, "{r}");
+        // not posed: the anchored sphere
+        let rest = (Vec3::new(20.0, 0.0, 1.0), 2.5);
+        let plain = CullObject {
+            flags: object_flags::ACTIVE | object_flags::RIGGED,
+            ..mesh
+        };
+        assert_eq!(plain.world_sphere(&palettes, &binds, &boxes), rest);
+        // no box, boxes or bindings out of the tables, a palette of NaN
+        assert_eq!(CullObject { box_count: 0, ..mesh }.world_sphere(&palettes, &binds, &boxes), rest);
+        assert_eq!(CullObject { boxes: 2, ..mesh }.world_sphere(&palettes, &binds, &boxes), rest);
+        assert_eq!(CullObject { binds: 1, ..mesh }.world_sphere(&palettes, &binds, &boxes), rest);
+        palettes[3] = [[f32::NAN; 4]; 4];
+        assert_eq!(mesh.world_sphere(&palettes, &binds, &boxes), rest);
+        // a pose thrown far away is no pose
+        palettes[3] = Mat4::from_translation(Vec3::new(0.0, 500.0, 0.0)).to_cols_array_2d();
+        assert_eq!(mesh.world_sphere(&palettes, &binds, &boxes), rest);
     }
 
     /// The compute passes give the reference bins, in record order, for a
@@ -1134,6 +1594,51 @@ mod tests {
         let mut cull = GpuCull::new(&device);
         let mut tables = CullTables::new(&device);
         let n_obj = 3000u32;
+        // two skeletons: joints, then anchors. Whole-metre translations,
+        // which the GPU and the reference apply to the same bit
+        let per = SKELETON_ANCHOR as usize + 48;
+        let palettes: Vec<[[f32; 4]; 4]> = (0..2 * per)
+            .map(|k| {
+                let range = if k % per < SKELETON_ANCHOR as usize { 3 } else { 60 };
+                let mut at = |n: u32| rand(n) as f32 - (n / 2) as f32;
+                Mat4::from_translation(Vec3::new(at(range), at(range), at(range.min(10)))).to_cols_array_2d()
+            })
+            .collect();
+        let binds: Vec<SkinBind> = (0..200)
+            .map(|_| SkinBind {
+                inverse_bind: Mat4::from_translation(Vec3::new(rand(3) as f32 - 1.0, rand(3) as f32 - 1.0, rand(3) as f32 - 1.0))
+                    .to_cols_array_2d(),
+                joint: [rand(SKELETON_ANCHOR), 0, 0, 0],
+            })
+            .collect();
+        let bind_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: std::mem::size_of_val(&binds[..]) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&bind_buffer, 0, bytemuck::cast_slice(&binds));
+        let boxes: Vec<JointBox> = (0..300)
+            .map(|_| {
+                let min = [rand(3) as f32 - 2.0, rand(3) as f32 - 2.0, rand(3) as f32 - 2.0];
+                JointBox {
+                    min,
+                    joint: rand(40),
+                    max: [min[0] + 1.0 + rand(2) as f32, min[1] + 1.0, min[2] + rand(3) as f32],
+                    _pad: 0,
+                }
+            })
+            .collect();
+        for (i, b) in boxes.iter().enumerate() {
+            tables.boxes.set(i, *b);
+        }
+        let palette_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (palettes.len() * 64) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&palette_buffer, 0, bytemuck::cast_slice(&palettes));
         let mut objects = Vec::new();
         for i in 0..n_obj {
             let avatar = rand(10) == 0;
@@ -1157,11 +1662,37 @@ mod tests {
                     NO_OBJECT
                 },
                 state: rand(8),
-                _pad: 0,
+                anchor: if !avatar && rand(4) == 0 { 1 + rand(2 * per as u32) } else { 0 },
+                ..CullObject::NONE
+            };
+            // a rigged mesh posed by one of the skeletons: a few joint
+            // boxes (now and then out of the tables: its rest sphere)
+            let bind_range = if rand(20) == 0 { 400 } else { 160 };
+            let o = if !avatar && rand(5) == 0 {
+                CullObject {
+                    sphere: [0.0, 0.0, 1.0, 3.0],
+                    flags: o.flags | object_flags::RIGGED | object_flags::POSED,
+                    anchor: 1 + rand(2) * per as u32 + SKELETON_ANCHOR,
+                    boxes: rand(290),
+                    box_count: rand(7),
+                    binds: rand(bind_range),
+                    ..o
+                }
+            } else {
+                o
             };
             tables.objects.set(i as usize, o);
             objects.push(o);
         }
+        assert!(objects.iter().any(|o| o.flags & object_flags::POSED != 0));
+        let spheres = world_spheres(&objects, &palettes, &binds, &boxes);
+        assert!(
+            objects
+                .iter()
+                .zip(&spheres)
+                .any(|(o, s)| o.flags & object_flags::POSED != 0 && s.1 != 3.0),
+            "some object is posed"
+        );
         let n_faces = 70_000usize;
         let faces: Vec<CullFace> = (0..n_faces)
             .map(|_| {
@@ -1185,6 +1716,7 @@ mod tests {
         let mut writes = GpuWrites::default();
         table.flush(&device, &mut writes);
         tables.objects.flush(&device, &mut writes);
+        tables.boxes.flush(&device, &mut writes);
         writes.replay(&mut crate::writes::QueueSink(&queue));
         // visible last frame (occlusion phase 1 list)
         let was: Vec<u32> = (0..n_faces).map(|_| rand(2)).collect();
@@ -1196,7 +1728,16 @@ mod tests {
         });
         queue.write_buffer(&visibility, 0, bytemuck::cast_slice(&was));
         let mut frame = frame_for_tests();
-        frame.sizes[3] = frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER | frame_flags::PROBE | frame_flags::OCCLUSION;
+        frame.sizes[3] = frame_flags::SHADOWS
+            | frame_flags::REFLECTIONS
+            | frame_flags::WATER
+            | frame_flags::PROBE
+            | frame_flags::OCCLUSION
+            | frame_flags::SHADOW_STATS;
+        // caster volumes: the east half in the second cascade, a slanted slab in the third
+        frame.shadow_planes[1][0] = [-1.0, 0.0, 0.0, 5.0];
+        frame.shadow_planes[2][3] = [0.6, 0.0, 0.8, 10.0];
+        frame.shadow_planes[2][SHADOW_PLANES - 1] = [-0.6, 0.0, -0.8, 30.0];
         frame.probe = view_planes(
             glam::camera::rh::proj::directx::perspective_infinite_reverse(1.5, 1.0, 0.1)
                 * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::Y, Vec3::Z),
@@ -1207,7 +1748,19 @@ mod tests {
         f.sizes[0] = n_faces as u32;
         f.sizes[1] = n_obj;
         let mut encoder = device.create_command_encoder(&Default::default());
-        cull.encode(&device, &mut encoder, table.buffer(), tables.objects.buffer(), &visibility, None);
+        cull.encode(
+            &device,
+            &mut encoder,
+            &CullInputs {
+                faces: table.buffer(),
+                objects: tables.objects.buffer(),
+                palettes: &palette_buffer,
+                skin_binds: &bind_buffer,
+                boxes: tables.boxes.buffer(),
+            },
+            &visibility,
+            None,
+        );
         let size = cull.args().size();
         let read = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -1232,7 +1785,7 @@ mod tests {
         let mut expect: Vec<Vec<u32>> = vec![Vec::new(); BINS];
         let (mut visible, mut tris) = (0, 0);
         for i in 0..n_faces {
-            let (m, v) = face_bins(&f, &faces, &objects, i);
+            let (m, v) = face_bins(&f, &faces, &objects, &spheres, i);
             visible += v as u32;
             for (b, e) in expect.iter_mut().enumerate() {
                 if (m >> b) & 1 != 0 {
@@ -1244,6 +1797,24 @@ mod tests {
             }
         }
         assert!(expect.iter().take(MAIN_BINS + 3).all(|e| !e.is_empty()), "every bin used");
+        assert!(
+            expect[BIN_SHADOW_ALPHA..].iter().all(|e| !e.is_empty()),
+            "alpha tested casters in every cascade"
+        );
+        // the casters' statistics of each cascade
+        for k in 0..3 {
+            let casters = || expect[BIN_SHADOW + k].iter().chain(&expect[BIN_SHADOW_ALPHA + k]);
+            let rigged =
+                |rec: &&u32| objects[faces[**rec as usize].object as usize].flags & (object_flags::RIGGED | object_flags::AVATAR) != 0;
+            let tris = |rec: &u32| faces[*rec as usize].index_count / 3;
+            assert_eq!(counts[COUNT_SHADOW + k], casters().map(tris).sum::<u32>(), "cascade {k} triangles");
+            assert_eq!(
+                counts[COUNT_SHADOW + 3 + k],
+                casters().filter(rigged).count() as u32,
+                "cascade {k} rigged"
+            );
+            assert_eq!(counts[COUNT_SHADOW + 6 + k], casters().filter(rigged).map(tris).sum::<u32>());
+        }
         assert_eq!(counts[COUNT_VISIBLE], visible);
         assert_eq!(counts[COUNT_TRIANGLES], tris);
         let cap = cull.cap() as usize;

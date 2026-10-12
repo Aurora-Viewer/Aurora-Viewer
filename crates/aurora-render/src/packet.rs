@@ -15,26 +15,24 @@
 //!   lists still built on the CPU ([`DrawLists`]: terrain, water, blended
 //!   faces, glow, debug, selection, impostors, particles) and the view of
 //!   the GPU culling;
-//! - the interface: egui primitives and texture changes;
+//! - the interface: egui shapes, still to tessellate, and texture changes
+//!   (ui_frame.rs);
 //! - the window surface state and the render settings to apply;
-//! - the readbacks asked for: the pixel under the cursor, a capture.
+//! - the readbacks asked for: the pixel under the cursor, the pixels
+//!   clicked on (their depth, the faces drawn there), a capture.
 //!
 //! A [`FrameResult`] comes back once the frame is presented: its
 //! statistics, the readbacks that arrived, and the packet's buffers to
 //! fill again.
 
+use crate::drawn_pick::{DrawnAnswer, DrawnRequest};
 use crate::gpu_cull::CullCounts;
+use crate::pick::{ClickAnswer, ClickRequest};
 use crate::types::{DrawLists, FrameParams, RenderSettings, RenderStats};
+use crate::ui_frame::EguiFrame;
 use crate::upload::FrameUploads;
 use crate::writes::GpuWrites;
 use glam::Vec3;
-
-/// The interface of a frame, as egui tessellated it.
-pub struct EguiFrame {
-    pub primitives: Vec<egui::ClippedPrimitive>,
-    pub textures_delta: egui::TexturesDelta,
-    pub pixels_per_point: f32,
-}
 
 /// Capture of the presented image asked with a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +79,8 @@ pub(crate) struct SceneGpu {
     pub face_count: usize,
     pub objects: wgpu::Buffer,
     pub object_count: usize,
+    /// Joint boxes of the rigged geometries the culling poses.
+    pub joint_boxes: wgpu::Buffer,
     /// Record ids handed out so far (sizes the occlusion's visibility flags).
     pub record_slots: usize,
     /// Texture pages, sampler and locations.
@@ -110,6 +110,12 @@ pub(crate) struct FramePacket {
     pub settings: RenderSettings,
     /// Pixel whose depth to read back (hover; answered a few frames later).
     pub hover: Option<(u32, u32)>,
+    /// Clicks made on the frame before this one: their depth is copied
+    /// before this frame is encoded, and answered with a later result.
+    pub picks: Vec<ClickRequest>,
+    /// Pixels whose drawn faces to read back: drawn again in this frame,
+    /// answered with a later result (drawn_pick.rs).
+    pub drawn: Vec<DrawnRequest>,
     pub capture: Option<Capture>,
 }
 
@@ -119,6 +125,10 @@ pub(crate) struct FrameResult {
     pub stats: RenderStats,
     /// Last hover answer: world position under the requested pixel.
     pub hover: Option<Vec3>,
+    /// The clicks answered since the last result.
+    pub picks: Vec<ClickAnswer>,
+    /// What was drawn under the pixels asked, by ticket.
+    pub drawn: Vec<DrawnAnswer>,
     /// Last GPU culling counts read back.
     pub cull: CullCounts,
     /// The capture asked with this frame (width, height, RGBA8); None when

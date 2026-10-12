@@ -179,6 +179,9 @@ pub struct World {
     /// Online status (away, do not disturb...) and automatic responses.
     pub status: status::Status,
     pub inventory: inventory::Inventory,
+    /// The inventory cache being read by its thread since the login reply
+    /// (`poll_inventory_cache`), and when the read started.
+    inventory_cache: Option<(crossbeam_channel::Receiver<Option<inventory::CachedInventory>>, Instant)>,
     /// Refused offers to move to the Trash (`take_inventory_edits`).
     inventory_edits: Vec<aurora_net::inventory::operations::Mutation>,
     /// Playing animations per avatar / animesh.
@@ -283,6 +286,7 @@ impl World {
             groups: groups::GroupChats::default(),
             status: status::Status::default(),
             inventory: inventory::Inventory::default(),
+            inventory_cache: None,
             inventory_edits: Vec::new(),
             animations: HashMap::new(),
             ao_pose: None,
@@ -408,8 +412,34 @@ impl World {
         (!self.agent_id.is_nil()).then(|| dir.join("inventory").join(format!("{}.inv", self.agent_id)))
     }
 
+    /// Apply the inventory cache once its thread has read it (every frame
+    /// after the login reply), then let the waiting folder requests go.
+    pub fn poll_inventory_cache(&mut self) {
+        let Some((reader, since)) = &self.inventory_cache else {
+            return;
+        };
+        let cache = match reader.try_recv() {
+            Ok(cache) => cache,
+            Err(crossbeam_channel::TryRecvError::Empty) => return,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => None,
+        };
+        let waited = since.elapsed().as_secs_f32() * 1000.0;
+        let t = Instant::now();
+        let folders = cache.map_or(0, |c| self.inventory.apply_cache(c));
+        log::info!(
+            "inventory cache: {folders} folders up to date (read in {waited:.0} ms off the main thread, applied in {:.1} ms)",
+            t.elapsed().as_secs_f32() * 1000.0
+        );
+        self.inventory_cache = None;
+        self.inventory.release_requests();
+    }
+
     /// Persist the fetched inventory (next login skips unchanged folders).
     pub fn save_inventory_cache(&self) {
+        // not applied yet: the file holds more than the inventory in memory
+        if self.inventory_cache.is_some() {
+            return;
+        }
         if let Some(path) = self.inventory_cache_path() {
             self.inventory.save_cache(&path);
         }
@@ -707,10 +737,12 @@ impl World {
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);
-                if let Some(path) = self.inventory_cache_path() {
-                    let n = self.inventory.load_cache(&path);
-                    log::info!("inventory cache: {n} folders up to date");
-                }
+                // read off the main thread; until `poll_inventory_cache`
+                // applies it, folder requests wait (the root's included)
+                self.inventory_cache = self.inventory_cache_path().map(|path| {
+                    self.inventory.hold_requests();
+                    (inventory::read_cache_in_background(path), Instant::now())
+                });
                 let root = self.inventory.root;
                 self.inventory.request(root);
                 self.map.set_home_from_login(l.raw["home"].as_str());
@@ -1387,6 +1419,24 @@ impl World {
                 self.inventory.add_items(items);
                 None
             }
+            NetEvent::InventoryUpdated { folders, items } => {
+                self.inventory.server_updated(folders, items);
+                None
+            }
+            NetEvent::InventoryMoved { id, parent, folder } => {
+                if folder {
+                    if let Some(f) = self.inventory.folders.get(&id) {
+                        let mut moved = f.info.clone();
+                        moved.parent = parent;
+                        self.inventory.server_updated(vec![moved], Vec::new());
+                    }
+                } else if let Some(item) = self.inventory.items.get(&id) {
+                    let mut moved = item.clone();
+                    moved.parent = parent;
+                    self.inventory.server_updated(Vec::new(), vec![moved]);
+                }
+                None
+            }
             NetEvent::InventoryItemsFailed { items } => {
                 log::warn!("{} inventory items could not be fetched", items.len());
                 None
@@ -1884,8 +1934,8 @@ impl World {
     pub fn update_bodies(&mut self, now: Instant, dt: f32, cam_at: Vec3, mouselook: bool) -> i8 {
         let mut own_turn = 0;
         let mut seen = std::collections::HashSet::new();
-        for (_, o) in self.objects.iter() {
-            if !o.is_avatar() || o.parent_id != 0 {
+        for (_, o) in self.objects.avatars() {
+            if o.parent_id != 0 {
                 continue;
             }
             let id = o.full_id;

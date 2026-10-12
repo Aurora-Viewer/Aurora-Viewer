@@ -232,7 +232,10 @@ pub fn paste(
     if cut {
         return move_selection(inv, ids, to, protected, worn);
     }
-    let mut change = Mutation::default();
+    let mut change = Mutation {
+        defer_folder_contents: true,
+        ..Default::default()
+    };
     for id in roots(inv, ids) {
         if id == to || under(inv, to, id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-a-folder-cannot-be-copied-into-itself").into());
@@ -426,8 +429,8 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
     inv.sort_all();
     let contents = change
         .refresh
-        .into_iter()
-        .filter_map(|id| inv.folders.get(&id))
+        .iter()
+        .filter_map(|id| inv.folders.get(id))
         .map(|f| aurora_net::inventory::FolderContents {
             folder_id: f.info.id,
             owner_id: agent,
@@ -442,6 +445,9 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
         .collect();
     Ok(aurora_net::inventory::operations::Reply {
         contents,
+        folders: Vec::new(),
+        moves_queued: false,
+        refresh: change.refresh,
         copies: change.copies,
         removed,
         created,

@@ -1,7 +1,7 @@
 //! GPU memory arenas: one big vertex buffer, one big u16 index buffer and
 //! a storage buffer of draw records, all sub-allocated on the CPU side.
 
-use crate::gpu_cull::{CullFace, GpuTable};
+use crate::gpu_cull::{CullFace, DirtyChunks, GpuTable};
 use crate::types::{DrawRecord, SkinVertex, Vertex};
 use crate::upload::{StagedMesh, UploadQueue};
 use crate::writes::GpuWrites;
@@ -313,13 +313,8 @@ impl GeometryArena {
     }
 }
 
-/// Records per dirty chunk: small enough that scattered updates (worn
-/// attachments, avatars) do not drag big untouched ranges along; neighbours
-/// are still uploaded in one write.
-const CHUNK: usize = 64;
-
 /// Elements per block of [`Blocks`]: 1 MB of draw records, a multiple of
-/// [`CHUNK`].
+/// the dirty chunks (`gpu_cull::CHUNK`).
 const BLOCK: usize = 4096;
 
 /// A growable array stored in blocks of [`BLOCK`] elements: it grows by
@@ -380,7 +375,8 @@ impl<T> Blocks<T> {
     }
 }
 
-/// Storage buffer of `DrawRecord`s with a CPU mirror and chunked dirty uploads.
+/// Storage buffer of `DrawRecord`s with a CPU mirror; only the changed
+/// records are uploaded (`DirtyChunks`).
 /// Each record also has a `CullFace` (GPU draw lists, gpu_cull.rs), reset
 /// when the record is allocated or freed: only object faces set one.
 pub struct RecordStore {
@@ -389,8 +385,7 @@ pub struct RecordStore {
     pub faces: GpuTable<CullFace>,
     mirror: Blocks<DrawRecord>,
     free: Vec<u32>,
-    dirty: Vec<bool>,
-    any_dirty: bool,
+    dirty: DirtyChunks,
     live: u32,
     /// Set when the buffer was reallocated (bind group must be rebuilt).
     pub generation: u64,
@@ -406,8 +401,7 @@ impl RecordStore {
             faces: GpuTable::new(device, "cull faces", cap, CullFace::NONE),
             mirror: Blocks::new(),
             free: Vec::new(),
-            dirty: Vec::new(),
-            any_dirty: false,
+            dirty: DirtyChunks::default(),
             live: 0,
             generation: 0,
             uploaded: 0,
@@ -447,12 +441,7 @@ impl RecordStore {
     }
 
     fn mark(&mut self, idx: usize) {
-        let c = idx / CHUNK;
-        if self.dirty.len() <= c {
-            self.dirty.resize(c + 1, false);
-        }
-        self.dirty[c] = true;
-        self.any_dirty = true;
+        self.dirty.mark(idx);
     }
 
     pub fn set(&mut self, id: u32, rec: DrawRecord) {
@@ -462,15 +451,20 @@ impl RecordStore {
         }
     }
 
-    /// Replace a record's model matrix only when it differs (moving objects:
-    /// no copy of the whole record, and an unchanged one is not uploaded).
-    pub fn set_model(&mut self, id: u32, model: [[f32; 4]; 4]) {
-        if let Some(slot) = self.mirror.get_mut(id as usize)
-            && (slot.model != model || slot.flags[0] >> 16 != 0)
-        {
-            slot.model = model;
+    /// Place a record: its model matrix, in the world or placed from anchor
+    /// matrix `anchor` (`flags::ANCHORED`: what an avatar wears keeps the
+    /// same record while its wearer moves). Only what differs is written
+    /// (no copy of the whole record), and an unchanged record is not
+    /// uploaded again.
+    pub fn set_placement(&mut self, id: u32, model: [[f32; 4]; 4], anchor: Option<u32>) {
+        if let Some(slot) = self.mirror.get_mut(id as usize) {
+            let old_flags = slot.flags;
             slot.set_hud_zoom(1.0);
-            self.mark(id as usize);
+            slot.set_anchor(anchor);
+            if slot.model != model || slot.flags != old_flags {
+                slot.model = model;
+                self.mark(id as usize);
+            }
         }
     }
 
@@ -504,7 +498,7 @@ impl RecordStore {
         }
     }
 
-    /// Record the upload of the dirty chunks in the frame's journal;
+    /// Record the upload of the changed records in the frame's journal;
     /// reallocates the buffer when it is too small.
     pub fn flush(&mut self, device: &wgpu::Device, writes: &mut GpuWrites) {
         self.faces.flush(device, writes);
@@ -533,27 +527,15 @@ impl RecordStore {
             self.buffer = grown;
             self.generation += 1;
         }
-        if !self.any_dirty {
+        if !self.dirty.any() {
             return;
         }
-        let mut c = 0;
-        while c < self.dirty.len() {
-            if !self.dirty[c] {
-                c += 1;
-                continue;
-            }
-            // coalesce consecutive dirty chunks
-            let start = c;
-            while c < self.dirty.len() && self.dirty[c] {
-                self.dirty[c] = false;
-                c += 1;
-            }
-            for (first, records) in self.mirror.runs(start * CHUNK, c * CHUNK) {
+        for range in self.dirty.take_ranges(self.mirror.len()) {
+            for (first, records) in self.mirror.runs(range.start, range.end) {
                 writes.write_buffer(&self.buffer, (first * rec_size) as u64, bytemuck::cast_slice(records));
                 self.uploaded += std::mem::size_of_val(records) as u64;
             }
         }
-        self.any_dirty = false;
     }
 }
 
@@ -595,7 +577,7 @@ mod tests {
 
     #[test]
     fn dirty_chunks_fit_in_blocks() {
-        assert!(BLOCK.is_multiple_of(CHUNK));
+        assert!(BLOCK.is_multiple_of(crate::gpu_cull::CHUNK));
     }
 
     /// GPU round trip of the geometry arena: meshes written by the main
