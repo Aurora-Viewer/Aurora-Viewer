@@ -795,6 +795,58 @@ mod tests {
     }
 
     #[test]
+    fn particle_and_sound_changes_are_listed_without_a_walk() {
+        use aurora_prim::params::LL_PCODE_VOLUME as PRIM;
+        let taken = |s: &mut ObjectStore, particles: bool| {
+            let mut out = Vec::new();
+            if particles {
+                s.take_particle_changes(&mut out);
+            } else {
+                s.take_sound_changes(&mut out);
+            }
+            out
+        };
+        let with = |local_id: u32, particles: ParticleUpdate| ObjectUpdate {
+            particles,
+            ..update(local_id, PRIM, "")
+        };
+        let mut s = ObjectStore::default();
+        let plain = s.upsert(1, with(10, ParticleUpdate::Keep));
+        let emitter = s.upsert(1, with(11, ParticleUpdate::Set(vec![1, 2, 3])));
+        // every full update carries the attached sound; only one a particle
+        // system
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert_eq!(taken(&mut s, false), [plain, emitter]);
+        // what the managers have not handled yet stays listed once, whatever
+        // touches the object meanwhile
+        s.touch(emitter);
+        s.get_mut(emitter).unwrap().text = "x".into();
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert_eq!(taken(&mut s, false), [emitter]);
+        // handled: no longer listed, until the next change
+        for idx in [plain, emitter] {
+            let o = s.get_mut_untracked(idx).unwrap();
+            o.particle_update = None;
+            o.sound_update = false;
+        }
+        s.touch(emitter);
+        s.touch(plain);
+        assert!(taken(&mut s, true).is_empty() && taken(&mut s, false).is_empty());
+        // a system stopped by an update that keeps the object, a full update
+        // without particles
+        s.upsert(1, with(11, ParticleUpdate::Clear));
+        s.upsert(1, with(10, ParticleUpdate::Keep));
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert_eq!(taken(&mut s, false), [emitter, plain]);
+        // a slot freed and filled again before the managers ran: listed once
+        s.remove(&ObjKey { region: 1, local_id: 11 });
+        let reused = s.upsert(1, with(12, ParticleUpdate::Set(vec![4])));
+        assert_eq!(reused, emitter);
+        assert_eq!(taken(&mut s, true), [emitter]);
+        assert!(s.get(reused).unwrap().particle_update.is_some());
+    }
+
+    #[test]
     fn tex_anim_clock_follows_firestorm() {
         let t0 = Instant::now();
         let t1 = t0 + Duration::from_secs(4);

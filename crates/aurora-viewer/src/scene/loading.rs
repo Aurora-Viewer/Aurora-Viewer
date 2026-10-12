@@ -182,8 +182,10 @@ pub struct Loading {
 
 impl Scene {
     /// What is loaded of an avatar: (done, total), what is still missing
-    /// (empty when complete) and the textures to hurry.
-    fn avatar_load_parts(&self, world: &World, idx: usize, hurry: &mut Vec<Uuid>) -> (u32, u32, Vec<Missing>) {
+    /// (empty when complete) and, when asked for, the textures to hurry
+    /// (those of its worn objects: every face is looked up, so only for an
+    /// avatar not shown yet).
+    fn avatar_load_parts(&self, world: &World, idx: usize, mut hurry: Option<&mut Vec<Uuid>>) -> (u32, u32, Vec<Missing>) {
         let Some(av) = world.objects.get(idx) else {
             return (0, 1, vec![Missing::Appearance]);
         };
@@ -201,7 +203,9 @@ impl Scene {
                     if self.textures.is_loaded(&t) {
                         done += 1;
                     } else {
-                        hurry.push(t);
+                        if let Some(h) = hurry.as_deref_mut() {
+                            h.push(t);
+                        }
                         missing.push(Missing::Bake(name, t));
                     }
                 }
@@ -221,30 +225,37 @@ impl Scene {
             if (31..=38).contains(&root.attachment_point()) {
                 continue; // HUD
             }
-            let mut prims = vec![att];
-            prims.extend_from_slice(world.objects.children_of(&root.key));
+            let prims = std::iter::once(att).chain(world.objects.children_of(&root.key).iter().copied());
             for p in prims {
                 let Some(g) = self.gpu.get(p) else {
                     continue;
                 };
                 total += 1;
-                // geometry asked for and not there yet
+                // geometry asked for and not there yet; why is only looked
+                // up for those (this runs for every worn prim, every frame)
                 let pending = g.wanted_geom.is_some_and(|k| Some(k) != g.geom) || g.sculpt_wait.is_some();
-                let unavailable = match g.wanted_geom {
-                    Some(GeomKey::Mesh { id, .. }) => self.meshes.failed(&id),
-                    Some(GeomKey::Sculpt { .. }) => g.sculpt_wait.is_some_and(|t| self.textures.is_unavailable(&t)),
-                    _ => false,
+                let wait = if pending {
+                    let unavailable = match g.wanted_geom {
+                        Some(GeomKey::Mesh { id, .. }) => self.meshes.failed(&id),
+                        Some(GeomKey::Sculpt { .. }) => g.sculpt_wait.is_some_and(|t| self.textures.is_unavailable(&t)),
+                        _ => false,
+                    };
+                    let build_failed = g.wanted_geom.is_some_and(|k| self.geom_failed(&k));
+                    geom_wait(pending, unavailable, build_failed)
+                } else {
+                    GeomWait::Built
                 };
-                let build_failed = g.wanted_geom.is_some_and(|k| self.geom_failed(&k));
-                if geom_wait(pending, unavailable, build_failed) == GeomWait::Pending {
+                if wait == GeomWait::Pending {
                     missing.push(Missing::Geometry(p));
                 } else {
                     done += 1;
                 }
                 // their textures first (the avatar is not drawn meanwhile)
-                for f in &g.faces {
-                    if !f.tex_id.is_nil() && !self.textures.is_loaded(&f.tex_id) {
-                        hurry.push(f.tex_id);
+                if let Some(h) = hurry.as_deref_mut() {
+                    for f in &g.faces {
+                        if !f.tex_id.is_nil() && !self.textures.is_loaded(&f.tex_id) {
+                            h.push(f.tex_id);
+                        }
                     }
                 }
             }
@@ -300,9 +311,10 @@ impl Scene {
             seen.push(id);
             let attachments = world.objects.children_of(&o.key).len();
             let s = loading.states.entry(id).or_insert_with(|| State::new(now, attachments));
-            let mut wanted = Vec::new();
-            let (done, total, missing) = self.avatar_load_parts(world, idx, &mut wanted);
+            // the textures to hurry are only used until the avatar shows
             let shown_before = s.shown_once;
+            let mut wanted = Vec::new();
+            let (done, total, missing) = self.avatar_load_parts(world, idx, (!shown_before).then_some(&mut wanted));
             let t = s.tick(now, attachments, missing.is_empty());
             let own = if id == world.agent_id { " (own)" } else { "" };
             if !shown_before {
@@ -497,7 +509,7 @@ mod tests {
         let (world, scene, own, loup) = cloud_self();
         assert_eq!(world.bake_texture(own, 8), Some(avatar::IMG_INVISIBLE));
         let mut hurry = Vec::new();
-        let (done, total, missing) = scene.avatar_load_parts(&world, own, &mut hurry);
+        let (done, total, missing) = scene.avatar_load_parts(&world, own, Some(&mut hurry));
         assert!(missing.is_empty(), "nothing to wait for: {missing:?}");
         assert_eq!(done, total);
         // an avatar the simulator has no bakes for yet (default avatar
@@ -514,7 +526,7 @@ mod tests {
             cof_version: 1,
             hover_height: 0.0,
         }));
-        let (_, _, missing) = scene.avatar_load_parts(&world, loup, &mut hurry);
+        let (_, _, missing) = scene.avatar_load_parts(&world, loup, Some(&mut hurry));
         assert_eq!(missing, [Missing::Appearance; 3]);
     }
 
@@ -530,12 +542,12 @@ mod tests {
         scene.geom_insert(key, GeomState::Pending);
         let mut hurry = Vec::new();
         // being downloaded: waited for
-        let (_, _, missing) = scene.avatar_load_parts(&world, own, &mut hurry);
+        let (_, _, missing) = scene.avatar_load_parts(&world, own, Some(&mut hurry));
         assert_eq!(missing, [Missing::Geometry(mesh)]);
         assert!(scene.describe_missing(&world, &missing).contains("mesh"));
         // the asset server does not have it (404): not expected any more
         scene.meshes.insert_demo_unavailable(crate::demo::CLOUD_MESH);
-        let (done, total, missing) = scene.avatar_load_parts(&world, own, &mut hurry);
+        let (done, total, missing) = scene.avatar_load_parts(&world, own, Some(&mut hurry));
         assert!(missing.is_empty(), "{missing:?}");
         assert_eq!(done, total);
     }
@@ -552,7 +564,7 @@ mod tests {
         scene.gpu[mesh].wanted_geom = Some(key);
         scene.geom_insert(key, GeomState::Failed);
         let mut hurry = Vec::new();
-        let (done, total, missing) = scene.avatar_load_parts(&world, own, &mut hurry);
+        let (done, total, missing) = scene.avatar_load_parts(&world, own, Some(&mut hurry));
         assert!(missing.is_empty(), "{missing:?}");
         assert_eq!(done, total);
     }

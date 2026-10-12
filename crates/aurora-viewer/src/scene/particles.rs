@@ -50,7 +50,10 @@ fn cloud_data(avatar: Uuid) -> ps::PartSysData {
 pub struct ParticleManager {
     sources: HashMap<Uuid, Source>,
     seed: u64,
-    sort_tmp: Vec<(f32, ParticleInstance)>,
+    /// The frame's instances in source order, and their back to front
+    /// order (reused).
+    inst_tmp: Vec<ParticleInstance>,
+    order_tmp: Vec<u64>,
     /// Objects whose update carried a particle system change (reused).
     changed_tmp: Vec<usize>,
     pub live: usize,
@@ -58,6 +61,15 @@ pub struct ParticleManager {
 
 fn to_u8(c: f32) -> u8 {
     (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+
+/// Sort key of an instance: ascending keys go from the farthest to the
+/// nearest (`distance_sq` to the eye), then by `index` (source order) so
+/// that two particles at the same distance keep their order from a frame to
+/// the next. The bits of a positive float order like the float.
+fn far_first_key(distance_sq: f32, index: usize) -> u64 {
+    let d = if distance_sq.is_nan() { 0.0 } else { distance_sq.max(0.0) };
+    ((!d.to_bits() as u64) << 32) | index as u64
 }
 
 impl ParticleManager {
@@ -230,7 +242,8 @@ impl ParticleManager {
         let t = parts.lap(Part::ParamsPartSim, t);
 
         // ---- instances, back to front
-        self.sort_tmp.clear();
+        self.inst_tmp.clear();
+        self.order_tmp.clear();
         for s in self.sources.values() {
             let slot = if s.texture.is_nil() || !textures.is_loaded(&s.texture) {
                 0
@@ -274,12 +287,34 @@ impl ParticleManager {
                     axis: axis.to_array(),
                     glow: p.glow,
                 };
-                self.sort_tmp.push((pos.distance_squared(eye), inst));
+                self.order_tmp.push(far_first_key(pos.distance_squared(eye), self.inst_tmp.len()));
+                self.inst_tmp.push(inst);
             }
         }
-        self.live = self.sort_tmp.len();
-        self.sort_tmp.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
-        out.extend(self.sort_tmp.iter().map(|(_, i)| *i));
+        self.live = self.inst_tmp.len();
+        // the order is sorted as plain integers (8 bytes each, not the
+        // 48-byte instances), then the instances are gathered
+        self.order_tmp.sort_unstable();
+        out.extend(self.order_tmp.iter().map(|k| self.inst_tmp[(k & 0xFFFF_FFFF) as usize]));
         parts.lap(Part::ParamsPartList, t);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instances_are_ordered_far_first_then_by_source_order() {
+        // distances squared and the index each instance was built at
+        let mut keys: Vec<u64> = [(4.0, 0), (100.0, 1), (0.0, 2), (4.0, 3), (f32::NAN, 4), (2.5e9, 5), (1e-30, 6)]
+            .into_iter()
+            .map(|(d, i)| far_first_key(d, i))
+            .collect();
+        keys.sort_unstable();
+        let order: Vec<u64> = keys.iter().map(|k| k & 0xFFFF_FFFF).collect();
+        // equal distances keep the order they were built in; a distance that
+        // is not a number counts as none
+        assert_eq!(order, [5, 1, 0, 3, 6, 2, 4]);
     }
 }
