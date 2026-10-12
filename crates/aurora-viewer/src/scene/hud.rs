@@ -69,7 +69,7 @@ impl Scene {
                 if self
                     .selection_faces
                     .get(&idx)
-                    .is_some_and(|mask| mask & 1u32.checked_shl(face.te_index.into()).unwrap_or(0) != 0)
+                    .is_some_and(|mask| mask & 1u64.checked_shl(face.te_index.into()).unwrap_or(0) != 0)
                 {
                     self.lists.hud_select_faces.push(face.cmd);
                 }

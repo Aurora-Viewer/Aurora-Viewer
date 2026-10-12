@@ -1600,7 +1600,7 @@ impl BuildTool {
     }
 
     /// LLSelectMgr's TE mode: the selected surfaces, not whole-object outlines.
-    pub fn face_selection(&self, world: &World, s: &BuildSettings) -> HashMap<usize, u32> {
+    pub fn face_selection(&self, world: &World, s: &BuildSettings) -> HashMap<usize, u64> {
         if !self.face_mode() || !s.show_highlight {
             return HashMap::new();
         }
@@ -1610,7 +1610,7 @@ impl BuildTool {
                 let mask = self
                     .sel_faces(world, idx)
                     .into_iter()
-                    .fold(0, |mask, face| mask | 1u32.checked_shl(face.into()).unwrap_or(0));
+                    .fold(0, |mask, face| mask | 1u64.checked_shl(face.into()).unwrap_or(0));
                 (idx, mask)
             })
             .collect()

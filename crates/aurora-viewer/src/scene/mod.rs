@@ -546,8 +546,8 @@ pub struct Scene {
     pub selection_wire: HashMap<usize, bool>,
     /// Selected prims whose deformed silhouette is prepared with their mesh.
     pub selection_silhouettes: HashSet<usize>,
-    /// Selected texture-entry bits for each prim, in face-editing mode.
-    pub selection_faces: HashMap<usize, u32>,
+    /// Selected texture-entry bits for each prim; all 45 TE slots must fit.
+    pub selection_faces: HashMap<usize, u64>,
     selection_changed: Option<Instant>,
     /// Far avatars drawn as pictures (RenderAvatarMaxNonImpostors).
     impostors: impostors::Impostors,
@@ -808,7 +808,7 @@ impl Scene {
     /// Invisible selected faces get temporary records for their overlay only.
     /// Ordinary transparent faces keep their zero-record path. Changing an
     /// opaque face selection never rebuilds its geometry or material records.
-    pub fn set_face_selection(&mut self, world: &mut World, selected: HashMap<usize, u32>) {
+    pub fn set_face_selection(&mut self, world: &mut World, selected: HashMap<usize, u64>) {
         if self.selection_faces == selected {
             return;
         }
@@ -817,7 +817,8 @@ impl Scene {
             let changed = self.selection_faces.get(&idx).copied().unwrap_or(0) ^ selected.get(&idx).copied().unwrap_or(0);
             let invisible = changed != 0
                 && world.objects.get(idx).and_then(|object| object.te.as_ref()).is_some_and(|te| {
-                    (0..aurora_prim::te::MAX_TES).any(|face| changed & (1u32 << face) != 0 && te.face(face).color[3] < 0.004)
+                    (0..aurora_prim::te::MAX_TES)
+                        .any(|face| changed & 1u64.checked_shl(face as u32).unwrap_or(0) != 0 && te.face(face).color[3] < 0.004)
                 });
             if invisible && let Some(object) = world.objects.get_mut(idx) {
                 // Face allocations changed: a placement update alone cannot
@@ -2444,7 +2445,7 @@ impl Scene {
             };
             let tf = te.as_ref().map(|t| *t.face(fi)).unwrap_or_default();
             let invisible = tf.color[3] < 0.004;
-            if invisible && selected_faces & 1u32.checked_shl(fi as u32).unwrap_or(0) == 0 {
+            if invisible && selected_faces & 1u64.checked_shl(fi as u32).unwrap_or(0) == 0 {
                 // fully transparent face: LL registers it as PASS_ALPHA_INVISIBLE,
                 // never drawn, and its glow is not drawn either
                 continue;
@@ -3233,7 +3234,7 @@ impl Scene {
                     }
                     if selection_faces
                         .get(&idx)
-                        .is_some_and(|mask| mask & 1u32.checked_shl(f.te_index.into()).unwrap_or(0) != 0)
+                        .is_some_and(|mask| mask & 1u64.checked_shl(f.te_index.into()).unwrap_or(0) != 0)
                     {
                         l.select_faces.push(cmd);
                     }
@@ -4593,6 +4594,30 @@ mod tests {
         scene.set_face_selection(&mut world, HashMap::from([(idx, 1)]));
         assert!(!world.objects.get(idx).unwrap().render.needs_records);
         scene.set_face_selection(&mut world, HashMap::new());
+        assert!(world.objects.get(idx).unwrap().render.needs_records);
+    }
+
+    #[test]
+    fn high_texture_entry_selection_does_not_wrap_onto_another_face() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        for event in crate::demo::events().into_iter().chain(crate::demo::face_selection_events(false)) {
+            world.apply(event);
+        }
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(99620)).unwrap();
+        let object = world.objects.get_mut(idx).unwrap();
+        Arc::make_mut(object.te.as_mut().unwrap()).faces[44].color[3] = 0.0;
+        object.render.needs_records = false;
+        object.material_dirty = false;
+        let mut scene = Scene::new(Default::default(), lib);
+        scene.set_face_selection(&mut world, HashMap::from([(idx, 1u64 << 12)]));
+        assert!(!world.objects.get(idx).unwrap().render.needs_records);
+        scene.set_face_selection(&mut world, HashMap::from([(idx, (1u64 << 12) | (1u64 << 44))]));
+        assert!(world.objects.get(idx).unwrap().render.needs_records);
+        world.objects.get_mut(idx).unwrap().render.needs_records = false;
+        scene.set_face_selection(&mut world, HashMap::from([(idx, (1u64 << 12) | (1u64 << 44))]));
+        assert!(!world.objects.get(idx).unwrap().render.needs_records);
+        scene.set_face_selection(&mut world, HashMap::from([(idx, 1u64 << 12)]));
         assert!(world.objects.get(idx).unwrap().render.needs_records);
     }
 

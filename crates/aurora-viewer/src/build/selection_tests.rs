@@ -154,6 +154,24 @@ fn face_highlights_replace_whole_object_outlines_only_in_face_mode() {
 }
 
 #[test]
+fn face_masks_keep_texture_entry_indices_across_the_32_bit_boundary() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99610);
+    let id = world.objects.get(idx).unwrap().full_id;
+    tool.face_counts.insert(id, aurora_prim::te::MAX_TES);
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    for (n, face) in [0, 31, 32, 44].into_iter().enumerate() {
+        tool.face_click(&mut world, Some(idx), Some(face), n != 0);
+    }
+    assert_eq!(
+        tool.face_selection(&world, &settings)[&idx],
+        1 | (1u64 << 31) | (1u64 << 32) | (1u64 << 44)
+    );
+    tool.face_click(&mut world, Some(idx), Some(32), true);
+    assert_eq!(tool.face_selection(&world, &settings)[&idx], 1 | (1u64 << 31) | (1u64 << 44));
+}
+
+#[test]
 fn invalid_face_and_shift_click_on_empty_space_preserve_selection() {
     let (mut world, mut tool, mut settings) = fixture();
     let idx = object(&world, 99610);
