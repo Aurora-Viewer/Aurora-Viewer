@@ -380,7 +380,9 @@ ne l'attend plus (`Renderer::request_pick`) : la demande part dans le paquet
 de l'image suivante, le thread de rendu copie le texel avant d'encoder cette
 image — la profondeur et la caméra sont encore celles de l'image sur
 laquelle le clic a été fait — dans des commandes soumises à part, et la
-réponse revient avec un résultat d'image, deux ou trois images plus tard
+réponse revient avec un résultat d'image, une à trois images plus tard (le
+résultat d'une image que le thread de rendu a déjà finie est pris sans
+attendre la remise suivante)
 (`aurora-render/src/pick.rs`, `aurora-viewer/src/app/click_pick.rs`).
 L'ancienne lecture, qui attendait l'image en cours puis tout ce que le GPU
 avait en file (`Renderer::pick_world`), ne sert plus qu'à la comparaison

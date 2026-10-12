@@ -802,7 +802,7 @@ impl Renderer {
     /// the last frame built (depth prepass read-back; None for the sky),
     /// without waiting for it: the request leaves with the next frame, the
     /// render thread copies the texel before it draws that frame, and
-    /// [`Self::take_pick`] gives the answer two or three frames later. The
+    /// [`Self::take_pick`] gives the answer one to three frames later. The
     /// ticket returned names the request.
     pub fn request_pick(&mut self, x: f32, y: f32) -> u64 {
         let ticket = self.pick_ticket;
@@ -817,10 +817,30 @@ impl Renderer {
     }
 
     /// The answer to a [`Self::request_pick`], once: None while it has not
-    /// come back.
+    /// come back. When the render thread has already finished the frame
+    /// handed over, its result is taken in now instead of with the next
+    /// hand-over: with a frame cap or vertical sync the render thread is
+    /// done long before the next frame starts, and the click is answered
+    /// one frame after it was made instead of two.
     pub fn take_pick(&mut self, ticket: u64) -> Option<Option<Vec3>> {
+        if !self.pick_answers.iter().any(|(t, _)| *t == ticket) {
+            self.collect();
+        }
         let i = self.pick_answers.iter().position(|(t, _)| *t == ticket)?;
         Some(self.pick_answers.swap_remove(i).1)
+    }
+
+    /// Take in the result of the frame handed over if the render thread is
+    /// done with it, without waiting for it.
+    fn collect(&mut self) {
+        let Host::Thread { owner, .. } = &mut self.host else {
+            return;
+        };
+        match owner.take_ready() {
+            Ok(Some(Done::Frame(r))) => self.apply(*r),
+            Ok(_) => {}
+            Err(_) => self.fail(),
+        }
     }
 
     /// Give up a [`Self::request_pick`] nobody waits for any more.

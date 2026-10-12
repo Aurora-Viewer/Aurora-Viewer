@@ -10,7 +10,9 @@
 //! The click now asks for that depth and returns
 //! (`Renderer::request_pick`): the request leaves with the next frame, the
 //! render thread copies the texel of the frame the click was made on, and
-//! the answer comes back with a frame result two or three frames later.
+//! the answer comes back with a frame result: one or two frames later
+//! under a frame cap, three when the GPU is the limit (about the time the
+//! click used to wait).
 //! The click is then run again from its start with the answer in hand, the
 //! cursor and the modifiers as they were when it was made: same ray, same
 //! depth, same code as before, a few frames later.

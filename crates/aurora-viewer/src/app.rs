@@ -3397,6 +3397,9 @@ impl App {
             return;
         }
         self.poll_inventory_images();
+        // a click whose depth is back already (the render thread finished
+        // the last frame while this thread waited for its next one)
+        self.resolve_clicks();
         self.frame_profile.lap(Lap::Between);
         let now = Instant::now();
         if let Some(action) = self.exit_prompt.finish(!self.in_world() || self.demo, now) {

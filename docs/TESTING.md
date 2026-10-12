@@ -1154,7 +1154,8 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 - **`AURORA_CLICK_PICK=wait|check`** : par défaut, un clic sur le monde
   (clic gauche, Alt + clic, clic droit, outils de construction) demande la
   profondeur sous son pixel sans l'attendre : la demande part avec l'image
-  suivante, la réponse revient deux ou trois images plus tard, et le clic
+  suivante, la réponse revient une à trois images plus tard (une ou deux
+  avec un plafond d'images/s, trois quand le GPU est la limite), et le clic
   est alors traité avec le curseur et les touches qu'il avait ; ce qui le
   suit (relâchement, autres boutons, mouvement de la souris qui déplace la
   caméra) attend derrière lui, dans l'ordre (`app/click_pick.rs`).
@@ -1166,7 +1167,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
     check` par clic : `depth identical` (c'est le même texel de la même
     image : `DIFFERENT` est un défaut), `target identical` (le point et
     l'objet que le clic trouve ; `DIFFERENT` seulement si ce qui est sous le
-    curseur a changé pendant les deux ou trois images d'attente), le temps
+    curseur a changé pendant les images d'attente), le temps
     de la lecture qui attend et le délai de la réponse. Coûte l'attente de
     `wait` à chaque clic.
   - Avec `AURORA_PROFILE=1` (ou `AURORA_DEMO_CLICKS`), chaque clic écrit
