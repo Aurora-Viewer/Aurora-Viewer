@@ -98,6 +98,44 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   rayon 5 ; fenêtres, cartes et pastilles de la barre d'outils : rayon 3,
   avec des coins proches de ceux de la construction, y compris au repli.
   Les rayons viennent du thème, jamais d'une valeur plus grande dans le code.
+- **Plaque de nom.** L'étiquette au-dessus d'un avatar (`ui/nameplate.rs`)
+  est la **seule exception** aux angles presque carrés : une plaque de verre
+  aux extrémités entièrement arrondies. Ce n'est pas un précédent : rien
+  d'autre dans l'interface ne s'arrondit davantage.
+  - *Verre* : la teinte de la plaque (à mi-chemin entre `navy` et `bar`, à
+    52 %) sur le flou des fenêtres, une bordure claire d'un pixel (`ink` à
+    14 %), une ombre douce dessous. Le flou va aux 16 plaques les plus
+    proches ; les autres, et les pastilles lointaines, n'ont que la teinte,
+    plus dense. Une skin opaque (`panel_alpha = 255`) n'a pas de flou.
+  - *Trois niveaux selon la distance à la caméra* : jusqu'à 15 m, la plaque
+    complète (photo de profil dans un cercle, pastille de statut, nom
+    d'affichage en semi-gras, nom d'utilisateur en `muted`, titre de groupe
+    en `teal`, badges ronds flottant sur le bord supérieur droit) ; jusqu'à
+    40 m, une pastille compacte (nom et badges sur une ligne) ; au-delà, le
+    nom seul. Une plaque ne change de niveau qu'à 1,5 m au-delà d'un seuil et
+    glisse d'un niveau à l'autre en 0,18 s. Dans une foule, seules les huit
+    plaques les plus proches sont complètes, les suivantes sont des pastilles
+    compactes. Une ligne masquée par les préférences est absente : jamais de
+    ligne vide.
+  - *Statut* : pastille en bas à droite de la photo, `success` (présent),
+    `amber` (absent), `danger` (ne pas déranger) ; aucune pour un résident
+    bloqué.
+  - *Badges* : micro `success` (dans le canal vocal), trois points animés
+    (écrit), cœur `violet_light` (ami), triangle `amber` (avatar trop
+    complexe, affiché en silhouette), interdit `danger` (bloqué).
+  - *Voix* : dans le canal vocal, le contour de la plaque prend la couleur
+    `success`, à tous les niveaux ; pendant que la personne parle, un halo
+    serré autour de la plaque suit le niveau de sa voix (montée rapide,
+    retombée plus lente, aucun halo au silence).
+  - *Couleurs fixées par le thème.* Nom d'affichage en `ink` (le nôtre
+    aussi), `violet_light` pour un ami, `rose` pour le personnel de Linden
+    Lab, `muted_dim` en italique sur une plaque à 62 % pour un résident
+    bloqué. Les couleurs d'étiquette des préférences (page Couleurs)
+    appartiennent aux étiquettes classiques, que l'on retrouve dans
+    Préférences › Interface › « Style des étiquettes ».
+  - *Taille* : le nom d'affichage garde la taille des étiquettes classiques
+    (13 points) sur la plaque complète ; tout le reste en découle par les
+    proportions de la maquette.
 - **Boutons pleins.** Tous les boutons et listes déroulantes sont des faces
   pleines sans bordure visible : le thème (`theme.rs`) donne à leur bordure la
   couleur de la face, seuls les champs de saisie et les cases à cocher gardent
