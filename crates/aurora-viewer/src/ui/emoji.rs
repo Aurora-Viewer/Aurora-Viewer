@@ -266,9 +266,10 @@ impl Emoji {
                 let sel = self.tab == i;
                 let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 24.0), egui::Sense::click());
                 if sel {
-                    ui.painter().rect_filled(rect, 2.0, p.violet.gamma_multiply(0.3));
+                    ui.painter()
+                        .rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.3));
                 } else if resp.hovered() {
-                    ui.painter().rect_filled(rect, 2.0, p.raised);
+                    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
                 }
                 if let Some(t) = icons.get(icon) {
                     let r = egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0));
@@ -317,7 +318,7 @@ impl Emoji {
                         for c in list.iter().skip(r * cols).take(cols) {
                             let (rect, resp) = ui.allocate_exact_size(egui::vec2(cell, cell), egui::Sense::click());
                             if resp.hovered() {
-                                ui.painter().rect_filled(rect, 3.0, p.raised);
+                                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
                             }
                             if let Some(t) = self.texture(ui.ctx(), *c) {
                                 let ir = rect.shrink(3.0);

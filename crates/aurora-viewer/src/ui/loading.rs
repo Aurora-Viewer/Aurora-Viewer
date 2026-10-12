@@ -238,7 +238,11 @@ fn chip(painter: &egui::Painter, p: &Palette, at: Pos2, k: f32, lead: Lead, text
             }
         }
         Lead::Letter(letter, bg, fg) => {
-            painter.rect_filled(mark_rect, 2.0, bg.gamma_multiply(alpha));
+            painter.rect_filled(
+                mark_rect,
+                super::widgets::inner_radius(&painter.ctx().global_style().visuals),
+                bg.gamma_multiply(alpha),
+            );
             let fg = fg.gamma_multiply(alpha);
             let letter = painter.layout_no_wrap(letter.to_owned(), egui::FontId::proportional(mark * 0.74), fg);
             super::widgets::paint_ink_centered(painter, letter, mark_rect.center(), fg);

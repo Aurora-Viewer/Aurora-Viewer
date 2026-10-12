@@ -1016,9 +1016,9 @@ fn list_row(
     let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), Sense::click());
     let painter = ui.painter();
     if selected {
-        painter.rect_filled(rect, 2.0, p.violet.gamma_multiply(0.28));
+        painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.28));
     } else if response.hovered() {
-        painter.rect_filled(rect, 2.0, p.raised);
+        painter.rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     let mut x = rect.left() + 4.0 + depth as f32 * 14.0;
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
@@ -1070,7 +1070,7 @@ fn section_header(ui: &mut egui::Ui, p: &Palette, title: &str, open: bool) -> eg
     let w = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 22.0), Sense::click());
     let fill = if response.hovered() { p.raised } else { p.field };
-    ui.painter().rect_filled(rect, 2.0, fill);
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     if let Some(t) = super::icons::global(if open { "caret-down-filled" } else { "caret-right-filled" }) {
         ui.painter().image(

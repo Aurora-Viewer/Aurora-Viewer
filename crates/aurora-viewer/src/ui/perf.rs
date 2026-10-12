@@ -393,7 +393,7 @@ fn headline(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
 fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), GRAPH_H), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 3.0, p.field);
+    painter.rect_filled(rect, ui.visuals().window_corner_radius, p.field);
     let top = d.graph_top.max(1.0);
     let plot = rect.shrink2(vec2(0.0, 4.0));
     let y = |fps: f32| plot.bottom() - (fps / top).min(1.0) * plot.height();
@@ -465,7 +465,7 @@ fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
         let left = pt.x + 6.0 + size.x > rect.right();
         let x = if left { pt.x - 6.0 - size.x } else { pt.x + 6.0 };
         let r = Rect::from_min_size(pos2(x, rect.top() + 3.0), size);
-        painter.rect_filled(r, 3.0, p.panel);
+        painter.rect_filled(r, ui.visuals().window_corner_radius, p.panel);
         painter.galley(r.min + vec2(5.0, 2.0), galley, p.ink);
     }
 }
@@ -475,7 +475,7 @@ fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
 fn net_graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), NET_GRAPH_H), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 3.0, p.field);
+    painter.rect_filled(rect, ui.visuals().window_corner_radius, p.field);
     let top = d.net_top.max(1.0);
     let plot = rect.shrink2(vec2(0.0, 4.0));
     let y = |kbps: f32| plot.bottom() - (kbps / top).min(1.0) * plot.height();
@@ -546,7 +546,7 @@ fn net_graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
         let left = px + 6.0 + size.x > rect.right();
         let bx = if left { (px - 6.0 - size.x).max(rect.left()) } else { px + 6.0 };
         let r = Rect::from_min_size(pos2(bx, rect.top() + 3.0), size);
-        painter.rect_filled(r, 3.0, p.panel);
+        painter.rect_filled(r, ui.visuals().window_corner_radius, p.panel);
         painter.galley(r.min + vec2(5.0, 2.0), galley, p.ink);
     }
 }
@@ -684,7 +684,7 @@ fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<P
     let wide = |x: &Part| x.live / total_live * rect.width() >= 0.5;
     if !parts.iter().any(wide) {
         // nothing measured yet (no traffic): the empty track
-        painter.rect_filled(rect, 3.0, p.field);
+        painter.rect_filled(rect, ui.visuals().window_corner_radius, p.field);
     }
     let first = parts.iter().position(wide).unwrap_or(0);
     let last = parts.iter().rposition(wide).unwrap_or(parts.len() - 1);
@@ -701,11 +701,12 @@ fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<P
         if right - left < 0.5 {
             continue;
         }
+        let end = ui.visuals().window_corner_radius;
         let corners = egui::CornerRadius {
-            nw: if i == first { 3 } else { 0 },
-            sw: if i == first { 3 } else { 0 },
-            ne: if i == last { 3 } else { 0 },
-            se: if i == last { 3 } else { 0 },
+            nw: if i == first { end.nw } else { 0 },
+            sw: if i == first { end.sw } else { 0 },
+            ne: if i == last { end.ne } else { 0 },
+            se: if i == last { end.se } else { 0 },
         };
         let dim = hovered.is_some_and(|h| h != part.name);
         let col = if dim { part.color.gamma_multiply(0.3) } else { part.color };
@@ -726,7 +727,7 @@ fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<P
         let on = hovered == Some(part.name);
         let painter = ui.painter();
         if on {
-            painter.rect_filled(row, 2.0, p.raised);
+            painter.rect_filled(row, ui.visuals().window_corner_radius, p.raised);
         }
         let cy = row.center().y;
         painter.circle_filled(pos2(row.left() + 7.0, cy), 3.5, part.color);

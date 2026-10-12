@@ -484,7 +484,7 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
         _ => {
             painter.rect_stroke(
                 egui::Rect::from_center_size(c, Vec2::splat(10.0)),
-                1.0,
+                inner_radius(ui.visuals()),
                 stroke,
                 egui::StrokeKind::Inside,
             );
@@ -492,6 +492,18 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     }
     resp
 }
+
+/// Corners of a small mark inside a control or a line (the knob of a switch,
+/// a key cap, a status square, a letter badge): one pixel tighter than the
+/// windows', so that a mark of a few pixels stays a square.
+pub fn inner_radius(visuals: &egui::Visuals) -> CornerRadius {
+    CornerRadius::same(visuals.window_corner_radius.nw.saturating_sub(1).max(1))
+}
+
+/// Ends of a thin bar (the track of a progress bar or of a level meter, a
+/// mark on a rail): the radius of the theme would turn a bar of a few pixels
+/// into a pill.
+pub const TRACK_RADIUS: f32 = 2.0;
 
 /// Flat on/off switch: a track with the corners of the theme, and a square
 /// knob that slides in it.
@@ -511,8 +523,7 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     let half = rect.height() / 2.0;
     let x = egui::lerp(rect.left() + half..=rect.right() - half, t);
     let knob = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), Vec2::splat(KNOB));
-    let knob_radius = CornerRadius::same(radius.nw.saturating_sub(1).max(1));
-    painter.rect_filled(knob, knob_radius, if *on { p.ink } else { p.muted });
+    painter.rect_filled(knob, inner_radius(ui.visuals()), if *on { p.ink } else { p.muted });
     resp
 }
 
@@ -708,7 +719,7 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
                 } else {
                     p.raised.gamma_multiply(0.25)
                 };
-                ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
+                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
             }
             underline(ui, p, &resp, sel, *enabled);
             let col = if !*enabled {
@@ -781,7 +792,7 @@ fn small_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enab
     } else {
         p.field
     };
-    ui.painter().rect_filled(rect, 2.0, fill);
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
     let col = if enabled { p.ink } else { p.muted_dim };
     match super::icons::global(icon) {
         Some(t) => {
@@ -874,12 +885,12 @@ pub fn progress(ui: &mut egui::Ui, p: &Palette, id: &str, fraction: f32, width: 
         ui.spacing_mut().item_spacing.y = 4.0;
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
         // the track of the sliders: it shows on a window as on a group
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, TRACK_RADIUS, p.raised);
         let fill = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * shown, rect.height()));
         if fill.width() >= 1.0 {
             match tint {
                 Some(color) => {
-                    ui.painter().rect_filled(fill, 2.0, color);
+                    ui.painter().rect_filled(fill, TRACK_RADIUS, color);
                 }
                 None => super::loading::gradient_rect(ui.painter(), fill, p.violet, p.teal, true),
             }
@@ -896,9 +907,9 @@ pub fn progress(ui: &mut egui::Ui, p: &Palette, id: &str, fraction: f32, width: 
 pub fn level(ui: &mut egui::Ui, p: &Palette, id: &str, value: f32, width: f32, color: Color32) {
     let shown = ui.ctx().animate_value_with_time(ui.id().with(id), value.clamp(0.0, 1.0), 0.08);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
-    ui.painter().rect_filled(rect, 2.0, p.raised);
+    ui.painter().rect_filled(rect, TRACK_RADIUS, p.raised);
     let fill = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * shown, rect.height()));
-    ui.painter().rect_filled(fill, 2.0, color);
+    ui.painter().rect_filled(fill, TRACK_RADIUS, color);
 }
 
 /// Face of an `action_button`.
@@ -1016,7 +1027,7 @@ pub fn maturity_badge(ui: &mut egui::Ui, p: &Palette, maturity: &str, size: f32)
         _ => aurora_i18n::tr!("ui-widgets-adult-region"),
     };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(2), bg);
+    ui.painter().rect_filled(rect, inner_radius(ui.visuals()), bg);
     // centered on the letter itself, not on the text row
     let galley = ui
         .painter()
@@ -1056,7 +1067,7 @@ pub fn picture(
     placeholder: &str,
 ) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    ui.painter().rect_filled(rect, 2.0, p.field);
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
     match tex {
         Some(t) => {
             let [w, h] = t.size();
@@ -1092,8 +1103,12 @@ pub fn picture(
             );
         }
     }
-    ui.painter()
-        .rect_stroke(rect, 2.0, egui::Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
+    ui.painter().rect_stroke(
+        rect,
+        ui.visuals().window_corner_radius,
+        egui::Stroke::new(1.0, p.raised),
+        egui::StrokeKind::Inside,
+    );
     resp
 }
 

@@ -102,7 +102,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (r, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::click());
                     if resp.hovered() {
-                        ui.painter().rect_filled(r, 2.0, p.raised);
+                        ui.painter().rect_filled(r, ui.visuals().window_corner_radius, p.raised);
                     }
                     if let Some(t) = icons.get("x") {
                         ui.painter().image(

@@ -1124,7 +1124,7 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
     if level_width > 0.5 {
         ui.painter().rect_filled(
             egui::Rect::from_min_size(egui::pos2(rect.left() + 3.0, rect.bottom() - 3.0), Vec2::new(level_width, 2.0)),
-            1.0,
+            super::widgets::TRACK_RADIUS,
             p.teal,
         );
     }

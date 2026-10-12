@@ -197,9 +197,10 @@ pub(super) fn show(
                         let row = &picker.destinations[picker.visible[i]];
                         let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), egui::Sense::click());
                         if picker.selected == Some(row.id) {
-                            ui.painter().rect_filled(rect, 2.0, p.violet.gamma_multiply(0.35));
+                            ui.painter()
+                                .rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.35));
                         } else if response.hovered() {
-                            ui.painter().rect_filled(rect, 2.0, p.raised);
+                            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
                         }
                         if let Some(icon) = icons.get("folder-filled") {
                             ui.painter().image(

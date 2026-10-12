@@ -187,7 +187,7 @@ pub fn swatch(
         let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
         let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), sense);
         let painter = ui.painter();
-        painter.rect_filled(rect, 2.0, p.field);
+        painter.rect_filled(rect, ui.visuals().window_corner_radius, p.field);
         match id.filter(|i| !i.is_nil()) {
             Some(tex) => {
                 wanted.insert(tex);
@@ -228,7 +228,12 @@ pub fn swatch(
             );
         }
         let stroke = if resp.hovered() && enabled { p.violet_light } else { p.raised };
-        painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
+        painter.rect_stroke(
+            rect,
+            ui.visuals().window_corner_radius,
+            egui::Stroke::new(1.0, stroke),
+            egui::StrokeKind::Inside,
+        );
         ui.add_sized(
             [size, 14.0],
             egui::Label::new(RichText::new(caption).size(11.0).color(if enabled { p.muted } else { p.muted_dim })),
@@ -245,10 +250,11 @@ pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str
         let response = ui
             .add_enabled_ui(enabled, |ui| {
                 let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
-                ui.painter().rect_filled(rect, 3.0, crate::ui::color_picker::color(rgb));
+                ui.painter()
+                    .rect_filled(rect, ui.visuals().window_corner_radius, crate::ui::color_picker::color(rgb));
                 ui.painter().rect_stroke(
                     rect,
-                    3.0,
+                    ui.visuals().window_corner_radius,
                     egui::Stroke::new(1.0, if response.hovered() { p.violet } else { p.raised }),
                     egui::StrokeKind::Inside,
                 );

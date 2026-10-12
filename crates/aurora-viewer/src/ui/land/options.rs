@@ -350,7 +350,7 @@ pub(super) fn show(
             ui.label(RichText::new(aurora_i18n::tr!("ui-land-options-picture")).size(12.0).color(p.muted));
             let size = Vec2::new(195.0, 150.0);
             let (rect, r) = ui.allocate_exact_size(size, if can_identity { egui::Sense::click() } else { egui::Sense::hover() });
-            ui.painter().rect_filled(rect, 2.0, p.field);
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
             if parcel.snapshot_id.is_nil() {
                 ui.painter().text(
                     rect.center(),

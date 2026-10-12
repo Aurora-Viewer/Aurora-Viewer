@@ -349,7 +349,7 @@ impl ColorPicker {
             if let Some(parent) = self.parent {
                 ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, parent)).rect_stroke(
                     origin.expand(2.0),
-                    3.0,
+                    ctx.global_style().visuals.window_corner_radius,
                     Stroke::new(1.5, p.violet.gamma_multiply(opacity)),
                     egui::StrokeKind::Outside,
                 );
@@ -493,8 +493,12 @@ impl ColorPicker {
         let marker = Pos2::new(rect.left() + draft.hsl[0] * width, rect.bottom() - draft.hsl[1] * height);
         ui.painter().circle_stroke(marker, 6.0, Stroke::new(3.0, p.field));
         ui.painter().circle_stroke(marker, 6.0, Stroke::new(1.0, p.ink));
-        ui.painter()
-            .rect_stroke(rect, 2.0, Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(
+            rect,
+            ui.visuals().window_corner_radius,
+            Stroke::new(1.0, p.raised),
+            egui::StrokeKind::Inside,
+        );
         let (bar, response) = ui.allocate_exact_size(Vec2::new(18.0, height), Sense::click_and_drag());
         self.record(Control::Lightness, bar);
         let mut mesh = egui::Mesh::default();
@@ -518,8 +522,12 @@ impl ColorPicker {
         let y = bar.bottom() - draft.hsl[2] * height;
         ui.painter().hline(bar.x_range(), y, Stroke::new(3.0, p.field));
         ui.painter().hline(bar.x_range(), y, Stroke::new(1.0, p.ink));
-        ui.painter()
-            .rect_stroke(bar, 2.0, Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(
+            bar,
+            ui.visuals().window_corner_radius,
+            Stroke::new(1.0, p.raised),
+            egui::StrokeKind::Inside,
+        );
         edited
     }
 
@@ -543,7 +551,7 @@ impl ColorPicker {
                         ui.allocate_exact_size(Vec2::new(width, 26.0), if current { Sense::drag() } else { Sense::hover() });
                     if !current && self.mixed {
                         // A mixed selection has no single original swatch.
-                        ui.painter().rect_filled(rect, 3.0, p.field);
+                        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
                         for col in 0..(width / 8.0).ceil() as usize {
                             for row in 0..4 {
                                 if (col + row) % 2 == 0 {
@@ -554,10 +562,14 @@ impl ColorPicker {
                             }
                         }
                     } else {
-                        ui.painter().rect_filled(rect, 3.0, color(rgb));
+                        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, color(rgb));
                     }
-                    ui.painter()
-                        .rect_stroke(rect, 3.0, Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
+                    ui.painter().rect_stroke(
+                        rect,
+                        ui.visuals().window_corner_radius,
+                        Stroke::new(1.0, p.raised),
+                        egui::StrokeKind::Inside,
+                    );
                     if current {
                         self.record(Control::Current, rect);
                         response.dnd_set_drag_payload(draft.rgb);
@@ -581,11 +593,12 @@ impl ColorPicker {
                     let slot = row * 16 + col;
                     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 19.0), Sense::click());
                     self.record(Control::Slot(slot), rect);
-                    ui.painter().rect_filled(rect, 2.0, color(prefs.palette[slot]));
+                    ui.painter()
+                        .rect_filled(rect, ui.visuals().window_corner_radius, color(prefs.palette[slot]));
                     let dropping = response.dnd_hover_payload::<Rgb>().is_some();
                     ui.painter().rect_stroke(
                         rect,
-                        2.0,
+                        ui.visuals().window_corner_radius,
                         Stroke::new(if dropping { 2.0 } else { 1.0 }, if dropping { p.violet } else { p.raised }),
                         egui::StrokeKind::Inside,
                     );

@@ -38,7 +38,7 @@ impl Keycap {
                 ui.painter().image(texture.id(), image, uv, p.ink);
             }
             Keycap::Text(mouse, galley) => {
-                ui.painter().rect_filled(rect, 2.0, p.ink);
+                ui.painter().rect_filled(rect, super::inner_radius(ui.visuals()), p.ink);
                 let mut text = rect;
                 if let Some(texture) = mouse {
                     let image =

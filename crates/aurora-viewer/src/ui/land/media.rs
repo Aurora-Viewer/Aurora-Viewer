@@ -122,7 +122,7 @@ pub(super) fn show(
         super::key(ui, p, aurora_i18n::tr!("ui-land-media-replace-texture"));
         let size = Vec2::new(64.0, 80.0);
         let (rect, r) = ui.allocate_exact_size(size, if can { egui::Sense::click() } else { egui::Sense::hover() });
-        ui.painter().rect_filled(rect, 2.0, p.field);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
         let id = parcel.media.media_id;
         if !id.is_nil() {
             s.wanted_images.insert(id);

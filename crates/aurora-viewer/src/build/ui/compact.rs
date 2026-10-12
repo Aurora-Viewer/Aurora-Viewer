@@ -51,7 +51,7 @@ pub fn icon_button(ui: &mut egui::Ui, p: &Palette, name: &str, title: &str, enab
     ui.add_enabled_ui(enabled, |ui| {
         let (rect, response) = ui.allocate_exact_size(Vec2::new(24.0, 24.0), egui::Sense::click());
         if response.hovered() && enabled {
-            ui.painter().rect_filled(rect, 3.0, p.raised);
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
         }
         glyph(
             ui,
@@ -163,11 +163,18 @@ pub(super) fn manipulation(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool,
             ] {
                 let (rect, response) = ui.allocate_exact_size(Vec2::new(28.0, 26.0), egui::Sense::click());
                 let active = tool.effective_mode(mods) == mode;
-                ui.painter()
-                    .rect_filled(rect, 3.0, if active || response.hovered() { p.raised } else { p.field });
+                ui.painter().rect_filled(
+                    rect,
+                    ui.visuals().window_corner_radius,
+                    if active || response.hovered() { p.raised } else { p.field },
+                );
                 if active {
-                    ui.painter()
-                        .rect_stroke(rect, 3.0, Stroke::new(1.0, p.violet_light), egui::StrokeKind::Inside);
+                    ui.painter().rect_stroke(
+                        rect,
+                        ui.visuals().window_corner_radius,
+                        Stroke::new(1.0, p.violet_light),
+                        egui::StrokeKind::Inside,
+                    );
                 }
                 glyph(
                     ui,
@@ -256,8 +263,11 @@ fn sections_panel(
                     let (rect, resp) = ui.allocate_exact_size(Vec2::new(34.0, 36.0), egui::Sense::click());
                     let active = tool.tab == tab;
                     if active || resp.hovered() {
-                        ui.painter()
-                            .rect_filled(rect, 3.0, if active { p.violet.gamma_multiply(0.3) } else { p.raised });
+                        ui.painter().rect_filled(
+                            rect,
+                            ui.visuals().window_corner_radius,
+                            if active { p.violet.gamma_multiply(0.3) } else { p.raised },
+                        );
                     }
                     if active {
                         ui.painter().vline(rect.left(), rect.y_range(), Stroke::new(2.0, p.violet));

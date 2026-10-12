@@ -509,7 +509,8 @@ fn paint_row(ui: &egui::Ui, p: &Palette, data: &RadarData, row: &Row, rect: Rect
             Column::Region => {
                 if row.same_region {
                     let dot = Rect::from_center_size(cell.center(), Vec2::splat(8.0));
-                    ui.painter().rect_filled(dot, 2.0, p.violet_light);
+                    ui.painter()
+                        .rect_filled(dot, crate::ui::widgets::inner_radius(ui.visuals()), p.violet_light);
                     say(aurora_i18n::tr!("radar-col-region").to_owned());
                 }
             }

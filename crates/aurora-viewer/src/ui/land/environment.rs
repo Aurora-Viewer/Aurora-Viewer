@@ -188,7 +188,7 @@ fn altitudes(ui: &mut egui::Ui, p: &Palette, e: Option<&EnvSummary>) {
     for (y, sky, alt) in marks {
         painter.rect_filled(
             egui::Rect::from_center_size(egui::pos2(bar_x, y), Vec2::new(14.0, 6.0)),
-            2.0,
+            super::super::widgets::TRACK_RADIUS,
             p.violet_light,
         );
         let ly = y.min(last - 30.0);

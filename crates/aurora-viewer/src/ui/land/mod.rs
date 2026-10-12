@@ -564,7 +564,7 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, enabled: bool) -> egu
     } else {
         p.raised
     };
-    ui.painter().rect_filled(rect, 2.0, fill);
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
     if let Some(t) = super::icons::global(icon) {
         ui.painter().image(
             t.id(),

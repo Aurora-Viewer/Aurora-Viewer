@@ -119,8 +119,11 @@ fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, body: impl F
 fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool, worn: Option<&str>) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 25.0), egui::Sense::click());
     if selected || response.hovered() {
-        ui.painter()
-            .rect_filled(rect, 2.0, if selected { p.violet.gamma_multiply(0.25) } else { p.raised });
+        ui.painter().rect_filled(
+            rect,
+            ui.visuals().window_corner_radius,
+            if selected { p.violet.gamma_multiply(0.25) } else { p.raised },
+        );
     }
     let (name, color) = match it.asset_type {
         6 => ("box", p.amber),
@@ -212,10 +215,10 @@ fn gallery(
                     ui.set_width(width);
                     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, width * 0.88), egui::Sense::click());
                     let selected = st.selected_outfit == Some(*id);
-                    ui.painter().rect_filled(rect, 3.0, p.field);
+                    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
                     ui.painter().rect_stroke(
                         rect,
-                        3.0,
+                        ui.visuals().window_corner_radius,
                         egui::Stroke::new(1.0, if selected { p.violet } else { p.raised }),
                         egui::StrokeKind::Inside,
                     );

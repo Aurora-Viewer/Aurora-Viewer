@@ -543,7 +543,7 @@ fn save_buttons(ui: &mut egui::Ui, p: &Palette, edit: &mut Edit) -> bool {
 fn icon(ui: &mut egui::Ui, p: &Palette, name: &str, size: f32, tint: Color32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     if let Some(t) = super::icons::global(name) {
         ui.painter().image(
@@ -561,7 +561,7 @@ fn preview_toggle(ui: &mut egui::Ui, p: &Palette, on: &mut bool) {
     let icon = if *on { "eye-filled" } else { "eye-off" };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     if let Some(t) = super::icons::global(icon) {
         ui.painter().image(
@@ -587,7 +587,7 @@ fn preview_toggle(ui: &mut egui::Ui, p: &Palette, on: &mut bool) {
 fn rights_icon(ui: &mut egui::Ui, p: &Palette, icon: &str, granted: bool, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, 2.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     if let Some(t) = super::icons::global(icon) {
         ui.painter().image(

@@ -460,8 +460,11 @@ fn picker_folder(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &mut Invent
 
 fn toolbar_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, enabled: bool, caption: &mut String) -> bool {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(32.0), if enabled { egui::Sense::click() } else { egui::Sense::hover() });
-    ui.painter()
-        .rect_filled(rect, 2.0, if enabled && response.hovered() { p.raised } else { p.field });
+    ui.painter().rect_filled(
+        rect,
+        ui.visuals().window_corner_radius,
+        if enabled && response.hovered() { p.raised } else { p.field },
+    );
     if let Some(texture) = crate::ui::icons::global(name) {
         ui.painter().image(
             texture.id(),

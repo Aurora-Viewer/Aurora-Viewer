@@ -144,7 +144,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         let allowed = editable && egui::DragAndDrop::has_payload_of_type::<InvDrag>(ui.ctx());
         ui.painter().rect_stroke(
             zone.response.rect,
-            3.0,
+            ui.visuals().window_corner_radius,
             egui::Stroke::new(1.0, if allowed { p.violet_light } else { p.muted_dim }),
             egui::StrokeKind::Inside,
         );

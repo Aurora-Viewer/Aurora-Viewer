@@ -237,7 +237,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
                     );
                 }
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(200.0, 110.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 2.0, p.field);
+                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
                 ui.painter().text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,

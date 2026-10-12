@@ -20,7 +20,7 @@ use crate::world::contact_sets::{self, ContactSets};
 use crate::world::names::{AvatarName, NameOptions};
 use crate::world::social::rights;
 use aurora_net::NetCommand;
-use egui::{Color32, CornerRadius, RichText, Sense, Stroke, Vec2};
+use egui::{Color32, RichText, Sense, Stroke, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -411,7 +411,7 @@ fn row_icon(ui: &egui::Ui, p: &Palette, rect: egui::Rect, tex: Option<&egui::Tex
             );
         }
         None => {
-            ui.painter().rect_filled(rect, 2.0, p.raised);
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
             if let Some(t) = super::icons::global(fallback) {
                 ui.painter().image(
                     t.id(),
@@ -752,7 +752,7 @@ fn friend_table(
                     // status: green square when online (icon_avatar_online)
                     let s = egui::Rect::from_center_size(egui::pos2(rect.left() + status_w * 0.5, rect.center().y), Vec2::splat(9.0));
                     if r.online {
-                        ui.painter().rect_filled(s, CornerRadius::same(1), p.success);
+                        ui.painter().rect_filled(s, super::widgets::inner_radius(ui.visuals()), p.success);
                     }
                     // names: bold when online (updateFriendItem), contact set color
                     let col = r.color.unwrap_or(if r.online { p.ink } else { p.muted });

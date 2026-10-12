@@ -211,7 +211,8 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, icons: &Icons, items: &[ParcelIcon],
         let w = item_width(ui, it);
         let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 18.0), egui::Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(rect.expand(1.0), 2.0, p.raised);
+            ui.painter()
+                .rect_filled(rect.expand(1.0), ui.visuals().window_corner_radius, p.raised);
         }
         let ir = egui::Rect::from_center_size(egui::pos2(rect.left() + 8.0, rect.center().y), Vec2::splat(14.0));
         if let Some(t) = icons.get(it.icon) {

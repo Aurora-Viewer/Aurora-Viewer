@@ -49,8 +49,11 @@ pub fn glyph(ui: &mut egui::Ui, name: &str, color: Color32, size: f32) {
 pub fn navigation(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::click());
     if selected || response.hovered() {
-        ui.painter()
-            .rect_filled(rect, 5.0, if selected { p.violet.gamma_multiply(0.24) } else { p.raised });
+        ui.painter().rect_filled(
+            rect,
+            ui.visuals().widgets.inactive.corner_radius,
+            if selected { p.violet.gamma_multiply(0.24) } else { p.raised },
+        );
     }
     if selected {
         ui.painter().vline(

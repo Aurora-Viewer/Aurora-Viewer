@@ -33,7 +33,7 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, width: f32
     } else {
         p.field
     };
-    ui.painter().rect_filled(rect, 3.0, fill);
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
     let tint = if on { p.ink } else { p.muted };
     if let Some(t) = crate::ui::icons::global(icon) {
         ui.painter().image(
@@ -160,7 +160,7 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
                     } else {
                         p.field
                     };
-                    ui.painter().rect_filled(rect, 3.0, fill);
+                    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
                     let col = if sel { Color32::WHITE } else { p.ink };
                     let name = match i {
                         i if i < shapes().len() => {

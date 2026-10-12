@@ -22,7 +22,7 @@ fn button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, 
         if enabled { egui::Sense::click() } else { egui::Sense::hover() },
     );
     if enabled && resp.hovered() {
-        ui.painter().rect_filled(rect, 3.0, p.raised);
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     if let Some(t) = icons.get(icon) {
         let tint = if !enabled {
