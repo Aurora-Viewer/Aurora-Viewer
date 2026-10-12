@@ -311,7 +311,6 @@ cargo run -p aurora-viewer
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
-| `AURORA_DEMO_REPLACE_PRIM=1` | A 15-part board and an independent replacement; combine with `AURORA_DEMO_BUILD=replace-button\|replace-edit\|replace-run\|replace-copy,object:99688` |
 | `AURORA_DEMO_<NAME>=…` | A demo scenario: a window, a stress scene, a camera script… |
 | `AURORA_DEMO_PIE=1` / `0` | Force le menu circulaire / en liste dans la démo, sans modifier la préférence ; à combiner avec `AURORA_DEMO_RCLICK` |
 | `AURORA_CAPTURE=<file.png>` | Saves a capture of a frame |
