@@ -78,8 +78,8 @@ pub enum Action {
     PhysicsPreset(Uuid, bool),
     Open(Uuid),
     Local(Uuid),
-    ClearLocalMesh,
-    RezLocalMesh(Uuid),
+    ClearLocal(Uuid),
+    RezLocal(Uuid),
     MapFile(Uuid, usize),
     MapInventory(Uuid, usize),
     Remove(Uuid),
@@ -222,7 +222,6 @@ pub fn show(
         actions.push(Action::Files);
     }
     let mut open = imports.open;
-    let mut close_requested = false;
     let prices = if imports.demo_started {
         Prices {
             texture: Some(10),
@@ -242,7 +241,7 @@ pub fn show(
         ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id));
     }
     let mesh_layout = imports.choice == Choice::Mesh
-        || (imports.choice == Choice::Local && prefs.local_meshes)
+        || imports.choice == Choice::Local
         || imports
             .active
             .and_then(|id| imports.entries.iter().find(|e| e.id == id))
@@ -288,9 +287,8 @@ pub fn show(
         }
         ui.separator();
         if imports.choice == Choice::Local {
-            ui.horizontal_wrapped(|ui| {
-                checkbox(ui, p, &mut prefs.local_meshes, aurora_i18n::tr!("import-local-mesh-files"));
-                if prefs.local_meshes {
+            ui.collapsing(aurora_i18n::tr!("import-local-settings"), |ui| {
+                ui.horizontal_wrapped(|ui| {
                     checkbox(ui, p, &mut prefs.local_assume_meters, aurora_i18n::tr!("import-local-meters"));
                     checkbox(ui, p, &mut prefs.local_mesh_auto_reload, aurora_i18n::tr!("import-local-live"));
                     ui.add(
@@ -298,7 +296,7 @@ pub fn show(
                             .range(0.1..=3600.0)
                             .suffix(" s"),
                     );
-                }
+                });
             });
         }
         ui.horizontal(|ui| {
@@ -683,29 +681,23 @@ pub fn show(
                     && ui
                         .add_enabled(
                             !entry.local_pending && entry.source.is_some(),
-                            egui::Button::new(if matches!(entry.source, Some(Source::Mesh(_))) {
-                                aurora_i18n::tr!("import-local-mesh-apply")
-                            } else {
-                                aurora_i18n::tr!("import-local-apply")
-                            }),
+                            egui::Button::new(aurora_i18n::tr!("import-local-apply")),
                         )
                         .clicked()
                 {
                     actions.push(Action::Local(entry.id));
                 }
-                if imports
-                    .active
-                    .and_then(|id| imports.entries.iter().find(|e| e.id == id))
-                    .is_some_and(|e| matches!(e.source, Some(Source::Mesh(_))))
-                    && flat_button(ui, p, aurora_i18n::tr!("import-local-mesh-clear")).clicked()
+                if let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|e| e.id == id))
+                    && entry.source.is_some()
+                    && flat_button(ui, p, aurora_i18n::tr!("import-local-clear")).clicked()
                 {
-                    actions.push(Action::ClearLocalMesh);
+                    actions.push(Action::ClearLocal(entry.id));
                 }
                 if let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|e| e.id == id))
-                    && matches!(entry.source, Some(Source::Mesh(_)))
-                    && flat_button(ui, p, aurora_i18n::tr!("import-local-mesh-rez")).clicked()
+                    && entry.source.is_some()
+                    && flat_button(ui, p, aurora_i18n::tr!("import-local-rez")).clicked()
                 {
-                    actions.push(Action::RezLocalMesh(entry.id));
+                    actions.push(Action::RezLocal(entry.id));
                 }
             } else {
                 if imports.choice == Choice::Mesh
@@ -733,9 +725,6 @@ pub fn show(
                     actions.push(Action::Cancel);
                 }
             }
-            if flat_button(ui, p, aurora_i18n::tr!("common-close")).clicked() {
-                close_requested = true;
-            }
         });
         ctx.data_mut(|d| {
             d.insert_temp(
@@ -744,7 +733,7 @@ pub fn show(
             )
         });
     });
-    imports.open = open && !close_requested;
+    imports.open = open;
     if prefs.permissions() != old_permissions.permissions() {
         for entry in &mut imports.entries {
             if let Some(Source::Mesh(draft)) = &mut entry.source {

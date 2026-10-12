@@ -1,6 +1,98 @@
 use super::*;
 
 #[test]
+fn every_local_asset_exposes_the_same_three_actions_without_a_footer_close_button() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut prefs = Preferences::default();
+    let sources = [
+        Source::Texture(Arc::new(DecodedImage {
+            width: 1,
+            height: 1,
+            components: 3,
+            data: vec![255; 3],
+            discard: 0,
+        })),
+        Source::Material {
+            value: PbrMaterial::default(),
+            images: Box::new(std::array::from_fn(|_| None)),
+        },
+        Source::Mesh(Box::new(crate::imports::tests::mesh_fixture())),
+    ];
+    for source in sources {
+        let mut entry = Entry::new("preview".into(), Ok(source), Default::default());
+        entry.local = true;
+        let id = entry.id;
+        let mut imports = Imports {
+            open: true,
+            choice: Choice::Local,
+            entries: vec![entry],
+            active: Some(id),
+            ..Default::default()
+        };
+        let mut frame = |events| {
+            let mut actions = Vec::new();
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| actions = show(ui.ctx(), &theme.palette(), &mut imports, &mut prefs, &world, &Default::default()),
+            );
+            (output, actions)
+        };
+        for _ in 0..3 {
+            drop(frame(Vec::new()));
+        }
+        let (output, _) = frame(Vec::new());
+        let texts: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some((text.galley.text().to_owned(), text.pos + text.galley.size() * 0.5)),
+                _ => None,
+            })
+            .collect();
+        assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("common-close")));
+        for (index, label) in [
+            aurora_i18n::tr!("import-local-apply"),
+            aurora_i18n::tr!("import-local-clear"),
+            aurora_i18n::tr!("import-local-rez"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let pos = texts.iter().find(|(text, _)| text == label).expect("local control visible").1;
+            for pressed in [true, false] {
+                let (_, actions) = frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+                if !pressed {
+                    assert!(
+                        match actions.as_slice() {
+                            [Action::Local(entry)] => index == 0 && *entry == id,
+                            [Action::ClearLocal(entry)] => index == 1 && *entry == id,
+                            [Action::RezLocal(entry)] => index == 2 && *entry == id,
+                            _ => false,
+                        },
+                        "local button dispatches its action"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn menu_file_request_is_emitted_once_and_tab_changes_do_not_reopen_the_picker() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();

@@ -1937,7 +1937,6 @@ impl Scene {
         self.drop_faces(renderer, idx, &mut g);
         let old_tex: Vec<Uuid> = std::mem::take(&mut g.tex_ids);
         g.material_ids.clear();
-        let te = o.te.clone();
         let wearer = Self::wearer_avatar(world, idx);
         let rigged_owner = match g.geom {
             Some(GeomKey::Mesh { id, .. }) => match self.meshes.meta(&id).and_then(|m| m.skin).filter(|s| !s.joint_names.is_empty()) {
@@ -1953,7 +1952,7 @@ impl Scene {
             let Some(alloc) = face else {
                 continue;
             };
-            let tf = te.as_ref().map(|t| *t.face(fi)).unwrap_or_default();
+            let tf = o.visual_texture_face(fi);
             if tf.color[3] < 0.004 {
                 // fully transparent face: LL registers it as PASS_ALPHA_INVISIBLE,
                 // never drawn, and its glow is not drawn either
@@ -1972,13 +1971,7 @@ impl Scene {
             let mut aux_repeats = [base_repeats; 3];
             let mut two_sided = false;
             // GLTF material?
-            let mat_id = o
-                .extra
-                .render_materials
-                .iter()
-                .find(|(te_idx, _)| *te_idx as usize == fi)
-                .map(|(_, id)| *id)
-                .filter(|id| !id.is_nil());
+            let mat_id = o.visual_material(fi);
             let mut base_tex = tf.texture;
             if let Some(mid) = mat_id {
                 g.material_ids.push(mid);
@@ -1990,7 +1983,8 @@ impl Scene {
                     .gltf_overrides
                     .get(&o.key)
                     .and_then(|s| s.iter().rev().find(|(f, _)| *f as usize == fi))
-                    .map(|(_, ov)| ov);
+                    .map(|(_, ov)| ov)
+                    .filter(|_| o.local_appearance(fi).is_none());
                 let m = meshes::render_material(&self.materials.resolve(&mid), ov);
                 // glTF materials replace the legacy shininess
                 rec.flags[0] &= !flags::LEGACY_MAT;

@@ -72,7 +72,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" => Choice::Mesh,
         "animation" | "animation-own" => Choice::Animation,
         "sound" => Choice::Sound,
-        "local" | "local-mesh" | "local-mesh-applied" | "local-mesh-removed" => Choice::Local,
+        mode if mode.starts_with("local") => Choice::Local,
         _ => Choice::Bulk,
     };
     let choice = imports.choice;
@@ -84,7 +84,6 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         }));
     }
     let local_mesh = mode.starts_with("local-mesh");
-    imports.load_preferences.local_meshes = local_mesh;
     let prefs = imports.load_preferences.clone();
     let request = Uuid::new_v4();
     imports.pending_files = Some(request);
@@ -105,8 +104,14 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                         ("animation-demo.anim", Choice::Animation),
                     ],
                     Choice::Sound => &[("sound-demo.wav", Choice::Sound)],
-                    Choice::Local if local_mesh => &[("mesh-demo.dae", Choice::Mesh)],
-                    Choice::Local => &[("texture-demo.png", Choice::Local), ("material-demo.gltf", Choice::Local)],
+                    Choice::Local if local_mesh => &[("mesh-demo.dae", Choice::Local)],
+                    Choice::Local if mode.starts_with("local-material") => &[("material-demo.gltf", Choice::Local)],
+                    Choice::Local if mode.starts_with("local-texture") => &[("texture-demo.png", Choice::Local)],
+                    Choice::Local => &[
+                        ("texture-demo.png", Choice::Local),
+                        ("material-demo.gltf", Choice::Local),
+                        ("mesh-demo.dae", Choice::Local),
+                    ],
                     _ => &[
                         ("texture-demo.png", Choice::Bulk),
                         ("material-demo.gltf", Choice::Bulk),
@@ -115,7 +120,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                     ],
                 };
                 let paths: Vec<_> = if let Some(path) = external {
-                    vec![(path, if local_mesh { Choice::Mesh } else { choice })]
+                    vec![(path, choice)]
                 } else {
                     files.iter().map(|(name, loader)| (root.join(name), *loader)).collect()
                 };

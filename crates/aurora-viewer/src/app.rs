@@ -3567,6 +3567,7 @@ impl App {
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
+        self.apply_local_imports(&mut gfx.renderer);
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
         let aspect = w as f32 / h.max(1) as f32;

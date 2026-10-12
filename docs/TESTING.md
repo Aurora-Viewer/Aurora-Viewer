@@ -628,6 +628,12 @@ grille.
   400. Les traces agrégées vérifient la liaison GPU au mesh local, puis le
   retour au prim, avec volume serveur conservé ; aucun nom de fichier ni
   chemin personnel n’y est ajouté.
+  Les modes `local-texture-applied|local-texture-removed|local-texture-rez`
+  et `local-material-applied|local-material-removed|local-material-rez`
+  suivent le même objet de démo : texture/matériau GPU actif, puis restauration
+  ou détection du prim support. Ils nécessitent `AURORA_DEMO_ACTIONS=1`.
+  Les traces vérifient aussi que les données serveur n’ont reçu aucun UUID local.
+  `local` charge ensemble texture, matériau et mesh par le même filtre.
   `animation-own` place l’aperçu à 0,75 s, en pause, également sur l’avatar
   de démo. Le curseur et la pose doivent rester fixes jusqu’à Reprendre.
   `AURORA_DEMO_IMPORT_FILE` remplace les fixtures par un fichier existant,

@@ -191,8 +191,17 @@ Sources : `llfloatermodelpreview.cpp`, `llmodelpreview.cpp`,
 
 - Lot hétérogène : textures/sons/`.anim`/matériaux, exclusions annoncées,
   total avant confirmation, limitation 1K, progression et erreurs individuelles.
-- Chargements locaux de textures, matériaux et meshes : réactualisation
-  après modification du fichier et aucune facturation.
+- Chargements locaux de textures, matériaux et meshes dans un même sélecteur,
+  sans changer de mode ; les documents glTF/GLB sont reconnus selon leur contenu.
+  Commandes communes : appliquer à la sélection, retirer de la sélection et
+  placer un prim support. Les textures et matériaux s’appliquent aux faces
+  choisies (ou à toutes les faces), sans modifier les données serveur ; le
+  retrait restaure leur état courant. Réactualisation après modification du
+  fichier et aucune facturation. Le bouton Fermer du pied de fenêtre est retiré.
+  La préparation utilise le pool de staging conservé par la scène et la
+  publication GPU passe explicitement par la boucle de rendu, y compris lorsque
+  l’interface ne détient pas le contexte graphique. Les slots retirés sont
+  libérés par cette même boucle.
 - Mesh local : choix du modèle, unités en mètres optionnelles, dimensions
   importées, application/retrait de la sélection et prim support ; surveillance
   désactivée par défaut, période de 3 s réglable dès 0,1 s comme Firestorm.
@@ -230,7 +239,7 @@ des accusés après annulation. Prix, permissions, inventaire créé et rendu de
 assets importés doivent encore être vérifiés par l’humain sur grille.
 Aucun import réel n’a été validé sur une grille.
 
-Vérifications locales : `check.ps1` vert, 1 210 tests réussis, 17 ignorés,
+Vérifications locales : `check.ps1` vert, 1 220 tests réussis, 17 ignorés,
 Clippy sans avertissement. Profilage de la scène démo : moyenne CPU de
 l’interface sur les trois dernières périodes, 0,37 ms sans la fenêtre puis
 0,57 ms avec l’aperçu PBR (0,51 ms animation, 0,51 ms mesh local). Les
@@ -240,6 +249,12 @@ options d’import, application locale et libellé d’animation examinés ;
 moyenne CPU de l’interface de 0,57 ms sur les trois dernières périodes
 du scénario mesh. Les réglages réseau et la préparation des assets restent
 identiques.
+
+Après unification des aperçus locaux : sélection mixte des trois types,
+application GPU, retrait et détection du prim support vérifiés en démo
+pour les textures et matériaux ; application du mesh local vérifiée aussi.
+Les tests couvrent les boutons des trois types, la détection glTF et la
+restauration de l’état serveur après mise à jour d’un objet.
 
 Les fixtures humaines ont aussi été lues et préparées hors ligne : neuf
 meshes avec leurs quatre LOD et leur physique, 58 textures, une image

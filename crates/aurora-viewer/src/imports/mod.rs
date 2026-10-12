@@ -89,7 +89,6 @@ pub struct Preferences {
     pub mesh_reliable_default: bool,
     pub mesh_suffixes: [String; 5],
     pub mesh_physics_preset: String,
-    pub local_meshes: bool,
     pub local_assume_meters: bool,
     pub local_mesh_auto_reload: bool,
     pub local_reload_seconds: f32,
@@ -118,7 +117,6 @@ impl Default for Preferences {
             mesh_reliable_default: false,
             mesh_suffixes: ["LOD0".into(), "LOD1".into(), "LOD2".into(), String::new(), "PHYS".into()],
             mesh_physics_preset: String::new(),
-            local_meshes: false,
             local_assume_meters: false,
             local_mesh_auto_reload: false,
             local_reload_seconds: 3.0,
@@ -432,6 +430,8 @@ pub struct Imports {
     pub spent: i32,
     pub discarded_quotes: Vec<Uuid>,
     pub local_targets: HashMap<Uuid, local::Target>,
+    pub local_appearance_targets: HashMap<(Uuid, Option<u8>), crate::world::objects::LocalAppearance>,
+    pub retired_local_slots: Vec<(Uuid, u32)>,
     pub local_rez: Option<local::Rez>,
 }
 impl Default for Imports {
@@ -471,6 +471,8 @@ impl Default for Imports {
             spent: 0,
             discarded_quotes: Vec::new(),
             local_targets: HashMap::new(),
+            local_appearance_targets: HashMap::new(),
+            retired_local_slots: Vec::new(),
             local_rez: None,
         }
     }

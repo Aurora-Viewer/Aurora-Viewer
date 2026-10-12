@@ -108,6 +108,7 @@ fn mesh_scene(
     path: &Path,
     data: &[u8],
     assume_meters: bool,
+    document: Option<Document>,
 ) -> Result<(aurora_assets::import_mesh::Scene, HashMap<usize, LocalImage>), AssetError> {
     let root = path
         .parent()
@@ -131,7 +132,10 @@ fn mesh_scene(
         }
         scene
     } else {
-        let doc = Document::parse(data, |uri| relative(&root, uri))?;
+        let doc = match document {
+            Some(doc) => doc,
+            None => Document::parse(data, |uri| relative(&root, uri))?,
+        };
         let mut scene = aurora_assets::import_mesh::gltf::parse(&doc, &skeleton)?;
         for key in ["buffers", "images"] {
             for resource in doc.json[key].as_array().into_iter().flatten() {
@@ -186,15 +190,34 @@ pub(super) fn load(
         Choice::Bulk => !matches!(extension.as_str(), "dae" | "bvh"),
         Choice::Local => matches!(
             extension.as_str(),
-            "png" | "jpg" | "jpeg" | "bmp" | "tga" | "j2c" | "j2k" | "jp2" | "gltf" | "glb"
+            "png" | "jpg" | "jpeg" | "bmp" | "tga" | "j2c" | "j2k" | "jp2" | "dae" | "gltf" | "glb"
         ),
     };
     if !matches_choice {
         return Err(AssetError::Unsupported("file type for this import window".into()));
     }
+    // Local glTF files are classified from their contents, not a picker mode.
+    let mut document = if choice == Choice::Local && matches!(extension.as_str(), "gltf" | "glb") {
+        let root = path
+            .parent()
+            .ok_or_else(|| AssetError::invalid("asset directory"))?
+            .canonicalize()
+            .map_err(|_| AssetError::invalid("asset directory"))?;
+        Some(Document::parse(&data, |uri| relative(&root, uri))?)
+    } else {
+        None
+    };
+    let local_mesh = choice == Choice::Local
+        && (extension == "dae"
+            || document.as_ref().is_some_and(|doc| {
+                doc.json
+                    .get("meshes")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|meshes| !meshes.is_empty())
+            }));
     let source = match extension.as_str() {
-        "dae" | "gltf" | "glb" if choice == Choice::Mesh => {
-            let (scene, images) = mesh_scene(path, &data, local && prefs.local_assume_meters)?;
+        "dae" | "gltf" | "glb" if choice == Choice::Mesh || local_mesh => {
+            let (scene, images) = mesh_scene(path, &data, local && prefs.local_assume_meters, document.take())?;
             let mut draft = mesh::Draft::new(scene, images);
             draft.lods[3].path = Some(path.to_owned());
             draft.options.skin &= prefs.mesh_auto_weights;
@@ -218,7 +241,7 @@ pub(super) fn load(
                 }
                 let candidate = path.with_file_name(format!("{stem}_{suffix}.{extension}"));
                 if candidate.is_file() {
-                    match read(&candidate).and_then(|data| mesh_scene(&candidate, &data, local && prefs.local_assume_meters)) {
+                    match read(&candidate).and_then(|data| mesh_scene(&candidate, &data, local && prefs.local_assume_meters, None)) {
                         Ok((scene, _)) => {
                             if level < 4 {
                                 draft.lods[level].file = Some(Arc::new(scene));
@@ -262,7 +285,10 @@ pub(super) fn load(
                 .ok_or_else(|| AssetError::invalid("material directory"))?
                 .canonicalize()
                 .map_err(|_| AssetError::invalid("material directory"))?;
-            let doc = Document::parse(&data, |uri| relative(&root, uri))?;
+            let doc = match document {
+                Some(doc) => doc,
+                None => Document::parse(&data, |uri| relative(&root, uri))?,
+            };
             let mut cache = HashMap::<usize, LocalImage>::new();
             let mut entries = Vec::new();
             for (index, material) in doc.materials()?.into_iter().enumerate() {
@@ -496,7 +522,7 @@ impl Imports {
                 .pick_file()
             {
                 let result = read(&path)
-                    .and_then(|data| mesh_scene(&path, &data, meters))
+                    .and_then(|data| mesh_scene(&path, &data, meters, None))
                     .map(|(scene, images)| (Arc::new(scene), images, path))
                     .map_err(|e| e.to_string());
                 let _ = tx.send(Worker::MeshFile(id, level, result));
@@ -510,7 +536,7 @@ impl Imports {
         let wake = ctx.clone();
         jobs.execute(move || {
             let result = read(&path)
-                .and_then(|data| mesh_scene(&path, &data, meters))
+                .and_then(|data| mesh_scene(&path, &data, meters, None))
                 .map(|(scene, images)| (Arc::new(scene), images, path))
                 .map_err(|e| e.to_string());
             let _ = tx.send(Worker::MeshFile(id, 8, result));
@@ -565,11 +591,7 @@ impl Imports {
         let request = Uuid::new_v4();
         self.pending_files = Some(request);
         let local = self.choice == Choice::Local;
-        let choice = if local && self.load_preferences.local_meshes {
-            Choice::Mesh
-        } else {
-            self.choice
-        };
+        let choice = self.choice;
         let sound_limit = self.sound_limit;
         let prefs = self.load_preferences.clone();
         let mut retained = self
@@ -589,7 +611,7 @@ impl Imports {
                 Choice::Material => &["gltf", "glb"],
                 Choice::Mesh => &["dae", "gltf", "glb"],
                 Choice::Bulk => &["tga", "bmp", "jpg", "jpeg", "png", "wav", "anim", "gltf", "glb"],
-                Choice::Local => &["tga", "bmp", "jpg", "jpeg", "png", "gltf", "glb"],
+                Choice::Local => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "dae", "gltf", "glb"],
             };
             let paths = rfd::FileDialog::new()
                 .set_title(aurora_i18n::tr!("import-title"))
@@ -770,6 +792,48 @@ mod tests {
             // Only this test's freshly created UUID directory is removed.
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+    #[test]
+    fn local_picker_detects_textures_materials_collada_and_gltf_meshes_together() {
+        let files = Files::new();
+        assert!(matches!(
+            files.load("texture-demo.png", Choice::Local)[0].source,
+            Some(Source::Texture(_))
+        ));
+        assert!(matches!(
+            files.load("material-demo.gltf", Choice::Local)[0].source,
+            Some(Source::Material { .. })
+        ));
+        assert!(matches!(
+            files.load("mesh-demo.dae", Choice::Local)[0].source,
+            Some(Source::Mesh(_))
+        ));
+        let points: [f32; 9] = [0., 0., 0., 1., 0., 0., 0., 1., 1.];
+        let bytes: Vec<_> = points.into_iter().flat_map(f32::to_le_bytes).collect();
+        std::fs::write(files.0.join("mesh.bin"), &bytes).expect("buffer");
+        let json = serde_json::json!({
+            "asset": {"version": "2.0"},
+            "buffers": [{"uri": "mesh.bin", "byteLength": bytes.len()}],
+            "bufferViews": [{"buffer": 0, "byteLength": bytes.len()}],
+            "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"}],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+            "nodes": [{"mesh": 0}], "scenes": [{"nodes": [0]}], "scene": 0
+        });
+        std::fs::write(files.0.join("mesh.gltf"), json.to_string()).expect("document");
+        let mut entries = files.load("mesh.gltf", Choice::Local);
+        localize(&mut entries, &Preferences::default());
+        let Some(Source::Mesh(draft)) = &entries[0].source else {
+            panic!("glTF mesh, not a material")
+        };
+        assert_eq!(draft.scene.models[0].triangles(), 1);
+        assert!(
+            entries[0]
+                .watch
+                .as_ref()
+                .expect("watch")
+                .paths
+                .contains(&files.0.join("mesh.bin").canonicalize().expect("path"))
+        );
     }
     #[test]
     fn disk_files_follow_filters_codecs_and_mesh_reload() {

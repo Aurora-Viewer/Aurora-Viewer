@@ -32,7 +32,6 @@ pub struct Target {
 }
 pub struct Rez {
     pub entry: Uuid,
-    pub model: usize,
     pub known: HashSet<Uuid>,
 }
 pub type Stamp = Vec<(PathBuf, Option<(SystemTime, u64)>)>;
@@ -176,6 +175,88 @@ fn prepare(
     Ok(prepared)
 }
 impl Imports {
+    pub fn target_local(&mut self, entry_id: Uuid, object: Uuid, faces: &[u8], use_scale: bool) {
+        use crate::world::objects::LocalAppearance;
+        let Some(entry) = self.entries.iter().find(|entry| entry.id == entry_id) else {
+            return;
+        };
+        let appearance = match &entry.source {
+            Some(Source::Mesh(draft)) => {
+                self.local_targets.insert(
+                    object,
+                    Target {
+                        entry: entry_id,
+                        model: draft.scene.instances.get(entry.local_model).map_or(0, |instance| instance.model),
+                        use_scale,
+                    },
+                );
+                return;
+            }
+            Some(Source::Texture(_)) => LocalAppearance::Texture(entry_id),
+            Some(Source::Material { .. }) => LocalAppearance::Material(entry_id),
+            _ => return,
+        };
+        if faces.is_empty() {
+            self.local_appearance_targets.retain(|(id, _), _| *id != object);
+            self.local_appearance_targets.insert((object, None), appearance);
+        } else {
+            for face in faces {
+                self.local_appearance_targets.insert((object, Some(*face)), appearance);
+            }
+        }
+    }
+    pub fn apply_appearance_targets(&self, objects: &mut crate::world::objects::ObjectStore) {
+        for ((id, face), appearance) in &self.local_appearance_targets {
+            if !self
+                .entries
+                .iter()
+                .any(|entry| entry.id == appearance.entry() && entry.local_published)
+            {
+                continue;
+            }
+            let Some(index) = objects.index_of_uuid(id) else { continue };
+            if objects.get(index).is_some_and(|object| {
+                object.render.local_appearance.get(face) == Some(appearance)
+                    && (face.is_some()
+                        || object
+                            .render
+                            .local_appearance
+                            .keys()
+                            .all(|face| face.is_none() || self.local_appearance_targets.contains_key(&(*id, *face))))
+            }) {
+                continue;
+            }
+            if let Some(object) = objects.get_mut(index) {
+                if face.is_none() {
+                    object
+                        .render
+                        .local_appearance
+                        .retain(|face, _| face.is_none() || self.local_appearance_targets.contains_key(&(*id, *face)));
+                }
+                object.render.local_appearance.insert(*face, *appearance);
+                object.material_dirty = true;
+                object.render.needs_records = true;
+            }
+        }
+    }
+    pub fn clear_appearance_targets(&mut self, objects: &mut crate::world::objects::ObjectStore, ids: &[Uuid], entry: Option<Uuid>) {
+        self.local_appearance_targets
+            .retain(|(id, _), appearance| !ids.contains(id) || entry.is_some_and(|entry| appearance.entry() != entry));
+        for id in ids {
+            let Some(index) = objects.index_of_uuid(id) else { continue };
+            if let Some(object) = objects.get_mut(index) {
+                let before = object.render.local_appearance.len();
+                object
+                    .render
+                    .local_appearance
+                    .retain(|_, appearance| entry.is_some_and(|entry| appearance.entry() != entry));
+                if before != object.render.local_appearance.len() {
+                    object.material_dirty = true;
+                    object.render.needs_records = true;
+                }
+            }
+        }
+    }
     pub fn publish_local(&mut self, id: Uuid, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, pool: Option<Arc<StagingPool>>) {
         let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.local && !e.local_pending) else {
             return;
@@ -261,6 +342,86 @@ impl Imports {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_appearance_applies_selected_faces_and_restores_latest_server_state() {
+        use crate::world::objects::{LocalAppearance, ObjectStore};
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        let id = update.full_id;
+        let server_material = Uuid::new_v4();
+        update.extra.render_materials = vec![(0, server_material)];
+        let mut objects = ObjectStore::default();
+        let index = objects.upsert(0, update.clone());
+        let mut texture = Entry::new(
+            "image.png".into(),
+            Ok(Source::Texture(Arc::new(DecodedImage {
+                width: 1,
+                height: 1,
+                components: 3,
+                data: vec![255; 3],
+                discard: 0,
+            }))),
+            Default::default(),
+        );
+        let texture_id = texture.id;
+        let mut material = Entry::new(
+            "material.gltf".into(),
+            Ok(Source::Material {
+                value: PbrMaterial::default(),
+                images: Box::new(std::array::from_fn(|_| None)),
+            }),
+            Default::default(),
+        );
+        material.local_published = true;
+        let material_id = material.id;
+        texture.local = true;
+        let mut imports = Imports {
+            entries: vec![texture, material],
+            ..Default::default()
+        };
+        imports.target_local(texture_id, id, &[], false);
+        imports.apply_appearance_targets(&mut objects);
+        assert!(
+            objects.get(index).expect("object").render.local_appearance.is_empty(),
+            "wait until the local asset is installed"
+        );
+        imports.entries[0].local_published = true;
+        imports.apply_appearance_targets(&mut objects);
+        let object = objects.get(index).expect("object");
+        assert_eq!(object.visual_texture_face(0).texture, texture_id);
+        assert_eq!(
+            object.visual_material(0),
+            None,
+            "a texture preview replaces the visible PBR material"
+        );
+        assert_eq!(object.extra.render_materials, update.extra.render_materials);
+        assert_ne!(object.te.as_ref().expect("server TE").face(0).texture, texture_id);
+        imports.target_local(material_id, id, &[1], false);
+        imports.apply_appearance_targets(&mut objects);
+        assert_eq!(
+            objects.get(index).expect("object").local_appearance(0),
+            Some(LocalAppearance::Texture(texture_id))
+        );
+        assert_eq!(objects.get(index).expect("object").visual_material(1), Some(material_id));
+        // Simulator updates remain authoritative underneath both local previews.
+        update.extra.render_materials = vec![(0, Uuid::new_v4()), (1, server_material)];
+        objects.upsert(0, update.clone());
+        assert_eq!(objects.get(index).expect("object").visual_material(1), Some(material_id));
+        imports.clear_appearance_targets(&mut objects, &[id], Some(material_id));
+        assert_eq!(
+            objects.get(index).expect("object").visual_material(1),
+            None,
+            "the underlying local texture remains"
+        );
+        imports.clear_appearance_targets(&mut objects, &[id], None);
+        let object = objects.get(index).expect("object");
+        assert_eq!(object.visual_material(0), Some(update.extra.render_materials[0].1));
+        assert_eq!(object.visual_material(1), Some(server_material));
+        assert_eq!(object.visual_texture_face(0), *update.texture_entry.as_ref().expect("TE").face(0));
+        assert!(object.material_dirty && object.render.needs_records);
+        assert!(imports.local_appearance_targets.is_empty());
+    }
 
     #[test]
     fn local_mesh_jobs_encode_and_install_without_a_graphics_handle_and_replace_only_current_results() {
