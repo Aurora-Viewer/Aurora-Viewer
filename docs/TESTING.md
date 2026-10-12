@@ -924,6 +924,7 @@ grille.
 | `AURORA_DEMO_INVENTORY=<mode>` | Inventaire synthétique, menus et fenêtres |
 | `AURORA_DEMO_IMPORTS=<mode>` | Fenêtre d’import et assets synthétiques |
 | `AURORA_DEMO_IMPORT_FILE=<chemin>` | Asset local à ouvrir dans le parcours de démo |
+| `AURORA_DEMO_IMPORT_REGISTRY=<fichier>` | Bibliothèque persistante isolée des essais d’import |
 | `AURORA_DEMO_REZ=<mode>` | Rez par glisser-déposer depuis l’inventaire |
 | `AURORA_DEMO_LAND=<onglet>[:owner]` | « À propos du terrain » sur un onglet |
 | `AURORA_DEMO_PLACE=<lieu>` | « Lieux » sur un profil de lieu |

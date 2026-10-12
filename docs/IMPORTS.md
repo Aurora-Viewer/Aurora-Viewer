@@ -238,8 +238,8 @@ local pour négociation/envoi/confirmation/refus ; captures des fenêtres et
 parcours de démo ; puis essais par l’humain des prix, droits et résultats sur
 grille. Aucune connexion ni opération réelle sur grille par l’agent.
 
-État : parcours implémentés dans le worktree `import-assets`, en attente des
-essais humains. Les codecs,
+État : parcours et viewer de test validés par l’humain le 12/10/2026,
+avec accord de fusion. Les codecs,
 les parcours réseau HTTP/UDP, les brouillons et les aperçus GPU sont présents.
 Les captures texture, son, animation, matériau, mesh et application locale ont
 été examinées : aperçu à droite des champs pour le mesh et des paramètres pour le matériau,
@@ -247,11 +247,12 @@ au-dessus pour les autres types ; actions et coût accessibles
 dans le pied de fenêtre. Les tests couvrent notamment
 la préparation ORM, les trois modes V-HACD, les poids de LOD, les palettes glTF,
 les limites d’échelle, le rechargement des dépendances et la conservation
-des accusés après annulation. Prix, permissions, inventaire créé et rendu des
-assets importés doivent encore être vérifiés par l’humain sur grille.
-Aucun import réel n’a été validé sur une grille.
+des accusés après annulation. La validation globale du viewer ne constitue
+pas un relevé détaillé des envois payants sur grille : prix, permissions,
+inventaire créé et rendu des assets restent dans le protocole d’essai
+ci-dessous. Aucun résultat par type n’est affirmé sans compte rendu humain.
 
-Vérifications locales : `check.ps1` vert, 1 495 tests réussis, 17 ignorés,
+Vérifications locales : `check.ps1` vert, 1 495 tests réussis, 22 ignorés,
 Clippy sans avertissement. Profilage de la scène démo : moyenne CPU de
 l’interface sur les trois dernières périodes, 0,37 ms sans la fenêtre puis
 0,57 ms avec l’aperçu PBR (0,51 ms animation, 0,51 ms mesh local). Les
