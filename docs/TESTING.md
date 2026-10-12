@@ -133,11 +133,13 @@ capture.
 - **`AURORA_DEMO_CAM`** : décalage de cap et inclinaison de la caméra autour
   de l'avatar (radians, une inclinaison positive regarde vers le bas) et
   distance (mètres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|tag|ml|wheel|fly|sit`** :
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|wheel|fly|sit`** :
   scénario journalisé sous `demo camera` — Alt+clic en (x, y) puis glisser et
   retour en marchant ; `close` : Alt+clic en (x, y) à l'image 600, zoom
   pendant n images (60 par défaut), puis la caméra ne bouge plus (gros plan
-  à caméra fixe, pour comparer des captures consécutives) ; appui sur notre propre étiquette de nom puis glisser
+  à caméra fixe, pour comparer des captures consécutives) ; `drift` : le
+  même gros plan, puis une orbite très lente (un cinquantième de pixel de
+  souris par image) jusqu'à l'image 1200 ; appui sur notre propre étiquette de nom puis glisser
   (pilotage) ; entrée / sortie de la vue subjective ; molette ; recul en
   vol ; assise sur un siège qui tourne, avec une caméra de siège et une
   animation lancée par une prim liée (image 300), puis lever et demande de
@@ -997,6 +999,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_TEXTURE_BC7=0` | Textures jamais compressées en BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 sans son cache disque |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
+| `AURORA_EYE_RELATIVE=0` | Sommets des objets calculés en coordonnées de région |
 | `AURORA_PROFILE=1` | Profilage dans le journal (voir [Profilage](#profilage)) |
 | `AURORA_PROFILE_FRAMES=1` | Profil détaillé de chaque image |
 | `AURORA_GPU_VALIDATION=1` | Couches de validation de wgpu |
@@ -1072,6 +1075,17 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   paquet autonome et passe à l'image suivante ; avec `0`, le même paquet est
   exécuté sur place. `thread=on|off` dans la ligne `perf summary`, et une
   ligne de journal au démarrage (`renderer: frames drawn by…`).
+- **`AURORA_EYE_RELATIVE=0`** : calcule les sommets des objets en coordonnées
+  de région, comme avant, pour comparer. Par défaut, le vertex shader retire
+  la position de la caméra de la translation du modèle avant tout autre
+  calcul (`eye_model` dans `object.wgsl`, matrice `eye_view_proj`) : en
+  altitude, la simple précision ne tient que 0,24 mm en coordonnées de
+  région (entre 2 048 et 4 096 m), et chaque sommet des objets proches
+  tombait jusqu'à un pixel à côté, ailleurs à chaque changement de vue. À
+  voir avec `AURORA_DEMO_ALTITUDE=2085` et
+  `AURORA_DEMO_CAMERA=drift,690,420,84` sur des captures consécutives
+  (images 800 à 899) : le bord du panneau dérive régulièrement, ou sautille
+  avec `0`.
 - **`AURORA_PROFILE=1`** : une ligne `perf summary` par seconde, plus une
   ligne `perf settings` quand les réglages changent. Le plafond d'images/s
   en arrière-plan (« Limiter hors focus ») est ignoré : une fenêtre sans le

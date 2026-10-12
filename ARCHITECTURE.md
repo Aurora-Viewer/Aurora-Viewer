@@ -283,7 +283,13 @@ Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâc
    encode les passes (ombres, prépasse, scène, eau, reflets,
    post-traitement) avec des draws indirects dont le nombre est écrit par le
    GPU. Sans `MULTI_DRAW_INDIRECT_COUNT` (ou avec `AURORA_CPU_CULL=1`),
-   `build_lists` prépare toutes les listes sur le CPU comme avant. Le thread
+   `build_lists` prépare toutes les listes sur le CPU comme avant. Les
+   sommets des objets sont calculés relativement à la caméra : le vertex
+   shader retire sa position de la translation du modèle (les
+   enregistrements restent en coordonnées de région), et la matrice de vue
+   de la caméra principale se réduit à sa rotation (`eye_view_proj` dans
+   `renderer.rs`) ; en altitude, la simple précision ne suffit pas en
+   coordonnées de région. Le thread
    principal s'arrête à la clôture de l'image (`Renderer::render`) : le
    reste de cette étape est fait par le thread de rendu à partir du paquet
    d'image, pendant que l'image suivante commence (voir « Threads et

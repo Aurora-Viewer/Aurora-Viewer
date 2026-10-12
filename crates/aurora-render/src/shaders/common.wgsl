@@ -18,6 +18,9 @@ struct Light {
 struct Frame {
     view_proj: mat4x4<f32>,
     inv_view_proj: mat4x4<f32>,
+    // view-projection for positions relative to `eye` (object vertices)
+    eye_view_proj: mat4x4<f32>,
+    eye: vec4<f32>,             // xyz: at or near the camera
     camera_pos: vec4<f32>,      // xyz, w = time (s)
     sun_dir: vec4<f32>,         // xyz towards the light, w = sun visible (0..1)
     sun_color: vec4<f32>,       // rgb radiance

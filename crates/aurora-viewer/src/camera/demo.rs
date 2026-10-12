@@ -10,6 +10,9 @@
 //! - `close,x,y[,n]`: Alt+click at (x, y) at frame 600, Alt drag closer for n
 //!   frames (60 by default), then the camera stays there: a close-up on a
 //!   still camera, for comparing consecutive captures
+//! - `drift,x,y[,n]`: the same close-up, then a very slow Ctrl+Alt orbit
+//!   (a fiftieth of a pixel per frame) until frame 1200: edges that drift
+//!   steadily when the picture is exact, for comparing consecutive captures
 //! - `tag`: left press on our own name tag at frame 600, drag (steer the
 //!   avatar, as when the avatar itself is held) until 660
 //! - `ml`: into mouselook at frame 600, out at 700
@@ -119,6 +122,43 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                 _ => {}
             }
         }
+        "drift" => {
+            let (Some(x), Some(y)) = (num(1), num(2)) else {
+                return out;
+            };
+            let drags = num(3).map_or(60, |n| n.clamp(1.0, 500.0) as u64);
+            match frame {
+                600 => out.extend([
+                    Step::Cursor(x, y),
+                    Step::Mods {
+                        ctrl: false,
+                        shift: false,
+                        alt: true,
+                    },
+                    Step::Press,
+                    Step::Log,
+                ]),
+                f if f > 600 && f <= 600 + drags => out.push(Step::Drag(0.0, -3.0)),
+                f if f > 600 + drags && f <= 1200 => out.extend([
+                    Step::Mods {
+                        ctrl: true,
+                        shift: false,
+                        alt: true,
+                    },
+                    Step::Drag(0.02, 0.0),
+                ]),
+                1201 => out.extend([
+                    Step::Release,
+                    Step::Mods {
+                        ctrl: false,
+                        shift: false,
+                        alt: false,
+                    },
+                    Step::Log,
+                ]),
+                _ => {}
+            }
+        }
         "tag" => match frame {
             600 => out.extend([
                 Step::CursorOnOwnTag,
@@ -190,6 +230,15 @@ mod tests {
         // the number of zoom frames is the camera's final distance
         assert_eq!(steps("close,400,300,20", 620), vec![Step::Drag(0.0, -3.0)]);
         assert!(steps("close,400,300,20", 621).contains(&Step::Release));
+    }
+
+    #[test]
+    fn drift_scenario_zooms_then_orbits_slowly() {
+        assert!(steps("drift,400,300", 600).contains(&Step::Press));
+        assert_eq!(steps("drift,400,300", 630), vec![Step::Drag(0.0, -3.0)]);
+        assert!(steps("drift,400,300", 900).contains(&Step::Drag(0.02, 0.0)));
+        assert!(steps("drift,400,300", 1201).contains(&Step::Release));
+        assert!(steps("drift,400,300", 1300).is_empty());
     }
 
     #[test]

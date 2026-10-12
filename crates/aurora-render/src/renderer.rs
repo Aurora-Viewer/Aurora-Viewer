@@ -53,6 +53,8 @@ struct LightU {
 struct FrameU {
     view_proj: [[f32; 4]; 4],
     inv_view_proj: [[f32; 4]; 4],
+    eye_view_proj: [[f32; 4]; 4],
+    eye: [f32; 4],
     camera_pos: [f32; 4],
     sun_dir: [f32; 4],
     sun_color: [f32; 4],
@@ -548,6 +550,38 @@ const SLOW_WRITES_MS: f32 = 4.0;
 /// Work of the helper threads (`Backend::finishers`).
 fn finish_encoder(encoder: wgpu::CommandEncoder) -> wgpu::CommandBuffer {
     encoder.finish()
+}
+
+/// View-projection matrix for positions given relative to `eye`, a point
+/// at or near the camera of `view`.
+///
+/// The object shaders subtract `eye` from the translation of the model
+/// matrix before anything else, so every product works on distances from
+/// the camera, not on region coordinates. High above the ground those are
+/// too coarse in single precision (steps of 0.24 mm between 2048 and
+/// 4096 m): each vertex then landed up to a pixel away from its place on
+/// close objects, somewhere else whenever the view changed (edges trembling
+/// while the camera moves). LL viewers have the same steps per object (the
+/// model-view matrix is multiplied on the CPU), not per vertex.
+///
+/// `exact`: `eye` is the very position `view` looks from (the main camera).
+/// The relative view is then its rotation alone; the translation of `view`
+/// (minus the rotated eye, rounded to those same steps) is left out.
+/// Otherwise the translation left is computed in double precision.
+fn eye_view_proj(proj: Mat4, view: Mat4, eye: Vec3, exact: bool) -> Mat4 {
+    let relative = if exact {
+        Mat4::from_mat3(glam::Mat3::from_mat4(view))
+    } else {
+        (view.as_dmat4() * glam::DMat4::from_translation(eye.as_dvec3())).as_mat4()
+    };
+    proj * relative
+}
+
+/// AURORA_EYE_RELATIVE=0: object vertices transformed in region coordinates,
+/// as before (comparison).
+fn eye_relative_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("AURORA_EYE_RELATIVE").is_none_or(|v| v != "0"))
 }
 
 /// Halton(2,3) jitter sequence in [-0.5, 0.5].
@@ -3146,13 +3180,30 @@ impl Backend {
     }
 
     /// Fill the uniform block for a camera (main view or a reflection).
-    fn frame_uniforms(&self, f: &FrameParams, view: Mat4, cascades: &[Mat4; CASCADES], splits: &[f32; CASCADES]) -> FrameU {
+    ///
+    /// `eye`: the position `view` looks from when it is known exactly (the
+    /// main camera), for the eye-relative transform of the objects.
+    fn frame_uniforms(
+        &self,
+        f: &FrameParams,
+        view: Mat4,
+        eye: Option<Vec3>,
+        cascades: &[Mat4; CASCADES],
+        splits: &[f32; CASCADES],
+    ) -> FrameU {
         let vp = f.proj * view;
         let inv_view = view.inverse();
         let camera_pos = inv_view.transform_point3(Vec3::ZERO);
         let mut u = FrameU::zeroed();
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();
+        if eye_relative_enabled() {
+            let origin = eye.unwrap_or(camera_pos);
+            u.eye_view_proj = eye_view_proj(f.proj, view, origin, eye.is_some()).to_cols_array_2d();
+            u.eye = origin.extend(0.0).to_array();
+        } else {
+            u.eye_view_proj = u.view_proj;
+        }
         u.camera_pos = camera_pos.extend(f.time).to_array();
         u.anim_clock = [self.anim_now[0], self.anim_now[1], 0, 0];
         u.sun_dir = f.sun_dir.normalize_or(Vec3::Z).extend(f.sun_visible).to_array();
@@ -3398,7 +3449,7 @@ impl Backend {
         let do_water_refl = self.targets.water_refl.is_some() && !lists.water.is_empty() && !underwater;
         let mirror = f.mirror.filter(|_| self.targets.mirror.is_some());
 
-        let mut main = self.frame_uniforms(fu, fu.view, &cascades, &splits);
+        let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.misc = [
             if self.targets.ao.is_some() { 1.0 } else { 0.0 },
             if self.settings.ssr { 1.0 } else { 0.0 },
@@ -3414,6 +3465,9 @@ impl Backend {
         if let Some(view) = lists.hud_view {
             let mut hud = main;
             hud.view_proj = view.matrix().to_cols_array_2d();
+            // (HUD records are in screen space: nothing to take away)
+            hud.eye_view_proj = hud.view_proj;
+            hud.eye = [0.0; 4];
             self.queue.write_buffer(&self.refl_buffers[5], 0, bytemuck::bytes_of(&hud));
             if self
                 .hud_depth
@@ -3441,7 +3495,7 @@ impl Backend {
             let m = reflection_matrix(n, d);
             let mut rf = f.clone();
             rf.shadows = false;
-            let mut u = this.frame_uniforms(&rf, f.view * m, &cascades, &splits);
+            let mut u = this.frame_uniforms(&rf, f.view * m, None, &cascades, &splits);
             u.misc = [0.0, 0.0, 0.0, 1.0];
             u.clip_plane = n.extend(d + keep_offset).to_array();
             u
@@ -3467,7 +3521,7 @@ impl Backend {
             let mut cf = f.clone();
             cf.shadows = false;
             cf.proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, c.near.max(0.1));
-            let mut u = self.frame_uniforms(&cf, crate::probes::face_view(c.origin, c.face), &cascades, &splits);
+            let mut u = self.frame_uniforms(&cf, crate::probes::face_view(c.origin, c.face), None, &cascades, &splits);
             probe_vp = Mat4::from_cols_array_2d(&u.view_proj);
             // reflection pass: no SSAO / SSR / mirrors / probes, no clip plane
             u.misc = [0.0, 0.0, 0.0, 1.0];
@@ -3482,7 +3536,7 @@ impl Backend {
             let mut cf = f.clone();
             cf.shadows = false;
             cf.proj = ortho_reverse_z(c.half.max(0.1), 0.05, c.depth.max(0.5));
-            let mut u = self.frame_uniforms(&cf, c.view, &cascades, &splits);
+            let mut u = self.frame_uniforms(&cf, c.view, None, &cascades, &splits);
             u.misc = [0.0, 0.0, 0.0, 1.0];
             u.clip_plane = [0.0; 4];
             let r = IMPOSTOR_TILE as f32;
@@ -4759,6 +4813,77 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The object vertex shader's arithmetic, in single precision like the
+    /// GPU, against the exact position: a 20 cm object 40 cm in front of a
+    /// camera turning slowly around it, 2 106 m above the ground, in a
+    /// 1359-pixel-high window (the report). Largest error in pixels, in
+    /// region coordinates (before) and relative to the eye.
+    fn vertex_errors(exact_eye: bool) -> (f64, f64) {
+        use glam::{DMat4, DVec3, DVec4};
+        // (look_at_mat4, in double precision)
+        let exact_view = |eye: DVec3, center: DVec3| {
+            let f = (center - eye).normalize();
+            let s = f.cross(DVec3::Z).normalize();
+            let u = s.cross(f);
+            DMat4::from_cols(
+                DVec4::new(s.x, u.x, -f.x, 0.0),
+                DVec4::new(s.y, u.y, -f.y, 0.0),
+                DVec4::new(s.z, u.z, -f.z, 0.0),
+                DVec4::new(-s.dot(eye), -u.dot(eye), f.dot(eye), 1.0),
+            )
+        };
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(60f32.to_radians(), 1278.0 / 1359.0, 0.1);
+        let half = glam::DVec2::new(1278.0, 1359.0) * 0.5;
+        let target = Vec3::new(120.3, 186.9, 2106.25);
+        let translation = target + Vec3::new(0.03, 0.02, -0.01);
+        let (mut world, mut eye_relative) = (0f64, 0f64);
+        for step in 0..400 {
+            let a = step as f32 * 1e-4;
+            let eye = target + Vec3::new(-0.4 * a.cos(), -0.4 * a.sin(), 0.07);
+            let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Z);
+            let exact_vp = proj.as_dmat4() * exact_view(eye.as_dvec3(), target.as_dvec3());
+            let relative_vp = eye_view_proj(proj, view, eye, exact_eye);
+            let world_vp = proj * view;
+            for corner in 0..8 {
+                let local = Vec3::new(
+                    if corner & 1 == 0 { -0.1 } else { 0.1 },
+                    if corner & 2 == 0 { -0.1 } else { 0.1 },
+                    if corner & 4 == 0 { -0.1 } else { 0.1 },
+                );
+                let pixels = |clip: glam::DVec4| glam::DVec2::new(clip.x, clip.y) / clip.w * half;
+                let exact = pixels(exact_vp * (translation.as_dvec3() + local.as_dvec3()).extend(1.0));
+                let wp = Mat4::from_translation(translation) * local.extend(1.0);
+                world = world.max((pixels((world_vp * wp).as_dvec4()) - exact).abs().max_element());
+                let ep = Mat4::from_translation(translation - eye) * local.extend(1.0);
+                eye_relative = eye_relative.max((pixels((relative_vp * ep).as_dvec4()) - exact).abs().max_element());
+            }
+        }
+        (world, eye_relative)
+    }
+
+    #[test]
+    fn eye_relative_vertices_land_on_their_pixel_high_above_the_ground() {
+        let (world, eye_relative) = vertex_errors(true);
+        // in region coordinates the vertices are off by a good part of a pixel
+        assert!(world > 0.2, "{world}");
+        assert!(eye_relative < 0.01, "{eye_relative}");
+    }
+
+    #[test]
+    fn eye_relative_view_of_an_approximate_eye_keeps_the_view_it_was_given() {
+        // (reflections, probes: the eye is derived from the view, whose
+        // translation carries the rounding of its construction, 0.7 pixel in
+        // the case above; the vertices themselves add nothing to it)
+        let (_, eye_relative) = vertex_errors(false);
+        assert!(eye_relative < 1.0, "{eye_relative}");
+        let proj = Mat4::IDENTITY;
+        let view = glam::camera::rh::view::look_at_mat4(Vec3::new(5.0, 6.0, 7.0), Vec3::ZERO, Vec3::Z);
+        let eye = Vec3::new(5.0, 6.0, 7.0);
+        let p = Vec3::new(1.0, -2.0, 3.0);
+        let relative = eye_view_proj(proj, view, eye, false) * (p - eye).extend(1.0);
+        assert!(relative.abs_diff_eq(view * p.extend(1.0), 1e-5));
+    }
 
     #[test]
     fn shadow_anchor_stays_near_and_still() {
