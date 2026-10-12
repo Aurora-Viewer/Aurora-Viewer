@@ -5654,27 +5654,34 @@ impl App {
         }
     }
 
+    /// The grid of the session for the web search: only the main grid's
+    /// session is known to search.secondlife.com.
+    fn search_grid(&self) -> crate::world::search::SearchGrid {
+        use crate::world::search::SearchGrid;
+        match self.settings.grid {
+            crate::settings::GridChoice::SecondLife => SearchGrid::Main,
+            crate::settings::GridChoice::SecondLifeBeta => SearchGrid::Beta,
+            crate::settings::GridChoice::Custom => SearchGrid::Other,
+        }
+    }
+
     /// The search page of the web tab (FSPanelSearchWeb::loadURL), None on
-    /// a grid without one. On Second Life it carries the session id of the
+    /// a grid without one. On the main grid it carries the session id of the
     /// agent, as Firestorm's does: it is only given to the embedded browser,
-    /// never logged, shown or saved. AURORA_DEMO_SEARCH_WEB=<page>: a page of
-    /// the tester's choice in demo, which loads nothing by itself and has no
-    /// session.
-    fn search_home(&self) -> Option<String> {
-        // LLWeb::expandURLSubstitutions: [GRID] is "secondlife.com" for every
-        // grid but Linden Lab's staging one
-        let domain = match self.settings.grid {
-            _ if self.demo => return std::env::var("AURORA_DEMO_SEARCH_WEB").ok().filter(|u| !u.trim().is_empty()),
-            crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta => "secondlife.com",
-            crate::settings::GridChoice::Custom => return None,
-        };
-        Some(crate::world::search::web_url(
-            domain,
-            "",
+    /// never logged, shown or saved; on the beta grid it is anonymous.
+    /// AURORA_DEMO_SEARCH_WEB=<page>: a page of the tester's choice in demo,
+    /// which loads nothing by itself and has no session.
+    fn search_home(&self) -> Option<crate::world::search::WebHome> {
+        if self.demo {
+            let url = std::env::var("AURORA_DEMO_SEARCH_WEB").ok().filter(|u| !u.trim().is_empty())?;
+            return Some(crate::world::search::WebHome { url, identified: false });
+        }
+        crate::world::search::web_home(
+            self.search_grid(),
             self.world.agent_access(),
             aurora_i18n::language(),
             self.search_session(),
-        ))
+        )
     }
 
     /// The session id the web tab's search page is opened with; none in
@@ -6474,7 +6481,10 @@ impl App {
                 // « Rechercher »
                 let search_home = self.panels.search.then(|| self.search_home()).flatten();
                 let search_session = self.search_session();
-                let demo = self.demo;
+                // the session's cookie only goes with a page opened with the
+                // session (main grid; never in demo)
+                let search_identified = search_home.as_ref().is_some_and(|h| h.identified);
+                let search_anonymous = !self.demo && self.search_grid() == crate::world::search::SearchGrid::Beta;
                 let mut c = ui::place_details::Ctx {
                     p: &p,
                     world: &self.world,
@@ -6487,10 +6497,10 @@ impl App {
                 let search_web = ui::search::WebEnv {
                     paths: paths.as_ref(),
                     browser: &browser,
-                    // nothing of a session in demo
-                    cookie: cookie.as_ref().filter(|_| !demo),
-                    home: search_home,
+                    cookie: cookie.as_ref().filter(|_| search_identified),
+                    home: search_home.map(|h| h.url),
                     session: search_session,
+                    anonymous: search_anonymous,
                 };
                 let mut open = self.panels.search;
                 let search_acts = self

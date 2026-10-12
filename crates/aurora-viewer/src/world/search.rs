@@ -902,6 +902,48 @@ fn expand(template: &str, grid_domain: &str, query: &str, access: search::AgentA
     url.replace(' ', "%20").replace('\\', "%5C")
 }
 
+/// The grid a session was opened on, as far as the web search goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchGrid {
+    /// The main grid: search.secondlife.com is its own search site.
+    Main,
+    /// Another Second Life grid (the beta grid): Firestorm's [GRID] still
+    /// gives "secondlife.com" for it, which is the main grid's site.
+    Beta,
+    /// Not a Second Life grid: no search page.
+    Other,
+}
+
+/// The search page of the web tab and how it is opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebHome {
+    pub url: String,
+    /// Opened with the session: `sid` is in the address and the OpenID
+    /// cookie goes to the browser. False: the page is anonymous, and the
+    /// browser must not get the cookie either.
+    pub identified: bool,
+}
+
+/// The search page of `grid`, None when it has none. The session only
+/// identifies the agent to the search site of the grid it was opened on: on
+/// the main grid the page is opened with it, as Firestorm does; on the beta
+/// grid the address derived is still the main grid's site, so the page is
+/// opened anonymously. This is a deliberate deviation from Firestorm, asked
+/// by the human: Firestorm sends the beta session id (and gives the beta
+/// OpenID cookie to the browser) to search.secondlife.com.
+pub fn web_home(grid: SearchGrid, access: search::AgentAccess, language: &str, session: Option<Uuid>) -> Option<WebHome> {
+    // LLWeb::expandURLSubstitutions: [GRID] is "secondlife.com" for every
+    // grid but Linden Lab's staging one
+    let domain = match grid {
+        SearchGrid::Main | SearchGrid::Beta => "secondlife.com",
+        SearchGrid::Other => return None,
+    };
+    let session = session.filter(|_| grid == SearchGrid::Main);
+    let url = web_url(domain, "", access, language, session);
+    let identified = session.is_some_and(|id| url.contains(&id.to_string()));
+    Some(WebHome { url, identified })
+}
+
 /// Whether `url` is a page of the grid's search site: https, and the host
 /// "search.<grid domain>" exactly (no user info, no port, no look-alike
 /// prefix or suffix). The session id is put in no other address.
@@ -1414,6 +1456,26 @@ mod tests {
             assert!(!url.contains(&session.to_string()), "{url}");
             assert!(!url.contains("sid="), "{url}");
         }
+    }
+
+    #[test]
+    fn the_session_stays_on_the_grid_it_was_opened_on() {
+        let session = Uuid::from_u128(0x5E55_1011_0000_4000_8000_0000_0000_00A1);
+        // main grid: as Firestorm, the page is opened with the session
+        let main = web_home(SearchGrid::Main, ACCESS, "fr", Some(session)).expect("search page");
+        assert!(main.identified);
+        assert_eq!(main.url, web_url("secondlife.com", "", ACCESS, "fr", Some(session)));
+        assert!(main.url.contains(&format!("&sid={session}&")));
+        // beta grid: the same site, but neither sid nor cookie
+        let beta = web_home(SearchGrid::Beta, ACCESS, "fr", Some(session)).expect("search page");
+        assert!(!beta.identified, "the browser gets no OpenID cookie");
+        assert_eq!(beta.url, web_url("secondlife.com", "", ACCESS, "fr", None));
+        assert!(!beta.url.contains("sid") && !beta.url.contains(&session.to_string()));
+        // without a session the main grid's page is anonymous too
+        let none = web_home(SearchGrid::Main, ACCESS, "fr", None).expect("search page");
+        assert!(!none.identified && !none.url.contains("sid"));
+        // any other grid: no page, as before
+        assert_eq!(web_home(SearchGrid::Other, ACCESS, "fr", Some(session)), None);
     }
 
     #[test]

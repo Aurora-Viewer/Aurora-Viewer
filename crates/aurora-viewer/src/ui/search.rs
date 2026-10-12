@@ -63,6 +63,9 @@ pub struct WebEnv<'a> {
     pub home: Option<String>,
     /// The session id to keep out of every address shown or handed over.
     pub session: Option<Uuid>,
+    /// The grid's search page is opened without the session (beta grid):
+    /// said in the tab, so that the user knows why the page ignores them.
+    pub anonymous: bool,
 }
 
 /// The address of the web tab's field: the page's, without the session.
@@ -768,6 +771,9 @@ impl SearchUi {
                 super::context::request(ui.ctx(), super::context::CtxAction::OpenUrl(url));
             }
         });
+        if env.anonymous {
+            ui.label(RichText::new(aurora_i18n::tr!("search-web-anonymous")).size(11.5).color(p.muted));
+        }
         ui.add_space(4.0);
         let size = Vec2::new(ui.available_width(), (ui.available_height() - 2.0).max(120.0));
         self.web.show(ui, p, env.paths, env.browser, env.cookie, size);

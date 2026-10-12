@@ -3998,6 +3998,7 @@ search-events-next-day = Next day
 search-events-today = Today
 search-events-date = { $month }/{ $day }
 search-web-unavailable = The grid's search page shows here once connected to Second Life.
+search-web-anonymous = Web search is anonymous on this grid.
 search-web-back = Back
 search-web-forward = Forward
 search-web-reload = Reload the page

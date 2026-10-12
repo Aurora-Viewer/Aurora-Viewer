@@ -3998,6 +3998,7 @@ search-events-next-day = Jour suivant
 search-events-today = Aujourd'hui
 search-events-date = { $day }/{ $month }
 search-web-unavailable = La page de recherche de la grille s'affiche ici une fois connecté à Second Life.
+search-web-anonymous = Recherche web anonyme sur cette grille.
 search-web-back = Page précédente
 search-web-forward = Page suivante
 search-web-reload = Recharger la page
