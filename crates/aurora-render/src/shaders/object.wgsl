@@ -527,13 +527,13 @@ fn legacy_light(col_in: vec3<f32>, spec: vec4<f32>, env: f32, n: vec3<f32>, v: v
 // Local light highlights of legacy materials (multiPointLightF). Our light
 // colors are PBR radiances (diffuse divided by pi): SL's classic light
 // colors are those over pi.
-fn legacy_local_spec(spec: vec4<f32>, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+fn legacy_local_spec(spec: vec4<f32>, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     var col = vec3<f32>(0.0);
     if (spec.a <= 0.0) {
         return col;
     }
-    let count = u32(frame.params.w);
-    for (var i = 0u; i < count; i++) {
+    var lights = light_walk(world_pos, frag);
+    for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
         let lt = frame.lights[i];
         let to_l = lt.pos_radius.xyz - world_pos;
         let dist = length(to_l);
@@ -555,8 +555,14 @@ struct Shaded {
 };
 
 fn shade(in: VsOut, front: bool) -> Shaded {
+    return shade_material(in, eval_material(in, front));
+}
+
+// Lighting, haze and fog of an evaluated material. Nothing here takes a
+// screen-space derivative (explicit levels and comparisons only): a fragment
+// may be discarded between `eval_material` and this (fs_blend).
+fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
-    let m = eval_material(in, front);
     var col: vec3<f32>;
     let classic = is_classic_sky() && !camera_underwater();
     var hazed = false;
@@ -573,14 +579,14 @@ fn shade(in: VsOut, front: bool) -> Shaded {
         if ((rec.flags.x & FLAG_PBR) != 0u) {
             col = ll_classic_pbr(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, sh, in.clip.xy, a);
             col = (col + m.emissive) * ll_final_scale()
-                + ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos);
+                + ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, in.clip.xy);
         } else {
             col = ll_classic_sun_ambient(m.color.rgb, m.n, sh, in.clip.xy, a);
             if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0) {
                 col = legacy_light(col, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, ll_sun_linear(a), 1.0);
             }
-            col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos)
-                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos) * ll_local_scale();
+            col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
+                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
         }
         col = ll_haze(col, a);
         hazed = true;
@@ -590,7 +596,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
         col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, sh, in.clip.xy) + m.emissive;
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0) {
             col = legacy_light(col - m.emissive, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, frame.sun_color.rgb / PI, 1.0 / PI)
-                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos) + m.emissive;
+                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos, in.clip.xy) + m.emissive;
         }
     }
     if ((rec.flags.x & FLAG_HIGHLIGHT) != 0u) {
@@ -600,7 +606,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
         col = apply_fog(col, in.world_pos);
     }
     var s: Shaded;
-    s.color = vec4<f32>(col, m.color.a);
+    s.color = vec4<f32>(light_tiles_checked(col, in.world_pos, in.clip.xy), m.color.a);
     s.n = m.n;
     s.roughness = m.roughness;
     s.metallic = m.metallic;
@@ -686,9 +692,21 @@ fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec
     return vec4<f32>(s.color.rgb, 1.0);
 }
 
+// Blended faces: invisible fragments leave before the lighting, as in
+// Firestorm's alphaF.glsl / pbralphaF.glsl (`final_alpha < minimum_alpha`,
+// LLDrawPoolAlpha MINIMUM_ALPHA = 0.004, tested before the atmospherics, the
+// probes and the lights). The empty texels of hair, lashes and lace cost
+// their texture samples only. `false` lights them first, as before, for
+// comparison (AURORA_BLEND_EARLY_DISCARD=0): same image.
+override BLEND_EARLY_DISCARD: bool = true;
+
 @fragment
 fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let c = shade(in, front).color;
+    let m = eval_material(in, front);
+    if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
+        discard;
+    }
+    let c = shade_material(in, m).color;
     if (c.a < 0.004) {
         discard;
     }

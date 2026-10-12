@@ -78,6 +78,7 @@ processus du viewer. Pour un test avec intervention humaine, garder le titre
 | `AURORA_DEMO_TOD=0..4` | Heure du jour |
 | `AURORA_DEMO_ALTITUDE=<m>` | Place tout le lieu de démo à cette altitude |
 | `AURORA_FPS_LIMIT=<n>` | Plafond d'images/s pour les essais (10–500) |
+| `AURORA_WINDOW_SIZE="l,h"` | Taille de la fenêtre pour ce lancement |
 | `AURORA_LOG_NAME=<nom>` | Nom du fichier journal |
 | `AURORA_EMOJI_FONT=<chemin>` | Utilise une autre police emoji |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS` | Remplacent ces réglages |
@@ -98,6 +99,14 @@ prépasse dans la passe de scène. Un changement des vertex shaders ou des
 passes se vérifie donc aussi avec `AURORA_AA=6` : c'est avec lui que le
 terrain laissait voir le ciel par taches (`AURORA_DEMO_POS="60,128"`,
 `AURORA_DEMO_ALTITUDE=86`).
+
+`AURORA_WINDOW_SIZE` : largeur et hauteur de la zone de rendu, en pixels
+logiques (au moins 800 × 560), pour mesurer selon la taille de la fenêtre :
+sans elle, la démo s'ouvre à la taille qu'avait la fenêtre du dernier
+lancement fermé, quel que soit l'agent qui l'a lancé. La fenêtre est placée
+comme celle d'une capture (ni position ni agrandissement enregistrés) et sa
+taille n'est pas retenue pour le lancement suivant. La taille réelle est en
+tête de la ligne `perf settings`.
 
 `AURORA_FPS_LIMIT` : plafond utilisateur pour les essais (10–500 images/s ;
 les valeurs positives sont ramenées à cette plage, une valeur invalide est
@@ -711,6 +720,8 @@ grille.
 | `AURORA_DEMO_TEXTURES_CHURN=1` | Avec `AURORA_DEMO_TEXTURES` : textures renouvelées |
 | `AURORA_DEMO_CROWD=<n>` | Test de charge de la synchro : n avatars |
 | `AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]` | Test des à-coups du streaming |
+| `AURORA_DEMO_HAIR=<couches>[,<segments>[,<vide>[,<période>]]]` | Charge des faces transparentes : coques superposées sur les avatars |
+| `AURORA_DEMO_LIGHTS=<n>` | Charge des lumières locales : n petites lumières dans la foule |
 
 ### Détails
 
@@ -727,6 +738,33 @@ grille.
   un nombre) qui jouent l'animation d'attente, chacun portant huit linksets
   de sept prims sur des os de tout le corps (avec `AURORA_DEMO_ANIMESH`,
   aussi le mesh riggé de la démo), comme dans une boutique fréquentée.
+- **`AURORA_DEMO_HAIR=<couches>[,<segments>[,<vide>[,<période>]]]`** : notre
+  avatar et chaque avatar de `AURORA_DEMO_CROWD` portent `couches` mesh
+  riggés (8 par défaut, 32 au plus), chacun une coque autour de la tête et
+  une autour du torse, un peu plus grandes d'une couche à la suivante : les
+  mèches superposées d'une chevelure mesh et les vêtements en couches, soit
+  `couches` fragments transparents par pixel couvert. `segments` (24 par
+  défaut, 4 à 180) fixe les triangles : 4 × segments² par couche et par
+  avatar. La texture est faite de mèches verticales espacées de `période`
+  texels (16 par défaut, 4 à 256, sur 256), dont `vide` pour cent sont
+  entièrement transparents (60 par défaut, 0 à 90).
+  - À lire dans `perf summary` : `g_transparent` + `g_post` (voir
+    [Profilage](#profilage)), `blend`, `blend_tris_k`. `32` avec
+    `AURORA_DEMO_CROWD=40` et `AURORA_DEMO_POS="129,134"` donne ~970 faces
+    transparentes (17 avatars dessinés en entier).
+  - Pour l'abandon précoce des fragments invisibles
+    (`AURORA_BLEND_EARLY_DISCARD`) : il ne rapporte que là où des zones
+    vides sont d'un seul tenant à l'écran. `32,24,90,256` (grandes plages
+    vides) le montre, `32,24,60,16` (mèches fines) ne gagne rien.
+- **`AURORA_DEMO_LIGHTS=<n>`** : n petites lumières locales (64 si la valeur
+  n'est pas un nombre, 256 au plus), des sphères lumineuses de 6 cm à
+  hauteur de tête, espacées de 1,6 m sur la place de la foule et au-delà,
+  de 3 m de rayon (4,5 m une fois étendues comme les lumières différées de
+  Firestorm) : les « face lights » d'une foule et les lampes d'un club. Le
+  rendu prend les 64 plus proches (`lights=` dans `perf summary`). Avec
+  `AURORA_DEMO_POS="129,134"` elles sont devant la caméra, à 9 m et plus ;
+  avec `"140,134"`, la caméra est au milieu d'elles. Sert à mesurer
+  `AURORA_LIGHT_TILES`.
 - **`AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]`** : n objets texturés (2000
   si la valeur n'est pas un nombre) qui arrivent par vagues après le fondu de
   chargement, `vague` objets toutes les 250 ms (100 par défaut, soit ~400 par
@@ -1240,6 +1278,8 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_MEDIA_DEBUG=1` | Diagnostic des médias |
 | `AURORA_FONT_FALLBACK=0` | Sans les polices de repli du système |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Force le budget mémoire des textures |
+| `AURORA_LIGHT_TILES=0`, `alt` ou `check` | Lumières locales sans tri par case d'écran, ou contrôle du tri |
+| `AURORA_BLEND_EARLY_DISCARD=0` ou `alt` | Fragments invisibles des faces transparentes éclairés avant d'être abandonnés |
 
 ### Détails
 
@@ -1264,6 +1304,38 @@ Ce que l'inventaire doit montrer avec ces scénarios :
     (caméra rapprochée après une réduction). Une valeur énorme (1000000)
     retire toute pression, pour comparer.
 
+- **`AURORA_LIGHT_TILES=0|alt|check`** : par défaut, un fragment éclairé ne
+  parcourt que les lumières locales qui couvrent à la fois sa colonne
+  d'écran, sa rangée et sa tranche de profondeur (32 de chaque ; ensembles
+  calculés à chaque image sur le thread de rendu,
+  `aurora-render/src/light_tiles.rs`), dans l'ordre de la liste : même
+  image, les lumières qui atteignent le fragment sont additionnées comme
+  avant et dans le même ordre.
+  - `0` : chaque fragment parcourt toute la liste (jusqu'à 64 lumières),
+    comme avant, pour comparer.
+  - `alt` (avec `AURORA_PROFILE=1`) : l'ancien parcours pendant une ligne
+    `perf summary` sur trois, le nouveau pendant les deux autres, dans la
+    même session et sur la même scène ; `light_tiles=1.00` ou `0.00` dans
+    la ligne dit lequel (une valeur intermédiaire : la seconde du
+    changement). Comparer `g_objects`, `g_terrain_sky` et
+    `g_transparent` + `g_post` des deux groupes de lignes, avec
+    `AURORA_FPS_LIMIT=120` ; `lights=` donne la longueur de la liste.
+  - `check` : les shaders peignent en magenta tout fragment qu'une lumière
+    de la liste atteint sans figurer dans ses ensembles. Il ne doit y en
+    avoir aucun, où que l'on regarde (coûteux : chaque fragment reparcourt
+    toute la liste).
+  - Les reflets, les faces de sondes et les photos d'imposteurs gardent
+    toute la liste.
+  - En démo : `AURORA_DEMO_LIGHTS=64` avec `AURORA_DEMO_CROWD=40`.
+- **`AURORA_BLEND_EARLY_DISCARD=0|alt`** : par défaut, un fragment de face
+  transparente dont l'alpha est sous 0,004 est abandonné avant l'éclairage
+  (ombres, lumières, brume, sondes) ; il l'était après. `alphaF.glsl` de
+  Firestorm l'abandonne de même avant la brume, les sondes et les lumières.
+  Même image. `0` : l'ancien ordre, pour comparer ; `alt` :
+  l'ancien ordre pendant une ligne `perf summary` sur trois (`blend_early=`
+  dans la ligne), comme `AURORA_LIGHT_TILES=alt` — n'alterner qu'une des
+  deux variables à la fois, elles changent aux mêmes secondes. Le gain
+  dépend du contenu : voir `AURORA_DEMO_HAIR`.
 - **`AURORA_FONT_FALLBACK=0`** : n'utilise que les polices embarquées, comme
   avant l'ajout des polices de repli du système : les caractères qu'elles
   n'ont pas (géorgien, CJK, arabe, lettres mathématiques…) redeviennent des
@@ -1505,6 +1577,23 @@ thread principal est déjà sur l'image suivante. Avec
     (un dessin par mesh) et `ui_vertices` par image, et `ui_vertices_max`,
     le plus grand nombre de sommets d'une image de la seconde : un pic de
     `r_tessellate` sans pic de sommets n'est pas du travail en plus ;
+  - le temps GPU par élément (`g_*`). Les marques posées à l'intérieur
+    d'une passe n'attendent pas la fin du travail des dessins qui les
+    précèdent : quand les faces transparentes sont lourdes, une partie de
+    leur éclairage est comptée dans `g_post` (mesuré en démo : une part
+    qui change d'une seconde à l'autre). Pour elles, lire la somme
+    `g_transparent` + `g_post`. `g_transparent` couvre les faces
+    transparentes triées, leur glow intercalé, les calques de débogage et de
+    sélection, les particules et la fin de la passe (en MSAA, la résolution
+    de l'image) ; l'eau, le glow des faces opaques et les imposteurs n'en
+    font pas partie ;
+  - ce que les faces transparentes dessinent : `blend` (faces),
+    `blend_tris_k` (leurs triangles, en milliers), `blend_glow`,
+    `blend_early` (part des images où leurs fragments invisibles sont
+    abandonnés avant l'éclairage) ; ce que chaque fragment éclairé peut
+    avoir à parcourir : `lights` (lumières locales de l'image, 64 au plus),
+    `light_tiles` (part des images où il ne parcourt que celles de sa case
+    d'écran et de sa profondeur) et `probes` (sondes de reflets) ;
   - le détail de `g_shadows_depth` : `g_cull` (culling GPU de toutes les
     vues), `g_shadow0` à `g_shadow2` (les cascades d'ombres, de la plus
     proche à la plus lointaine) et `g_depth` (prépasse de profondeur et
@@ -1517,7 +1606,7 @@ thread principal est déjà sur l'image suivante. Avec
     avatars et des mesh riggés (les triangles ne comptent que les draws des
     listes du GPU). `shadow_path` : le chemin des ombres de la seconde
     (`AURORA_SHADOW_LEGACY`) ;
-  - le temps GPU par élément (`g_*`), les draws et commandes de dessin, les
+  - les draws et commandes de dessin, les
     objets synchronisés / reconstruits (`synced`, `rebuilt` : des moyennes
     **par image** ; `rebuilt=0.2` à 175 images/s, ce sont 35 reconstructions
     par seconde, `AURORA_STILL_CHECK=1` dit lesquelles), les objets portés et

@@ -2421,7 +2421,7 @@ impl App {
             self.net.send(NetCommand::Logout);
             std::thread::sleep(Duration::from_millis(300));
         }
-        if let Some(g) = &self.gfx {
+        if let Some(g) = self.gfx.as_ref().filter(|_| forced_window_size().is_none()) {
             self.settings.window_maximized = g.window.is_maximized();
             // when maximized, keep the restored size / position recorded below
             if !self.settings.window_maximized && !g.window.is_minimized().unwrap_or(false) {
@@ -2462,7 +2462,7 @@ impl App {
         let Some(t) = self.geom_changed else {
             return;
         };
-        if t.elapsed() < Duration::from_millis(300) || self.capture.is_some() {
+        if t.elapsed() < Duration::from_millis(300) || self.capture.is_some() || forced_window_size().is_some() {
             return;
         }
         self.geom_changed = None;
@@ -4308,6 +4308,8 @@ impl App {
             probes,
             wireframe: self.settings.debug.wireframe,
             debug_glow: self.settings.debug.glow_view,
+            blend_late_discard: self.frame_profile.blend_late_discard(),
+            all_lights: self.frame_profile.all_lights(),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -6391,6 +6393,18 @@ impl App {
     }
 }
 
+/// AURORA_WINDOW_SIZE="w,h": the window size of this run (logical pixels),
+/// to measure by window size. It is not remembered: the next run opens at
+/// the size of the last session again.
+fn forced_window_size() -> Option<(u32, u32)> {
+    static SIZE: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
+    *SIZE.get_or_init(|| {
+        let v = std::env::var("AURORA_WINDOW_SIZE").ok()?;
+        let (w, h) = v.split_once(',')?;
+        Some((w.trim().parse::<u32>().ok()?.max(800), h.trim().parse::<u32>().ok()?.max(560)))
+    })
+}
+
 #[derive(Default)]
 struct UiActions {
     exit: Option<ui::exit::Action>,
@@ -6419,6 +6433,13 @@ impl ApplicationHandler for App {
         // captures keep a fixed, predictable window
         let capture = self.capture.is_some();
         let (mut w, mut h) = (self.settings.window_width.max(800), self.settings.window_height.max(600));
+        // (a forced size is placed like a capture's window: not where the
+        // last session was, not maximized)
+        let forced = forced_window_size();
+        if let Some(size) = forced {
+            (w, h) = size;
+        }
+        let capture = capture || forced.is_some();
         let mut pos = None;
         let mut monitor = event_loop.primary_monitor();
         // last position, only if it is still on a connected screen
@@ -7023,6 +7044,22 @@ impl ApplicationHandler for App {
             if let Some(n) = crate::demo::crowd_count() {
                 let rigged = std::env::var_os("AURORA_DEMO_ANIMESH").is_some();
                 for ev in crate::demo::crowd_events(n, rigged) {
+                    self.world.apply(ev);
+                }
+            }
+            // AURORA_DEMO_LIGHTS=<n>: small local lights among the crowd
+            if let Some(n) = crate::demo::lights_count() {
+                for ev in crate::demo::lights_events(n) {
+                    self.world.apply(ev);
+                }
+            }
+            // AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty %>[,<period>]]]: layered
+            // blended shells on our avatar and on the crowd (blended pass load)
+            if let Some(hair) = crate::demo::hair_demo() {
+                if let Some(g) = &mut self.gfx {
+                    self.scene.install_demo_hair(&mut g.renderer, hair);
+                }
+                for ev in crate::demo::hair_events(hair, crate::demo::crowd_count().unwrap_or(0)) {
                     self.world.apply(ev);
                 }
             }
