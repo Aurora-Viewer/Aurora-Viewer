@@ -92,6 +92,18 @@ fn cstring(r: &mut ByteReader) -> Result<String, AssetError> {
 }
 
 pub fn parse_animation(data: &[u8]) -> Result<Animation, AssetError> {
+    parse(data, false)
+}
+
+/// Validate the entire native file before paying for its upload. Playback
+/// tolerates old files without constraints; imports retain and validate them.
+pub fn parse_animation_upload(data: &[u8]) -> Result<Animation, AssetError> {
+    if data.len() > 64 * 1024 * 1024 {
+        return Err(AssetError::TooLarge("animation file"));
+    }
+    parse(data, true)
+}
+fn parse(data: &[u8], upload: bool) -> Result<Animation, AssetError> {
     let mut r = ByteReader::new(data);
     let version = r.u16("version")?;
     let sub_version = r.u16("sub_version")?;
@@ -100,7 +112,11 @@ pub fn parse_animation(data: &[u8]) -> Result<Animation, AssetError> {
         (1, 0) => false,
         _ => return Err(AssetError::Unsupported(format!("anim version {version}.{sub_version}"))),
     };
-    let base_priority = r.i32("base_priority")?.clamp(-1, 6);
+    let priority = r.i32("base_priority")?;
+    if upload && !(-1..=6).contains(&priority) {
+        return Err(AssetError::invalid("animation priority"));
+    }
+    let base_priority = priority.clamp(-1, 6);
     let duration = r.f32("duration")?;
     if !duration.is_finite() || duration > MAX_ANIM_DURATION || duration < 0.0 {
         return Err(AssetError::invalid("bad duration"));
@@ -115,8 +131,14 @@ pub fn parse_animation(data: &[u8]) -> Result<Animation, AssetError> {
         return Err(AssetError::invalid("bad animation timing"));
     }
     let hand_pose = r.u32("hand_pose")?;
+    // LLKeyframeMotion::deserialize accepts finite loop/ease values, including
+    // exporter -1 markers when looping is disabled. Bounds are normalized only
+    // for sampling; native uploads keep the original bytes. NUM_HAND_POSES is 14.
+    if upload && hand_pose > 14 {
+        return Err(AssetError::invalid("animation hand pose"));
+    }
     let num_joints = r.u32("num_joints")? as usize;
-    if num_joints > MAX_JOINTS {
+    if num_joints > MAX_JOINTS || (upload && num_joints > 216) {
         return Err(AssetError::invalid("too many joints"));
     }
     let mut joints = Vec::with_capacity(num_joints);
@@ -140,6 +162,9 @@ pub fn parse_animation(data: &[u8]) -> Result<Animation, AssetError> {
                 let z = u16_to_f32(r.u16("rz")?, -1.0, 1.0);
                 (t, unpack_quat(Vec3::new(x, y, z)))
             };
+            if upload && (!time.is_finite() || time < 0.0 || time > duration || !rotation.is_finite()) {
+                return Err(AssetError::invalid("animation rotation key"));
+            }
             if time.is_finite() && rotation.is_finite() {
                 rot_keys.push(RotKey { time, rotation });
             }
@@ -161,6 +186,9 @@ pub fn parse_animation(data: &[u8]) -> Result<Animation, AssetError> {
                 let z = u16_to_f32(r.u16("pz")?, -m, m);
                 (t, Vec3::new(x, y, z))
             };
+            if upload && (!time.is_finite() || time < 0.0 || time > duration || !position.is_finite()) {
+                return Err(AssetError::invalid("animation position key"));
+            }
             if time.is_finite() && position.is_finite() {
                 pos_keys.push(PosKey { time, position });
             }
@@ -194,7 +222,32 @@ pub fn parse_animation(data: &[u8]) -> Result<Animation, AssetError> {
             });
         }
     }
-    // Constraints follow; they are not needed for playback here.
+    if upload {
+        let constraints = r.i32("constraints")?;
+        if !(0..=10).contains(&constraints) {
+            return Err(AssetError::invalid("animation constraints count"));
+        }
+        for _ in 0..constraints {
+            if usize::from(r.u8("chain length")?) > num_joints || r.u8("constraint type")? > 1 {
+                return Err(AssetError::invalid("animation constraint chain or type"));
+            }
+            let _ = r.take(16, "source volume")?;
+            for _ in 0..3 {
+                if !r.f32("source offset")?.is_finite() {
+                    return Err(AssetError::invalid("animation constraint offset"));
+                }
+            }
+            let _ = r.take(16, "target volume")?;
+            for _ in 0..10 {
+                if !r.f32("constraint parameter")?.is_finite() {
+                    return Err(AssetError::invalid("animation constraint parameter"));
+                }
+            }
+        }
+        if r.remaining() != 0 {
+            return Err(AssetError::invalid("trailing animation bytes"));
+        }
+    }
     Ok(Animation {
         base_priority,
         duration,
@@ -376,6 +429,42 @@ mod tests {
         let r1 = a.joints[0].rotation_at(2.0).unwrap();
         assert!(r1.z > 0.1);
         assert!((a.local_time(3.0) - 1.0).abs() < 1e-5);
+    }
+    #[test]
+    fn native_uploads_validate_constraints_without_modifying_the_file() {
+        let valid = build();
+        assert!(parse_animation_upload(&valid).is_ok());
+        assert!(parse_animation_upload(&valid[..valid.len() - 1]).is_err());
+        let mut constrained = valid[..valid.len() - 4].to_vec();
+        constrained.extend(1i32.to_le_bytes());
+        constrained.extend([1, 0]);
+        constrained.extend(b"HEAD\0\0\0\0\0\0\0\0\0\0\0\0");
+        constrained.extend([0u8; 12]);
+        constrained.extend(b"GROUND\0\0\0\0\0\0\0\0\0\0");
+        constrained.extend([0u8; 40]);
+        assert!(parse_animation_upload(&constrained).is_ok());
+        let last = constrained.len() - 4;
+        constrained[last..].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(parse_animation_upload(&constrained).is_err());
+    }
+
+    #[test]
+    fn native_upload_accepts_finite_exporter_loop_markers() {
+        let mut bytes = build();
+        bytes[13..17].copy_from_slice(&(-1.0f32).to_le_bytes());
+        bytes[17..21].copy_from_slice(&(-1.0f32).to_le_bytes());
+        bytes[21..25].copy_from_slice(&0i32.to_le_bytes());
+        let parsed = parse_animation_upload(&bytes).expect("disabled exporter loop markers");
+        assert!(!parsed.looping);
+        assert_eq!((parsed.loop_in, parsed.loop_out), (0.0, 0.0));
+        bytes[17..21].copy_from_slice(&3.0f32.to_le_bytes());
+        bytes[33..37].copy_from_slice(&14u32.to_le_bytes());
+        assert!(parse_animation_upload(&bytes).is_ok());
+        bytes[33..37].copy_from_slice(&15u32.to_le_bytes());
+        assert!(parse_animation_upload(&bytes).is_err());
+        bytes[33..37].copy_from_slice(&0u32.to_le_bytes());
+        bytes[13..17].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(parse_animation_upload(&bytes).is_err());
     }
 
     #[test]

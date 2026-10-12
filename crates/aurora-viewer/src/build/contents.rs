@@ -229,17 +229,15 @@ impl BuildTool {
         } else {
             folder
         };
-        let (handle, local_id, object_id) = (o.key.region, o.key.local_id, o.full_id);
-        self.send(BuildCmd::MoveTaskInventory {
-            handle,
-            local_id,
-            item_id: item.item_id,
-            folder_id: folder,
-        });
-        // a no-copy item leaves the object
-        if item.owner_mask & perm::COPY == 0 {
-            self.contents_changed(object_id);
-        }
+        self.ui
+            .requests
+            .push(super::ui::Request::TransferTask(Box::new(super::task_inventory::TransferRequest {
+                object: o.full_id,
+                item: item.clone(),
+                folder,
+                approved: None,
+                ignore_warning: false,
+            })));
     }
 
     /// « Réinit. scripts »: ScriptReset for every script of every selected

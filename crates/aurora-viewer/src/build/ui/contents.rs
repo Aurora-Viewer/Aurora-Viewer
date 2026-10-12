@@ -224,9 +224,17 @@ fn item_row(
             tool.ui.contents_selected = Some((object_id, item.item_id));
         }
         let item_modify = item.owner_mask & perm::MODIFY != 0;
+        crate::ui::inventory::task_drop::source(
+            ui,
+            &r,
+            world,
+            object_id,
+            item,
+            crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
+        );
         let script = item.asset_type == AT_LSL_TEXT;
-        let can_take = item.owner_mask & perm::COPY != 0 && item.owner_mask & perm::TRANSFER != 0
-            || tool.props.get(&object_id).is_some_and(|pr| pr.owner_id == world.agent_id);
+        let transfer = tool.task_transfer_kind(world, object_id, item);
+        let can_take = transfer.is_ok();
         menu::context_menu(&r, p, |ui| {
             let can_open = script || item.asset_type == 7;
             let no_open = if can_open {
@@ -253,7 +261,12 @@ fn item_row(
             if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), editable) {
                 tool.remove_item(world, idx, item.item_id);
             }
-            let take = aurora_i18n::tr!("build-ui-contents-copy-to-inventory");
+            // a no-copy item leaves the object: the row says so
+            let take = if matches!(transfer, Ok(crate::build::task_inventory::TransferKind::Move { .. })) {
+                aurora_i18n::tr!("task-transfer-move-menu")
+            } else {
+                aurora_i18n::tr!("build-ui-contents-copy-to-inventory")
+            };
             let take_tip = aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory");
             if menu::item_tip(ui, p, "briefcase-filled", take, can_take, take_tip) {
                 tool.copy_item_to_inventory(world, idx, item, uuid::Uuid::nil());

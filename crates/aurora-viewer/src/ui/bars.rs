@@ -13,6 +13,10 @@ use egui::{Color32, RichText, Vec2};
 pub enum BarAction {
     CheckUpdates,
     ReportBug,
+    Import {
+        choice: crate::imports::Choice,
+        pick_files: bool,
+    },
     ShowHuds(bool),
     HudZoom(f32),
     #[default]
@@ -485,6 +489,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             &mut panels.inventory,
             true,
         );
+        import_menu(ui, p, action);
     });
     if advanced {
         menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("common-advanced"), true, |ui| {
@@ -521,6 +526,35 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             aurora_i18n::tr!("ui-bars-editable-shortcuts-preferences-shortcuts"),
         );
     });
+}
+
+fn import_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction) {
+    use crate::imports::Choice;
+
+    let heading = menu::submenu_heading(ui, p, "file-upload-filled", aurora_i18n::tr!("import-menu"), true, |ui| {
+        // each kind keeps the icon it has in the inventory
+        for (choice, icon) in [
+            (Choice::Texture, "photo-filled"),
+            (Choice::Sound, "file-music-filled"),
+            (Choice::Animation, "run"),
+            (Choice::Material, "droplet-filled"),
+            (Choice::Mesh, "cube-3d-sphere"),
+            (Choice::Bulk, "files-filled"),
+            (Choice::Local, "eye-filled"),
+        ] {
+            if menu::item(ui, p, icon, choice.label()) {
+                *action = BarAction::Import { choice, pick_files: true };
+            }
+        }
+    });
+    // Deliberate extension of Firestorm's upload submenu: its heading also opens the inspector.
+    if heading.clicked() {
+        *action = BarAction::Import {
+            choice: Choice::Texture,
+            pick_files: false,
+        };
+        ui.close();
+    }
 }
 
 /// Draw a (white mask) icon tinted, centered in `rect`.
@@ -1596,5 +1630,98 @@ mod tests {
         bench.click(settings);
         assert!(bench.open_prefs, "the button opens the sound preferences");
         assert!(!bench.panel_shown(), "and closes the panel");
+    }
+}
+
+#[cfg(test)]
+mod import_menu_tests {
+    use super::*;
+    use crate::imports::Choice;
+
+    fn text_position(output: &egui::FullOutput, label: &str) -> egui::Pos2 {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos + text.galley.size() * 0.5),
+                _ => None,
+            })
+            .next_back()
+            .expect("menu item visible")
+    }
+
+    #[test]
+    fn parent_click_opens_texture_and_submenu_choices_request_their_file_picker() {
+        for choice in [
+            None,
+            Some(Choice::Texture),
+            Some(Choice::Sound),
+            Some(Choice::Animation),
+            Some(Choice::Material),
+            Some(Choice::Mesh),
+            Some(Choice::Bulk),
+            Some(Choice::Local),
+        ] {
+            let ctx = egui::Context::default();
+            let p = crate::theme::Theme::default().palette();
+            let mut time = 0.0;
+            let mut frame = |events| {
+                time += 0.2;
+                let mut action = BarAction::None;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::MenuBar::new().ui(ui, |ui| {
+                            ui.menu_button(aurora_i18n::tr!("common-contents"), |ui| import_menu(ui, &p, &mut action));
+                        });
+                    },
+                );
+                output.textures_delta.clear();
+                (output, action)
+            };
+            let click_events = |pos, pressed| {
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]
+            };
+            let (output, _) = frame(Vec::new());
+            let contents = text_position(&output, aurora_i18n::tr!("common-contents"));
+            for pressed in [true, false] {
+                frame(click_events(contents, pressed));
+            }
+            let mut output = frame(Vec::new()).0;
+            for _ in 0..3 {
+                output = frame(Vec::new()).0;
+            }
+            let heading = text_position(&output, aurora_i18n::tr!("import-menu"));
+            // Hover must expose the submenu without opening an inspector or a native dialog.
+            for _ in 0..3 {
+                let (next, action) = frame(vec![egui::Event::PointerMoved(heading)]);
+                assert!(matches!(action, BarAction::None));
+                output = next;
+            }
+            let pos = choice.map_or(heading, |choice| text_position(&output, choice.label()));
+            frame(click_events(pos, true));
+            let (_, action) = frame(click_events(pos, false));
+            assert!(matches!(action, BarAction::Import { choice: selected, pick_files }
+                if selected == choice.unwrap_or(Choice::Texture) && pick_files == choice.is_some()));
+            let (output, _) = frame(Vec::new());
+            assert!(
+                !output.shapes.iter().any(|shape| matches!(&shape.shape,
+                egui::epaint::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-menu"))),
+                "menu closes after activation"
+            );
+        }
     }
 }

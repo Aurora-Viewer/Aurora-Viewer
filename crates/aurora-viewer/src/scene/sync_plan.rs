@@ -52,6 +52,9 @@ pub(super) struct MoveSync {
     pub(super) changed: bool,
     /// Updated (`needs_records`): the flag is cleared once applied.
     pub(super) clear_flags: bool,
+    /// (radius, distance) its detail level was checked with (a HUD
+    /// attachment: no size, it never changes level); None when it was not.
+    pub(super) lod: Option<(f32, f32)>,
 }
 
 /// Model matrix and culling bounds of an object on its bound geometry.
@@ -79,11 +82,18 @@ pub(super) struct FrameState<'a> {
     pub(super) geoms: &'a HashMap<GeomKey, GeomEntry>,
     pub(super) textures: &'a TextureStreamer,
     pub(super) mat_gen: u64,
+    /// HUD attachments are placed when they change, not with their wearer
+    /// at each frame (false with AURORA_SYNC_SLICE).
+    pub(super) still_huds: bool,
 }
 
 impl SyncState for FrameState<'_> {
     fn rigged(&self, idx: usize) -> bool {
         self.gpu.get(idx).is_some_and(|g| g.moves_with_skeleton())
+    }
+
+    fn hud(&self, idx: usize) -> bool {
+        self.still_huds && self.gpu.get(idx).is_some_and(|g| g.hud)
     }
 
     fn anchored(&self, idx: usize) -> bool {
@@ -153,9 +163,9 @@ impl SyncCtx<'_> {
     pub(super) fn lod_metrics(&self, idx: usize, o: &Object, pos: Vec3) -> (f32, f32) {
         let world = self.world;
         let eye = self.eye;
-        if o.volume.is_mesh() {
+        if o.visual_volume().is_mesh() {
             let rigged = o
-                .volume
+                .visual_volume()
                 .sculpt
                 .is_some_and(|s| self.meshes.meta(&s.texture).is_some_and(|m| m.skin.is_some()));
             if rigged
@@ -164,14 +174,18 @@ impl SyncCtx<'_> {
             {
                 // avatars: diagonal of the animated extents (~2.2 m);
                 // animesh: half of it (LL uses the dynamic box)
-                let radius = if ow.is_avatar() { 2.2 } else { (ow.scale.length() * 0.5).max(0.5) };
+                let radius = if ow.is_avatar() {
+                    2.2
+                } else {
+                    (ow.visual_scale().length() * 0.5).max(0.5)
+                };
                 return (radius, op.distance(eye));
             }
-            return ((o.scale * 0.5).length(), pos.distance(eye));
+            return ((o.visual_scale() * 0.5).length(), pos.distance(eye));
         }
-        let path = o.volume.path.curve_type & 0xF0;
-        let profile = o.volume.profile.curve_type & 0x0F;
-        let bias = if o.volume.is_sculpt() {
+        let path = o.visual_volume().path.curve_type & 0xF0;
+        let profile = o.visual_volume().profile.curve_type & 0x0F;
+        let bias = if o.visual_volume().is_sculpt() {
             Vec3::splat(0.5)
         } else if path == aurora_prim::params::LL_PCODE_PATH_LINE && profile == aurora_prim::params::LL_PCODE_PROFILE_CIRCLE {
             // cylinders don't care about the Z axis
@@ -181,14 +195,14 @@ impl SyncCtx<'_> {
         } else {
             Vec3::splat(0.5)
         };
-        ((bias * o.scale).length(), pos.distance(eye))
+        ((bias * o.visual_scale()).length(), pos.distance(eye))
     }
 
     /// Model matrix and bounds of an object drawn with `geom`.
     pub(super) fn placement(&self, idx: usize, o: &Object, xf: Xf, geom_key: GeomKey, geom: &GpuGeom) -> Placement {
         let world = self.world;
         let (pos, rot, _) = xf;
-        let scale = (o.scale * if xf.2 { world.hud_scale(idx) } else { 1.0 }).max(Vec3::splat(0.001));
+        let scale = (o.visual_scale() * if xf.2 { world.hud_scale(idx) } else { 1.0 }).max(Vec3::splat(0.001));
         let rigged = matches!(geom_key, GeomKey::Mesh { id, .. } if self.meshes.meta(&id).is_some_and(|m| m.skin.is_some()));
         let skeleton_owner = rigged.then(|| Scene::skeleton_owner(world, idx)).flatten();
         let owner_xf = skeleton_owner.and_then(|(_, owner_idx)| self.transform(owner_idx));
@@ -289,6 +303,20 @@ impl SyncCtx<'_> {
         }
     }
 
+    /// The geometry the object's place and the camera ask for at this
+    /// moment (what a check of its detail level would want); None when it
+    /// cannot be placed.
+    pub(super) fn wanted_now(&self, idx: usize, o: &Object) -> Option<Option<GeomKey>> {
+        let (pos, _, hud) = self.transform(idx)?;
+        let lod = if hud {
+            3
+        } else {
+            let (radius, distance) = self.lod_metrics(idx, o, pos);
+            lod_for(radius, distance, self.lod_factor, self.fov_y)
+        };
+        Some(Scene::object_geom_key(o, lod))
+    }
+
     /// What this frame's sync does with an object. A transform-only update
     /// is planned here when nothing else changed: same geometry and detail
     /// level, no new faces, materials or skeleton; anything else is left to
@@ -326,11 +354,11 @@ impl SyncCtx<'_> {
             return full();
         }
         let (pos, _, hud) = xf;
+        let metrics = if hud { (0.0, 0.0) } else { self.lod_metrics(idx, o, pos) };
         let lod = if hud {
             3
         } else {
-            let (radius, distance) = self.lod_metrics(idx, o, pos);
-            lod_for(radius, distance, self.lod_factor, self.fov_y)
+            lod_for(metrics.0, metrics.1, self.lod_factor, self.fov_y)
         };
         let Some(key) = Scene::object_geom_key(o, lod) else {
             return full();
@@ -340,7 +368,7 @@ impl SyncCtx<'_> {
         }
         // a sculpt keeps its texture held (the full sync acquires it again
         // after its faces were rebuilt)
-        if matches!(key, GeomKey::Sculpt { .. }) && o.volume.sculpt.is_some_and(|s| !g.tex_ids.contains(&s.texture)) {
+        if matches!(key, GeomKey::Sculpt { .. }) && o.visual_volume().sculpt.is_some_and(|s| !g.tex_ids.contains(&s.texture)) {
             return full();
         }
         let Some(GeomState::Ready(geom)) = self.geoms.get(&key).map(|e| &e.state) else {
@@ -368,6 +396,7 @@ impl SyncCtx<'_> {
             posed_rest: p.posed_rest,
             changed,
             clear_flags: o.render.needs_records,
+            lod: Some(metrics),
         })
     }
 
@@ -414,6 +443,7 @@ impl SyncCtx<'_> {
             posed_rest: p.posed_rest,
             changed,
             clear_flags: false,
+            lod: None,
         })
     }
 }

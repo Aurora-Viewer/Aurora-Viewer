@@ -24,7 +24,7 @@ use openjpeg_sys as opj;
 
 use crate::AssetError;
 mod encode;
-pub use encode::encode_thumbnail_j2k;
+pub use encode::{encode_texture_j2k, encode_thumbnail_j2k};
 
 /// `MAX_DISCARD_LEVEL` from `llimage.h`.
 pub const MAX_DISCARD_LEVEL: u8 = 5;

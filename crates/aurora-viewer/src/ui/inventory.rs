@@ -22,8 +22,9 @@ pub use document::document_demo_events;
 pub(crate) mod permissions;
 mod progress;
 mod properties;
+pub(crate) mod task_drop;
 pub mod thumbnail;
-mod view;
+pub(crate) mod view;
 pub use controls::preferences;
 pub use view::InventoryPreferences;
 
@@ -61,6 +62,7 @@ pub fn show_document(
 }
 
 pub enum InvAction {
+    TakeTask(Box<crate::build::task_inventory::TransferRequest>),
     TeleportLandmark(Uuid),
     /// « À propos du repère » (LLLandmarkBridge "about"): its profile, as
     /// item and asset.
@@ -106,6 +108,7 @@ pub enum InvAction {
     },
 }
 
+#[derive(Default)]
 pub struct Facts {
     pub agent: Uuid,
     pub worn: HashSet<Uuid>,
@@ -503,6 +506,7 @@ fn item_row(
         // interaction overlay used to consume secondary clicks on the label.
         r.dnd_set_drag_payload(InvDrag(it.id));
         clipboard::demo_row(&r, st, it.id);
+        task_drop::target(ui, p, &r, inv, it.parent, prefs, actions);
         super::widgets::demo::rez_row(&r, it.id);
         let date = if it.created_at > 0 {
             aurora_net::inventory::created_date(it.created_at)
@@ -631,6 +635,7 @@ fn folder_row(
                 .wrap_mode(egui::TextWrapMode::Extend),
         );
         clipboard::demo_row(&r, state, id);
+        task_drop::target(ui, p, &r, inv, id, prefs, actions);
         if first_open {
             scroll_to_row(ui, &r, egui::Align::Min);
         }
@@ -745,7 +750,7 @@ fn folder_window_contents(
         );
     }
     let list_h = list_height(ui);
-    egui::Frame::new().fill(p.field).show(ui, |ui| {
+    let zone = egui::Frame::new().fill(p.field).show(ui, |ui| {
         clipboard::list_focus(ui, st, list_h);
         if filtered {
             prepare_result_tree(st, inv, root);
@@ -757,6 +762,7 @@ fn folder_window_contents(
             folder_contents(ui, p, icons, inv, root, 1, expand, st, prefs, facts, actions);
         });
     });
+    task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
@@ -1171,7 +1177,7 @@ fn inventory_contents(
     }
     ui.add_space(6.0);
     let list_h = list_height(ui);
-    egui::Frame::new()
+    let zone = egui::Frame::new()
         .fill(p.field.gamma_multiply(0.72))
         .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(4)
@@ -1203,6 +1209,7 @@ fn inventory_contents(
                 }
             });
         });
+    task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }

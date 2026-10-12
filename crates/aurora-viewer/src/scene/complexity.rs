@@ -182,29 +182,29 @@ impl Scene {
         let Some(g) = self.gpu.get(idx) else {
             return 0.0;
         };
-        let radius = o.scale.length() * 0.5;
+        let radius = o.visual_scale().length() * 0.5;
         let mut weighted_mesh = false;
-        let mut num_triangles = if o.volume.is_mesh() {
-            let Some(meta) = o.volume.sculpt.and_then(|s| self.meshes.meta(&s.texture)) else {
+        let mut num_triangles = if o.visual_volume().is_mesh() {
+            let Some(meta) = o.visual_volume().sculpt.and_then(|s| self.meshes.meta(&s.texture)) else {
                 // mesh not loaded yet: no cost (LL returns 0)
                 return 0.0;
             };
             weighted_mesh = meta.skin.is_some();
             radius_weighted_tris(meta.lod_bytes, radius)
-        } else if o.volume.sculpt.is_some() {
+        } else if o.visual_volume().sculpt.is_some() {
             // sculpts: getCostData asks the mesh repository for the sculpt
             // map's id and finds nothing, so they count the minimum below
             0.0
         } else {
             // prims: each LOD's triangles estimated from the shape
             // (getLoDTriangleCounts), as LOD sizes of 10 bytes per triangle
-            let counts = self.prim_triangle_counts(&o.volume);
+            let counts = self.prim_triangle_counts(&o.visual_volume());
             radius_weighted_tris(counts.map(|c| c.saturating_mul(10)), radius)
         };
         if num_triangles <= 0.0 {
             num_triangles = 4.0;
         }
-        if let Some(s) = o.volume.sculpt.filter(|_| !o.volume.is_mesh()) {
+        if let Some(s) = o.visual_volume().sculpt.filter(|_| !o.visual_volume().is_mesh()) {
             textures.insert(s.texture);
         }
         let te = o.te.as_ref();
@@ -268,7 +268,7 @@ impl Scene {
             Some(k @ super::GeomKey::Sculpt { .. }) => self.sculpt_area.get(&k).copied().unwrap_or(1.0),
             _ => 1.0,
         };
-        area * o.scale.x.max(o.scale.y).max(o.scale.z)
+        area * o.visual_scale().x.max(o.visual_scale().y).max(o.visual_scale().z)
     }
 
     /// LLVOAvatar::calculateUpdateRenderComplexity for the avatar at `idx`,

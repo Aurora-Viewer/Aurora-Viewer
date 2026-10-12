@@ -7,6 +7,15 @@
 //!   (deeper, deeper, nearer), centered on `object:99610`.
 //!   linked-click | linked-click-ready: select a whole object, then switch
 //!   to linked editing and click the requested part (ready stops before switching).
+//!   faces | faces-invisible | faces-ready: plain / Shift face clicks on
+//!   three prims of two objects (ready stops before the face clicks).
+//!   faces-picker: select one face and keep its texture picker open.
+//!   faces-close: close view of one selected face for material readability.
+//!   faces-complex: closed torus and disconnected mesh islands, with holes.
+//!   create-delete | create-ready: create and select a basic prim, then
+//!   delete it (ready leaves the new prim for the human).
+//!   contents-copy | contents-move | contents-move-plain | contents-ready:
+//!   take an item into inventory or show the move warning (ready stops).
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -36,6 +45,13 @@ use std::time::Instant;
 pub enum Step {
     Open(Tool, EditMode, u8),
     Select(usize),
+    Face(usize, u8, bool),
+    TexturePicker,
+    CloseView,
+    CreateAt(Vec3),
+    Delete,
+    Contents,
+    TakeTask(bool),
     Cursor(f32, f32),
     Press,
     Release,
@@ -152,6 +168,48 @@ pub fn apply_tab(tool: &mut BuildTool) {
     };
 }
 
+pub fn texture_inventory(world: &mut World) {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::{InvFolder, InvItem};
+    use uuid::Uuid;
+    let project = Uuid::from_u128(99870);
+    let wood = Uuid::from_u128(99872);
+    for (id, parent, name) in [
+        (project, world.inventory.root, aurora_i18n::tr!("demo-picker-texture-project")),
+        (wood, project, aurora_i18n::tr!("build-demo-sim-light-wood")),
+    ] {
+        world.inventory.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name: name.to_owned(),
+                    type_default: -1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = world.inventory.folders.get_mut(&parent) {
+            folder.children.push(id);
+        }
+    }
+    world.inventory.add_items(vec![InvItem {
+        id: Uuid::from_u128(99871),
+        parent: wood,
+        asset_id: aurora_prim::te::BLANK_TEXTURE,
+        inv_type: 0,
+        owner_mask: aurora_net::build::perm::COPY,
+        name: aurora_i18n::tr!("build-demo-sim-light-wood").repeat(20),
+        ..Default::default()
+    }]);
+    world.inventory.generation += 1;
+}
+
 /// Optional direct object selection, used for animated-shape captures.
 pub fn target_index(spec: &str, world: &World) -> Option<usize> {
     let id = spec.split(',').nth(1)?.trim().strip_prefix("object:")?.parse::<u32>().ok()?;
@@ -172,7 +230,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let (t, m, land) = match parts[0] {
         "rotate" => (Tool::Edit, EditMode::Rotate, 6),
         "stretch" => (Tool::Edit, EditMode::Stretch, 6),
-        "face" => (Tool::Edit, EditMode::Face, 6),
+        "face" | "faces" | "faces-invisible" | "faces-ready" => (Tool::Edit, EditMode::Face, 6),
         "align" => (Tool::Edit, EditMode::Align, 6),
         "grab" => (Tool::Grab, EditMode::Move, 6),
         "focus" => (Tool::Focus, EditMode::Move, 6),
@@ -191,6 +249,77 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let Some(frame) = (frame + 215).checked_sub(base) else {
         return Vec::new();
     };
+    if matches!(parts[0], "create-delete" | "create-ready") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Create, EditMode::Move, 6)],
+            240 => {
+                let x = world.agent.position.x + 5.0;
+                let y = world.agent.position.y + 3.0;
+                vec![Step::CreateAt(Vec3::new(x, y, crate::demo::floor_at(x, y)))]
+            }
+            250 => vec![Step::Focus(false)],
+            290 if parts[0] == "create-delete" => vec![Step::Delete],
+            _ => Vec::new(),
+        };
+    }
+    if parts[0].starts_with("contents-") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            225 => vec![Step::Contents],
+            260 if parts[0] != "contents-ready" => vec![Step::TakeTask(parts[0] == "contents-copy")],
+            _ => Vec::new(),
+        };
+    }
+    if parts[0].starts_with("faces") {
+        let pick = |id, face, shift| {
+            world
+                .objects
+                .index_of_uuid(&crate::demo::action_id(id))
+                .and_then(|idx| {
+                    let face = if face == u8::MAX {
+                        let o = world.objects.get(idx)?;
+                        let (pos, rot, _) = crate::scene::Scene::object_transform(world, idx, Instant::now(), 0)?;
+                        let toward = rot.inverse() * (tool.cam.eye - pos);
+                        aurora_prim::volume::generate_volume(&o.volume, 1.0)
+                            .faces
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| (1..=4).contains(i))
+                            .filter_map(|(i, face)| face.normals.first().map(|n| (i, Vec3::from_array(*n).dot(toward))))
+                            .max_by(|a, b| a.1.total_cmp(&b.1))
+                            .map(|(i, _)| i as u8)?
+                    } else {
+                        face
+                    };
+                    Some(Step::Face(idx, face, shift))
+                })
+                .into_iter()
+                .collect()
+        };
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6), Step::Linked(false)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            227 => vec![Step::Focus(false)],
+            235 if matches!(parts[0], "faces-close" | "faces-picker" | "faces-complex") => vec![Step::CloseView],
+            _ if parts[0] == "faces-ready" => Vec::new(),
+            240 if parts[0] == "faces-complex" => pick(99620, 0, false),
+            240 => pick(99620, u8::MAX, false),
+            250 if parts[0] == "faces-picker" => vec![Step::TexturePicker],
+            _ if parts[0] == "faces-close" => Vec::new(),
+            _ if parts[0] == "faces-picker" => Vec::new(),
+            260 if parts[0] == "faces-complex" => pick(99621, 0, true),
+            _ if parts[0] == "faces-complex" => Vec::new(),
+            260 => pick(99620, 0, true),
+            280 => pick(99621, u8::MAX, true),
+            300 => pick(99622, u8::MAX, true),
+            320 => pick(99620, 0, true),
+            340 => pick(99621, u8::MAX, true),
+            360 => pick(99622, 0, false),
+            380 => pick(99622, 0, true),
+            _ => Vec::new(),
+        };
+    }
     if matches!(parts[0], "linked-click" | "linked-click-ready") {
         return match frame {
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 1), Step::Linked(false)],

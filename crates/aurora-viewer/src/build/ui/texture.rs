@@ -10,7 +10,7 @@
 use super::common::{Edit, check, color_swatch, combo, label, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
 use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
-use crate::build::{BuildSettings, BuildTool};
+use crate::build::{BuildSettings, BuildTool, EditMode};
 use crate::scene::legacy_mat::{LegacyMaterial, alpha_mode};
 use crate::theme::Palette;
 use crate::ui::widgets::collapsing;
@@ -81,10 +81,10 @@ const TEX_GEN_PLANAR: u8 = 0x02;
 
 /// One selected face.
 #[derive(Debug, Clone, Copy)]
-struct Sel {
-    idx: usize,
-    face: u8,
-    te: TextureFace,
+pub(super) struct Sel {
+    pub idx: usize,
+    pub face: u8,
+    pub te: TextureFace,
 }
 
 const W: f32 = 64.0;
@@ -176,13 +176,12 @@ impl BuildTool {
         }
     }
 
-    /// A texture chosen in the picker for the Texture tab.
-    pub fn on_texture_picked(&mut self, world: &mut World, env: &mut Env, target: PickTarget, id: Uuid) {
-        let sel = selected(self, world);
+    /// Apply a picker choice to the dialog's original faces.
+    pub(super) fn apply_texture(&mut self, world: &mut World, env: &mut Env, target: PickTarget, id: Uuid, sel: &[Sel]) {
         match target {
-            PickTarget::Diffuse => self.edit_faces(world, |f, _, _| f.texture = id),
-            PickTarget::Normal => self.edit_legacy(env, world, &sel, |m| m.normal_map = id),
-            PickTarget::Specular => self.edit_legacy(env, world, &sel, |m| m.specular_map = id),
+            PickTarget::Diffuse => self.set_diffuse(world, sel, |_, f| f.texture = id),
+            PickTarget::Normal => self.edit_legacy(env, world, sel, |m| m.normal_map = id),
+            PickTarget::Specular => self.edit_legacy(env, world, sel, |m| m.specular_map = id),
             PickTarget::PbrMaterial => {
                 // keep the transform of the override, else the Blinn-Phong one
                 let updates = sel
@@ -215,7 +214,7 @@ impl BuildTool {
             }
             PickTarget::PbrMap(i) => {
                 let tex = if id.is_nil() { OVERRIDE_NULL_UUID } else { id };
-                self.edit_gltf(world, &sel, |o| o.textures[i] = tex);
+                self.edit_gltf(world, sel, |o| o.textures[i] = tex);
             }
             PickTarget::Sculpt => {
                 if let Some(idx) = sel.first().map(|s| s.idx)
@@ -244,7 +243,7 @@ impl BuildTool {
 }
 
 /// The selected faces of modifiable volume prims.
-fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
+pub(super) fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
     tool.sel_te(world)
         .into_iter()
         .filter(|(i, _)| tool.can_modify(world, *i))
@@ -256,22 +255,27 @@ fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
 }
 
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
-    let sel = selected(tool, world);
-    if sel.is_empty() {
-        small(ui, p, aurora_i18n::tr!("build-ui-texture-no-editable-face-selected"));
-        return;
-    }
+    let mut sel = selected(tool, world);
     super::compact::heading(ui, p, "paint-filled", aurora_i18n::tr!("build-compact-materials"), |ui| {
+        if super::common::icon_button(
+            ui,
+            p,
+            "eye-filled",
+            aurora_i18n::tr!("build-review-face-selection"),
+            tool.edit_mode == EditMode::Face && s.show_highlight && !tool.sel_te(world).is_empty(),
+        ) {
+            tool.ui.reveal_faces = true;
+        }
         if super::common::icon_button(
             ui,
             p,
             "clipboard-text-filled",
             aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
-            tool.ui.face_clipboard.is_some(),
+            !sel.is_empty() && tool.ui.face_clipboard.is_some(),
         ) {
             paste_faces(tool, world, &sel);
         }
-        let one_object = sel.iter().all(|x| x.idx == sel[0].idx);
+        let one_object = !sel.is_empty() && sel.iter().all(|x| x.idx == sel[0].idx);
         if super::common::icon_button(
             ui,
             p,
@@ -290,6 +294,23 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             tool.ui.face_clipboard = Some(clip);
         }
     });
+    // Face selection is a material operation in Aurora's section layout.
+    if let Some(face) = check(
+        ui,
+        p,
+        tool.edit_mode == EditMode::Face,
+        false,
+        aurora_i18n::tr!("build-compact-face"),
+        true,
+    ) {
+        tool.set_edit_mode(world, s, if face { EditMode::Face } else { EditMode::Move });
+        sel = selected(tool, world);
+    }
+    ui.add_space(6.0);
+    if sel.is_empty() {
+        small(ui, p, aurora_i18n::tr!("build-ui-texture-no-editable-face-selected"));
+        return;
+    }
     tabs(
         ui,
         p,

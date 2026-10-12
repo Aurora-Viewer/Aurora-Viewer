@@ -353,6 +353,7 @@ mod tests {
             land: Default::default(),
             decode_failures: HashMap::new(),
             inventory_uploads: Default::default(),
+            asset_imports: Default::default(),
             inventory_previews: Default::default(),
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),

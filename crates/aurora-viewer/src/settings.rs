@@ -71,6 +71,7 @@ pub struct Settings {
     /// Radar of the People window.
     pub radar: crate::ui::people::RadarSettings,
     pub inventory: crate::ui::inventory::InventoryPreferences,
+    pub imports: crate::imports::Preferences,
     pub ao: crate::ao::Settings,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
@@ -456,6 +457,7 @@ impl Default for Settings {
             contacts: Default::default(),
             radar: Default::default(),
             inventory: Default::default(),
+            imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),
             remember_username: true,

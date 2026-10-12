@@ -123,14 +123,15 @@ impl DemoSim {
                     },
                 );
             }
-            (
-                1,
-                vec![
-                    demo_item(id, 1, aurora_i18n::tr!("build-demo-sim-door-script"), 10, 10),
-                    demo_item(id, 2, aurora_i18n::tr!("build-demo-sim-instructions"), 7, 7),
-                    demo_item(id, 3, aurora_i18n::tr!("build-demo-sim-light-wood"), 0, 0),
-                ],
-            )
+            let mut items = vec![
+                demo_item(id, 1, aurora_i18n::tr!("build-demo-sim-door-script"), 10, 10),
+                demo_item(id, 2, aurora_i18n::tr!("build-demo-sim-instructions"), 7, 7),
+                demo_item(id, 3, aurora_i18n::tr!("build-demo-sim-light-wood"), 0, 0),
+            ];
+            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("contents-move-plain,")) {
+                items.retain(|i| i.asset_type != 10);
+            }
+            (1, items)
         })
     }
 
@@ -161,6 +162,21 @@ impl DemoSim {
     /// Events a simulator would send back for a build command.
     pub fn reply(&mut self, world: &World, c: &BuildCmd) -> Vec<NetEvent> {
         match c {
+            BuildCmd::Add(p) => vec![NetEvent::ObjectUpdates {
+                handle: p.handle,
+                objects: vec![crate::demo::build_rez(p)],
+            }],
+            BuildCmd::DeRez {
+                handle,
+                local_ids,
+                destination,
+                ..
+            } if *destination == aurora_net::build::derez::TRASH => {
+                vec![NetEvent::ObjectsKilled {
+                    handle: *handle,
+                    local_ids: local_ids.clone(),
+                }]
+            }
             BuildCmd::SetPhysicsParams {
                 handle, local_id, params, ..
             } => {
@@ -244,8 +260,16 @@ impl DemoSim {
                 let Some(task) = self.contents_of(id).1.iter().find(|i| i.item_id == *item_id).cloned() else {
                     return Vec::new();
                 };
-                if task.owner_mask & perm::COPY == 0 {
+                let Ok(kind) = super::task_inventory::kind(world, id, &task, true) else {
                     return Vec::new();
+                };
+                let moving = matches!(kind, super::task_inventory::TransferKind::Move { .. });
+                if moving {
+                    let inv = self.contents_of(id);
+                    inv.1.retain(|i| i.item_id != *item_id);
+                    inv.0 = inv.0.wrapping_add(1);
+                    let serial = inv.0;
+                    self.props_of(world, id).inventory_serial = serial;
                 }
                 let mut items: Vec<_> = world.inventory.items.values().filter(|i| i.parent == *folder_id).cloned().collect();
                 items.push(aurora_net::inventory::InvItem {
@@ -269,7 +293,7 @@ impl DemoSim {
                     created_at: task.creation_date as i64,
                     ..Default::default()
                 });
-                vec![NetEvent::InventoryContents(vec![aurora_net::inventory::FolderContents {
+                let mut events = vec![NetEvent::InventoryContents(vec![aurora_net::inventory::FolderContents {
                     folder_id: *folder_id,
                     owner_id: world.agent_id,
                     // A new item advances storage's snapshot version too.
@@ -278,9 +302,30 @@ impl DemoSim {
                         .folders
                         .get(folder_id)
                         .map_or(1, |f| f.info.version.max(0).saturating_add(1)),
-                    folders: Vec::new(),
+                    folders: world
+                        .inventory
+                        .folders
+                        .get(folder_id)
+                        .map(|folder| {
+                            folder
+                                .children
+                                .iter()
+                                .filter_map(|id| world.inventory.folders.get(id).map(|folder| folder.info.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                     items,
-                }])]
+                }])];
+                if moving {
+                    let (serial, items) = self.contents_of(id).clone();
+                    events.push(NetEvent::TaskInventory {
+                        object: id,
+                        serial: Some(serial),
+                        result: Ok(items),
+                    });
+                    events.push(NetEvent::ObjectProperties(vec![self.props_of(world, id).clone()]));
+                }
+                events
             }
             BuildCmd::RezInventory(rez) => vec![NetEvent::ObjectUpdates {
                 handle: rez.handle,

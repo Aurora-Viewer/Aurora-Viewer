@@ -75,6 +75,15 @@ pub fn preferences(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferen
         &mut prefs.double_click_add_clothes,
     );
     ui.add_space(6.0);
+    ui.label(RichText::new(aurora_i18n::tr!("task-transfer-preferences")).color(p.muted));
+    changed |= check(ui, p, aurora_i18n::tr!("task-transfer-warn-move"), &mut prefs.warn_task_move);
+    changed |= check(
+        ui,
+        p,
+        aurora_i18n::tr!("task-transfer-warn-scripted"),
+        &mut prefs.warn_scripted_task_move,
+    );
+    ui.add_space(6.0);
     ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-also-search-in")).color(p.muted));
     changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-library"), &mut prefs.search_library);
     changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-trash"), &mut prefs.search_trash);

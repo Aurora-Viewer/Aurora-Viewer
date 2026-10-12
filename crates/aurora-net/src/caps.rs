@@ -31,6 +31,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetTexture",
     "InventoryAPIv3",
     "InventoryThumbnailUpload",
+    "NewFileAgentInventory",
+    "MeshUploadFlag",
     "DirectDelivery",
     "ModifyMaterialParams",
     // LLViewerRegionImpl::buildCapabilityNames (indra/newview/llviewerregion.cpp,

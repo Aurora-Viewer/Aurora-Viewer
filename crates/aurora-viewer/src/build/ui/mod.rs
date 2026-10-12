@@ -16,6 +16,7 @@ mod general;
 mod object;
 mod replace;
 mod texture;
+mod texture_preview;
 mod tools;
 
 use super::{BuildSettings, BuildTool, EditMode, Tool};
@@ -47,6 +48,7 @@ pub struct Env<'a> {
 /// Something the floater asks the app to do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Request {
+    TransferTask(Box<super::task_inventory::TransferRequest>),
     /// Focus slider moved (LLAgentCamera::setCameraZoomFraction).
     ZoomFraction(f32),
     AboutLand,
@@ -152,6 +154,7 @@ pub struct FloaterState {
     pub confirm: Option<Confirm>,
     pub picker: TexturePicker,
     pub pick_target: Option<PickTarget>,
+    texture_edit: Option<texture_preview::Session>,
     /// ObjectMedia data fetched for the selection, and the objects asked.
     pub media_data: HashMap<Uuid, ObjectMediaData>,
     pub media_asked: HashSet<Uuid>,
@@ -168,6 +171,7 @@ pub struct FloaterState {
     pub probe_warned: bool,
     /// Images the swatches want loaded (drained by the app).
     pub wanted_images: HashSet<Uuid>,
+    pub reveal_faces: bool,
     pub requests: Vec<Request>,
     /// The selection seen last frame (drafts are dropped when it changes).
     last_selection: Vec<ObjKey>,
@@ -258,6 +262,7 @@ pub fn show(
     env: &mut Env,
 ) -> bool {
     if !tool.open {
+        tool.cancel_texture_picker(world, env);
         tool.cancel_color_picker(world);
         tool.commit_color_edit();
         return false;
@@ -323,6 +328,7 @@ pub fn show(
     color::show(ctx, p, tool, world, s);
     color::finish_gesture(ctx, tool);
     if !open {
+        tool.cancel_texture_picker(world, env);
         tool.close(world, s);
     }
     *s != before

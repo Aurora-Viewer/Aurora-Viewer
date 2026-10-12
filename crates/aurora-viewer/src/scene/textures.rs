@@ -670,6 +670,12 @@ impl TextureStreamer {
         out.append(&mut self.alpha_changes);
     }
 
+    /// The same slots, left for the sync to take: what the hover search
+    /// must not trust between two syncs (hover.rs).
+    pub fn pending_alpha_changes(&self) -> &[u32] {
+        &self.alpha_changes
+    }
+
     /// The transcoded chain of a texture (`texture_cache.rs`).
     fn transcoded_path(cache_dir: &std::path::Path, id: &Uuid) -> PathBuf {
         cache_dir.join("tex").join(format!("{id}.bc7"))
@@ -785,22 +791,22 @@ impl TextureStreamer {
         if let Some(slot) = self.local_slots.get(&id) {
             return *slot;
         }
-        if let Some((px, w, h)) = crate::demo::local_texture(&id)
-            && let Some(slot) = renderer.create_texture(&[MipLevel {
-                width: w,
-                height: h,
-                data: &px,
-            }])
-        {
-            set_slot_alpha(
-                &mut self.alpha_by_slot,
-                &mut self.generation,
-                &mut self.alpha_changes,
-                slot,
-                super::jobs::classify_alpha(&px),
-            );
-            self.local_slots.insert(id, slot);
-            return slot;
+        if let Some((px, w, h)) = crate::demo::local_texture(&id) {
+            let alpha = super::jobs::classify_alpha(&px);
+            let levels = aurora_render::build_mips(w, h, px, if crate::demo::local_texture_mips(&id) { 16 } else { 1 });
+            let mips: Vec<MipLevel> = levels
+                .iter()
+                .map(|(width, height, data)| MipLevel {
+                    width: *width,
+                    height: *height,
+                    data,
+                })
+                .collect();
+            if let Some(slot) = renderer.create_texture(&mips) {
+                set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, &mut self.alpha_changes, slot, alpha);
+                self.local_slots.insert(id, slot);
+                return slot;
+            }
         }
         // the shared grey placeholder until the first texels arrive: no
         // GPU work for a texture met for the first time
@@ -869,6 +875,17 @@ impl TextureStreamer {
 
     pub fn unregister_local(&mut self, id: &Uuid) {
         self.local_slots.remove(id);
+    }
+    pub fn register_local_image(&mut self, id: Uuid, slot: u32, alpha: AlphaKind, has_alpha: bool) {
+        set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, &mut self.alpha_changes, slot, alpha);
+        if let Some(channel) = self.alpha_channel_by_slot.get_mut(slot as usize)
+            && *channel != has_alpha
+        {
+            *channel = has_alpha;
+            self.generation += 1;
+            self.alpha_changes.push(slot);
+        }
+        self.local_slots.insert(id, slot);
     }
 
     pub fn release(&mut self, id: &Uuid) {
