@@ -895,6 +895,25 @@ fn list_entry(
     }
 }
 
+/// Size of the window before the user resizes it, where there is room.
+const DEFAULT_SIZE: egui::Vec2 = egui::vec2(700.0, 440.0);
+/// The least height it opens with, in a small viewer window.
+const DEFAULT_MIN_H: f32 = 240.0;
+
+/// The window before the user moves or resizes it: the bottom right corner
+/// of the work area (`layout::work_area`), above the bottom bar and on the
+/// right edge of the mini-map and Performance windows of a first launch. In
+/// a viewer window too low for its whole height under Performance
+/// (`perf::default_pos`), it opens lower rather than over it (252 px in a
+/// 1280 x 720 window; FSFloaterIMContainer opens at 396 x 390).
+pub(crate) fn default_rect(work: egui::Rect) -> egui::Rect {
+    let gap = super::layout::GAP;
+    let performance_bottom = super::perf::default_pos(work, super::perf::COMPACT_W).y + super::perf::COMPACT_H;
+    let room = work.bottom() - gap - (performance_bottom + gap);
+    let size = egui::vec2(DEFAULT_SIZE.x, room.clamp(DEFAULT_MIN_H, DEFAULT_SIZE.y));
+    egui::Rect::from_min_size(work.right_bottom() - egui::Vec2::splat(gap) - size, size)
+}
+
 /// Conversations floater (FSFloaterIMContainer): the tabs on the left
 /// (Contacts, nearby chat, sessions); on the right the contacts, or the
 /// toolbar, grouped messages and input (with emoji picker).
@@ -913,7 +932,7 @@ pub fn show(
     open: &mut bool,
 ) -> Vec<ConvAction> {
     let mut actions = Vec::new();
-    let screen = ctx.content_rect();
+    let default = default_rect(super::layout::work_area(ctx));
     if let Some(f) = world.social.focus_im.take() {
         st.selected = Some(f);
         st.show_profile = false;
@@ -930,12 +949,7 @@ pub fn show(
     };
     let own_name = world.own_name();
     let mut tear_off = false;
-    let mut floater = super::widgets::Floater::new(
-        "conversations",
-        title,
-        egui::pos2(screen.left() + 8.0, screen.bottom() - 400.0),
-        egui::vec2(700.0, 440.0),
-    );
+    let mut floater = super::widgets::Floater::new("conversations", title, default.min, default.size());
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);

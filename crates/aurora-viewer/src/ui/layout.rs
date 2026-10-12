@@ -68,6 +68,38 @@ pub fn forget(ctx: &egui::Context) {
     ctx.options_mut(|o| *o = options);
 }
 
+/// Room left between a window and the bars or the edges of the screen, and
+/// between two windows that stand side by side: the windows of a first
+/// launch are placed with it.
+pub(crate) const GAP: f32 = 8.0;
+
+/// The part of `screen` the windows are laid out in: between the navigation
+/// bar and the bottom bar of the default skin. For what must be known before
+/// the bars are drawn; a frame then reports the real one (`set_work_area`).
+pub(crate) fn default_work_area(screen: Rect) -> Rect {
+    let bars = super::skin::Layout::default();
+    Rect::from_min_max(
+        Pos2::new(screen.left(), screen.top() + bars.nav_bar_height),
+        Pos2::new(screen.right(), screen.bottom() - bars.bottom_bar_height),
+    )
+}
+
+fn work_area_id() -> Id {
+    Id::new("layout_work_area")
+}
+
+/// The room left by the bars this frame: call it once they are drawn,
+/// before the windows are shown.
+pub(crate) fn set_work_area(ctx: &egui::Context, area: Rect) {
+    ctx.data_mut(|d| d.insert_temp(work_area_id(), area));
+}
+
+/// Where the windows are laid out: the screen without the bars.
+pub(crate) fn work_area(ctx: &egui::Context) -> Rect {
+    ctx.data(|d| d.get_temp::<Rect>(work_area_id()))
+        .unwrap_or_else(|| default_work_area(ctx.content_rect()))
+}
+
 /// A screen smaller than this is not one to lay windows out in: the content
 /// rect of a minimized viewer window, or of the first frames before the
 /// surface has its size. Windows neither follow it nor record it.

@@ -5799,6 +5799,8 @@ impl App {
                 if chat_width_set {
                     self.settings.save();
                 }
+                // what the bars leave: where the windows are laid out
+                ui::layout::set_work_area(ui.ctx(), ui.available_rect_before_wrap());
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
                 if mic.mode_changed || mic.devices_changed {

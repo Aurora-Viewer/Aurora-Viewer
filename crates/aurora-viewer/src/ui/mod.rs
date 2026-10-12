@@ -84,7 +84,8 @@ pub struct Panels {
 impl Panels {
     /// The panels of a new session: those the settings recorded at the last
     /// exit, or, without a settings file, the first-launch layout of
-    /// `Settings::default` (the radar and the mini-map).
+    /// `Settings::default` (the radar, the mini-map, Performance and
+    /// Conversations).
     pub fn from_settings(settings: &crate::settings::Settings) -> Panels {
         Panels {
             chat: settings.show_chat,
@@ -138,12 +139,12 @@ mod tests {
     }
 
     #[test]
-    fn first_launch_opens_the_radar_the_mini_map_and_performance() {
+    fn first_launch_opens_the_radar_the_mini_map_performance_and_conversations() {
         let missing_file = Settings::default();
         let empty_file: Settings = serde_json::from_str("{}").expect("blank settings");
         for blank in [missing_file, empty_file] {
             let panels = Panels::from_settings(&blank);
-            assert_eq!(open(&panels), ["perf", "people", "minimap"]);
+            assert_eq!(open(&panels), ["chat", "perf", "people", "minimap"]);
             assert_eq!(panels.people_tab, 0, "the radar is the first tab of People");
             assert!(
                 !blank.radar.show_minimap,
@@ -152,24 +153,53 @@ mod tests {
         }
     }
 
-    /// The radar in the top left corner, the mini-map in the top right one,
-    /// on the same line and apart, down to a 1280 x 720 window.
+    /// The radar in the top left corner, the mini-map in the top right one
+    /// with Performance under it, Conversations in the bottom right one:
+    /// inside the work area and apart, each at the same gap from the bars,
+    /// the edges and its neighbor, down to a 1280 x 720 window.
     #[test]
-    fn the_first_launch_windows_take_opposite_corners() {
-        for (width, height) in [(1280.0, 720.0), (1600.0, 900.0)] {
+    fn the_first_launch_windows_take_their_corners() {
+        use super::layout::GAP;
+        for (width, height) in [(1280.0, 720.0), (1600.0, 900.0), (1920.0, 1017.0)] {
             let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
-            let radar = egui::Rect::from_min_size(super::people::DEFAULT_POS, super::people::DEFAULT_SIZE);
-            let map = super::minimap::default_rect(screen);
-            assert!(screen.contains_rect(radar) && screen.contains_rect(map), "{width} x {height}");
-            assert!(!radar.intersects(map), "{width} x {height}");
-            assert_eq!(radar.top(), map.top());
-            assert!(radar.left() < 20.0 && screen.right() - map.right() < 20.0);
+            let work = super::layout::default_work_area(screen);
+            assert!(work.top() > screen.top() && work.bottom() < screen.bottom());
+            let radar = egui::Rect::from_min_size(super::people::default_pos(work), super::people::DEFAULT_SIZE);
+            let map = super::minimap::default_rect(work);
+            let perf = egui::Rect::from_min_size(
+                super::perf::default_pos(work, super::perf::COMPACT_W),
+                egui::vec2(super::perf::COMPACT_W + super::perf::SIDES, super::perf::COMPACT_H),
+            );
+            let chat = super::chat::default_rect(work);
+            let windows = [("radar", radar), ("map", map), ("perf", perf), ("chat", chat)];
+            for (i, (name, rect)) in windows.iter().enumerate() {
+                assert!(
+                    work.shrink(GAP - 0.01).contains_rect(*rect),
+                    "{name} at {width} x {height}: {rect:?}"
+                );
+                for (other, other_rect) in &windows[i + 1..] {
+                    // apart by the gap at least: expanded by half of it, they still miss each other
+                    assert!(
+                        !rect.expand(GAP / 2.0 - 0.01).intersects(other_rect.expand(GAP / 2.0 - 0.01)),
+                        "{name} and {other} at {width} x {height}: {rect:?} {other_rect:?}"
+                    );
+                }
+            }
+            // the corners
+            assert_eq!(radar.left_top(), work.left_top() + egui::Vec2::splat(GAP));
+            assert_eq!(map.right_top(), work.right_top() + egui::vec2(-GAP, GAP));
+            assert_eq!(chat.right_bottom(), work.right_bottom() - egui::Vec2::splat(GAP));
             // Performance stands under the mini-map, on its right edge
-            let perf = super::perf::default_pos(screen, super::perf::COMPACT_W);
-            assert!(perf.y > map.bottom() && perf.y - map.bottom() < 20.0);
-            assert_eq!(perf.x + super::perf::COMPACT_W + super::perf::SIDES, map.right());
-            assert!(perf.x > radar.right(), "{width} x {height}");
+            assert_eq!(perf.top(), map.bottom() + GAP);
+            assert_eq!(perf.right(), map.right());
+            assert_eq!(chat.right(), map.right());
         }
+        // Conversations has its whole height where there is room for it
+        let large = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1017.0));
+        assert_eq!(
+            super::chat::default_rect(super::layout::default_work_area(large)).size(),
+            egui::vec2(700.0, 440.0)
+        );
     }
 
     #[test]

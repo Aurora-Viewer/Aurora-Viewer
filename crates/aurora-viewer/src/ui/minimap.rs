@@ -24,11 +24,12 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// The window before the user moves or resizes it: the 200 x 200 map of
-/// floater_map.xml in the top right corner, under the top bar. A first
-/// launch opens it there, the radar in the opposite corner
-/// (`people::DEFAULT_POS`).
-pub(crate) fn default_rect(screen: Rect) -> Rect {
-    Rect::from_min_size(pos2(screen.right() - 216.0, 56.0), Vec2::splat(200.0))
+/// floater_map.xml in the top right corner of the work area
+/// (`layout::work_area`). A first launch opens it there, the radar in the
+/// opposite corner (`people::default_pos`).
+pub(crate) fn default_rect(work: Rect) -> Rect {
+    let gap = super::layout::GAP;
+    Rect::from_min_size(pos2(work.right() - gap - 200.0, work.top() + gap), Vec2::splat(200.0))
 }
 
 pub const MAP_SCALE_MIN: f32 = 32.0;
@@ -394,7 +395,7 @@ impl MiniMap {
         super::sound_cues::floater_shown(ctx, egui::Id::new("minimap"));
         // floater_map.xml: no header nor border, DkGray background at
         // FSMiniMapOpacity (0.66); dragged anywhere, resized by its corner
-        let screen = ctx.content_rect();
+        let default = default_rect(super::layout::work_area(ctx));
         let frame = super::widgets::overlay_frame(ctx, p)
             .fill(Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), 168))
             .inner_margin(egui::Margin::same(2));
@@ -408,8 +409,8 @@ impl MiniMap {
             .frame(frame)
             .fade_in(false)
             .fade_out(false)
-            .default_pos(default_rect(screen).min)
-            .default_size(default_rect(screen).size())
+            .default_pos(default.min)
+            .default_size(default.size())
             .min_size(vec2(64.0, 64.0))
             .resizable(true)
             .constrain(true);

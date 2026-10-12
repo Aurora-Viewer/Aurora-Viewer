@@ -20,8 +20,11 @@ const GRAPH_EASE_S: f32 = 1.5;
 /// How often the numbers are refreshed (s): slow enough to be read.
 const REFRESH_S: f32 = 0.5;
 pub(crate) const COMPACT_W: f32 = 236.0;
-/// The two side margins of the window around its content.
-pub(crate) const SIDES: f32 = 20.0;
+/// The two sides of the window around its content: margins and border.
+pub(crate) const SIDES: f32 = 22.0;
+/// Height of the compact window, as it lays itself out: only to place the
+/// other windows of a first launch around it.
+pub(crate) const COMPACT_H: f32 = 182.0;
 const FULL_W: f32 = 300.0;
 const GRAPH_H: f32 = 64.0;
 /// Lowest top of the graph scale (images/s).
@@ -305,9 +308,9 @@ pub fn set_full(ctx: &egui::Context, full: bool) {
 
 /// Where the window stands before the user moves it: under the mini-map of
 /// a first launch (`minimap::default_rect`), on its right edge.
-pub(crate) fn default_pos(screen: egui::Rect, width: f32) -> egui::Pos2 {
-    let map = super::minimap::default_rect(screen);
-    pos2(map.right() - width - SIDES, map.bottom() + 8.0)
+pub(crate) fn default_pos(work: egui::Rect, width: f32) -> egui::Pos2 {
+    let map = super::minimap::default_rect(work);
+    pos2(map.right() - width - SIDES, map.bottom() + super::layout::GAP)
 }
 
 pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
@@ -318,12 +321,12 @@ pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
         ("arrows-maximize", aurora_i18n::tr!("ui-perf-show-details"))
     };
     let width = if full { FULL_W } else { COMPACT_W };
-    let screen = ctx.content_rect();
+    let work = super::layout::work_area(ctx);
     let mut toggle = false;
     Floater::new(
         "perf",
         aurora_i18n::tr!("common-performance"),
-        default_pos(screen, width),
+        default_pos(work, width),
         vec2(width, 0.0),
     )
     .fixed()

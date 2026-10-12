@@ -477,11 +477,12 @@ impl Default for Settings {
             ui_scale: 1.0,
             use_pie_menu: false,
             // First launch (no settings file): the radar (People on its
-            // first tab, top left), the mini-map (top right) and Performance
-            // under it are open, as asked by the human; the other windows
-            // wait for their button. A saved file keeps what was open at exit.
+            // first tab, top left), the mini-map (top right), Performance
+            // under it and Conversations (bottom right) are open, as asked
+            // by the human; the other windows wait for their button. A
+            // saved file keeps what was open at exit.
             show_perf: true,
-            show_chat: false,
+            show_chat: true,
             show_minimap: true,
             standalone_place_details: false,
             landmarks_by_date: true,
