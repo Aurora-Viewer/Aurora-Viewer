@@ -36,8 +36,8 @@
 //! - the triangle hierarchies of the large faces (pick_accel.rs), for the
 //!   objects the ray does meet.
 //!
-//! Clicks never read the cache: they search again with a blocking pick,
-//! over every object and every triangle.
+//! Clicks never read the cache: they search again over every object and
+//! every triangle, with their own depth read (`app/click_pick.rs`).
 //!
 //! `AURORA_HOVER_CHECK=1` compares every answer with the full search and
 //! logs the differences (`hover check`), with a count of searches and
