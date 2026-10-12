@@ -68,6 +68,32 @@ mod shader_tests {
         validate(&src);
     }
 
+    /// The statements of vertex entry point `entry` that lead to its
+    /// position: the model matrix, the placed vertex and the clip position.
+    fn position_steps<'a>(src: &'a str, entry: &str) -> Vec<&'a str> {
+        let start = src.find(&format!("fn {entry}(")).unwrap_or_else(|| panic!("{entry} not found"));
+        let body = &src[start..];
+        let end = body.find("\n}").unwrap_or(body.len());
+        body[..end]
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("let model =") || l.starts_with("let ep =") || l.starts_with("out.clip ="))
+            .collect()
+    }
+
+    /// The depth prepass draws the terrain with `vs_depth`, and without
+    /// multisampling the scene pass tests `vs_terrain` against that depth
+    /// (`GreaterEqual`): both must reach the position by the same
+    /// operations. When only the prepass placed its vertices relative to
+    /// the eye, patches of terrain failed the test and showed the sky.
+    #[test]
+    fn terrain_position_is_the_depth_prepass_position() {
+        let prepass = position_steps(include_str!("shaders/object.wgsl"), "vs_depth");
+        let scene = position_steps(include_str!("shaders/env.wgsl"), "vs_terrain");
+        assert_eq!(prepass.len(), 3, "{prepass:?}");
+        assert_eq!(prepass, scene);
+    }
+
     #[test]
     fn ssao_shader_is_valid() {
         validate(include_str!("shaders/ssao.wgsl"));

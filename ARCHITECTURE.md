@@ -286,7 +286,9 @@ Le rez depuis l’inventaire passe par `ui/inventory.rs` (charge utile et relâc
    post-traitement) avec des draws indirects dont le nombre est écrit par le
    GPU. Sans `MULTI_DRAW_INDIRECT_COUNT` (ou avec `AURORA_CPU_CULL=1`),
    `build_lists` prépare toutes les listes sur le CPU comme avant. Les
-   sommets des objets sont calculés relativement à la caméra : le vertex
+   sommets des objets et du terrain sont calculés relativement à la caméra
+   (le terrain comme la prépasse de profondeur, opération pour opération :
+   sans MSAA, la passe de scène le teste contre cette profondeur) : le vertex
    shader retire sa position de la translation du modèle (les
    enregistrements restent en coordonnées de région), et la matrice de vue
    de la caméra principale se réduit à sa rotation (`eye_view_proj` dans
