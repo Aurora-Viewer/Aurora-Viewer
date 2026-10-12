@@ -3464,7 +3464,10 @@ ui-login-pending-link = { $name }{ " (pending link)" }
 world-blocking-was-added-to-the-block-list = { $name }{ " was added to the block list." }
 app-was-unblocked-because-you-sent-them-an-im = { $name }{ " was unblocked because you sent them an IM." }
 ui-contacts-is-already-your-friend = { $name }{ " is already your friend." }
-ui-appearance-not-worn = { $name }{ " not worn" }{ $ending }
+# { $ending } is the agreement of the French participle: nothing in English
+ui-appearance-not-worn = { $name } not worn{ $ending ->
+       *[other] { "" }
+    }
 world-social-is-online = { $n }{ " is online." }
 world-social-is-offline = { $n }{ " is offline." }
 world-names-is-now-named = { $old_display_name }{ " (" }{ $slid }{ ") is now named " }{ $value0 }.
@@ -3615,7 +3618,7 @@ extra-4-days-ago = 4 days ago
 extra-5-days-ago = 5 days ago
 extra-none = none
 extra-new-script = New Script
-extra-rendering-info = Rendering Info
+extra-rendering-info = RENDERING INFO
 extra-location = Location
 extra-chair = Chair
 extra-media = Media
