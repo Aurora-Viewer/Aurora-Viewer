@@ -134,6 +134,40 @@ fn file_status(ui: &mut egui::Ui, p: &Palette, entry: &Entry) {
     }
 }
 
+fn metadata_controls(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    entry: &mut Entry,
+    inventory: &crate::world::inventory::Inventory,
+    protected: &HashSet<Uuid>,
+    picker: &mut destination::Picker,
+    demo: bool,
+) {
+    egui::Grid::new("import_metadata")
+        .num_columns(2)
+        .spacing(Vec2::new(12.0, 8.0))
+        .show(ui, |ui| {
+            ui.label(aurora_i18n::tr!("common-name"));
+            ui.add(egui::TextEdit::singleline(&mut entry.name).desired_width(360.0).char_limit(63));
+            ui.end_row();
+            if !entry.local {
+                ui.label(aurora_i18n::tr!("common-description"));
+                ui.add(
+                    egui::TextEdit::singleline(&mut entry.description)
+                        .desired_width(360.0)
+                        .char_limit(127),
+                );
+                ui.end_row();
+                ui.label(aurora_i18n::tr!("import-destination"));
+                if demo {
+                    picker.demo(ui);
+                }
+                picker.show(ui, p, inventory, protected, &mut entry.folder);
+                ui.end_row();
+            }
+        });
+}
+
 pub fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -300,6 +334,9 @@ pub fn show(
                                     .clicked()
                                 {
                                     imports.active = Some(entry.id);
+                                    if matches!(entry.source, Some(Source::Animation { .. })) {
+                                        actions.push(Action::Play(entry.id, true));
+                                    }
                                 }
                                 file_status(ui, p, entry);
                             });
@@ -343,38 +380,30 @@ pub fn show(
                                     actions.push(Action::RestoreDraft(entry.id));
                                 }
                                 ui.add_enabled_ui(!busy && matches!(entry.status, Status::Ready), |ui| {
-                                    egui::Grid::new("import_metadata")
-                                        .num_columns(2)
-                                        .spacing(Vec2::new(12.0, 8.0))
-                                        .show(ui, |ui| {
-                                            ui.label(aurora_i18n::tr!("common-name"));
-                                            ui.add(egui::TextEdit::singleline(&mut entry.name).desired_width(360.0).char_limit(63));
-                                            ui.end_row();
-                                            if !entry.local {
-                                                ui.label(aurora_i18n::tr!("common-description"));
-                                                ui.add(
-                                                    egui::TextEdit::singleline(&mut entry.description)
-                                                        .desired_width(360.0)
-                                                        .char_limit(127),
-                                                );
-                                                ui.end_row();
-                                                ui.label(aurora_i18n::tr!("import-destination"));
-                                                if imports.demo_mode == "destination" {
-                                                    imports.destination.demo(ui);
-                                                }
-                                                imports.destination.show(
-                                                    ui,
-                                                    p,
-                                                    &world.inventory,
-                                                    &inventory_prefs.protected,
-                                                    &mut entry.folder,
-                                                );
-                                                ui.end_row();
-                                            }
-                                        });
-                                    ui.add_space(12.0);
+                                    if !matches!(entry.source, Some(Source::Mesh(_))) {
+                                        metadata_controls(
+                                            ui,
+                                            p,
+                                            entry,
+                                            &world.inventory,
+                                            &inventory_prefs.protected,
+                                            &mut imports.destination,
+                                            imports.demo_mode == "destination",
+                                        );
+                                        ui.add_space(12.0);
+                                    }
                                     if matches!(entry.source, Some(Source::Mesh(_))) {
-                                        mesh_panel::show(ui, p, entry, prefs, &mut actions, height);
+                                        mesh_panel::show(ui, p, entry, prefs, &mut actions, |ui, entry| {
+                                            metadata_controls(
+                                                ui,
+                                                p,
+                                                entry,
+                                                &world.inventory,
+                                                &inventory_prefs.protected,
+                                                &mut imports.destination,
+                                                imports.demo_mode == "destination",
+                                            )
+                                        });
                                     } else if let Some(source) = &mut entry.source {
                                         match source {
                                             Source::Texture(image) => texture(

@@ -1,6 +1,105 @@
 use super::*;
 
 #[test]
+fn clicking_an_animation_selects_and_restarts_its_preview() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut prefs = Preferences::default();
+    let mut imports = Imports {
+        open: true,
+        choice: Choice::Animation,
+        ..Default::default()
+    };
+    let animation = Arc::new(Animation {
+        base_priority: 2,
+        duration: 2.0,
+        emote_name: String::new(),
+        loop_in: 0.0,
+        loop_out: 2.0,
+        looping: false,
+        ease_in: 0.3,
+        ease_out: 0.3,
+        hand_pose: 0,
+        joints: Vec::new(),
+    });
+    for name in ["first", "second"] {
+        let mut entry = Entry::new(
+            PathBuf::from(format!("{name}.anim")),
+            Ok(Source::Animation {
+                bytes: Arc::new(Vec::new()),
+                animation: animation.clone(),
+                bvh: None,
+            }),
+            prefs.texture(),
+        );
+        entry.player.started = true;
+        entry.player.position = 2.0;
+        imports.entries.push(entry);
+    }
+    imports.active = Some(imports.entries[0].id);
+    let target = imports.entries[1].id;
+    let mut position = None;
+    let mut frame = |events: Vec<egui::Event>, imports: &mut Imports| {
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                actions = show(
+                    ui.ctx(),
+                    &theme.palette(),
+                    imports,
+                    &mut prefs,
+                    &world,
+                    &crate::ui::inventory::InventoryPreferences::default(),
+                );
+            },
+        );
+        (output, actions)
+    };
+    for _ in 0..3 {
+        let (output, actions) = frame(Vec::new(), &mut imports);
+        assert!(actions.is_empty());
+        position = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == "second" => Some(text.pos + text.galley.size() * 0.5),
+                _ => None,
+            })
+            .or(position);
+    }
+    let pos = position.expect("second animation row visible");
+    // Both switching to a finished preview and clicking its selected row replay it.
+    for _ in 0..2 {
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            let (output, next) = frame(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                &mut imports,
+            );
+            drop(output);
+            actions.extend(next);
+        }
+        assert_eq!(imports.active, Some(target));
+        assert!(matches!(actions.as_slice(), [Action::Play(id, true)] if *id == target));
+    }
+}
+
+#[test]
 fn popup_rows_keep_their_rectangles_when_hover_changes() {
     let ctx = egui::Context::default();
     crate::theme::Theme::default().apply(&ctx, 1.0);

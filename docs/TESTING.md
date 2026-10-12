@@ -592,9 +592,12 @@ grille.
   `destination` ouvre le choix de dossier avec le filtre « Textures » ;
   saisir un autre nom doit filtrer sans changer la destination ni fermer
   la liste. Choisir un résultat ferme la liste et applique ce dossier.
-  Pour le mesh, l’aperçu reste à gauche des sections LOD, Collisions et
-  Import. `mesh-options` ouvre la troisième section (taille, textures,
-  squelette, association des fichiers) ; les contrôles défilent indépendamment.
+  Pour le mesh, l’aperçu se trouve à droite du nom, de la description et de
+  la destination ; les sections LOD, Collisions et Import se trouvent dessous.
+  Le niveau Haut est affiché par défaut ; cliquer un nom de LOD change l’aperçu.
+  `mesh-options` ouvre la troisième section (taille, textures, squelette,
+  association des fichiers). Dans la liste des animations, cliquer un fichier
+  lance sa lecture, même si on avait déjà joué cette animation.
   `bulk-upload` exécute automatiquement le lot sur ce serveur hors ligne :
   quatre lignes réussies, création des dépendances du matériau et reçu total
   de 40 L$ fictifs attendus ; aucun transfert ni paiement réel.

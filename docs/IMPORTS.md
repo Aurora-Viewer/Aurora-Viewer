@@ -77,6 +77,8 @@ Sources : `llfloaternamedesc.cpp`, `llaudio/llvorbisencode.cpp`,
   ou en images ; fondus de 0,3 s ; poses des mains et expressions.
 - Aperçu local : debout/marche/assis/vol, lecture/pause/arrêt, curseur temporel,
   caméra, rechargement du fichier, statistiques et erreurs de parsing.
+  Cliquer une animation dans la liste relance sa lecture depuis le début,
+  y compris si elle avait déjà été jouée ou arrêtée.
   La pause et le curseur pilotent également l’aperçu sur notre avatar ;
   les fins de ces mouvements locaux ne produisent aucun arrêt réseau.
 - Imports par lot : `.anim` acceptés, BVH exclus comme Firestorm.
@@ -115,8 +117,10 @@ Sources : `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
   matériaux, coordonnées, unités, transformations et rigging.
 - Quatre LOD : fichier, génération, réutilisation ; compteurs et validation
   des faces/instances, suffixes et recherche des fichiers associés.
-  La fenêtre présente l’aperçu à côté de trois sections : LOD, Collisions
-  et Import. Chaque LOD possède un bloc encadré avec titre, source, fichier et nombre de
+  La fenêtre présente l’aperçu à droite des champs nom, description et
+  destination ; trois sections LOD, Collisions et Import se trouvent dessous.
+  Le LOD Haut est affiché par défaut, sans second sélecteur de niveau.
+  Chaque LOD possède un bloc encadré avec titre, source, fichier et nombre de
   triangles ; cliquer son niveau l’affiche dans l’aperçu. Les outils de
   visualisation et les réglages avancés restent accessibles sans masquer
   le modèle. Le calcul des frais se trouve dans le pied de fenêtre.
@@ -175,7 +179,7 @@ grille. Aucune connexion ni opération réelle sur grille par l’agent.
 essais humains. Les codecs,
 les parcours réseau HTTP/UDP, les brouillons et les aperçus GPU sont présents.
 Les captures texture, son, animation, matériau, mesh et application locale ont
-été examinées : aperçu à côté des paramètres pour le mesh et le matériau,
+été examinées : aperçu à droite des champs pour le mesh et des paramètres pour le matériau,
 au-dessus pour les autres types ; actions et coût accessibles
 dans le pied de fenêtre. Les tests couvrent notamment
 la préparation ORM, les trois modes V-HACD, les poids de LOD, les palettes glTF,
@@ -184,7 +188,7 @@ des accusés après annulation. Prix, permissions, inventaire créé et rendu de
 assets importés doivent encore être vérifiés par l’humain sur grille.
 Aucun import réel n’a été validé sur une grille.
 
-Vérifications locales : `check.ps1` vert, 1 196 tests réussis, 17 ignorés,
+Vérifications locales : `check.ps1` vert, 1 197 tests réussis, 17 ignorés,
 Clippy sans avertissement. Profilage de la scène démo : moyenne CPU de
 l’interface sur les trois dernières périodes, 0,37 ms sans la fenêtre puis
 0,57 ms avec l’aperçu PBR (0,51 ms animation, 0,51 ms mesh local). Les

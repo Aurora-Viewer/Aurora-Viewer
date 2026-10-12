@@ -114,7 +114,6 @@ import-physics-help = Defines the model’s solid surfaces. Use a simplified fil
 import-choose-physics = Choose collision file…
 import-no-source-file = No file selected
 import-upload-options-help = Check the dimensions and upload data, then calculate fees at the bottom of the window.
-import-preview-lod = Displayed LOD
 import-physics-preview = Collisions
 import-physics-preview-help = Display the collision shape in the preview.
 import-preview-camera-help = Drag: orbit · Shift + drag: pan · Wheel: zoom
