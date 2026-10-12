@@ -5,15 +5,25 @@ use std::sync::Arc;
 
 struct Region {
     radius: f32,
+    opacity: f32,
 }
 
 /// Insert below a window's contents. The viewer resolves the final rectangle
 /// after layout, so moving/resizing never samples last frame's position.
 pub fn glass_panel(rect: egui::Rect, radius: f32, tint: egui::Color32) -> egui::Shape {
+    glass_panel_faded(rect, radius, tint, 1.0)
+}
+
+/// `glass_panel` whose blur shows through at `opacity` (0 to 1), for a
+/// surface that fades in or out; `tint` carries its own alpha.
+pub fn glass_panel_faded(rect: egui::Rect, radius: f32, tint: egui::Color32, opacity: f32) -> egui::Shape {
     egui::Shape::Vec(vec![
         egui::Shape::Callback(egui::PaintCallback {
             rect,
-            callback: Arc::new(Region { radius }),
+            callback: Arc::new(Region {
+                radius,
+                opacity: opacity.clamp(0.0, 1.0),
+            }),
         }),
         egui::Shape::rect_filled(rect, radius, tint),
     ])
@@ -93,19 +103,21 @@ impl Glass {
             if let egui::epaint::Primitive::Callback(callback) = &primitive.primitive
                 && let Some(region) = callback.callback.downcast_ref::<Region>()
             {
-                primitive.primitive = egui::epaint::Primitive::Mesh(rounded_mesh(callback.rect, region.radius, self.texture, screen));
+                let color = egui::Color32::WHITE.gamma_multiply(region.opacity);
+                primitive.primitive =
+                    egui::epaint::Primitive::Mesh(rounded_mesh(callback.rect, region.radius, self.texture, screen, color));
             }
         }
     }
 }
 
-fn rounded_mesh(rect: egui::Rect, radius: f32, texture: egui::TextureId, screen: egui::Vec2) -> egui::Mesh {
+fn rounded_mesh(rect: egui::Rect, radius: f32, texture: egui::TextureId, screen: egui::Vec2, color: egui::Color32) -> egui::Mesh {
     let mut mesh = egui::Mesh::with_texture(texture);
     let radius = radius.max(0.0).min(rect.width().min(rect.height()) * 0.5);
     let vertex = |pos: egui::Pos2| egui::epaint::Vertex {
         pos,
         uv: egui::pos2(pos.x / screen.x, pos.y / screen.y),
-        color: egui::Color32::WHITE,
+        color,
     };
     mesh.vertices.push(vertex(rect.center()));
     for (center, start) in [
@@ -135,7 +147,7 @@ mod tests {
         for scale in [1.0, 1.5, 2.0] {
             let screen = egui::vec2(1920.0, 1080.0) / scale;
             let rect = egui::Rect::from_min_size(egui::pos2(40.0, 70.0), egui::vec2(344.0, 548.0));
-            let mesh = rounded_mesh(rect, 8.0, egui::TextureId::User(7), screen);
+            let mesh = rounded_mesh(rect, 8.0, egui::TextureId::User(7), screen, egui::Color32::WHITE);
             assert!(mesh.is_valid());
             assert!(mesh.vertices.iter().all(|v| rect.expand(0.001).contains(v.pos)));
             for vertex in &mesh.vertices {

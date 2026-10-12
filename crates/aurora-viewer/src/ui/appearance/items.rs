@@ -67,7 +67,7 @@ pub(super) fn context_menu(
         let worn = worn_items(world).contains(&it.id);
         let wearable = matches!(it.asset_type, 5 | 6 | 13);
         if !worn && wearable {
-            if menu::item(ui, p, "t-shirt", aurora_i18n::tr!("common-wear")) {
+            if menu::item(ui, p, "shirt-filled", aurora_i18n::tr!("common-wear")) {
                 actions.push(Action::WearItem {
                     item: it.id,
                     replace: true,
@@ -91,7 +91,7 @@ pub(super) fn context_menu(
             && menu::item(
                 ui,
                 p,
-                "x-circle",
+                "circle-x-filled",
                 if it.asset_type == 6 {
                     aurora_i18n::tr!("common-detach")
                 } else {
@@ -101,14 +101,14 @@ pub(super) fn context_menu(
         {
             actions.push(Action::Remove(it.id));
         }
-        if menu::item(ui, p, "info", aurora_i18n::tr!("ui-appearance-items-object-profile")) {
+        if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-items-object-profile")) {
             st.profile_item = Some(it.id);
         }
         menu::separator(ui, p);
         if menu::item_if(
             ui,
             p,
-            "star",
+            "star-filled",
             if it.favorite {
                 aurora_i18n::tr!("common-remove-from-favorites")
             } else {
@@ -118,13 +118,13 @@ pub(super) fn context_menu(
         ) {
             actions.push(Action::Favorite(it.id));
         }
-        if menu::item(ui, p, "arrow-square-out", aurora_i18n::tr!("ui-appearance-items-show-original")) {
+        if menu::item(ui, p, "external-link-filled", aurora_i18n::tr!("ui-appearance-items-show-original")) {
             actions.push(Action::ShowOriginal(it.id));
         }
         if menu::item_if(
             ui,
             p,
-            "trash",
+            "trash-filled",
             aurora_i18n::tr!("ui-appearance-items-remove-from-outfit"),
             st.pending.is_none(),
         ) {
@@ -146,7 +146,7 @@ fn attach_menu(ui: &mut egui::Ui, p: &Palette, world: &World, item: Uuid, hud: b
     menu::submenu(
         ui,
         p,
-        if hud { "monitor" } else { "person" },
+        if hud { "device-desktop-filled" } else { "man-filled" },
         if hud {
             aurora_i18n::tr!("common-attach-to-hud")
         } else {
@@ -164,7 +164,7 @@ fn attach_menu(ui: &mut egui::Ui, p: &Palette, world: &World, item: Uuid, hud: b
                         .unwrap_or(aurora_i18n::tr!("common-attachment"));
                     let name = point_name(name);
                     let label = if hud { name.to_owned() } else { format!("{name} ({id})") };
-                    if menu::item(ui, p, if hud { "monitor" } else { "person" }, &label) {
+                    if menu::item(ui, p, if hud { "device-desktop-filled" } else { "man-filled" }, &label) {
                         // Firestorm's Attach To always adds, even on an occupied point.
                         actions.push(Action::WearItem {
                             item,

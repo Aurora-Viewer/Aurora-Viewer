@@ -69,18 +69,18 @@ pub(super) fn new_menu(
     prefs: &mut InventoryPreferences,
     actions: &mut Vec<InvAction>,
 ) {
-    if menu::item_if(ui, p, "folder", aurora_i18n::tr!("common-new-folder"), enabled) {
+    if menu::item_if(ui, p, "folder-filled", aurora_i18n::tr!("common-new-folder"), enabled) {
         submit(st, actions, rules::create_folder(id, aurora_i18n::tr!("common-new-folder")));
     }
     for (kind, icon, name) in [
         (NewItem::Script, "code", aurora_i18n::tr!("common-new-script")),
-        (NewItem::Note, "note", aurora_i18n::tr!("common-new-notecard")),
+        (NewItem::Note, "file-text-filled", aurora_i18n::tr!("common-new-notecard")),
+        (NewItem::Gesture, "hand-move", aurora_i18n::tr!("ui-inventory-context-new-gesture")),
         (
-            NewItem::Gesture,
-            "hand-waving",
-            aurora_i18n::tr!("ui-inventory-context-new-gesture"),
+            NewItem::Material,
+            "droplet-filled",
+            aurora_i18n::tr!("ui-inventory-context-new-material"),
         ),
-        (NewItem::Material, "cube", aurora_i18n::tr!("ui-inventory-context-new-material")),
     ] {
         entry(
             ui,
@@ -99,7 +99,7 @@ pub(super) fn new_menu(
     menu::submenu(
         ui,
         p,
-        "t-shirt",
+        "shirt-filled",
         aurora_i18n::tr!("ui-inventory-context-new-clothes"),
         enabled,
         |ui| {
@@ -121,7 +121,7 @@ pub(super) fn new_menu(
                 entry(
                     ui,
                     p,
-                    "t-shirt",
+                    "shirt-filled",
                     name,
                     enabled,
                     InvAction::Create {
@@ -137,7 +137,7 @@ pub(super) fn new_menu(
     menu::submenu(
         ui,
         p,
-        "person",
+        "man-filled",
         aurora_i18n::tr!("ui-inventory-context-new-body-parts"),
         enabled,
         |ui| {
@@ -150,7 +150,7 @@ pub(super) fn new_menu(
                 entry(
                     ui,
                     p,
-                    "person",
+                    "man-filled",
                     name,
                     enabled,
                     InvAction::Create {
@@ -163,31 +163,38 @@ pub(super) fn new_menu(
             }
         },
     );
-    menu::submenu(ui, p, "sun", aurora_i18n::tr!("ui-inventory-context-new-settings"), enabled, |ui| {
-        for (kind, name) in [
-            (0, aurora_i18n::tr!("ui-inventory-context-new-sky")),
-            (1, aurora_i18n::tr!("ui-inventory-context-new-water")),
-            (2, aurora_i18n::tr!("ui-inventory-context-new-day-cycle")),
-        ] {
-            entry(
-                ui,
-                p,
-                "sun",
-                name,
-                enabled,
-                InvAction::Create {
-                    parent: id,
-                    kind: NewItem::Settings(kind),
-                    name: name.into(),
-                },
-                actions,
-            );
-        }
-    });
     menu::submenu(
         ui,
         p,
-        "arrow-square-out",
+        "sun-filled",
+        aurora_i18n::tr!("ui-inventory-context-new-settings"),
+        enabled,
+        |ui| {
+            for (kind, name) in [
+                (0, aurora_i18n::tr!("ui-inventory-context-new-sky")),
+                (1, aurora_i18n::tr!("ui-inventory-context-new-water")),
+                (2, aurora_i18n::tr!("ui-inventory-context-new-day-cycle")),
+            ] {
+                entry(
+                    ui,
+                    p,
+                    "sun-filled",
+                    name,
+                    enabled,
+                    InvAction::Create {
+                        parent: id,
+                        kind: NewItem::Settings(kind),
+                        name: name.into(),
+                    },
+                    actions,
+                );
+            }
+        },
+    );
+    menu::submenu(
+        ui,
+        p,
+        "file-upload-filled",
         aurora_i18n::tr!("ui-inventory-context-use-as-default-folder-for"),
         enabled,
         |ui| {
@@ -201,7 +208,7 @@ pub(super) fn new_menu(
             .iter()
             .enumerate()
             {
-                if menu::check(ui, p, "arrow-square-out", name, prefs.upload_folders[slot] == id, enabled) {
+                if menu::check(ui, p, "file-upload-filled", name, prefs.upload_folders[slot] == id, enabled) {
                     prefs.upload_folders[slot] = id;
                 }
             }
@@ -243,7 +250,7 @@ pub(super) fn show(
                 if menu::item_if(
                     ui,
                     p,
-                    "trash",
+                    "trash-filled",
                     aurora_i18n::tr!("common-empty-trash"),
                     ready && folder.is_some_and(|f| f.state == FetchState::Fetched && (!f.items.is_empty() || !f.children.is_empty())),
                 ) {
@@ -253,7 +260,7 @@ pub(super) fn show(
                 if menu::item_if(
                     ui,
                     p,
-                    "arrow-counter-clockwise",
+                    "restore",
                     aurora_i18n::tr!("ui-inventory-context-restore-object"),
                     ready && movable && single,
                 ) && let Some(to) = rules::default_folder(inv, id)
@@ -263,7 +270,7 @@ pub(super) fn show(
                 if menu::item_if(
                     ui,
                     p,
-                    "trash",
+                    "trash-filled",
                     aurora_i18n::tr!("ui-inventory-context-purge-object"),
                     ready && super::delete::allowed(inv, &ids, prefs, facts),
                 ) {
@@ -273,7 +280,7 @@ pub(super) fn show(
             menu::separator(ui, p);
         } else {
             let share = ready && writable && ids.iter().all(|id| rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok());
-            if menu::item_if(ui, p, "share-network", aurora_i18n::tr!("common-share"), share) {
+            if menu::item_if(ui, p, "share", aurora_i18n::tr!("common-share"), share) {
                 st.share_items = ids.clone();
                 st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);
             }
@@ -293,7 +300,7 @@ pub(super) fn show(
                 entry(
                     ui,
                     p,
-                    "t-shirt",
+                    "shirt-filled",
                     aurora_i18n::tr!("ui-inventory-context-replace-current-outfit"),
                     can_wear,
                     InvAction::Appearance(Wear::WearContents {
@@ -317,7 +324,7 @@ pub(super) fn show(
                 entry(
                     ui,
                     p,
-                    "coat-hanger",
+                    "hanger-2-filled",
                     aurora_i18n::tr!("ui-inventory-context-wear-objects"),
                     can_wear,
                     InvAction::Appearance(Wear::WearContents {
@@ -329,7 +336,7 @@ pub(super) fn show(
                 entry(
                     ui,
                     p,
-                    "x-circle",
+                    "circle-x-filled",
                     aurora_i18n::tr!("ui-inventory-context-remove-from-current-outfit"),
                     can_wear && content.iter().any(|l| facts.worn.contains(&l.target)),
                     InvAction::Appearance(Wear::RemoveOutfit(id)),
@@ -339,9 +346,9 @@ pub(super) fn show(
             } else {
                 let opens = single && target.is_some() && matches!(kind, 0 | 1 | 2 | 3 | 7 | 10 | 20 | 21 | 56 | 57);
                 let (icon, label) = if kind == 3 {
-                    ("navigation-arrow", aurora_i18n::tr!("common-teleport"))
+                    ("location-filled", aurora_i18n::tr!("common-teleport"))
                 } else {
-                    ("folder-open", aurora_i18n::tr!("common-open"))
+                    ("folder-open-filled", aurora_i18n::tr!("common-open"))
                 };
                 if menu::item_if(ui, p, icon, label, opens) {
                     open(inv, id, st, prefs, actions);
@@ -350,26 +357,26 @@ pub(super) fn show(
                     && menu::item_if(
                         ui,
                         p,
-                        "info",
+                        "info-circle-filled",
                         aurora_i18n::tr!("ui-inventory-context-about-landmark"),
                         single && !landmark.asset_id.is_nil(),
                     )
                 {
                     actions.push(InvAction::AboutLandmark(landmark.id, landmark.asset_id));
                 }
-                if menu::item_if(ui, p, "info", aurora_i18n::tr!("common-properties"), single) {
+                if menu::item_if(ui, p, "info-circle-filled", aurora_i18n::tr!("common-properties"), single) {
                     st.property_edit = None;
                     st.dialog = Some(EditDialog::Properties(id));
                 }
             }
             let rename = ready && single && rules::renameable(inv, id, &prefs.protected);
-            if menu::item_if(ui, p, "pencil-simple", aurora_i18n::tr!("common-rename"), rename) {
+            if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-rename"), rename) {
                 st.begin_rename(inv, id);
             }
             if menu::item_if(
                 ui,
                 p,
-                "image",
+                "photo-filled",
                 aurora_i18n::tr!("common-image-2"),
                 ready && single && writable && !linked,
             ) {
@@ -381,7 +388,7 @@ pub(super) fn show(
                     if menu::item(
                         ui,
                         p,
-                        "lock-simple",
+                        "lock-filled",
                         if protected {
                             aurora_i18n::tr!("ui-inventory-context-unlock")
                         } else {
@@ -398,7 +405,7 @@ pub(super) fn show(
                 if menu::item_if(
                     ui,
                     p,
-                    "arrows-clockwise",
+                    "refresh",
                     aurora_i18n::tr!("ui-inventory-context-reload-folder"),
                     single && id != inv.root && id != inv.lib_root,
                 ) {
@@ -408,7 +415,7 @@ pub(super) fn show(
                 if menu::item_if(
                     ui,
                     p,
-                    "arrow-square-out",
+                    "external-link-filled",
                     aurora_i18n::tr!("ui-inventory-context-show-in-a-new-window"),
                     single,
                 ) {
@@ -418,7 +425,7 @@ pub(super) fn show(
                 if menu::item_if(
                     ui,
                     p,
-                    "folder-open",
+                    "folder-open-filled",
                     aurora_i18n::tr!("ui-inventory-context-open-in-a-new-window"),
                     single,
                 ) {
@@ -430,7 +437,7 @@ pub(super) fn show(
                 if menu::item_if(
                     ui,
                     p,
-                    "copy",
+                    "copy-filled",
                     aurora_i18n::tr!("ui-inventory-context-copy-object-uuid"),
                     single && knowable && !it.asset_id.is_nil(),
                 ) {
@@ -440,7 +447,7 @@ pub(super) fn show(
                     entry(
                         ui,
                         p,
-                        "arrow-counter-clockwise",
+                        "restore",
                         aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
                         single && writable && !worn,
                         InvAction::Restore(target.unwrap_or(id)),
@@ -451,13 +458,13 @@ pub(super) fn show(
         }
         menu::separator(ui, p);
         let copyable = clipboard::copy_allowed(inv, &ids);
-        if menu::item_if(ui, p, "copy", aurora_i18n::tr!("common-copy-2"), ready && copyable) {
+        if menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("common-copy-2"), ready && copyable) {
             clipboard::store(ui.ctx(), st, ids.clone(), false);
         }
-        if menu::item_if(ui, p, "arrow-u-up-left", aurora_i18n::tr!("common-cut"), ready && movable) {
+        if menu::item_if(ui, p, "cut", aurora_i18n::tr!("common-cut"), ready && movable) {
             clipboard::store(ui.ctx(), st, ids.clone(), true);
         }
-        if menu::item_if(ui, p, "folder", aurora_i18n::tr!("inventory-move-to"), ready && movable) {
+        if menu::item_if(ui, p, "folder-filled", aurora_i18n::tr!("inventory-move-to"), ready && movable) {
             st.begin_move_to(id);
         }
         let to = folder.map(|_| id).or_else(|| rules::parent(inv, id));
@@ -468,13 +475,18 @@ pub(super) fn show(
             && single
             && to.is_some_and(|to| rules::paste_allowed(inv, &st.clipboard, to, false, true, &prefs.protected, &facts.worn))
             && !st.cut;
-        if menu::item_if(ui, p, "clipboard-text", aurora_i18n::tr!("common-paste"), paste)
+        if menu::item_if(ui, p, "clipboard-text-filled", aurora_i18n::tr!("common-paste"), paste)
             && let Some(to) = to
         {
             clipboard::paste(inv, to, false, st, prefs, facts, actions);
         }
-        if menu::item_if(ui, p, "link", aurora_i18n::tr!("ui-inventory-context-paste-as-link"), paste_links)
-            && let Some(to) = to
+        if menu::item_if(
+            ui,
+            p,
+            "link-filled",
+            aurora_i18n::tr!("ui-inventory-context-paste-as-link"),
+            paste_links,
+        ) && let Some(to) = to
         {
             clipboard::paste(inv, to, true, st, prefs, facts, actions);
         }
@@ -482,14 +494,20 @@ pub(super) fn show(
             if menu::item_if(
                 ui,
                 p,
-                "arrow-square-out",
+                "external-link-filled",
                 aurora_i18n::tr!("ui-inventory-context-find-original"),
                 single && target.is_some(),
             ) && let Some(target) = target
             {
                 st.show_original(inv, target);
             }
-        } else if menu::item_if(ui, p, "link", aurora_i18n::tr!("ui-inventory-context-find-all-links"), single) {
+        } else if menu::item_if(
+            ui,
+            p,
+            "link-filled",
+            aurora_i18n::tr!("ui-inventory-context-find-all-links"),
+            single,
+        ) {
             st.search.clear();
             if st.saved_filters.is_none() {
                 st.saved_filters = Some(st.filters.clone());
@@ -505,7 +523,7 @@ pub(super) fn show(
             && menu::item_if(
                 ui,
                 p,
-                "link",
+                "link-filled",
                 aurora_i18n::tr!("common-replace-links"),
                 single && ready && target.is_some() && !rules::library(inv, id),
             )
@@ -516,14 +534,14 @@ pub(super) fn show(
         if !trash {
             menu::separator(ui, p);
             let removable = super::delete::allowed(inv, &ids, prefs, facts);
-            if menu::item_if(ui, p, "trash", aurora_i18n::tr!("common-delete"), ready && removable) {
+            if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), ready && removable) {
                 st.dialog = Some(EditDialog::Delete(ids.clone(), false));
             }
             if folder.is_none()
                 && menu::item_if(
                     ui,
                     p,
-                    "folder",
+                    "folder-filled",
                     aurora_i18n::tr!("ui-inventory-context-move-to-default-folder"),
                     ready && movable && single,
                 )
@@ -535,7 +553,7 @@ pub(super) fn show(
             if menu::item_if(
                 ui,
                 p,
-                "folder",
+                "folder-filled",
                 aurora_i18n::tr!("ui-inventory-context-create-folder-from-selection"),
                 ready && movable,
             ) {
@@ -545,7 +563,7 @@ pub(super) fn show(
                 && menu::item_if(
                     ui,
                     p,
-                    "arrows-out",
+                    "arrows-maximize",
                     aurora_i18n::tr!("ui-inventory-context-ungroup-folder-items"),
                     ready
                         && movable
@@ -561,7 +579,7 @@ pub(super) fn show(
             if menu::item_if(
                 ui,
                 p,
-                "star",
+                "star-filled",
                 if favorite {
                     aurora_i18n::tr!("common-remove-from-favorites")
                 } else {
@@ -578,7 +596,7 @@ pub(super) fn show(
                     entry(
                         ui,
                         p,
-                        "play",
+                        "player-play-filled",
                         aurora_i18n::tr!("ui-inventory-context-play-in-second-life"),
                         single && !asset.is_nil(),
                         InvAction::Animation {
@@ -591,7 +609,7 @@ pub(super) fn show(
                     entry(
                         ui,
                         p,
-                        "play",
+                        "player-play-filled",
                         aurora_i18n::tr!("common-play-locally"),
                         single && !asset.is_nil(),
                         InvAction::Animation {
@@ -606,7 +624,7 @@ pub(super) fn show(
                     entry(
                         ui,
                         p,
-                        "speaker-high",
+                        "volume",
                         aurora_i18n::tr!("common-play"),
                         single && original.is_some_and(|it| !it.asset_id.is_nil()),
                         InvAction::Sound(original.map(|it| it.asset_id).unwrap_or_default()),
@@ -633,7 +651,7 @@ pub(super) fn show(
                 entry(
                     ui,
                     p,
-                    "t-shirt",
+                    "shirt-filled",
                     aurora_i18n::tr!("common-wear"),
                     wear && single,
                     InvAction::Appearance(Wear::WearItem {
@@ -660,7 +678,7 @@ pub(super) fn show(
                     menu::submenu(
                         ui,
                         p,
-                        if hud { "monitor" } else { "person" },
+                        if hud { "device-desktop-filled" } else { "man-filled" },
                         if hud {
                             aurora_i18n::tr!("common-attach-to-hud")
                         } else {
@@ -674,7 +692,7 @@ pub(super) fn show(
                                     entry(
                                         ui,
                                         p,
-                                        "person",
+                                        "man-filled",
                                         &label,
                                         true,
                                         InvAction::Appearance(Wear::WearItems {
@@ -693,7 +711,7 @@ pub(super) fn show(
                     entry(
                         ui,
                         p,
-                        "x-circle",
+                        "circle-x-filled",
                         if kind == 6 {
                             aurora_i18n::tr!("ui-inventory-context-detach-from-yourself")
                         } else {
@@ -716,7 +734,7 @@ pub(super) fn show(
                 entry(
                     ui,
                     p,
-                    "sun",
+                    "sun-filled",
                     aurora_i18n::tr!("common-apply-to-myself-only"),
                     single && !it.asset_id.is_nil(),
                     InvAction::Environment(it.asset_id, it.flags),
@@ -729,7 +747,7 @@ pub(super) fn show(
                 (false, aurora_i18n::tr!("ui-inventory-context-move-to-marketplace-listings")),
             ] {
                 let plan = rules::marketplace(inv, &ids, copy, &prefs.protected, &facts.worn);
-                if menu::item_if(ui, p, "tag", label, ready && st.merchant && plan.is_ok()) {
+                if menu::item_if(ui, p, "tag-filled", label, ready && st.merchant && plan.is_ok()) {
                     submit(st, actions, plan);
                 }
             }

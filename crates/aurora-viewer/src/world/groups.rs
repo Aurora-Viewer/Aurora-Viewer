@@ -283,7 +283,9 @@ impl World {
         }
     }
 
-    /// Close a group / conference session (LLIMModel::sendLeaveSession).
+    /// Close a conversation: a group / conference session is left
+    /// (LLIMModel::sendLeaveSession), a 1:1 conversation only leaves the list
+    /// (nothing is sent; the next message from that resident opens it again).
     pub fn leave_session(&mut self, session: Uuid) {
         if self.groups.sessions.remove(&session).is_some() {
             self.groups.im(session, dialog::SESSION_LEAVE, session, String::new());

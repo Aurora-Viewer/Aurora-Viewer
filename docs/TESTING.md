@@ -466,7 +466,8 @@ des objets possédés y apparaissent également, après filtrage du bridge et
 des objets bloqués. La fenêtre permet de voir tous les objets ou un seul et
 d'effacer les messages affichés.
 
-**`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm.
+**`AURORA_DEMO_ACTIONS`** — curseurs et clics d'objet comme Firestorm
+(mêmes règles ; curseurs dessinés à partir des icônes Tabler).
 Aucun L$ réel ni connexion à une grille.
 
 - `1` : tous les objets, pour un test manuel.
@@ -901,6 +902,7 @@ grille.
 | `AURORA_DEMO_WINDOWS=<mode>` | Repli, déplacement et restauration du titre de l’inventaire |
 | `AURORA_DEMO_EXIT=<mode>` | Modale de fermeture et choix hors ligne |
 | `AURORA_DEMO_UI=<onglet>` | Ouvre Personnes (onglet), l'inventaire et le chat |
+| `AURORA_DEMO_RADAR=1` | Résidents autour de soi pour le radar de Personnes (toutes les portées) |
 | `AURORA_DEMO_OPTIONS=<section>` | Ouvre les préférences sur une section |
 | `AURORA_DEMO_PERF=compact` ou `full` | Ouvre la fenêtre Performances, compacte ou complète |
 | `AURORA_DEMO_LOGIN=<mode>` | Écran de connexion hors ligne |
@@ -914,7 +916,8 @@ grille.
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Compilation dev à version synthétique pour cet essai |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Rapport de bug public avec données de démo, sans envoi |
 | `AURORA_DEMO_MAP=1` ou `mini` | Carte du monde et mini-carte |
-| `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Liste des notifications, menu de statut, champ de lieu |
+| `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Liste des notifications, menu de statut, panneau du micro, champ de lieu |
+| `AURORA_DEMO_COLORPICK=1` | Ouvre le sélecteur de couleur compact de la première pastille affichée |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Conversation de groupe, micro ouvert |
 | `AURORA_DEMO_CONTACTS=<onglet>` | Onglet Contacts de Conversations |
 | `AURORA_DEMO_GLYPHS=1` | Noms, titres et chat en caractères étendus (polices du système) |
@@ -966,6 +969,12 @@ grille.
   désactivé. Les choix sont simulés hors ligne, sans requête de connexion.
 - **`AURORA_DEMO_OPTIONS=<section>`** : par exemple `8` pour Raccourcis
   (touche de déplacement des HUDs).
+- **`AURORA_DEMO_COLORPICK=1`** : à l'image 300, ouvre le sélecteur de
+  couleur compact (`widgets::color_button`) de la première pastille de
+  couleur dessinée. À combiner avec `AURORA_DEMO_OPTIONS=5` (Couleurs) : le
+  panneau s'ouvre sous « Mon nom », avec le champ saturation / valeur, la
+  barre de teinte, la nouvelle couleur au-dessus de l'ancienne, les champs
+  R V B et hexadécimal, et la pipette.
 - **`AURORA_DEMO_GLYPHS=1|2`** : huit résidents sur deux rangs devant
   l'avatar (le second rang en vol), un cube à texte flottant à droite et la
   fenêtre Conversations sur le chat local. Titre de groupe, nom d'affichage

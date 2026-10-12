@@ -733,7 +733,11 @@ fn animation(
             if crate::ui::widgets::icon_button(
                 ui,
                 p,
-                if st.animation_details { "caret-up" } else { "caret-down" },
+                if st.animation_details {
+                    "caret-up-filled"
+                } else {
+                    "caret-down-filled"
+                },
                 aurora_i18n::tr!("ui-inventory-dialogs-show-statistics"),
                 true,
             ) {

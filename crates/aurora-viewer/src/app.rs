@@ -140,6 +140,8 @@ pub struct App {
     start: Instant,
     right_drag: bool,
     cursor_grabbed: bool,
+    /// Where the cursor was when the camera took it (physical pixels).
+    grab_origin: Option<(f32, f32)>,
     alt: bool,
     left_down: bool,
     /// Clicks that wait for the depth under them, and what follows them.
@@ -249,6 +251,9 @@ pub struct App {
     geom_changed: Option<Instant>,
     frame_start: Instant,
     people_ui: ui::people::PeopleUi,
+    /// Avatars around us, swept once a second on `radar_clock`.
+    radar: crate::world::radar::Radar,
+    radar_clock: Instant,
     contacts_ui: ui::contacts::ContactsUi,
     /// Mini-map and world map state, map server tiles.
     minimap_ui: ui::minimap::MiniMap,
@@ -443,26 +448,7 @@ impl App {
             }
         });
 
-        let panels = Panels {
-            chat: settings.show_chat,
-            perf: settings.show_perf,
-            people: settings.show_people,
-            minimap: settings.show_minimap,
-            world_map: false,
-            settings: false,
-            time_of_day: settings.time_of_day,
-            environment: false,
-            personal_lighting: false,
-            inventory: settings.show_inventory,
-            appearance: settings.show_appearance,
-            ao: settings.show_ao,
-            people_tab: settings.people_tab.min(1),
-            contacts: false,
-            about_land: false,
-            places: false,
-            nav_edit: None,
-            nav_edit_new: false,
-        };
+        let panels = Panels::from_settings(&settings);
         let mut scene = Scene::new(cache, lib.clone());
         scene.draw_distance = settings.draw_distance;
         scene.lod_factor = settings.lod_factor;
@@ -506,6 +492,7 @@ impl App {
             start: Instant::now(),
             right_drag: false,
             cursor_grabbed: false,
+            grab_origin: None,
             alt: false,
             left_down: false,
             clicks: Default::default(),
@@ -573,6 +560,8 @@ impl App {
             geom_changed: None,
             frame_start: Instant::now(),
             people_ui: Default::default(),
+            radar: Default::default(),
+            radar_clock: Instant::now(),
             contacts_ui: Default::default(),
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
@@ -1499,6 +1488,34 @@ impl App {
 
     // ------------------------------------------------------------------ input
 
+    /// The camera drag a left click would start under the pointer, like
+    /// LLToolCamera::handleHover (lltoolfocus.cpp): Alt held over the world,
+    /// or the build Focus tool. AltGr alone (right Alt, typed as Ctrl + Alt)
+    /// is a character key, not the camera.
+    fn camera_tool_hover(&self, ctx: &egui::Context) -> Option<crate::camera::ToolMode> {
+        use crate::camera::ToolMode;
+        let focus_tool = self.build.open && self.build.tool == crate::build::Tool::Focus;
+        let alt_gr = self.down.contains(&Input::key(KeyCode::AltRight)) && !self.down.contains(&Input::key(KeyCode::AltLeft));
+        if !matches!(self.screen, Screen::World)
+            || self.mouse_mode != MouseMode::None
+            || self.camera.mouselook()
+            || !(focus_tool || (self.alt && !alt_gr))
+            || ctx.is_pointer_over_egui()
+            || ctx.egui_wants_pointer_input()
+        {
+            return None;
+        }
+        Some(if focus_tool && !self.ctrl && !self.shift {
+            match self.build.focus_mode {
+                crate::build::FocusMode::Zoom => ToolMode::Zoom,
+                crate::build::FocusMode::Orbit => ToolMode::Orbit,
+                crate::build::FocusMode::Pan => ToolMode::Pan,
+            }
+        } else {
+            ToolMode::from_mods(self.ctrl, self.shift)
+        })
+    }
+
     fn set_mouselook_grab(&mut self, on: bool) {
         let Some(g) = &self.gfx else {
             return;
@@ -1519,8 +1536,18 @@ impl App {
                 .is_ok();
             g.window.set_cursor_visible(false);
             self.cursor_grabbed = ok;
+            self.grab_origin = ok.then_some(self.cursor_pos);
         } else {
             let _ = g.window.set_cursor_grab(CursorGrabMode::None);
+            // LLToolCamera::handleMouseUp (lltoolfocus.cpp) puts the cursor
+            // back where the drag started: a confined cursor moved while
+            // hidden.
+            if let Some((x, y)) = self.grab_origin.take() {
+                let _ = g
+                    .window
+                    .set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
+                self.cursor_pos = (x, y);
+            }
             g.window.set_cursor_visible(true);
             self.cursor_grabbed = false;
         }
@@ -2534,6 +2561,72 @@ impl App {
         }
     }
 
+    /// Radar of the People window: one sweep a second (also with the
+    /// window closed, for its alerts), the profiles its columns show and
+    /// the crossings it reports (FSRadar::updateRadarList, fsradar.cpp).
+    fn update_radar(&mut self) {
+        use crate::world::radar::Event;
+        let now = self.radar_clock.elapsed().as_secs_f64();
+        if !self.in_world() || !self.radar.due(now) {
+            return;
+        }
+        let seen = crate::world::radar::sightings(&self.world);
+        let mut events = self.radar.sweep(
+            seen,
+            self.world.agent.position,
+            self.world.main_region,
+            self.settings.draw_distance,
+            now,
+        );
+        let s = self.settings.radar.clone();
+        // Firestorm asks for every profile as its entry appears; here only
+        // when something reads them (a column on screen, the age alert)
+        let on_screen = self.panels.people && self.panels.people_tab == 0;
+        if s.age_alert || (on_screen && s.wants_profiles()) {
+            for id in self.radar.take_profile_wants() {
+                self.world.want_profile(id);
+            }
+        }
+        if s.age_alert {
+            let today = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0.0, |d| d.as_secs_f64());
+            let profiles = &self.world.profiles;
+            events.extend(self.radar.age_alerts(i64::from(s.age_alert_days), |id| {
+                profiles.get(id).and_then(|p| ui::people::age_days(p, today))
+            }));
+        }
+        for event in events {
+            let meters = |d: f32| aurora_i18n::number(f64::from(d), 2);
+            let (wanted, text) = match event {
+                Event::ChatEnter(_, d) => (s.chat_enter, aurora_i18n::tr!("radar-chat-enter", distance = meters(d))),
+                Event::ChatLeave(_) => (s.chat_leave, aurora_i18n::tr!("radar-chat-leave").to_owned()),
+                Event::DrawEnter(_, d) => (s.draw_enter, aurora_i18n::tr!("radar-draw-enter", distance = meters(d))),
+                Event::DrawLeave(_) => (s.draw_leave, aurora_i18n::tr!("radar-draw-leave").to_owned()),
+                Event::RegionEnter(_, Some(d)) => (s.region_enter, aurora_i18n::tr!("radar-region-enter", distance = meters(d))),
+                Event::RegionEnter(_, None) => (s.region_enter, aurora_i18n::tr!("radar-region-enter-unknown").to_owned()),
+                Event::RegionLeave(_) => (s.region_leave, aurora_i18n::tr!("radar-region-leave").to_owned()),
+                Event::AgeAlert(_, days) => (s.age_alert, aurora_i18n::tr!("radar-age-alert", days = days)),
+            };
+            if !wanted {
+                continue;
+            }
+            let id = event.avatar();
+            if s.toasts {
+                let name = ui::people::radar_name(&self.world, &id, s.name_format);
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    name,
+                    text,
+                    crate::world::notifications::Data::None,
+                );
+            } else {
+                // the name is a link to the resident, as in Firestorm's chat
+                self.world.system_message(format!("secondlife:///app/agent/{id}/about {text}"));
+            }
+        }
+    }
+
     /// Voice session for the current region / parcel, microphone, push-to-talk.
     fn update_voice(&mut self) {
         let tuning = self.panels.settings && self.options_ui.tab == ui::options::TAB_AUDIO;
@@ -2878,9 +2971,7 @@ impl App {
             if !self.egui_ctx.is_pointer_over_egui() {
                 self.sample_build_color();
             }
-            let picker = self.active_color_picker();
-            picker.pipette = false;
-            picker.sampled = None;
+            self.release_color_pipette();
         }
         self.update_hud_drag(self.scene.lists.hud_view);
         if let Some(cmd) = self.hud_drag.take().and_then(|drag| drag.release(&self.world)) {
@@ -3734,6 +3825,7 @@ impl App {
             *self.net.controls.lock() = c;
         }
         self.update_voice();
+        self.update_radar();
         let mut view = self.camera.view();
         let mut proj = self.camera.proj(aspect);
         let mut vp = proj * view;
@@ -4208,7 +4300,7 @@ impl App {
                 }
             };
             // glide toward the target, never backwards
-            let k = 1.0 - (-7.0 * dt).exp();
+            let k = 1.0 - (-2.6 * dt).exp();
             o.shown = (o.shown + (target - o.shown) * k).max(o.shown).min(1.0);
             if target >= 1.0 && o.shown > 0.985 {
                 o.end.get_or_insert(Instant::now());
@@ -4526,6 +4618,10 @@ impl App {
             if inventory_drop.is_none() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
             }
+            // the glass blurs the world: there is none behind the login screen
+            if self.in_world() {
+                ui::menu::glaze(ui.ctx(), &self.palette);
+            }
             windows_ms += t.elapsed().as_secs_f32() * 1000.0;
         });
         // interface sounds of the widgets; the sounds are SL assets, loaded
@@ -4599,8 +4695,16 @@ impl App {
                 full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Grab, false);
             } else {
                 full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
-                full.platform_output.cursor_image = None;
+                full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
             }
+        }
+        if let Some(mode) = self.camera_tool_hover(&ctx) {
+            full.platform_output.cursor_icon = match mode {
+                crate::camera::ToolMode::Zoom => egui::CursorIcon::ZoomIn,
+                crate::camera::ToolMode::Orbit => egui::CursorIcon::AllScroll,
+                crate::camera::ToolMode::Pan => egui::CursorIcon::Move,
+            };
+            full.platform_output.cursor_image = self.cursors.camera(mode);
         }
         if self.hud_drag.is_some()
             || (self.hud_drag_requested()
@@ -4625,6 +4729,12 @@ impl App {
         if self.color_pipette() && !ctx.is_pointer_over_egui() {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
             full.platform_output.cursor_image = self.cursors.pipette();
+        }
+        if self.cursor_grabbed {
+            // the camera holds the hidden cursor: a cursor change from egui
+            // would show it again in the middle of the drag
+            full.platform_output.cursor_icon = egui::CursorIcon::None;
+            full.platform_output.cursor_image = None;
         }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
@@ -5696,12 +5806,14 @@ impl App {
                     terrain,
                     elapsed: since.elapsed().as_secs_f32(),
                 };
+                let facts = ui::loading::PlaceFacts::gather(&mut self.world, &mut self.map_tiles, info.region, None, true);
                 a.cancel_loading = ui::loading::show(
                     ui,
                     &p,
                     self.logo.as_ref(),
                     self.settings.loading_backdrop.then_some(&self.backdrop),
                     &info,
+                    &facts.place(),
                 );
             }
             Screen::World => {
@@ -5772,6 +5884,17 @@ impl App {
                     talking: self.talking(),
                     level: self.voice_level,
                     connected: self.voice_connected,
+                    key: self
+                        .settings
+                        .keybinds
+                        .get(crate::keybinds::Action::PushToTalk)
+                        .into_iter()
+                        .flatten()
+                        .next(),
+                    input_device: self.settings.audio.input_device.clone(),
+                    output_device: self.settings.audio.output_device.clone(),
+                    input_devices: &self.options_ui.input_devices,
+                    output_devices: &self.options_ui.output_devices,
                     ..Default::default()
                 };
                 let (chat, bar2, bottom_top, chat_width_set) = ui::bars::bottom_bar(
@@ -5794,11 +5917,19 @@ impl App {
                 }
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
-                if mic.mode_changed {
+                if mic.mode_changed || mic.devices_changed {
+                    // the audio engine and the voice follow the settings
                     self.settings.audio.mic_hold = mic.hold;
+                    self.settings.audio.input_device = std::mem::take(&mut mic.input_device);
+                    self.settings.audio.output_device = std::mem::take(&mut mic.output_device);
                     self.settings.save();
                 }
-                if mic.open_prefs {
+                let (open_prefs, list_devices) = (mic.open_prefs, mic.list_devices);
+                if list_devices {
+                    self.options_ui.output_devices = aurora_audio::output_devices();
+                    self.options_ui.input_devices = aurora_audio::input_devices();
+                }
+                if open_prefs {
                     self.panels.settings = true;
                     self.options_ui.tab = ui::options::TAB_AUDIO;
                 }
@@ -5932,9 +6063,13 @@ impl App {
                         ui::chat::ConvAction::Im { to, text } => a.ims.push((to, text)),
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
-                        ui::chat::ConvAction::LeaveSession(id) => {
+                        ui::chat::ConvAction::Close(id) => {
                             self.world.leave_session(id);
-                            self.chat_ui.selected = None;
+                            // closed from the list, another conversation may be shown
+                            if self.chat_ui.selected == Some(id) {
+                                self.chat_ui.selected = None;
+                                self.chat_ui.show_profile = false;
+                            }
                         }
                         ui::chat::ConvAction::BlockGroupChat(id) => {
                             self.world.set_group_chat_blocked(id, true);
@@ -5986,7 +6121,26 @@ impl App {
                     );
                     mini.extend(acts);
                 };
-                let people = ui::people::people_window(&ctx, &p, &self.world, &mut self.panels, &mut self.people_ui, &mut people_map);
+                let radar_before = self.settings.radar.clone();
+                let mut radar = ui::people::RadarData {
+                    radar: &self.radar,
+                    settings: &mut self.settings.radar,
+                    voice: &voice_levels,
+                    draw_distance: self.settings.draw_distance,
+                    now: self.radar_clock.elapsed().as_secs_f64(),
+                };
+                let people = ui::people::people_window(
+                    &ctx,
+                    &p,
+                    &self.world,
+                    &mut self.panels,
+                    &mut self.people_ui,
+                    &mut radar,
+                    &mut people_map,
+                );
+                if radar_before != self.settings.radar {
+                    self.settings.save();
+                }
                 for pa in people {
                     match pa {
                         ui::people::PeopleAction::OpenIm(id) => {
@@ -5997,6 +6151,9 @@ impl App {
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::people::PeopleAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+                        ui::people::PeopleAction::TooFarToZoom => {
+                            self.world.system_message(aurora_i18n::tr!("radar-too-far-to-zoom"));
+                        }
                         ui::people::PeopleAction::GroupChat(id) => {
                             self.world.ui_sounds.push(UiSound::StartIm);
                             self.world.start_group_chat(id);
@@ -6428,6 +6585,9 @@ impl App {
                 if res.refresh_devices {
                     self.devices_listed = false;
                 }
+                if res.reset_camera {
+                    self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+                }
                 if res.reset {
                     // the panels must not write the old time of day back
                     self.panels.time_of_day = self.settings.time_of_day;
@@ -6464,13 +6624,16 @@ impl App {
                     };
                     let fade_out = o.end.map_or(1.0, |e| 1.0 - e.elapsed().as_secs_f32() / ui::loading::FADE_SECONDS);
                     let alpha = fade_in.min(fade_out).clamp(0.0, 1.0);
+                    // the banner names the region; its arrival point is one of its facts
+                    let (dest, point) = ui::loading::split_destination(&o.dest);
+                    let arrived = o.loading_end || o.arrived.is_some() || dest.is_empty();
                     let (title, sub, detail) = if o.loading_end {
                         (aurora_i18n::tr!("common-loading-world"), self.world.region_name(), String::new())
                     } else {
-                        let sub = if o.dest.is_empty() {
+                        let sub = if dest.is_empty() {
                             self.world.region_name()
                         } else {
-                            o.dest.clone()
+                            dest.to_owned()
                         };
                         let detail = if o.shown >= 0.985 {
                             aurora_i18n::tr!("app-welcome").to_owned()
@@ -6479,6 +6642,7 @@ impl App {
                         };
                         (aurora_i18n::tr!("common-teleport-2"), sub, detail)
                     };
+                    let facts = ui::loading::PlaceFacts::gather(&mut self.world, &mut self.map_tiles, &sub, point, arrived);
                     ui::loading::teleport_overlay(
                         &ctx,
                         &p,
@@ -6489,6 +6653,7 @@ impl App {
                         &detail,
                         Some(o.shown),
                         alpha,
+                        &facts.place(),
                     );
                 }
             }
@@ -6723,6 +6888,14 @@ impl ApplicationHandler for App {
                 if p.len() >= 2 {
                     self.camera.demo_orbit(p[0], p[1], p.get(2).copied(), &self.settings.camera);
                 }
+            }
+            // AURORA_DEMO_RADAR=1: residents around for the radar of People
+            if std::env::var_os("AURORA_DEMO_RADAR").is_some() {
+                for ev in crate::demo::radar_events() {
+                    self.world.apply(ev);
+                }
+                self.panels.people = true;
+                self.panels.people_tab = 0;
             }
             if std::env::var_os("AURORA_DEMO_UI").is_some() {
                 self.panels.people = true;
@@ -7403,7 +7576,11 @@ impl ApplicationHandler for App {
                     let pressed = ke.state == ElementState::Pressed;
                     // The color dialog owns Escape before camera shortcuts.
                     // egui already received the event above.
-                    if pressed && code == KeyCode::Escape && (self.build.ui.color_picker.is_open() || self.script_editors.color_open()) {
+                    let eyedropper = ui::widgets::color::pipette::armed(&self.egui_ctx);
+                    if pressed
+                        && code == KeyCode::Escape
+                        && (self.build.ui.color_picker.is_open() || self.script_editors.color_open() || eyedropper)
+                    {
                         return;
                     }
                     // learn the keyboard layout for the shortcut labels

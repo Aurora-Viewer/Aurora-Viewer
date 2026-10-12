@@ -19,7 +19,9 @@ const SMOOTHING_S: f32 = 0.6;
 const GRAPH_EASE_S: f32 = 1.5;
 /// How often the numbers are refreshed (s): slow enough to be read.
 const REFRESH_S: f32 = 0.5;
-const COMPACT_W: f32 = 236.0;
+pub(crate) const COMPACT_W: f32 = 236.0;
+/// The two side margins of the window around its content.
+pub(crate) const SIDES: f32 = 20.0;
 const FULL_W: f32 = 300.0;
 const GRAPH_H: f32 = 64.0;
 /// Lowest top of the graph scale (images/s).
@@ -301,12 +303,19 @@ pub fn set_full(ctx: &egui::Context, full: bool) {
     ctx.data_mut(|d| d.insert_persisted(full_id(), full));
 }
 
+/// Where the window stands before the user moves it: under the mini-map of
+/// a first launch (`minimap::default_rect`), on its right edge.
+pub(crate) fn default_pos(screen: egui::Rect, width: f32) -> egui::Pos2 {
+    let map = super::minimap::default_rect(screen);
+    pos2(map.right() - width - SIDES, map.bottom() + 8.0)
+}
+
 pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
     let full = ctx.data_mut(|d| d.get_persisted::<bool>(full_id())).unwrap_or(false);
     let (icon, tip) = if full {
-        ("corners-in", aurora_i18n::tr!("ui-perf-compact-version"))
+        ("arrows-minimize", aurora_i18n::tr!("ui-perf-compact-version"))
     } else {
-        ("corners-out", aurora_i18n::tr!("ui-perf-show-details"))
+        ("arrows-maximize", aurora_i18n::tr!("ui-perf-show-details"))
     };
     let width = if full { FULL_W } else { COMPACT_W };
     let screen = ctx.content_rect();
@@ -314,7 +323,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
     Floater::new(
         "perf",
         aurora_i18n::tr!("common-performance"),
-        pos2(screen.right() - FULL_W - 16.0, 300.0),
+        default_pos(screen, width),
         vec2(width, 0.0),
     )
     .fixed()
@@ -770,13 +779,10 @@ fn row(ui: &mut egui::Ui, p: &Palette, k: &str, v: String) {
 }
 
 fn group(ui: &mut egui::Ui, p: &Palette, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
-    egui::CollapsingHeader::new(RichText::new(title).size(12.0).strong().color(p.violet_light))
-        .id_salt(("perf", title))
-        .default_open(open)
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            body(ui);
-        });
+    super::widgets::collapsing(ui, p, ("perf", title), title, open, |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        body(ui);
+    });
 }
 
 fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {

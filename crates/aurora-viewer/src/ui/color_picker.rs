@@ -203,7 +203,7 @@ impl ColorPicker {
         )
         .fixed()
         .auto_height()
-        .framed_header("palette")
+        .framed_header("palette-filled")
         .help(aurora_i18n::tr!("color-picker-help"))
         .show(ctx, p, &mut open, |ui| {
             egui::Frame::new().inner_margin(10).show(ui, |ui| {
@@ -224,7 +224,7 @@ impl ColorPicker {
                 ui.label(RichText::new(aurora_i18n::tr!("color-picker-save-hint")).size(11.0).color(p.muted));
                 ui.horizontal(|ui| {
                     let label = RichText::new(aurora_i18n::tr!("color-picker-pipette")).size(12.0).color(p.ink);
-                    let button = if let Some(icon) = super::icons::global("eyedropper") {
+                    let button = if let Some(icon) = super::icons::global("color-picker") {
                         egui::Button::image_and_text(egui::Image::new((icon.id(), Vec2::splat(16.0))).tint(p.ink), label)
                     } else {
                         egui::Button::new(label)
@@ -255,7 +255,7 @@ impl ColorPicker {
                 );
                 ui.separator();
                 ui.horizontal(|ui| {
-                    let apply = ui.checkbox(&mut prefs.apply, aurora_i18n::tr!("color-picker-apply"));
+                    let apply = widgets::checkbox(ui, p, &mut prefs.apply, aurora_i18n::tr!("color-picker-apply"));
                     self.record(Control::Apply, apply.rect);
                     apply.on_hover_text(aurora_i18n::tr!("color-picker-apply-hint"));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -596,11 +596,10 @@ impl ColorPicker {
                         draft.set_rgb(prefs.palette[slot]);
                         edited = true;
                     }
-                    response.context_menu(|ui| {
-                        if ui.button(aurora_i18n::tr!("color-picker-save-slot")).clicked() {
+                    super::menu::context_menu(&response, p, |ui| {
+                        if super::menu::item(ui, p, "device-floppy-filled", aurora_i18n::tr!("color-picker-save-slot")) {
                             prefs.store(slot, draft.rgb);
                             self.notice = aurora_i18n::tr!("color-picker-saved").to_owned();
-                            ui.close();
                         }
                     });
                     response.on_hover_text(format!("#{}", hex(prefs.palette[slot])));

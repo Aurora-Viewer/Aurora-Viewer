@@ -323,7 +323,7 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
     let ctx = ui.ctx().clone();
     let act = |a: CtxAction| request(&ctx, a);
     if id == world.agent_id {
-        if menu::item(ui, p, "user-circle", aurora_i18n::tr!("common-view-profile")) {
+        if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
             act(CtxAction::Profile(id));
         }
         return;
@@ -334,40 +334,40 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
     let online = friend.as_ref().is_none_or(|f| f.online);
     let name = world.social.name_of(&id);
     let profile = |ui: &mut egui::Ui| {
-        if menu::item(ui, p, "user-circle", aurora_i18n::tr!("common-view-profile")) {
+        if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
             act(CtxAction::Profile(id));
         }
     };
     let im = |ui: &mut egui::Ui| {
-        if menu::item(ui, p, "chat-text", aurora_i18n::tr!("ui-context-send-im")) {
+        if menu::item(ui, p, "message-filled", aurora_i18n::tr!("ui-context-send-im")) {
             act(CtxAction::Im(id));
         }
     };
     let offer_tp = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "paper-plane-tilt", aurora_i18n::tr!("common-offer-teleport"), online) {
+        if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), online) {
             act(CtxAction::OfferTeleport(id));
         }
     };
     let tp_to = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "navigation-arrow", aurora_i18n::tr!("common-teleport-to"), here) {
+        if menu::item_if(ui, p, "location-filled", aurora_i18n::tr!("common-teleport-to"), here) {
             act(CtxAction::TeleportToAvatar(id));
         }
     };
     let zoom = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "magnifying-glass-plus", aurora_i18n::tr!("common-zoom-2"), here) {
+        if menu::item_if(ui, p, "zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), here) {
             act(CtxAction::ZoomAvatar(id));
         }
     };
     let block = |ui: &mut egui::Ui| {
-        if menu::check(ui, p, "prohibit", aurora_i18n::tr!("common-ignore"), blocked, true) {
+        if menu::check(ui, p, "forbid-filled", aurora_i18n::tr!("common-ignore"), blocked, true) {
             act(CtxAction::ToggleBlock(id));
         }
     };
     let copy = |ui: &mut egui::Ui| {
-        if menu::item(ui, p, "copy", aurora_i18n::tr!("common-copy-name")) {
+        if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("common-copy-name")) {
             ui.ctx().copy_text(name.clone());
         }
-        if menu::item(ui, p, "link", aurora_i18n::tr!("common-copy-url")) {
+        if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-url")) {
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
         }
         if menu::item(ui, p, "at", aurora_i18n::tr!("common-copy-mention-uri")) {
@@ -385,7 +385,7 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
         }
     };
     let request_tp = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "airplane-landing", aurora_i18n::tr!("common-request-teleport"), online) {
+        if menu::item_if(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport"), online) {
             act(CtxAction::RequestTeleport(id));
         }
     };
@@ -396,44 +396,34 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
             offer_tp(ui);
             request_tp(ui);
             tp_to(ui);
-            menu::todo(ui, p, "phone", aurora_i18n::tr!("common-voice-call"));
+            menu::todo(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"));
             menu::separator(ui, p);
-            menu::todo(
-                ui,
-                p,
-                "clock-counter-clockwise",
-                aurora_i18n::tr!("common-view-conversation-history"),
-            );
+            menu::todo(ui, p, "history", aurora_i18n::tr!("common-view-conversation-history"));
             menu::separator(ui, p);
             add_friend(ui);
             remove_friend(ui);
-            menu::todo(ui, p, "users-three", aurora_i18n::tr!("ui-context-add-to-contact-set"));
-            menu::todo(ui, p, "user-circle-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
+            menu::todo(ui, p, "users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+            menu::todo(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
             menu::separator(ui, p);
             zoom(ui);
-            if menu::item_if(ui, p, "map-trifold", aurora_i18n::tr!("common-show-on-map-2"), here) {
+            if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map-2"), here) {
                 act(CtxAction::ShowOnMap(id));
             }
-            menu::todo(ui, p, "share-network", aurora_i18n::tr!("common-share"));
-            menu::todo(ui, p, "currency-circle-dollar", aurora_i18n::tr!("common-pay"));
+            menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
+            menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"));
             block(ui);
         }
         AvatarList::Friend => {
             profile(ui);
             im(ui);
-            menu::todo(
-                ui,
-                p,
-                "clock-counter-clockwise",
-                aurora_i18n::tr!("common-view-conversation-history"),
-            );
-            menu::todo(ui, p, "users-three", aurora_i18n::tr!("common-add-to-contact-set"));
+            menu::todo(ui, p, "history", aurora_i18n::tr!("common-view-conversation-history"));
+            menu::todo(ui, p, "users-group", aurora_i18n::tr!("common-add-to-contact-set"));
             zoom(ui);
             tp_to(ui);
             offer_tp(ui);
             request_tp(ui);
-            menu::todo(ui, p, "currency-circle-dollar", aurora_i18n::tr!("common-pay"));
-            menu::todo(ui, p, "crosshair", aurora_i18n::tr!("common-follow"));
+            menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"));
+            menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("common-follow"));
             remove_friend(ui);
             menu::separator(ui, p);
             copy(ui);
@@ -444,7 +434,7 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
                 if menu::check(
                     ui,
                     p,
-                    "eye",
+                    "eye-filled",
                     aurora_i18n::tr!("common-online-status-visible-to-this-friend"),
                     on,
                     true,
@@ -459,22 +449,17 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
         AvatarList::Name => {
             profile(ui);
             im(ui);
-            menu::todo(
-                ui,
-                p,
-                "clock-counter-clockwise",
-                aurora_i18n::tr!("common-view-conversation-history"),
-            );
+            menu::todo(ui, p, "history", aurora_i18n::tr!("common-view-conversation-history"));
             add_friend(ui);
-            menu::todo(ui, p, "users-three", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+            menu::todo(ui, p, "users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
             zoom(ui);
             tp_to(ui);
             offer_tp(ui);
             request_tp(ui);
-            menu::todo(ui, p, "crosshair", aurora_i18n::tr!("ui-context-follow-resident"));
+            menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("ui-context-follow-resident"));
             remove_friend(ui);
             menu::separator(ui, p);
-            menu::todo(ui, p, "flag", aurora_i18n::tr!("ui-context-report-abuse"));
+            menu::todo(ui, p, "flag-filled", aurora_i18n::tr!("ui-context-report-abuse"));
             block(ui);
             menu::separator(ui, p);
             copy(ui);
@@ -487,38 +472,37 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
 pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     let ctx = ui.ctx().clone();
     let act = |a: CtxAction| request(&ctx, a);
-    if menu::item_if(ui, p, "check-circle", aurora_i18n::tr!("common-enable"), world.groups.active != id) {
+    if menu::item_if(
+        ui,
+        p,
+        "circle-check-filled",
+        aurora_i18n::tr!("common-enable"),
+        world.groups.active != id,
+    ) {
         act(CtxAction::ActivateGroup(id));
     }
-    menu::todo(ui, p, "info", aurora_i18n::tr!("common-view-info"));
-    if menu::item(ui, p, "link", aurora_i18n::tr!("common-copy-slurl-2")) {
+    menu::todo(ui, p, "info-circle-filled", aurora_i18n::tr!("common-view-info"));
+    if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl-2")) {
         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
     }
-    if menu::item(ui, p, "chat-text", aurora_i18n::tr!("common-chat")) {
+    if menu::item(ui, p, "message-filled", aurora_i18n::tr!("common-chat")) {
         act(CtxAction::GroupChat(id));
     }
-    menu::todo(ui, p, "phone", aurora_i18n::tr!("common-voice-call"));
+    menu::todo(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"));
     let pin = if world.groups.favorites.contains(&id) {
         aurora_i18n::tr!("common-unpin-group")
     } else {
         aurora_i18n::tr!("common-pin-group")
     };
-    if menu::item(ui, p, "push-pin", pin) {
+    if menu::item(ui, p, "pin-filled", pin) {
         act(CtxAction::PinGroup(id));
     }
     let blocked = world.mutes.group_chat_muted(&id);
-    if menu::check(
-        ui,
-        p,
-        "chat-teardrop-slash",
-        aurora_i18n::tr!("ui-context-block-group-chat"),
-        blocked,
-        true,
-    ) {
+    if menu::check(ui, p, "message-off", aurora_i18n::tr!("ui-context-block-group-chat"), blocked, true) {
         act(CtxAction::GroupChatBlocked(id, !blocked));
     }
     menu::separator(ui, p);
-    if menu::item(ui, p, "sign-out", aurora_i18n::tr!("common-quit")) {
+    if menu::item(ui, p, "logout", aurora_i18n::tr!("common-quit")) {
         act(CtxAction::LeaveGroup(id));
     }
 }
@@ -571,7 +555,8 @@ pub fn delete_warning(flags: &[u32]) -> Option<String> {
 
 /// The delete confirmation; Some(true) to delete, Some(false) to cancel.
 pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bool> {
-    use egui::{Color32, CornerRadius, RichText};
+    use crate::ui::widgets::{ActionKind, action_button};
+    use egui::RichText;
     let mut answer = None;
     let modal = crate::ui::widgets::Modal::new(egui::Id::new("object_delete_confirm")).show(ctx, |ui| {
         ui.set_width(340.0);
@@ -585,15 +570,12 @@ pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bo
         ui.label(RichText::new(text).size(12.5).color(p.muted));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let yes = ui.add(
-                egui::Button::new(RichText::new(aurora_i18n::tr!("common-delete")).color(Color32::WHITE))
-                    .fill(p.danger)
-                    .corner_radius(CornerRadius::same(2)),
-            );
-            if yes.clicked() {
+            let size = egui::Vec2::new(0.0, 26.0);
+            let delete = aurora_i18n::tr!("common-delete");
+            if action_button(ui, p, "trash-filled", delete, ActionKind::Danger, size).clicked() {
                 answer = Some(true);
             }
-            if super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
                 answer = Some(false);
             }
         });
@@ -653,8 +635,12 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
     let modal = crate::ui::widgets::Modal::new(egui::Id::new("external_link_confirm")).show(ctx, |ui| {
         ui.set_width(380.0);
         let (icon, col, title) = match danger {
-            Some(_) => ("x-circle-fill", p.danger, aurora_i18n::tr!("ui-context-dangerous-link")),
-            None => ("warning-fill", p.amber, aurora_i18n::tr!("ui-context-think-before-clicking")),
+            Some(_) => ("circle-x-filled", p.danger, aurora_i18n::tr!("ui-context-dangerous-link")),
+            None => (
+                "alert-triangle-filled",
+                p.amber,
+                aurora_i18n::tr!("ui-context-think-before-clicking"),
+            ),
         };
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
@@ -686,7 +672,9 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
         );
         ui.add_space(8.0);
         if danger.is_none() {
-            ui.checkbox(
+            super::widgets::checkbox(
+                ui,
+                p,
                 dont_warn,
                 RichText::new(aurora_i18n::tr!("ui-context-do-not-warn-me-again"))
                     .size(12.5)

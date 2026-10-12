@@ -11,12 +11,12 @@ use glam::Vec3;
 
 fn sections() -> [(usize, &'static str, &'static str); 6] {
     [
-        (1, "arrows-out-cardinal", aurora_i18n::tr!("build-compact-transform")),
-        (5, "cube", aurora_i18n::tr!("build-compact-shape")),
-        (3, "paint-brush", aurora_i18n::tr!("build-compact-materials")),
-        (2, "sliders", aurora_i18n::tr!("build-compact-features")),
-        (0, "lock-key", aurora_i18n::tr!("build-compact-rights")),
-        (4, "folder", aurora_i18n::tr!("build-compact-contents")),
+        (1, "arrows-move", aurora_i18n::tr!("build-compact-transform")),
+        (5, "box", aurora_i18n::tr!("build-compact-shape")),
+        (3, "paint-filled", aurora_i18n::tr!("build-compact-materials")),
+        (2, "adjustments-filled", aurora_i18n::tr!("build-compact-features")),
+        (0, "lock-filled", aurora_i18n::tr!("build-compact-rights")),
+        (4, "folder-filled", aurora_i18n::tr!("build-compact-contents")),
     ]
 }
 
@@ -152,12 +152,12 @@ pub(super) fn manipulation(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool,
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             for (mode, icon, title) in [
-                (EditMode::Move, "arrows-out-cardinal", aurora_i18n::tr!("build-compact-move")),
-                (EditMode::Rotate, "arrows-clockwise", aurora_i18n::tr!("build-compact-rotate")),
-                (EditMode::Stretch, "arrows-out", aurora_i18n::tr!("build-compact-stretch")),
+                (EditMode::Move, "arrows-move", aurora_i18n::tr!("build-compact-move")),
+                (EditMode::Rotate, "rotate-clockwise", aurora_i18n::tr!("build-compact-rotate")),
+                (EditMode::Stretch, "arrows-maximize", aurora_i18n::tr!("build-compact-stretch")),
                 (
                     EditMode::Align,
-                    "align-center-horizontal-simple",
+                    "layout-align-center-filled",
                     aurora_i18n::tr!("build-compact-align"),
                 ),
             ] {
@@ -180,7 +180,7 @@ pub(super) fn manipulation(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool,
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icon_button(ui, p, "grid-four", aurora_i18n::tr!("build-compact-grid-options"), true).clicked() {
+                if icon_button(ui, p, "grid-pattern-filled", aurora_i18n::tr!("build-compact-grid-options"), true).clicked() {
                     tool.ui.grid_options_open = !tool.ui.grid_options_open;
                 }
                 let items = [
@@ -205,7 +205,7 @@ fn transform_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, s: &m
     ui.add_space(4.0);
     ui.spacing_mut().interact_size.y = 20.0;
     ui.horizontal(|ui| {
-        if let Some(v) = common::check(ui, s.snap, false, aurora_i18n::tr!("build-compact-snap"), true) {
+        if let Some(v) = common::check(ui, p, s.snap, false, aurora_i18n::tr!("build-compact-snap"), true) {
             s.snap = v;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -219,22 +219,21 @@ fn transform_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, s: &m
             }
         });
     });
-    egui::CollapsingHeader::new(RichText::new(aurora_i18n::tr!("build-compact-options")).size(11.0).color(p.muted))
-        .id_salt("compact_manipulation")
-        .show(ui, |ui| {
-            for (value, title) in [
-                (&mut s.scale_uniform, aurora_i18n::tr!("build-compact-both-sides")),
-                (&mut s.scale_stretch_textures, aurora_i18n::tr!("build-compact-stretch-textures")),
-                (&mut s.actual_root, aurora_i18n::tr!("build-compact-root-axis")),
-                (&mut s.show_highlight, aurora_i18n::tr!("build-compact-highlight")),
-                (&mut s.select_probes, aurora_i18n::tr!("build-compact-probes")),
-                (&mut s.follow_edit_object, aurora_i18n::tr!("build-ui-tools-follow-edit-object")),
-            ] {
-                if let Some(v) = common::check(ui, *value, false, title, true) {
-                    *value = v;
-                }
+    let options = aurora_i18n::tr!("build-compact-options");
+    crate::ui::widgets::collapsing(ui, p, "compact_manipulation", options, false, |ui| {
+        for (value, title) in [
+            (&mut s.scale_uniform, aurora_i18n::tr!("build-compact-both-sides")),
+            (&mut s.scale_stretch_textures, aurora_i18n::tr!("build-compact-stretch-textures")),
+            (&mut s.actual_root, aurora_i18n::tr!("build-compact-root-axis")),
+            (&mut s.show_highlight, aurora_i18n::tr!("build-compact-highlight")),
+            (&mut s.select_probes, aurora_i18n::tr!("build-compact-probes")),
+            (&mut s.follow_edit_object, aurora_i18n::tr!("build-ui-tools-follow-edit-object")),
+        ] {
+            if let Some(v) = common::check(ui, p, *value, false, title, true) {
+                *value = v;
             }
-        });
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -330,8 +329,8 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
             let selected = !tool.selection.is_empty();
             if tool.tool == Tool::Edit && (s.edit_linked || tool.edit_mode == EditMode::Face) {
                 for (forward, icon, title) in [
-                    (false, "caret-left", aurora_i18n::tr!("build-compact-previous")),
-                    (true, "caret-right", aurora_i18n::tr!("build-compact-next")),
+                    (false, "caret-left-filled", aurora_i18n::tr!("build-compact-previous")),
+                    (true, "caret-right-filled", aurora_i18n::tr!("build-compact-next")),
                 ] {
                     if icon_button(ui, p, icon, title, selected).clicked() {
                         tool.select_next_part(world, s, forward, mods.shift);
@@ -341,7 +340,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
             if icon_button(
                 ui,
                 p,
-                "arrow-counter-clockwise",
+                "arrow-back-up",
                 aurora_i18n::tr!("build-compact-undo"),
                 selected || tool.tool == Tool::Land,
             )
@@ -360,7 +359,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
             if icon_button(
                 ui,
                 p,
-                "arrow-clockwise",
+                "arrow-forward-up",
                 aurora_i18n::tr!("build-compact-redo"),
                 selected && tool.tool != Tool::Land,
             )
@@ -373,7 +372,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
             ui.painter().vline(line.center().x, line.y_range(), Stroke::new(1.0, p.raised));
             ui.add_space(3.0);
             let label = RichText::new(aurora_i18n::tr!("build-compact-duplicate")).size(10.0);
-            let button = if let Some(icon) = icons::global("copy") {
+            let button = if let Some(icon) = icons::global("copy-filled") {
                 egui::Button::image_and_text(egui::Image::new((icon.id(), Vec2::splat(12.0))).tint(p.ink), label)
             } else {
                 egui::Button::new(label)
@@ -384,7 +383,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
                     button
                         .fill(p.field)
                         .stroke(Stroke::new(1.0, p.raised))
-                        .corner_radius(3)
+                        .corner_radius(ui.visuals().window_corner_radius)
                         .min_size(Vec2::new(0.0, 24.0)),
                 )
                 .on_hover_text("Ctrl+D")
@@ -406,7 +405,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
             if icon_button(
                 ui,
                 p,
-                "link-break",
+                "unlink",
                 aurora_i18n::tr!("build-compact-unlink"),
                 !tool.hud_selected(world) && selected,
             )
@@ -414,7 +413,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
             {
                 tool.unlink(world);
             }
-            let icon = if s.expanded { "caret-up" } else { "caret-down" };
+            let icon = if s.expanded { "caret-up-filled" } else { "caret-down-filled" };
             if icon_button(ui, p, icon, aurora_i18n::tr!("build-compact-collapse"), true).clicked() {
                 s.expanded = !s.expanded;
             }
@@ -439,7 +438,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         // Firestorm's floater_tools.xml exposes linked editing above its tabs.
         if tool.tool == Tool::Edit {
             ui.add_space(6.0);
-            if let Some(v) = common::check(ui, s.edit_linked, false, aurora_i18n::tr!("build-compact-linked"), true) {
+            if let Some(v) = common::check(ui, p, s.edit_linked, false, aurora_i18n::tr!("build-compact-linked"), true) {
                 tool.set_edit_linked(world, s, v);
             }
         }

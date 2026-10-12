@@ -54,7 +54,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         }
         // the combo's drop-down: the parcel's URL, then the saved streams
         ui.add_enabled_ui(can_media, |ui| {
-            let img = super::super::icons::global("caret-down")
+            let img = super::super::icons::global("caret-down-filled")
                 .map(|t| egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), egui::Vec2::splat(14.0))).tint(p.muted));
             let button = match img {
                 Some(img) => egui::Button::image(img),
@@ -96,7 +96,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             streams.retain(|x| *x != current && !(!x.contains("://") && *x == no_http));
             streams_changed |= streams.len() != before;
         }
-        if super::icon_button(ui, p, "copy", true)
+        if super::icon_button(ui, p, "copy-filled", true)
             .on_hover_text(aurora_i18n::tr!("ui-land-sound-copy-music-stream-url-to-clipboard"))
             .clicked()
             && !current.is_empty()
@@ -112,6 +112,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     super::row(ui, p, aurora_i18n::tr!("ui-land-sound-sound"), |ui| {
         let (_, on) = check(
             ui,
+            p,
             can_media,
             flags & pf::SOUND_LOCAL != 0,
             aurora_i18n::tr!("ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel"),
@@ -121,23 +122,24 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     super::row(ui, p, aurora_i18n::tr!("ui-land-sound-avatar-sounds"), |ui| {
         let can_av = v.can(powers::LAND_OPTIONS) && parcel.have_new_parcel_limit_data;
         super::fixed(ui, 130.0, |ui| {
-            let (_, on) = check(ui, can_av, any_av, aurora_i18n::tr!("common-everyone"));
+            let (_, on) = check(ui, p, can_av, any_av, aurora_i18n::tr!("common-everyone"));
             any_av = on;
         });
         // on (and greyed) while "everyone" is
-        let (_, on) = check(ui, can_av && !parcel.any_av_sounds, group_av, aurora_i18n::tr!("common-group"));
+        let (_, on) = check(ui, p, can_av && !parcel.any_av_sounds, group_av, aurora_i18n::tr!("common-group"));
         group_av = on;
     });
     let voice_region = v.region_flag(rf::ALLOW_VOICE);
     let allow_voice = flags & pf::ALLOW_VOICE_CHAT != 0;
     super::row(ui, p, aurora_i18n::tr!("ui-land-sound-voice"), |ui| {
         if voice_region {
-            let (_, on) = check(ui, can_media, allow_voice, aurora_i18n::tr!("ui-land-sound-enable-voice-chat"));
+            let (_, on) = check(ui, p, can_media, allow_voice, aurora_i18n::tr!("ui-land-sound-enable-voice-chat"));
             flags = set(flags, pf::ALLOW_VOICE_CHAT, on);
         } else {
             // voice off for the estate: a disabled box says so
             check(
                 ui,
+                p,
                 false,
                 false,
                 aurora_i18n::tr!("ui-land-sound-enable-voice-controlled-by-estate"),
@@ -148,6 +150,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         ui.add_space(super::KEY_W);
         let (_, on) = check(
             ui,
+            p,
             voice_region && can_media && allow_voice,
             parcel.flags & pf::USE_ESTATE_VOICE_CHAN == 0,
             aurora_i18n::tr!("ui-land-sound-restrict-voice-chat-to-this-parcel"),
@@ -155,7 +158,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         flags = set(flags, pf::USE_ESTATE_VOICE_CHAN, !on);
     });
     super::row(ui, p, aurora_i18n::tr!("ui-land-sound-media"), |ui| {
-        let (r, on) = check(ui, can_media, obscure, aurora_i18n::tr!("ui-land-sound-hide-moap"));
+        let (r, on) = check(ui, p, can_media, obscure, aurora_i18n::tr!("ui-land-sound-hide-moap"));
         r.on_hover_text(aurora_i18n::tr!("ui-land-sound-media-on-prims-outside-a-parcel-must-not-auto"));
         obscure = on;
     });

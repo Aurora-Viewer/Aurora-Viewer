@@ -132,7 +132,7 @@ The texture memory budget is set automatically from the detected VRAM.
   world sounds, parcel music, media on prims.
 - **Social** — local chat, IMs and groups, people list, blocking,
   notifications, voice (WebRTC).
-- **Interface** — flat Aurora theme, Phosphor icons, mini-map and world map,
+- **Interface** — flat Aurora theme, Tabler icons, mini-map and world map,
   inventory, preferences, debug overlays.
 - **Windows updates** — release checks, cancellable verified downloads,
   installation and restart with rollback. The prompt explains whether cache

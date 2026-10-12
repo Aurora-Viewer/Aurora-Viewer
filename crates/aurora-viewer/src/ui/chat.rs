@@ -95,14 +95,14 @@ fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(Str
 fn link_badge_look(p: &Palette, url: &str) -> (&'static str, Color32, String) {
     use crate::link_trust::Trust;
     match crate::link_trust::classify(url) {
-        Trust::Trusted => ("check-circle-fill", p.success, aurora_i18n::tr!("ui-chat-trusted-site").into()),
+        Trust::Trusted => ("circle-check-filled", p.success, aurora_i18n::tr!("ui-chat-trusted-site").into()),
         Trust::Unknown => (
-            "warning-fill",
+            "alert-triangle-filled",
             p.amber,
             aurora_i18n::tr!("ui-chat-external-link-check-the-address-before-opening-it").into(),
         ),
         Trust::Dangerous(why) => (
-            "x-circle-fill",
+            "circle-x-filled",
             p.danger,
             aurora_i18n::tr!("ui-chat-dangerous-link", why = why.to_string()),
         ),
@@ -272,8 +272,9 @@ pub enum ConvAction {
     OpenContacts,
     /// Block / unblock the avatar of a 1:1 conversation.
     ToggleBlock(uuid::Uuid),
-    /// Leave a group / conference session.
-    LeaveSession(uuid::Uuid),
+    /// Close a conversation (the X of its tab in FSFloaterIMContainer): a
+    /// group / conference session is left, a 1:1 conversation leaves the list.
+    Close(uuid::Uuid),
     /// Stop receiving a group's chat (and leave its session).
     BlockGroupChat(uuid::Uuid),
     /// Open an avatar's profile window.
@@ -316,7 +317,7 @@ fn avatar_pic(ui: &mut egui::Ui, p: &Palette, pic: Option<&egui::TextureHandle>,
     }
 }
 
-/// Phosphor icon button of the conversation toolbar.
+/// Tabler icon button of the conversation toolbar.
 fn tool(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: &str, tip: &str, enabled: bool, active: bool) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::click());
     if active {
@@ -411,7 +412,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
     super::menu::context_menu(r, p, |ui| {
         let l = &place.location;
         let teleport = |ui: &mut egui::Ui| {
-            if super::menu::item(ui, p, "navigation-arrow", aurora_i18n::tr!("ui-chat-teleport-to-this-location")) {
+            if super::menu::item(ui, p, "location-filled", aurora_i18n::tr!("ui-chat-teleport-to-this-location")) {
                 super::context::request(ui.ctx(), CtxAction::TeleportToPlace(l.region.clone(), l.pos));
             }
         };
@@ -421,7 +422,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
             aurora_i18n::tr!("common-show-on-map-2")
         };
         let map = |ui: &mut egui::Ui| {
-            if super::menu::item(ui, p, "map-trifold", map_label) {
+            if super::menu::item(ui, p, "map", map_label) {
                 super::context::request(ui.ctx(), CtxAction::ShowPlace(l.region.clone(), l.pos));
             }
         };
@@ -430,7 +431,12 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
             super::menu::separator(ui, p);
             map(ui);
         } else {
-            if super::menu::item(ui, p, "info", aurora_i18n::tr!("ui-chat-show-information-about-this-place")) {
+            if super::menu::item(
+                ui,
+                p,
+                "info-circle-filled",
+                aurora_i18n::tr!("ui-chat-show-information-about-this-place"),
+            ) {
                 super::context::request(ui.ctx(), CtxAction::ShowPlaceInfo(l.region.clone(), l.pos));
             }
             super::menu::separator(ui, p);
@@ -438,7 +444,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
             teleport(ui);
         }
         super::menu::separator(ui, p);
-        if super::menu::item(ui, p, "link", aurora_i18n::tr!("common-copy-slurl")) {
+        if super::menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl")) {
             ui.ctx().copy_text(url.to_owned());
         }
     });
@@ -662,14 +668,14 @@ fn conversation(
             let username = cached.and_then(|n| n.chat_username(&names.options));
             egui::Frame::new()
                 .fill(p.raised.gamma_multiply(0.55))
-                .corner_radius(egui::CornerRadius::same(2))
+                .corner_radius(ui.visuals().window_corner_radius)
                 .inner_margin(egui::Margin::symmetric(4, 3))
                 .show(ui, |ui| {
                     ui.set_width(w - 8.0);
                     ui.horizontal(|ui| {
                         if object {
                             let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-                            if let Some(t) = icons.get("cube") {
+                            if let Some(t) = icons.get("box") {
                                 ui.painter().image(
                                     t.id(),
                                     rect.shrink(2.0),
@@ -747,12 +753,47 @@ fn conversation(
 const LIST_W: f32 = 170.0;
 const ENTRY_W: f32 = 166.0;
 const UNREAD_DOT_R: f32 = 4.0;
+/// Side of the slot every list entry has at its right edge, for its unread
+/// dot or its close button: both are centered in it, on one vertical line
+/// down the list.
+const SLOT_SIDE: f32 = 18.0;
+
+/// What the user did with an entry of the conversation list.
+struct ListEntry {
+    resp: egui::Response,
+    /// Its close button was clicked.
+    close: bool,
+}
+
+/// The slot at the right of an entry: its unread dot, replaced on an entry
+/// that can be closed by the close button when it is selected or under the
+/// pointer (a selected conversation is read: it has no dot to show).
+fn trailing_slot(entry: egui::Rect) -> egui::Rect {
+    let center = egui::pos2(entry.right() - 6.0 - SLOT_SIDE * 0.5, entry.center().y);
+    egui::Rect::from_center_size(center, egui::Vec2::splat(SLOT_SIDE))
+}
+
+/// Tooltip of the close buttons of a conversation: closing a group or
+/// conference session leaves it (LLIMMgr::leaveSession), which is worth
+/// saying before the click.
+fn close_tip(world: &World, session: &uuid::Uuid) -> &'static str {
+    if world.is_group_session(session) {
+        aurora_i18n::tr!("ui-chat-close-conversation-leave")
+    } else {
+        aurora_i18n::tr!("ui-chat-close-conversation")
+    }
+}
 
 /// One entry of the conversation list: picture (or initials), name, unread
 /// dot. The name is cut with an ellipsis before the dot and the edge of the
 /// entry, as the tab labels of Firestorm's conversations window are
 /// (use_ellipses="true" in floater_fs_im_container.xml), and the whole name
 /// shows on hover when it was cut (LLTabContainer::addLabelToolTip).
+///
+/// `close` is the tooltip of the close button of an entry that can be closed
+/// (the X of a tab of FSFloaterIMContainer; the nearby chat has none): the
+/// button shows on the selected entry and under the pointer, in a slot the
+/// name never enters, so nothing moves when it appears.
 fn list_entry(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -760,11 +801,15 @@ fn list_entry(
     pic: Option<(Option<&egui::TextureHandle>, &str)>,
     sel: bool,
     unread: usize,
-) -> egui::Response {
+    close: Option<&str>,
+) -> ListEntry {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ENTRY_W, 34.0), egui::Sense::click());
+    // the close button stands over the entry and takes its hover: the entry
+    // keeps its hovered face while the pointer is on the button
+    let over = resp.hovered() || (close.is_some() && ui.rect_contains_pointer(rect));
     let fill = if sel {
         p.violet.gamma_multiply(0.22)
-    } else if resp.hovered() {
+    } else if over {
         p.field.gamma_multiply(1.4)
     } else {
         p.field
@@ -799,9 +844,14 @@ fn list_entry(
         }
         x += 22.0;
     }
-    let dot = rect.right_center() - egui::vec2(10.0, 0.0);
-    // the name stops before the unread dot, else before the entry's edge
-    let text_right = if unread > 0 {
+    let slot = trailing_slot(rect);
+    let dot = slot.center();
+    // the name stops before the slot of an entry that can be closed (its
+    // button comes and goes with the pointer), before the unread dot of
+    // another, else before the entry's edge
+    let text_right = if close.is_some() {
+        slot.left() - 4.0
+    } else if unread > 0 {
         dot.x - UNREAD_DOT_R - 4.0
     } else {
         rect.right() - 6.0
@@ -814,10 +864,35 @@ fn list_entry(
         egui::FontId::proportional(12.0),
         if sel { p.ink } else { p.muted },
     );
-    if unread > 0 {
-        ui.painter().circle_filled(dot, UNREAD_DOT_R, p.violet);
+    let mut closed = false;
+    match close {
+        Some(tip) if sel || over => {
+            let button = ui.interact(slot, resp.id.with("close"), egui::Sense::click());
+            button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+            if button.hovered() {
+                ui.painter()
+                    .rect_filled(slot, ui.visuals().widgets.inactive.corner_radius, p.raised);
+            }
+            if let Some(t) = super::icons::global("x") {
+                ui.painter().image(
+                    t.id(),
+                    egui::Rect::from_center_size(slot.center(), egui::Vec2::splat(12.0)),
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    // the color of the entry's name, lit under the pointer
+                    if sel || button.hovered() { p.ink } else { p.muted },
+                );
+            }
+            closed = button.on_hover_text(tip).clicked();
+        }
+        _ if unread > 0 => {
+            ui.painter().circle_filled(dot, UNREAD_DOT_R, p.violet);
+        }
+        _ => {}
     }
-    if cut { resp.on_hover_text(label) } else { resp }
+    ListEntry {
+        resp: if cut { resp.on_hover_text(label) } else { resp },
+        close: closed,
+    }
 }
 
 /// Conversations floater (FSFloaterIMContainer): the tabs on the left
@@ -863,7 +938,7 @@ pub fn show(
     );
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
-        floater = floater.action("arrow-square-out", aurora_i18n::tr!("common-detach"), &mut tear_off);
+        floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
     }
     floater.show(ctx, p, open, |ui| {
         let h = (ui.available_height() - 6.0).max(140.0);
@@ -875,7 +950,10 @@ pub fn show(
                 // Contacts first (addFloater at START); once torn off the
                 // entry brings its own window up (Firestorm has the toolbar
                 // button for that)
-                if list_entry(ui, p, aurora_i18n::tr!("common-contacts"), None, st.contacts, 0).clicked() {
+                if list_entry(ui, p, aurora_i18n::tr!("common-contacts"), None, st.contacts, 0, None)
+                    .resp
+                    .clicked()
+                {
                     if docked {
                         st.contacts = true;
                     } else {
@@ -890,7 +968,9 @@ pub fn show(
                     None,
                     local_shown,
                     if local_shown { 0 } else { world.chat_unread },
+                    None,
                 )
+                .resp
                 .clicked()
                 {
                     st.selected = None;
@@ -903,16 +983,18 @@ pub fn show(
                     if !world.is_group_session(&other) {
                         st.wanted_pics.insert(other);
                     }
-                    if list_entry(
+                    let entry = list_entry(
                         ui,
                         p,
                         &name,
                         Some((pics.get(&other), &name)),
                         st.selected == Some(other) && !st.contacts,
                         unread,
-                    )
-                    .clicked()
-                    {
+                        Some(close_tip(world, &other)),
+                    );
+                    if entry.close {
+                        actions.push(ConvAction::Close(other));
+                    } else if entry.resp.clicked() {
                         st.selected = Some(other);
                         st.show_profile = false;
                         st.contacts = false;
@@ -936,13 +1018,13 @@ pub fn show(
                     ui.spacing_mut().item_spacing.x = 2.0;
                     match st.selected {
                         Some(other) if world.is_group_session(&other) => {
-                            // group / conference: participants, block the group's chat, leave
+                            // group / conference: participants, block the group's chat
                             let n = world.groups.sessions.get(&other).map(|s| s.participants.len()).unwrap_or(0);
                             if tool(
                                 ui,
                                 p,
                                 icons,
-                                "users-three",
+                                "users-group",
                                 &aurora_i18n::tr!("ui-chat-participants", n = format!("{}", n)),
                                 true,
                                 st.show_profile,
@@ -954,7 +1036,7 @@ pub fn show(
                                     ui,
                                     p,
                                     icons,
-                                    "chat-teardrop-slash",
+                                    "message-off",
                                     aurora_i18n::tr!("common-stop-receiving-this-group-s-chat"),
                                     true,
                                     false,
@@ -962,12 +1044,9 @@ pub fn show(
                             {
                                 actions.push(ConvAction::BlockGroupChat(other));
                             }
-                            if tool(ui, p, icons, "sign-out", aurora_i18n::tr!("ui-chat-leave-session"), true, false) {
-                                actions.push(ConvAction::LeaveSession(other));
-                            }
                         }
                         Some(other) => {
-                            if tool(ui, p, icons, "user-circle", aurora_i18n::tr!("common-profile"), true, false) {
+                            if tool(ui, p, icons, "user-filled", aurora_i18n::tr!("common-profile"), true, false) {
                                 actions.push(ConvAction::Profile(other));
                             }
                             tool(
@@ -979,22 +1058,14 @@ pub fn show(
                                 false,
                                 false,
                             );
-                            if tool(
-                                ui,
-                                p,
-                                icons,
-                                "airplane-takeoff",
-                                aurora_i18n::tr!("common-offer-teleport"),
-                                true,
-                                false,
-                            ) {
+                            if tool(ui, p, icons, "send-filled", aurora_i18n::tr!("common-offer-teleport"), true, false) {
                                 actions.push(ConvAction::OfferTeleport(other));
                             }
                             tool(
                                 ui,
                                 p,
                                 icons,
-                                "gift",
+                                "gift-filled",
                                 aurora_i18n::tr!("ui-chat-give-object-coming-soon"),
                                 false,
                                 false,
@@ -1003,7 +1074,7 @@ pub fn show(
                                 ui,
                                 p,
                                 icons,
-                                "currency-circle-dollar",
+                                "coin-filled",
                                 aurora_i18n::tr!("ui-chat-pay-coming-soon"),
                                 false,
                                 false,
@@ -1012,7 +1083,7 @@ pub fn show(
                                 ui,
                                 p,
                                 icons,
-                                "phone",
+                                "phone-filled",
                                 aurora_i18n::tr!("ui-chat-voice-call-coming-soon"),
                                 false,
                                 false,
@@ -1023,7 +1094,7 @@ pub fn show(
                             } else {
                                 aurora_i18n::tr!("common-block")
                             };
-                            if tool(ui, p, icons, "prohibit", tip, true, blocked) {
+                            if tool(ui, p, icons, "forbid-filled", tip, true, blocked) {
                                 actions.push(ConvAction::ToggleBlock(other));
                             }
                         }
@@ -1038,7 +1109,7 @@ pub fn show(
                         ui,
                         p,
                         icons,
-                        "magnifying-glass",
+                        "search-filled",
                         aurora_i18n::tr!("ui-chat-search-conversation"),
                         true,
                         searching,
@@ -1052,6 +1123,16 @@ pub fn show(
                                 .desired_width(160.0),
                         );
                     }
+                    // the conversation's own close button, at the end of its
+                    // toolbar like the X of a title bar (the nearby chat
+                    // cannot be closed, as in Firestorm)
+                    if let Some(other) = st.selected {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if tool(ui, p, icons, "x", close_tip(world, &other), true, false) {
+                                actions.push(ConvAction::Close(other));
+                            }
+                        });
+                    }
                 });
                 ui.add_space(2.0);
                 // profile card
@@ -1059,7 +1140,7 @@ pub fn show(
                     // participants of a group / conference session
                     egui::Frame::new()
                         .fill(p.field)
-                        .corner_radius(egui::CornerRadius::same(2))
+                        .corner_radius(ui.visuals().window_corner_radius)
                         .inner_margin(egui::Margin::same(6))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
@@ -1110,7 +1191,7 @@ pub fn show(
                 };
                 egui::Frame::new()
                     .fill(p.field)
-                    .corner_radius(egui::CornerRadius::same(1))
+                    .corner_radius(ui.visuals().window_corner_radius)
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         egui::ScrollArea::vertical()
@@ -1178,7 +1259,7 @@ pub fn show(
                                 .hint_text(hint)
                                 .desired_width(field_w),
                         );
-                        let b = tool_resp(ui, p, icons, "smiley", st.emoji_open);
+                        let b = tool_resp(ui, p, icons, "mood-smile-filled", st.emoji_open);
                         emoji_btn = Some(b.rect);
                         if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
                             st.emoji_open = !st.emoji_open;
@@ -1195,18 +1276,13 @@ pub fn show(
                         .pivot(egui::Align2::RIGHT_BOTTOM)
                         .fixed_pos(anchor - egui::vec2(0.0, 4.0))
                         .show(ui.ctx(), |ui| {
-                            egui::Frame::new()
-                                .fill(p.panel)
-                                .stroke(egui::Stroke::new(1.0, p.raised))
-                                .corner_radius(egui::CornerRadius::same(3))
-                                .inner_margin(egui::Margin::same(6))
-                                .show(ui, |ui| {
-                                    ui.set_width(300.0);
-                                    if let Some(c) = emoji.picker(ui, p, icons) {
-                                        st.conv_input.push(c);
-                                        close = !ui.input(|i| i.modifiers.shift);
-                                    }
-                                });
+                            super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
+                                ui.set_width(300.0);
+                                if let Some(c) = emoji.picker(ui, p, icons) {
+                                    st.conv_input.push(c);
+                                    close = !ui.input(|i| i.modifiers.shift);
+                                }
+                            });
                         });
                     if close {
                         st.emoji_open = false;
@@ -1277,7 +1353,7 @@ fn bubble_sender(
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     match who {
         Sender::Object => {
-            if let Some(t) = super::icons::global("cube") {
+            if let Some(t) = super::icons::global("box") {
                 painter.image(t.id(), r.shrink(1.0), uv, super::colors::sender_color(line).gamma_multiply(alpha));
             }
         }
@@ -1341,16 +1417,16 @@ pub fn toasts(
             for line in recent.into_iter().rev() {
                 let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
                 let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
-                egui::Frame::new()
-                    .fill(Color32::from_rgba_unmultiplied(
-                        p.bar.r(),
-                        p.bar.g(),
-                        p.bar.b(),
-                        (190.0 * alpha) as u8,
-                    ))
-                    .corner_radius(egui::CornerRadius::same(3))
+                let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * alpha) as u8);
+                let radius = ui.visuals().window_corner_radius;
+                let glass = p.panel_alpha < 255;
+                let mut slot = None;
+                let bubble = egui::Frame::new()
+                    .fill(if glass { Color32::TRANSPARENT } else { tint })
+                    .corner_radius(radius)
                     .inner_margin(egui::Margin::symmetric(6, 2))
                     .show(ui, |ui| {
+                        slot = Some(ui.painter().add(egui::Shape::Noop));
                         let size = 13.0;
                         let BubbleJob {
                             mut job,
@@ -1388,6 +1464,11 @@ pub fn toasts(
                             }
                         }
                     });
+                if glass && let Some(slot) = slot {
+                    let rect = bubble.response.rect;
+                    ui.painter()
+                        .set(slot, aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, alpha));
+                }
                 ui.add_space(2.0);
             }
         });
@@ -1474,11 +1555,11 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
 pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, width: f32) -> Option<OutgoingChat> {
     let mut out = None;
     ui.label(RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.0).color(p.muted));
-    let resp = ui.add(
-        egui::TextEdit::singleline(&mut st.input)
-            .hint_text(aurora_i18n::tr!("ui-chat-enter-to-talk-ctrl-enter-to-shout-shift-enter"))
-            .desired_width(width),
-    );
+    // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
+    // written in the empty field they crowded the bar (the human's request)
+    let resp = ui
+        .add(egui::TextEdit::singleline(&mut st.input).desired_width(width))
+        .on_hover_text(aurora_i18n::tr!("ui-chat-enter-to-talk-ctrl-enter-to-shout-shift-enter"));
     if st.focus_request {
         resp.request_focus();
         st.focus_request = false;
@@ -1553,24 +1634,38 @@ mod tests {
     const LONG_GROUP: &str = "The Honourable Society of Extremely Long Conference Names (Northern Chapter)";
     const USERNAME: &str = "maximilienne.wolfeschlegelsteinhausen";
 
-    fn entry(ui: &mut egui::Ui, label: &str, pic: bool, sel: bool, unread: usize) -> egui::Rect {
+    const CLOSE_TIP: &str = "Close this conversation";
+
+    fn entry(ui: &mut egui::Ui, label: &str, pic: bool, sel: bool, unread: usize, closable: bool) -> ListEntry {
         let p = crate::theme::Theme::default().palette();
-        list_entry(ui, &p, label, pic.then_some((None, label)), sel, unread).rect
+        let close = closable.then_some(CLOSE_TIP);
+        list_entry(ui, &p, label, pic.then_some((None, label)), sel, unread, close)
     }
 
     #[test]
     fn list_entry_keeps_long_names_inside() {
         let mut frames = Frames::new();
         for name in [LONG, WIDE, LONG_GROUP] {
-            for (pic, sel, unread) in [(true, false, 0), (true, true, 0), (true, false, 3), (false, false, 1)] {
+            for (pic, sel, unread, closable) in [
+                (true, false, 0, false),
+                (true, true, 0, false),
+                (true, false, 3, false),
+                (false, false, 1, false),
+                (true, false, 0, true),
+                (true, true, 0, true),
+                (true, false, 3, true),
+            ] {
                 let mut rect = egui::Rect::NOTHING;
-                let texts = frames.run(Vec::new(), |ui| rect = entry(ui, name, pic, sel, unread));
+                let texts = frames.run(Vec::new(), |ui| rect = entry(ui, name, pic, sel, unread, closable).resp.rect);
                 assert_eq!(rect.width(), ENTRY_W);
                 let t = painted(&texts, name);
                 assert!(t.cut && t.shown.ends_with('…'), "{name:?} shown as {:?}", t.shown);
-                // before the unread dot when there is one, else inside the entry
-                let limit = if unread > 0 {
-                    rect.right() - 10.0 - UNREAD_DOT_R
+                // before the close button of an entry that has one, before
+                // the unread dot when there is one, else inside the entry
+                let limit = if closable {
+                    trailing_slot(rect).left()
+                } else if unread > 0 {
+                    trailing_slot(rect).center().x - UNREAD_DOT_R
                 } else {
                     rect.right()
                 };
@@ -1589,15 +1684,118 @@ mod tests {
             let mut frames = Frames::new();
             let mut rect = egui::Rect::NOTHING;
             let count = |texts: &[crate::ui::widgets::elide_tests::Text]| texts.iter().filter(|t| t.source == name).count();
-            let texts = frames.run(Vec::new(), |ui| rect = entry(ui, name, false, false, 2));
+            let texts = frames.run(Vec::new(), |ui| rect = entry(ui, name, false, false, 2, false).resp.rect);
             assert_eq!(painted(&texts, name).cut, cut);
             assert_eq!(count(&texts), 1);
             let texts = frames.hover(rect.center(), |ui| {
-                entry(ui, name, false, false, 2);
+                entry(ui, name, false, false, 2, false);
             });
             assert_eq!(count(&texts), if cut { 2 } else { 1 }, "{name:?}");
             assert!(!cut || tooltip_shown(&texts, name), "{name:?}");
         }
+    }
+
+    /// One click at `at` on an entry drawn the same way each frame:
+    /// (the entry was clicked, its close button was clicked).
+    fn click_entry(at: impl Fn(egui::Rect) -> egui::Pos2, sel: bool, closable: bool) -> (bool, bool) {
+        let mut frames = Frames::new();
+        let mut rect = egui::Rect::NOTHING;
+        frames.run(Vec::new(), |ui| rect = entry(ui, SHORT, true, sel, 2, closable).resp.rect);
+        let pos = at(rect);
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut out = (false, false);
+        for events in [vec![egui::Event::PointerMoved(pos)], vec![button(true)], vec![button(false)]] {
+            frames.run(events, |ui| {
+                let e = entry(ui, SHORT, true, sel, 2, closable);
+                out = (e.resp.clicked(), e.close);
+            });
+        }
+        out
+    }
+
+    #[test]
+    fn list_entry_close_button_closes_without_selecting() {
+        let on_button = |r: egui::Rect| trailing_slot(r).center();
+        let on_name = |r: egui::Rect| r.left_center() + egui::vec2(40.0, 0.0);
+        for sel in [false, true] {
+            assert_eq!(click_entry(on_button, sel, true), (false, true), "selected: {sel}");
+            assert_eq!(click_entry(on_name, sel, true), (true, false), "selected: {sel}");
+            // the nearby chat and the contacts have no button: the same
+            // spot selects them
+            assert_eq!(click_entry(on_button, sel, false), (true, false), "selected: {sel}");
+        }
+    }
+
+    /// The close button of a closable entry: always on the selected entry,
+    /// under the pointer on the others, which show their unread dot the
+    /// rest of the time. Its tooltip tells it from the entry.
+    #[test]
+    fn list_entry_shows_its_close_button_when_selected_or_hovered() {
+        let tip = |texts: &[crate::ui::widgets::elide_tests::Text]| texts.iter().any(|t| t.source == CLOSE_TIP);
+        for sel in [false, true] {
+            let mut frames = Frames::new();
+            let mut rect = egui::Rect::NOTHING;
+            frames.run(Vec::new(), |ui| rect = entry(ui, SHORT, true, sel, 0, true).resp.rect);
+            let texts = frames.hover(trailing_slot(rect).center(), |ui| {
+                entry(ui, SHORT, true, sel, 0, true);
+            });
+            assert!(tip(&texts), "selected: {sel}");
+            // away from the entry, only the selected one keeps its button
+            let away = rect.center_bottom() + egui::vec2(0.0, 200.0);
+            frames.hover(away, |ui| {
+                entry(ui, SHORT, true, sel, 0, true);
+            });
+            let mut shown = false;
+            frames.run(Vec::new(), |ui| {
+                let e = entry(ui, SHORT, true, sel, 0, true);
+                shown = ui.ctx().read_response(e.resp.id.with("close")).is_some();
+            });
+            assert_eq!(shown, sel);
+        }
+    }
+
+    /// The unread dot of an entry and the close button of another stand on
+    /// the same vertical line, whether the entry can be closed or not.
+    #[test]
+    fn unread_dots_and_close_buttons_are_aligned() {
+        let p = crate::theme::Theme::default().palette();
+        let mut frames = Frames::new();
+        // (nearby chat with unread lines, unread IM, IM under the pointer)
+        let hovered = std::cell::Cell::new(egui::Rect::NOTHING);
+        let draw = |ui: &mut egui::Ui| {
+            entry(ui, "Nearby chat", false, false, 2, false);
+            entry(ui, SHORT, true, false, 2, true);
+            hovered.set(entry(ui, LONG, true, false, 2, true).resp.rect);
+        };
+        frames.shapes(Vec::new(), draw);
+        let on_button = trailing_slot(hovered.get()).center();
+        frames.shapes(vec![egui::Event::PointerMoved(on_button)], draw);
+        let shapes = frames.shapes(Vec::new(), draw);
+        let dots: Vec<egui::Pos2> = shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::Shape::Circle(c) if c.fill == p.violet => Some(c.center),
+                _ => None,
+            })
+            .collect();
+        // the face of the hovered close button, the only square of the list
+        let faces: Vec<egui::Rect> = shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::Shape::Rect(r) if r.fill == p.raised && r.rect.width() == SLOT_SIDE => Some(r.rect),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(dots.len(), 2, "the hovered entry shows its button instead of its dot");
+        assert_eq!(faces.len(), 1);
+        assert_eq!(dots[0].x, dots[1].x);
+        assert_eq!(dots[0].x, faces[0].center().x);
+        assert_eq!(faces[0].center().y, hovered.get().center().y);
     }
 
     /// A message header `width` wide: (row, name, time) rects.

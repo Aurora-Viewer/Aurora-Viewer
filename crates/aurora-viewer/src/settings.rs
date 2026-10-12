@@ -68,6 +68,8 @@ pub struct Settings {
     pub camera: crate::camera::CameraSettings,
     /// Contacts window (Amis / Groupes / Cercles).
     pub contacts: crate::ui::contacts::ContactsSettings,
+    /// Radar of the People window.
+    pub radar: crate::ui::people::RadarSettings,
     pub inventory: crate::ui::inventory::InventoryPreferences,
     pub ao: crate::ao::Settings,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
@@ -448,6 +450,7 @@ impl Default for Settings {
             build: Default::default(),
             camera: Default::default(),
             contacts: Default::default(),
+            radar: Default::default(),
             inventory: Default::default(),
             script_editor: Default::default(),
             username: String::new(),
@@ -473,13 +476,17 @@ impl Default for Settings {
             texture_budget_mb: 1536,
             ui_scale: 1.0,
             use_pie_menu: false,
+            // First launch (no settings file): the radar (People on its
+            // first tab, top left), the mini-map (top right) and Performance
+            // under it are open, as asked by the human; the other windows
+            // wait for their button. A saved file keeps what was open at exit.
             show_perf: true,
-            show_chat: true,
+            show_chat: false,
             show_minimap: true,
             standalone_place_details: false,
             landmarks_by_date: true,
             maps: MapSettings::default(),
-            show_people: false,
+            show_people: true,
             people_tab: 0,
             show_inventory: false,
             show_appearance: false,

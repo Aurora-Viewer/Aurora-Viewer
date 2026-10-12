@@ -326,7 +326,7 @@ pub fn draw(
             if let Some(id) = avatar {
                 voice_tags.paint(&painter, p, id, r, in_voice, now_s, fade);
             }
-            if no_voice && let Some(icon) = icons.get("microphone-slash-fill") {
+            if no_voice && let Some(icon) = icons.get("microphone-off") {
                 let center = Pos2::new(r.left() + 6.0 + super::voice_tag::ICON_SIZE * 0.5, r.center().y);
                 let icon_rect = egui::Rect::from_center_size(center, egui::Vec2::splat(super::voice_tag::ICON_SIZE));
                 painter.image(

@@ -22,6 +22,7 @@ pub mod objects;
 pub mod outfit;
 pub mod place_details;
 pub mod profiles;
+pub mod radar;
 pub mod script_debug;
 pub mod social;
 pub mod status;

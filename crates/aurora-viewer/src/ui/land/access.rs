@@ -132,7 +132,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     let before = now;
 
     let estate = aurora_i18n::tr!("ui-land-access-set-by-the-estate");
-    let (r, on) = check(ui, can_allowed, now.public, aurora_i18n::tr!("ui-land-access-anyone-can-visit"));
+    let (r, on) = check(ui, p, can_allowed, now.public, aurora_i18n::tr!("ui-land-access-anyone-can-visit"));
     r.on_hover_text(aurora_i18n::tr!("ui-land-access-ban-lines-will-appear-if-this-box-is-not"));
     if on != now.public {
         now.public = on;
@@ -144,6 +144,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     ui.indent("land_access_public", |ui| {
         let (r, on) = check(
             ui,
+            p,
             now.public && can_allowed && !parcel.region_deny_age_unverified,
             now.age,
             &aurora_i18n::tr!(
@@ -155,6 +156,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         now.age = on;
         let (r, on) = check(
             ui,
+            p,
             now.public && can_allowed && !parcel.region_deny_anonymous,
             now.payment,
             &aurora_i18n::tr!(
@@ -170,6 +172,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     let can_allow_group = !now.public || (now.payment ^ now.age);
     let (r, on) = check(
         ui,
+        p,
         group_name.is_some() && can_allowed && can_allow_group,
         now.group,
         &aurora_i18n::tr!(
@@ -188,6 +191,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     ui.horizontal(|ui| {
         let (r, on) = check(
             ui,
+            p,
             !now.public && can_allowed,
             now.pass,
             aurora_i18n::tr!("ui-land-access-sell-passes-to"),

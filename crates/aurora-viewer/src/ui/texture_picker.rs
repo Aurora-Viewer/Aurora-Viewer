@@ -236,11 +236,11 @@ impl TexturePicker {
                         }
                         x += 12.0;
                         let icon = if row.folder {
-                            if row.open { "folder-open" } else { "folder" }
+                            if row.open { "folder-open-filled" } else { "folder-filled" }
                         } else if self.materials {
-                            "cube"
+                            "droplet-filled"
                         } else {
-                            "image"
+                            "photo-filled"
                         };
                         if let Some(icon) = super::icons::global(icon) {
                             ui.painter().image(

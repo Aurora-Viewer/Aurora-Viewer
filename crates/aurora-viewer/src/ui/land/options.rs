@@ -149,7 +149,7 @@ pub(super) fn show(
     };
     line(ui, aurora_i18n::tr!("ui-land-options-edit-land"), &mut |ui| {
         col(ui, 130.0, &mut |ui| {
-            let (r, on) = check(ui, can_terraform, now.terraform, aurora_i18n::tr!("common-all"));
+            let (r, on) = check(ui, p, can_terraform, now.terraform, aurora_i18n::tr!("common-all"));
             r.on_hover_text(aurora_i18n::tr!(
                 "ui-land-options-when-checked-everyone-can-terraform-your-land-it-is"
             ));
@@ -158,7 +158,7 @@ pub(super) fn show(
         dim(ui, p, aurora_i18n::tr!("ui-land-options-use-with-care"));
     });
     line(ui, aurora_i18n::tr!("ui-land-options-fly"), &mut |ui| {
-        let (r, on) = check(ui, can_options, now.fly, aurora_i18n::tr!("common-all"));
+        let (r, on) = check(ui, p, can_options, now.fly, aurora_i18n::tr!("common-all"));
         r.on_hover_text(aurora_i18n::tr!(
             "ui-land-options-when-checked-residents-can-fly-on-your-land-otherwise"
         ));
@@ -166,7 +166,7 @@ pub(super) fn show(
     });
     line(ui, aurora_i18n::tr!("ui-land-options-build"), &mut |ui| {
         col(ui, 130.0, &mut |ui| {
-            let (r, on) = check(ui, can_options, now.edit_objects, aurora_i18n::tr!("common-all"));
+            let (r, on) = check(ui, p, can_options, now.edit_objects, aurora_i18n::tr!("common-all"));
             r.on_hover_text(aurora_i18n::tr!(
                 "ui-land-options-when-checked-residents-can-create-and-rez-objects-on"
             ));
@@ -175,6 +175,7 @@ pub(super) fn show(
         // explicitly on (and greyed) while everyone may build
         let (r, on) = check(
             ui,
+            p,
             can_options && !before.edit_objects,
             now.edit_group,
             aurora_i18n::tr!("common-group"),
@@ -186,7 +187,7 @@ pub(super) fn show(
     });
     line(ui, aurora_i18n::tr!("ui-land-options-allow-object-entry"), &mut |ui| {
         col(ui, 130.0, &mut |ui| {
-            let (r, on) = check(ui, can_options, now.all_entry, aurora_i18n::tr!("common-all"));
+            let (r, on) = check(ui, p, can_options, now.all_entry, aurora_i18n::tr!("common-all"));
             r.on_hover_text(aurora_i18n::tr!(
                 "ui-land-options-when-checked-residents-can-move-their-objects-from-other"
             ));
@@ -194,6 +195,7 @@ pub(super) fn show(
         });
         let (r, on) = check(
             ui,
+            p,
             can_options && !before.all_entry,
             now.group_entry,
             aurora_i18n::tr!("common-group"),
@@ -205,7 +207,7 @@ pub(super) fn show(
     });
     line(ui, aurora_i18n::tr!("ui-land-options-run-scripts"), &mut |ui| {
         col(ui, 130.0, &mut |ui| {
-            let (r, on) = check(ui, can_options, now.other_scripts, aurora_i18n::tr!("common-all"));
+            let (r, on) = check(ui, p, can_options, now.other_scripts, aurora_i18n::tr!("common-all"));
             r.on_hover_text(aurora_i18n::tr!(
                 "ui-land-options-when-checked-residents-can-run-scripts-on-your-parcel"
             ));
@@ -213,6 +215,7 @@ pub(super) fn show(
         });
         let (r, on) = check(
             ui,
+            p,
             can_options && !before.other_scripts,
             now.group_scripts,
             aurora_i18n::tr!("common-group"),
@@ -246,7 +249,7 @@ pub(super) fn show(
     };
     ui.columns(2, |cols| {
         let ui = &mut cols[0];
-        let (r, on) = check(ui, can_options, now.safe, aurora_i18n::tr!("ui-land-options-safe-no-damage"));
+        let (r, on) = check(ui, p, can_options, now.safe, aurora_i18n::tr!("ui-land-options-safe-no-damage"));
         r.on_hover_text(aurora_i18n::tr!("ui-land-options-when-checked-the-land-is-safe-no-combat-damage"));
         now.safe = on;
         let label = if DIRECTORY_FEE == 0 {
@@ -254,14 +257,14 @@ pub(super) fn show(
         } else {
             aurora_i18n::tr!("extra-show-place-in-search-l-week", DIRECTORY_FEE = format!("{}", DIRECTORY_FEE))
         };
-        let (r, on) = check(ui, search_on, now.directory, &label);
+        let (r, on) = check(ui, p, search_on, now.directory, &label);
         r.on_hover_text(search_tip).on_disabled_hover_text(search_tip);
         now.directory = on;
         // maturity: PG never, mature by choice, adult always
         if sim_access == 21 || sim_access == 42 || sim_access == 13 {
             ui.horizontal(|ui| {
                 let adult = sim_access == 42;
-                let (r, on) = check(ui, sim_access == 21 && can_identity, now.mature, "");
+                let (r, on) = check(ui, p, sim_access == 21 && can_identity, now.mature, "");
                 now.mature = on;
                 super::widgets::maturity_badge(
                     ui,
@@ -315,7 +318,7 @@ pub(super) fn show(
         } else {
             aurora_i18n::tr!("ui-land-options-no-pushing")
         };
-        let (r, on) = check(ui, can_options && !parcel.region_push_override, now.push, push_label);
+        let (r, on) = check(ui, p, can_options && !parcel.region_push_override, now.push, push_label);
         r.on_hover_text(aurora_i18n::tr!(
             "ui-land-options-prevents-scripts-from-pushing-people-useful-for-preventing-abusive"
         ));
@@ -323,7 +326,7 @@ pub(super) fn show(
         ui.horizontal_top(|ui| {
             // the server must know SeeAVs (getHaveNewParcelLimitData)
             let enabled = can_options && parcel.have_new_parcel_limit_data;
-            let (r, on) = check(ui, enabled, now.see_avs, "");
+            let (r, on) = check(ui, p, enabled, now.see_avs, "");
             r.on_hover_text(aurora_i18n::tr!("ui-land-options-allow-avatars-on-other-parcels-to-see-and-chat"));
             now.see_avs = on;
             // toggleSeeAvatars: the label toggles the box too

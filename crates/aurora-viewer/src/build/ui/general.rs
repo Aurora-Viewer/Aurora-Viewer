@@ -202,7 +202,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let can_set_group = root_selected && owners_identical && first.owner_id == me;
-            if super::common::icon_button(ui, p, "wrench", aurora_i18n::tr!("build-ui-general-set-group"), can_set_group) {
+            if super::common::icon_button(ui, p, "users-group", aurora_i18n::tr!("build-ui-general-set-group"), can_set_group) {
                 tool.ui.group_picker_open = true;
             }
         });
@@ -223,7 +223,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let can_transfer = owner.0 & perm::TRANSFER != 0;
     ui.horizontal(|ui| {
         ui.add_space(LABEL_W);
-        if let Some(v) = check(ui, share, share_tentative, aurora_i18n::tr!("common-share"), can_manipulate) {
+        if let Some(v) = check(ui, p, share, share_tentative, aurora_i18n::tr!("common-share"), can_manipulate) {
             tool.set_perm(world, perm_field::GROUP, v, share_bits);
         }
         let deed_ok = !first.group_id.is_nil()
@@ -276,12 +276,13 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             1.0,
             if tool.ui.sale_draft.is_some() { p.violet } else { p.raised },
         ))
-        .corner_radius(2)
+        .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(4)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 if let Some(v) = check(
                     ui,
+                    p,
                     for_sale,
                     sale_mixed,
                     aurora_i18n::tr!("common-for-sale"),
@@ -367,6 +368,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         );
         if let Some(v) = check(
             ui,
+            p,
             search.unwrap_or(false),
             search_mixed,
             aurora_i18n::tr!("common-show-in-search"),
@@ -398,6 +400,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         let (v, t) = bit(everyone, perm::MOVE);
         if let Some(n) = check(
             ui,
+            p,
             v,
             t,
             aurora_i18n::tr!("common-move"),
@@ -407,7 +410,14 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
         let (v, t) = bit(everyone, perm::COPY);
         let copy_ok = owner.0 & perm::COPY != 0 && owner.0 & perm::TRANSFER != 0;
-        if let Some(n) = check(ui, v, t || !copy_ok, aurora_i18n::tr!("common-copy-2"), can_manipulate && copy_ok) {
+        if let Some(n) = check(
+            ui,
+            p,
+            v,
+            t || !copy_ok,
+            aurora_i18n::tr!("common-copy-2"),
+            can_manipulate && copy_ok,
+        ) {
             tool.set_perm(world, perm_field::EVERYONE, n, perm::COPY);
         }
     });
@@ -416,13 +426,14 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         ui.add_space(12.0);
         let next_ok = can_sell && owner.0 & perm::TRANSFER != 0;
         let (v, t) = bit(next, perm::MODIFY);
-        if let Some(n) = check(ui, v, t, aurora_i18n::tr!("common-edit"), next_ok && base.0 & perm::MODIFY != 0) {
+        if let Some(n) = check(ui, p, v, t, aurora_i18n::tr!("common-edit"), next_ok && base.0 & perm::MODIFY != 0) {
             tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::MODIFY);
         }
         let (v, t) = bit(next, perm::COPY);
         let can_copy = owner.0 & perm::COPY != 0;
         if let Some(n) = check(
             ui,
+            p,
             v,
             t || !can_copy,
             aurora_i18n::tr!("common-copy-2"),
@@ -434,6 +445,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         // enabled by the next owner's copy bit (sic, LLPanelPermissions)
         if let Some(n) = check(
             ui,
+            p,
             v,
             t || !can_transfer,
             aurora_i18n::tr!("common-transfer"),

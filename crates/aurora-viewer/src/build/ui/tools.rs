@@ -15,11 +15,11 @@ use egui::{Color32, RichText, Vec2};
 /// The tool buttons (icon, tooltip, tool).
 fn tools() -> [(&'static str, &'static str, Tool); 5] {
     [
-        ("magnifying-glass", aurora_i18n::tr!("build-ui-tools-focus-ctrl-1"), Tool::Focus),
-        ("hand-grabbing", aurora_i18n::tr!("build-ui-tools-move-ctrl-2"), Tool::Grab),
-        ("cursor", aurora_i18n::tr!("build-ui-tools-edit-ctrl-3"), Tool::Edit),
-        ("magic-wand", aurora_i18n::tr!("build-ui-tools-create-ctrl-4"), Tool::Create),
-        ("mountains", aurora_i18n::tr!("build-ui-tools-land-ctrl-5"), Tool::Land),
+        ("zoom-filled", aurora_i18n::tr!("build-ui-tools-focus-ctrl-1"), Tool::Focus),
+        ("hand-grab", aurora_i18n::tr!("build-ui-tools-move-ctrl-2"), Tool::Grab),
+        ("pointer-filled", aurora_i18n::tr!("build-ui-tools-edit-ctrl-3"), Tool::Edit),
+        ("wand", aurora_i18n::tr!("build-ui-tools-create-ctrl-4"), Tool::Create),
+        ("mountain-filled", aurora_i18n::tr!("build-ui-tools-land-ctrl-5"), Tool::Land),
     ]
 }
 
@@ -184,18 +184,33 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            if let Some(v) = check(ui, s.rez_under_land_group, false, aurora_i18n::tr!("rez-under-land-group"), true) {
+            if let Some(v) = check(ui, p, s.rez_under_land_group, false, aurora_i18n::tr!("rez-under-land-group"), true) {
                 s.rez_under_land_group = v;
             }
-            if let Some(v) = check(ui, s.keep_tool, false, aurora_i18n::tr!("build-ui-tools-keep-selection-tool"), true) {
+            if let Some(v) = check(
+                ui,
+                p,
+                s.keep_tool,
+                false,
+                aurora_i18n::tr!("build-ui-tools-keep-selection-tool"),
+                true,
+            ) {
                 s.keep_tool = v;
             }
-            if let Some(v) = check(ui, s.copy_selection, false, aurora_i18n::tr!("build-ui-tools-copy-selection"), true) {
+            if let Some(v) = check(
+                ui,
+                p,
+                s.copy_selection,
+                false,
+                aurora_i18n::tr!("build-ui-tools-copy-selection"),
+                true,
+            ) {
                 s.copy_selection = v;
             }
             ui.indent("copy_opts", |ui| {
                 if let Some(v) = check(
                     ui,
+                    p,
                     s.copy_centers,
                     false,
                     aurora_i18n::tr!("build-ui-tools-center"),
@@ -203,7 +218,7 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
                 ) {
                     s.copy_centers = v;
                 }
-                if let Some(v) = check(ui, s.copy_rotates, false, aurora_i18n::tr!("common-rotate"), s.copy_selection) {
+                if let Some(v) = check(ui, p, s.copy_rotates, false, aurora_i18n::tr!("common-rotate"), s.copy_selection) {
                     s.copy_rotates = v;
                 }
             });
@@ -379,6 +394,7 @@ pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world:
     }
     if let Some(v) = check(
         ui,
+        p,
         s.show_parcel_owners,
         false,
         aurora_i18n::tr!("build-ui-tools-show-owners"),

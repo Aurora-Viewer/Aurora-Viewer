@@ -1,6 +1,7 @@
 //! Public report form, shared by all entry points.
 
-use super::widgets::{Floater, flat_button};
+use super::menu;
+use super::widgets::{ActionKind, Floater, action_button, action_button_if, section_header};
 use crate::bug_report::github::{self, Github};
 use crate::bug_report::{Field, Report, files};
 use crate::theme::Palette;
@@ -8,6 +9,9 @@ use egui::{RichText, Vec2};
 
 #[cfg(test)]
 mod tests;
+
+/// Height of the form's secondary buttons, the one of a stock button.
+const BUTTON: Vec2 = Vec2::new(0.0, 26.0);
 
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Delivery {
@@ -341,7 +345,7 @@ impl BugReportUi {
                 .show(ui, |ui| {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if let Some(icon) = icons.get("bug") {
+                        if let Some(icon) = icons.get("bug-filled") {
                             ui.add(egui::Image::new(icon).fit_to_exact_size(Vec2::splat(28.0)).tint(p.violet_light));
                         }
                         ui.vertical(|ui| {
@@ -354,8 +358,7 @@ impl BugReportUi {
                     if self.demo {
                         ui.label(RichText::new(aurora_i18n::tr!("bug-demo-warning")).color(p.teal));
                     }
-                    ui.add_space(6.0);
-                    ui.separator();
+                    ui.add_space(8.0);
                     let working = self.save_job.is_some() || self.github.sending;
                     let image_note = if self.include_image && self.image.is_some() { 40.0 } else { 0.0 };
                     let auth_controls = if self.delivery == Delivery::Direct && !self.demo {
@@ -367,9 +370,8 @@ impl BugReportUi {
                     ui.add_enabled_ui(!working && self.github.created.is_none(), |ui| {
                         self.form_panel(ui, p, in_world, height);
                     });
-                    ui.separator();
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(aurora_i18n::tr!("bug-send-heading")).strong().color(p.violet_light));
+                    ui.add_space(4.0);
+                    section_header(ui, p, "send-filled", aurora_i18n::tr!("bug-send-heading"));
                     ui.add_enabled_ui(
                         !working && (self.github.created.is_none() || self.github.attachment_pending()),
                         |ui| self.delivery_options(ui, p),
@@ -390,49 +392,38 @@ impl BugReportUi {
                     }
                     let idle = !working && self.diagnostics.is_none() && !self.image_busy();
                     ui.horizontal_wrapped(|ui| {
-                        let label = if self.delivery == Delivery::Direct {
-                            aurora_i18n::tr!("bug-send-direct")
+                        let (icon, label) = if self.delivery == Delivery::Direct {
+                            ("send-filled", aurora_i18n::tr!("bug-send-direct"))
                         } else {
-                            aurora_i18n::tr!("bug-open-github")
+                            ("external-link-filled", aurora_i18n::tr!("bug-open-github"))
                         };
                         let delivery_ready = self.delivery == Delivery::Browser || self.github.connected() || self.demo;
-                        if ui
-                            .add_enabled(
-                                idle && self.report.ready() && delivery_ready && self.github.created.is_none(),
-                                egui::Button::new(RichText::new(label).color(p.ink))
-                                    .fill(p.violet)
-                                    .min_size(Vec2::new(180.0, 30.0)),
-                            )
-                            .clicked()
-                        {
+                        let ready = idle && self.report.ready() && delivery_ready && self.github.created.is_none();
+                        if action_button_if(ui, p, icon, label, ActionKind::Primary, Vec2::new(0.0, 30.0), ready).clicked() {
                             self.save(self.delivery);
                         }
-                        ui.menu_button(aurora_i18n::tr!("bug-other-actions"), |ui| {
-                            if ui.button(aurora_i18n::tr!("bug-copy")).clicked() {
+                        let other = aurora_i18n::tr!("bug-other-actions");
+                        let other = action_button(ui, p, "dots-filled", other, ActionKind::Flat, Vec2::new(0.0, 30.0));
+                        // closes on any click, like the stock menu button it replaces
+                        menu::dropdown(&other, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                            if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("bug-copy")) {
                                 ctx.copy_text(self.report.markdown());
-                                ui.close();
                             }
-                            if ui.add_enabled(idle, egui::Button::new(aurora_i18n::tr!("bug-save"))).clicked() {
+                            if menu::item_if(ui, p, "device-floppy-filled", aurora_i18n::tr!("bug-save"), idle) {
                                 self.save(Delivery::Local);
-                                ui.close();
                             }
                             if let Some(saved) = &self.saved
-                                && ui.button(aurora_i18n::tr!("bug-open-folder")).clicked()
+                                && menu::item(ui, p, "folder-open-filled", aurora_i18n::tr!("bug-open-folder"))
                             {
                                 let path = saved.public_dir.clone();
                                 std::thread::spawn(move || {
                                     let _ = files::open_directory(&path);
                                 });
-                                ui.close();
                             }
                             if self.github.complete() {
-                                ui.separator();
-                                if ui
-                                    .add_enabled(idle, egui::Button::new(aurora_i18n::tr!("bug-new-report")))
-                                    .clicked()
-                                {
+                                menu::separator(ui, p);
+                                if menu::item_if(ui, p, "plus", aurora_i18n::tr!("bug-new-report"), idle) {
                                     self.new_report();
-                                    ui.close();
                                 }
                             }
                         });
@@ -442,13 +433,8 @@ impl BugReportUi {
                     });
                     if self.github.attachment_pending() {
                         ui.label(RichText::new(aurora_i18n::tr!("bug-upload-partial")).color(p.amber));
-                        if ui
-                            .add_enabled(
-                                idle && self.github.connected(),
-                                egui::Button::new(aurora_i18n::tr!("bug-upload-retry")),
-                            )
-                            .clicked()
-                        {
+                        let (retry, ready) = (aurora_i18n::tr!("bug-upload-retry"), idle && self.github.connected());
+                        if action_button_if(ui, p, "refresh", retry, ActionKind::Flat, BUTTON, ready).clicked() {
                             self.github.retry_attachments();
                         }
                     }
@@ -463,10 +449,8 @@ impl BugReportUi {
                     }
                     if self.browser_opened && self.github.created.is_none() {
                         ui.label(RichText::new(aurora_i18n::tr!("bug-browser-confirm-help")).color(p.muted));
-                        if ui
-                            .add_enabled(idle, egui::Button::new(aurora_i18n::tr!("bug-browser-confirm")))
-                            .clicked()
-                        {
+                        let confirm = aurora_i18n::tr!("bug-browser-confirm");
+                        if action_button_if(ui, p, "check", confirm, ActionKind::Flat, BUTTON, idle).clicked() {
                             self.confirm_browser_publication();
                         }
                     }
@@ -498,11 +482,7 @@ impl BugReportUi {
     }
 
     fn form_panel(&mut self, ui: &mut egui::Ui, p: &Palette, in_world: bool, height: f32) {
-        ui.label(
-            RichText::new(aurora_i18n::tr!("bug-compose-heading"))
-                .strong()
-                .color(p.violet_light),
-        );
+        section_header(ui, p, "edit-filled", aurora_i18n::tr!("bug-compose-heading"));
         // Keep navigation outside the form's scroll area.
         super::widgets::tabs(
             ui,
@@ -568,21 +548,21 @@ impl BugReportUi {
             }
             2 => {
                 ui.add_enabled_ui(self.delivery == Delivery::Direct, |ui| {
-                    ui.checkbox(&mut self.include_logs, aurora_i18n::tr!("bug-private-logs"));
+                    super::widgets::checkbox(ui, p, &mut self.include_logs, aurora_i18n::tr!("bug-private-logs"));
                 });
                 ui.label(RichText::new(aurora_i18n::tr!("bug-private-logs-help")).size(12.0).color(p.amber));
-                ui.separator();
+                ui.add_space(10.0);
                 ui.label(RichText::new(aurora_i18n::tr!("bug-fields-help")).size(12.0).color(p.muted));
                 for field in &mut self.report.fields {
-                    ui.checkbox(&mut field.included, aurora_i18n::text(field.label));
+                    super::widgets::checkbox(ui, p, &mut field.included, aurora_i18n::text(field.label));
                     ui.indent(field.heading, |ui| {
                         ui.add(egui::Label::new(RichText::new(field.display_value()).color(p.muted)).wrap());
                     });
                     ui.add_space(4.0);
                 }
-                ui.separator();
+                ui.add_space(8.0);
                 ui.add_enabled_ui(!self.report.excerpt.is_empty(), |ui| {
-                    ui.checkbox(&mut self.report.include_excerpt, aurora_i18n::tr!("bug-log"));
+                    super::widgets::checkbox(ui, p, &mut self.report.include_excerpt, aurora_i18n::tr!("bug-log"));
                 });
                 ui.label(RichText::new(aurora_i18n::tr!("bug-log-help")).size(12.0).color(p.muted));
                 if !self.report.excerpt.is_empty() {
@@ -601,14 +581,15 @@ impl BugReportUi {
                         let busy = self.image_busy();
                         ui.add_enabled_ui(!busy, |ui| {
                             ui.horizontal_wrapped(|ui| {
-                                if ui
-                                    .add_enabled(in_world, egui::Button::new(aurora_i18n::tr!("bug-take-picture")))
-                                    .on_disabled_hover_text(aurora_i18n::tr!("bug-picture-login"))
-                                    .clicked()
-                                {
+                                let take = aurora_i18n::tr!("bug-take-picture");
+                                let take = action_button_if(ui, p, "camera-filled", take, ActionKind::Flat, BUTTON, in_world);
+                                if !in_world {
+                                    take.on_hover_text(aurora_i18n::tr!("bug-picture-login"));
+                                } else if take.clicked() {
                                     self.capture_requested = Some(self.include_ui);
                                 }
-                                if flat_button(ui, p, aurora_i18n::tr!("bug-attach-image")).clicked() {
+                                let attach = aurora_i18n::tr!("bug-attach-image");
+                                if action_button(ui, p, "paperclip", attach, ActionKind::Flat, BUTTON).clicked() {
                                     let (tx, rx) = crossbeam_channel::bounded(1);
                                     self.image_job = Some(ImageJob {
                                         rx,
@@ -620,7 +601,7 @@ impl BugReportUi {
                                     });
                                 }
                             });
-                            if ui.checkbox(&mut self.include_ui, aurora_i18n::tr!("bug-with-ui")).changed() {
+                            if super::widgets::checkbox(ui, p, &mut self.include_ui, aurora_i18n::tr!("bug-with-ui")).changed() {
                                 self.capture_option_changed(in_world);
                             }
                         });
@@ -630,8 +611,9 @@ impl BugReportUi {
                         if self.image.is_some() {
                             ui.add_enabled_ui(!busy, |ui| {
                                 ui.horizontal_wrapped(|ui| {
-                                    ui.checkbox(&mut self.include_image, aurora_i18n::tr!("bug-include-image"));
-                                    if flat_button(ui, p, aurora_i18n::tr!("bug-remove-image")).clicked() {
+                                    super::widgets::checkbox(ui, p, &mut self.include_image, aurora_i18n::tr!("bug-include-image"));
+                                    let remove = aurora_i18n::tr!("bug-remove-image");
+                                    if action_button(ui, p, "trash-filled", remove, ActionKind::Flat, BUTTON).clicked() {
                                         self.image = None;
                                         self.texture = None;
                                         self.include_image = false;
@@ -665,12 +647,14 @@ impl BugReportUi {
 
     fn delivery_options(&mut self, ui: &mut egui::Ui, p: &Palette) {
         // Only the current draft remembers the chosen delivery mode.
-        ui.horizontal_wrapped(|ui| {
-            ui.radio_value(&mut self.delivery, Delivery::Direct, aurora_i18n::tr!("bug-direct-mode"));
-            ui.add_enabled_ui(!self.include_logs, |ui| {
-                ui.radio_value(&mut self.delivery, Delivery::Browser, aurora_i18n::tr!("bug-browser-mode"));
-            });
-        });
+        let mut mode = usize::from(self.delivery == Delivery::Browser);
+        let modes = [
+            (aurora_i18n::tr!("bug-direct-mode"), true),
+            (aurora_i18n::tr!("bug-browser-mode"), !self.include_logs),
+        ];
+        if super::widgets::tabs(ui, p, &mut mode, &modes) {
+            self.delivery = if mode == 1 { Delivery::Browser } else { Delivery::Direct };
+        }
         ui.label(
             RichText::new(aurora_i18n::text(if self.delivery == Delivery::Browser {
                 "bug-browser-help"
@@ -688,7 +672,8 @@ impl BugReportUi {
         if self.github.connected() {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(aurora_i18n::tr!("bug-connected")).size(12.0).color(p.teal));
-                if flat_button(ui, p, aurora_i18n::tr!("bug-disconnect")).clicked() {
+                let disconnect = aurora_i18n::tr!("bug-disconnect");
+                if action_button(ui, p, "logout", disconnect, ActionKind::Flat, BUTTON).clicked() {
                     self.github.disconnect();
                 }
             });
@@ -696,25 +681,26 @@ impl BugReportUi {
             ui.horizontal_wrapped(|ui| {
                 ui.label(aurora_i18n::tr!("bug-device-instruction"));
                 ui.monospace(&code);
-                if flat_button(ui, p, aurora_i18n::tr!("bug-copy-code")).clicked() {
+                let copy = aurora_i18n::tr!("bug-copy-code");
+                if action_button(ui, p, "copy-filled", copy, ActionKind::Flat, BUTTON).clicked() {
                     ui.ctx().copy_text(code);
                 }
                 ui.hyperlink_to(aurora_i18n::tr!("bug-authorize-browser"), github::VERIFY);
-                if flat_button(ui, p, aurora_i18n::tr!("bug-cancel-auth")).clicked() {
+                let cancel = aurora_i18n::tr!("bug-cancel-auth");
+                if action_button(ui, p, "x", cancel, ActionKind::Flat, BUTTON).clicked() {
                     self.github.cancel_authorization();
                 }
             });
         } else if self.github.authorizing() {
             ui.spinner();
-            if flat_button(ui, p, aurora_i18n::tr!("bug-cancel-auth")).clicked() {
+            let cancel = aurora_i18n::tr!("bug-cancel-auth");
+            if action_button(ui, p, "x", cancel, ActionKind::Flat, BUTTON).clicked() {
                 self.github.cancel_authorization();
             }
         } else {
             ui.horizontal_wrapped(|ui| {
-                if ui
-                    .add_enabled(!github::CLIENT_ID.is_empty(), egui::Button::new(aurora_i18n::tr!("bug-connect")))
-                    .clicked()
-                {
+                let (connect, configured) = (aurora_i18n::tr!("bug-connect"), !github::CLIENT_ID.is_empty());
+                if action_button_if(ui, p, "brand-github-filled", connect, ActionKind::Flat, BUTTON, configured).clicked() {
                     self.github.authorize();
                 }
                 ui.label(

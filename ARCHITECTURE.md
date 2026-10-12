@@ -41,7 +41,7 @@ aurora-viewer/                  dépôt git (GitHub : Aurora-Viewer/Aurora-Viewe
 ├─ aurora-tools.cmd             outils de développement (double-clic) : scripts/tools
 ├─ assets/
 │  ├─ branding/                 logos (couleur, silhouette), SVG + PNG 4096, aurora.ico
-│  ├─ phosphor-icons/           bibliothèque Phosphor complète (SVG, 6 graisses)
+│  ├─ tabler-icons/             bibliothèque Tabler complète (SVG : outline, filled)
 │  └─ emoji/                    police emoji (téléchargée, hors git)
 ├─ crates/                      le code (voir ci-dessous)
 ├─ docs/                        BRANDING.md, TESTING.md (options de test `AURORA_*`, profilage), captures du README
@@ -171,9 +171,9 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `camera/` | La caméra comme LLAgentCamera : vue derrière l'avatar, caméra Alt sur un point ou un objet (`focus.rs`), caméra de siège, vue subjective, transitions, lissage, recul en vol, collision envoyée par le simulateur ; réglages Firestorm (`settings.rs`), scénarios de démo (`demo.rs`) |
 | `world/` | État du monde reçu du réseau : objets, régions, terrain, environnement (EEP : cycles et assets de réglages dans `eep.rs`, choix local > parcelle > région > jour par défaut, environnement local et fondus dans `eep_env.rs`, listes du sélecteur d'environnement et chargement des dossiers dans `env_select.rs`), parcelle sélectionnée d'« À propos du terrain » et ses droits (`land.rs`), social, profils des avatars, inventaire, groupes (actif, épinglés), cercles de contacts et surnoms (`contact_sets.rs`), blocages, messages du bridge LSL de Firestorm (cachés), orientation des corps, regard (LookAt), carte, profils de lieux de « Lieux » et des fenêtres séparées (`place_details.rs` : région par son nom, repère, RemoteParcelRequest, ParcelInfoRequest), assets des repères et handles de leurs régions (`landmarks.rs`), historique de téléportation daté et enregistré (`tphistory.rs`)… |
 | `scene/` | Ce qu'on envoie au GPU : géométrie et LOD, textures (streaming), avatars (squelette, animations, silhouette), particules, eau, sondes de reflets, sons du monde, imposteurs, assets de réglages d'environnement (`settings.rs` : ciel, eau, cycle du jour) |
-| `ui/` | Interface egui : barres, fenêtres, options, chat, contacts (amis, groupes, cercles : `contacts.rs`), profils des avatars, « Lieux » (`places.rs` : favoris, repères, historique de téléportation) et profils de lieux (`place_details.rs`, aussi en fenêtres séparées), « À propos du terrain » (`land/`, un fichier par onglet, dialogues), choix d'un résident (`avatar_picker.rs`), page web dans une fenêtre (`web_view.rs`), choix d'une texture, inventaire, sélecteur d'environnement et « Éclairage personnel » (`environment.rs`), cartes, overlays de débogage ; sons causés par les widgets (`sound_cues.rs` : clics, touches refusées, fenêtres) ; menus clic droit : apparence commune (`menu.rs` : icône Phosphor, sous-menus, cases cochées) et entrées comme Firestorm (`context.rs` : monde, noms d'avatars, groupes) |
+| `ui/` | Interface egui : barres, fenêtres, options, chat, contacts (amis, groupes, cercles : `contacts.rs`), profils des avatars, « Lieux » (`places.rs` : favoris, repères, historique de téléportation) et profils de lieux (`place_details.rs`, aussi en fenêtres séparées), « À propos du terrain » (`land/`, un fichier par onglet, dialogues), choix d'un résident (`avatar_picker.rs`), page web dans une fenêtre (`web_view.rs`), choix d'une texture, inventaire, sélecteur d'environnement et « Éclairage personnel » (`environment.rs`), cartes, overlays de débogage ; sons causés par les widgets (`sound_cues.rs` : clics, touches refusées, fenêtres) ; menus clic droit : apparence commune (`menu.rs` : icône Tabler, sous-menus, cases cochées) et entrées comme Firestorm (`context.rs` : monde, noms d'avatars, groupes) |
 | `build/` | Outils de construction comme LLFloaterTools : sélection et manipulateurs (`manip.rs`), régressions de sélection des parties liées et des objets entiers (`selection_tests.rs`), parcours de la sélection sous le pointeur avec CTRL + molette (`cycle.rs` : unités par linkset ou prims d’un même objet, molette de haute précision), déplacement direct des HUDs (`hud_drag.rs` : racine du linkset, conversion écran / point d’attachement, écho local et MultipleObjectUpdate de position au relâchement), outils Déplacer (`grab.rs`) et Aligner (`align.rs`), terrain (`land.rs`), modifications de la sélection (`edits.rs`), matériaux et médias (`materials.rs`), contenu des objets (`contents.rs`), impact et poids (`costs.rs`), simulateur de démo (`demo_sim.rs`) ; la fenêtre et ses onglets dans `build/ui/` |
-| `interaction.rs`, `cursors.rs`, `ui/object_actions.rs` | Règles des actions de clic 0–9, héritage, permissions, curseurs natifs Firestorm, fenêtres d'achat / paiement et liste du contenu ; transaction après confirmation |
+| `interaction.rs`, `cursors.rs`, `ui/object_actions.rs` | Règles des actions de clic 0–9, héritage, permissions, curseurs dessinés à partir des icônes Tabler (règles de Firestorm), fenêtres d'achat / paiement et liste du contenu ; transaction après confirmation |
 | `app/object_actions.rs` | Déclenchement des actions, toucher maintenu, déplacement physique, lecture de parcelle, ouverture de média et cadrage de caméra |
 | `scene/picking.rs` | Rayons contre les triangles partagés avec la géométrie affichée (prims, sculpts, meshes) ; prim réellement visée au survol et au clic gauche malgré des boîtes recouvrantes, IGNORE traverse la géométrie hors construction, informations de surface pour les scripts de toucher ; les mêmes tests sur les seuls candidats de l'index de survol |
 | `scene/drawn.rs` | Ce qu'un clic désigne d'après les faces que le GPU a dessinées sous son pixel (`aurora-render/src/drawn_pick.rs`) : les objets que le CPU ne sait pas trouver là où ils sont affichés — animesh, mesh riggés portés, mesh portés — sont désignés tels que le GPU les pose, pour le clic gauche, le clic droit et la construction. Règle isolée et testée (`reaches` : geste × statut de l'objet), informations de surface d'un toucher (face, position, ST / UV, normale et binormale de la surface posée). Écart voulu avec Firestorm, qui n'atteint un mesh riggé qu'au clic droit et avec l'outil Déplacer |
@@ -187,6 +187,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 | `aurora-net/src/outfits.rs`, `aurora-net/src/outfits/categories.rs` | Écriture des liens de tenue, favoris, noms et images par AIS InventoryAPIv3, déplacement dans la corbeille ; confirmation et relecture des dossiers / éléments |
 | `slurl.rs`, `link_trust.rs` | Liens des textes : SLURL (barre de navigation, libellés « Région (x,y,z) » des liens de lieu) ; confiance des liens web (site de confiance, inconnu, dangereux : raccourcisseurs, faux noms officiels, adresses IP…), jugée localement sur l'URL |
 | `ui/widgets.rs`, `ui/widgets/resize.rs`, `ui/widgets/demo.rs` | Widgets communs et fenêtres flottantes ; repli par double-clic du titre ou bouton, taille développée conservée et barre repliée déplaçable ; gestes hors ligne sur le titre réel ; poignées de redimensionnement bornées avant le déplacement, bord opposé fixe, limites du contenu et de la zone visible ; position et taille conservées par egui ; noms plus longs que leur place coupés par « … » avec le nom entier au survol (`elided_label`, `paint_elided`) pour les listes de résidents, de groupes et de conversations |
+| `ui/layout.rs` | Disposition de l'interface : mémoire d'egui (positions, tailles, fenêtres repliées) écrite dans `ui_layout.ron` à la sortie et relue au démarrage ; `Slot`, par lequel passent `widgets::Floater` et la mini-carte, enregistre où chaque fenêtre se tenait et dans quel écran, et la fait suivre ses bords les plus proches quand la fenêtre du viewer change de taille, pendant la session ou d'une session à l'autre (`follow_edges`) |
 | `ui/fonts.rs`, `ui/fonts/fallback.rs` | Polices de l'interface : police principale embarquée ou choisie, celles d'egui, puis les polices de repli du système pour les caractères que les autres n'ont pas (noms d'affichage, titres, chat : géorgien, CJK, arabe, lettres mathématiques…). `fallback.rs` : liste par écriture, première police installée qui dessine le caractère témoin, fichiers mappés en mémoire et vérifiés sur le thread `aurora-fonts`, alignement de leur ligne de base sur la police principale ; installées à l'image suivante si la recherche n'était pas finie. `AURORA_FONT_FALLBACK=0` les retire |
 | `ui/exit.rs` | Modale de fermeture traduite : quitter, déconnecter vers le login, annuler ; fond flouté sur le GPU et interactions bloquées ; attente non bloquante de la fin de session, avec le délai de secours de six secondes de Firestorm |
 | `updater.rs`, `ui/update.rs` | Contrôleur asynchrone et fenêtre de mise à jour : notes, progression, relance et erreurs ; recherche manuelle dans Aide / connexion, tag ignoré et choix Demander / Automatique / Obligatoires uniquement. Démo synthétique isolée via `AURORA_DEMO_UPDATE`. |
@@ -214,7 +215,7 @@ Les scripts utilisent un éditeur commun (`ui/scripts.rs`, actions dans `app/scr
 Les indicateurs vocaux des étiquettes sont dessinés par `ui/voice_tag.rs` :
 contour lissé selon le niveau de parole, couleurs calibrées sur l'échelle
 WebRTC (rouge dès 0,58, le micro local plafonnant vers 0,63), micro barré
-Phosphor fill pour les avatars hors vocal. `voice.rs` garantit l'entrée de notre avatar à partir du
+Tabler (`microphone-off`) pour les avatars hors vocal. `voice.rs` garantit l'entrée de notre avatar à partir du
 micro local, même sans écho de sa présence par le serveur vocal.
 
 ## Déroulement d'une image
@@ -297,6 +298,12 @@ les dossiers concernés, sans rejouer les copies ni les déplacements.
 
 ### Surfaces des fenêtres
 
+`world/radar.rs` tient le radar de la fenêtre Personnes (balayage des avatars une fois par seconde, première
+apparition, franchissements signalés), `ui/people/radar.rs` son tableau, ses réglages et son menu d'options.
+`ui/widgets/keycap.rs` dessine les touches d'un raccourci (liste des
+raccourcis, panneau du micro). `ui/widgets/color.rs` est le sélecteur de couleur compact (`color_button`,
+`color_panel`, conversions RVB / TSV / hexadécimal) et la pipette qu'il partage
+avec l'application (`app/color_picker.rs`).
 `ui/widgets/workspace.rs` partage la navigation, les panneaux de détails, les
 dialogues et les lignes de l'inventaire utilisateur et des contenus d'objets
 (densité, survol, sélection et style du nom). `build/ui/compact.rs` agence la
@@ -323,8 +330,9 @@ Les pastilles transmettent leur rectangle visible à chaque passage : un cône
 dégradé les relie à la palette pendant qu'elle est déplacée séparément, sans
 surface interactive supplémentaire. Un second clic sur la même pastille ferme
 la transaction ; une autre pastille restaure la précédente avant de s'ouvrir.
-`cursors.rs` garde le curseur pipette Phosphor en mémoire, avec la pointe comme
-point de prélèvement et le contour contrasté de la skin, comme le curseur HUD.
+`cursors.rs` garde le curseur pipette Tabler en mémoire, avec la pointe comme
+point de prélèvement et le contour contrasté de la skin, comme les curseurs
+des HUDs, de la caméra Alt et des actions de clic.
 `aurora-render/src/ui_glass.rs` produit un fond dépoli partagé
 par les fenêtres visibles : copie et deux passes de flou sur le GPU, puis
 échantillonnage dans leurs seuls rectangles arrondis. Les ressources sont
@@ -552,7 +560,7 @@ Son dossier de travail est celui des rapports, pour laisser l'updater
 remplacer le dossier d'installation après l'arrêt du viewer. Il ne relance
 jamais le viewer.
 
-`window.rs` réutilise Fluent, la Palette, les polices, les icônes Phosphor
+`window.rs` réutilise Fluent, la Palette, les polices, les icônes Tabler
 et les boutons du viewer. `software.rs` dessine ses maillages egui sur le
 CPU et `softbuffer` présente les pixels, sans initialiser Vulkan ni aucun
 adaptateur graphique. La boucle attend les événements entre les images.

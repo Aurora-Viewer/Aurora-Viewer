@@ -132,42 +132,13 @@ pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i3
 }
 
 /// Check box that can show a mixed state; returns the new value when clicked.
-pub fn check(ui: &mut egui::Ui, value: bool, tentative: bool, label: &str, enabled: bool) -> Option<bool> {
+pub fn check(ui: &mut egui::Ui, p: &Palette, value: bool, tentative: bool, label: &str, enabled: bool) -> Option<bool> {
     let mut v = value && !tentative;
-    ui.scope(|ui| {
-        // Keep checkbox geometry distinct from rounded buttons, using the
-        // current theme's field, outline and selection colors. The native
-        // checkbox retains focus, accessibility and its mixed-state marker.
-        let visuals = ui.visuals_mut();
-        let fill = if v || tentative {
-            visuals.selection.bg_fill
-        } else {
-            visuals.extreme_bg_color
-        };
-        let outline = visuals.widgets.noninteractive.fg_stroke.color;
-        let ink = visuals.widgets.inactive.fg_stroke.color;
-        for state in [
-            &mut visuals.widgets.noninteractive,
-            &mut visuals.widgets.inactive,
-            &mut visuals.widgets.hovered,
-            &mut visuals.widgets.active,
-        ] {
-            state.corner_radius = egui::CornerRadius::same(2);
-            state.bg_fill = fill;
-            state.fg_stroke.width = 2.0;
-        }
-        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, outline);
-        // Disabled permissions still need a visible square after egui fades it.
-        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, ink);
-        ui.spacing_mut().icon_width = 16.0;
-        ui.spacing_mut().icon_width_inner = 10.0;
-        let r = ui.add_enabled(
-            enabled,
-            egui::Checkbox::new(&mut v, RichText::new(label).size(12.0)).indeterminate(tentative),
-        );
-        r.clicked().then_some(v)
-    })
-    .inner
+    let label = RichText::new(label).size(12.0);
+    let r = ui
+        .add_enabled_ui(enabled, |ui| crate::ui::widgets::checkbox_mixed(ui, p, &mut v, label, tentative))
+        .inner;
+    r.clicked().then_some(v)
 }
 
 /// Combo box over a list of (label, value); returns the chosen value.

@@ -570,6 +570,20 @@ impl Camera {
         self.set_camera_pos_and_focus(center + dir * distance.max(0.1), center, object, s);
     }
 
+    /// "Reset the camera" of the preferences: the view goes back with the
+    /// settings. What a shortcut left on the follow camera (orbit, pitch,
+    /// zoom, field-of-view zoom) is dropped without turning the avatar, then
+    /// the view returns behind it (LLAgentCamera::resetView).
+    pub fn reset_to_defaults(&mut self, agent: &mut AgentState, s: &CameraSettings) {
+        if self.third_person() {
+            self.orbit_yaw = 0.0;
+            self.pitch = 0.0;
+        }
+        self.zoom_fraction = 1.0;
+        self.fov_zoom = 0.0;
+        self.reset_view(agent, s, true, true, false, false);
+    }
+
     /// LLAgentCamera::resetView: back behind the avatar. `movement` = called
     /// by a movement key (FSResetCameraOnMovement); `steering` = left button
     /// held on the avatar.
@@ -1572,6 +1586,30 @@ mod tests {
         cam.orbit_drag(-200.0, 0.0, 1.0, &mut agent);
         cam.reset_view(&mut agent, &keep, true, false, true, false);
         assert!(cam.orbit_yaw > 0.5);
+    }
+
+    #[test]
+    fn reset_to_defaults_drops_orbit_pitch_and_zoom_without_turning_the_avatar() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let rest = cam.position;
+        let mut agent = w.agent.clone();
+        cam.orbit_drag(-200.0, 60.0, 1.0, &mut agent);
+        cam.zoom_fraction = 0.4;
+        cam.fov_zoom = 0.3;
+        let heading = agent.yaw;
+        cam.reset_to_defaults(&mut agent, &s);
+        assert_eq!((cam.orbit_yaw, cam.pitch, cam.zoom_fraction, cam.fov_zoom), (0.0, 0.0, 1.0, 0.0));
+        assert_eq!(agent.yaw, heading, "the avatar keeps its heading");
+        w.agent = agent;
+        settle(&mut cam, &mut w, &s);
+        assert!(
+            cam.position.distance(rest) < 0.05,
+            "back to the rear view: {:?} vs {rest:?}",
+            cam.position
+        );
     }
 
     #[test]

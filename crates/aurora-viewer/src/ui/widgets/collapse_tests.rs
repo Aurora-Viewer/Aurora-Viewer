@@ -57,7 +57,7 @@ impl Fixture {
                     floater = floater.fixed();
                 }
                 if self.framed {
-                    floater = floater.framed_header("cube");
+                    floater = floater.framed_header("box");
                 }
                 if self.auto_height {
                     floater = floater.auto_height();

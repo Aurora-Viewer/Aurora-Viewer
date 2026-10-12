@@ -2,7 +2,17 @@
 //! memory (window positions and sizes, collapsed floaters) is written to
 //! `ui_layout.ron` on exit and restored at startup. Which panels are open
 //! lives in the settings.
+//!
+//! egui remembers the top left corner of a window. When the viewer window
+//! changes size, live or between two sessions, each window keeps instead its
+//! distance to the screen edges it is nearest to (`follow_edges`): the
+//! mini-map stays in its top right corner, what stands on the left stays on
+//! the left. Every window the user places goes through a `Slot` for that
+//! (`widgets::Floater`, the mini-map): the slot records where the window
+//! stood and in which screen, with the layout.
 
+use egui::{Id, Pos2, Rect, Vec2};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 fn path() -> PathBuf {
@@ -58,8 +68,378 @@ pub fn forget(ctx: &egui::Context) {
     ctx.options_mut(|o| *o = options);
 }
 
+/// A screen smaller than this is not one to lay windows out in: the content
+/// rect of a minimized viewer window, or of the first frames before the
+/// surface has its size. Windows neither follow it nor record it.
+const MIN_SCREEN: Vec2 = Vec2::new(320.0, 240.0);
+
+fn usable(screen: Rect) -> bool {
+    screen.is_finite() && screen.width() >= MIN_SCREEN.x && screen.height() >= MIN_SCREEN.y
+}
+
+/// How far `window` moves when the screen it stood in goes from `old` to
+/// `new`: it keeps its distance to the nearer of the left and right edges,
+/// and to the nearer of the top and bottom ones, as Firestorm's floaters
+/// follow the edge they are closest to when the viewer window is resized
+/// (LLFloaterView::reshape, indra/llui/llfloater.cpp). At equal distances
+/// (a centered window) it stays with the left and top edges. An unusable
+/// screen on either side moves nothing.
+pub(crate) fn follow_edges(old: Rect, new: Rect, window: Rect) -> Vec2 {
+    if !usable(old) || !usable(new) {
+        return Vec2::ZERO;
+    }
+    let near_right = old.right() - window.right() < window.left() - old.left();
+    let near_bottom = old.bottom() - window.bottom() < window.top() - old.top();
+    Vec2::new(
+        if near_right {
+            new.right() - old.right()
+        } else {
+            new.left() - old.left()
+        },
+        if near_bottom {
+            new.bottom() - old.bottom()
+        } else {
+            new.top() - old.top()
+        },
+    )
+}
+
+/// Where a window stood the last time it was shown, and in which screen.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Placed {
+    rect: Rect,
+    screen: Rect,
+}
+
+/// The windows the user places, by `Id::value`; persisted with egui's
+/// memory, so written to `ui_layout.ron` with the rest of the layout.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Windows {
+    placed: BTreeMap<u64, Placed>,
+}
+
+fn windows<R>(ctx: &egui::Context, read: impl FnOnce(&mut Windows) -> R) -> R {
+    ctx.data_mut(|d| read(d.get_persisted_mut_or_default::<Windows>(Id::new("window_layout"))))
+}
+
+/// One window of the layout for one frame: ask for it before the window is
+/// shown, give `pos` (when there is one) to `egui::Window::current_pos`, and
+/// report the rect once shown.
+#[must_use = "report the window with Slot::shown"]
+pub(crate) struct Slot {
+    id: Id,
+    /// egui knew the size of the window before this frame. It does not on
+    /// the first frame of a window, shown or restored from the layout: that
+    /// frame only measures it, and its rect is not one to record.
+    sized: bool,
+    /// The position the window takes this frame: the screen changed since
+    /// it was last shown, and it follows its edges.
+    pub pos: Option<Pos2>,
+}
+
+/// The slot of window `id` (the id given to `egui::Window::id`).
+pub(crate) fn slot(ctx: &egui::Context, id: Id) -> Slot {
+    let screen = ctx.content_rect();
+    let sized = egui::AreaState::load(ctx, id).is_some_and(|s| s.size.is_some());
+    let pos = usable(screen)
+        .then(|| windows(ctx, |w| w.placed.get(&id.value()).copied()))
+        .flatten()
+        .filter(|placed| placed.screen != screen)
+        .map(|placed| placed.rect.min + follow_edges(placed.screen, screen, placed.rect));
+    Slot { id, sized, pos }
+}
+
+impl Slot {
+    /// The window was shown at `rect`.
+    pub(crate) fn shown(self, ctx: &egui::Context, rect: Rect) {
+        let screen = ctx.content_rect();
+        if !usable(screen) {
+            return;
+        }
+        windows(ctx, |w| {
+            let key = self.id.value();
+            let new = match (self.sized, w.placed.get(&key)) {
+                (true, _) => Placed { rect, screen },
+                // measured this frame: it keeps the size it was recorded with
+                (false, Some(old)) => Placed {
+                    rect: Rect::from_min_size(rect.min, old.rect.size()),
+                    screen,
+                },
+                (false, None) => return,
+            };
+            if w.placed.get(&key) != Some(&new) {
+                w.placed.insert(key, new);
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn screen(width: f32, height: f32) -> Rect {
+        Rect::from_min_size(Pos2::ZERO, Vec2::new(width, height))
+    }
+
+    /// A 200 x 100 window whose top left corner is at (x, y).
+    fn window(x: f32, y: f32) -> Rect {
+        Rect::from_min_size(Pos2::new(x, y), Vec2::new(200.0, 100.0))
+    }
+
+    #[test]
+    fn a_window_near_the_right_edge_keeps_its_gap_to_it() {
+        let old = screen(1280.0, 720.0);
+        let map = window(1064.0, 56.0);
+        for width in [1600.0, 1920.0, 1000.0] {
+            let new = screen(width, 720.0);
+            let moved = map.translate(follow_edges(old, new, map));
+            assert_eq!(new.right() - moved.right(), 16.0, "{width}");
+            assert_eq!(moved.top(), 56.0, "{width}");
+        }
+    }
+
+    #[test]
+    fn a_window_near_the_left_or_top_edge_does_not_move() {
+        let old = screen(1280.0, 720.0);
+        for new in [screen(1600.0, 900.0), screen(1024.0, 600.0)] {
+            assert_eq!(follow_edges(old, new, window(8.0, 56.0)), Vec2::ZERO);
+        }
+    }
+
+    #[test]
+    fn a_window_near_the_bottom_edge_follows_it() {
+        let old = screen(1280.0, 720.0);
+        let chat = window(8.0, 580.0);
+        for height in [900.0, 600.0] {
+            let new = screen(1280.0, height);
+            let moved = chat.translate(follow_edges(old, new, chat));
+            assert_eq!(new.bottom() - moved.bottom(), 40.0, "{height}");
+            assert_eq!(moved.left(), 8.0);
+        }
+        // the bottom right corner follows both
+        let corner = window(1072.0, 580.0);
+        let new = screen(1600.0, 900.0);
+        let moved = corner.translate(follow_edges(old, new, corner));
+        assert_eq!((new.right() - moved.right(), new.bottom() - moved.bottom()), (8.0, 40.0));
+    }
+
+    /// At the same distance from both edges, the left and the top ones win:
+    /// a centered window stays where it is, on each axis.
+    #[test]
+    fn a_centered_window_stays_put() {
+        let old = screen(1280.0, 720.0);
+        let centered = window(540.0, 310.0);
+        assert_eq!(follow_edges(old, screen(1600.0, 900.0), centered), Vec2::ZERO);
+        // one pixel nearer the right edge, it follows that one
+        let right = window(541.0, 310.0);
+        assert_eq!(follow_edges(old, screen(1600.0, 900.0), right), Vec2::new(320.0, 0.0));
+    }
+
+    #[test]
+    fn nothing_moves_in_an_unchanged_or_unusable_screen() {
+        let old = screen(1280.0, 720.0);
+        let map = window(1064.0, 56.0);
+        assert_eq!(follow_edges(old, old, map), Vec2::ZERO);
+        // minimized viewer window, first frames
+        for tiny in [screen(0.0, 0.0), screen(120.0, 28.0), screen(1280.0, 0.0), screen(f32::NAN, 720.0)] {
+            assert!(!usable(tiny));
+            assert_eq!(follow_edges(old, tiny, map), Vec2::ZERO);
+            assert_eq!(follow_edges(tiny, old, map), Vec2::ZERO);
+        }
+    }
+
+    /// The origin of the screen moves too when a side bar takes room.
+    #[test]
+    fn edges_are_those_of_the_screen_rect() {
+        let old = screen(1280.0, 720.0);
+        let new = Rect::from_min_max(Pos2::new(40.0, 20.0), Pos2::new(1640.0, 920.0));
+        assert_eq!(follow_edges(old, new, window(8.0, 56.0)), Vec2::new(40.0, 20.0));
+        assert_eq!(follow_edges(old, new, window(1064.0, 580.0)), Vec2::new(360.0, 200.0));
+    }
+
+    /// Frames of the windows of a session: a floater against the left edge,
+    /// one in the bottom right corner, and a bare `egui::Window` in the top
+    /// right one, like the mini-map.
+    struct Session {
+        ctx: egui::Context,
+        frame: usize,
+    }
+
+    const LEFT: &str = "layout_left";
+    const CORNER: &str = "layout_corner";
+    const MAP: &str = "layout_map";
+
+    impl Session {
+        fn new() -> Self {
+            Self {
+                ctx: egui::Context::default(),
+                frame: 0,
+            }
+        }
+
+        /// One frame in a `width` x `height` screen; the windows open at
+        /// their place in a 1280 x 720 one.
+        fn frame(&mut self, width: f32, height: f32) {
+            self.frame += 1;
+            let palette = crate::theme::Theme::default().palette();
+            let input = egui::RawInput {
+                screen_rect: Some(screen(width, height)),
+                time: Some(self.frame as f64 / 60.0),
+                ..Default::default()
+            };
+            let mut output = self.ctx.run_ui(input, |ui| {
+                let ctx = ui.ctx();
+                let floater = |id, pos| {
+                    crate::ui::widgets::Floater::new(id, "Window", pos, Vec2::new(300.0, 200.0))
+                        .silent()
+                        .show(ctx, &palette, &mut true, |ui| {
+                            ui.label("content");
+                        });
+                };
+                floater(LEFT, Pos2::new(8.0, 56.0));
+                floater(CORNER, Pos2::new(972.0, 480.0));
+                let slot = slot(ctx, Id::new(MAP));
+                let mut map = egui::Window::new("Map")
+                    .id(Id::new(MAP))
+                    .title_bar(false)
+                    .default_pos([1064.0, 56.0])
+                    .default_size([200.0, 200.0]);
+                if let Some(pos) = slot.pos {
+                    map = map.current_pos(pos);
+                }
+                if let Some(shown) = map.show(ctx, |ui| ui.allocate_space(ui.available_size())) {
+                    slot.shown(ctx, shown.response.rect);
+                }
+            });
+            output.textures_delta.clear();
+        }
+
+        fn frames(&mut self, n: usize, width: f32, height: f32) {
+            for _ in 0..n {
+                self.frame(width, height);
+            }
+        }
+
+        fn rect(&self, id: &str) -> Rect {
+            self.ctx.memory(|m| m.area_rect(Id::new(id))).expect("the window was shown")
+        }
+
+        /// (left gap, top gap, right gap, bottom gap) of a window.
+        fn gaps(&self, id: &str, width: f32, height: f32) -> [f32; 4] {
+            let r = self.rect(id);
+            [r.left(), r.top(), width - r.right(), height - r.bottom()]
+        }
+
+        /// The session that follows: a new context restored from the layout
+        /// this one would write on exit.
+        fn restart(&self) -> Session {
+            let saved = ron::to_string(&self.ctx.memory(|m| m.clone())).expect("serialize");
+            let next = Session::new();
+            restore(&next.ctx, &saved).expect("restore");
+            next
+        }
+    }
+
+    #[test]
+    fn windows_follow_their_edges_when_the_viewer_window_is_resized() {
+        let mut s = Session::new();
+        s.frames(3, 1280.0, 720.0);
+        let left = s.gaps(LEFT, 1280.0, 720.0);
+        let corner = s.gaps(CORNER, 1280.0, 720.0);
+        let map = s.gaps(MAP, 1280.0, 720.0);
+        assert_eq!((left[0], left[1]), (8.0, 56.0));
+        assert_eq!((map[1], map[2]), (56.0, 16.0), "{:?}", s.rect(MAP));
+        for (width, height) in [(1600.0, 900.0), (1920.0, 1080.0), (1400.0, 760.0), (1280.0, 720.0)] {
+            s.frames(2, width, height);
+            let now = s.gaps(LEFT, width, height);
+            assert_eq!((now[0], now[1]), (left[0], left[1]), "{width} x {height}");
+            let now = s.gaps(CORNER, width, height);
+            assert_eq!((now[2], now[3]), (corner[2], corner[3]), "{width} x {height}");
+            let now = s.gaps(MAP, width, height);
+            assert_eq!((now[1], now[2]), (map[1], map[2]), "{width} x {height}");
+        }
+    }
+
+    /// A screen too small to lay windows out in (egui itself squeezes them
+    /// into it) leaves no trace in the layout: what is recorded is still
+    /// where the windows stood in the last real screen. A minimized viewer
+    /// window does not even get there: egui-winit keeps the previous screen
+    /// rect when the window has no size.
+    #[test]
+    fn an_unusable_screen_is_not_recorded() {
+        let mut s = Session::new();
+        s.frames(3, 1600.0, 900.0);
+        let before = windows(&s.ctx, |w| w.clone());
+        assert_eq!(before.placed.len(), 3);
+        assert_eq!(before.placed[&Id::new(MAP).value()].screen, screen(1600.0, 900.0));
+        s.frames(2, 0.0, 0.0);
+        s.frames(2, 160.0, 28.0);
+        assert_eq!(windows(&s.ctx, |w| w.clone()), before);
+    }
+
+    /// The layout saved in a small viewer window, opened in a larger one:
+    /// the first frames of the next session put each window back against
+    /// its edges, whatever the screen of the very first frame is.
+    #[test]
+    fn a_saved_layout_follows_the_edges_of_the_next_session() {
+        let mut first = Session::new();
+        first.frames(3, 1280.0, 720.0);
+        let corner = first.gaps(CORNER, 1280.0, 720.0);
+        let map = first.gaps(MAP, 1280.0, 720.0);
+        let sizes = [first.rect(LEFT).size(), first.rect(CORNER).size(), first.rect(MAP).size()];
+        for first_frame in [None, Some((800.0, 600.0)), Some((640.0, 480.0)), Some((2560.0, 1440.0))] {
+            let mut next = first.restart();
+            if let Some((width, height)) = first_frame {
+                next.frame(width, height);
+            }
+            next.frames(3, 1600.0, 900.0);
+            assert_eq!(next.rect(LEFT).min, Pos2::new(8.0, 56.0), "{first_frame:?}");
+            let now = next.gaps(CORNER, 1600.0, 900.0);
+            assert_eq!((now[2], now[3]), (corner[2], corner[3]), "{first_frame:?}");
+            let now = next.gaps(MAP, 1600.0, 900.0);
+            assert_eq!((now[1], now[2]), (map[1], map[2]), "{first_frame:?}");
+            assert_eq!(
+                [next.rect(LEFT).size(), next.rect(CORNER).size(), next.rect(MAP).size()],
+                sizes,
+                "{first_frame:?}"
+            );
+        }
+    }
+
+    /// A window closed while the viewer window changed size follows its
+    /// edges when it opens again.
+    #[test]
+    fn a_window_reopened_after_a_resize_follows_its_edges() {
+        let ctx = egui::Context::default();
+        let palette = crate::theme::Theme::default().palette();
+        let mut time = 0.0;
+        let mut frame = |width: f32, open: bool| {
+            time += 1.0 / 60.0;
+            let input = egui::RawInput {
+                screen_rect: Some(screen(width, 720.0)),
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                crate::ui::widgets::Floater::new(CORNER, "Window", Pos2::new(972.0, 100.0), Vec2::new(300.0, 200.0))
+                    .silent()
+                    .show(ui.ctx(), &palette, &mut { open }, |ui| {
+                        ui.label("content");
+                    });
+            });
+            output.textures_delta.clear();
+        };
+        frame(1280.0, true);
+        frame(1280.0, true);
+        frame(1600.0, false);
+        frame(1600.0, false);
+        frame(1600.0, true);
+        frame(1600.0, true);
+        let rect = ctx.memory(|m| m.area_rect(Id::new(CORNER))).expect("shown");
+        assert_eq!(1600.0 - rect.right(), 8.0, "{rect:?}");
+    }
+
     #[test]
     fn layout_round_trip_keeps_window_rects() {
         let ctx = egui::Context::default();
@@ -98,7 +478,7 @@ mod tests {
             ctx.fonts(|f| f.definitions().families[&egui::FontFamily::Proportional][0].clone())
         };
         let ctx = egui::Context::default();
-        super::restore(&ctx, &saved).expect("restore");
+        restore(&ctx, &saved).expect("restore");
         crate::ui::fonts::apply(&ctx, crate::ui::fonts::NOTO);
         assert_eq!(first_font(&ctx), "aurora-main");
 
