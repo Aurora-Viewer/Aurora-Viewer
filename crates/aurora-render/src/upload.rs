@@ -354,6 +354,63 @@ impl StagingPool {
     }
 }
 
+/// Texel format of a texture page and of a staged mip chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TexelFormat {
+    /// Tightly packed RGBA8.
+    Rgba8,
+    /// BC7 blocks of 4×4 texels, 16 bytes each, row by row (a level that is
+    /// not a multiple of 4 has its last blocks padded). A quarter of RGBA8
+    /// in video memory.
+    Bc7,
+}
+
+impl TexelFormat {
+    pub fn wgpu(self) -> wgpu::TextureFormat {
+        match self {
+            TexelFormat::Rgba8 => wgpu::TextureFormat::Rgba8Unorm,
+            TexelFormat::Bc7 => wgpu::TextureFormat::Bc7RgbaUnorm,
+        }
+    }
+
+    /// Bytes of one row of data of a level `width` texels wide.
+    pub fn row_bytes(self, width: u32) -> u32 {
+        match self {
+            TexelFormat::Rgba8 => width * 4,
+            TexelFormat::Bc7 => width.div_ceil(4) * 16,
+        }
+    }
+
+    /// Rows of data of a level `height` texels high.
+    pub fn rows(self, height: u32) -> u32 {
+        match self {
+            TexelFormat::Rgba8 => height,
+            TexelFormat::Bc7 => height.div_ceil(4),
+        }
+    }
+
+    pub fn level_bytes(self, width: u32, height: u32) -> u64 {
+        self.row_bytes(width) as u64 * self.rows(height) as u64
+    }
+
+    /// Extent of the copy that fills a level: whole blocks, so the physical
+    /// size of a level smaller than, or not a multiple of, a block.
+    pub fn copy_extent(self, width: u32, height: u32) -> (u32, u32) {
+        match self {
+            TexelFormat::Rgba8 => (width, height),
+            TexelFormat::Bc7 => (width.next_multiple_of(4), height.next_multiple_of(4)),
+        }
+    }
+
+    /// Level-0 size this format can hold (BC7: whole blocks).
+    pub fn fits(self, width: u32, height: u32) -> bool {
+        match self {
+            TexelFormat::Rgba8 => true,
+            TexelFormat::Bc7 => width.is_multiple_of(4) && height.is_multiple_of(4),
+        }
+    }
+}
+
 /// Layout of a mip chain in staging memory: rows padded to
 /// [`STAGING_ALIGN`], each level at an aligned offset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -364,36 +421,37 @@ pub struct StagedLevel {
     pub bytes_per_row: u32,
 }
 
-/// Levels of `dims` (RGBA8) and the total size.
-pub fn level_layout(dims: impl IntoIterator<Item = (u32, u32)>) -> (Vec<StagedLevel>, u64) {
+/// Levels of `dims` in `format` and the total size.
+pub fn level_layout(format: TexelFormat, dims: impl IntoIterator<Item = (u32, u32)>) -> (Vec<StagedLevel>, u64) {
     let mut offset = 0;
     let levels = dims
         .into_iter()
         .map(|(width, height)| {
-            let bytes_per_row = align(width as u64 * 4) as u32;
+            let bytes_per_row = align(format.row_bytes(width) as u64) as u32;
             let l = StagedLevel {
                 width,
                 height,
                 offset,
                 bytes_per_row,
             };
-            offset += align(bytes_per_row as u64 * height as u64);
+            offset += align(bytes_per_row as u64 * format.rows(height) as u64);
             l
         })
         .collect();
     (levels, offset)
 }
 
-/// Write tightly packed RGBA8 levels into `dst` at their staged layout.
-pub fn write_levels(dst: &mut wgpu::WriteOnly<'_, [u8]>, levels: &[StagedLevel], data: &[&[u8]]) {
+/// Write tightly packed levels of `format` into `dst` at their staged layout.
+pub fn write_levels(dst: &mut wgpu::WriteOnly<'_, [u8]>, format: TexelFormat, levels: &[StagedLevel], data: &[&[u8]]) {
     for (l, src) in levels.iter().zip(data) {
-        let row = l.width as usize * 4;
+        let row = format.row_bytes(l.width) as usize;
+        let rows = format.rows(l.height) as usize;
         if row == l.bytes_per_row as usize {
-            let len = row * l.height as usize;
+            let len = row * rows;
             dst.slice(l.offset as usize..l.offset as usize + len).copy_from_slice(&src[..len]);
             continue;
         }
-        for y in 0..l.height as usize {
+        for y in 0..rows {
             let at = l.offset as usize + y * l.bytes_per_row as usize;
             dst.slice(at..at + row).copy_from_slice(&src[y * row..(y + 1) * row]);
         }
@@ -404,6 +462,7 @@ pub fn write_levels(dst: &mut wgpu::WriteOnly<'_, [u8]>, levels: &[StagedLevel],
 /// texture layer ([`crate::Renderer::replace_texture_staged`]).
 #[derive(Debug)]
 pub struct StagedTexture {
+    pub format: TexelFormat,
     pub levels: Vec<StagedLevel>,
     pub data: Staged,
 }
@@ -412,18 +471,28 @@ impl StagedTexture {
     /// Stage tightly packed RGBA8 levels (level 0 first); None when the pool
     /// is full.
     pub fn new(pool: &StagingPool, mips: &[(u32, u32, &[u8])]) -> Option<Self> {
-        let usable = mips.iter().all(|(w, h, d)| d.len() >= *w as usize * *h as usize * 4);
-        if mips.is_empty() || !usable {
+        Self::with_format(pool, TexelFormat::Rgba8, mips)
+    }
+
+    /// Stage tightly packed levels of `format` (level 0 first, sizes in
+    /// texels); None when the pool is full or the data does not fit the sizes.
+    pub fn with_format(pool: &StagingPool, format: TexelFormat, mips: &[(u32, u32, &[u8])]) -> Option<Self> {
+        let usable = mips.iter().all(|(w, h, d)| d.len() as u64 >= format.level_bytes(*w, *h));
+        if mips.is_empty() || !usable || !format.fits(mips[0].0, mips[0].1) {
             return None;
         }
-        let (levels, size) = level_layout(mips.iter().map(|m| (m.0, m.1)));
+        let (levels, size) = level_layout(format, mips.iter().map(|m| (m.0, m.1)));
         let data: Vec<&[u8]> = mips.iter().map(|m| m.2).collect();
-        let staged = pool.stage(size, |dst| write_levels(dst, &levels, &data))?;
-        Some(StagedTexture { levels, data: staged })
+        let staged = pool.stage(size, |dst| write_levels(dst, format, &levels, &data))?;
+        Some(StagedTexture {
+            format,
+            levels,
+            data: staged,
+        })
     }
 
     pub fn bytes(&self) -> u64 {
-        self.levels.iter().map(|l| l.width as u64 * l.height as u64 * 4).sum()
+        self.levels.iter().map(|l| self.format.level_bytes(l.width, l.height)).sum()
     }
 }
 
@@ -538,13 +607,14 @@ impl UploadQueue {
         let base = staged.data.offset;
         let enc = self.encoder(device);
         for (i, l) in staged.levels.iter().take(count as usize).enumerate() {
+            let (width, height) = staged.format.copy_extent(l.width, l.height);
             enc.copy_buffer_to_texture(
                 wgpu::TexelCopyBufferInfo {
                     buffer: &src,
                     layout: wgpu::TexelCopyBufferLayout {
                         offset: base + l.offset,
                         bytes_per_row: Some(l.bytes_per_row),
-                        rows_per_image: Some(l.height),
+                        rows_per_image: Some(staged.format.rows(l.height)),
                     },
                 },
                 wgpu::TexelCopyTextureInfo {
@@ -554,8 +624,8 @@ impl UploadQueue {
                     aspect: wgpu::TextureAspect::All,
                 },
                 wgpu::Extent3d {
-                    width: l.width,
-                    height: l.height,
+                    width,
+                    height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -696,7 +766,7 @@ mod tests {
 
     #[test]
     fn levels_are_aligned() {
-        let (levels, size) = level_layout([(64, 32), (32, 16), (16, 8), (1, 1)]);
+        let (levels, size) = level_layout(TexelFormat::Rgba8, [(64, 32), (32, 16), (16, 8), (1, 1)]);
         // 64 px rows are 256 bytes: tight; smaller rows are padded
         assert_eq!(levels[0].bytes_per_row, 256);
         assert_eq!(levels[1].offset, 256 * 32);
@@ -705,25 +775,57 @@ mod tests {
         assert_eq!(levels[3].bytes_per_row, 256);
         assert_eq!(size, levels[3].offset + 256);
         assert!(levels.iter().all(|l| l.offset % STAGING_ALIGN == 0));
-        let (big, size) = level_layout([(1024, 512)]);
+        let (big, size) = level_layout(TexelFormat::Rgba8, [(1024, 512)]);
         assert_eq!((big[0].bytes_per_row, size), (4096, 4096 * 512));
+    }
+
+    #[test]
+    fn bc7_levels_are_rows_of_blocks() {
+        // 40 × 12 texels: 10 × 3 blocks, rows of 160 bytes padded to 256;
+        // then 20 × 6 (5 × 2 blocks) and a 1 × 1 level in one block
+        let (levels, size) = level_layout(TexelFormat::Bc7, [(40, 12), (20, 6), (1, 1)]);
+        assert_eq!(levels.iter().map(|l| l.bytes_per_row).collect::<Vec<_>>(), [256, 256, 256]);
+        assert_eq!(levels.iter().map(|l| l.offset).collect::<Vec<_>>(), [0, 768, 1280]);
+        assert_eq!(size, 1536);
+        assert_eq!(TexelFormat::Bc7.copy_extent(20, 6), (20, 8));
+        assert_eq!(TexelFormat::Bc7.copy_extent(1, 1), (4, 4));
+        assert_eq!(TexelFormat::Rgba8.copy_extent(1, 1), (1, 1));
+        let l0: Vec<u8> = (0..10 * 3 * 16).map(|i| (i / 160) as u8 + 1).collect();
+        let l1 = vec![7u8; 5 * 2 * 16];
+        let l2 = vec![9u8; 16];
+        let mut out = vec![0u8; size as usize];
+        write_levels(
+            &mut wgpu::WriteOnly::from(out.as_mut_slice()),
+            TexelFormat::Bc7,
+            &levels,
+            &[&l0, &l1, &l2],
+        );
+        // each row of blocks at the start of its padded row
+        assert_eq!((out[0], out[159], out[160], out[256], out[512]), (1, 1, 0, 2, 3));
+        assert_eq!((out[768], out[768 + 79], out[768 + 80], out[1024]), (7, 7, 0, 7));
+        assert_eq!((out[1280], out[1280 + 15], out[1280 + 16]), (9, 9, 0));
     }
 
     #[test]
     fn levels_are_written_row_by_row() {
         let l0: Vec<u8> = (0..64 * 2 * 4).map(|i| i as u8).collect();
         let l1: Vec<u8> = (0..4u8).map(|i| 200 + i).collect();
-        let (levels, size) = level_layout([(64, 2), (1, 1)]);
+        let (levels, size) = level_layout(TexelFormat::Rgba8, [(64, 2), (1, 1)]);
         let mut out = vec![0u8; size as usize];
-        write_levels(&mut wgpu::WriteOnly::from(out.as_mut_slice()), &levels, &[&l0, &l1]);
+        write_levels(
+            &mut wgpu::WriteOnly::from(out.as_mut_slice()),
+            TexelFormat::Rgba8,
+            &levels,
+            &[&l0, &l1],
+        );
         assert_eq!(&out[..512], &l0[..]);
         assert_eq!(&out[512..516], &l1[..]);
         assert!(out[516..].iter().all(|&b| b == 0));
         // a padded level: 2 px rows of 8 bytes in 256-byte rows
         let px: Vec<u8> = (1..=16).collect();
-        let (levels, size) = level_layout([(2, 2)]);
+        let (levels, size) = level_layout(TexelFormat::Rgba8, [(2, 2)]);
         let mut out = vec![0u8; size as usize];
-        write_levels(&mut wgpu::WriteOnly::from(out.as_mut_slice()), &levels, &[&px]);
+        write_levels(&mut wgpu::WriteOnly::from(out.as_mut_slice()), TexelFormat::Rgba8, &levels, &[&px]);
         assert_eq!(&out[..8], &px[..8]);
         assert_eq!(&out[256..264], &px[8..]);
         assert!(out[8..256].iter().all(|&b| b == 0));

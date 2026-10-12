@@ -18,9 +18,19 @@
 //! and its texture, now holding downloaded data of the size of its J2C
 //! file, is no longer used; two seconds later they are all due for
 //! eviction (`demo stream: textures evicted`).
+//!
+//! With `,j2k=<folder>` after the counts, the textures are the `.j2c` files
+//! of that folder (a viewer's `cache/tex`, cycled if there are fewer than
+//! objects) instead of drawn checkers: each file is handed to the streamer
+//! as a disk cache hit, when it looks for the JPEG 2000 data and has
+//! none, and goes through the real path from the JPEG 2000 decode on, at
+//! the level its size on screen asks for. This is the return to a region
+//! already in the cache; the streamer's `texture load:` line gives what it
+//! cost. Run twice, the second run finds the transcoded chains the first
+//! one left in the demo's cache folder and asks for almost no file.
 
 use super::{HANDLE, height, prim, shape, te};
-use crate::scene::jobs::{AlphaKind, Jobs};
+use crate::scene::jobs::{AlphaKind, JobResult, Jobs};
 use crate::scene::textures::{DemoSource, TexSource, TextureStreamer, texture_result};
 use aurora_net::NetEvent;
 use aurora_prim::ExtraParams;
@@ -28,6 +38,7 @@ use aurora_prim::params::*;
 use aurora_render::{Renderer, StagingPool};
 use glam::{Quat, Vec3};
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -75,6 +86,26 @@ fn parse(value: &str) -> (u32, u32, bool) {
     let n = parts.next().flatten().unwrap_or(2000).clamp(1, 20_000);
     let wave = parts.next().flatten().unwrap_or(WAVE).clamp(1, n);
     (n, wave, leave)
+}
+
+/// `j2k=<folder>` in the variable's value: the `.j2c` files of the folder,
+/// in name order (none: the option is ignored, with a line in the log).
+fn j2k_files(value: &str) -> Option<Arc<Vec<PathBuf>>> {
+    let folder = value.split(',').find_map(|p| p.trim().strip_prefix("j2k="))?;
+    let mut files: Vec<PathBuf> = std::fs::read_dir(folder)
+        .map_err(|e| log::warn!("demo stream: j2k folder: {e}"))
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "j2c"))
+        .collect();
+    files.sort();
+    if files.is_empty() {
+        log::warn!("demo stream: no .j2c file in the j2k folder");
+        return None;
+    }
+    log::info!("demo stream: textures from {} J2C files", files.len());
+    Some(Arc::new(files))
 }
 
 /// Bytes of downloaded data held by texture `i` once loaded: about what
@@ -188,6 +219,21 @@ fn spawn_decodes(jobs: &Jobs, pool: Option<Arc<StagingPool>>, textures: Vec<u32>
     });
 }
 
+/// `j2k=<folder>`: the J2C file of each texture, read on the background
+/// pool and handed over as a disk cache hit. The streamer decodes it at the
+/// level its size on screen asks for, as a texture of the grid.
+/// Asked again after this long if the data still has not come.
+const FEED_AGAIN: Duration = Duration::from_secs(2);
+
+fn spawn_cache_hits(jobs: &Jobs, files: Arc<Vec<PathBuf>>, textures: Vec<u32>) {
+    jobs.spawn_many(textures, move |i| JobResult::TextureCache {
+        id: texture(i),
+        data: std::fs::read(&files[i as usize % files.len()]).ok(),
+        complete: true,
+        keep_rgba: false,
+    });
+}
+
 /// The scenario, driven once a frame.
 pub struct StreamDemo {
     n: u32,
@@ -206,12 +252,19 @@ pub struct StreamDemo {
     with_data: u32,
     left_at: Option<Instant>,
     evicted_logged: bool,
+    /// `,j2k=<folder>`: the files the textures are decoded from.
+    j2k: Option<Arc<Vec<PathBuf>>>,
+    /// When each texture was last given its file.
+    fed: Vec<Option<Instant>>,
 }
 
 impl StreamDemo {
     pub fn from_env() -> Option<Self> {
-        let (n, wave, leave) = parse(&std::env::var("AURORA_DEMO_STREAM").ok()?);
+        let value = std::env::var("AURORA_DEMO_STREAM").ok()?;
+        let (n, wave, leave) = parse(&value);
         Some(StreamDemo {
+            j2k: j2k_files(&value),
+            fed: vec![None; n as usize],
             n,
             wave,
             next: 0,
@@ -298,9 +351,13 @@ impl StreamDemo {
             // (never evicted: the scenario holds them)
             for i in self.next..self.next + count {
                 let _ = textures.acquire(renderer, texture(i), TexSource::Asset);
-                self.upgrades.push_back((now + UPGRADE_AFTER, i));
             }
-            spawn_decodes(jobs, textures.staging.clone(), (self.next..self.next + count).collect(), 2);
+            let arrived: Vec<u32> = (self.next..self.next + count).collect();
+            // (with `j2k=`, the files are brought below, when asked for)
+            if self.j2k.is_none() {
+                self.upgrades.extend(arrived.iter().map(|&i| (now + UPGRADE_AFTER, i)));
+                spawn_decodes(jobs, textures.staging.clone(), arrived, 2);
+            }
             for ev in wave_events(self.n, self.next, count) {
                 world.apply(ev);
             }
@@ -313,12 +370,44 @@ impl StreamDemo {
                 );
             }
         }
+        // `j2k=`: the file of each texture whose disk cache lookup found no
+        // JPEG 2000 data, where the grid would start a download (not the
+        // textures shown from their transcoded chain)
+        if let Some(files) = &self.j2k
+            && frame.is_multiple_of(4)
+        {
+            let fed = &mut self.fed;
+            let ask: Vec<u32> = (0..self.next)
+                .filter(|&i| fed[i as usize].is_none_or(|t| now.duration_since(t) >= FEED_AGAIN) && textures.demo_needs_data(&texture(i)))
+                .collect();
+            for &i in &ask {
+                fed[i as usize] = Some(now);
+            }
+            if !ask.is_empty() {
+                spawn_cache_hits(jobs, files.clone(), ask);
+            }
+        }
         let mut due = Vec::new();
         while self.upgrades.front().is_some_and(|(at, _)| *at <= now) {
             due.extend(self.upgrades.pop_front().map(|(_, i)| i));
         }
         spawn_decodes(jobs, textures.staging.clone(), due, 0);
         if self.next == self.n && self.upgrades.is_empty() && frame.is_multiple_of(10) {
+            if self.j2k.is_some() {
+                // every texture shown at some level and nothing under way:
+                // the levels follow the size on screen from there
+                let shown = (0..self.n).all(|i| textures.decoded_level(&texture(i)).is_some());
+                if shown && textures.stats.decoding == 0 && textures.stats.pending_upload == 0 && geom_pending == 0 {
+                    self.loaded_logged = true;
+                    self.loaded_at = Some(now);
+                    log::info!(
+                        "demo stream: loaded in {:.2} s ({} textures decoded from J2C files, geometry built)",
+                        now.duration_since(started).as_secs_f32(),
+                        self.n,
+                    );
+                }
+                return;
+            }
             let full = (0..self.n).filter(|&i| textures.decoded_level(&texture(i)) == Some(0)).count();
             if full == self.n as usize && geom_pending == 0 {
                 self.loaded_logged = true;
@@ -373,6 +462,8 @@ mod tests {
         assert_eq!(parse("3000,leave"), (3000, 100, true));
         assert_eq!(parse("3000, 3000, leave"), (3000, 3000, true));
         assert_eq!(parse("leave"), (2000, 100, true));
+        // the folder of J2C files does not change the counts before it
+        assert_eq!(parse("3000,3000,j2k=some folder"), (3000, 3000, false));
     }
 
     #[test]

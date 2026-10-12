@@ -148,10 +148,24 @@ pub enum JobResult {
     TextureFailed {
         id: Uuid,
     },
+    /// The JPEG 2000 data of a texture read from the disk cache (none: not
+    /// there).
     TextureCache {
         id: Uuid,
         data: Option<Vec<u8>>,
         complete: bool,
+        /// The transcoded cache says BC7 would harm this texture.
+        keep_rgba: bool,
+    },
+    /// A texture read back from the transcoded disk cache
+    /// (`texture_cache.rs`), staged as a decode job would have: `texture`
+    /// is its `Texture` result, `info` the JPEG 2000 image it comes from and
+    /// `finest` the finest discard level the file holds.
+    TextureTranscoded {
+        id: Uuid,
+        info: aurora_assets::J2kInfo,
+        finest: u8,
+        texture: Box<JobResult>,
     },
     MeshCache {
         id: Uuid,

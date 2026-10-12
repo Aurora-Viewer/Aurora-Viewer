@@ -17,10 +17,12 @@
 
 use super::jobs::{AlphaKind, JobResult, Jobs, SculptMap, Trash, classify_alpha, to_rgba};
 use super::texture_budget::{self, Pressure};
+use super::texture_cache::{self, Transcoded};
+use super::texture_load::{DecodeMeter, LoadTotals, LoadWatch};
 use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
 use aurora_net::{FetchRequest, FetchResult, Fetcher};
-use aurora_render::{MipLevel, Renderer, StagedTexture, StagingPool, build_mips};
+use aurora_render::{MipLevel, Renderer, StagedTexture, StagingPool, TexelFormat, build_mips};
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -120,6 +122,17 @@ pub struct PickMask {
 }
 
 impl PickMask {
+    /// As stored in the transcoded cache: (width, height, bits).
+    fn parts(&self) -> (u32, u32, &[u8]) {
+        (self.width, self.height, &self.bits)
+    }
+
+    /// A mask read back from the transcoded cache, if its bits fit its size.
+    fn from_parts((width, height, bits): texture_cache::MaskParts) -> Option<Self> {
+        let fits = width > 0 && height > 0 && bits.len() == (width as usize * height as usize).div_ceil(8);
+        fits.then_some(Self { width, height, bits })
+    }
+
     pub fn from_rgba(width: u32, height: u32, rgba: &[u8]) -> Option<Self> {
         let pixels = (width as usize).checked_mul(height as usize)?;
         if width == 0 || height == 0 || rgba.len() != pixels.checked_mul(4)? {
@@ -170,7 +183,14 @@ struct Entry {
     gpu_size: (u32, u32),
     fetching: bool,
     decoding: bool,
-    cache_state: u8, // 0 unchecked, 1 loading, 2 done
+    /// 0 unchecked, 1 being read, 2 the JPEG 2000 data is read (or is not
+    /// on the disk), 3 shown from the transcoded cache, the JPEG 2000 data
+    /// left on the disk until a finer level is wanted.
+    cache_state: u8,
+    /// Finest discard level the transcoded cache holds for this texture.
+    transcoded: Option<u8>,
+    /// BC7 would harm this texture (known from the transcoded cache).
+    keep_rgba: bool,
     failures: u32,
     retry_at: Option<Instant>,
     keep_pixels: bool,
@@ -186,6 +206,10 @@ struct Entry {
     /// The last fetch was answered 404: asked again much later.
     gone: bool,
 }
+
+/// What decides the texture page of an upload: texel format, level-0
+/// size and number of levels.
+type ChainSize = (TexelFormat, u32, u32, u32);
 
 struct PendingUpload {
     id: Uuid,
@@ -297,12 +321,15 @@ impl PendingUpload {
         self.staged.as_ref().is_none_or(|s| s.data.ready())
     }
 
-    /// Level-0 size and number of levels of the chain to upload (what
-    /// decides its texture page).
-    fn chain(&self) -> Option<(u32, u32, u32)> {
+    /// Texel format, level-0 size and number of levels of the chain to
+    /// upload (what decides its texture page).
+    fn chain(&self) -> Option<ChainSize> {
         match &self.staged {
-            Some(staged) => staged.levels.first().map(|l| (l.width, l.height, staged.levels.len() as u32)),
-            None => self.mips.first().map(|m| (m.0, m.1, self.mips.len() as u32)),
+            Some(staged) => staged
+                .levels
+                .first()
+                .map(|l| (staged.format, l.width, l.height, staged.levels.len() as u32)),
+            None => self.mips.first().map(|m| (TexelFormat::Rgba8, m.0, m.1, self.mips.len() as u32)),
         }
     }
 
@@ -336,13 +363,18 @@ struct PendingUploads {
     finest: HashMap<Uuid, u8>,
     /// Uploads waiting, per chain size: tells the renderer when to prepare
     /// the next texture page of a size (`TextureTable::prepare_page`).
-    chains: HashMap<(u32, u32, u32), u32>,
+    chains: HashMap<ChainSize, u32>,
     seq: u64,
 }
 
 impl PendingUploads {
     fn len(&self) -> usize {
         self.heap.len() + self.unready.len()
+    }
+
+    /// An upload of `id` at `discard` or finer is waiting.
+    fn covers(&self, id: &Uuid, discard: u8) -> bool {
+        self.finest.get(id).is_some_and(|&f| f <= discard)
     }
 
     /// Queue an upload; `first`: the texture still shows its placeholder,
@@ -386,7 +418,7 @@ impl PendingUploads {
     }
 
     /// Uploads of that chain size waiting (copyable or not).
-    fn queued(&self, chain: (u32, u32, u32)) -> u32 {
+    fn queued(&self, chain: ChainSize) -> u32 {
         self.chains.get(&chain).copied().unwrap_or(0)
     }
 
@@ -510,6 +542,13 @@ pub struct TextureStreamer {
     uploads: PendingUploads,
     /// Staging memory of the renderer, given to the decode jobs.
     pub staging: Option<Arc<StagingPool>>,
+    /// The decode jobs compress to BC7 the textures that come out of it
+    /// unharmed (`aurora_render::bc7`): the GPU has BC compression and
+    /// AURORA_TEXTURE_BC7 does not turn it off.
+    pub bc7: bool,
+    /// The BC7 chains are kept on the disk and read back instead of
+    /// decoding the JPEG 2000 data again (`texture_cache.rs`).
+    pub bc7_cache: bool,
     /// Alpha class by bindless slot (fast lookup during list building).
     pub alpha_by_slot: Vec<AlphaKind>,
     pub(super) pick_masks: HashMap<Uuid, PickMask>,
@@ -559,6 +598,15 @@ pub struct TextureStreamer {
     /// Decoded levels the uploads are done with and download bodies once
     /// merged, freed off this thread.
     trash: Trash<Vec<u8>>,
+    /// Thread that writes the transcoded cache (started with the first
+    /// file to write).
+    cache_writer: Option<texture_cache::Writer>,
+    /// Measure of the loading episodes (`texture load:` in the log): what
+    /// the decode jobs spent, what the main thread counts, and the episode
+    /// under way.
+    meter: Arc<DecodeMeter>,
+    load: LoadTotals,
+    watch: LoadWatch,
 }
 
 impl TextureStreamer {
@@ -572,6 +620,8 @@ impl TextureStreamer {
             next_key: 1,
             uploads: PendingUploads::default(),
             staging: None,
+            bc7: false,
+            bc7_cache: false,
             pick_masks: HashMap::from([(
                 aurora_prim::te::TRANSPARENT_TEXTURE,
                 PickMask {
@@ -606,7 +656,11 @@ impl TextureStreamer {
             unused: VecDeque::new(),
             dirty: Vec::new(),
             trash: Trash::default(),
+            cache_writer: None,
             alpha_changes: Vec::new(),
+            meter: Arc::default(),
+            load: LoadTotals::default(),
+            watch: LoadWatch::default(),
         }
     }
 
@@ -614,6 +668,11 @@ impl TextureStreamer {
     /// call (a slot may be listed more than once).
     pub fn take_alpha_changes(&mut self, out: &mut Vec<u32>) {
         out.append(&mut self.alpha_changes);
+    }
+
+    /// The transcoded chain of a texture (`texture_cache.rs`).
+    fn transcoded_path(cache_dir: &std::path::Path, id: &Uuid) -> PathBuf {
+        cache_dir.join("tex").join(format!("{id}.bc7"))
     }
 
     fn cache_path(cache_dir: &std::path::Path, id: &Uuid, complete: bool) -> PathBuf {
@@ -771,6 +830,8 @@ impl TextureStreamer {
                 fetching: false,
                 decoding: false,
                 cache_state: 0,
+                transcoded: None,
+                keep_rgba: false,
                 failures: 0,
                 retry_at: None,
                 keep_pixels: false,
@@ -1004,11 +1065,24 @@ impl TextureStreamer {
             decodes,
             max_decodes,
             staging,
+            meter,
+            load,
+            uploads,
+            bc7,
+            bc7_cache,
+            ui_wanted,
+            cache_writer,
             demo_source,
             ..
         } = self;
+        if *bc7_cache && cache_writer.is_none() {
+            *cache_writer = texture_cache::Writer::start();
+            // (without its thread, the cache is only read)
+        }
+        let (bc7, bc7_cache) = (*bc7, *bc7_cache);
         // first disk reads of the new textures, queued in one go
         let mut cache_reads = Vec::new();
+        let mut reading = 0;
         for (&id, e) in entries.iter_mut() {
             if e.decoded.is_some() {
                 loaded += 1;
@@ -1026,12 +1100,25 @@ impl TextureStreamer {
                 continue;
             }
             // 1. disk cache
+            // (a texture whose pixels are kept, or copied for the
+            // interface, needs a decode: the transcoded cache has blocks)
+            let blocks_do = bc7_cache && !e.keep_pixels && !ui_wanted.contains(&id);
             if e.cache_state == 0 {
                 e.cache_state = 1;
-                cache_reads.push(id);
+                // its size on screen is not known yet: the coarsest level of
+                // a transcoded chain shows it at once, and the level it
+                // needs is read when known (the default level would load
+                // every texture of a region at a quarter of its size)
+                let level = if e.need_px > 0.0 {
+                    e.want
+                } else {
+                    aurora_assets::j2k::MAX_DISCARD_LEVEL
+                };
+                cache_reads.push((id, level, blocks_do));
                 continue;
             }
             if e.cache_state == 1 || e.decoding || e.fetching {
+                reading += usize::from(e.cache_state == 1);
                 continue;
             }
             // (before looking at the data, which is behind a pointer: most
@@ -1041,6 +1128,18 @@ impl TextureStreamer {
                 Some(d) => e.want < d,
             };
             if !better {
+                continue;
+            }
+            if e.cache_state == 3 {
+                // shown from the transcoded cache and another level is
+                // wanted: from that file again if it holds it, else the
+                // JPEG 2000 data is read at last, for a decode
+                let from_file = blocks_do && e.transcoded.is_some_and(|finest| e.want >= finest);
+                if from_file && uploads.covers(&id, e.want) {
+                    continue;
+                }
+                e.cache_state = 1;
+                cache_reads.push((id, e.want, from_file));
                 continue;
             }
             if let Some(source) = demo_source.filter(|s| e.data.is_empty() && (s.has)(&id)) {
@@ -1081,12 +1180,33 @@ impl TextureStreamer {
                 if e.decoded.is_some_and(|d| discard >= d) {
                     continue;
                 }
+                // That level, or a finer one, is already decoded and waits
+                // for its turn to the GPU (`decoded` only follows once it is
+                // sent): decoding it again each time a decode slot frees up
+                // was half of the decodes of an arrival (AURORA_DEMO_STREAM
+                // with j2k=, 9000 textures: 9126 of 18129).
+                if uploads.covers(&id, discard) {
+                    continue;
+                }
                 e.decoding = true;
                 *decodes += 1;
+                load.again += u64::from(e.decoded.is_some());
                 let data = e.data.clone();
-                let keep = e.keep_pixels;
+                let job = DecodeJob {
+                    id,
+                    discard,
+                    keep_pixels: e.keep_pixels,
+                    bc7: bc7 && !e.keep_rgba,
+                    // (not over a file that already holds this level)
+                    cache: e
+                        .info
+                        .filter(|_| bc7_cache && !e.keep_rgba && !e.transcoded.is_some_and(|finest| finest <= discard))
+                        .zip(cache_writer.clone())
+                        .map(|(info, writer)| (Self::transcoded_path(cache_dir, &id), info, writer)),
+                };
                 let pool = staging.clone();
-                jobs.spawn(move || decode_job(id, &data, discard, keep, pool.as_deref()));
+                let meter = meter.clone();
+                jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
                 continue;
             }
             // 2. fetch more
@@ -1111,22 +1231,11 @@ impl TextureStreamer {
                 accept: "image/x-j2c",
             });
         }
+        reading += cache_reads.len();
         let dir = cache_dir.clone();
-        jobs.spawn_many(cache_reads, move |id| {
-            for complete in [true, false] {
-                if let Ok(d) = crate::cache::read_touch(Self::cache_path(&dir, &id, complete)) {
-                    return JobResult::TextureCache {
-                        id,
-                        data: Some(d),
-                        complete,
-                    };
-                }
-            }
-            JobResult::TextureCache {
-                id,
-                data: None,
-                complete: false,
-            }
+        let pool = staging.clone();
+        jobs.spawn_many(cache_reads, move |(id, want, blocks)| {
+            read_job(&dir, id, want, blocks, pool.as_deref())
         });
         self.stats.total = self.entries.len();
         self.stats.loaded = loaded;
@@ -1135,6 +1244,35 @@ impl TextureStreamer {
         self.stats.decoding = self.decodes;
         self.stats.pending_upload = self.uploads.len();
         let _ = Self::url_for;
+        let busy = reading > 0 || fetching > 0 || self.decodes > 0 || self.uploads.len() > 0;
+        // (totals: the main thread's counters and what the jobs have spent so far)
+        let (counted, meter) = (self.load, &self.meter);
+        let totals = || {
+            let mut totals = counted;
+            meter.read_into(&mut totals);
+            totals
+        };
+        if let Some(r) = self.watch.step(now, busy, totals) {
+            log::info!("{}", r.added.describe(r.took, !r.done, (loaded, self.entries.len())));
+        }
+    }
+
+    /// Arrival in a region (login, teleport, crossing by teleport): the
+    /// loading episode under way ends there, so the next `texture load:`
+    /// line counts the new region alone.
+    pub fn mark_arrival(&mut self) {
+        let (counted, meter) = (self.load, &self.meter);
+        let totals = || {
+            let mut totals = counted;
+            meter.read_into(&mut totals);
+            totals
+        };
+        if let Some(r) = self.watch.cut(Instant::now(), totals) {
+            log::info!(
+                "{} (cut by an arrival)",
+                r.added.describe(r.took, false, (self.stats.loaded, self.stats.total))
+            );
+        }
     }
 
     pub fn on_fetch(&mut self, r: FetchResult) {
@@ -1145,6 +1283,10 @@ impl TextureStreamer {
             return;
         };
         e.fetching = false;
+        if let Ok(bytes) = &r.data {
+            self.load.fetched_bytes += bytes.len() as u64;
+            self.load.replies += 1;
+        }
         // LLTextureFetchWorker::callbackHttpGet / WAIT_HTTP_REQ: a 200 is the
         // whole asset, a 206 continues our data, a 416 completes it.
         let outcome = match r.data {
@@ -1224,9 +1366,32 @@ impl TextureStreamer {
 
     pub fn on_job(&mut self, r: JobResult) {
         match r {
-            JobResult::TextureCache { id, data, complete } => {
+            JobResult::TextureTranscoded { id, info, finest, texture } => {
+                self.load.transcoded += 1;
+                if let Some(e) = self.entries.get_mut(&id) {
+                    e.cache_state = 3;
+                    e.transcoded = Some(finest);
+                    e.info.get_or_insert(info);
+                }
+                // (queued as the result of a decode; it took no decode slot,
+                // and the handler below gives one back)
+                self.decodes += 1;
+                self.on_job(*texture);
+            }
+            JobResult::TextureCache {
+                id,
+                data,
+                complete,
+                keep_rgba,
+            } => {
+                if data.is_some() {
+                    self.load.cache_hits += 1;
+                } else {
+                    self.load.cache_misses += 1;
+                }
                 if let Some(e) = self.entries.get_mut(&id) {
                     e.cache_state = 2;
+                    e.keep_rgba |= keep_rgba;
                     if let Some(d) = data
                         && d.len() > e.data.len()
                     {
@@ -1312,6 +1477,16 @@ impl TextureStreamer {
         }
     }
 
+    /// AURORA_DEMO_STREAM with `j2k=`: the texture is in use, the disk
+    /// cache was looked up and it has no JPEG 2000 data (nothing there, or
+    /// its transcoded chain does not hold the level wanted): on the grid, a
+    /// download would start; the scenario brings the file instead.
+    pub fn demo_needs_data(&self, id: &Uuid) -> bool {
+        self.entries
+            .get(id)
+            .is_some_and(|e| e.refs > 0 && e.cache_state == 2 && e.data.is_empty() && !e.decoding)
+    }
+
     /// AURORA_DEMO_STREAM: the downloaded data a texture loaded at full
     /// resolution holds (the demo textures arrive decoded, without any).
     pub fn demo_attach_data(&mut self, id: &Uuid, data: Vec<u8>) {
@@ -1355,7 +1530,7 @@ impl TextureStreamer {
             // of a size waits a frame or two, and the others go meanwhile
             let queued = &self.uploads;
             if u.chain()
-                .is_some_and(|(w, h, levels)| !renderer.textures.prepare_page(e.slot, w, h, levels, queued.queued((w, h, levels))))
+                .is_some_and(|chain| !renderer.textures.prepare_page(e.slot, chain, queued.queued(chain)))
             {
                 waiting.push(u);
                 if waiting.len() >= PAGE_WAITS {
@@ -1545,7 +1720,7 @@ impl TextureStreamer {
             if complete {
                 let _ = std::fs::remove_file(Self::cache_path(&dir, &id, false));
             }
-            JobResult::TextureCache { id, data: None, complete }
+            JobResult::Done
         });
     }
 
@@ -1677,18 +1852,72 @@ fn eviction_round(
 pub fn texture_result(
     id: Uuid,
     discard: u8,
+    mips: Vec<(u32, u32, Vec<u8>)>,
+    alpha: (AlphaKind, bool),
+    sculpt: Option<Arc<SculptMap>>,
+    pool: Option<&StagingPool>,
+) -> JobResult {
+    texture_result_from(id, discard, mips, None, alpha, sculpt, pool, None)
+}
+
+/// [`texture_result`], staging the BC7 blocks of the chain (`compressed`)
+/// instead of its RGBA8 levels when the job has them. Without room in the
+/// staging memory, the RGBA8 chain stays for the main-thread write, as an
+/// uncompressed texture.
+/// A decoded level under this size says nothing of how BC7 treats the
+/// larger ones: its refusal is not written to the transcoded cache.
+const KEEP_RGBA_FROM: u32 = 128;
+
+/// Where a decode job leaves its result in the transcoded cache.
+struct CacheWrite<'a> {
+    path: &'a std::path::Path,
+    writer: &'a texture_cache::Writer,
+    info: J2kInfo,
+    /// BC7 was tried: no chain means it would harm the texture.
+    tried: bool,
+}
+
+fn texture_result_from(
+    id: Uuid,
+    discard: u8,
     mut mips: Vec<(u32, u32, Vec<u8>)>,
+    compressed: Option<aurora_render::bc7::Chain>,
     (alpha, alpha_channel): (AlphaKind, bool),
     sculpt: Option<Arc<SculptMap>>,
     pool: Option<&StagingPool>,
+    cache: Option<CacheWrite>,
 ) -> JobResult {
     // Generated on the decode worker, before staging may release CPU levels.
     let pick_mask = (alpha != AlphaKind::Opaque)
         .then(|| mips.first().and_then(|(w, h, rgba)| PickMask::from_rgba(*w, *h, rgba)))
         .flatten();
+    if let Some(cache) = cache {
+        let meta = texture_cache::Meta {
+            info: cache.info,
+            discard,
+            alpha,
+            alpha_channel,
+        };
+        let file = match &compressed {
+            Some(chain) => texture_cache::encode(&meta, pick_mask.as_ref().map(PickMask::parts), chain),
+            // BC7 was tried and harms it: remembered, unless the level is
+            // too small to tell for the larger ones
+            None => mips
+                .first()
+                .filter(|(w, h, _)| cache.tried && TexelFormat::Bc7.fits(*w, *h) && (*w).max(*h) >= KEEP_RGBA_FROM)
+                .map(|_| texture_cache::encode_keep_rgba(&meta)),
+        };
+        if let Some(file) = file {
+            cache.writer.write(cache.path.to_path_buf(), file);
+        }
+    }
     let staged = pool.and_then(|pool| {
-        let levels: Vec<(u32, u32, &[u8])> = mips.iter().map(|(w, h, d)| (*w, *h, d.as_slice())).collect();
-        StagedTexture::new(pool, &levels)
+        let (format, chain) = match &compressed {
+            Some(blocks) => (TexelFormat::Bc7, blocks),
+            None => (TexelFormat::Rgba8, &mips),
+        };
+        let levels: Vec<(u32, u32, &[u8])> = chain.iter().map(|(w, h, d)| (*w, *h, d.as_slice())).collect();
+        StagedTexture::with_format(pool, format, &levels)
     });
     if staged.is_some() {
         mips.retain(|m| m.0.max(m.1) <= 256);
@@ -1705,9 +1934,79 @@ pub fn texture_result(
     }
 }
 
-fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Option<&StagingPool>) -> JobResult {
-    match aurora_assets::decode_j2k(data, discard) {
-        Ok(img) => {
+/// One decode: the texture, the level, and what to do with the result.
+struct DecodeJob {
+    id: Uuid,
+    discard: u8,
+    keep_pixels: bool,
+    /// Compress to BC7 when the texture comes out of it unharmed.
+    bc7: bool,
+    /// File of the transcoded cache to write, with the header of the image
+    /// and the thread that writes it.
+    cache: Option<(PathBuf, J2kInfo, texture_cache::Writer)>,
+}
+
+/// A texture from the disk cache: its transcoded chain at `want` when
+/// `blocks` allows it and the file is there (staged, ready for the GPU),
+/// else its JPEG 2000 data.
+fn read_job(dir: &std::path::Path, id: Uuid, want: u8, blocks: bool, pool: Option<&StagingPool>) -> JobResult {
+    let mut keep_rgba = false;
+    if blocks {
+        match texture_cache::read(&TextureStreamer::transcoded_path(dir, &id), want) {
+            Some(Transcoded::Bc7(cached)) => {
+                let levels: Vec<(u32, u32, &[u8])> = cached.levels.iter().map(|(w, h, d)| (*w, *h, d.as_slice())).collect();
+                // (without room in the staging memory: decoded, as before)
+                if let Some(staged) = pool.and_then(|pool| StagedTexture::with_format(pool, TexelFormat::Bc7, &levels)) {
+                    return JobResult::TextureTranscoded {
+                        id,
+                        info: cached.info,
+                        finest: cached.finest,
+                        texture: Box::new(JobResult::Texture {
+                            id,
+                            discard: cached.discard,
+                            mips: Vec::new(),
+                            staged: Some(staged),
+                            alpha: cached.alpha,
+                            alpha_channel: cached.alpha_channel,
+                            pick_mask: cached.pick_mask.and_then(PickMask::from_parts),
+                            sculpt: None,
+                        }),
+                    };
+                }
+            }
+            Some(Transcoded::KeepRgba) => keep_rgba = true,
+            None => {}
+        }
+    }
+    for complete in [true, false] {
+        if let Ok(d) = crate::cache::read_touch(TextureStreamer::cache_path(dir, &id, complete)) {
+            return JobResult::TextureCache {
+                id,
+                data: Some(d),
+                complete,
+                keep_rgba,
+            };
+        }
+    }
+    JobResult::TextureCache {
+        id,
+        data: None,
+        complete: false,
+        keep_rgba,
+    }
+}
+
+fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &DecodeMeter) -> JobResult {
+    let DecodeJob {
+        id,
+        discard,
+        keep_pixels,
+        bc7,
+        cache,
+    } = job;
+    match aurora_assets::decode_j2k_timed(data, discard) {
+        Ok((img, decode)) => {
+            let start = Instant::now();
             let pixels = (img.width * img.height) as usize;
             let rgba = if img.components == 4 {
                 img.data.clone()
@@ -1716,6 +2015,7 @@ fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Optio
             };
             let alpha_channel = img.components == 4 || img.components == 2;
             let alpha = if alpha_channel { classify_alpha(&rgba) } else { AlphaKind::Opaque };
+            let rgba_done = start.elapsed();
             let sculpt = keep_pixels.then(|| {
                 Arc::new(SculptMap {
                     width: img.width,
@@ -1724,8 +2024,25 @@ fn decode_job(id: Uuid, data: &[u8], discard: u8, keep_pixels: bool, pool: Optio
                     pixels: img.data,
                 })
             });
+            let before_mips = start.elapsed();
             let mips = build_mips(img.width, img.height, rgba, 16);
-            texture_result(id, img.discard, mips, (alpha, alpha_channel), sculpt, pool)
+            let mips_done = start.elapsed();
+            let tried = bc7 && pool.is_some();
+            let compressed = tried
+                .then(|| aurora_render::bc7::encode_chain(&mips, alpha != AlphaKind::Opaque))
+                .flatten();
+            let bc7_done = start.elapsed();
+            let cache = cache.as_ref().map(|(path, info, writer)| CacheWrite {
+                path,
+                writer,
+                info: *info,
+                tried,
+            });
+            let result = texture_result_from(id, img.discard, mips, compressed, (alpha, alpha_channel), sculpt, pool, cache);
+            let as_blocks = matches!(&result, JobResult::Texture { staged: Some(s), .. } if s.format == TexelFormat::Bc7);
+            let stages = [rgba_done, mips_done - before_mips, bc7_done - mips_done, start.elapsed() - bc7_done];
+            meter.add(img.discard, pixels as u64, decode, stages, as_blocks);
+            result
         }
         Err(e) => {
             log::debug!("texture {id} decode failed at discard {discard}: {e}");
@@ -1757,6 +2074,10 @@ mod tests {
         assert!(!textures.pick_masks[&aurora_prim::te::TRANSPARENT_TEXTURE].hits(glam::Vec2::splat(0.5)));
     }
 
+    fn rgba(width: u32, height: u32, levels: u32) -> ChainSize {
+        (TexelFormat::Rgba8, width, height, levels)
+    }
+
     /// A 1024 × 1024 texture in use, loaded at `decoded`, covering `need_px`
     /// pixels in view.
     fn entry(decoded: Option<u8>, need_px: f32) -> Entry {
@@ -1776,6 +2097,8 @@ mod tests {
             fetching: false,
             decoding: false,
             cache_state: 2,
+            transcoded: None,
+            keep_rgba: false,
             failures: 0,
             retry_at: None,
             keep_pixels: false,
@@ -1997,16 +2320,19 @@ mod tests {
         q.push(held, true, 10.0);
         q.push(sized(2, 0, &big), true, 20.0);
         q.push(sized(3, 0, &small), true, 30.0);
-        assert_eq!((q.queued((4, 4, 3)), q.queued((2, 2, 2)), q.queued((8, 8, 4))), (2, 1, 0));
+        assert_eq!(
+            (q.queued(rgba(4, 4, 3)), q.queued(rgba(2, 2, 2)), q.queued(rgba(8, 8, 4))),
+            (2, 1, 0)
+        );
         // the one popped no longer counts; put back, it does again
         let u = q.pop(&mut trash).expect("upload");
-        assert_eq!((u.id.as_u128(), q.queued((2, 2, 2))), (3, 0));
+        assert_eq!((u.id.as_u128(), q.queued(rgba(2, 2, 2))), (3, 0));
         q.requeue(u);
-        assert_eq!(q.queued((2, 2, 2)), 1);
+        assert_eq!(q.queued(rgba(2, 2, 2)), 1);
         // a coarser level retired on the way is forgotten too
         q.push(sized(4, 2, &small), true, 90.0);
         q.push(sized(4, 0, &big), true, 90.0);
-        assert_eq!((q.queued((4, 4, 3)), q.queued((2, 2, 2))), (3, 2));
+        assert_eq!((q.queued(rgba(4, 4, 3)), q.queued(rgba(2, 2, 2))), (3, 2));
         q.unready[0].held = false;
         q.promote_ready();
         while q.pop(&mut trash).is_some() {}
@@ -2134,6 +2460,20 @@ mod tests {
         assert_eq!(q.pop(&mut trash).map(|u| u.discard), Some(0));
         assert_eq!(q.pop(&mut trash).map(|u| u.discard), Some(2));
         assert!(q.pop(&mut trash).is_none() && q.finest.is_empty());
+    }
+
+    #[test]
+    fn waiting_upload_covers_its_level_and_the_coarser_ones() {
+        let mut q = PendingUploads::default();
+        let mut trash = Trash::default();
+        assert!(!q.covers(&id(1), 5));
+        q.push(pending(1, 2), true, 100.0);
+        // no decode again at 2 or coarser while it waits; a finer one may go
+        assert!(q.covers(&id(1), 2) && q.covers(&id(1), 5));
+        assert!(!q.covers(&id(1), 1) && !q.covers(&id(2), 5));
+        // once it left for the GPU, the texture's `decoded` level takes over
+        assert!(q.pop(&mut trash).is_some());
+        assert!(!q.covers(&id(1), 5));
     }
 
     #[test]

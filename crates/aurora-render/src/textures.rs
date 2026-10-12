@@ -25,7 +25,7 @@
 //! direct call (media, ban lines, the reserved slots) still create their
 //! page on the spot when they need one.
 
-use crate::upload::{StagedTexture, UploadQueue};
+use crate::upload::{StagedTexture, TexelFormat, UploadQueue};
 use crate::writes::{GpuWrites, TexelDst};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -259,7 +259,7 @@ fn make_page(device: &wgpu::Device, key: PageKey, layers: u32) -> DeadPage {
         mip_level_count: key.mips,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        format: key.format.wgpu(),
         // COPY_SRC: compaction copies layers between pages
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
@@ -281,26 +281,32 @@ pub struct MipLevel<'a> {
     pub data: &'a [u8],
 }
 
-/// What makes textures share a page: level-0 size and mip count (always
-/// RGBA8).
+/// What makes textures share a page: level-0 size, mip count and texel
+/// format (RGBA8, or BC7 for the streamed textures that compress well).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct PageKey {
     width: u32,
     height: u32,
     mips: u32,
+    format: TexelFormat,
 }
 
 impl PageKey {
     /// Key of a regular chain of `levels` levels, as `chain_key` keeps it.
-    fn of_chain(width: u32, height: u32, levels: u32) -> Self {
+    fn of_chain(format: TexelFormat, width: u32, height: u32, levels: u32) -> Self {
         let mips = levels.min(32 - width.max(height).max(1).leading_zeros());
-        PageKey { width, height, mips }
+        PageKey {
+            width,
+            height,
+            mips,
+            format,
+        }
     }
 
     /// Bytes of one layer with its mip chain.
     fn layer_bytes(&self) -> u64 {
         (0..self.mips)
-            .map(|i| level_dim(self.width, i) as u64 * level_dim(self.height, i) as u64 * 4)
+            .map(|i| self.format.level_bytes(level_dim(self.width, i), level_dim(self.height, i)))
             .sum()
     }
 }
@@ -315,6 +321,7 @@ fn level_dim(size: u32, level: u32) -> u32 {
 /// refused: in a shared page its layer would show the previous texels.
 fn page_key(mips: &[MipLevel], max_dim: u32) -> Option<PageKey> {
     chain_key(
+        TexelFormat::Rgba8,
         mips.iter()
             .map(|m| (m.width, m.height, m.data.len() >= m.width as usize * m.height as usize * 4)),
         max_dim,
@@ -322,9 +329,9 @@ fn page_key(mips: &[MipLevel], max_dim: u32) -> Option<PageKey> {
 }
 
 /// Page key of a chain given as (width, height, data complete) per level.
-fn chain_key(mut levels: impl Iterator<Item = (u32, u32, bool)>, max_dim: u32) -> Option<PageKey> {
+fn chain_key(format: TexelFormat, mut levels: impl Iterator<Item = (u32, u32, bool)>, max_dim: u32) -> Option<PageKey> {
     let (w, h, complete) = levels.next()?;
-    if w == 0 || h == 0 || w > max_dim || h > max_dim || !complete {
+    if w == 0 || h == 0 || w > max_dim || h > max_dim || !complete || !format.fits(w, h) {
         return None;
     }
     // a longer chain is invalid for the device (1×1 is the last level)
@@ -337,17 +344,22 @@ fn chain_key(mut levels: impl Iterator<Item = (u32, u32, bool)>, max_dim: u32) -
         width: w,
         height: h,
         mips: count,
+        format,
     })
 }
 
 /// Page key of a texture once its `levels` finest levels are dropped: level
 /// `levels` becomes level 0 and the rest of the chain follows. None when
-/// nothing would be dropped or nothing would be left.
+/// nothing would be dropped or nothing would be left, or when the level
+/// that would come first is not made of whole blocks (a BC7 page cannot
+/// start there: the texture keeps its size).
 fn shrunk_key(key: PageKey, levels: u32) -> Option<PageKey> {
-    (levels > 0 && levels < key.mips).then(|| PageKey {
-        width: level_dim(key.width, levels),
-        height: level_dim(key.height, levels),
+    let (width, height) = (level_dim(key.width, levels), level_dim(key.height, levels));
+    (levels > 0 && levels < key.mips && key.format.fits(width, height)).then_some(PageKey {
+        width,
+        height,
         mips: key.mips - levels,
+        format: key.format,
     })
 }
 
@@ -475,6 +487,8 @@ struct PageStore {
     page_capacity: u32,
     max_layers: u32,
     max_dim: u32,
+    /// The device has BC texture compression: BC7 chains are accepted.
+    bc7: bool,
     /// Location of each slot, uploaded by range in `TextureTable::maintain`.
     loc: Vec<u32>,
     loc_dirty: Option<(usize, usize)>,
@@ -528,6 +542,7 @@ impl PageStore {
             page_capacity,
             max_layers,
             max_dim,
+            bc7: false,
             loc: vec![WHITE_LOC; capacity as usize],
             loc_dirty: None,
             bytes: 0,
@@ -816,7 +831,10 @@ impl PageStore {
     /// Like `replace`, from a mip chain staged by a background job: the
     /// copies are recorded in the frame's upload encoder.
     fn replace_staged(&mut self, device: &wgpu::Device, uploads: &mut UploadQueue, slot: u32, staged: &StagedTexture) -> bool {
-        let Some(key) = chain_key(staged.levels.iter().map(|l| (l.width, l.height, true)), self.max_dim) else {
+        if staged.format == TexelFormat::Bc7 && !self.bc7 {
+            return false;
+        }
+        let Some(key) = chain_key(staged.format, staged.levels.iter().map(|l| (l.width, l.height, true)), self.max_dim) else {
             return false;
         };
         let Some((page, layer)) = self.target(device, slot, key) else {
@@ -872,8 +890,8 @@ impl PageStore {
     /// (none of that size has a free layer, and the slot is not already of
     /// that size). `levels`: length of the mip chain, as uploaded.
     #[cfg(test)]
-    fn needs_page(&self, slot: u32, width: u32, height: u32, levels: u32) -> bool {
-        let key = PageKey::of_chain(width, height, levels);
+    fn needs_page(&self, slot: u32, format: TexelFormat, width: u32, height: u32, levels: u32) -> bool {
+        let key = PageKey::of_chain(format, width, height, levels);
         !self.holds(slot, key) && self.free_layers(key) == 0
     }
 
@@ -922,6 +940,9 @@ impl PageStore {
         let encoder = uploads.encoder(device);
         if let (Some(s), Some(d)) = (self.page(page), self.page(dst)) {
             for level in 0..small.mips {
+                let (width, height) = small
+                    .format
+                    .copy_extent(level_dim(small.width, level), level_dim(small.height, level));
                 encoder.copy_texture_to_texture(
                     wgpu::TexelCopyTextureInfo {
                         texture: &s.texture,
@@ -936,8 +957,8 @@ impl PageStore {
                         aspect: wgpu::TextureAspect::All,
                     },
                     wgpu::Extent3d {
-                        width: level_dim(small.width, level),
-                        height: level_dim(small.height, level),
+                        width,
+                        height,
                         depth_or_array_layers: 1,
                     },
                 );
@@ -993,6 +1014,7 @@ impl PageStore {
             };
             if let (Some(s), Some(d)) = (self.page(src), self.page(dst)) {
                 for level in 0..key.mips {
+                    let (width, height) = key.format.copy_extent(level_dim(key.width, level), level_dim(key.height, level));
                     encoder.copy_texture_to_texture(
                         wgpu::TexelCopyTextureInfo {
                             texture: &s.texture,
@@ -1007,8 +1029,8 @@ impl PageStore {
                             aspect: wgpu::TextureAspect::All,
                         },
                         wgpu::Extent3d {
-                            width: level_dim(key.width, level),
-                            height: level_dim(key.height, level),
+                            width,
+                            height,
                             depth_or_array_layers: 1,
                         },
                     );
@@ -1105,6 +1127,7 @@ impl TextureTable {
             mapped_at_creation: false,
         });
         let mut store = PageStore::new(capacity, page_capacity, max_layers, limits.max_texture_dimension_2d);
+        store.bc7 = device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
         for (slot, rgba) in [
             (WHITE, [255u8, 255, 255, 255]),
             (FLAT_NORMAL, [128, 128, 255, 255]),
@@ -1232,6 +1255,12 @@ impl TextureTable {
         self.store.capacity
     }
 
+    /// The device has BC texture compression: `replace_staged` accepts BC7
+    /// chains (a quarter of the video memory of RGBA8).
+    pub fn bc7(&self) -> bool {
+        self.store.bc7
+    }
+
     /// CPU time the caller spent creating pages since the start (ms;
     /// AURORA_PROFILE): those of the streamed uploads are made by the page
     /// thread and cost it nothing (`prepare_page`).
@@ -1261,9 +1290,9 @@ impl TextureTable {
     /// True as well when the page thread cannot make the page (not started,
     /// no answer in `REQUEST_TIMEOUT`, table full): the upload then creates
     /// it or is refused, as before.
-    pub fn prepare_page(&mut self, slot: u32, width: u32, height: u32, levels: u32, queued: u32) -> bool {
+    pub fn prepare_page(&mut self, slot: u32, (format, width, height, levels): (TexelFormat, u32, u32, u32), queued: u32) -> bool {
         self.receive_pages();
-        let key = PageKey::of_chain(width, height, levels);
+        let key = PageKey::of_chain(format, width, height, levels);
         if self.store.holds(slot, key) || !self.store.has_page_room() {
             return true;
         }
@@ -1345,11 +1374,12 @@ impl TextureTable {
         match self.store.slots.get(slot as usize).and_then(Option::as_ref) {
             None => "free".into(),
             Some(s) => format!(
-                "page {} layer {} ({}×{}, {} levels{})",
+                "page {} layer {} ({}×{} {:?}, {} levels{})",
                 s.page,
                 s.layer,
                 s.key.width,
                 s.key.height,
+                s.key.format,
                 s.key.mips,
                 if self.store.loc.get(slot as usize) == Some(&pack(s.page, s.layer)) {
                     ""
@@ -1374,6 +1404,7 @@ impl TextureTable {
         let need = w as usize * h as usize * 4;
         if slot < RESERVED
             || s.shared
+            || s.key.format != TexelFormat::Rgba8
             || w == 0
             || h == 0
             || x.checked_add(w).is_none_or(|r| r > s.key.width)
@@ -1590,7 +1621,8 @@ mod tests {
             Some(PageKey {
                 width: 64,
                 height: 32,
-                mips: 7
+                mips: 7,
+                format: TexelFormat::Rgba8,
             })
         );
         // a level of the wrong size ends the chain
@@ -1629,10 +1661,39 @@ mod tests {
 
     #[test]
     fn layer_bytes_count_the_mip_chain() {
-        let key = |width, height, mips| PageKey { width, height, mips };
+        let key = |width, height, mips| PageKey {
+            width,
+            height,
+            mips,
+            format: TexelFormat::Rgba8,
+        };
         assert_eq!(key(4, 2, 3).layer_bytes(), (8 + 2 + 1) * 4);
         assert_eq!(key(1, 1, 1).layer_bytes(), 4);
         assert_eq!(key(64, 64, 1).layer_bytes(), 64 * 64 * 4);
+    }
+
+    #[test]
+    fn bc7_pages_hold_whole_blocks() {
+        let key = |width, height, mips| PageKey {
+            width,
+            height,
+            mips,
+            format: TexelFormat::Bc7,
+        };
+        // a quarter of RGBA8 at the large levels; the levels under 4 texels
+        // still take one block each
+        assert_eq!(key(64, 64, 1).layer_bytes(), 64 * 64);
+        assert_eq!(key(8, 8, 4).layer_bytes(), (4 + 1 + 1 + 1) * 16);
+        // 100 × 60: 50 × 30 is 13 × 8 blocks
+        assert_eq!(key(100, 60, 2).layer_bytes(), (25 * 15 + 13 * 8) * 16);
+        // level 0 must be whole blocks, in its own pages
+        let levels = |w, h| [(w, h, true), (w / 2, h / 2, true)].into_iter();
+        assert_eq!(chain_key(TexelFormat::Bc7, levels(64, 32), 16384), Some(key(64, 32, 2)));
+        assert_eq!(chain_key(TexelFormat::Bc7, levels(66, 32), 16384), None);
+        assert_ne!(
+            chain_key(TexelFormat::Bc7, levels(64, 32), 16384),
+            chain_key(TexelFormat::Rgba8, levels(64, 32), 16384)
+        );
     }
 
     #[test]
@@ -1665,8 +1726,8 @@ mod tests {
             for levels in [full, full.min(3), full + 2] {
                 let dims = (0..levels).map(|l| (level_dim(w, l), level_dim(h, l), true));
                 assert_eq!(
-                    chain_key(dims, 16384),
-                    Some(PageKey::of_chain(w, h, levels)),
+                    chain_key(TexelFormat::Rgba8, dims, 16384),
+                    Some(PageKey::of_chain(TexelFormat::Rgba8, w, h, levels)),
                     "{w}×{h}, {levels} levels"
                 );
             }
@@ -1696,6 +1757,7 @@ mod tests {
             width,
             height: 64,
             mips: 7,
+            format: TexelFormat::Rgba8,
         };
         let t0 = Instant::now();
         let ms = Duration::from_millis;
@@ -1721,6 +1783,7 @@ mod tests {
             width: 1024,
             height: 1024,
             mips: 11,
+            format: TexelFormat::Rgba8,
         }
         .layer_bytes();
         assert_eq!(growth(big, 12), vec![1, 1, 1, 1, 2, 3, 4, 6, 6, 6, 6, 6]);
@@ -1729,6 +1792,7 @@ mod tests {
             width: 64,
             height: 64,
             mips: 7,
+            format: TexelFormat::Rgba8,
         }
         .layer_bytes();
         assert_eq!(growth(small, 6), vec![96, 96, 96, 144, 216, 324]);
@@ -1843,13 +1907,15 @@ mod tests {
             width: 1024,
             height: 512,
             mips: 11,
+            format: TexelFormat::Rgba8,
         };
         assert_eq!(
             shrunk_key(key, 2),
             Some(PageKey {
                 width: 256,
                 height: 128,
-                mips: 9
+                mips: 9,
+                format: TexelFormat::Rgba8,
             })
         );
         // down to the last level, never past it
@@ -1858,7 +1924,8 @@ mod tests {
             Some(PageKey {
                 width: 1,
                 height: 1,
-                mips: 1
+                mips: 1,
+                format: TexelFormat::Rgba8,
             })
         );
         assert_eq!(shrunk_key(key, 11), None);
@@ -1868,13 +1935,15 @@ mod tests {
             width: 48,
             height: 6,
             mips: 6,
+            format: TexelFormat::Rgba8,
         };
         assert_eq!(
             shrunk_key(odd, 3),
             Some(PageKey {
                 width: 6,
                 height: 1,
-                mips: 3
+                mips: 3,
+                format: TexelFormat::Rgba8,
             })
         );
         // the memory of a layer falls by about four per level dropped
@@ -1906,7 +1975,8 @@ mod tests {
         let page = store.page(s.page).expect("live page");
         assert_eq!(store.loc[slot as usize], pack(s.page, s.layer));
         let k = s.key;
-        let rows: u32 = (0..k.mips).map(|l| level_dim(k.height, l)).sum();
+        // (rows of blocks for a BC7 page: the read-back gives the blocks)
+        let rows: u32 = (0..k.mips).map(|l| k.format.rows(level_dim(k.height, l))).sum();
         let buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: rows as u64 * 256,
@@ -1916,7 +1986,8 @@ mod tests {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         let mut offset = 0u64;
         for l in 0..k.mips {
-            let (w, h) = (level_dim(k.width, l), level_dim(k.height, l));
+            let (w, h) = k.format.copy_extent(level_dim(k.width, l), level_dim(k.height, l));
+            let h_rows = k.format.rows(h);
             enc.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     texture: &page.texture,
@@ -1929,7 +2000,7 @@ mod tests {
                     layout: wgpu::TexelCopyBufferLayout {
                         offset,
                         bytes_per_row: Some(256),
-                        rows_per_image: Some(h),
+                        rows_per_image: Some(h_rows),
                     },
                 },
                 wgpu::Extent3d {
@@ -1938,7 +2009,7 @@ mod tests {
                     depth_or_array_layers: 1,
                 },
             );
-            offset += h as u64 * 256;
+            offset += h_rows as u64 * 256;
         }
         queue.submit(std::iter::once(enc.finish()));
         buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
@@ -1947,11 +2018,12 @@ mod tests {
         let mut out = Vec::new();
         let mut row = 0usize;
         for l in 0..k.mips {
-            let (w, h) = (level_dim(k.width, l) as usize, level_dim(k.height, l) as usize);
+            let (w, h) = (level_dim(k.width, l), level_dim(k.height, l));
+            let (w, h) = (k.format.row_bytes(w) as usize, k.format.rows(h) as usize);
             let mut level = Vec::new();
             for y in 0..h {
                 let start = (row + y) * 256;
-                level.extend_from_slice(&data[start..start + w * 4]);
+                level.extend_from_slice(&data[start..start + w]);
             }
             row += h;
             out.push(level);
@@ -2096,6 +2168,7 @@ mod tests {
             width: 64,
             height: 32,
             mips: 7,
+            format: TexelFormat::Rgba8,
         }
         .layer_bytes();
         assert_eq!(full, 40 * layer);
@@ -2163,6 +2236,7 @@ mod tests {
                         width: 64,
                         height: 32,
                         mips: 7,
+                        format: TexelFormat::Rgba8,
                     },
                     dropped(i),
                 )
@@ -2177,6 +2251,122 @@ mod tests {
     /// GPU check of the shared placeholder: slots of textures still loading
     /// show the one grey layer without owning it; their first texels (even
     /// 1×1 ones, the placeholder's own size) go to a layer of their own and
+    /// BC7 chains staged by a job land block for block in pages of their
+    /// own, levels under one block and sizes that are not a power of two
+    /// included; an RGBA8 chain then moves the slot back to an RGBA8 page.
+    /// `cargo test -p aurora-render bc7_pages -- --ignored`.
+    #[test]
+    #[ignore]
+    fn bc7_pages_round_trip_on_the_gpu() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        if !adapter.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+            eprintln!("no BC texture compression: skipped");
+            return;
+        }
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        let max_layers = device.limits().max_texture_array_layers.min(MAX_LAYERS);
+        let mut store = PageStore::new(4096, 64, max_layers, 4096);
+        let writes = RefCell::new(GpuWrites::default());
+        for slot in 0..RESERVED {
+            let created = store.create(
+                &device,
+                &mut writes.borrow_mut(),
+                &[MipLevel {
+                    width: 1,
+                    height: 1,
+                    data: &[slot as u8; 4],
+                }],
+            );
+            assert_eq!(created, Some(slot));
+        }
+        let mut uploads = UploadQueue::new(&device, true);
+        // blocks proper to the texture, the level and the block
+        let blocks = |i: u8, w: u32, h: u32| -> Vec<Vec<u8>> {
+            (0..32 - w.max(h).leading_zeros())
+                .map(|l| {
+                    let n = TexelFormat::Bc7.level_bytes(level_dim(w, l), level_dim(h, l)) as usize;
+                    (0..n)
+                        .map(|b| i.wrapping_mul(31) ^ (l as u8 * 16) ^ (b / 16) as u8 ^ (b as u8 % 16))
+                        .collect()
+                })
+                .collect()
+        };
+        let sizes = [(64u32, 64u32), (64, 64), (16, 8), (40, 12), (4, 4)];
+        let mut slots = Vec::new();
+        for (i, &(w, h)) in sizes.iter().enumerate() {
+            let slot = store.create_placeholder().expect("slot");
+            let data = blocks(i as u8, w, h);
+            let levels: Vec<(u32, u32, &[u8])> = data
+                .iter()
+                .enumerate()
+                .map(|(l, d)| (level_dim(w, l as u32), level_dim(h, l as u32), d.as_slice()))
+                .collect();
+            let staged = StagedTexture::with_format(uploads.pool(), TexelFormat::Bc7, &levels).expect("staging room");
+            uploads.prepare();
+            // refused without the device feature, accepted with it
+            assert!(!store.replace_staged(&device, &mut uploads, slot, &staged));
+            store.bc7 = true;
+            assert!(store.replace_staged(&device, &mut uploads, slot, &staged));
+            store.bc7 = false;
+            drop(staged);
+            run_frame(&queue, &writes, &mut uploads);
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            slots.push((slot, data));
+        }
+        for (slot, data) in &slots {
+            assert_eq!(&read_back(&device, &queue, &store, *slot), data, "slot {slot}");
+        }
+        // the two 64 × 64 share a page, apart from the RGBA8 pages
+        let key = |store: &PageStore, slot: u32| store.slots[slot as usize].as_ref().map(|s| (s.page, s.key.format));
+        assert_eq!(key(&store, slots[0].0), key(&store, slots[1].0));
+        assert_eq!(key(&store, slots[0].0).map(|k| k.1), Some(TexelFormat::Bc7));
+        assert_ne!(key(&store, slots[0].0).map(|k| k.0), Some(0));
+        // a quarter of the RGBA8 size (64 × 64 with 7 levels: 4 levels of
+        // whole blocks, 3 of one block)
+        assert_eq!(
+            store.slots[slots[0].0 as usize].as_ref().map(|s| s.key.layer_bytes()),
+            Some((256 + 64 + 16 + 4 + 1 + 1 + 1) * 16)
+        );
+        // an RGBA8 chain of the same size: another page, the BC7 layer freed
+        let slot = slots[0].0;
+        let rgba: Vec<Vec<u8>> = (0..7).map(|l| texels(9, 64, 64, l)).collect();
+        let mips: Vec<MipLevel> = rgba
+            .iter()
+            .enumerate()
+            .map(|(l, d)| MipLevel {
+                width: level_dim(64, l as u32),
+                height: level_dim(64, l as u32),
+                data: d,
+            })
+            .collect();
+        assert!(store.replace(&device, &mut writes.borrow_mut(), slot, &mips));
+        run_frame(&queue, &writes, &mut uploads);
+        assert_eq!(read_back(&device, &queue, &store, slot), rgba);
+        assert_eq!(key(&store, slot).map(|k| k.1), Some(TexelFormat::Rgba8));
+        assert_eq!(read_back(&device, &queue, &store, slots[1].0), slots[1].1);
+        // memory to give back: the finest level dropped on the GPU, the
+        // others block for block in a BC7 page of the smaller size
+        assert!(store.shrink(&device, &mut uploads, slots[1].0, 1));
+        run_frame(&queue, &writes, &mut uploads);
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        assert_eq!(read_back(&device, &queue, &store, slots[1].0), slots[1].1[1..]);
+        assert_eq!(
+            store.slots[slots[1].0 as usize].as_ref().map(|s| (s.key.width, s.key.format)),
+            Some((32, TexelFormat::Bc7))
+        );
+        // 40 × 12 would start at 20 × 6, which is not whole blocks: kept
+        assert!(!store.shrink(&device, &mut uploads, slots[3].0, 1));
+        assert_eq!(read_back(&device, &queue, &store, slots[3].0), slots[3].1);
+    }
+
     /// leave it untouched, and freeing them does not release it.
     /// `cargo test -p aurora-render placeholders -- --ignored`.
     #[test]
@@ -2229,7 +2419,7 @@ mod tests {
                 data: d,
             })
             .collect();
-        assert!(store.needs_page(waiting[0], 16, 16, 5));
+        assert!(store.needs_page(waiting[0], TexelFormat::Rgba8, 16, 16, 5));
         assert!(store.replace(&device, &mut writes, waiting[0], &mips));
         writes.replay(&mut QueueSink(&queue));
         assert_ne!(store.loc[waiting[0] as usize], grey_loc);
@@ -2240,7 +2430,7 @@ mod tests {
             height: 1,
             data: &[9, 8, 7, 6],
         }];
-        assert!(store.needs_page(waiting[1], 1, 1, 1) || store.page(0).is_some_and(|p| p.layers.used() < p.layers.len));
+        assert!(store.needs_page(waiting[1], TexelFormat::Rgba8, 1, 1, 1) || store.page(0).is_some_and(|p| p.layers.used() < p.layers.len));
         assert!(store.replace(&device, &mut writes, waiting[1], &one));
         writes.replay(&mut QueueSink(&queue));
         assert_ne!(store.loc[waiting[1] as usize], grey_loc);
@@ -2415,19 +2605,19 @@ mod tests {
         assert_eq!((table.pages(), table.pages_made().threaded), (1, 0));
         // 64² with its mips is 21 KB: pages of 96 layers at first
         const COUNT: u32 = 100;
-        let key = PageKey::of_chain(64, 64, 7);
+        let key = PageKey::of_chain(TexelFormat::Rgba8, 64, 64, 7);
         let chain = |i: u32| -> Vec<Vec<u8>> { (0..7).map(|l| texels(i, 64, 64, l)).collect() };
         let slots: Vec<u32> = (0..COUNT).map(|_| table.create_placeholder().expect("slot")).collect();
         // true once the upload of `slot` can go, as the frames of the streamer ask
         let ready = |table: &mut TextureTable, slot: u32, queued: u32| {
             let t0 = Instant::now();
-            while !table.prepare_page(slot, 64, 64, 7, queued) {
+            while !table.prepare_page(slot, (TexelFormat::Rgba8, 64, 64, 7), queued) {
                 assert!(t0.elapsed() < Duration::from_secs(5), "no page from the page thread");
                 std::thread::sleep(Duration::from_millis(1));
             }
         };
         // no page of that size yet: the page thread makes it, the upload waits
-        assert!(!table.prepare_page(slots[0], 64, 64, 7, COUNT - 1));
+        assert!(!table.prepare_page(slots[0], (TexelFormat::Rgba8, 64, 64, 7), COUNT - 1));
         assert_eq!((table.pages(), table.store.free_layers(key)), (1, 0));
         for (i, &slot) in slots.iter().enumerate() {
             // (the second page was asked with the first upload: 99 waited
@@ -2445,7 +2635,7 @@ mod tests {
                 .collect();
             assert!(table.replace(&device, &mut writes, slot, &mips));
             // in place from now on: no layer, no page
-            assert!(table.prepare_page(slot, 64, 64, 7, 1000));
+            assert!(table.prepare_page(slot, (TexelFormat::Rgba8, 64, 64, 7), 1000));
         }
         let made = table.pages_made();
         assert_eq!((made.threaded, made.inline, table.pages()), (2, inline, 3));
@@ -2456,9 +2646,9 @@ mod tests {
             assert_eq!(read_back(&device, &queue, &table.store, slot), chain(i as u32), "slot {slot}");
         }
         // a page asked for an upload that never came: kept a while, then destroyed
-        let unused = PageKey::of_chain(32, 32, 6);
+        let unused = PageKey::of_chain(TexelFormat::Rgba8, 32, 32, 6);
         let extra = table.create_placeholder().expect("slot");
-        assert!(!table.prepare_page(extra, 32, 32, 6, 0));
+        assert!(!table.prepare_page(extra, (TexelFormat::Rgba8, 32, 32, 6), 0));
         let t0 = Instant::now();
         while table.store.spare_layers(unused) == 0 {
             assert!(t0.elapsed() < Duration::from_secs(5), "no page from the page thread");
@@ -2471,7 +2661,7 @@ mod tests {
         assert_eq!((table.store.spare_layers(unused), table.pages()), (0, 3));
         assert_eq!(table.pages_made().unused, 1);
         // asked again when an upload does come
-        assert!(!table.prepare_page(extra, 32, 32, 6, 0));
+        assert!(!table.prepare_page(extra, (TexelFormat::Rgba8, 32, 32, 6), 0));
     }
 
     /// The whole table on the GPU as the renderer uses it: random creations,

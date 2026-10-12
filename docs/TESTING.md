@@ -505,7 +505,7 @@ grille.
 | `AURORA_DEMO_TEXTURES=<n>` | Test de charge des textures : n cubes |
 | `AURORA_DEMO_TEXTURES_CHURN=1` | Avec `AURORA_DEMO_TEXTURES` : textures renouvelées |
 | `AURORA_DEMO_CROWD=<n>` | Test de charge de la synchro : n avatars |
-| `AURORA_DEMO_STREAM=<n>[,<vague>][,leave]` | Test des à-coups du streaming |
+| `AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]` | Test des à-coups du streaming |
 
 ### Détails
 
@@ -522,7 +522,7 @@ grille.
   un nombre) qui jouent l'animation d'attente, chacun portant huit linksets
   de sept prims sur des os de tout le corps (avec `AURORA_DEMO_ANIMESH`,
   aussi le mesh riggé de la démo), comme dans une boutique fréquentée.
-- **`AURORA_DEMO_STREAM=<n>[,<vague>][,leave]`** : n objets texturés (2000
+- **`AURORA_DEMO_STREAM=<n>[,<vague>][,leave][,j2k=<dossier>]`** : n objets texturés (2000
   si la valeur n'est pas un nombre) qui arrivent par vagues après le fondu de
   chargement, `vague` objets toutes les 250 ms (100 par défaut, soit ~400 par
   seconde comme sur la grille ; `vague` = n envoie tout d'un coup, comme une
@@ -542,6 +542,20 @@ grille.
     de son fichier J2C, est inutilisée et à évincer 2 s plus tard (`demo
     stream: region left`, puis `demo stream: textures evicted`) ; lire
     `s_maintain`, `sync`, `s_sync_list` et `r_submit` dans `max:`.
+  - Avec `,j2k=<dossier>` après les nombres, les textures sont les fichiers
+    `.j2c` de ce dossier (le `cache\tex` d'un viewer, repris en boucle
+    s'il y en a moins que d'objets) au lieu de damiers dessinés : chaque
+    fichier est remis au streaming comme une lecture réussie du cache
+    disque et suit le vrai chemin à partir du décodage JPEG2000, au
+    niveau que demande sa taille à l'écran. C'est le retour dans une
+    région déjà en cache, sans la grille : lire `demo stream: loaded in
+    … s` puis la ligne `texture load:` (voir [Profilage](#profilage)).
+    Le dossier n'est que lu. Lancé deux fois de suite, le scénario rejoue
+    aussi le retour avec le cache des textures transcodées : la seconde
+    fois, les textures compressées viennent des fichiers `.bc7` laissés
+    par la première dans le cache de la démo (`cache\demo\tex`, à
+    supprimer pour repartir d'une première visite) et leur fichier J2C
+    n'est demandé que s'il faut un niveau plus fin.
 
 ## Interface
 
@@ -964,6 +978,8 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_NOVSYNC=1` | Coupe la synchronisation verticale |
 | `AURORA_PRESENT_MODE=<mode>` | Force le mode de présentation de la swapchain |
 | `AURORA_CPU_CULL=1` | Listes de dessin construites sur le CPU |
+| `AURORA_TEXTURE_BC7=0` | Textures jamais compressées en BC7 |
+| `AURORA_TEXTURE_BC7_CACHE=0` | BC7 sans son cache disque |
 | `AURORA_RENDER_THREAD=0` | Images dessinées sur le thread principal |
 | `AURORA_PROFILE=1` | Profilage dans le journal (voir [Profilage](#profilage)) |
 | `AURORA_PROFILE_FRAMES=1` | Profil détaillé de chaque image |
@@ -1016,6 +1032,19 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   sous la fenêtre et sa fréquence à chaque changement
   (`screen under the window: \\.\DISPLAY2, 144 Hz`) ; `present=` et
   `screen_hz=` figurent dans la ligne `perf settings`.
+- **`AURORA_TEXTURE_BC7_CACHE=0`** : les textures compressées en BC7 ne
+  sont ni écrites dans le cache disque (`cache\tex\<id>.bc7`) ni relues :
+  chaque texture est décodée depuis son JPEG2000 comme à une première
+  visite, pour mesurer ce que le cache épargne (`read as BC7 without a
+  decode` et le temps processeur dans la ligne `texture load:`).
+- **`AURORA_TEXTURE_BC7=0`** : toutes les textures restent en RGBA8 en
+  mémoire vidéo, comme avant la compression BC7, pour comparer l'image,
+  la mémoire (`texture_mb`, `pages_mb` de `perf summary`) et le temps de
+  chargement (`bc7` dans la ligne `texture load:`). Par défaut, quand la
+  carte graphique a la compression BC, chaque tâche de décodage encode la
+  texture en BC7 et vérifie le résultat ; celles qu'il abîmerait restent
+  en RGBA8. Le journal l'annonce au démarrage (`textures: BC7 compression
+  on|off (GPU support: …)`).
 - **`AURORA_CPU_CULL=1`** : construit toutes les listes de dessin sur le CPU
   (le repli quand le GPU n'a pas `MULTI_DRAW_INDIRECT_COUNT`) au lieu de les
   trier sur le GPU, pour comparer ; `cull=cpu|gpu` dans la ligne
@@ -1112,3 +1141,55 @@ thread principal est déjà sur l'image suivante. Avec
     (textures vivantes, pages de textures et leur mémoire allouée), la
     mémoire de la géométrie, et les objets dont la synchro complète attend
     une image qui a du temps (`sync_backlog`).
+
+### Chargement des textures
+
+Sans variable, le journal reçoit une ligne `texture load:` à la fin de
+chaque chargement de textures (`scene/texture_load.rs`) : du premier
+fichier lu, téléchargé ou décodé jusqu'à ce qu'il ne reste rien à lire,
+télécharger, décoder ni envoyer au GPU pendant 2 s. Les petits chargements
+(moins de 200 décodages et moins de 5 s) n'en ont pas. Une région chargée
+ne s'arrête jamais tout à fait (il reste toujours quelques téléchargements
+en cours) : tant qu'un chargement dure, une ligne `texture load (running):`
+donne son avancement toutes les 10 s, et l'arrivée dans une autre région
+(connexion, téléportation) clôt celui en cours (`cut by an arrival`) pour
+que le suivant ne compte que la nouvelle région. Chaque ligne donne :
+
+- la durée du chargement, le « temps jusqu'à tout chargé » à comparer d'une
+  version à l'autre et avec Firestorm au même endroit, et les textures
+  chargées sur celles connues ;
+- les décodages JPEG2000, dont ceux d'une texture déjà affichée à un
+  niveau plus grossier et ceux dont la texture part en BC7, et leur nombre
+  par niveau de réduction (`discard 0..5`, 0 = pleine résolution) ; les
+  mégapixels décodés ;
+- le temps processeur des tâches de décodage, tous threads additionnés,
+  et sa répartition : `codec` (OpenJPEG), `convert` (plans 32 bits vers
+  pixels 8 bits), `rgba` (passage en RGBA et classe alpha), `mips`,
+  `bc7` (encodage BC7 et contrôle de qualité), `staging` (masque de
+  picking et copie en mémoire de transit) ;
+- les octets téléchargés et le nombre de réponses, les lectures du cache
+  disque réussies et manquées (données JPEG2000), et les textures relues
+  du cache transcodé (`read as BC7 without a decode`) : envoyées au GPU
+  sans décodage ni encodage.
+
+Le coût du décodage seul se mesure hors du viewer sur un dossier de
+textures en cache (lecture seule), par classe de taille, sur un thread
+puis sur autant de threads que les tâches de fond :
+
+```powershell
+cargo run --release -p aurora-assets --example j2k_bench -- "$env:LOCALAPPDATA\Aurora\AuroraViewer\cache\tex"
+```
+
+Options : `--sample <n>` (2000 textures par défaut), `--threads <n>`,
+`--levels 0,1,2,3`.
+
+Ce que donne la compression BC7 sur le même dossier (part des textures
+qui passent le contrôle de qualité, mémoire vidéo avec et sans, coût de
+l'encodage face au décodage), textures opaques et avec alpha à part :
+
+```powershell
+cargo run --release -p aurora-render --example bc7_check -- "$env:LOCALAPPDATA\Aurora\AuroraViewer\cache\tex"
+```
+
+Options : `--sample <n>` (1000 par défaut), `--discard <n>` (niveau
+décodé, 0 par défaut).

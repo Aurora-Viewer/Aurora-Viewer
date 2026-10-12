@@ -6,6 +6,7 @@
 //! of `render_thread`); see main_thread.rs for who owns what.
 
 pub mod arena;
+pub mod bc7;
 pub mod gpu_cull;
 mod helpers;
 pub mod hud;
@@ -35,7 +36,7 @@ pub use textures::{MipLevel, build_mips};
 pub use types::*;
 pub use ui_blur::blurred_backdrop;
 pub use ui_glass::glass_panel;
-pub use upload::{StagedMesh, StagedTexture, StagingPool};
+pub use upload::{StagedMesh, StagedTexture, StagingPool, TexelFormat};
 
 pub use egui;
 pub use egui_wgpu;

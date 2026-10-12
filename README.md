@@ -51,6 +51,10 @@ upscaling and DLAA anti-aliasing are planned (see the [roadmap](#roadmap)).
 - Texture and mesh decoding runs on background threads and writes straight
   into GPU staging memory, so arriving in a busy region doesn't freeze the
   picture.
+- Textures are kept BC7-compressed in video memory when that leaves them
+  visually intact (each one is checked), about half the texture memory
+  overall, and cached that way on disk: back in a place already visited,
+  they go to the GPU without being decoded again.
 - Same look as Firestorm: PBR and legacy materials, EEP sky, shadows,
   reflection probes, mirrors, water, glow and particles, checked side by
   side on the main grid.
@@ -187,8 +191,8 @@ exemple ; l’envoi est simulé et le navigateur reste fermé. Voir
 
 - NVIDIA DLSS upscaling and DLAA anti-aliasing.
 - Frame Generation (under investigation).
-- Faster texture loading: a GPU-compressed texture cache, so revisited
-  places skip JPEG2000 decoding, and about 4× less VRAM per texture.
+- Compression for the textures that fast BC7 encoding would harm (they
+  stay uncompressed and are decoded at each visit).
 - PBR terrain, projector lights and a full pass on water rendering.
 - Maybe a VR mode with controller support.
 
