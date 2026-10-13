@@ -269,6 +269,11 @@ de `ui/inventory/view.rs`. Les dossiers se chargent par lots bornés ; les état
 dépliés de recherche et de navigation restent séparés. `ui/texture_picker.rs`
 présente les lignes visibles, les noms longs tronqués avec infobulle, un aperçu
 borné, une séparation ajustable et les commandes en bas de la fenêtre.
+La colonne d’inventaire est réduite d’un tiers par défaut. Le dossier repliable
+« Fichiers locaux » précède l’inventaire pour les choix de diffuse et de matériau
+PBR ; il partage le dessin des lignes et filtre textures / matériaux séparément.
+`app/imports.rs` prépare les images et matériaux locaux dès leur chargement sur
+les workers, afin qu’ils soient sélectionnables avant leur première application.
 Ses choix intentionnels sont distincts de la confirmation :
 `build/ui/texture_preview.rs` applique l’aperçu immédiat à la sélection capturée,
 conserve les textures et matériaux d’origine de chaque face, confirme sans

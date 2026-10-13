@@ -54,6 +54,7 @@ pub struct TexturePicker {
     selected_item: Option<Uuid>,
     selected_lookup: Option<(u64, Option<Uuid>)>,
     tree: tree::Tree,
+    local_open: [bool; 2],
     list_fraction: f32,
     footer_height: f32,
     /// Images to stream (selected texture preview).
@@ -80,6 +81,7 @@ impl TexturePicker {
         self.selected_item = None;
         self.selected_lookup = None;
         self.tree.opened(current);
+        self.local_open = [true; 2];
         self.materials = false;
         self.default = None;
         self.allow_none = false;
@@ -153,9 +155,10 @@ impl TexturePicker {
                 });
             }
         }
-        let size = Vec2::new(680.0, 480.0);
+        // Keep the preview's space while reducing the original list by a third.
+        let size = Vec2::new(530.0, 480.0);
         let mut floater = Floater::new("texture_picker", self.title.clone(), screen.center() - size * 0.5, size);
-        floater.min_size = Vec2::new(560.0, 400.0);
+        floater.min_size = Vec2::new(460.0, 400.0);
         floater.show(ctx, p, &mut open, |ui| {
             let hint = if self.materials {
                 aurora_i18n::tr!("ui-texture-picker-filter-materials")
@@ -176,7 +179,7 @@ impl TexturePicker {
                 Vec2::new(ui.available_width(), (ui.available_height() - footer).max(280.0)),
                 egui::Sense::hover(),
             );
-            let fraction = if self.list_fraction > 0.0 { self.list_fraction } else { 0.68 };
+            let fraction = if self.list_fraction > 0.0 { self.list_fraction } else { 0.59 };
             let left_width = (body.width() * fraction).clamp(240.0, body.width() - 176.0);
             let divider = egui::Rect::from_min_max(
                 egui::pos2(body.left() + left_width, body.top()),
@@ -209,10 +212,16 @@ impl TexturePicker {
                     self.allow_local && *material == self.materials && (filter.is_empty() || name.to_lowercase().contains(&filter))
                 })
                 .collect();
-            locals.sort_by(|a, b| a.1.0.cmp(&b.1.0));
-            let row_count = rows.len() + if locals.is_empty() { 0 } else { locals.len() + 1 };
+            locals.sort_by(|a, b| a.1.0.cmp(&b.1.0).then_with(|| a.0.cmp(b.0)));
             let tab = usize::from(!self.filter.trim().is_empty());
+            let local_count = if self.allow_local {
+                1 + if self.local_open[tab] { locals.len() } else { 0 }
+            } else {
+                0
+            };
+            let row_count = local_count + rows.len();
             let mut toggle = None;
+            let mut toggle_local = false;
             let radius = ui.visuals().window_corner_radius;
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -220,50 +229,47 @@ impl TexturePicker {
                 .show_rows(&mut list, 22.0, row_count, |ui, range| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for index in range {
-                        if index >= rows.len() {
-                            if index == rows.len() {
-                                ui.add_sized(
-                                    Vec2::new(ui.available_width(), 22.0),
-                                    egui::Label::new(RichText::new(aurora_i18n::tr!("import-local")).color(p.muted)),
-                                );
-                            } else {
-                                let (id, (name, _)) = locals[index - rows.len() - 1];
-                                let selected = self.selected == Some(*id);
-                                let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), egui::Sense::click());
-                                if selected || response.hovered() {
-                                    ui.painter().rect_filled(rect, radius, if selected { p.violet } else { p.raised });
-                                }
-                                widgets::paint_elided(
-                                    ui,
-                                    name,
-                                    rect.left_center() + egui::vec2(8.0, 0.0),
-                                    rect.width() - 16.0,
-                                    egui::FontId::proportional(12.0),
-                                    if selected { p.on_accent } else { p.ink },
-                                );
-                                if response.clicked() {
-                                    self.selected = Some(*id);
-                                    self.selected_item = None;
-                                    self.preview = Some(*id);
-                                }
-                                if response.double_clicked() {
-                                    chosen = Some(*id);
-                                }
-                            }
-                            continue;
-                        }
-                        let row = &rows[index];
                         let inv = &world.inventory;
-                        let name = if row.id == inv.root {
-                            aurora_i18n::tr!("common-my-inventory").to_owned()
-                        } else if row.id == inv.lib_root {
-                            aurora_i18n::tr!("common-library").to_owned()
+                        let local = index < local_count;
+                        let (id, depth, folder, row_open, name, asset) = if local {
+                            if index == 0 {
+                                (
+                                    Uuid::nil(),
+                                    0,
+                                    true,
+                                    self.local_open[tab],
+                                    aurora_i18n::tr!("ui-texture-picker-local-files").to_owned(),
+                                    None,
+                                )
+                            } else {
+                                let (id, (name, _)) = locals[index - 1];
+                                (*id, 1, false, false, name.clone(), Some(*id))
+                            }
                         } else {
-                            crate::world::inventory::actions::name(inv, row.id)
+                            let row = &rows[index - local_count];
+                            let name = if row.id == inv.root {
+                                aurora_i18n::tr!("common-my-inventory").to_owned()
+                            } else if row.id == inv.lib_root {
+                                aurora_i18n::tr!("common-library").to_owned()
+                            } else {
+                                actions::name(inv, row.id)
+                            };
+                            (
+                                row.id,
+                                row.depth,
+                                row.folder,
+                                row.open,
+                                name,
+                                (!row.folder).then(|| inventory_asset(inv, row.id, self.materials)).flatten(),
+                            )
                         };
-                        let selected = !row.folder && self.selected_item == Some(row.id);
-                        let asset = (!row.folder).then(|| inventory_asset(inv, row.id, self.materials)).flatten();
-                        let enabled = row.folder || asset.is_some();
+                        let selected = !folder
+                            && if local {
+                                self.selected == asset
+                            } else {
+                                self.selected_item == Some(id)
+                            };
+                        let enabled = folder || asset.is_some();
                         let (rect, response) = ui.allocate_exact_size(
                             Vec2::new(ui.available_width(), 22.0),
                             if enabled { egui::Sense::click() } else { egui::Sense::hover() },
@@ -271,10 +277,10 @@ impl TexturePicker {
                         if selected || response.hovered() {
                             ui.painter().rect_filled(rect, radius, if selected { p.violet } else { p.raised });
                         }
-                        let mut x = rect.left() + 4.0 + row.depth.min(16) as f32 * 12.0;
-                        if row.folder {
+                        let mut x = rect.left() + 4.0 + depth.min(16) as f32 * 12.0;
+                        if folder {
                             let c = egui::pos2(x + 5.0, rect.center().y);
-                            let points = if row.open {
+                            let points = if row_open {
                                 vec![c + egui::vec2(-3.5, -2.0), c + egui::vec2(3.5, -2.0), c + egui::vec2(0.0, 2.5)]
                             } else {
                                 vec![c + egui::vec2(-2.0, -3.5), c + egui::vec2(2.5, 0.0), c + egui::vec2(-2.0, 3.5)]
@@ -282,8 +288,8 @@ impl TexturePicker {
                             ui.painter().add(egui::Shape::convex_polygon(points, p.muted, egui::Stroke::NONE));
                         }
                         x += 12.0;
-                        let icon = if row.folder {
-                            if row.open { "folder-open-filled" } else { "folder-filled" }
+                        let icon = if folder {
+                            if row_open { "folder-open-filled" } else { "folder-filled" }
                         } else if self.materials {
                             "droplet-filled"
                         } else {
@@ -312,23 +318,28 @@ impl TexturePicker {
                         );
                         let response = if cut { response.on_hover_text(&name) } else { response };
                         if response.clicked() {
-                            if row.folder {
-                                toggle = Some(row.id);
-                            } else {
-                                if let Some(asset) = asset {
-                                    self.selected = Some(asset);
-                                    self.selected_item = Some(row.id);
-                                    self.preview = can_preview(&world.inventory, row.id).then_some(asset);
+                            if folder {
+                                if local {
+                                    toggle_local = true;
+                                } else {
+                                    toggle = Some(id);
                                 }
+                            } else if let Some(asset) = asset {
+                                self.selected = Some(asset);
+                                self.selected_item = (!local).then_some(id);
+                                self.preview = (local || can_preview(&world.inventory, id)).then_some(asset);
                             }
                         }
-                        if !row.folder && response.double_clicked() {
+                        if !folder && response.double_clicked() {
                             chosen = self.selected;
                         }
                     }
                 });
             if let Some(id) = toggle {
                 self.tree.state.toggle(id, tab);
+            }
+            if toggle_local {
+                self.local_open[tab] = !self.local_open[tab];
             }
             let mut preview = ui.new_child(
                 egui::UiBuilder::new()
@@ -383,10 +394,15 @@ impl TexturePicker {
                         );
                     }
                 }
-                if let Some(item) = self.selected_item.and_then(|id| world.inventory.items.get(&id)) {
+                let name = self
+                    .selected_item
+                    .and_then(|id| world.inventory.items.get(&id))
+                    .map(|item| &item.name)
+                    .or_else(|| self.selected.and_then(|id| world.local_assets.get(&id)).map(|(name, _)| name));
+                if let Some(name) = name {
                     ui.add(widgets::elided_label(
                         ui,
-                        RichText::new(&item.name).size(12.0).color(p.ink),
+                        RichText::new(name).size(12.0).color(p.ink),
                         ui.available_width(),
                     ));
                 }
@@ -486,6 +502,144 @@ impl TexturePicker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame(
+        ctx: &egui::Context,
+        picker: &mut TexturePicker,
+        world: &mut World,
+        time: f64,
+        events: Vec<egui::Event>,
+    ) -> HashMap<String, egui::Pos2> {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 800.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |_| {
+                picker.show(ctx, &crate::theme::Theme::default().palette(), world, &HashMap::new());
+            },
+        );
+        output.textures_delta.clear();
+        let mut labels = HashMap::new();
+        for shape in output.shapes {
+            if let egui::Shape::Text(text) = shape.shape {
+                labels
+                    .entry(text.galley.text().to_owned())
+                    .or_insert(text.pos + text.galley.size() * 0.5);
+            }
+        }
+        labels
+    }
+
+    fn click(ctx: &egui::Context, picker: &mut TexturePicker, world: &mut World, time: f64, pos: egui::Pos2) {
+        for (step, pressed) in [true, false].into_iter().enumerate() {
+            frame(
+                ctx,
+                picker,
+                world,
+                time + step as f64 / 60.0,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+    }
+
+    #[test]
+    fn local_folder_precedes_inventory_filters_by_type_and_previews_a_real_click() {
+        for materials in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let root = Uuid::from_u128(1);
+            world.inventory.root = root;
+            world.inventory.folders.insert(
+                root,
+                crate::world::inventory::Folder {
+                    info: aurora_net::inventory::InvFolder {
+                        id: root,
+                        ..Default::default()
+                    },
+                    state: crate::world::inventory::FetchState::Fetched,
+                    children: Vec::new(),
+                    items: vec![Uuid::from_u128(20)],
+                    library: false,
+                },
+            );
+            world.inventory.items.insert(
+                Uuid::from_u128(20),
+                aurora_net::inventory::InvItem {
+                    id: Uuid::from_u128(20),
+                    parent: root,
+                    asset_id: Uuid::from_u128(21),
+                    inv_type: if materials { INV_MATERIAL } else { INV_TEXTURE },
+                    name: "Inventory asset".into(),
+                    owner_mask: actions::COPY,
+                    ..Default::default()
+                },
+            );
+            for (id, name, material) in [
+                (10, "A texture", false),
+                (11, "B texture", false),
+                (12, "A material", true),
+                (13, "B material", true),
+            ] {
+                world.local_assets.insert(Uuid::from_u128(id), (name.into(), material));
+            }
+            let mut picker = TexturePicker::default();
+            if materials {
+                picker.open_materials("Material", Uuid::nil());
+            } else {
+                picker.open_with_defaults("Texture", Uuid::nil(), None, false);
+            }
+            picker.allow_local = true;
+            let folder = aurora_i18n::tr!("ui-texture-picker-local-files");
+            let inventory = aurora_i18n::tr!("common-my-inventory");
+            let (first, second, excluded, asset) = if materials {
+                ("A material", "B material", "A texture", 12)
+            } else {
+                ("A texture", "B texture", "A material", 10)
+            };
+            let mut labels = HashMap::new();
+            for n in 0..5 {
+                labels = frame(&ctx, &mut picker, &mut world, n as f64 / 60.0, vec![]);
+            }
+            assert!(labels[folder].y < labels[first].y);
+            assert!(labels[first].y < labels[second].y);
+            assert!(labels[second].y < labels[inventory].y);
+            assert!(!labels.contains_key(excluded));
+            click(&ctx, &mut picker, &mut world, 1.0, labels[first]);
+            assert_eq!(picker.selected, Some(Uuid::from_u128(asset)));
+            assert_eq!(picker.selected_item, None);
+            assert_eq!(picker.take_preview(), Some(Uuid::from_u128(asset)));
+            assert!(picker.open);
+            click(&ctx, &mut picker, &mut world, 2.0, labels[folder]);
+            labels = frame(&ctx, &mut picker, &mut world, 2.1, vec![]);
+            assert!(!labels.contains_key(second));
+            assert!(labels[folder].y < labels[inventory].y);
+            picker.filter = "B".into();
+            labels = frame(&ctx, &mut picker, &mut world, 3.0, vec![]);
+            assert!(labels.contains_key(second));
+            assert!(!labels.contains_key(excluded));
+            picker.filter.clear();
+            labels = frame(&ctx, &mut picker, &mut world, 4.0, vec![]);
+            assert!(!labels.contains_key(second));
+            world.local_assets.clear();
+            labels = frame(&ctx, &mut picker, &mut world, 5.0, vec![]);
+            assert!(labels[folder].y < labels[inventory].y);
+            picker.allow_local = false;
+            labels = frame(&ctx, &mut picker, &mut world, 6.0, vec![]);
+            assert!(!labels.contains_key(folder));
+        }
+    }
 
     #[test]
     fn inventory_links_resolve_assets_and_a_null_material_is_blank() {
@@ -587,6 +741,12 @@ mod tests {
             } else {
                 picker.open_with_defaults("Texture", asset, Some(asset), true);
             }
+            picker.allow_local = true;
+            if mode != 0 {
+                world
+                    .local_assets
+                    .insert(Uuid::from_u128(3), ("A very long local file name ".repeat(30), mode == 2));
+            }
             let mut initial = None;
             for frame in 0..180 {
                 if frame == 60 || frame == 120 {
@@ -609,7 +769,7 @@ mod tests {
                 );
                 output.textures_delta.clear();
                 let rect = ctx.memory(|m| m.area_rect(egui::Id::new("texture_picker"))).unwrap();
-                assert!(rect.width() < 730.0, "mode {mode}, frame {frame}: {rect:?}");
+                assert!(rect.width() < 580.0, "mode {mode}, frame {frame}: {rect:?}");
                 assert!(rect.height() < 600.0, "mode {mode}, frame {frame}: {rect:?}");
                 if frame == 20 {
                     initial = Some(rect);

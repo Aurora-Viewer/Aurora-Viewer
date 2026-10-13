@@ -5443,20 +5443,30 @@ impl App {
                         self.panels.inventory = true;
                         self.inventory_ui.expand_all = Some(true);
                     }
-                    crate::build::demo::Step::TexturePicker => {
+                    crate::build::demo::Step::TexturePicker(materials) => {
                         let current = self
                             .build
                             .sel_te(&self.world)
                             .first()
                             .and_then(|&(idx, face)| self.world.objects.get(idx)?.te.as_ref().map(|te| te.face(face as usize).texture))
                             .unwrap_or_default();
-                        self.build.ui.picker.open_with_defaults(
-                            aurora_i18n::tr!("build-ui-texture-choose-texture"),
-                            current,
-                            Some(aurora_prim::te::DEFAULT_TEXTURE),
-                            false,
-                        );
-                        self.build.ui.pick_target = Some(crate::build::ui::PickTarget::Diffuse);
+                        if materials {
+                            self.build
+                                .ui
+                                .picker
+                                .open_materials(aurora_i18n::tr!("build-ui-texture-choose-material"), uuid::Uuid::nil());
+                            self.build.ui.pick_target = Some(crate::build::ui::PickTarget::PbrMaterial);
+                            self.build.ui.tex_tab = 0;
+                        } else {
+                            self.build.ui.picker.open_with_defaults(
+                                aurora_i18n::tr!("build-ui-texture-choose-texture"),
+                                current,
+                                Some(aurora_prim::te::DEFAULT_TEXTURE),
+                                false,
+                            );
+                            self.build.ui.pick_target = Some(crate::build::ui::PickTarget::Diffuse);
+                        }
+                        self.imports.open = false;
                         crate::build::demo::texture_inventory(&mut self.world);
                     }
                     crate::build::demo::Step::TakeTask(copy) => {
