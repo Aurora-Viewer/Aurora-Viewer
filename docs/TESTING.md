@@ -1161,7 +1161,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
-| `AURORA_DEMO_EMOJI_PICKER=1` | Conversations open on the emoji picker |
+| `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -1376,12 +1376,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
-- **`AURORA_DEMO_EMOJI_PICKER=1`**: the Conversations window open on
-  local chat with its emoji picker shown (first tab, smileys). With
-  `AURORA_DEMO_GLYPHS=1`, the emoji line of the chat is visible beside it.
+- **`AURORA_DEMO_EMOJI_PICKER=1|<text>`**: the Conversations window open on
+  local chat with its emoji picker shown (first tab, smileys); any value
+  other than `1` is put in the input field, as if picked. With
+  `AURORA_DEMO_GLYPHS=1`, the emoji line of the chat is visible beside it;
+  with `AURORA_DEMO_CHATCMD=<same text>`, the line is sent.
   What to see: colour emojis in every cell, centred, with their
-  proportions (the 2D font's images are wider than tall), same size as in
-  the chat line. `AURORA_EMOJI_FONT=<file>` compares two fonts.
+  proportions (the 2D font's images are wider than tall), and the same
+  colour emojis, same size, in the input field and in the sent line.
+  `AURORA_EMOJI_FONT=<file>` compares two fonts.
 - **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery`**, only
   with `AURORA_DEMO`: triggers a Rust panic, a native Windows
   exception, an abnormal exit without a trace, a normal close or an

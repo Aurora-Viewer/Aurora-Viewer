@@ -257,6 +257,86 @@ impl Emoji {
         flush(ui, &mut run);
     }
 
+    /// A one-line text field (the conversation input) whose emoji show in
+    /// colour, as in the history. egui's text only has one-colour glyphs, so
+    /// the emoji are laid out blank (same size as in `inline`) and their
+    /// images drawn over them: editing, cursor and selection stay egui's.
+    /// `build` sets the field up (id, hint, width).
+    pub fn text_field(
+        &mut self,
+        ui: &mut egui::Ui,
+        text: &mut String,
+        build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>,
+    ) -> egui::Response {
+        // without emoji, egui's own layout
+        if !text.chars().any(|c| self.has(c)) {
+            return ui.add(build(egui::TextEdit::singleline(text)));
+        }
+        // what TextEdit uses when given no font nor colour
+        let font = egui::FontSelection::default().resolve(ui.style());
+        let color = ui
+            .visuals()
+            .override_text_color
+            .unwrap_or_else(|| ui.visuals().widgets.inactive.text_color());
+        let line_height = ui.fonts_mut(|f| f.row_height(&font)) + ui.spacing().extra_text_line_spacing;
+        // the size `inline` gives the emoji pictures
+        let side = font.size * 1.25;
+        let format = |blank: bool| {
+            let mut f = if blank {
+                egui::TextFormat::simple(egui::FontId::new(side, font.family.clone()), egui::Color32::TRANSPARENT)
+            } else {
+                egui::TextFormat::simple(font.clone(), color)
+            };
+            f.line_height = Some(line_height);
+            f.valign = egui::Align::Center;
+            f
+        };
+        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap_width: f32| {
+            let text = text.as_str();
+            let mut job = egui::text::LayoutJob {
+                keep_trailing_whitespace: true,
+                ..Default::default()
+            };
+            // runs of text and runs of emoji (with their variation selectors
+            // and joiners, which `inline` does not draw either)
+            let mut start = 0;
+            let mut blank_run = false;
+            for (i, c) in text.char_indices() {
+                let blank = self.has(c) || c == '\u{FE0F}' || c == '\u{200D}';
+                if blank != blank_run && i > start {
+                    job.append(&text[start..i], 0.0, format(blank_run));
+                    start = i;
+                }
+                blank_run = blank;
+            }
+            if start < text.len() {
+                job.append(&text[start..], 0.0, format(blank_run));
+            }
+            ui.fonts_mut(|f| f.layout_job(job))
+        };
+        let out = build(egui::TextEdit::singleline(text).layouter(&mut layouter)).show(ui);
+        let painter = ui.painter().with_clip_rect(out.text_clip_rect);
+        for placed in &out.galley.rows {
+            let mid_y = out.galley_pos.y + placed.pos.y + placed.row.size.y / 2.0;
+            for g in &placed.row.glyphs {
+                if !self.has(g.chr) {
+                    continue;
+                }
+                if let Some(t) = self.texture(ui.ctx(), g.chr) {
+                    let mid_x = out.galley_pos.x + placed.pos.x + g.pos.x + g.advance_width / 2.0;
+                    let size = t.size_vec2() * (side / t.size_vec2().max_elem());
+                    painter.image(
+                        t.id(),
+                        egui::Rect::from_center_size(egui::pos2(mid_x, mid_y), size),
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        crate::ui::widgets::PICTURE_TINT,
+                    );
+                }
+            }
+        }
+        out.response.response
+    }
+
     /// Emoji picker grid; returns the chosen emoji.
     pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons) -> Option<char> {
         if !self.available() {
