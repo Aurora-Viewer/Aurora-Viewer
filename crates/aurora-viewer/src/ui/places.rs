@@ -1130,10 +1130,12 @@ mod tests {
     /// Runs the confirmation of `ui`, clicking in turn the texts of `clicks`,
     /// and gives the actions it asked for.
     fn answer_confirm(ui: &mut PlacesUi, confirm_teleports: bool, clicks: &[&str]) -> Vec<PlacesAction> {
+        // The last text drawn: in English the title and the button of the
+        // question are both "Teleport", and the button comes after.
         fn text_pos(shape: &egui::epaint::Shape, text: &str) -> Option<egui::Pos2> {
             match shape {
                 egui::epaint::Shape::Text(t) if t.galley.text() == text => Some(t.pos + egui::vec2(4.0, 4.0)),
-                egui::epaint::Shape::Vec(v) => v.iter().find_map(|s| text_pos(s, text)),
+                egui::epaint::Shape::Vec(v) => v.iter().rev().find_map(|s| text_pos(s, text)),
                 _ => None,
             }
         }
@@ -1161,6 +1163,7 @@ mod tests {
             let pos = output
                 .shapes
                 .iter()
+                .rev()
                 .find_map(|s| text_pos(&s.shape, text))
                 .unwrap_or_else(|| panic!("« {text} » in the confirmation"));
             for pressed in [true, false] {
