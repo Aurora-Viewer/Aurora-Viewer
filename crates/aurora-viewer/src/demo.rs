@@ -457,18 +457,18 @@ fn long_name(id: &Uuid) -> Option<(&'static str, &'static str, &'static str)> {
     }
 }
 
-/// AURORA_DEMO_CONV=noms[:etroit|large]: the long names scenario, and the
+/// AURORA_DEMO_CONV=names[:narrow|wide]: the long names scenario, and the
 /// sizes of the Conversations and People windows it is shown in.
 pub fn long_names_scenario() -> Option<(egui::Vec2, egui::Vec2)> {
     let v = std::env::var("AURORA_DEMO_CONV").ok()?;
     let (mode, width) = v.split_once(':').unwrap_or((v.as_str(), ""));
-    if mode != "noms" {
+    if !matches!(mode, "names" | "noms") {
         return None;
     }
     let size = |w, h| egui::vec2(w, h);
     Some(match width {
-        "etroit" => (size(400.0, 300.0), size(230.0, 420.0)),
-        "large" => (size(900.0, 360.0), size(520.0, 420.0)),
+        "narrow" | "etroit" => (size(400.0, 300.0), size(230.0, 420.0)),
+        "wide" | "large" => (size(900.0, 360.0), size(520.0, 420.0)),
         _ => (size(600.0, 360.0), size(330.0, 420.0)),
     })
 }

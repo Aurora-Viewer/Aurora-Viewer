@@ -7448,7 +7448,7 @@ impl ApplicationHandler for App {
                 // (nothing over the rows of plates)
                 self.panels.people = false;
             }
-            // AURORA_DEMO_RADAR=1|tp|amis|groupes|profil: residents around
+            // AURORA_DEMO_RADAR=1|tp|friends|groups|profile: residents around
             // for the radar of People (tp: with the ones of a region a
             // teleport just left), or its friends / groups tab (profil: with
             // the profile of a group)
@@ -7459,11 +7459,11 @@ impl ApplicationHandler for App {
                 }
                 self.panels.people = true;
                 self.panels.people_tab = match v.as_str() {
-                    "amis" => 1,
-                    "groupes" | "profil" => 2,
+                    "friends" | "amis" => 1,
+                    "groups" | "groupes" | "profile" | "profil" => 2,
                     _ => 0,
                 };
-                if v == "profil" {
+                if matches!(v.as_str(), "profile" | "profil") {
                     self.group_profile_ui.open(&mut self.world, crate::demo::DEMO_GROUP1);
                 }
             }
@@ -7475,7 +7475,7 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.panels.minimap = false;
             }
-            // AURORA_DEMO_PLACE=1|lagune|nordheim|pinede|faille|inconnue: the
+            // AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown: the
             // place details of a place link, as if clicked
             if let Some((region, pos)) = crate::demo::place::scenario() {
                 ui::context::request(&self.egui_ctx, ui::context::CtxAction::ShowPlaceInfo(region.to_owned(), pos));
@@ -7487,13 +7487,13 @@ impl ApplicationHandler for App {
                 self.demo_place = Some(source);
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_PLACES=favoris|reperes|historique: "Places" on a tab
+            // AURORA_DEMO_PLACES=favorites|landmarks|history: "Places" on a tab
             if let Some(tab) = std::env::var("AURORA_DEMO_PLACES").ok().and_then(|v| ui::places::tab_from_name(&v)) {
                 self.places_ui.open_tab(tab);
                 self.panels.places = true;
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_TP_CONFIRM=lien|repere: a teleport confirmation on
+            // AURORA_DEMO_TP_CONFIRM=link|landmark: a teleport confirmation on
             // screen, asked whatever the saved setting says (not saved)
             if let Some(confirm) = crate::demo::place::teleport_confirm_scenario() {
                 use crate::demo::place::TeleportConfirm;
@@ -7528,7 +7528,7 @@ impl ApplicationHandler for App {
             if std::env::var_os("AURORA_DEMO_PLACE_WINDOW").is_some() {
                 self.settings.standalone_place_details = true;
             }
-            // AURORA_DEMO_PROFILE=loup|nova|friend|self[:tab]: a profile window
+            // AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab]: a profile window
             if let Ok(v) = std::env::var("AURORA_DEMO_PROFILE") {
                 let (who, tab) = v.split_once(':').unwrap_or((v.as_str(), "0"));
                 let id = match who {
@@ -7553,7 +7553,7 @@ impl ApplicationHandler for App {
                 self.group_profile_ui.open(&mut self.world, crate::demo::DEMO_GROUP1);
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_CONTACTS=amis|groupes|cercles|detache|ajout: the
+            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add: the
             // Contacts tab of Conversations (or its torn-off window, or the
             // resident picker of "Add...")
             if let Ok(v) = std::env::var("AURORA_DEMO_CONTACTS") {
@@ -7561,18 +7561,19 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.chat_ui.contacts = true;
                 self.settings.contacts.tab = match v.as_str() {
-                    "groupes" => 1,
-                    "cercles" => 2,
+                    "groups" | "groupes" => 1,
+                    "sets" | "cercles" => 2,
                     _ => 0,
                 };
-                self.settings.contacts.torn_off = v == "detache";
-                self.panels.contacts = v == "detache";
-                if v == "ajout" {
+                let detached = matches!(v.as_str(), "detached" | "detache");
+                self.settings.contacts.torn_off = detached;
+                self.panels.contacts = detached;
+                if matches!(v.as_str(), "add" | "ajout") {
                     self.contacts_ui.pick_new_friend();
                 }
             }
             // AURORA_DEMO_CONV=1: the demo group chat with its participants;
-            // =noms[:etroit|large]: conversations and nearby avatars whose
+            // =names[:narrow|wide]: conversations and nearby avatars whose
             // names do not fit, in windows of a known size
             if let Some((conversations, people)) = crate::demo::long_names_scenario() {
                 self.panels.chat = true;
