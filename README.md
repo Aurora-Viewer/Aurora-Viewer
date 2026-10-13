@@ -21,8 +21,8 @@
 Aurora Viewer is a Second Life client built from scratch in Rust, with a
 modern GPU renderer (wgpu on Vulkan) and a clean, flat interface. It follows
 the behaviour of [Firestorm](https://www.firestormviewer.org) — same protocol,
-same rules, same defaults — while rethinking the user interface. NVIDIA DLSS
-upscaling and DLAA anti-aliasing are planned (see the [roadmap](#roadmap)).
+same rules, same defaults — while rethinking the user interface. AMD FSR
+upscaling and anti-aliasing are planned (see the [roadmap](#roadmap)).
 
 > **Status:** early development (0.x). Usable for exploring, chatting and
 > testing; many features are still in progress — see [TASKS.md](TASKS.md).
@@ -192,7 +192,8 @@ exemple ; l’envoi est simulé et le navigateur reste fermé. Voir
 
 **Planned**
 
-- NVIDIA DLSS upscaling and DLAA anti-aliasing.
+- AMD FSR (FidelityFX Super Resolution) upscaling and native anti-aliasing,
+  on every GPU vendor.
 - Frame Generation (under investigation).
 - Compression for the textures that fast BC7 encoding would harm (they
   stay uncompressed and are decoded at each visit).
