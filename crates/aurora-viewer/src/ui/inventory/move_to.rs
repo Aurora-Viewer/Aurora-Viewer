@@ -1,4 +1,4 @@
-//! Destination picker for the inventory's « Déplacer vers… » action.
+//! Destination picker for the inventory's "Move to…" action.
 //! Uses LLFolderBridge's move / protected-folder rules (Firestorm
 //! indra/newview/llinventorybridge.cpp, originally LGPL 2.1). The searchable
 //! picker is an Aurora addition; submission uses the existing move mutation.

@@ -1,4 +1,4 @@
-//! Contact sets ("Cercles"), port of Firestorm's LGGContactSets
+//! Contact sets, port of Firestorm's LGGContactSets
 //! (indra/newview/lggcontactsets.cpp, originally LGPL 2.1): named sets of
 //! friends (and non-friends, kept in the "extraAvs" list) with a color,
 //! plus aliases (pseudonyms) that replace an avatar's display name. Saved

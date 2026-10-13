@@ -65,7 +65,7 @@ pub fn show_document(
 pub enum InvAction {
     TakeTask(Box<crate::build::task_inventory::TransferRequest>),
     TeleportLandmark(Uuid),
-    /// « À propos du repère » (LLLandmarkBridge "about"): its profile, as
+    /// "About Landmark" (LLLandmarkBridge "about"): its profile, as
     /// item and asset.
     AboutLandmark(Uuid, Uuid),
     Edit(Mutation),
@@ -576,7 +576,7 @@ fn folder_tree(
         st.set_open(true);
     }
     if let Some(e) = expand {
-        // "Développer" only opens folders already fetched, to avoid fetching everything.
+        // "Expand" only opens folders already fetched, to avoid fetching everything.
         if !e || fetch_state == FetchState::Fetched || depth == 0 {
             st.set_open(e || depth == 0);
         }

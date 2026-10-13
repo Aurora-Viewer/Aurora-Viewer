@@ -1,4 +1,4 @@
-//! Rebindable controls (Firestorm "Contrôles > Raccourcis"): each action
+//! Rebindable controls (Firestorm "Controls > Shortcuts"): each action
 //! has up to two bindings, a keyboard key or a mouse button (middle, back,
 //! forward, others) with optional modifiers. Keys are stored by their winit
 //! physical code name so the layout does not matter (ZQSD on AZERTY = WASD).
@@ -273,7 +273,7 @@ fn key_icon(label: &str) -> Option<String> {
 pub enum Action {
     Forward,
     Back,
-    /// Turn (strafe with Shift, or always when "flèches = pas latéraux").
+    /// Turn (strafe with Shift, or always when "Arrows: strafe").
     Left,
     Right,
     StrafeLeft,
@@ -304,15 +304,15 @@ pub enum Action {
     Inventory,
     Minimap,
     WorldMap,
-    /// Monde › Historique de téléportation (Firestorm Alt+H).
+    /// World › Teleport history (Firestorm Alt+H).
     TeleportHistory,
-    /// « Rechercher » (Firestorm Ctrl+F, menu_viewer.xml).
+    /// "Search" (Firestorm Ctrl+F, menu_viewer.xml).
     Search,
     Performance,
     Preferences,
     /// Aurora's held shortcut for dragging a visible HUD with the left button.
     HudDrag,
-    /// « Afficher la transparence » (Firestorm Ctrl+Alt+T).
+    /// "Show transparency" (Firestorm Ctrl+Alt+T).
     ShowTransparency,
 }
 

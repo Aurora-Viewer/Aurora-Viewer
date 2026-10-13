@@ -1,4 +1,4 @@
-//! "Son" (LLPanelLandAudio::refresh / onCommitAny, with Firestorm's saved
+//! "Sound" (LLPanelLandAudio::refresh / onCommitAny, with Firestorm's saved
 //! stream list: FIRE-593 add / remove / copy, FIRE-29157 drop a URL the
 //! region refused).
 

@@ -218,15 +218,15 @@ pub fn scan_step(inv: &mut Inventory) -> usize {
 /// What a list shows (setSelectedEnvironment).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shown {
-    /// "Environnement partagé" (PRESET_NAME_REGION_DEFAULT).
+    /// "Shared environment" (PRESET_NAME_REGION_DEFAULT).
     Shared,
-    /// Sky and water lists: "Basé sur le cycle du jour" (PRESET_NAME_DAY_CYCLE);
-    /// the day list: "Rien" (PRESET_NAME_NONE).
+    /// Sky and water lists: "Based on day cycle" (PRESET_NAME_DAY_CYCLE);
+    /// the day list: "Nothing" (PRESET_NAME_NONE).
     DayBased,
     Item(Uuid),
-    /// Aurora's local time of day preset (Monde > Environnement).
+    /// Aurora's local time of day preset (World > Environment).
     Preset(u8),
-    /// Edited in « Éclairage personnel ».
+    /// Edited in "Personal lighting".
     Personal,
 }
 
@@ -411,7 +411,7 @@ mod tests {
             })
             .collect();
         let id = Uuid::from_u128;
-        // from "Environnement partagé": > gives the first item, < the last
+        // from "Shared environment": > gives the first item, < the last
         assert_eq!(step(&list, shown_index(&list, Shown::Shared), true), Some(id(1)));
         assert_eq!(step(&list, shown_index(&list, Shown::Shared), false), Some(id(3)));
         assert_eq!(step(&list, shown_index(&list, Shown::DayBased), false), Some(id(3)));

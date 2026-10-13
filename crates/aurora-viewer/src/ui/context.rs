@@ -47,7 +47,7 @@ pub enum Target {
         key: ObjKey,
     },
     /// An avatar; `attachment` when one of its attachments was clicked
-    /// (menu_attachment_other.xml adds « Profil de l'objet »).
+    /// (menu_attachment_other.xml adds "Object profile").
     Avatar {
         id: Uuid,
         own: bool,
@@ -99,7 +99,7 @@ pub struct ObjectFacts {
     pub delete: bool,
     /// LLSelectMgr::enableUnlinkObjects: a linkset we can modify.
     pub unlink: bool,
-    /// Blocked (LLMuteList), for « Ignorer » / « Cesser d'ignorer ».
+    /// Blocked (LLMuteList), for "Ignore" / "Stop ignoring".
     pub blocked: bool,
     /// Name from ObjectProperties (block list entry).
     pub name: String,
@@ -155,7 +155,7 @@ pub enum CtxAction {
     Detach(ObjKey),
     AttachmentInventory(Uuid),
     EditAttachment(ObjKey),
-    /// « Toucher » / « Modifier » of a worn item in the inventory or the
+    /// "Touch" / "Edit" of a worn item in the inventory or the
     /// outfit lists, by inventory item (handle_attachment_touch /
     /// handle_attachment_edit).
     TouchWorn(Uuid),
@@ -189,7 +189,7 @@ pub enum CtxAction {
     },
     /// Edit the object in the build tools (handle_object_edit).
     Edit(Uuid),
-    /// « Inspecter »: the window of the object's prims (Floater.Show "inspect").
+    /// "Inspect": the window of the object's prims (Floater.Show "inspect").
     Inspect(Uuid),
     /// Take / take a copy into the inventory (derez_objects).
     Take(Uuid),
@@ -204,7 +204,7 @@ pub enum CtxAction {
     Open(Uuid),
     /// Unlink the linkset (Tools.Unlink).
     Unlink(Uuid),
-    /// « Modifier les parties liées » (Tools.EditLinkedParts).
+    /// "Edit linked parts" (Tools.EditLinkedParts).
     EditLinkedParts(bool),
     /// Land menu: build tools, create (Land.Build) or terraform (Land.Edit).
     Build,
@@ -495,7 +495,7 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
 }
 
 /// Right-click menu of one of our groups (menu_people_groups.xml), plus
-/// Aurora's « Bloquer le chat du groupe » (exoGroupMuteList).
+/// Aurora's "Block group chat" (exoGroupMuteList).
 pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     let ctx = ui.ctx().clone();
     let act = |a: CtxAction| request(&ctx, a);
@@ -622,10 +622,10 @@ pub fn place_teleport_question(region: &str) -> String {
 
 /// A teleport confirmation (TeleportFromLandmark, TeleportToHistoryEntry,
 /// TeleportViaSLAPP: the "okcancelignore" template of notifications.xml).
-/// Some(true) teleports, Some(false) cancels; `dont_ask` is the « Ne plus
-/// afficher » box, which the caller saves as `Settings::confirm_teleports`
+/// Some(true) teleports, Some(false) cancels; `dont_ask` is the "Do not
+/// show again" box, which the caller saves as `Settings::confirm_teleports`
 /// once the teleport is accepted. Firestorm keeps the box whatever the
-/// answer (LLNotification::respond, llnotifications.cpp): here « Annuler »
+/// answer (LLNotification::respond, llnotifications.cpp): here "Cancel"
 /// leaves the setting alone, a refused teleport silences nothing.
 pub fn teleport_confirm(ctx: &egui::Context, p: &Palette, id: &str, text: &str, dont_ask: &mut bool) -> Option<bool> {
     use egui::RichText;
@@ -667,7 +667,7 @@ pub fn teleport_confirm(ctx: &egui::Context, p: &Palette, id: &str, text: &str, 
 
 /// Warning before opening a web link outside the trusted domains (phishing,
 /// fake login pages...). Some(true) opens it, Some(false) cancels;
-/// `dont_warn` is the « Ne plus me prévenir » box. A dangerous link
+/// `dont_warn` is the "Do not warn me again" box. A dangerous link
 /// (`danger`: the reason, from `link_trust`) gets the red version, without
 /// that box: it always warns.
 pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_warn: &mut bool, danger: Option<&str>) -> Option<bool> {
@@ -723,7 +723,7 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
             );
             ui.add_space(8.0);
         }
-        // the action, then « Annuler », like the other confirmations
+        // the action, then "Cancel", like the other confirmations
         ui.horizontal(|ui| {
             let visit = if danger.is_some() {
                 aurora_i18n::tr!("ui-context-visit-anyway")

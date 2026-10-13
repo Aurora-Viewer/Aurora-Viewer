@@ -1,4 +1,4 @@
-//! "Choisissez un Résident": pick residents like LLFloaterAvatarPicker
+//! "Choose a Resident": pick residents like LLFloaterAvatarPicker
 //! (newview/llfloateravatarpicker.cpp, floater_avatar_picker.xml, originally
 //! LGPL 2.1): search by name (AvatarPickerSearch), friends, near me
 //! (NearMeRange 162 m) and Firestorm's search by UUID.
@@ -40,7 +40,7 @@ impl AvatarPicker {
         self.selected.clear();
     }
 
-    /// The residents chosen with "Sélectionner" (the picker closes).
+    /// The residents chosen with "Select" (the picker closes).
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, world: &mut World) -> Option<Vec<Uuid>> {
         if !self.open {
             return None;

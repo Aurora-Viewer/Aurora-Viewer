@@ -1,4 +1,4 @@
-//! Features tab (« Attributs », LLPanelVolume, indra/newview/llpanelvolume.cpp,
+//! Features tab ("Features", LLPanelVolume, indra/newview/llpanelvolume.cpp,
 //! originally LGPL 2.1): animated mesh, flexible path, light (and its
 //! projector texture), reflection probe, physics shape and material.
 
@@ -12,7 +12,7 @@ use crate::world::World;
 use aurora_prim::extra::{EXTENDED_MESH_ANIMATED, ReflectionProbeParams};
 use aurora_prim::params::{LL_PCODE_PATH_FLEXIBLE, LL_PCODE_PATH_LINE};
 
-/// LL_MCODE_* in the « Matériau » combo order (material_codes.h).
+/// LL_MCODE_* in the "Material" combo order (material_codes.h).
 fn materials() -> [(&'static str, u8); 7] {
     [
         (aurora_i18n::tr!("build-ui-features-stone"), 0),
@@ -30,7 +30,7 @@ const LL_MCODE_LIGHT: u8 = 7;
 const FRICTION: [f32; 7] = [0.8, 0.3, 0.2, 0.6, 0.9, 0.4, 0.9];
 const RESTITUTION: [f32; 7] = [0.4, 0.4, 0.7, 0.5, 0.3, 0.7, 0.9];
 
-/// « Type de forme physique » (PHYSICS_SHAPE_*): Aucun 1, Prim 0, Enveloppe convexe 2.
+/// "Physics shape type" (PHYSICS_SHAPE_*): None 1, Prim 0, Convex hull 2.
 fn physics_shapes() -> [(&'static str, u8); 3] {
     [
         (aurora_i18n::tr!("common-none"), 1),
@@ -420,7 +420,7 @@ impl BuildTool {
     }
 }
 
-/// « Coller » of the features (LLPanelVolume::onPasteFeatures).
+/// "Paste" of the features (LLPanelVolume::onPasteFeatures).
 fn paste_features(tool: &mut BuildTool, world: &mut World, idx: usize, c: FeaturesClip) {
     let current = world.objects.get(idx).map(|o| o.extra.clone()).unwrap_or_default();
     if current.flexible != c.flexible {

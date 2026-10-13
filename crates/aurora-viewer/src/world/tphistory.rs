@@ -199,7 +199,7 @@ impl HistoryStorage {
         self.save();
     }
 
-    /// "Supprimer de l'historique" (removeItem + save).
+    /// "Remove from history" (removeItem + save).
     pub fn remove(&mut self, index: usize) {
         if index < self.items.len() {
             self.items.remove(index);
@@ -248,8 +248,8 @@ pub fn history_sections() -> [&'static str; 9] {
 
 /// LLTeleportHistoryPanel::getNextTab with FSTPHistoryTZ "utc" (the
 /// default): the first six sections are days starting at midnight UTC,
-/// "6 jours et plus" goes back to the same day of the previous month and
-/// "1 mois et plus" to six months ago. A date in the future counts as
+/// "6 days ago or earlier" goes back to the same day of the previous month and
+/// "1 month ago or earlier" to six months ago. A date in the future counts as
 /// today. Returns the index in HISTORY_SECTIONS.
 pub fn history_section(date: f64, now: f64) -> usize {
     use aurora_net::profile::{civil_from_days, days_from_civil};

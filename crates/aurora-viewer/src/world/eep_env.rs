@@ -15,8 +15,8 @@
 //! selector's sky, water and day cycle items (LLEnvironment::setEnvironment
 //! with a settings asset: a day replaces everything, a sky or a water is
 //! fixed on top, the missing half taken from what is shown), Aurora's time
-//! of day presets, « Éclairage personnel » (LLFloaterEnvironmentAdjust) and
-//! « Environnement partagé » (setSharedEnvironment). It survives region
+//! of day presets, "Personal lighting" (LLFloaterEnvironmentAdjust) and
+//! "Shared environment" (setSharedEnvironment). It survives region
 //! changes and, like EnvironmentPersistAcrossLogin, sessions
 //! (saveToSettings / loadFromSettings).
 
@@ -43,7 +43,7 @@ pub enum LocalOrigin {
     Item(Uuid),
     /// Aurora's time of day preset (1..=4).
     Preset(u8),
-    /// Edited in « Éclairage personnel ».
+    /// Edited in "Personal lighting".
     Personal,
     /// What was shown when the other half was picked
     /// (LLEnvironment::setEnvironment(fixedEnvironment_t) fills the missing
@@ -99,8 +99,8 @@ impl LocalEnv {
     }
 
     /// What the selector's lists show (FloaterQuickPrefs::setSelectedEnvironment):
-    /// a day shows in the day list ("Rien" otherwise) and makes the sky and
-    /// water "Basé sur le cycle du jour" unless a fixed one with an asset
+    /// a day shows in the day list ("Nothing" otherwise) and makes the sky and
+    /// water "Based on day cycle" unless a fixed one with an asset
     /// overrides it; a fixed half without an asset matches no entry.
     pub fn shown(&self) -> LocalView {
         let other = if self.day.is_some() {
@@ -182,7 +182,7 @@ impl Slot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
     /// ENV_LOCAL: the environment selector, the time-of-day presets,
-    /// « Éclairage personnel ».
+    /// "Personal lighting".
     Local(u64),
     /// ENV_PARCEL of the main region.
     Parcel(u64),
@@ -246,7 +246,7 @@ struct Shown {
     water: WaterFrame,
     /// The selected environment without the crossfade (what Firestorm's
     /// DayInstance holds: the half a fixed sky or water inherits, the sky
-    /// « Éclairage personnel » starts from).
+    /// "Personal lighting" starts from).
     target_sky: SkyFrame,
     target_water: WaterFrame,
 }
@@ -426,8 +426,8 @@ impl EnvSelector {
 
     /// Time-of-day preset (0 = none) as the local environment: a fixed sky
     /// with the preset sun, like Firestorm's World > Environment skies
-    /// (setManualEnvironment(ENV_LOCAL, KNOWN_SKY_*)); 0 is « Utiliser les
-    /// environnements partagés » (setSharedEnvironment).
+    /// (setManualEnvironment(ENV_LOCAL, KNOWN_SKY_*)); 0 is "Use shared
+    /// environments" (setSharedEnvironment).
     pub fn set_time_of_day(&mut self, preset: u8) {
         if preset == self.local_preset {
             return;
@@ -469,7 +469,7 @@ impl EnvSelector {
         });
     }
 
-    /// « Environnement partagé » (setSharedEnvironment: clearEnvironment(ENV_LOCAL)).
+    /// "Shared environment" (setSharedEnvironment: clearEnvironment(ENV_LOCAL)).
     pub fn clear_local(&mut self) {
         self.pending.clear();
         if self.local.take().is_some() {
@@ -575,7 +575,7 @@ impl EnvSelector {
         self.local_dirty = true;
     }
 
-    /// « Éclairage personnel » opens (LLFloaterEnvironmentAdjust::
+    /// "Personal lighting" opens (LLFloaterEnvironmentAdjust::
     /// captureCurrentEnvironment): the sky and water shown become a fixed
     /// local environment at once (a local day is frozen; a fixed local sky
     /// is edited as it is).
@@ -597,7 +597,7 @@ impl EnvSelector {
         self.local_dirty = true;
     }
 
-    /// The local sky « Éclairage personnel » edits (nothing without a local
+    /// The local sky "Personal lighting" edits (nothing without a local
     /// fixed sky). `edit` returns true when it changed something: the sky
     /// becomes the personal one, shown at once.
     pub fn edit_personal(&mut self, edit: impl FnOnce(&mut SkyFrame) -> bool) -> bool {
@@ -615,7 +615,7 @@ impl EnvSelector {
         true
     }
 
-    /// The local fixed sky, if any (« Éclairage personnel » shows it).
+    /// The local fixed sky, if any ("Personal lighting" shows it).
     pub fn personal_sky(&self) -> Option<SkyFrame> {
         self.local.as_ref().and_then(|l| l.sky.map(|s| s.1))
     }
@@ -1214,7 +1214,7 @@ mod tests {
         sel.set_time_of_day(0);
         assert!(sel.has_local(), "dropping the preset is not « shared »");
         assert!((sel.frame(&input(2.0)).1.fog_density - 5.0).abs() < 1e-6);
-        // « Utiliser les environnements partagés »
+        // "Use shared environments"
         sel.set_time_of_day(3);
         sel.set_time_of_day(0);
         assert!(!sel.has_local());

@@ -1,4 +1,4 @@
-//! Debug overlays drawn over the 3D view (Préférences › Debug): bounding
+//! Debug overlays drawn over the 3D view (Preferences › Debug): bounding
 //! boxes, culling decisions, lights, glowing objects, reflection probes and
 //! avatar skeletons. Lines are projected on the CPU and painted by egui, on
 //! top of the scene (no depth test).

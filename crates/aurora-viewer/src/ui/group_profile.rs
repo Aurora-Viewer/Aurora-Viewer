@@ -1,9 +1,9 @@
 //! Group profile window, first version: the general information that
 //! GroupProfileReply carries (LLPanelGroupGeneral: insignia, name, key,
 //! founder, charter, our title, enrollment, fee, rating), drawn by the group
-//! pane of « Rechercher » (`search/details.rs`) in a window of its own. A
+//! pane of "Search" (`search/details.rs`) in a window of its own. A
 //! group's name opens it like LLGroupActions::show (the "group ... inspect"
-//! links of Firestorm): « À propos du terrain », the build window, the
+//! links of Firestorm): "About Land", the build window, the
 //! search results. One window, on the last group asked for. The members,
 //! roles, notices and land panels of LLPanelGroup are not ported yet
 //! (indra/newview/llpanelgroup.cpp, llgroupactions.cpp, originally LGPL 2.1).
@@ -57,7 +57,7 @@ impl GroupProfileUi {
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(WINDOW)));
         }
         // until the profile answers: the name of one of our groups, or the
-        // one « À propos du terrain » looked up
+        // one "About Land" looked up
         let known = c
             .world
             .groups

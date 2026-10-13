@@ -1,6 +1,6 @@
 //! A web page inside a window, like LLMediaCtrl: a CEF plugin of its own
 //! (`aurora-media`), its pixels in an egui texture, mouse, wheel and (once
-//! clicked) keyboard sent to the page. Used by the "Flux" tab of the
+//! clicked) keyboard sent to the page. Used by the "Feed" tab of the
 //! profiles (LLPanelProfileWeb) and by the web tab of the search window
 //! (FSPanelSearchWeb), which also follows the page's address and goes back
 //! and forward in its history. The search tab's browser is a private one
@@ -31,7 +31,7 @@ pub struct WebView {
     /// The page has the keyboard (clicked; a click elsewhere releases it).
     pub focused: bool,
     nav_started: Option<Instant>,
-    /// "Heure de chargement : N secondes" (LLPanelProfileWeb::handleMediaEvent).
+    /// "Load time: N seconds" (LLPanelProfileWeb::handleMediaEvent).
     pub load_secs: Option<f32>,
     cursor: String,
     scratch: Vec<Color32>,

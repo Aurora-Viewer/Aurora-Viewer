@@ -27,7 +27,7 @@ pub(super) enum Confirm {
 /// LLFloaterSellLand being filled.
 pub(super) struct SellForm {
     price: String,
-    /// sell_to: 0 "- Sélectionnez -", 1 anyone, 2 a specific resident.
+    /// sell_to: 0 "- Select -", 1 anyone, 2 a specific resident.
     to: u8,
     pub(super) buyer: Option<Uuid>,
     with_objects: bool,
@@ -218,7 +218,7 @@ fn window(ctx: &egui::Context, p: &Palette, title: &str, width: f32, body: impl 
     open
 }
 
-/// OK / Annuler (or Oui / Non) at the bottom right; Some(true) for OK.
+/// OK / Cancel (or Yes / No) at the bottom right; Some(true) for OK.
 fn buttons(ui: &mut egui::Ui, p: &Palette, ok: &str, cancel: &str, ok_enabled: bool) -> Option<bool> {
     let mut out = None;
     ui.add_space(6.0);

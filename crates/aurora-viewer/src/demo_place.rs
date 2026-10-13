@@ -2,8 +2,8 @@
 //! RemoteParcelRequest, ParcelInfoRequest and RegionHandleRequest answers
 //! for the regions of the demo map, the landmarks of the Landmarks and
 //! Favorites folders with their assets, and a teleport history over several
-//! days, so the « Lieux » window can be tried offline. Aurora Démo answers
-//! with the parcel of "À propos du terrain"; Faille answers HTTP 404
+//! days, so the "Places" window can be tried offline. Aurora Demo answers
+//! with the parcel of "About Land"; Flaw answers HTTP 404
 //! (LLPanelPlaceInfo::setErrorStatus).
 
 use super::{DEMO_LOUP, TEX_SNAPSHOT, demo_sims, u};
@@ -68,7 +68,7 @@ fn parcels() -> &'static Vec<DemoParcel> {
 }
 
 /// The named demo parcels as a directory lists them: (parcel, name,
-/// traffic, area), the parcel of "À propos du terrain" first.
+/// traffic, area), the parcel of "About Land" first.
 pub fn directory() -> Vec<(Uuid, String, f32, i32)> {
     let l = super::land::parcel();
     std::iter::once((super::land::PARCEL_UUID, l.name, 145.0, l.area))
@@ -81,7 +81,7 @@ pub fn directory() -> Vec<(Uuid, String, f32, i32)> {
         .collect()
 }
 
-/// Grid position of Faille, the region whose parcel requests fail.
+/// Grid position of Flaw, the region whose parcel requests fail.
 const FAILING: (u32, u32) = (1001, 1001);
 
 /// Region id of a demo region (RegionHandleRequest), by grid position.
@@ -101,7 +101,7 @@ pub fn scenario() -> Option<(&'static str, Vec3)> {
         "faille" => (aurora_i18n::tr!("common-flaw"), Vec3::new(128.0, 128.0, 30.0)),
         "inconnue" => (aurora_i18n::tr!("demo-place-atlantis"), Vec3::new(128.0, 128.0, 20.0)),
         "repere" | "historique" => return None,
-        // Loup Violet's home (the link of his profile)
+        // Violet Wolf's home (the link of his profile)
         _ => (aurora_i18n::tr!("common-aurora-demo"), Vec3::new(140.0, 120.0, 25.0)),
     })
 }
@@ -132,7 +132,7 @@ pub enum TeleportConfirm {
 }
 
 /// AURORA_DEMO_TP_CONFIRM=lien|repere: the confirmation of a teleport asked
-/// by a place link (the default) or by a landmark of « Lieux ».
+/// by a place link (the default) or by a landmark of "Places".
 pub fn teleport_confirm_scenario() -> Option<TeleportConfirm> {
     let v = std::env::var("AURORA_DEMO_TP_CONFIRM").ok()?;
     Some(match v.to_lowercase().as_str() {
@@ -179,7 +179,7 @@ pub fn region_handle(id: Uuid) -> Vec<NetEvent> {
 /// ParcelInfoRequest for a parcel of `remote_parcel`, None for another id.
 pub fn parcel_info(id: Uuid) -> Option<NetEvent> {
     let p = if id == super::land::PARCEL_UUID {
-        // the parcel of "À propos du terrain", seen from afar
+        // the parcel of "About Land", seen from afar
         let l = super::land::parcel();
         ParcelSummary {
             id,

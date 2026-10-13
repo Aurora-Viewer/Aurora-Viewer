@@ -27,7 +27,7 @@ pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, 
     job
 }
 
-/// A one-line label at most `max_width` wide: a longer text ends with « … »,
+/// A one-line label at most `max_width` wide: a longer text ends with "…",
 /// as the texts Firestorm declares with use_ellipses="true" do
 /// (LLFontGL::render), and shows whole on hover (egui's tooltip of an elided
 /// label; Firestorm adds it to its truncated tab labels,
@@ -119,7 +119,7 @@ impl<'a> Floater<'a> {
         self
     }
 
-    /// Add a title bar button left of « Réduire »; `clicked` is set when pressed.
+    /// Add a title bar button left of "Collapse"; `clicked` is set when pressed.
     pub fn action(mut self, icon: &'a str, tip: &'a str, clicked: &'a mut bool) -> Self {
         self.action = Some((icon, tip, clicked));
         self

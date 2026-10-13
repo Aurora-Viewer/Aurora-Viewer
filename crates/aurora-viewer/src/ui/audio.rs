@@ -1,6 +1,6 @@
 //! Top-right audio controls (Firestorm style): parcel media and parcel
-//! music play toggles, and the volume panel (Principal, Interface,
-//! Ambiance, Sons, Musique, Multimédia, Voix) with mute and enable toggles.
+//! music play toggles, and the volume panel (Main, Interface,
+//! Ambient, Sounds, Music, Multimedia, Voice) with mute and enable toggles.
 
 use super::icons::Icons;
 use crate::settings::{AudioSettings, audio_channels};

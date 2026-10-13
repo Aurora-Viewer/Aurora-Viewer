@@ -1,4 +1,4 @@
-//! "Expériences" (LLPanelLandExperiences with two LLPanelExperienceListEditor:
+//! "Experiences" (LLPanelLandExperiences with two LLPanelExperienceListEditor:
 //! allowed and blocked experiences, sent as access lists
 //! AL_ALLOW_EXPERIENCE / AL_BLOCK_EXPERIENCE).
 

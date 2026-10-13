@@ -4,7 +4,7 @@
 //! friendship requests) and Preferences > Privacy > Autoresponse
 //! (llimprocessing.cpp, LLIMProcessing::getAutoresponseTextForAvatar,
 //! send_rejecting_tp_offers_message, LLAgent::setAFK / setDoNotDisturb).
-//! « Invisible » is Firestorm's button of the friends list that hides our
+//! "Invisible" is Firestorm's button of the friends list that hides our
 //! online status from every friend (GlobalOnlineStatusToggle,
 //! applyGlobalOnlineStatusChange in llviewercontrol.cpp), moved to the
 //! status choices at the human's request.
@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 use uuid::Uuid;
 
-/// The « Invisible » status of the account, kept between sessions like
+/// The "Invisible" status of the account, kept between sessions like
 /// Firestorm's per-account GlobalOnlineStatusToggle.
 pub const INVISIBLE_FILE: &str = "invisible.xml";
 
@@ -30,7 +30,7 @@ const TELEPORT_REQUEST: u8 = 26;
 pub const ANIM_AWAY: Uuid = Uuid::from_u128(0xfd037134_85d4_f241_72c6_4f42164fedee);
 pub const ANIM_DO_NOT_DISTURB: Uuid = Uuid::from_u128(0xefcf670c_2d18_8128_973a_034ebc806b67);
 
-/// Modes of the "Statut de connexion" menu. Away and do not disturb last
+/// Modes of the "Online status" menu. Away and do not disturb last
 /// for the session; the others are kept like Firestorm's per-account
 /// settings (in `AutoResponse`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -44,7 +44,7 @@ pub struct StatusModes {
     pub reject_teleports: bool,
     pub reject_group_invites: bool,
     pub reject_friendship: bool,
-    /// Conférences ad hoc: FSIgnoreAdHocSessions, FSReportIgnoredAdHocSession,
+    /// Ad hoc conferences: FSIgnoreAdHocSessions, FSReportIgnoredAdHocSession,
     /// FSDontIgnoreAdHocFromFriends.
     pub ignore_adhoc: bool,
     pub report_ignored_adhoc: bool,
@@ -107,7 +107,7 @@ impl Default for AutoResponse {
     }
 }
 
-/// « Invisible »: no friend sees us online. The right lives on the server,
+/// "Invisible": no friend sees us online. The right lives on the server,
 /// one friend at a time (GrantUserRights); unlike Firestorm, which gives it
 /// back to every friend, the friends who had it are remembered, so that
 /// leaving the status restores exactly what it took.
@@ -277,7 +277,7 @@ impl World {
         }
     }
 
-    /// « Invisible » (applyGlobalOnlineStatusChange): one GrantUserRights
+    /// "Invisible" (applyGlobalOnlineStatusChange): one GrantUserRights
     /// per friend, which the servers take a while to apply. Firestorm asks
     /// for a confirmation because it cannot undo it; here leaving the
     /// status gives the right back to the friends who had it, and to them

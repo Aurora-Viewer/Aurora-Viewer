@@ -114,13 +114,13 @@ pub enum MiniMapAction {
     },
     StopTracking,
     OpenWorldMap,
-    /// "Voir le profil" (LLNetMap::handleShowProfile).
+    /// "View profile" (LLNetMap::handleShowProfile).
     Profile(Uuid),
-    /// "À propos du terrain" on the parcel under the click (popupShowAboutLand).
+    /// "About Land" on the parcel under the click (popupShowAboutLand).
     AboutLand(f64, f64),
     /// Chat ring options changed (saved with the color settings).
     Colors(crate::settings::ColorSettings),
-    /// "Fermer la mini-carte" (the floater has no close button).
+    /// "Close mini-map" (the floater has no close button).
     Close,
 }
 
@@ -762,7 +762,7 @@ impl MiniMap {
                         actions.push(MiniMapAction::Profile(first));
                     }
                 } else {
-                    // « Voir le profil ▸ » lists the avatars under the pointer
+                    // "View profile ▸" lists the avatars under the pointer
                     menu::submenu(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), true, |ui| {
                         for id in &avs {
                             if menu::item(ui, p, "user-filled", &avatar_name(world, id)) {
@@ -801,7 +801,7 @@ impl MiniMap {
                         self.marks.clear();
                     }
                 });
-                // « Plus… »: the radar menu of the nearest avatar
+                // "More…": the radar menu of the nearest avatar
                 menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("ui-minimap-more"), true, |ui| {
                     context::avatar_list_menu(ui, p, world, first, AvatarList::Nearby)
                 });
@@ -1015,7 +1015,7 @@ impl MiniMap {
     }
 
     /// The mini-map's image of a region for another window (the header of
-    /// « À propos du terrain »): its map tile, else the terrain drawn from
+    /// "About Land"): its map tile, else the terrain drawn from
     /// the heights received (no map server, or the tile is not there yet).
     pub fn region_image(
         &mut self,

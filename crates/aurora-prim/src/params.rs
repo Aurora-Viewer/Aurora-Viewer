@@ -27,7 +27,7 @@ pub const LL_PCODE_HOLE_TRIANGLE: u8 = 0x30;
 // Path curve types
 pub const LL_PCODE_PATH_LINE: u8 = 0x10;
 pub const LL_PCODE_PATH_CIRCLE: u8 = 0x20;
-/// Firestorm's « 33 » paths (Working33): generated as a circle (0x20 mask).
+/// Firestorm's "33" paths (Working33): generated as a circle (0x20 mask).
 pub const LL_PCODE_PATH_CIRCLE_33: u8 = 0x21;
 pub const LL_PCODE_PATH_CIRCLE2: u8 = 0x30;
 pub const LL_PCODE_PATH_TEST: u8 = 0x40;

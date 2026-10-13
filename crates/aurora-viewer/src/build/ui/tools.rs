@@ -178,7 +178,7 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
                         }
                     };
                     if resp.on_hover_text(name).clicked() {
-                        // LLFloaterTools::setObjectType also unticks « Copier la sélection »
+                        // LLFloaterTools::setObjectType also unticks "Copy selection"
                         s.create_shape = i;
                         s.copy_selection = false;
                     }
@@ -519,8 +519,8 @@ impl BuildTool {
         }
     }
 
-    /// "link_num_obj_count": « Numéro de lien : N » with « Modification
-    /// liée », « Faces : … » with the face tool, one prim selected.
+    /// "link_num_obj_count": "Link number: N" with "Linked edit",
+    /// "Faces: …" with the face tool, one prim selected.
     pub fn part_info(&self, world: &World, s: &BuildSettings) -> Option<String> {
         let prims = self.sel_prims(world);
         if prims.len() != 1 {

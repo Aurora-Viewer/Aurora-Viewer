@@ -1,4 +1,4 @@
-//! About Land in the offline demo (`AURORA_DEMO_LAND=<onglet>[:owner]`):
+//! About Land in the offline demo (`AURORA_DEMO_LAND=<tab>[:owner]`):
 //! the simulator's answers to the floater's requests, for the plaza
 //! parcel (north-east quarter of the demo region). Without `:owner` the
 //! parcel belongs to a group the avatar has no powers in (everything

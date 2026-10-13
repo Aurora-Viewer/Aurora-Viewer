@@ -650,7 +650,7 @@ pub(super) fn show(
                         .iter()
                         .all(|id| inv.items.get(id).is_some_and(|it| it.asset_type != 13));
                 // LLObjectBridge::buildContextMenu: a worn object lists
-                // « Toucher », « Modifier » and « Détacher de vous » in place
+                // "Touch", "Edit" and "Detach from yourself" in place
                 // of the entries that wear it
                 let worn_objects = objects && !selected_items.is_empty() && selected_items.iter().all(|id| facts.worn.contains(id));
                 if worn_objects {
@@ -1047,7 +1047,7 @@ mod tests {
         };
         let touch = aurora_i18n::tr!("ui-context-touch");
         let edit = aurora_i18n::tr!("common-edit");
-        // « Toucher » only when the object handles touches
+        // "Touch" only when the object handles touches
         assert!(matches!(&click(true, touch)[..], [CtxAction::TouchWorn(id)] if *id == item));
         assert!(click(false, touch).is_empty());
         assert!(matches!(&click(false, edit)[..], [CtxAction::EditWorn(id)] if *id == item));

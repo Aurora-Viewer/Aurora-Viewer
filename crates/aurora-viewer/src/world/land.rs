@@ -1,4 +1,4 @@
-//! The parcel shown in "À propos du terrain": LLViewerParcelMgr's selection
+//! The parcel shown in "About Land": LLViewerParcelMgr's selection
 //! (selectParcelAt, the selected LLParcel with its access / ban /
 //! experience lists, dwell), the estate covenant, the parcel environment,
 //! and the rules deciding what the agent may change
@@ -175,18 +175,18 @@ pub fn add_entry(list: &mut Vec<AccessEntry>, owner: &Uuid, id: Uuid, time: i32)
     true
 }
 
-/// Object owners list of the "Objets" tab.
+/// Object owners list of the "Objects" tab.
 #[derive(Debug, Clone, Default)]
 pub enum OwnerList {
     /// Not asked yet (or the parcel changed).
     #[default]
     Idle,
-    /// "Recherche..." until the first reply.
+    /// "Search..." until the first reply.
     Searching,
     Rows(Vec<ObjectOwner>),
 }
 
-/// What the "Environnement" tab shows of the parcel environment
+/// What the "Environment" tab shows of the parcel environment
 /// (LLEnvironment::EnvironmentInfo::extract).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EnvSummary {
@@ -303,7 +303,7 @@ pub struct Covenant {
 }
 
 /// Objects held by the land of the parcel's owner in the region, against
-/// what it may hold: the "[COUNT] sur [MAX] ([AVAILABLE] disponibles)" of
+/// what it may hold: the "[COUNT] out of [MAX] ([AVAILABLE] available)" of
 /// LLPanelLandObjects::refresh (getSimWidePrimCount /
 /// getSimWideMaxPrimCapacity). The parcels of one owner share their capacity,
 /// so this, not the parcel's own count, tells what can still be rezzed.
@@ -378,7 +378,7 @@ pub struct Selection {
     pub parcel: Option<Arc<ParcelInfo>>,
     /// PARCEL_RESULT_* of the last answer.
     pub result: i32,
-    /// None = "Chargement..." (DWELL_NAN).
+    /// None = "Loading..." (DWELL_NAN).
     pub dwell: Option<f32>,
     pub access: Vec<AccessEntry>,
     pub bans: Vec<AccessEntry>,
@@ -539,7 +539,7 @@ impl Land {
     }
 
     /// Group name like LLCacheName::getGroupName: Some when known (the
-    /// null group is "(aucun)"), else asked and None.
+    /// null group is "(none)"), else asked and None.
     pub fn group_name(&mut self, id: &Uuid, ours: &[GroupMembership]) -> Option<String> {
         if id.is_nil() {
             return Some(aurora_i18n::tr!("status-none").into());
@@ -866,7 +866,7 @@ impl Land {
         }
     }
 
-    /// onClickRefresh: ParcelObjectOwnersRequest, "Recherche..." meanwhile.
+    /// onClickRefresh: ParcelObjectOwnersRequest, "Search..." meanwhile.
     pub fn refresh_owners(&mut self) {
         if let Some(sel) = self.sel.as_mut() {
             sel.owners = OwnerList::Searching;

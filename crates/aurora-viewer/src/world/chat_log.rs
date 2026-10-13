@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 
-/// What the user chose (Préférences › Chat).
+/// What the user chose (Preferences › Chat).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Config {
     /// Instant messages, group chats and conferences (Firestorm's

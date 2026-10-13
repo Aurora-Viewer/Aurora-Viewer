@@ -574,7 +574,7 @@ pub struct Scene {
     /// Attachment surface area of each avatar (m², RenderAutoMuteSurfaceAreaLimit).
     pub avatar_area: HashMap<Uuid, f32>,
     complexity_rules: u64,
-    /// Debug « Afficher la transparence »: Some(rigged faces too).
+    /// Debug "Show transparency": Some(rigged faces too).
     pub debug_alpha: Option<bool>,
     /// Culling view of the last lists (debug overlay).
     pub last_cull: Option<CullView>,
@@ -3255,7 +3255,7 @@ impl Scene {
                         l.glow.push(cmd);
                     }
                 }
-                // debug « Afficher la transparence » (renderDebugAlpha): blended,
+                // debug "Show transparency" (renderDebugAlpha): blended,
                 // masked and invisible faces in red, material masks in blue;
                 // rigged faces only when asked (Firestorm sShowDebugAlphaRigged)
                 if let Some(rigged_too) = debug_alpha.filter(|_| in_view)
@@ -4407,7 +4407,7 @@ mod tests {
         assert!(!posed.abs_diff_eq(raw + Vec3::Z * 0.25, 1e-3));
     }
 
-    /// The demo region with a prim linked under Loup Violet's hat, the
+    /// The demo region with a prim linked under Violet Wolf's hat, the
     /// avatar posed off its rest pose.
     fn posed_attachment() -> (World, [usize; 3]) {
         let lib = Arc::new(AvatarLibrary::load());

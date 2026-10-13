@@ -697,7 +697,7 @@ struct Pipelines {
     glow: wgpu::RenderPipeline,
     glow_max: wgpu::RenderPipeline,
     glow_suppress: wgpu::RenderPipeline,
-    /// Debug « Afficher la transparence »: red and blue translucent faces.
+    /// Debug "Show transparency": red and blue translucent faces.
     debug_red: wgpu::RenderPipeline,
     debug_blue: wgpu::RenderPipeline,
     /// Debug wireframe (None without POLYGON_MODE_LINE).

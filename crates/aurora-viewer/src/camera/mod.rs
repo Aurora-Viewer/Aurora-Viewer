@@ -545,7 +545,7 @@ impl Camera {
         self.set_camera_pos_and_focus(camera, focus, None, s);
     }
 
-    /// Context menu « Zoomer » (handle_zoom_to_object).
+    /// Context menu "Zoom" (handle_zoom_to_object).
     pub fn zoom_to(&mut self, point: Vec3, agent: &mut AgentState, s: &CameraSettings) {
         self.set_focus_on_avatar(false, true, true, agent, s);
         let dir = (self.position - point).normalize_or(-self.forward());
@@ -616,7 +616,7 @@ impl Camera {
         }
     }
 
-    /// handle_reset_view (Escape, « Réinitialiser la caméra »).
+    /// handle_reset_view (Escape, "Reset camera").
     pub fn handle_reset_view(&mut self, agent: &mut AgentState, s: &CameraSettings) {
         if !s.reset_view_turns_avatar {
             // setFocusOnAvatar(true, false, false): the avatar keeps its direction

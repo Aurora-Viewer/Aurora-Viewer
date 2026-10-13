@@ -1,4 +1,4 @@
-//! « Inspecter les objets »: the prims of what was right-clicked, with
+//! "Inspect Objects": the prims of what was right-clicked, with
 //! their names, owners, creators, creation dates, geometry and texture
 //! figures, and the totals of the selection. Port of LLFloaterInspect with
 //! Firestorm's additions (indra/newview/llfloaterinspect.cpp,
@@ -109,10 +109,10 @@ pub struct Row {
     pub root: bool,
     pub name: String,
     pub description: String,
-    /// Shown owner and creator ("Chargement…" until the name is known).
+    /// Shown owner and creator ("Loading…" until the name is known).
     pub owner_name: String,
     pub creator_name: String,
-    /// Whose profile « Voir le profil du propriétaire » opens: none for an
+    /// Whose profile "See Owner Profile" opens: none for an
     /// object owned by a group.
     pub owner: Option<Uuid>,
     pub creator: Option<Uuid>,

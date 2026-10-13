@@ -281,7 +281,7 @@ pub struct DrawLists {
     /// each first dims the glow under it by its alpha, then adds its own,
     /// so stacked body / clothing layers do not add up.
     pub glow_alpha: Vec<DrawCmd>,
-    /// Debug « Afficher la transparence » (LLDrawPoolAlpha::renderDebugAlpha):
+    /// Debug "Show transparency" (LLDrawPoolAlpha::renderDebugAlpha):
     /// blended, alpha-masked and invisible faces in translucent red...
     pub debug_red: Vec<DrawCmd>,
     /// ... and faces masked by their material in blue.

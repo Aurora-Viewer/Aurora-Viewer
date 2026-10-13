@@ -1011,7 +1011,7 @@ mod tests {
         let extra = Uuid::from_u128(723);
         let (add, _) = plan(&inv, Action::Add(extra), &HashMap::new()).expect("extra attachment");
         demo_mutate(&mut inv, Uuid::from_u128(1), &add).expect("add");
-        // Removing only Flic keeps Neurolab's extra and all required body parts.
+        // Removing only Cop keeps Neurolab's extra and all required body parts.
         let selected = Uuid::from_u128(703);
         let (change, sync) = plan(&inv, Action::RemoveOutfit(selected), &HashMap::new()).expect("take off");
         assert!(sync);

@@ -1,5 +1,5 @@
 //! Secondary floaters of the build floater: grid options
-//! (floater_build_options.xml), « Avancé » weights (LLFloaterObjectWeights),
+//! (floater_build_options.xml), "Advanced" weights (LLFloaterObjectWeights),
 //! media settings (LLFloaterMediaSettings and its three panels, the
 //! whitelist entry dialog), the group picker (LLFloaterGroupPicker), the
 //! contents permissions (LLFloaterBulkPermission), an item's properties,
@@ -21,7 +21,7 @@ pub struct MediaSettingsState {
     pub entry: MediaEntry,
     pub tab: usize,
     whitelist_sel: Option<usize>,
-    /// The « Entrée de la liste blanche » dialog, open with its text.
+    /// The "Whitelist entry" dialog, open with its text.
     whitelist_entry: Option<String>,
 }
 
@@ -58,7 +58,7 @@ pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: 
     tool.ui.wanted_images.extend(w);
 }
 
-/// floater_build_options.xml (« Options de la règle »).
+/// floater_build_options.xml ("Ruler options").
 fn grid_options(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: &mut BuildSettings) {
     if !tool.ui.grid_options_open {
         return;
@@ -116,7 +116,7 @@ fn grid_options(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: &mut 
     tool.ui.grid_options_open = open;
 }
 
-/// LLFloaterObjectWeights (« Avancé »).
+/// LLFloaterObjectWeights ("Advanced").
 fn weights(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &World) {
     if !tool.ui.weights_open {
         return;
@@ -194,7 +194,7 @@ fn weights(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &World
     tool.ui.weights_open = open;
 }
 
-/// LLFloaterMediaSettings: Général, Personnaliser, Sécurité; OK / Annuler / Appliquer.
+/// LLFloaterMediaSettings: General, Customize, Security; OK / Cancel / Apply.
 fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, env: &mut Env) {
     let Some(mut st) = tool.ui.media_settings.take() else { return };
     let mut open = true;
@@ -483,7 +483,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
     }
 }
 
-/// LLFloaterGroupPicker: the agent's groups and « aucun ».
+/// LLFloaterGroupPicker: the agent's groups and "none".
 fn group_picker(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World) {
     if !tool.ui.group_picker_open {
         return;
@@ -855,7 +855,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut W
 }
 
 impl BuildTool {
-    /// « Réinitialiser » of the media settings: the selected faces' media
+    /// "Reset" of the media settings: the selected faces' media
     /// go back to the home page (LLPanelMediaSettingsGeneral::onBtnResetCurrentUrl).
     fn media_home(&mut self, world: &World, env: &mut Env, home: &str) {
         for (idx, face) in self.sel_te(world) {
@@ -868,7 +868,7 @@ impl BuildTool {
         }
     }
 
-    /// « Affichage » of the weights (LLSelectMgr::getSelectedObjectRenderCost,
+    /// "Display" of the weights (LLSelectMgr::getSelectedObjectRenderCost,
     /// coarse: triangles of the selection's volumes / 10, textures 1 each).
     pub fn render_cost(&self, world: &World) -> u32 {
         let (tris, _) = self.render_info(world);

@@ -427,7 +427,7 @@ impl LandTool {
     }
 }
 
-/// « Afficher les propriétaires » (ShowParcelOwners, LLViewerParcelOverlay
+/// "Show owners" (ShowParcelOwners, LLViewerParcelOverlay
 /// colours): the 4 m parcel cells around the camera tinted by ownership
 /// (green yours, cyan group, red others, yellow for sale, purple auction,
 /// grey public), drawn on the ground.

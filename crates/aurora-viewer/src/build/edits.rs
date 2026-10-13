@@ -555,7 +555,7 @@ impl BuildTool {
         }
     }
 
-    /// The selection's linksets, whole (for « Copier l'UUID », link
+    /// The selection's linksets, whole (for "Copy UUID", link
     /// numbers...): every prim of each selected root.
     pub fn linkset_prims(&self, world: &World) -> Vec<usize> {
         let mut out = Vec::new();

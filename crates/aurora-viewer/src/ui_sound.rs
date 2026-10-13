@@ -6,7 +6,7 @@
 //! Copyright (C) Linden Research, Inc. and The Phoenix Firestorm Project.
 //!
 //! Each sound has Firestorm's asset UUID and "play" default; both can be
-//! changed per sound in Préférences › Son et voix. The sounds are SL assets
+//! changed per sound in Preferences › Sound and voice. The sounds are SL assets
 //! (fetched from the ViewerAsset capability, cached like the other sounds).
 
 use serde::{Deserialize, Serialize};

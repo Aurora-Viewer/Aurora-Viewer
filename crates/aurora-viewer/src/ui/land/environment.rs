@@ -1,6 +1,6 @@
-//! "Environnement" (LLPanelLandEnvironment / LLPanelEnvironmentInfo:
+//! "Environment" (LLPanelLandEnvironment / LLPanelEnvironmentInfo:
 //! setControlsEnabled, refresh, day length and offset committed on mouse up,
-//! "Utiliser les réglages de la région" = resetParcel, apparent time, sky
+//! "Use region settings" = resetParcel, apparent time, sky
 //! altitudes shown read-only for a parcel).
 
 use super::dialogs::Confirm;

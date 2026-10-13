@@ -5,7 +5,7 @@
 //! hide water, mapping, material sync).
 //!
 //! Every value is read over the selected faces: when they differ the
-//! control shows a mixed value (« Multiples »).
+//! control shows a mixed value ("Multiple").
 
 use super::common::{Edit, check, color_swatch, combo, label, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
@@ -21,14 +21,14 @@ use aurora_prim::te::{DEFAULT_TEXTURE, TextureFace};
 use egui::RichText;
 use uuid::Uuid;
 
-/// IMG_ALPHA_GRAD: the diffuse of a « hide water » face.
+/// IMG_ALPHA_GRAD: the diffuse of a "hide water" face.
 const IMG_ALPHA_GRAD: Uuid = Uuid::from_u128(0xe97cf410_8e61_7005_ec06_629eba4cd1fb);
 /// Default normal map of the pickers.
 pub const DEFAULT_NORMAL: Uuid = Uuid::from_u128(0x85f28839_7a1c_b4e3_d71d_967792970a7b);
 /// Default specular map.
 pub const DEFAULT_SPECULAR: Uuid = Uuid::from_u128(0x87e0e8f7_8729_1ea8_cfc9_8915773009db);
 
-/// « Relief » (bump codes 0..17).
+/// "Bumpiness" (bump codes 0..17).
 fn bumps() -> [&'static str; 18] {
     [
         aurora_i18n::tr!("common-none"),
@@ -51,7 +51,7 @@ fn bumps() -> [&'static str; 18] {
         "trame",
     ]
 }
-/// Index of « Utiliser la texture » (BUMPY_TEXTURE / SHINY_TEXTURE).
+/// Index of "Use texture" (BUMPY_TEXTURE / SHINY_TEXTURE).
 const BUMPY_TEXTURE: u8 = 18;
 const SHINY_TEXTURE: u8 = 4;
 fn shines() -> [&'static str; 4] {
@@ -468,7 +468,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                     }
                 });
             });
-            // « Enregistrer » (LLMaterialEditor::saveObjectsMaterialAs): needs the
+            // "Save" (LLMaterialEditor::saveObjectsMaterialAs): needs the
             // material upload to the inventory, not ported yet
             ui.add_enabled(false, egui::Button::new(RichText::new(aurora_i18n::tr!("common-save")).size(12.0)))
                 .on_disabled_hover_text(aurora_i18n::tr!(
@@ -546,7 +546,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             ch = channel;
         }
         tool.ui.pbr_channel = ch;
-        // « Tous » shows the base color's, mixed when the channels differ;
+        // "All" shows the base color's, mixed when the channels differ;
         // the others in the panel's order: base, normal, ORM, emissive
         let (t, mixed) = if ch == 0 {
             (mat.transforms[0], mat.transforms.iter().any(|x| *x != mat.transforms[0]))
@@ -937,7 +937,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
     });
 }
 
-/// A « hide water » face (FSPanelFace: alpha gradient diffuse, opaque,
+/// A "hide water" face (FSPanelFace: alpha gradient diffuse, opaque,
 /// no maps).
 fn is_hide_water(te: &TextureFace, m: Option<&LegacyMaterial>) -> bool {
     te.texture == IMG_ALPHA_GRAD && te.color[3] >= 1.0 && m.is_none_or(|m| m.normal_map.is_nil() && m.specular_map.is_nil())
@@ -1038,7 +1038,7 @@ fn face_options(
     });
 }
 
-/// « Coller » (FSPanelFace::onPasteFaces): the copied faces in order onto
+/// "Paste" (FSPanelFace::onPasteFaces): the copied faces in order onto
 /// the selected ones; a single copied face goes on all of them.
 fn paste_faces(tool: &mut BuildTool, world: &mut World, sel: &[Sel]) {
     let Some(clip) = tool.ui.face_clipboard.clone() else { return };
@@ -1149,7 +1149,7 @@ fn media(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World
     });
 }
 
-/// « Aligner » of the Media tab (FSPanelFace::onClickAutoFix): scale the
+/// "Align" of the Media tab (FSPanelFace::onClickAutoFix): scale the
 /// face's texture to the media inside its power-of-two texture.
 fn media_autofix(tool: &mut BuildTool, world: &mut World, env: &mut Env, sel: &[Sel]) {
     let sizes: Vec<((usize, u8), (f32, f32))> = sel
@@ -1207,7 +1207,7 @@ impl BuildTool {
         }
     }
 
-    /// « Aligner les faces planaires »: the planar-mapped faces take the
+    /// "Align planar faces": the planar-mapped faces take the
     /// repeats, rotation and offsets of the last selected one. Deviation:
     /// LLFace::calcAlignedPlanarTE also shifts the offsets by the faces'
     /// positions so that coplanar faces of different objects line up.

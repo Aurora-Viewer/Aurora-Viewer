@@ -1,7 +1,7 @@
 //! Object tab (LLPanelObject, indra/newview/llpanelobject.cpp, Firestorm,
 //! originally LGPL 2.1): lock / physical / temporary / phantom, position,
 //! size and rotation with copy / paste actions, the prim shape (22
-//! types, Firestorm's « Working33 » extra paths included) and sculpties.
+//! types, Firestorm's "Working33" extra paths included) and sculpties.
 
 use super::common::{Edit, check, combo, label, section, small, spin};
 use super::{Env, Request, ShapeClip};
@@ -19,7 +19,7 @@ use std::time::Instant;
 /// FLAGS_USE_PHYSICS / TEMPORARY_ON_REZ / PHANTOM (llprimitive.h).
 use crate::build::edits::{FLAGS_PHANTOM, FLAGS_TEMPORARY_ON_REZ, FLAGS_USE_PHYSICS};
 
-/// comboBaseType: (label, path, profile). Index 7 is « Sculptie ».
+/// comboBaseType: (label, path, profile). Index 7 is "Sculptie".
 pub fn types() -> [(&'static str, u8, u8); 22] {
     [
         (aurora_i18n::tr!("common-box"), LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE),
@@ -92,7 +92,7 @@ pub fn types() -> [(&'static str, u8, u8); 22] {
 }
 const SCULPTED: usize = 7;
 
-/// « Forme du creux » (hole type bits).
+/// "Hollow shape" (hole type bits).
 fn holes() -> [(&'static str, u8); 4] {
     [
         (aurora_i18n::tr!("common-default"), LL_PCODE_HOLE_SAME),
@@ -102,7 +102,7 @@ fn holes() -> [(&'static str, u8); 4] {
     ]
 }
 
-/// « Type de raccord » (sculpt stitching): Sphère, Tore, Plan, Cylindre.
+/// "Join type" (sculpt stitching): Sphere, Torus, Plane, Cylinder.
 fn sculpt_types() -> [(&'static str, u8); 4] {
     [
         (aurora_i18n::tr!("common-sphere"), 1),
@@ -171,7 +171,7 @@ pub struct ShapeUi {
     pub skew: f32,
     /// Degrees.
     pub twist: (f32, f32),
-    /// « Biseautage » / « Taille du trou ».
+    /// "Bevel" / "Hole size".
     pub top_size: [f32; 2],
     pub shear: [f32; 2],
     pub adv_cut: (f32, f32),
@@ -698,13 +698,13 @@ fn mixed_vectors(tool: &BuildTool, world: &World, s: &BuildSettings) -> [[bool; 
     mixed
 }
 
-/// « C »: the vector in our clipboard and in the system's as "<x, y, z>".
+/// "C": the vector in our clipboard and in the system's as "<x, y, z>".
 fn copy_vector(ui: &egui::Ui, tool: &mut BuildTool, which: usize, v: Vec3, decimals: usize) {
     tool.ui.vec_clipboard[which] = Some(v);
     ui.ctx().copy_text(vector_text(v, decimals));
 }
 
-/// « Coller » of the shape parameters (LLPanelObject::onPasteParams).
+/// "Paste" of the shape parameters (LLPanelObject::onPasteParams).
 fn paste_params(tool: &mut BuildTool, world: &mut World, idx: usize, c: ShapeClip) {
     let current = world.objects.get(idx).map(|o| o.extra.sculpt);
     match (c.sculpt, current) {
@@ -854,7 +854,7 @@ fn shape_column(
                 _ => aurora_i18n::tr!("build-ui-object-profile-cut-begin-end"),
             };
             e = e.or(pair(ui, adv, &mut u.adv_cut.0, &mut u.adv_cut.1, 0.02, 0.0..=0.98, 0.02..=1.0, 3));
-            // « Biseautage » of the path (taper), hidden for the box
+            // "Bevel" of the path (taper), hidden for the box
             if ty != 0 {
                 label(ui, p, aurora_i18n::tr!("build-ui-object-bevel"));
                 ui.horizontal(|ui| {
@@ -965,8 +965,8 @@ fn sculpt_section(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
 }
 
 impl BuildTool {
-    /// « p »: a vector pasted from the system clipboard (`which`: position,
-    /// size, rotation), clamped like « P ».
+    /// "p": a vector pasted from the system clipboard (`which`: position,
+    /// size, rotation), clamped like "P".
     pub fn paste_vector(&mut self, world: &mut World, s: &BuildSettings, which: usize, text: &str) {
         let Some(v) = parse_vector(text) else {
             self.status = aurora_i18n::tr!("build-ui-object-the-clipboard-does-not-contain-a-vector-x-y").into();

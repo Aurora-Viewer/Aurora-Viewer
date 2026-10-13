@@ -1,5 +1,5 @@
-//! AURORA_DEMO_WORN: the scripted right click, « Modifier », arrow drag and
-//! « Inspecter » on the object our demo avatar wears (demo_worn.rs).
+//! AURORA_DEMO_WORN: the scripted right click, "Edit", arrow drag and
+//! "Inspect" on the object our demo avatar wears (demo_worn.rs).
 use super::*;
 use crate::ui::context::CtxAction;
 use crate::world::objects::ObjKey;

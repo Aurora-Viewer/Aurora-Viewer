@@ -1,5 +1,5 @@
-//! Préférences › Commandes: the chat bar as a command line, Firestorm's
-//! « Conversations › Commandes » tab (FSCmdLine* settings).
+//! Preferences › Commands: the chat bar as a command line, Firestorm's
+//! "Chat › CmdLine" tab (FSCmdLine* settings).
 
 use super::{group, row, slider, toggle};
 use crate::cmdline::ChatCommandSettings;
@@ -7,7 +7,7 @@ use crate::theme::Palette;
 use egui::RichText;
 
 /// The name of a chat command, with its usage next to it (Firestorm's
-/// « Commandes » tab: « ex: cmd x y z »).
+/// "CmdLine" tab: "usage: cmd x y z").
 fn command_name(ui: &mut egui::Ui, p: &Palette, label: &str, usage: &str, hint: &str, name: &mut String) -> bool {
     row(ui, p, label, hint, |ui| {
         let c = ui.add(egui::TextEdit::singleline(name).desired_width(110.0)).changed();

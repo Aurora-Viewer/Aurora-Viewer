@@ -161,7 +161,7 @@ pub fn parse(input: &str) -> Option<Location> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlaceLink {
     pub location: Location,
-    /// "Region (x,y,z)", or "Me téléporter vers Region (x,y,z)".
+    /// "Region (x,y,z)", or "Teleport me to Region (x,y,z)".
     pub label: String,
     /// `secondlife:///app/teleport/...`: a click teleports (once confirmed).
     pub teleport: bool,

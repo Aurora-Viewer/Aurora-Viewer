@@ -55,7 +55,7 @@ pub enum Request {
     BuyLand,
     Profile(Uuid),
     GroupProfile(Uuid),
-    /// « p » of the Object tab: read the system clipboard for this vector
+    /// "p" of the Object tab: read the system clipboard for this vector
     /// (0 position, 1 size, 2 rotation) and call BuildTool::paste_vector.
     PasteVector(usize),
     Script {
@@ -78,7 +78,7 @@ pub enum PickTarget {
     PbrMap(usize),
 }
 
-/// One face copied with « Copier » of the Texture tab (FSPanelFace::onCopyFaces).
+/// One face copied with "Copy" of the Texture tab (FSPanelFace::onCopyFaces).
 #[derive(Debug, Clone)]
 pub struct FaceClip {
     pub face: aurora_prim::te::TextureFace,
@@ -86,14 +86,14 @@ pub struct FaceClip {
     pub gltf: Option<(Uuid, aurora_assets::material::PbrOverride)>,
 }
 
-/// Object parameters copied with « Copier » of the Object tab (LLPanelObject::onCopyParams).
+/// Object parameters copied with "Copy" of the Object tab (LLPanelObject::onCopyParams).
 #[derive(Debug, Clone, Copy)]
 pub struct ShapeClip {
     pub volume: aurora_prim::VolumeParams,
     pub sculpt: Option<aurora_prim::params::SculptParams>,
 }
 
-/// Features copied with « Copier » of the Features tab (LLPanelVolume::onCopyFeatures).
+/// Features copied with "Copy" of the Features tab (LLPanelVolume::onCopyFeatures).
 #[derive(Debug, Clone, Copy)]
 pub struct FeaturesClip {
     pub flexible: Option<aurora_prim::extra::FlexibleParams>,
@@ -129,18 +129,18 @@ pub struct FloaterState {
     color_focused: bool,
     /// Texture tab: 0 PBR, 1 Blinn-Phong, 2 Media.
     pub tex_tab: usize,
-    /// PBR transform channel (Tous, Couleur, Normale, (O)RM, Émissive).
+    /// PBR transform channel (All, Color, Normal, (O)RM, Emissive).
     pub pbr_channel: usize,
-    /// Blinn-Phong UV channel (Diffuse, Normale, Spéculaire).
+    /// Blinn-Phong UV channel (Diffuse, Normal, Specular).
     pub bp_channel: usize,
     pub face_clipboard: Option<Vec<FaceClip>>,
     pub shape_clipboard: Option<ShapeClip>,
-    /// Position, size, rotation (degrees) copied with « C ».
+    /// Position, size, rotation (degrees) copied with "C".
     pub vec_clipboard: [Option<Vec3>; 3],
     pub features_clipboard: Option<FeaturesClip>,
     /// Text being typed (field id -> text) until Enter / focus lost.
     pub edits: HashMap<&'static str, String>,
-    /// « À vendre » ticked / sale type / price not applied yet (Appliquer).
+    /// "For sale" ticked / sale type / price not applied yet (Apply).
     pub sale_draft: Option<(bool, u8, i32)>,
     pub contents_filter: String,
     pub contents_selected: Option<(Uuid, Uuid)>,
@@ -161,7 +161,7 @@ pub struct FloaterState {
     /// Blinn-Phong material just sent per (object, face), shown until the
     /// face's material id changes: (material id when sent, material).
     pub legacy_pending: HashMap<(Uuid, u8), (Uuid, Option<crate::scene::legacy_mat::LegacyMaterial>)>,
-    /// « Aligner les faces planaires ».
+    /// "Align planar faces".
     pub planar_align: bool,
     pub bulk_perms_open: bool,
     pub bulk: floaters::BulkPerms,
@@ -335,7 +335,7 @@ pub fn show(
 }
 
 impl BuildTool {
-    /// « Utiliser la sélection pour la grille » (Shift+G): the selected
+    /// "Use Selection for Grid" (Shift+G): the selected
     /// roots become the reference grid (LLSelectMgr::addGridObject).
     pub fn use_selection_for_grid(&mut self, world: &World, s: &mut BuildSettings) {
         self.grid_objects = self
@@ -381,8 +381,8 @@ impl BuildTool {
     }
 
     /// ◄ ► (LLToolsSelectNextPartFace): next / previous face with the face
-    /// tool, else next / previous prim of the linkset with « Modification
-    /// liée »; `include` (Shift) adds it to the selection.
+    /// tool, else next / previous prim of the linkset with "Linked edit";
+    /// `include` (Shift) adds it to the selection.
     pub fn select_next_part(&mut self, world: &mut World, s: &mut BuildSettings, next: bool, include: bool) {
         let face_mode = self.tool == Tool::Edit && self.edit_mode == EditMode::Face;
         if !(s.edit_linked || face_mode) {
@@ -448,8 +448,8 @@ impl BuildTool {
         }
     }
 
-    /// « Copier l'UUID »: the roots' ids, or every selected prim with
-    /// Shift / « Modification liée » (LLFloaterTools::onClickBtnCopyKeys).
+    /// "Copy UUID": the roots' ids, or every selected prim with
+    /// Shift / "Linked edit" (LLFloaterTools::onClickBtnCopyKeys).
     pub fn copy_keys(&self, world: &World, s: &BuildSettings, all_prims: bool) -> String {
         let idxs = if all_prims || s.edit_linked {
             self.sel_prims(world)

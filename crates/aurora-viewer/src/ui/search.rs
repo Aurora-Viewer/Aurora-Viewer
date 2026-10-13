@@ -1,8 +1,8 @@
-//! « Rechercher »: Firestorm's legacy search floater (FSFloaterSearch,
+//! "Search": Firestorm's legacy search floater (FSFloaterSearch,
 //! indra/newview/fsfloatersearch.cpp, floater_fs_search.xml and
 //! panel_fs_search_legacy_*.xml, originally LGPL 2.1) drawn the Aurora way:
-//! one window with the tabs Personnes, Groupes, Lieux, Ventes de terrains,
-//! Événements, Annonces and Web. Each directory tab has its form (the fields
+//! one window with the tabs People, Groups, Places, Land Sales,
+//! Events, Classifieds and Web. Each directory tab has its form (the fields
 //! `find()` reads), the result list with sortable headers, the count and the
 //! page buttons, and the details of the selected row (`search/details.rs`);
 //! the web tab hosts the search page in the embedded browser
@@ -95,7 +95,7 @@ fn shown_address(location: &str, session: Option<Uuid>) -> String {
     crate::world::search::without_session(location, session)
 }
 
-/// What « Ouvrir dans le navigateur » opens: the page shown, or the search
+/// What "Open in browser" opens: the page shown, or the search
 /// page, as an anonymous address (the system browser never gets the
 /// session).
 fn external_address(location: &str, home: &str, session: Option<Uuid>) -> String {
@@ -235,7 +235,7 @@ fn cell_text(v: &Value) -> (String, bool) {
     }
 }
 
-/// "> 100 trouvé(s)" when a next page exists, else the number of rows.
+/// "> 100 found" when a next page exists, else the number of rows.
 fn count_text(list: &List) -> String {
     if list.has_next {
         aurora_i18n::tr!("search-found-more", count = list.rows.len() as i64)

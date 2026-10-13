@@ -57,7 +57,7 @@ impl SimInfo {
         access_label(self.access)
     }
 
-    /// "Bac à sable", "Non sécurisé" (LLWorldMapView tooltip flags).
+    /// "Sandbox", "Unsecured" (LLWorldMapView tooltip flags).
     pub fn flag_labels(&self) -> Vec<&'static str> {
         let mut v = Vec::new();
         if self.flags & REGION_FLAGS_SANDBOX != 0 {
@@ -513,7 +513,7 @@ impl WorldMap {
     }
 }
 
-/// "Région (x, y, z)" (LLFloaterWorldMap::trackLocation).
+/// "Region (x, y, z)" (LLFloaterWorldMap::trackLocation).
 pub fn location_label(region: &str, x: f64, y: f64, z: f32) -> String {
     format!("{region} ({}, {}, {})", x.round() as i64, y.round() as i64, z.round() as i64)
 }

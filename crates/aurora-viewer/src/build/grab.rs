@@ -1,4 +1,4 @@
-//! The « Déplacer » tool: grab an object and drag it, lift it (Ctrl) or
+//! The "Move" tool: grab an object and drag it, lift it (Ctrl) or
 //! spin it (Ctrl+Shift). The simulator moves it from our ObjectGrabUpdate /
 //! ObjectSpinUpdate messages, physical or not.
 //!

@@ -561,7 +561,7 @@ struct Part {
 }
 
 /// Colors of the breakdown parts, in a fixed order: neighbours stay apart
-/// for colour-blind readers; the last one (neutral) is the « rest ».
+/// for colour-blind readers; the last one (neutral) is the "rest".
 fn part_colors(p: &Palette) -> [Color32; 7] {
     [p.indigo_light, p.rose, p.amber, p.violet, p.teal, p.violet_pale, p.muted_dim]
 }

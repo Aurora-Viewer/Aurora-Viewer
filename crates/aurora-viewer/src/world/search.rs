@@ -1,4 +1,4 @@
-//! « Rechercher »: the state of Firestorm's legacy search floater
+//! "Search": the state of Firestorm's legacy search floater
 //! (FSFloaterSearch and its FSPanelSearch* panels,
 //! indra/newview/fsfloatersearch.cpp, originally LGPL 2.1). One result list
 //! per tab with its query, page, status and selection; the replies are

@@ -1,4 +1,4 @@
-//! Directory search (« Rechercher »): the queries of Firestorm's legacy
+//! Directory search ("Search"): the queries of Firestorm's legacy
 //! search floater and what the directory answers. Port of the query builders
 //! of FSPanelSearchPeople / Groups / Places / Land / Classifieds / Events
 //! `::find` and of the fields their `processSearchReply` read

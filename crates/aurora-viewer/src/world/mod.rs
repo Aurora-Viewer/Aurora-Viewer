@@ -264,7 +264,7 @@ pub struct World {
     pub map: worldmap::WorldMap,
     /// Place details windows of place links (their parcel requests).
     pub place_details: place_details::PlaceDetails,
-    /// « Rechercher »: result lists and details of the directory search.
+    /// "Search": result lists and details of the directory search.
     pub search: search::Search,
     arrived_once: bool,
     /// The instant messages kept while offline were asked for (once per
@@ -1101,7 +1101,7 @@ impl World {
             }
             NetEvent::ObjectUpdates { handle, objects } => {
                 let me = self.agent_id;
-                // « À propos du terrain » open on a parcel of this region: a
+                // "About Land" open on a parcel of this region: a
                 // prim that was not there changes its counts
                 let mut land_changed = false;
                 let land_watches = self.land.watches(handle);

@@ -4,7 +4,7 @@
 //! - a window with a find bar over a conversation (Conversations, the
 //!   history of a conversation), like LLFloaterSearchReplace on a chat
 //!   history;
-//! - « Rechercher », the accelerator of Firestorm's menu (menu_viewer.xml),
+//! - "Search", the accelerator of Firestorm's menu (menu_viewer.xml),
 //!   a shortcut of the viewer (`keybinds::Action::Search` by default).
 //!
 //! One rule decides, [`owner`]: the window whose field has the keyboard
@@ -38,7 +38,7 @@ pub enum Owner {
     ScriptEditor,
     /// The find bar of this window.
     FindWindow(LayerId),
-    /// The viewer's shortcut on these keys: « Rechercher » by default.
+    /// The viewer's shortcut on these keys: "Search" by default.
     Search,
 }
 
@@ -142,7 +142,7 @@ mod tests {
         assert_eq!(owner(Keyboard::FindWindow(conversations), None), Owner::FindWindow(conversations));
         // the keyboard nowhere: the conversation under the pointer
         assert_eq!(owner(Keyboard::Nowhere, Some(conversations)), Owner::FindWindow(conversations));
-        // nothing focused, the pointer elsewhere: « Rechercher »
+        // nothing focused, the pointer elsewhere: "Search"
         assert_eq!(owner(Keyboard::Nowhere, None), Owner::Search);
         // another field (chat bar, inventory filter, the search window's own)
         // leaves the viewer its shortcut, even with the pointer on a conversation

@@ -4,12 +4,12 @@
 //! panel_fs_contacts_{friends,groups,sets}.xml, originally LGPL 2.1): the
 //! first tab of the Conversations window (or its own window once torn off,
 //! ContactsTornOff) with three tabs:
-//! - « Amis »: the friend list (multi-selection, online first, configurable
+//! - "Friends": the friend list (multi-selection, online first, configurable
 //!   name columns, the rights given and received as check boxes) and its
 //!   buttons;
-//! - « Groupes »: our groups (pinned first, active one in bold, « aucun »
+//! - "Groups": our groups (pinned first, active one in bold, "none"
 //!   on top) and their buttons;
-//! - « Cercles »: contact sets (LGGContactSets) and aliases.
+//! - "Contact sets": contact sets (LGGContactSets) and aliases.
 
 use super::avatar_picker::AvatarPicker;
 use super::context::{self, CtxAction};
@@ -52,7 +52,7 @@ pub struct ContactsSettings {
     pub column_permissions: bool,
     /// FSFriendListSortOrder: by display name (else by username).
     pub sort_by_display_name: bool,
-    /// FSFriendListFullNameFormat: « Nom d'affichage (Nom d'utilisateur) »
+    /// FSFriendListFullNameFormat: "Display Name (Username)"
     /// (else the other way round).
     pub full_name_display_first: bool,
     /// FSContactSetsColorizeFriends: contact set colors in the friend list.
@@ -135,15 +135,15 @@ pub struct ContactsUi {
     friends_sel: Vec<Uuid>,
     friends_anchor: Option<Uuid>,
     group_filter: String,
-    /// Selected group (nil = « aucun »).
+    /// Selected group (nil = "none").
     group_sel: Option<Uuid>,
-    /// Contact set shown (None = the first one, else « Tous »).
+    /// Contact set shown (None = the first one, else "All").
     set_choice: Option<String>,
     set_filter: String,
     set_sel: Vec<Uuid>,
     set_anchor: Option<Uuid>,
     dialog: Option<Dialog>,
-    /// « Ajouter au cercle » of the friend menu: (set, avatars).
+    /// "Add to contact set" of the friend menu: (set, avatars).
     add_to_set: Option<(String, Vec<Uuid>)>,
     picker: AvatarPicker,
     /// What the picker is open for.
@@ -161,13 +161,13 @@ pub struct ContactsUi {
 }
 
 impl ContactsUi {
-    /// « Ajouter... » of the friend list: the resident picker.
+    /// "Add..." of the friend list: the resident picker.
     pub fn pick_new_friend(&mut self) {
         self.pick_for = Some(PickFor::Friend);
         self.picker.open(PICKER_ID, false);
     }
 
-    /// « Devenir amis » of any menu (AddFriendWithMessage).
+    /// "Become friends" of any menu (AddFriendWithMessage).
     pub fn ask_friendship(&mut self, to: Uuid) {
         self.dialog = Some(Dialog::Friendship {
             to,
@@ -175,12 +175,12 @@ impl ContactsUi {
         });
     }
 
-    /// « Supprimer cet ami » of any menu (RemoveFromFriends).
+    /// "Remove this friend" of any menu (RemoveFromFriends).
     pub fn ask_remove_friend(&mut self, id: Uuid) {
         self.dialog = Some(Dialog::RemoveFriends(vec![id]));
     }
 
-    /// « Demander une téléportation » of any menu (TeleportRequest).
+    /// "Request teleport" of any menu (TeleportRequest).
     pub fn ask_teleport_request(&mut self, to: Uuid) {
         self.dialog = Some(Dialog::TeleportRequest {
             to,
@@ -188,7 +188,7 @@ impl ContactsUi {
         });
     }
 
-    /// « Quitter » of any group menu (GroupLeaveConfirmMember).
+    /// "Quit" of any group menu (GroupLeaveConfirmMember).
     pub fn ask_leave_group(&mut self, id: Uuid) {
         self.dialog = Some(Dialog::LeaveGroup(id));
     }
@@ -497,10 +497,10 @@ pub fn window(
 
 /// The resident picker of the contacts window: what it was opened for.
 enum PickFor {
-    /// « Ajouter... » of the friend list (LLFloaterAvatarPicker with
+    /// "Add..." of the friend list (LLFloaterAvatarPicker with
     /// isItemsFreeOfFriends).
     Friend,
-    /// « Ajouter... » of a contact set.
+    /// "Add..." of a contact set.
     Set(String),
 }
 
@@ -908,7 +908,7 @@ fn friend_menu(
     }
 }
 
-/// « Options... » of the friend list menu: columns, sort, name format,
+/// "Options..." of the friend list menu: columns, sort, name format,
 /// search filter (onColumnDisplayModeChanged keeps one name column).
 fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSettings) {
     let before = (s.column_username, s.column_display_name, s.column_full_name);
@@ -1141,7 +1141,7 @@ fn group_list(
                             .color(p.muted),
                         );
                     }
-                    // « aucun » on top when not filtering (LLGroupList::refresh)
+                    // "none" on top when not filtering (LLGroupList::refresh)
                     if filter.is_empty() && !groups.is_empty() {
                         group_row(ui, p, world, st, pics, None, list_w, actions);
                     }

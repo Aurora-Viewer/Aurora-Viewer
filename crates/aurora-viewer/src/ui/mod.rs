@@ -67,14 +67,14 @@ pub struct Panels {
     pub perf: bool,
     pub people: bool,
     pub minimap: bool,
-    /// Carte du monde (Ctrl+M).
+    /// World map (Ctrl+M).
     pub world_map: bool,
     pub settings: bool,
     /// Local time of day: 0 shared (region EEP), 1 sunrise, 2 noon, 3 sunset, 4 midnight.
     pub time_of_day: u8,
     /// The environment selector (Firestorm's quick preferences lists).
     pub environment: bool,
-    /// « Éclairage personnel » (LLFloaterEnvironmentAdjust).
+    /// "Personal lighting" (LLFloaterEnvironmentAdjust).
     pub personal_lighting: bool,
     pub inventory: bool,
     pub appearance: bool,
@@ -82,11 +82,11 @@ pub struct Panels {
     pub people_tab: u8,
     /// The torn-off Contacts window (ContactsTornOff).
     pub contacts: bool,
-    /// "À propos du terrain" (navigation bar info icon).
+    /// "About Land" (navigation bar info icon).
     pub about_land: bool,
-    /// « Lieux » (favorites, landmarks, teleport history, place profiles).
+    /// "Places" (favorites, landmarks, teleport history, place profiles).
     pub places: bool,
-    /// « Rechercher » (Firestorm's legacy search floater, Ctrl+F).
+    /// "Search" (Firestorm's legacy search floater, Ctrl+F).
     pub search: bool,
     /// Navigation bar location being edited (text) and "just opened" (select all).
     pub nav_edit: Option<String>,
@@ -208,7 +208,7 @@ mod tests {
             assert_eq!(perf.right(), map.right());
             assert_eq!(chat.right(), map.right());
         }
-        // « Rechercher », closed at first: opened, it stands in the middle,
+        // "Search", closed at first: opened, it stands in the middle,
         // inside the work area, and hides none of these windows entirely
         for (width, height) in [(1280.0, 720.0), (1600.0, 900.0), (1920.0, 1017.0)] {
             let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
