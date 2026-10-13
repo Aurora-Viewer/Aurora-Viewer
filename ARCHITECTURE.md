@@ -95,6 +95,19 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`ui/hover_height.rs` exposes the avatar's -3..3 m hover adjustment and the
+shared camera preference. `world/hover_height.rs` owns local preview, the
+committed value, ordered background persistence in the account's
+`hover_height.json`, and one outstanding server write at a time. The app
+resends after region changes only when SimulatorFeatures and AgentPreferences
+allow it. `NetCommand::SetHoverHeight` posts one finite `hover_height` real;
+its correlated result supports retry without letting an old reply overwrite
+a newer edit. The skeleton caches only the shape offset; scene transforms
+add the current hover height independently of pose updates. Camera roots
+start from the unshifted object position and add hover only when enabled,
+avoiding a one-frame mismatch and floating-point cancellation while dragging.
+`app/hover_height.rs` drives the lifecycle and the offline scenario.
+
 Avatar name tag height is evaluated with each avatar's skeleton in
 `scene/anim.rs`: shape and mesh joint offsets, plus the upper translation
 envelope of each animation track (cached by `BoundAnim` when loaded).

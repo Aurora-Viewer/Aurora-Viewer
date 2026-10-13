@@ -147,6 +147,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details) |
+| `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Avatar hover-height adjustment and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
@@ -163,6 +164,22 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
 ### Details
+
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure`**:
+  opens the hover-height floater at frame 600. A number sets the height;
+  `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
+  repeats the cycle with "Affect camera view" enabled; otherwise the camera
+  stays at its original height. Capture at 660, 750, 840 and 1020; include
+  719, 720 and 721 to catch a camera jump on the first adjusted frame.
+  With the toggle off, drag continuously in both directions: the background
+  must stay fixed throughout, also when seated or using a scripted camera.
+  `unsupported`
+  disables adjustment as on a region without AvatarHoverHeightEnabled;
+  `failure` simulates a rejected update and exposes Retry. Demo changes stay
+  in memory and never contact a grid. Use the slider, its editable value,
+  +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
+  switch for the manual check. On the grid, also verify other viewers see
+  the committed adjustment, then teleport and reconnect to check persistence.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).

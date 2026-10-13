@@ -670,6 +670,7 @@ impl Session<'_> {
                         let _ = events.send(NetEvent::SimulatorFeatures {
                             handle,
                             voice_server_type,
+                            avatar_hover_height: v["AvatarHoverHeightEnabled"].as_bool(),
                             materials_rate,
                             materials_max,
                         });
@@ -1067,6 +1068,7 @@ impl Session<'_> {
         }
         match c {
             NetCommand::UpdateAgentLanguage => self.update_agent_language(),
+            NetCommand::SetHoverHeight { region, request, value } => self.set_hover_height(region, request, value),
             NetCommand::Login(_) => log::warn!("already logged in"),
             NetCommand::Logout => {
                 if self.logout_started.is_none() {
@@ -2249,6 +2251,33 @@ impl Session<'_> {
 
     fn main_cap(&self, name: &str) -> Option<String> {
         self.main.and_then(|a| self.sims.get(&a)).and_then(|s| s.caps.get(name).cloned())
+    }
+
+    /// LLVOAvatarSelf::sendHoverHeight. A delayed command must never write
+    /// to a different region after teleporting; never log a capability URL.
+    fn set_hover_height(&self, region: RegionHandle, request: u64, value: f32) {
+        let url = self
+            .main
+            .and_then(|address| self.sims.get(&address))
+            .filter(|sim| sim.handle == region)
+            .and_then(|sim| sim.caps.get("AgentPreferences"))
+            .cloned();
+        let body = caps::hover_height_body(value);
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let success = if let (Some(url), Some(body)) = (url, body) {
+                tokio::time::timeout(std::time::Duration::from_secs(20), caps::post_llsd(&http, &url, &body))
+                    .await
+                    .is_ok_and(|result| result.is_ok())
+            } else {
+                false
+            };
+            if !success {
+                log::warn!("Could not update avatar hover height");
+            }
+            let _ = events.send(NetEvent::HoverHeightUpdated { region, request, success });
+        });
     }
 
     fn notecard_copy_http(&mut self, callback: u32, result: Result<(), String>) {

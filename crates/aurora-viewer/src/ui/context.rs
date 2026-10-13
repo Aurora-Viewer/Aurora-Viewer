@@ -137,6 +137,7 @@ pub struct Facts {
     pub me: Uuid,
     pub seated: bool,
     pub flying: bool,
+    pub hover_height: bool,
     pub object: ObjectFacts,
     /// Avatar: (complexity, shown as a silhouette).
     pub complexity: Option<(u32, bool)>,
@@ -211,6 +212,7 @@ pub enum CtxAction {
     EditTerrain,
     /// Change our display name (LLFloaterDisplayName).
     DisplayName,
+    HoverHeight,
     OpenAppearance {
         tab: usize,
         editing: bool,

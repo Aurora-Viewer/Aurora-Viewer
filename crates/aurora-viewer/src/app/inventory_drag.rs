@@ -505,6 +505,7 @@ mod tests {
                 dirty_chunks: HashSet::new(),
                 caps: Arc::new(Default::default()),
                 voice_server: String::new(),
+                avatar_hover_height: false,
                 materials_limits: Default::default(),
                 max_tasks: 0,
             },
