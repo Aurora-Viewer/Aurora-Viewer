@@ -191,7 +191,9 @@ pub struct Settings {
     pub look_at_range: f32,
     /// 0 off, 1 low, 2 medium, 3 high, 4 ultra
     pub shadow_quality: u8,
-    /// 0 none, 1 FXAA, 2 MSAA 2x, 3 MSAA 4x, 4 MSAA 8x, 5 TAA
+    /// 0 none, 1 FXAA, 2 MSAA 2x, 3 MSAA 4x, 4 MSAA 8x, 5 TAA, 6 SMAA (the
+    /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
+    /// featuretable.txt)
     pub antialiasing: u8,
     /// 0 Khronos PBR Neutral, 1 ACES
     pub tonemapper: u8,
@@ -545,7 +547,7 @@ impl Default for Settings {
             look_at: false,
             look_at_range: 10.0,
             shadow_quality: 3,
-            antialiasing: 3,
+            antialiasing: 6,
             tonemapper: 0,
             fps_cap: true,
             fps_limit: 120,
@@ -1199,6 +1201,15 @@ mod tests {
         left.window_maximized = true;
         let json = serde_json::to_string(&left).expect("serialize synthetic settings");
         assert_eq!(state(&json), (true, false));
+    }
+
+    #[test]
+    fn a_new_profile_starts_with_smaa_and_a_saved_choice_is_kept() {
+        use aurora_render::AntiAliasing;
+        let fresh: Settings = serde_json::from_str("{}").expect("synthetic empty settings");
+        assert_eq!(fresh.sanitized().render_settings().aa, AntiAliasing::Smaa);
+        let saved: Settings = serde_json::from_str(r#"{"antialiasing":3}"#).expect("synthetic saved settings");
+        assert_eq!(saved.sanitized().render_settings().aa, AntiAliasing::Msaa(4));
     }
 
     #[test]

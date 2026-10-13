@@ -502,6 +502,8 @@ pub struct RenderSettings {
 impl Default for RenderSettings {
     fn default() -> Self {
         RenderSettings {
+            // the state `Renderer::new` builds its pipelines and targets
+            // for, not the viewer's default (SMAA, in its own settings)
             aa: AntiAliasing::Msaa(4),
             tonemapper: Tonemapper::KhronosNeutral,
             shadow_resolution: 2048,
