@@ -64,17 +64,33 @@ mod tests {
             assert_eq!(waited_ms(5.0, 0), 0.0);
             return;
         }
-        let (t0, c0) = (Instant::now(), cycles());
-        while t0.elapsed() < Duration::from_millis(20) {
-            std::hint::spin_loop();
+        // On a loaded machine another thread takes the core in the middle of
+        // a loop, for longer than the loop lasts (seen on CI: 34 ms out of
+        // 37), and that loop did wait: the claim is for a loop left alone.
+        // Short ones are tried until one is, a bounded number of times; half
+        // on the processor is enough to tell it from a sleep.
+        let mut least = (f32::MAX, 0.0, 0);
+        for _ in 0..40 {
+            let (t0, c0) = (Instant::now(), cycles());
+            while t0.elapsed() < Duration::from_millis(5) {
+                std::hint::spin_loop();
+            }
+            let (busy_ms, busy) = (t0.elapsed().as_secs_f32() * 1000.0, cycles() - c0);
+            let waited = waited_ms(busy_ms, busy) / busy_ms;
+            if waited < least.0 {
+                least = (waited, busy_ms, busy);
+            }
+            if waited < 0.5 {
+                break;
+            }
         }
-        let (busy_ms, busy) = (t0.elapsed().as_secs_f32() * 1000.0, cycles() - c0);
+        // a sleep costs next to no cycles, however long the machine makes it
+        // last
         let (t1, c1) = (Instant::now(), cycles());
         std::thread::sleep(Duration::from_millis(20));
         let (sleep_ms, slept) = (t1.elapsed().as_secs_f32() * 1000.0, cycles() - c1);
-        // another process may take the core during the loop: half is enough
-        // to tell the two apart
-        assert!(waited_ms(busy_ms, busy) < busy_ms * 0.5, "{busy_ms} ms, {busy} cycles");
+        let (waited, busy_ms, busy) = least;
+        assert!(waited < 0.5, "{busy_ms} ms, {busy} cycles at best");
         assert!(waited_ms(sleep_ms, slept) > sleep_ms * 0.9, "{sleep_ms} ms, {slept} cycles");
     }
 }
