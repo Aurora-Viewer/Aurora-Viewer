@@ -1,4 +1,4 @@
-//! "À propos du terrain", laid out like Firestorm's LLFloaterLand
+//! "About Land", laid out like Firestorm's LLFloaterLand
 //! (newview/llfloaterland.cpp, llpanellandaudio.cpp, llpanellandmedia.cpp,
 //! llpanelenvironment.cpp, floater_about_land.xml, originally LGPL 2.1):
 //! nine tabs on the selected parcel (LLViewerParcelMgr's selection, see
@@ -145,7 +145,7 @@ impl View {
 /// the small floaters it opens).
 enum Dialog {
     Confirm(dialogs::Confirm),
-    /// LLFloaterGroupPicker for "Choisir".
+    /// LLFloaterGroupPicker for "Choose".
     GroupPicker,
     /// LLFloaterSellLand.
     Sell(dialogs::SellForm),
@@ -473,8 +473,8 @@ const HEADER_MAP_TOP: f32 = 4.0;
 
 /// The parcel at a glance, over the tabs: the mini-map's image of its
 /// region, its name, its area, and a gauge of the objects on the owner's
-/// land in the region against what it may hold (the "Capacité de la
-/// région" of the objects tab), which follows the simulator while the
+/// land in the region against what it may hold (the "Region
+/// capacity" of the objects tab), which follows the simulator while the
 /// floater is open (`Land::tick`). Not in Firestorm's floater.
 fn header(ui: &mut egui::Ui, p: &Palette, v: &View, parcel: &ParcelInfo, map: Option<&egui::TextureHandle>) {
     let usage = PrimUsage::of(parcel, v.region.as_ref().map_or(0, |r| r.max_tasks));
@@ -550,7 +550,7 @@ fn header(ui: &mut egui::Ui, p: &Palette, v: &View, parcel: &ParcelInfo, map: Op
     });
 }
 
-/// "Aucune parcelle sélectionnée." (no_selection_text) while waiting.
+/// "No parcel selected." (no_selection_text) while waiting.
 fn no_selection(ui: &mut egui::Ui, p: &Palette) {
     ui.add_space(8.0);
     ui.label(
@@ -656,7 +656,7 @@ fn check(ui: &mut egui::Ui, p: &Palette, enabled: bool, mut value: bool, label: 
     (r, value)
 }
 
-/// "Pas encore disponible dans Aurora" for the few Firestorm floaters not ported yet.
+/// "Not available in Aurora yet" for the few Firestorm floaters not ported yet.
 fn not_yet() -> &'static str {
     aurora_i18n::tr!("common-not-available-in-aurora-yet")
 }
@@ -733,14 +733,14 @@ pub(crate) fn months() -> [&'static str; 12] {
     ]
 }
 
-/// time_stamp_template of the French skin: "sam. 18 juin 2022 11:19:10".
+/// time_stamp_template of the French skin: "Sat 18 Jun 2022 11:19:10".
 fn claim_date(secs: i64) -> String {
     let (y, m, d, w, h, mi, s) = slt_parts(secs);
     format!("{} {d} {} {y} {h:02}:{mi:02}:{s:02}", weekdays()[w], months()[m - 1])
 }
 
 /// process_covenant_reply with the French LTime strings:
-/// "mer. juin 05 21:18:48 2024".
+/// "Wed Jun 05 21:18:48 2024".
 fn covenant_date(secs: i64) -> String {
     let (y, m, d, w, h, mi, s) = slt_parts(secs);
     format!("{} {} {d:02} {h:02}:{mi:02}:{s:02} {y}", weekdays()[w], months()[m - 1])

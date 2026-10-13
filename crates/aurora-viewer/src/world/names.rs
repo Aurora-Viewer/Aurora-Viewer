@@ -374,7 +374,7 @@ impl AvatarNames {
     }
 
     /// DisplayNameUpdate: the new name replaces the cached one. Returns the
-    /// notice to show ("[OLD_NAME] ([SLID]) a désormais le nom [NEW_NAME].").
+    /// notice to show ("[OLD_NAME] ([SLID]) is now named [NEW_NAME].").
     pub fn on_update(&mut self, d: &AvatarNameData, old_display_name: &str) -> String {
         let n = AvatarName::from_data(d, now() + DEFAULT_EXPIRES);
         // getUserName(): "Firstname Lastname" or "Firstname"

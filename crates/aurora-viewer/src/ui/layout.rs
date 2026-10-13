@@ -69,7 +69,7 @@ pub fn save(ctx: &egui::Context) {
     }
 }
 
-/// Forget the saved layout ("Tout réinitialiser").
+/// Forget the saved layout ("Reset everything").
 pub fn forget(ctx: &egui::Context) {
     let _ = std::fs::remove_file(path());
     let options = ctx.options(|o| o.clone());

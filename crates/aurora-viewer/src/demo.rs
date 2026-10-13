@@ -435,7 +435,7 @@ pub const DEMO_NOVA: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000
 pub const DEMO_TESS: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0004);
 pub const DEMO_GROUP1: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0001);
 pub const DEMO_GROUP2: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0002);
-/// Hidden from the profile (Contacts › Groupes shows it in the other color).
+/// Hidden from the profile (Contacts › Groups shows it in the other color).
 pub const DEMO_GROUP3: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0003);
 /// AURORA_DEMO_CONV=noms: residents and a conference whose names do not fit
 /// in the lists (long display name and username, wide letters, long title).
@@ -842,7 +842,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             }
             vec![NetEvent::InventoryContents(out)]
         }
-        // block list: Loup Violet, an object, a name and the chat of group 2
+        // block list: Violet Wolf, an object, a name and the chat of group 2
         aurora_net::NetCommand::RequestMuteList { .. } => {
             let text = aurora_i18n::tr!(
                 "demo-1-violet-wolf-0-2-spam-box-0-0",
@@ -2607,7 +2607,7 @@ pub fn events() -> Vec<NetEvent> {
         o.name_values = format!("FirstName STRING RW SV {first}\nLastName STRING RW SV {last}\nTitle STRING RW SV Aurora");
         avatars.push(o);
     }
-    // Loup Violet wears a hat (skull) and holds a glowing orb (right hand):
+    // Violet Wolf wears a hat (skull) and holds a glowing orb (right hand):
     // non-rigged attachments that must follow the animated bones
     for (id, point, pos, scale, volume, color) in [
         (9100u32, 2u8, Vec3::new(0.0, 0.0, 0.1), Vec3::new(0.26, 0.26, 0.2), cyl, violet),

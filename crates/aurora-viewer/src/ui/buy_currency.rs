@@ -1,4 +1,4 @@
-//! "Acheter des L$", opened by the balance of the top bar. Port of
+//! "Buy L$", opened by the balance of the top bar. Port of
 //! LLFloaterBuyCurrencyUI, of the estimate / purchase cycle of
 //! LLCurrencyUIManager and of LLFloaterAddPaymentMethod (Firestorm
 //! indra/newview/llfloaterbuycurrency.cpp, llcurrencyuimanager.cpp,

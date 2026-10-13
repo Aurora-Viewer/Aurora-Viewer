@@ -36,22 +36,22 @@ pub enum BarAction {
     /// Teleport history (navigation bar arrows).
     TeleportBack,
     TeleportForward,
-    /// Voice light clicked: open "Son et voix".
+    /// Voice light clicked: open "Sound and voice".
     VoicePrefs,
     /// Location typed or pasted in the navigation bar (SLURL, Region/x/y/z...).
     TeleportTo(String),
-    /// Communiquer > Statut de connexion changed.
+    /// Communicate > Online status changed.
     SetStatus(crate::world::status::StatusModes),
     /// Open the chat preferences (automatic responses).
     ChatPrefs,
-    /// Moi > Profil.
+    /// Me > Profile.
     MyProfile,
-    /// Monde › Environnement › Utiliser les environnements partagés
+    /// World › Environment › Use shared environments
     /// (setSharedEnvironment: drops every local choice).
     SharedEnvironment,
-    /// Monde › Historique de téléportation (ToggleTeleportHistory, Alt+H).
+    /// World › Teleport history (ToggleTeleportHistory, Alt+H).
     TeleportHistory,
-    /// The balance, or Moi › Acheter des L$ (LLStatusBar::onClickBuyCurrency).
+    /// The balance, or Me › Buy L$ (LLStatusBar::onClickBuyCurrency).
     BuyCurrency,
 }
 
@@ -78,7 +78,7 @@ pub struct StatusInfo<'a> {
     pub slurl: String,
     /// Online status modes (away, do not disturb, autoresponse...).
     pub status: crate::world::status::StatusModes,
-    /// ShowBanLines mode (Monde › Lignes d'interdiction).
+    /// ShowBanLines mode (World › Ban lines).
     pub ban_lines: u8,
     /// Abilities of the current parcel (right end of the location field).
     pub parcel_icons: Vec<super::parcel_icons::ParcelIcon>,
@@ -156,7 +156,7 @@ const NO_TELEPORT: &str = "plane-departure-filled";
 const NO_INVITE: &str = "users-plus";
 const NO_FRIENDSHIP: &str = "user-plus";
 const AD_HOC: &str = "messages-filled";
-/// « Invisible »: the eye of the right to see someone online, barred.
+/// "Invisible": the eye of the right to see someone online, barred.
 const INVISIBLE: &str = "eye-off";
 
 /// Color of the online status: grey invisible, red do not disturb, violet
@@ -201,7 +201,7 @@ fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, 
     clicked
 }
 
-/// Entries of Communiquer > Statut de connexion (Firestorm's menu).
+/// Entries of Communicate > Online status (Firestorm's menu).
 fn status_menu(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::StatusModes, action: &mut BarAction) {
     let mut m = status;
     let mut c = false;
@@ -281,7 +281,7 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
     }
     menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
         ui.set_min_width(250.0);
-        // availability: one of four, like a presence menu. « Invisible »
+        // availability: one of four, like a presence menu. "Invisible"
         // is Firestorm's button of the friends list that hides our online
         // status from every friend (GlobalOnlineStatusToggle)
         let mut m = status;
@@ -341,7 +341,7 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
 }
 
 /// Viewer menus: the submenus of the wolf menu button of the navigation bar
-/// (without "Avancé" unless `advanced`). An entry carries the icon its
+/// (without "Advanced" unless `advanced`). An entry carries the icon its
 /// function has in the bottom toolbar and in the world menus.
 fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, action: &mut BarAction, advanced: bool) {
     menu::submenu(ui, p, "user-filled", aurora_i18n::tr!("common-me"), true, |ui| {
@@ -432,7 +432,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 }
             }
         });
-        // menu_viewer.xml: Historique de téléportation (Alt+H), Lieux
+        // menu_viewer.xml: Teleport history (Alt+H), Places
         if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), "Alt+H") {
             *action = BarAction::TeleportHistory;
         }
@@ -828,7 +828,7 @@ pub fn top_bars(
                 ui.set_min_width(ui.available_width());
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.style_mut().visuals.button_frame = false;
-                // Aurora menu (white wolf): Moi, Communiquer, Monde, Construire, Contenu, Avancé, Aide
+                // Aurora menu (white wolf): Me, Communicate, World, Build, Contents, Advanced, Help
                 if let Some(t) = icons.get("wolf") {
                     let img = egui::Image::new(t).fit_to_exact_size(Vec2::new(18.0, 18.0)).tint(p.ink);
                     menu::button(ui, p, egui::Button::image(img), |ui| {
@@ -1087,7 +1087,7 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &
     resp.on_hover_text(tip).clicked()
 }
 
-/// Microphone button state (Firestorm "Parler" button with its arrow).
+/// Microphone button state (Firestorm "Speak" button with its arrow).
 #[derive(Default)]
 pub struct MicButton<'a> {
     /// Toggle mode: microphone switched on.
@@ -1102,7 +1102,7 @@ pub struct MicButton<'a> {
     pub level: f32,
     /// Voice connected in this region.
     pub connected: bool,
-    /// Output: open the "Son et voix" preferences.
+    /// Output: open the "Sound and voice" preferences.
     pub open_prefs: bool,
     /// Output: the mode switch changed.
     pub mode_changed: bool,
@@ -1390,7 +1390,7 @@ fn mic_mode(
     resp.clicked()
 }
 
-/// Bottom bar: "Chat local" input on the left, feature buttons spread over
+/// Bottom bar: "Nearby chat" input on the left, feature buttons spread over
 /// the rest of the width. Returns (chat, action, top y of the bar).
 #[allow(clippy::too_many_arguments)]
 pub fn bottom_bar(

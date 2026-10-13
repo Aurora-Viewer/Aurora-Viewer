@@ -2,9 +2,9 @@
 //! LLFloaterProfile (`newview/llfloaterprofile.cpp`, `llpanelprofile.cpp`,
 //! `llpanelprofilepicks.cpp`, `llpanelprofileclassifieds.cpp`,
 //! `floater_profile.xml`, `panel_profile_*.xml`, originally LGPL 2.1):
-//! "Vie SL" (name, key, status, picture, birth date, account, partner,
-//! about, groups, actions), "Flux" (the my.secondlife.com feed in a
-//! browser), "Favoris" (picks), "Annonces" (classifieds), "Vie RL" and
+//! "Second Life" (name, key, status, picture, birth date, account, partner,
+//! about, groups, actions), "Feed" (the my.secondlife.com feed in a
+//! browser), "Favorites" (picks), "Classifieds", "Real life" and
 //! "Notes". Our own profile can be edited (texts, pictures, picks, show in
 //! search, full birth date); notes can be written on anyone.
 
@@ -49,13 +49,13 @@ pub enum ProfileAction {
     DisplayName,
     /// Chat of one of our groups (double-click in the group list).
     GroupChat(Uuid),
-    /// Picks and classifieds: "Montrer sur carte" / "Téléportation"
+    /// Picks and classifieds: "Show on map" / "Teleport"
     /// (LLFloaterWorldMap::trackLocation, gAgent.teleportViaLocation).
     ShowOnMap(DVec3),
     Teleport(DVec3),
 }
 
-/// What the "Flux" browser needs from the app.
+/// What the "Feed" browser needs from the app.
 pub struct WebContext<'a> {
     pub paths: Option<&'a aurora_media::PluginPaths>,
     pub browser: &'a aurora_media::BrowserSettings,
@@ -72,7 +72,7 @@ const TAB_CLASSIFIEDS: usize = 3;
 const TAB_RL: usize = 4;
 const TAB_NOTES: usize = 5;
 
-/// Left column of the labels ("Nom :", "Clé :", "Info :"...), right-aligned.
+/// Left column of the labels ("Name:", "Key:", "Info:"...), right-aligned.
 const LABEL_W: f32 = 60.0;
 
 /// A text being edited against the value the server has.
@@ -116,7 +116,7 @@ struct Window {
     about: Edit,
     fl_about: Edit,
     notes: Edit,
-    /// "Info" / "Vie RL" shown with their links (the eye toggle) on our profile.
+    /// "Info" / "Real life" shown with their links (the eye toggle) on our profile.
     about_preview: bool,
     fl_preview: bool,
     /// Closing with unsaved changes (ProfileUnsavedChanges).
@@ -131,11 +131,11 @@ struct Window {
     classifieds_asked: bool,
     /// Pick / classified / parcel details already asked for.
     asked: HashSet<Uuid>,
-    /// "Supprimer..." waiting for a yes.
+    /// "Delete..." waiting for a yes.
     confirm_delete: bool,
     /// Rights we grant this friend, being edited (LLFloaterProfilePermissions).
     rights_edit: Option<i32>,
-    /// Height under "Info" in the "Vie SL" tab (previous frame).
+    /// Height under "Info" in the "Second Life" tab (previous frame).
     bottom_h: f32,
 }
 
@@ -209,14 +209,14 @@ impl ProfileUi {
         }
     }
 
-    /// Demo captures: show one tab (0 Vie SL ... 5 Notes).
+    /// Demo captures: show one tab (0 Second Life ... 5 Notes).
     pub fn set_tab(&mut self, id: Uuid, tab: usize) {
         if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
             w.tab = tab.min(TAB_NOTES);
         }
     }
 
-    /// The "Flux" page that has the keyboard, if any.
+    /// The "Feed" page that has the keyboard, if any.
     pub fn focused_web(&mut self) -> Option<&mut aurora_media::MediaPlugin> {
         self.windows
             .iter_mut()
@@ -383,7 +383,7 @@ struct TabCtx<'a> {
     own: bool,
 }
 
-/// "Enregistrer les modifications ?" shown when closing with edits.
+/// "Save changes?" shown when closing with edits.
 fn unsaved_bar(ui: &mut egui::Ui, p: &Palette, w: &mut Window, actions: &mut Vec<ProfileAction>) {
     egui::Frame::new()
         .fill(p.warn.gamma_multiply(0.18))
@@ -522,7 +522,7 @@ fn text_area(
     });
 }
 
-/// "Enregistrer" / "Annuler" at the bottom right (save_description_changes).
+/// "Save" / "Cancel" at the bottom right (save_description_changes).
 fn save_buttons(ui: &mut egui::Ui, p: &Palette, edit: &mut Edit) -> bool {
     let mut save = false;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -807,7 +807,7 @@ fn second_life_tab(
         });
     });
     // "Info" (103 high at least, follows="all") takes the space left by the
-    // groups (80), "Donner" and the buttons, measured on the previous frame
+    // groups (80), "Give" and the buttons, measured on the previous frame
     let groups_h = 80.0;
     let field_w = full_w - LABEL_W - 20.0;
     ui.add_space(6.0);
@@ -927,8 +927,8 @@ fn groups_list(
     }
 }
 
-/// Own profile bottom: "Afficher dans la recherche", "Afficher la date de
-/// naissance complète", Enregistrer / Annuler of "Info".
+/// Own profile bottom: "Show in search", "Show full birth
+/// date", Save / Cancel of "Info".
 fn own_bottom(ui: &mut egui::Ui, p: &Palette, w: &mut Window, profile: Option<&AvatarProfile>, now: f64, actions: &mut Vec<ProfileAction>) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 12.0;

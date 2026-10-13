@@ -34,7 +34,7 @@ fn click_actions() -> [(&'static str, u8); 8] {
     ]
 }
 
-/// "sale type" combo: Copie, Contenus, Original.
+/// "sale type" combo: Copy, Contents, Original.
 fn sale_types() -> [(&'static str, u8); 3] {
     [
         (aurora_i18n::tr!("common-copy"), 2),
@@ -246,7 +246,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     // ---- click action
     let prims = tool.sel_prims(world);
     let (click, _) = super::common::same(prims.iter().filter_map(|&i| world.objects.get(i).map(|o| o.click_action)));
-    // PLAY / OPEN_MEDIA show as « Toucher »
+    // PLAY / OPEN_MEDIA show as "Touch"
     let click = click.map(|c| if click_actions().iter().any(|(_, v)| *v == c) { c } else { 0 });
     row(ui, p, aurora_i18n::tr!("build-ui-general-click-to"), LABEL_W, |ui| {
         if let Some(a) = combo(ui, "click_action", click, &click_actions(), 150.0, modify) {
@@ -312,7 +312,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                     if e.changed {
                         draft_changed = true;
                     }
-                    // a typed price commits when « À vendre » is ticked
+                    // a typed price commits when "For sale" is ticked
                     if e.commit && for_sale {
                         commit_now = true;
                     }

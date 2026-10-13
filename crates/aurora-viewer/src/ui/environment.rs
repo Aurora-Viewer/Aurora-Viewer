@@ -1,10 +1,10 @@
-//! « Environnement » window and « Éclairage personnel ».
+//! "Environment" window and "Personal lighting".
 //!
 //! The selector is Firestorm's quick preferences environment block
 //! (FloaterQuickPrefs, newview/quickprefs.cpp, floater_quickprefs.xml:
-//! « Env. ciel », « Env. eau », « Jour/Nuit » lists with < > arrows,
-//! « Éclairage personnel… » and the reset button), plus Aurora's time of day
-//! presets. « Éclairage personnel » follows LLFloaterEnvironmentAdjust
+//! "Sky environment", "Water environment", "Day/Night" lists with < > arrows,
+//! "Personal lighting…" and the reset button), plus Aurora's time of day
+//! presets. "Personal lighting" follows LLFloaterEnvironmentAdjust
 //! (newview/llfloaterenvironmentadjust.cpp, floater_adjust_environment.xml):
 //! the same controls, ranges and scales, on the local sky. Both originally
 //! LGPL 2.1.
@@ -24,7 +24,7 @@ use uuid::Uuid;
 pub enum EnvAction {
     /// Apply a settings item from a list.
     Pick(SettingsKind, Uuid),
-    /// « Environnement partagé » (the reset button).
+    /// "Shared environment" (the reset button).
     Shared,
     /// A time of day preset (1..=4).
     Preset(u8),
@@ -49,7 +49,7 @@ pub struct EnvironmentUi {
     built_at: Option<std::time::Instant>,
     /// Folders still to load for the lists (0: complete).
     pub scan_left: usize,
-    /// « Réinitialiser » of « Éclairage personnel » waits for a confirmation
+    /// "Reset" of "Personal lighting" waits for a confirmation
     /// (PersonalSettingsConfirmReset).
     confirm_reset: bool,
     /// Open this list's drop-down on the next frame (demo captures).
@@ -72,7 +72,7 @@ impl EnvironmentUi {
         &self.catalog
     }
 
-    /// The selector window. `lighting` opens « Éclairage personnel ».
+    /// The selector window. `lighting` opens "Personal lighting".
     pub fn show_selector(
         &mut self,
         ctx: &egui::Context,
@@ -270,8 +270,8 @@ impl EnvironmentUi {
         picked.map(|id| EnvAction::Pick(kind, id))
     }
 
-    /// « Éclairage personnel »: edits the local sky at once. Returns
-    /// [`EnvAction::Shared`] when « Réinitialiser » is confirmed.
+    /// "Personal lighting": edits the local sky at once. Returns
+    /// [`EnvAction::Shared`] when "Reset" is confirmed.
     pub fn show_lighting(&mut self, ctx: &egui::Context, p: &Palette, eep: &mut EnvSelector, open: &mut bool) -> Option<EnvAction> {
         let mut out = None;
         let screen = ctx.content_rect();
@@ -358,7 +358,7 @@ impl EnvironmentUi {
                 ))
                 .changed()
             {
-                // setReflectionProbeAmbiance: the sky is no longer « classic »
+                // setReflectionProbeAmbiance: the sky is no longer "classic"
                 s.probe_ambiance = ambiance;
                 s.can_auto_adjust = false;
             }

@@ -807,7 +807,7 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     return vec4<f32>(0.0, 0.0, 0.0, a);
 }
 
-// Debug overlays (« Afficher la transparence », fil de fer): one flat
+// Debug overlays ("Show transparency", wireframe): one flat
 // translucent color per pipeline.
 override debug_r: f32 = 1.0;
 override debug_g: f32 = 0.0;

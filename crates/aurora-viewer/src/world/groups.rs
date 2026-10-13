@@ -539,7 +539,7 @@ impl World {
             if in_group && self.mutes.text_muted(&inv.from, &inv.from_name) {
                 return;
             }
-            // Communiquer > Statut de connexion > Conférences ad hoc (FS:PP)
+            // Communicate > Online status > Ad hoc conferences (FS:PP)
             let c = &self.status.cfg;
             let friend = self.social.friends.iter().any(|f| f.id == inv.from);
             if !in_group && c.ignore_adhoc && !(c.adhoc_from_friends && friend) && !crate::world::mutes::is_linden(&inv.from_name) {

@@ -39,7 +39,7 @@ fn searchable_name(i: &TaskItem) -> String {
     name
 }
 
-/// "Contenus (N éléments)".
+/// "Contents (N items)".
 fn root_label(n: usize) -> String {
     aurora_i18n::tr!("contents-count", count = n)
 }

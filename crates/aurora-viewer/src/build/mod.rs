@@ -122,7 +122,7 @@ pub struct BuildSettings {
     pub sync_materials: bool,
     /// ShowPhysicsShapeInEdit (Features tab eye toggle).
     pub show_physics_shape: bool,
-    /// FSCopyObjKeySeparator for « Copier l'UUID ».
+    /// FSCopyObjKeySeparator for "Copy UUID".
     pub copy_key_separator: String,
 }
 
@@ -651,8 +651,8 @@ pub fn bounds_of(world: &World, selection: &[ObjKey], linked: bool, now: Instant
 }
 
 /// LLSelectMgr::getGrid: world grid, the selection's own frame ("local"),
-/// or the frame of the objects chosen as reference (« Utiliser la sélection
-/// pour la grille »).
+/// or the frame of the objects chosen as reference ("Use Selection for
+/// Grid").
 pub fn grid_of(s: &BuildSettings, bounds: Option<&Bounds>, reference: Option<&Bounds>) -> Grid {
     let bounds = if s.grid_mode == 2 { reference } else { bounds };
     match (s.grid_mode, bounds) {
@@ -1593,7 +1593,7 @@ impl BuildTool {
         }
     }
 
-    /// « Copier la sélection »: ObjectDuplicateOnRay of the selected roots
+    /// "Copy selection": ObjectDuplicateOnRay of the selected roots
     /// where the ray hits (LLToolPlacer::addDuplicate).
     fn place_copy(&mut self, world: &mut World, s: &BuildSettings, hit: Option<Vec3>, target: Option<usize>, cursor: (f32, f32)) {
         let Some(point) = hit else { return };

@@ -1,14 +1,14 @@
-//! "Lieux" window, as Firestorm shows it by default (LLFloaterSidePanelContainer
+//! "Places" window, as Firestorm shows it by default (LLFloaterSidePanelContainer
 //! "places" with LLPanelPlaces; FSUseStandalonePlaceDetailsFloater off).
 //! Port of LLPanelPlaces, LLLandmarksPanel / LLFavoritesPanel and
 //! LLTeleportHistoryPanel (indra/newview/llpanelplaces.cpp,
 //! llpanellandmarks.cpp, llpanelteleporthistory.cpp, floater_places.xml,
 //! panel_places.xml, panel_landmarks.xml, panel_favorites.xml,
 //! panel_teleport_history.xml and their menus, originally LGPL 2.1):
-//! a filter, the ⚙ / sort / + / trash buttons, three tabs (Favoris: the
-//! Favorites folder, Repères: the Landmarks folder tree, Historique de
-//! teleport.: the saved teleport history in day sections), and at the bottom
-//! Se téléporter / Carte / Profil (FIRE-31033). The profile of a place link,
+//! a filter, the ⚙ / sort / + / trash buttons, three tabs (Favorites: the
+//! Favorites folder, Landmarks: the Landmarks folder tree, Teleport
+//! history: the saved teleport history in day sections), and at the bottom
+//! Teleport / Map / Profile (FIRE-31033). The profile of a place link,
 //! a history entry or a landmark replaces the tabs, with a back arrow
 //! (`place_details.rs` draws it). Double-click teleports, after the
 //! TeleportFromLandmark / TeleportToHistoryEntry confirmations.
@@ -76,11 +76,11 @@ pub enum PlacesAction {
     /// The back arrow.
     CloseProfile,
     RemoveHistory(usize),
-    /// Confirmed « Effacer l'historique des téléportations ».
+    /// Confirmed "Clear teleport history".
     ClearHistory,
-    /// « Trier par date » (LandmarksSortedByDate).
+    /// "Sort by date" (LandmarksSortedByDate).
     SortByDate(bool),
-    /// « Ne plus afficher » ticked in an accepted teleport confirmation.
+    /// "Do not show again" ticked in an accepted teleport confirmation.
     StopConfirmingTeleports,
 }
 
@@ -244,7 +244,7 @@ pub struct PlacesUi {
     /// History sections closed by the user (isAccordionCollapsedByUser).
     collapsed: HashSet<usize>,
     confirm: Option<Confirm>,
-    /// The box « Ne plus afficher » of the teleport confirmation on screen.
+    /// The box "Do not show again" of the teleport confirmation on screen.
     dont_ask: bool,
     /// Landmark assets to load / resolve (the app calls Landmarks::resolve).
     pub want_landmarks: HashSet<Uuid>,
@@ -272,7 +272,7 @@ impl PlacesUi {
     }
 
     /// `confirm_teleports`: `Settings::confirm_teleports`, off once the box
-    /// « Ne plus afficher » of a teleport confirmation was ticked.
+    /// "Do not show again" of a teleport confirmation was ticked.
     pub fn show(&mut self, ctx: &egui::Context, c: &mut Ctx, open: &mut bool, by_date: bool, confirm_teleports: bool) -> Vec<PlacesAction> {
         let mut actions = Vec::new();
         self.show_confirm(ctx, c.p, confirm_teleports, &mut actions);
@@ -310,7 +310,7 @@ impl PlacesUi {
         let Some(confirm) = &self.confirm else {
             return;
         };
-        // the question of a teleport (with its « Ne plus afficher » box)
+        // the question of a teleport (with its "Do not show again" box)
         let teleport = match confirm {
             Confirm::Landmark { name, .. } => Some(aurora_i18n::tr!(
                 "ui-places-do-you-really-want-to-teleport-to",
@@ -588,7 +588,7 @@ impl PlacesUi {
         system_folder(&world.inventory, kind)
     }
 
-    /// « Développer / Réduire tous les dossiers » and « Trier par date »
+    /// "Expand / Collapse all folders" and "Sort by date"
     /// (menu_places_gear_sorting.xml, the end of the gear menus).
     fn expand_collapse_sort(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, by_date: bool, actions: &mut Vec<PlacesAction>) {
         let folders = Self::all_folders(world, self.current_root(world));
@@ -864,7 +864,7 @@ impl PlacesUi {
         }
     }
 
-    /// Se téléporter / Carte / Profil (FIRE-31033), for the selection.
+    /// Teleport / Map / Profile (FIRE-31033), for the selection.
     fn list_buttons(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut Vec<PlacesAction>) {
         let landmark = self.selected_landmark(world).cloned();
         let history = self.selected_history(world).map(|(_, it)| it.clone());
@@ -958,8 +958,8 @@ impl PlacesUi {
                 .layout(egui::Layout::bottom_up(egui::Align::Min)),
         );
         let ui = &mut bottom_up;
-        // updateVerbs with a profile shown: Se téléporter, Carte and the
-        // overflow menu (Profil hidden)
+        // updateVerbs with a profile shown: Teleport, Map and the
+        // overflow menu (Profile hidden)
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             let w = ((ui.available_width() - 30.0) / 2.0).max(60.0);
@@ -1198,7 +1198,7 @@ mod tests {
         assert!(matches!(&actions[..], [PlacesAction::TeleportLandmark(a)] if *a == asset));
         assert!(ui.confirm.is_none());
 
-        // box ticked, then « Téléporter »: the setting goes off first
+        // box ticked, then "Teleport": the setting goes off first
         let mut ui = pending();
         let actions = answer_confirm(&mut ui, true, &[dont_ask, teleport]);
         assert!(matches!(
@@ -1207,7 +1207,7 @@ mod tests {
         ));
         assert!(!ui.dont_ask, "the box starts empty for the next question");
 
-        // box ticked, then « Annuler »: nothing happens, the question stays on
+        // box ticked, then "Cancel": nothing happens, the question stays on
         let mut ui = pending();
         let actions = answer_confirm(&mut ui, true, &[dont_ask, aurora_i18n::tr!("common-cancel")]);
         assert!(actions.is_empty());

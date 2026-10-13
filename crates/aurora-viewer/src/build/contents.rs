@@ -31,7 +31,7 @@ pub struct TaskInventory {
     /// Waiting for (another) listing.
     pub loading: bool,
     pub requested: Option<Instant>,
-    /// Reset every script once the listing comes (« Réinit. scripts »
+    /// Reset every script once the listing comes ("Reset scripts"
     /// pressed before it was known).
     pub reset_pending: bool,
 }
@@ -60,7 +60,7 @@ fn now_unix() -> i64 {
 
 impl BuildTool {
     /// The object the Contents tab shows: the primary selected prim
-    /// (its root unless « Modification liée »).
+    /// (its root unless "Linked edit").
     pub fn contents_target(&self, world: &World) -> Option<usize> {
         let key = self.selection.first()?;
         world.objects.index_of(key)
@@ -151,7 +151,7 @@ impl BuildTool {
         p.owner_mask & perm::MODIFY != 0 && (p.owner_id == world.agent_id || member)
     }
 
-    /// « Nouveau script »: RezScript of a default script
+    /// "New script": RezScript of a default script
     /// (LLPanelContents::onClickNewScript + LLViewerObject::saveScript).
     pub fn new_script(&mut self, world: &World, idx: usize) {
         let Some(o) = world.objects.get(idx) else { return };
@@ -240,7 +240,7 @@ impl BuildTool {
             })));
     }
 
-    /// « Réinit. scripts »: ScriptReset for every script of every selected
+    /// "Reset scripts": ScriptReset for every script of every selected
     /// object (the reset queue), listing them first when needed.
     pub fn reset_scripts(&mut self, world: &World) {
         let targets: Vec<usize> = if self.selection_linked {
@@ -286,7 +286,7 @@ impl BuildTool {
         }
     }
 
-    /// Script running / not running (« En cours d'exécution » of the menu).
+    /// Script running / not running ("Running" of the menu).
     pub fn set_script_running(&mut self, world: &World, idx: usize, item_id: Uuid, running: bool) {
         let Some(o) = world.objects.get(idx) else { return };
         let (handle, object_id) = (o.key.region, o.full_id);

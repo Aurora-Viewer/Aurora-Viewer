@@ -1,4 +1,4 @@
-//! Figures of the « Inspecter » window: what LLFloaterInspect::refresh
+//! Figures of the "Inspect" window: what LLFloaterInspect::refresh
 //! reads on each selected prim (Firestorm's "Improved Object Inspect",
 //! indra/newview/llfloaterinspect.cpp, originally LGPL 2.1) — faces,
 //! vertices and triangles as drawn now, its textures and their memory, and

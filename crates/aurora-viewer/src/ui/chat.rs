@@ -19,7 +19,7 @@ pub struct ChatUi {
     pub has_focus: bool,
     /// Conversation shown in the floater (None = local chat).
     pub selected: Option<uuid::Uuid>,
-    /// The « Contacts » tab is shown instead (FSFloaterContacts docked as
+    /// The "Contacts" tab is shown instead (FSFloaterContacts docked as
     /// the first tab of FSFloaterIMContainer).
     pub contacts: bool,
     pub conv_input: String,
@@ -313,7 +313,7 @@ pub enum ConvAction {
     OfferTeleport(uuid::Uuid),
     /// Open the People floater (0 = nearby, 1 = friends).
     OpenPeople(u8),
-    /// From the « Contacts » tab.
+    /// From the "Contacts" tab.
     Contacts(super::contacts::ContactsAction),
     /// Show the torn-off Contacts window (its entry in the list).
     OpenContacts,
@@ -1453,7 +1453,7 @@ pub fn show(
                                 actions.push(ConvAction::Local(OutgoingChat {
                                     message,
                                     channel,
-                                    // Ctrl+Entrée crie, Maj+Entrée murmure (comme la barre de chat)
+                                    // Ctrl+Enter shouts, Shift+Enter whispers (like the chat bar)
                                     chat_type: ui.input(|i| {
                                         if i.modifiers.ctrl {
                                             ChatType::Shout
@@ -1707,7 +1707,7 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
         });
 }
 
-/// The "Chat local" input bar; returns a message to send.
+/// The "Nearby chat" input bar; returns a message to send.
 pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, width: f32) -> Option<OutgoingChat> {
     let mut out = None;
     ui.label(RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.0).color(p.muted));

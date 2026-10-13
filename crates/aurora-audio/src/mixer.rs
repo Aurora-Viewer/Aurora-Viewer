@@ -23,19 +23,19 @@ pub(crate) const ENGINE_CHANNELS: usize = 2;
 /// Volume channels, matching the rows of Firestorm's audio volume floater.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Channel {
-    /// "Principal" (master). Scales every other channel.
+    /// "Main" (master). Scales every other channel.
     Master,
     /// "Interface" (UI sounds).
     Ui,
-    /// "Ambiance" (ambient / wind / looped world sounds).
+    /// "Ambient" (ambient / wind / looped world sounds).
     Ambient,
-    /// "Sons" (sound effects from objects).
+    /// "Sounds" (sound effects from objects).
     Sfx,
-    /// "Musique" (parcel music stream).
+    /// "Music" (parcel music stream).
     Music,
-    /// "Multimédia" (media-on-a-prim / parcel media audio).
+    /// "Multimedia" (media-on-a-prim / parcel media audio).
     Media,
-    /// "Voix" (voice chat).
+    /// "Voice" (voice chat).
     Voice,
 }
 

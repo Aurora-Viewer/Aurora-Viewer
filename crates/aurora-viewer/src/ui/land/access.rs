@@ -1,4 +1,4 @@
-//! "Accès" (LLPanelLandAccess::refresh / refresh_ui / onCommitPublicAccess /
+//! "Access" (LLPanelLandAccess::refresh / refresh_ui / onCommitPublicAccess /
 //! onCommitGroupCheck / onCommitAny, access and ban lists, FS:PP export and
 //! import as CSV).
 
@@ -32,7 +32,7 @@ pub(super) fn ban_duration(time: i32, now: i64) -> String {
     }
 }
 
-/// Prefix of a temporary access entry: " (12 min restantes) ".
+/// Prefix of a temporary access entry: " (12 min remaining) ".
 pub(super) fn access_prefix(time: i32, now: i64) -> String {
     if time == 0 {
         return String::new();

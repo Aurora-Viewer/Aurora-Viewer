@@ -1,4 +1,4 @@
-//! "Près de vous" tab of the People window: Firestorm's radar (columns,
+//! "Near you" tab of the People window: Firestorm's radar (columns,
 //! sorting, options and names of panel_fs_radar.xml, fspanelradar.cpp,
 //! fsradarlistctrl.cpp, fsradarentry.cpp and menu_fs_radar_options.xml,
 //! originally LGPL 2.1), drawn the Aurora way.

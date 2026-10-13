@@ -11,12 +11,12 @@ pub enum GridChoice {
     Custom,
 }
 
-/// Debug overlays (Préférences › Debug), not saved: they reset at each launch.
+/// Debug overlays (Preferences › Debug), not saved: they reset at each launch.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct DebugView {
     /// Complexity under the name tags, green to red (Firestorm FSTagShowARW).
     pub complexity_tags: bool,
-    /// « Afficher la transparence » (Ctrl+Alt+T, LLDrawPoolAlpha::sShowDebugAlpha).
+    /// "Show transparency" (Ctrl+Alt+T,LLDrawPoolAlpha::sShowDebugAlpha).
     pub show_alpha: bool,
     /// ... rigged faces too (Firestorm sShowDebugAlphaRigged).
     pub show_alpha_rigged: bool,
@@ -64,9 +64,9 @@ pub struct Settings {
     pub debug: DebugView,
     /// Build tools (grid, snap, create, land brush).
     pub build: crate::build::BuildSettings,
-    /// Camera (Firestorm « Déplacements et vue › Vue »).
+    /// Camera (Firestorm "Move & View › View").
     pub camera: crate::camera::CameraSettings,
-    /// Contacts window (Amis / Groupes / Cercles).
+    /// Contacts window (Friends / Groups / Contact sets).
     pub contacts: crate::ui::contacts::ContactsSettings,
     /// Radar of the People window.
     pub radar: crate::ui::people::RadarSettings,
@@ -129,12 +129,12 @@ pub struct Settings {
     pub landmarks_by_date: bool,
     /// Ask before a teleport to a landmark, a history entry or a place link
     /// (TeleportFromLandmark, TeleportToHistoryEntry, TeleportViaSLAPP; the
-    /// box « Ne plus afficher » of the confirmation turns it off). Firestorm
+    /// box "Do not show again" of the confirmation turns it off). Firestorm
     /// keeps one "ignore" per notification: one setting here for the three.
     pub confirm_teleports: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
-    /// « Rechercher »: last tab, rating boxes and land limits.
+    /// "Search": last tab, rating boxes and land limits.
     pub search: crate::world::search::SearchSettings,
     /// Other panels open at exit (restored at startup) and the People tab.
     pub show_people: bool,
@@ -170,7 +170,7 @@ pub struct Settings {
     /// Date in the names of these files (LogFileNamewithDate, off).
     pub log_dated_names: bool,
     /// Ask before opening a web link outside the trusted domains (the box
-    /// « Ne plus me prévenir » of the warning turns it off).
+    /// "Do not warn me again" of the warning turns it off).
     pub warn_external_links: bool,
     /// FSMuteAllGroups: refuse every group chat.
     pub mute_all_groups: bool,
@@ -181,8 +181,8 @@ pub struct Settings {
     pub report_blocks: bool,
     /// Automatic responses and the kept online status modes.
     pub autoresponse: crate::world::status::AutoResponse,
-    /// The chat bar as a command line (FSCmdLine*, Préférences › Chat ›
-    /// Commandes).
+    /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
+    /// Commands).
     pub chat_commands: crate::cmdline::ChatCommandSettings,
     pub name_tag_distance: f32,
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
@@ -396,8 +396,8 @@ impl Default for ColorSettings {
     }
 }
 
-/// Audio channels in Firestorm's order: Principal, Interface, Ambiance, Sons,
-/// Musique, Multimédia, Voix.
+/// Audio channels in Firestorm's order: Main, Interface, Ambient, Sounds,
+/// Music, Multimedia, Voice.
 pub fn audio_channels() -> [&'static str; 7] {
     [
         aurora_i18n::tr!("settings-main"),
@@ -444,7 +444,7 @@ pub struct AudioSettings {
     /// Each interface sound: played or not, asset (UISnd* / PlayModeUISnd*).
     pub ui: crate::ui_sound::UiSoundSettings,
     /// Saved music stream URLs (FSStreamList "audio", FIRE-593), offered by
-    /// the "Son" tab of About Land.
+    /// the "Sound" tab of About Land.
     pub saved_streams: Vec<String>,
 }
 
@@ -873,7 +873,7 @@ impl Settings {
         self
     }
 
-    /// Back to the defaults ("Tout réinitialiser"), keeping the account and
+    /// Back to the defaults ("Reset everything"), keeping the account and
     /// grid used to log in, the start location and the window size.
     pub fn reset_keeping_account(&mut self) {
         let old = std::mem::take(self);

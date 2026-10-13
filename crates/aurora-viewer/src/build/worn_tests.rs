@@ -34,7 +34,7 @@ fn what_we_wear_is_selectable_as_an_attachment_and_other_avatars_things_are_not(
     assert!(selectable(&world, root) && selectable(&world, child));
     // a click on a linked prim takes the whole worn object
     assert_eq!(BuildTool::unit_of(&world, child, false), Some(world.objects.get(root).unwrap().key));
-    // Loup Violet's hat: an attachment too, but not ours to edit
+    // Violet Wolf's hat: an attachment too, but not ours to edit
     let hat = local(&world, 9100);
     assert_eq!(select_type(&world, hat), SelectType::Attachment);
     assert!(!selectable(&world, hat));

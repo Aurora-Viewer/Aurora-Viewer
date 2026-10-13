@@ -62,11 +62,11 @@ pub struct CameraSettings {
     pub focus_offset: [f32; 3],
     /// CameraOffsetScale ("Distance").
     pub offset_scale: f32,
-    /// CameraAngle: vertical field of view, radians ("Angle de vue").
+    /// CameraAngle: vertical field of view, radians ("Viewing angle").
     pub fov: f32,
     /// ZoomTime: seconds of a transition between camera modes.
     pub zoom_time: f32,
-    /// CameraPositionSmoothing ("Lissage"), × 0.02 s half-life.
+    /// CameraPositionSmoothing ("Smoothing"), × 0.02 s half-life.
     pub smoothing: f32,
     /// DynamicCameraStrength: lag behind the avatar in the air (0 = none, 30 = avatar velocity).
     pub dynamic_strength: f32,
@@ -123,7 +123,7 @@ impl Default for CameraSettings {
 
 /// DEFAULT_FIELD_OF_VIEW (60°).
 pub const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
-/// LLViewerCamera min / max view angles of the "Angle de vue" slider.
+/// LLViewerCamera min / max view angles of the "Viewing angle" slider.
 pub const FOV_RANGE: std::ops::RangeInclusive<f32> = 0.17..=2.97;
 
 impl CameraSettings {

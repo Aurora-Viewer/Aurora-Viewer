@@ -167,7 +167,7 @@ pub struct Drag {
 
 #[derive(Debug, Default)]
 pub struct Manip {
-    /// Bounds of the reference objects (grid mode « Référence »), set by
+    /// Bounds of the reference objects (grid mode "Reference"), set by
     /// the build tool every frame.
     pub grid_ref: Option<Bounds>,
     pub hover: Option<Part>,

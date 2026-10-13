@@ -1,4 +1,4 @@
-//! "Définir le nom d'affichage", ported from LLFloaterDisplayName (Second
+//! "Set display name", ported from LLFloaterDisplayName (Second
 //! Life viewer and Firestorm, originally LGPL 2.1, Linden Research, Inc.): the new name
 //! typed twice, locked for a week after a change, reset to the username.
 
@@ -21,7 +21,7 @@ pub struct DisplayNameUi {
 /// Change to send: (old display name, new one; "" = back to the username).
 pub type SetDisplayName = (String, String);
 
-/// "le 15/10/2026 à 14:30 SLT" (Firestorm LockOutDateFormat, in SLT).
+/// "10/15/2026 at 14:30 SLT" (Firestorm LockOutDateFormat, in SLT).
 fn slt_datetime(secs: f64) -> String {
     let secs = secs as i64;
     // SLT is US Pacific time; DST approximated by day of year like the top bar

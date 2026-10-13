@@ -213,7 +213,7 @@ impl MediaImpl {
         }
     }
 
-    /// (media size, texture size) of a loaded media (« Aligner » of the
+    /// (media size, texture size) of a loaded media ("Align" of the
     /// build floater's Media tab).
     pub fn sizes(&self) -> Option<((i32, i32), (i32, i32))> {
         let p = self.plugin.as_ref()?;

@@ -1,4 +1,4 @@
-//! "Général" (LLPanelLandGeneral::refresh / onCommitAny).
+//! "General" (LLPanelLandGeneral::refresh / onCommitAny).
 
 use super::dialogs::{Confirm, SellForm};
 use super::{Dialog, LandUi, View, button, check, dim, not_yet, row, text};

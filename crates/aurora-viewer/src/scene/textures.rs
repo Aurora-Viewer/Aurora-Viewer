@@ -811,7 +811,7 @@ impl TextureStreamer {
     }
 
     /// The texture has see-through pixels (None until it is decoded): the
-    /// build floater's « Mode alpha » is only offered then.
+    /// build floater's "Alpha mode" is only offered then.
     pub fn has_alpha(&self, id: &Uuid) -> Option<bool> {
         if !self.is_loaded(id) {
             return None;

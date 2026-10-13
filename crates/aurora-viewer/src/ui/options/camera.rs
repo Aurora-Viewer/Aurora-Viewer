@@ -1,5 +1,5 @@
-//! Préférences › Caméra: Firestorm's « Déplacements et vue › Vue » and
-//! « Vue subjective » camera settings (panel_preferences_move.xml), the
+//! Preferences › Camera: Firestorm's "Move & View › View" and
+//! "Mouselook" camera settings (panel_preferences_move.xml), the
 //! camera presets and the phototools offsets.
 
 use super::{SLIDER_W, group, row, slider, toggle};

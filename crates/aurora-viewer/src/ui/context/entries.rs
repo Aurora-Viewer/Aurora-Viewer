@@ -303,7 +303,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
     ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
     ui.separator();
-    // « Supprimer » drops the attachment on the ground (Attachment.Drop)
+    // "Delete" drops the attachment on the ground (Attachment.Drop)
     ui.todo("trash-filled", aurora_i18n::tr!("common-delete"));
     ui.separator();
     ui.todo("sparkles-filled", aurora_i18n::tr!("ui-context-block-particle-owner"));
@@ -349,7 +349,7 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
     ui.todo("coin-filled", aurora_i18n::tr!("common-pay"));
     ui.separator();
-    // Firestorm « Rendu toujours complet / Aucun rendu / Rendu selon vos préférences »
+    // Firestorm "Always Display Full Detail / Never Display Full Detail / Remove From Display Exceptions"
     if let Some((c, silhouette)) = f.complexity {
         let text = aurora_i18n::tr!(
             "ui-context-complexity",
@@ -452,7 +452,7 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
     save_as_submenu(ui);
 }
 
-/// « Enregistrer sous » (Export Menu): the export has its own task and
+/// "Save as" (Export Menu): the export has its own task and
 /// rules of rights; its two entries wait for it.
 fn save_as_submenu(ui: &mut Builder) {
     ui.submenu("device-floppy-filled", aurora_i18n::tr!("common-save-as"), true, |ui| {
@@ -487,7 +487,7 @@ fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
     ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
 }
 
-/// « S'asseoir » (on the ground, Self.SitDown) and « Se lever ».
+/// "Sit" (on the ground, Self.SitDown) and "Stand up".
 fn sit_stand(ui: &mut Builder, f: &Facts) {
     ui.item_if("armchair", aurora_i18n::tr!("status-sit"), !f.seated, CtxAction::SitGround);
     ui.item_if("man-filled", aurora_i18n::tr!("common-stand-up"), f.seated, CtxAction::StandUp);
@@ -634,7 +634,7 @@ mod tests {
             tr(&keys)
         };
         assert_eq!(labels(&world_menu(&target, &f, Vec3::ZERO)), expected(false));
-        // « Retirer des exceptions d'affichage » only with an exception
+        // "Remove from display exceptions" only with an exception
         f.render = 2;
         assert_eq!(labels(&world_menu(&target, &f, Vec3::ZERO)), expected(true));
         // the avatar itself keeps menu_avatar_other.xml
@@ -683,7 +683,7 @@ mod tests {
             "ui-context-block-particle-owner",
         ]);
         assert_eq!(got, expected);
-        // sitting: « Voler / Atterrir » is greyed (enable_fly_land)
+        // sitting: "Fly / Land" is greyed (enable_fly_land)
         let fly = |f: &Facts| {
             world_menu(&Target::Attachment { key }, f, Vec3::ZERO)
                 .into_iter()

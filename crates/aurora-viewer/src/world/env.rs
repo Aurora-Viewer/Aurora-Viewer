@@ -54,7 +54,7 @@ fn exp3(v: Vec3) -> Vec3 {
     Vec3::new(v.x.exp(), v.y.exp(), v.z.exp())
 }
 
-/// Local time of day presets (Firestorm Monde > Environnement):
+/// Local time of day presets (Firestorm World > Environment):
 /// 1 sunrise, 2 noon, 3 sunset, 4 midnight (sun below the horizon, moon up).
 pub fn time_of_day_sun(preset: u8) -> Vec3 {
     match preset {

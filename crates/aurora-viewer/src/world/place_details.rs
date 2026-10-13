@@ -1,6 +1,6 @@
 //! Place profiles: what the Places window (LLPanelPlaces) shows for a place
 //! link, a teleport history entry or a landmark, and the standalone
-//! "Détails de l'emplacement" windows (FSFloaterPlaceDetails, used instead
+//! "Location details" windows (FSFloaterPlaceDetails, used instead
 //! when FSUseStandalonePlaceDetailsFloater is on). A place link resolves its
 //! region by name (MapNameRequest, like LLWorldMapMessage::
 //! sendNamedRegionRequest), a landmark its asset and region handle
@@ -85,7 +85,7 @@ pub struct Place {
     /// Stable id (egui ids of the standalone windows, raise / close).
     pub serial: u64,
     pub source: Source,
-    /// mPosGlobal: where Téléporter / Carte go, once known.
+    /// mPosGlobal: where Teleport / Map go, once known.
     pub global: Option<DVec3>,
     /// mPosRegion: the position shown after the region name.
     pub region_pos: Vec3,

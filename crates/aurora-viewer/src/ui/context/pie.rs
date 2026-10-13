@@ -2,7 +2,7 @@
 //! (Firestorm indra/newview/piemenu.cpp, originally LGPL 2.1) and menu_pie_*.xml.
 //! Eight fixed directions, clockwise screen coordinates reversed to match SL,
 //! disabled slices, click-through submenus. Aurora keeps its extra actions in
-//! « Plus » and adds a center back button; it does not warp the system pointer.
+//! "More" and adds a center back button; it does not warp the system pointer.
 //! At the user's request, right-click goes back instead of selecting a slice.
 
 use super::entries::{Entry, Kind};
@@ -69,7 +69,7 @@ fn seated(entries: &mut Vec<Entry>) -> Entry {
 }
 
 /// Main directions follow Firestorm. Only Aurora's additional/unfinished
-/// entries move into « Plus »; list-menu order remains unchanged.
+/// entries move into "More"; list-menu order remains unchanged.
 fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
     let mut rest = entries.to_vec();
     let mut root = match target {

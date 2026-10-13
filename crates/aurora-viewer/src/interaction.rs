@@ -137,7 +137,7 @@ pub fn target(world: &World, idx: usize, props: &HashMap<Uuid, ObjectProps>) -> 
     })
 }
 
-/// Target of a right-click menu entry (Payer, Acheter, Ouvrir), whatever
+/// Target of a right-click menu entry (Pay, Buy, Open), whatever
 /// the click action: Pay goes to the clicked prim if it takes money, else
 /// its parent (LLFloaterPay::payViaObject); Buy and Open to the root.
 pub fn menu_target(world: &World, idx: usize, action: Action) -> Option<Target> {

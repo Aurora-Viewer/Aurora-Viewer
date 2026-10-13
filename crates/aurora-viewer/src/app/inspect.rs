@@ -1,4 +1,4 @@
-//! « Inspecter les objets » (ui/inspect.rs): which prims the window lists
+//! "Inspect Objects" (ui/inspect.rs): which prims the window lists
 //! and where their figures come from — the ObjectProperties the simulator
 //! sends for selected prims, the scene for geometry and textures. Follows
 //! LLFloaterInspect::onOpen / refresh (indra/newview/llfloaterinspect.cpp).
@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 impl App {
-    /// « Inspecter » of a right-click menu on object `id`: its whole
+    /// "Inspect" of a right-click menu on object `id`: its whole
     /// linkset, as the menu's selection in Firestorm.
     pub(super) fn inspect_object(&mut self, id: Uuid) {
         let Some(idx) = self.world.objects.index_of_uuid(&id) else {

@@ -6,7 +6,7 @@
 //! and enrollment for a group; category, date and fee for an event), and the
 //! buttons of onBtnPeople* / onBtnGroup* / onBtnTeleport / onBtnMap /
 //! onBtnEventReminder (indra/newview/fsfloatersearch.cpp, originally
-//! LGPL 2.1). The place profile is the one of « Lieux » (`place_details.rs`).
+//! LGPL 2.1). The place profile is the one of "Places" (`place_details.rs`).
 
 use super::SearchAction;
 use crate::theme::Palette;
@@ -317,7 +317,7 @@ fn person(
                 });
                 match profile {
                     Some(pr) => {
-                        // "03/19/2008 (18 ans 6 mois; 6781 jours)" on one line
+                        // "03/19/2008 (18 years 6 months; 6781 days)" on one line
                         if let Some(birth) = profiles::birth_text(pr, own, now) {
                             ui.label(RichText::new(birth.replace('\n', " ")).size(12.0).color(p.ink));
                         }
@@ -347,7 +347,7 @@ fn person(
                 ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.ink)).wrap());
             });
         }
-        // "Donner : déposez l'objet ici" (LLDropTarget), not done yet
+        // "Give: drop the object here" (LLDropTarget), not done yet
         field(ui, p, aurora_i18n::tr!("ui-profile-give"), |ui| {
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-profile-drop-the-object-here"))
@@ -474,7 +474,7 @@ pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, st
 }
 
 /// A parcel of the places and land sales tabs: the place profile of
-/// « Lieux », with Se téléporter, Carte and its menu.
+/// "Places", with Teleport, Map and its menu.
 fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, actions: &mut Vec<SearchAction>) {
     let (p, world) = (c.p, c.world);
     let data = world.profiles.parcels.get(&parcel);

@@ -174,7 +174,7 @@ fn lerp(range: (f32, f32), t: f32) -> f32 {
 fn line(env: &Env<'_>, text: &str, format: TextFormat, max_width: f32) -> Arc<Galley> {
     let mut job = LayoutJob::single_section(text.to_owned(), format);
     job.break_on_newline = false;
-    // a long name ends with « … »; the full one is everywhere else
+    // a long name ends with "…"; the full one is everywhere else
     job.wrap = TextWrapping::truncate_at_width(max_width);
     env.painter.layout_job(job)
 }

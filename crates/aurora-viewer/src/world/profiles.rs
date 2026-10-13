@@ -154,7 +154,7 @@ fn split(secs: f64) -> (i64, u32, u32) {
 }
 
 /// LLDateUtil::ageFromDate with Firestorm's total days ("TotalDaysOld"):
-/// "17 ans 4 mois; 6350 jours", "3 semaines; 23 jours", "5 jours".
+/// "17 years 4 months; 6350 days", "3 weeks; 23 days", "5 days".
 fn age_from_date(language: &str, born: f64, now: f64) -> String {
     let (by, bm, bd) = split(born);
     let (mut ny, mut nm, nd) = split(now);
@@ -229,7 +229,7 @@ fn birth_text_in(language: &str, p: &AvatarProfile, own: bool, now: f64) -> Opti
     ))
 }
 
-/// "Compte" (CaptionTextAcctInfo): account type, then the payment info.
+/// "Account" (CaptionTextAcctInfo): account type, then the payment info.
 pub fn account_text(p: &AvatarProfile) -> String {
     if !p.caption_text.is_empty() {
         // special accounts (M Linden) show their caption, without payment info
@@ -260,7 +260,7 @@ pub fn payment_info_on_file(p: &AvatarProfile) -> bool {
     !p.caption_text.is_empty() || p.caption_index == 3 || p.flags & (flags::TRANSACTED | flags::IDENTIFIED) != 0
 }
 
-/// Account badge next to "Compte" (LLPanelProfileSecondLife::fillAccountStatus):
+/// Account badge next to "Account" (LLPanelProfileSecondLife::fillAccountStatus):
 /// the first that applies.
 pub fn badge(p: &AvatarProfile) -> Option<&'static str> {
     // the original beta testers registered before 2003-06-23

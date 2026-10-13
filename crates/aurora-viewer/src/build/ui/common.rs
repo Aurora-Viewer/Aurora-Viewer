@@ -170,7 +170,7 @@ pub fn combo<T: PartialEq + Copy>(
 }
 
 /// A texture swatch (LLTextureCtrl): the image, its caption below, a
-/// « Multiples » overlay when the selected faces differ. Clicked: open the picker.
+/// "Multiple" overlay when the selected faces differ. Clicked: open the picker.
 #[allow(clippy::too_many_arguments)]
 pub fn swatch(
     ui: &mut egui::Ui,

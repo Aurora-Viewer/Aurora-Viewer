@@ -1,4 +1,4 @@
-//! "Objets" (LLPanelLandObjects): prim counts, returns, auto-return delay
+//! "Objects" (LLPanelLandObjects): prim counts, returns, auto-return delay
 //! and the object owners list (ParcelObjectOwnersRequest).
 
 use super::dialogs::Confirm;
@@ -175,7 +175,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
 /// sortByColumnIndex(count, descending).
 const DEFAULT_SORT: (usize, bool) = (2, false);
 
-/// The owners list: Type | Nom | Nbre | Plus récents, sorted by count first.
+/// The owners list: Type | Name | Count | Newest, sorted by count first.
 fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, owners: &OwnerList, _now: i64) {
     let cols: [(&str, f32); 4] = [
         (aurora_i18n::tr!("common-type"), 46.0),

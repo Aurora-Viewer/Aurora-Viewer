@@ -181,7 +181,7 @@ pub struct App {
     /// Last walk-key press (for double-tap running) and the active temporary run.
     last_tap: Option<(u8, Instant)>,
     temp_run: Option<u8>,
-    /// "Toujours courir" (Ctrl+R).
+    /// "Always run" (Ctrl+R).
     always_run: bool,
     /// Microphone switched on (toggle mode).
     mic_on: bool,
@@ -217,7 +217,7 @@ pub struct App {
     move_complete_at: Option<Instant>,
     /// Teleport diagnostics still to log (seconds after the arrival).
     tp_checks: Vec<f32>,
-    /// Debug: culling view kept while « Figer le culling » is on.
+    /// Debug: culling view kept while "Freeze culling" is on.
     frozen_cull: Option<CullView>,
     /// Interface sounds caused by the widgets (clicks, keys, windows).
     sound_cues: ui::sound_cues::SoundCues,
@@ -225,13 +225,13 @@ pub struct App {
     /// dialogs (their sounds).
     mic_was: bool,
     context_menu_was: bool,
-    /// « Supprimer » waiting for a yes: (object, why it asks).
+    /// "Delete" waiting for a yes: (object, why it asks).
     delete_confirm: Option<(uuid::Uuid, String)>,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
-    /// with the state of its « Ne plus afficher » box.
+    /// with the state of its "Do not show again" box.
     place_confirm: Option<(String, Vec3, bool)>,
     /// External web link waiting for the warning's answer, with the state of
-    /// its « Ne plus me prévenir » box and, for a dangerous link, the reason.
+    /// its "Do not warn me again" box and, for a dangerous link, the reason.
     url_confirm: Option<(String, bool, Option<&'static str>)>,
     script_dialogs_were: usize,
     /// Last tracker beacon sound (FIRE-16969).
@@ -340,11 +340,11 @@ pub struct App {
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     /// Avatar profile windows.
     profile_ui: ui::profile::ProfileUi,
-    /// "Détails de l'emplacement" windows (standalone place profiles).
+    /// "Location details" windows (standalone place profiles).
     place_ui: ui::place_details::PlaceDetailsUi,
-    /// « Lieux ».
+    /// "Places".
     places_ui: ui::places::PlacesUi,
-    /// « Rechercher ».
+    /// "Search".
     search_ui: ui::search::SearchUi,
     /// AURORA_DEMO_PLACE=repere|historique, opened once logged in.
     demo_place: Option<crate::world::place_details::Source>,
@@ -353,14 +353,14 @@ pub struct App {
     /// Parcel snapshots and group names the place profiles want.
     place_images: std::collections::HashSet<uuid::Uuid>,
     place_groups: std::collections::HashSet<uuid::Uuid>,
-    /// "À propos du terrain".
+    /// "About Land".
     land_ui: ui::land::LandUi,
     group_profile_ui: ui::group_profile::GroupProfileUi,
-    /// Environment selector and « Éclairage personnel ».
+    /// Environment selector and "Personal lighting".
     env_ui: ui::environment::EnvironmentUi,
     /// The selector's folder fetches started (the selector was opened).
     env_scan: bool,
-    /// « Éclairage personnel » was open last frame (captures on opening).
+    /// "Personal lighting" was open last frame (captures on opening).
     lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
@@ -1839,7 +1839,7 @@ impl App {
         }
     }
 
-    /// Escape / « Réinitialiser la caméra » (handle_reset_view).
+    /// Escape / "Reset camera" (handle_reset_view).
     fn reset_camera_view(&mut self) {
         let was = self.camera.mouselook();
         self.camera.handle_reset_view(&mut self.world.agent, &self.settings.camera);
@@ -2410,7 +2410,7 @@ impl App {
     }
 
     /// Plays an interface sound when the settings allow it (make_ui_sound /
-    /// find_ui_sound: its play flag, its asset, the "Sons de l'interface"
+    /// find_ui_sound: its play flag, its asset, the "Interface sounds"
     /// switch).
     fn play_ui_sound(&mut self, s: UiSound) {
         if !self.settings.audio.ui_sounds {
@@ -2702,9 +2702,9 @@ impl App {
         self.teleport_to_location(l.region, l.pos);
     }
 
-    /// The box « Ne plus afficher » of a teleport confirmation was ticked and
-    /// the teleport accepted: later ones start at once (Préférences ›
-    /// Interface › Téléportation brings the question back).
+    /// The box "Do not show again" of a teleport confirmation was ticked and
+    /// the teleport accepted: later ones start at once (Preferences ›
+    /// Interface › Teleport brings the question back).
     fn stop_confirming_teleports(&mut self) {
         self.settings.confirm_teleports = false;
         self.settings.save();
@@ -3604,7 +3604,7 @@ impl App {
         }
     }
 
-    /// Place profiles and « Lieux »: arrivals saved in the history, landmark
+    /// Place profiles and "Places": arrivals saved in the history, landmark
     /// assets and region handles, folders and group names asked by the
     /// lists, region names resolved, parcel requests.
     fn update_places(&mut self) {
@@ -3675,7 +3675,7 @@ impl App {
         self.world.place_details.update(&self.world.map, &mut self.world.landmarks, now);
         let mut cmds = self.world.place_details.take_commands();
         cmds.extend(self.world.landmarks.take_commands());
-        // « Rechercher »: a key typed in the people tab waits for its name
+        // "Search": a key typed in the people tab waits for its name
         let names = &self.world.social.avatar_names;
         if let Some(id) = self.world.search.resolve_key(|id| names.complete(id), now) {
             names.want(&id);
@@ -5420,7 +5420,7 @@ impl App {
             self.demo_buy_currency();
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
-        // the window, moving), Loup Violet looks at a point north of him
+        // the window, moving), Violet Wolf looks at a point north of him
         if self.demo && std::env::var_os("AURORA_DEMO_LOOKAT").is_some() {
             self.demo_look_at = true;
             if let Some(g) = self.gfx.as_ref() {
@@ -6061,7 +6061,7 @@ impl App {
     }
 
     /// toggleTeleportHistory (llviewermenu.cpp) without the standalone
-    /// history floater: hide Lieux when shown, else open it on the history.
+    /// history floater: hide Places when shown, else open it on the history.
     fn toggle_teleport_history(&mut self) {
         if self.panels.places {
             self.panels.places = false;
@@ -6784,7 +6784,7 @@ impl App {
                 if let Some(id) = ui::profile::take_open_request(&ctx) {
                     self.profile_ui.open(&mut self.world, id);
                 }
-                // the "Flux" tab: a browser on the grid's web profiles
+                // the "Feed" tab: a browser on the grid's web profiles
                 let paths = self.media.plugins(&self.settings.media).cloned();
                 let browser = crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language());
                 let cookie = self.media.openid.cookie();
@@ -6841,7 +6841,7 @@ impl App {
                         ui::profile::ProfileAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
                     }
                 }
-                // place profiles: standalone windows and « Lieux »
+                // place profiles: standalone windows and "Places"
                 let mut c = ui::place_details::Ctx {
                     p: &p,
                     world: &self.world,
@@ -6903,7 +6903,7 @@ impl App {
                         PlacesAction::StopConfirmingTeleports => self.stop_confirming_teleports(),
                     }
                 }
-                // « Rechercher »
+                // "Search"
                 let search_home = self.panels.search.then(|| self.search_home()).flatten();
                 let search_session = self.search_session();
                 // the session's cookie only goes with a page opened with the
@@ -7482,7 +7482,7 @@ impl ApplicationHandler for App {
                 self.demo_place = Some(source);
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_PLACES=favoris|reperes|historique: « Lieux » on a tab
+            // AURORA_DEMO_PLACES=favoris|reperes|historique: "Places" on a tab
             if let Some(tab) = std::env::var("AURORA_DEMO_PLACES").ok().and_then(|v| ui::places::tab_from_name(&v)) {
                 self.places_ui.open_tab(tab);
                 self.panels.places = true;
@@ -7499,7 +7499,7 @@ impl ApplicationHandler for App {
                 }
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_SEARCH=<tab>[:text]: « Rechercher » on a tab, its
+            // AURORA_DEMO_SEARCH=<tab>[:text]: "Search" on a tab, its
             // search done ("page" in the text: a full page, "xyz": nothing;
             // for land the text is the price limit, 0 by default)
             if let Ok(v) = std::env::var("AURORA_DEMO_SEARCH") {
@@ -7536,7 +7536,7 @@ impl ApplicationHandler for App {
                 self.profile_ui.set_tab(id, tab.parse().unwrap_or(0));
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_LAND=<onglet>[:owner]: About Land on that tab
+            // AURORA_DEMO_LAND=<tab>[:owner]: About Land on that tab
             if let Some((tab, _)) = crate::demo::land::scenario() {
                 self.land_ui.set_tab(&tab);
                 self.panels.about_land = true;
@@ -7550,7 +7550,7 @@ impl ApplicationHandler for App {
             }
             // AURORA_DEMO_CONTACTS=amis|groupes|cercles|detache|ajout: the
             // Contacts tab of Conversations (or its torn-off window, or the
-            // resident picker of « Ajouter... »)
+            // resident picker of "Add...")
             if let Ok(v) = std::env::var("AURORA_DEMO_CONTACTS") {
                 self.panels.chat = true;
                 self.panels.perf = false;
@@ -8310,7 +8310,7 @@ impl ApplicationHandler for App {
                     // Ctrl+F belongs to the window with its own find when the
                     // keyboard is in it (script editor, conversation), or the
                     // pointer over a conversation with the keyboard nowhere:
-                    // the viewer's shortcut on these keys (« Rechercher »)
+                    // the viewer's shortcut on these keys ("Search")
                     // only runs otherwise. The rule: ui::find_shortcut::owner.
                     // The key is the one egui reads, which the window takes.
                     let find_key = matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("f"));

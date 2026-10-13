@@ -96,7 +96,7 @@ pub fn filter_id() -> egui::Id {
 /// Ctrl+F was pressed for the window this `ui` is in: the keyboard is in
 /// one of `own` fields, or it is nowhere while the pointer is over this
 /// window. Another window with the keyboard (the script editor, a search
-/// field) keeps its shortcut, and the viewer's own (« Rechercher ») runs
+/// field) keeps its shortcut, and the viewer's own ("Search") runs
 /// when the pointer is over the world or another window. The key is
 /// consumed when taken. The rule itself, shared with the app, is
 /// `find_shortcut::owner`.

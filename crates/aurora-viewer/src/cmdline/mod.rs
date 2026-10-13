@@ -1,4 +1,4 @@
-//! The chat bar as a command line (Firestorm's « Commandes » preferences).
+//! The chat bar as a command line (Firestorm's "CmdLine" preferences).
 //!
 //! Port of cmd_line_chat (indra/newview/chatbar_as_cmdline.cpp, Firestorm):
 //! local chat whose first word is one of the configured command names is

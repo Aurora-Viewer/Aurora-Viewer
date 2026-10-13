@@ -1,18 +1,18 @@
 //! Place profiles, drawn in the Places window (`places.rs`) or in the
-//! standalone "Détails de l'emplacement" windows of FSFloaterPlaceDetails
+//! standalone "Place Details" windows of FSFloaterPlaceDetails
 //! (FSUseStandalonePlaceDetailsFloater). Two panels, as in Firestorm
 //! (indra/newview/llpanelplaceinfo.cpp, llpanelplaceprofile.cpp,
 //! llpanellandmarkinfo.cpp, fsfloaterplacedetails.cpp, panel_place_profile.xml,
 //! panel_landmark_info.xml, floater_fs_placedetails.xml, originally LGPL 2.1):
 //! - the place profile of a place link or a teleport history entry
 //!   (LLPanelPlaceProfile, PLACE / TELEPORT_HISTORY): snapshot, area and
-//!   traffic (FIRE-2717), parcel name, "Région : Name (x, y, z)",
+//!   traffic (FIRE-2717), parcel name, "Region: Name (x, y, z)",
 //!   description, maturity. The owner line and the accordions (parcel,
 //!   region, estate, for sale) are only shown by Firestorm for the agent's own
 //!   parcel (AGENT), not for these;
 //! - the landmark profile (LLPanelLandmarkInfo, LANDMARK): snapshot, parcel
 //!   name, region and maturity, parcel owner, description, the item's owner,
-//!   creator and date, traffic and area, title and notes, « Modifier ».
+//!   creator and date, traffic and area, title and notes, "Edit".
 //!
 //! Network state: `world/place_details.rs`.
 
@@ -140,7 +140,7 @@ pub fn landmark_information(area: i32, dwell: f32) -> String {
 }
 
 /// "acquired_date" of the French landmark panel, in SLT:
-/// "mar. 02 avr. 2024 07:42:28"; 0 is "(inconnu)".
+/// "Tue 02 Apr 2024 07:42:28"; 0 is "(unknown)".
 pub fn acquired_date(secs: i64) -> String {
     if secs == 0 {
         return aurora_i18n::tr!("status-unknown").to_owned();
@@ -213,7 +213,7 @@ fn slurl_of(place: &Place, world: &World) -> Option<String> {
     (!region.is_empty()).then(|| crate::slurl::make(&region, place.region_pos))
 }
 
-/// Téléporter of a profile (onTeleportButtonClicked).
+/// "Teleport" of a profile (onTeleportButtonClicked).
 pub fn teleport_action(place: &Place, world: &World) -> Option<PlaceAction> {
     match &place.source {
         Source::Landmark { item, asset } => Some(PlaceAction::TeleportLandmark {
@@ -225,7 +225,7 @@ pub fn teleport_action(place: &Place, world: &World) -> Option<PlaceAction> {
 }
 
 /// The overflow menu of a profile: menu_place.xml for a place link or a
-/// history entry ("Créer un repère" only for the agent's own parcel,
+/// history entry ("Create landmark" only for the agent's own parcel,
 /// STORM-411), menu_landmark.xml for a landmark.
 pub fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place) {
     let slurl = slurl_of(place, world);
@@ -290,8 +290,8 @@ impl PlaceDetailsUi {
     }
 }
 
-/// Bottom bar of floater_fs_placedetails.xml (updateVerbs: Téléporter and
-/// Carte enabled with a position; « Modifier » for a landmark) and the
+/// Bottom bar of floater_fs_placedetails.xml (updateVerbs: "Teleport" and
+/// "Map" enabled with a position; "Edit" for a landmark) and the
 /// overflow menu.
 fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, actions: &mut Vec<PlaceAction>) {
     let global = place.global;
@@ -407,7 +407,7 @@ fn small_icon(ui: &mut egui::Ui, name: &str, size: f32, tint: egui::Color32) {
     }
 }
 
-/// Parcel name (SansSerifLarge) and "Région : Name (x, y, z)".
+/// Parcel name (SansSerifLarge) and "Region: Name (x, y, z)".
 fn titles(data: &Shown, place: &Place) -> (String, Option<String>) {
     match data {
         Shown::Parcel(d) => (
@@ -662,7 +662,7 @@ fn landmark_info(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, item: Uuid, data
         ui.label(RichText::new(text).size(12.0).color(p.ink));
     });
     ui.add_space(6.0);
-    // landmark_edit_panel, read only until « Modifier » (not ported yet)
+    // landmark_edit_panel, read only until "Edit" (not ported yet)
     ui.horizontal(|ui| {
         label(ui, p, aurora_i18n::tr!("ui-place-details-title"));
         let mut name = it.as_ref().map(|i| i.name.clone()).unwrap_or_default();

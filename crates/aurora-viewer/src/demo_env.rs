@@ -5,8 +5,8 @@
 //!
 //! - `1`: the selector opens; a sky is picked (frame 2600), a water on top
 //!   (2900), the next sky with the > arrow (3200), a day cycle (3500), then
-//!   « Environnement partagé » (3800, 5 s crossfade back to the region).
-//! - `lighting`: the selector and « Éclairage personnel » open on the region
+//!   "Shared environment" (3800, 5 s crossfade back to the region).
+//! - `lighting`: the selector and "Personal lighting" open on the region
 //!   sky; a sky is picked (2600), then edited (2900: brightness, haze, sun).
 //! - `list`: the selector with its sky list open (2500).
 
@@ -328,7 +328,7 @@ pub fn settings_assets() -> Vec<(Uuid, Settings)> {
 /// A scripted step of the scenario.
 #[derive(Debug, Clone, Copy)]
 pub enum Step {
-    /// Open the selector (and « Éclairage personnel »).
+    /// Open the selector (and "Personal lighting").
     Open {
         lighting: bool,
     },
@@ -336,7 +336,7 @@ pub enum Step {
     /// The > arrow of a list.
     Next(SettingsKind),
     Shared,
-    /// « Éclairage personnel »: brightness and a lower sun.
+    /// "Personal lighting": brightness and a lower sun.
     EditLighting,
     /// Drop the list down.
     OpenList(SettingsKind),

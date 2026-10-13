@@ -271,7 +271,7 @@ pub fn draw(
                 continue;
             }
             let mut lines = Vec::new();
-            // status line first, as LLVOAvatar::idleUpdateNameTagText: "(Absent, Bloqué(e))"
+            // status line first, as LLVOAvatar::idleUpdateNameTagText: "(Away, Blocked)"
             {
                 use crate::world::status::{ANIM_AWAY, ANIM_DO_NOT_DISTURB};
                 let anims = world.animations_of(&o.full_id);

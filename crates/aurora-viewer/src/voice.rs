@@ -23,7 +23,7 @@ pub struct VoiceInputs<'a> {
     pub in_world: bool,
     /// Offline demo: microphone only, no voice server.
     pub offline: bool,
-    /// Preferences open on "Son et voix": keep the microphone open for the meter.
+    /// Preferences open on "Sound and voice": keep the microphone open for the meter.
     pub tuning: bool,
     pub engine: Option<&'a AudioEngine>,
     pub http: &'a reqwest::Client,

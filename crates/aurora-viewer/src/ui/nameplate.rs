@@ -1,6 +1,6 @@
 //! Avatar name plates: the rounded glass plate floating above an avatar,
 //! with its profile picture, a status dot, up to three lines and round
-//! badges (docs/BRANDING.md, « Plaque de nom »). `ui::hud` decides which
+//! badges (docs/BRANDING.md, "Name plate"). `ui::hud` decides which
 //! avatars get one and where; this module holds what a plate shows at each
 //! distance level, its layout, and what it remembers of an avatar from one
 //! frame to the next (level, voice envelope, picture request).
@@ -180,7 +180,7 @@ impl Badges {
 /// Complexity of the avatar (Firestorm FSTagShowARW), when the options show it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Detail {
-    /// On a line of its own: « Complexité : 245 000 ».
+    /// On a line of its own: "Complexity: 245,000".
     pub full: String,
     /// After the username when the plate already has its three lines.
     pub short: String,

@@ -1,8 +1,8 @@
 //! Choose a picture among the inventory's textures and snapshots, like
 //! LLFloaterTexturePicker (floater_texture_ctrl.xml): opened by the
 //! profiles (PICK_TEXTURE, inventory filter IT_TEXTURE | IT_SNAPSHOT) and
-//! by the build floater, which adds the « Défaut », « Vierge »,
-//! « Transparent » and « Aucune » buttons, the UUID field, and lists
+//! by the build floater, which adds the "Default", "Blank",
+//! "Transparent" and "None" buttons, the UUID field, and lists
 //! materials for a PBR material (PICK_MATERIAL), plus published local previews.
 
 use super::widgets::{self, Floater};
@@ -18,7 +18,7 @@ mod tree;
 const INV_TEXTURE: i32 = 0;
 const INV_SNAPSHOT: i32 = 15;
 const INV_MATERIAL: i32 = 26;
-/// IMG_WHITE: « Vierge » of a texture.
+/// IMG_WHITE: "Blank" of a texture.
 const BLANK_TEXTURE: Uuid = aurora_prim::te::BLANK_TEXTURE;
 /// UIImgTransparentUUID.
 const TRANSPARENT_TEXTURE: Uuid = aurora_prim::te::TRANSPARENT_TEXTURE;
@@ -59,7 +59,7 @@ pub struct TexturePicker {
     footer_height: f32,
     /// Images to stream (selected texture preview).
     pub wanted_images: HashSet<Uuid>,
-    /// Build floater options: list materials, the default asset, « Aucune ».
+    /// Build floater options: list materials, the default asset, "None".
     materials: bool,
     default: Option<Uuid>,
     allow_none: bool,
@@ -93,8 +93,8 @@ impl TexturePicker {
         self.generation = self.generation.wrapping_add(1);
     }
 
-    /// The build floater's picker: « Défaut » (`default`), « Vierge »,
-    /// « Transparent », « Aucune » when `allow_none`.
+    /// The build floater's picker: "Default" (`default`), "Blank",
+    /// "Transparent", "None" when `allow_none`.
     pub fn open_with_defaults(&mut self, title: &str, current: Uuid, default: Option<Uuid>, allow_none: bool) {
         self.open(title, current);
         self.default = default;
@@ -102,7 +102,7 @@ impl TexturePicker {
         self.extra_buttons = true;
     }
 
-    /// PICK_MATERIAL: the inventory's materials, « Vierge » = blank material.
+    /// PICK_MATERIAL: the inventory's materials, "Blank" = blank material.
     pub fn open_materials(&mut self, title: &str, current: Uuid) {
         self.open(title, current);
         self.materials = true;
@@ -120,7 +120,7 @@ impl TexturePicker {
         self.preview = preview.then_some(asset);
     }
 
-    /// The asset chosen with "OK" (the picker closes). Nil: « Aucune ».
+    /// The asset chosen with "OK" (the picker closes). Nil: "None".
     pub fn show(
         &mut self,
         ctx: &egui::Context,

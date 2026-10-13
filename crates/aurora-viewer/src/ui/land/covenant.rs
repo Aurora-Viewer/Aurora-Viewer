@@ -1,4 +1,4 @@
-//! "Règlement" (LLPanelLandCovenant::refresh, process_covenant_reply).
+//! "Rules" (LLPanelLandCovenant::refresh, process_covenant_reply).
 
 use super::{View, dim, row, text};
 use crate::theme::Palette;

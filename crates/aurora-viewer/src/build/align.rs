@@ -1,11 +1,11 @@
-//! « Aligner »: align or pack the selected linksets against a side of
+//! "Align": align or pack the selected linksets against a side of
 //! their common bounding box.
 //!
 //! Port of QToolAlign (indra/newview/qtoolalign.cpp, Firestorm, originally
 //! LGPL 2.1): an axis-aligned box around the selection, a cone on each of
 //! its six sides, pointing inwards; a click on a cone moves every object
 //! along that axis, the way it points, until it touches the opposite side
-//! of the box (« force », the default) or, with Shift, packs them there
+//! of the box ("force", the default) or, with Shift, packs them there
 //! without overlapping.
 
 use super::draw::{Painter3d, axis_color, fade};
@@ -105,7 +105,7 @@ pub fn align_boxes(boxes: &[Aabb], target: &Aabb, axis: usize, direction: f32, f
 pub struct Align {
     /// Highlighted cone: (axis, direction).
     pub hover: Option<(usize, f32)>,
-    /// Without Shift: « force » mode (double cones).
+    /// Without Shift: "force" mode (double cones).
     pub force: bool,
 }
 
@@ -139,7 +139,7 @@ fn linkset_box(world: &World, root: usize, now: Instant) -> Option<Aabb> {
 
 impl BuildTool {
     /// QToolAlign::canAffectSelection: every object movable (and modifiable
-    /// with « Modification liée »).
+    /// with "Linked edit").
     fn align_allowed(&self, world: &World) -> bool {
         let prims = self.sel_prims(world);
         !prims.is_empty()

@@ -39,7 +39,7 @@ pub struct OptionsUi {
     pub capture: Option<Capture>,
     capture_modifier: Option<winit::keyboard::KeyCode>,
     clear: Option<(crate::keybinds::Action, usize)>,
-    /// "Tout réinitialiser" confirmation open.
+    /// "Reset everything" confirmation open.
     confirm_reset: bool,
     /// Sound assets being typed (Firestorm name -> text).
     ui_sound_text: std::collections::HashMap<&'static str, String>,
@@ -48,7 +48,7 @@ pub struct OptionsUi {
     pub chat_log_dir: Option<std::path::PathBuf>,
     /// What the last erasing of the transcripts did (set by the app).
     pub chat_log_status: String,
-    /// "Effacer les historiques" confirmation open.
+    /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
 }
 
@@ -612,9 +612,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     r
 }
 
-/// Préférences › Chat › Historique des conversations: what is written to
-/// the account's transcripts and where they are (Firestorm: Préférences ›
-/// Confidentialité, « Journaux et transcriptions »).
+/// Preferences › Chat › Conversation history: what is written to
+/// the account's transcripts and where they are (Firestorm: Preferences ›
+/// Privacy, "Logs & Transcripts").
 fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult) -> bool {
     let mut c = false;
     group(ui, p, aurora_i18n::tr!("ui-options-chat-logs"), |ui| {
@@ -1414,7 +1414,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     toggle(ui, p, &mut s.show_minimap)
                 });
             });
-            // panel_preferences_UI.xml « Utiliser des fenêtres distinctes pour : »
+            // panel_preferences_UI.xml "Use stand-alone windows for:"
             group(ui, p, aurora_i18n::tr!("common-windows"), |ui| {
                 c |= row(
                     ui,
@@ -1425,8 +1425,8 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 );
             });
             // the "ignore" box of TeleportFromLandmark, TeleportToHistoryEntry
-            // and TeleportViaSLAPP (Firestorm: Préférences › Notifications ›
-            // Alertes, one line each)
+            // and TeleportViaSLAPP (Firestorm: Preferences › Notifications ›
+            // Alerts, one line each)
             group(ui, p, aurora_i18n::tr!("common-teleport-2"), |ui| {
                 c |= row(
                     ui,
@@ -1567,7 +1567,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     |ui| toggle(ui, p, &mut s.report_blocks),
                 );
             });
-            // Firestorm: Préférences > Confidentialité > Réponses auto. 1 et 2
+            // Firestorm: Preferences > Privacy > Autoresponse 1 and 2
             let a = &mut s.autoresponse;
             group(ui, p, aurora_i18n::tr!("ui-options-auto-replies"), |ui| {
                 ui.label(
@@ -1916,7 +1916,7 @@ pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devi
     (changed, list.inner.is_some())
 }
 
-/// "Son et voix": devices, the volumes of the top-right panel (same
+/// "Sound and voice": devices, the volumes of the top-right panel (same
 /// settings, so both stay in sync), voice and microphone behaviour.
 fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, audio_changed: &mut bool, refresh: &mut bool) -> bool {
     let mut c = false;
@@ -2251,7 +2251,7 @@ fn binding_cell(
     resp.on_hover_text(tip);
 }
 
-/// "Raccourcis": every rebindable action, two bindings each.
+/// "Shortcuts": every rebindable action, two bindings each.
 fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
     let mut c = false;
     ui.label(
@@ -2289,7 +2289,7 @@ fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsU
     c
 }
 
-/// Préférences › Son et voix › Sons de l'interface: each sound on / off, its
+/// Preferences › Sound and voice › Interface sounds: each sound on / off, its
 /// asset and a preview, the IM modes and the L$ threshold
 /// (FSPanelPreferenceUISounds, fspanelpreferenceuisounds.cpp).
 fn ui_sounds_group(ui: &mut egui::Ui, p: &Palette, a: &mut crate::settings::AudioSettings, st: &mut OptionsUi) -> bool {

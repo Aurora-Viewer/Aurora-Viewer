@@ -478,7 +478,7 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32) -> A
         }
     }
     if let Some(enc) = resp.headers().get(reqwest::header::CONTENT_ENCODING) {
-        // Seen on some assets (Firestorm notes « binary/octet-stream »
+        // Seen on some assets (Firestorm notes "binary/octet-stream"
         // from AWS); the body is used as is, like Firestorm does.
         static SEEN: AtomicBool = AtomicBool::new(false);
         if !SEEN.swap(true, Ordering::Relaxed) {

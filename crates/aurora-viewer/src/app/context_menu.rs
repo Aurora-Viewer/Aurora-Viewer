@@ -20,7 +20,7 @@ impl App {
         let (x, y) = self.cursor_pos;
         let now = Instant::now();
         // an avatar name tag opens its avatar's menu, as a click on the
-        // avatar; its point is the avatar, not the air at the tag ("Zoomer"
+        // avatar; its point is the avatar, not the air at the tag ("Zoom"
         // frames the avatar, like handle_look_at_selection)
         let (picked, point) = if let Some((idx, point, _)) = self.scene.hud_edit_pick(&self.world, (x, y)) {
             // (a HUD does not need the depth of the world behind it)
@@ -195,7 +195,7 @@ impl App {
     }
 
     /// FSFloaterPlaceDetails::showPlaceDetails: a standalone window when
-    /// FSUseStandalonePlaceDetailsFloater is on, else the profile in « Lieux »
+    /// FSUseStandalonePlaceDetailsFloater is on, else the profile in "Places"
     /// (LLFloaterSidePanelContainer::showPanel("places", key)).
     pub(super) fn show_place_profile(&mut self, source: crate::world::place_details::Source) {
         let now = Instant::now();

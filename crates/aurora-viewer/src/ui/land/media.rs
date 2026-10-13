@@ -1,4 +1,4 @@
-//! "Médias" (LLPanelLandMedia: refresh, populateMIMECombo, onCommitType,
+//! "Media" (LLPanelLandMedia: refresh, populateMIMECombo, onCommitType,
 //! onCommitAny; LLFloaterURLEntry for the home page) and the MIME widget
 //! sets of mime_types.xml (LLMIMETypes).
 

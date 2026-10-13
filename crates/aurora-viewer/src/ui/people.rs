@@ -1,4 +1,4 @@
-//! "Personnes" floater (nearby / friends / groups / blocked).
+//! "People" floater (nearby / friends / groups / blocked).
 
 use super::Panels;
 use super::context::{self, AvatarList};
@@ -19,7 +19,7 @@ pub use radar::{RadarData, RadarSettings, age_days, radar_name};
 
 pub enum PeopleAction {
     OpenIm(Uuid),
-    /// "Voir le profil" (menu_people_nearby.xml / friends, Avatar.Profile).
+    /// "View profile" (menu_people_nearby.xml / friends, Avatar.Profile).
     Profile(Uuid),
     OfferTeleport(Uuid),
     /// Open the chat of one of our groups.
@@ -103,7 +103,7 @@ pub(crate) const DEFAULT_SIZE: Vec2 = Vec2::new(462.0, 420.0);
 pub struct PeopleUi {
     pub filter: String,
     pub friends_tab: usize,
-    /// Object name typed in "Bloquer par nom".
+    /// Object name typed in "Block by name".
     pub block_name: String,
     /// Avatars selected in the radar.
     pub radar_selected: Vec<Uuid>,
@@ -226,7 +226,7 @@ fn friends_view_menu(ui: &mut egui::Ui, p: &Palette, s: &mut FriendsSettings) {
 /// Friends (the friends tab of LLPanelPeople, panel_people.xml): the filter
 /// with the view / sort options and the friendship offer, then the friends
 /// online and all of them. Firestorm's button hiding our online status from
-/// every friend is the « Invisible » status of the top bar; removing a
+/// every friend is the "Invisible" status of the top bar; removing a
 /// friend is in the menu of its row.
 fn friends_tab(
     ui: &mut egui::Ui,
@@ -354,7 +354,7 @@ fn friends_tab(
 /// Our groups (the groups tab of LLPanelPeople): a row has the bell of its
 /// notices and the group's profile, nothing else (asked by the human;
 /// Firestorm's bell only opens the notices of the profile, here it turns
-/// them on and off as the profile's « Recevoir les notices » does). The
+/// them on and off as the profile's "Receive group notices" does). The
 /// chat is a double click away, the rest in the menu of the row. Under the
 /// list, how many groups we are in and how many we can still join
 /// (FSCommon::populateGroupCount).
@@ -407,7 +407,7 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &World, filter: &str, actio
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    // the icon « Voir les infos » has in the menu of the row
+                    // the icon "View info" has in the menu of the row
                     if widgets::icon_button(ui, p, "info-circle-filled", aurora_i18n::tr!("people-group-profile"), true) {
                         super::group_profile::request_open(ui.ctx(), g.id);
                     }
@@ -509,7 +509,7 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
                             (flag::PARTICLES, "sparkles-filled", aurora_i18n::tr!("common-block-particles")),
                             (flag::OBJECT_SOUNDS, "volume-off", aurora_i18n::tr!("ui-people-block-object-sounds")),
                         ] {
-                            // a set flag means « not blocked » (LLMute flags)
+                            // a set flag means "not blocked" (LLMute flags)
                             let mut on = m.flags & bit == 0;
                             if menu::toggle(ui, p, icon, label, &mut on) {
                                 actions.push(PeopleAction::BlockFlag {
