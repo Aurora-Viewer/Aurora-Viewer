@@ -1265,7 +1265,9 @@ pub fn draw_beacon(ctx: &egui::Context, world: &World, proj: &super::hud::Projec
         return;
     };
     let base = Vec3::new((t.x - ox as f64) as f32, (t.y - oy as f64) as f32, t.z);
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("track-beacon")));
+    // Firestorm draws the beacon before the HUD attachments
+    // (render_hud_elements, then render_hud_attachments)
+    let painter = super::hud::world_painter(ctx);
     let d = base.distance(world.agent.position);
     let label = format!(
         "{} ({:.0} m)",

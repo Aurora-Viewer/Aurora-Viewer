@@ -1991,7 +1991,10 @@ thread principal est déjà sur l'image suivante. Avec
     transparentes triées, leur glow intercalé, les calques de débogage et de
     sélection, les particules et la fin de la passe (en MSAA, la résolution
     de l'image) ; l'eau, le glow des faces opaques et les imposteurs n'en
-    font pas partie ;
+    font pas partie. `g_post` va jusqu'à la fin de la passe des HUD portés :
+    quand ils sont affichés, il compte aussi les étiquettes du monde,
+    dessinées juste avant eux, et le flou des plaques de nom (0,017 ms en
+    démo avec `AURORA_DEMO_HUDS=1` et `AURORA_DEMO_TAGS=voice`) ;
   - ce que les faces transparentes dessinent : `blend` (faces),
     `blend_tris_k` (leurs triangles, en milliers), `blend_glow`,
     `blend_early` (part des images où leurs fragments invisibles sont

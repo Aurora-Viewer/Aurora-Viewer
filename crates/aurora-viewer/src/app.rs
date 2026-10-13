@@ -6093,6 +6093,63 @@ impl App {
                 );
             }
             Screen::World => {
+                // what belongs to the world first: the HUD attachments, the bars and
+                // every window cover the name tags, the floating texts and the beacon
+                let voice_levels = if self.demo {
+                    static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+                    let mut levels = crate::demo::voice_levels(
+                        ctx.input(|i| i.time),
+                        self.world.agent_id,
+                        self.settings.audio.voice_enabled,
+                        self.talking(),
+                        self.voice.mic_level,
+                        VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
+                    );
+                    crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
+                    levels
+                } else {
+                    self.voice.levels(self.world.agent_id)
+                };
+                let classic_tags = self.classic_name_tags();
+                self.name_tags = ui::hud::draw(
+                    &ctx,
+                    &p,
+                    &self.skin.icons,
+                    &self.world,
+                    projector,
+                    self.camera.position,
+                    !self.camera.mouselook(),
+                    self.settings.name_tag_distance,
+                    &voice_levels,
+                    &mut self.voice_tags,
+                    {
+                        let s = &self.settings;
+                        // debug: on every tag
+                        let all = s.debug.complexity_tags;
+                        (all || s.tag_complexity).then_some(ui::hud::TagComplexity {
+                            values: &self.scene.avatar_complexity,
+                            areas: &self.scene.avatar_area,
+                            too_complex: &self.scene.too_complex,
+                            max: s.max_complexity,
+                            max_area: s.max_attachment_area,
+                            only_too_complex: !all && s.tag_complexity_too_complex_only,
+                            own: all || s.tag_complexity_own,
+                        })
+                    },
+                    self.scene.loading_bars.then(|| self.scene.loading_avatars()),
+                    (!classic_tags).then_some(ui::hud::PlateFrame {
+                        plates: &mut self.plates,
+                        pictures: &self.avatar_pics,
+                        too_complex: &self.scene.too_complex,
+                        demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
+                    }),
+                );
+                if !self.camera.mouselook() {
+                    ui::minimap::draw_beacon(&ctx, &self.world, projector);
+                }
+                aurora_render::end_world_labels(&ctx);
+                ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
+                t = self.ui_parts.lap(Part::UiTags, t);
                 let icons = &self.skin.icons;
                 let layout = &self.skin.layout;
                 let maturity = self
@@ -6219,60 +6276,6 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiBars, t);
                 // overlays
-                let voice_levels = if self.demo {
-                    static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-                    let mut levels = crate::demo::voice_levels(
-                        ctx.input(|i| i.time),
-                        self.world.agent_id,
-                        self.settings.audio.voice_enabled,
-                        self.talking(),
-                        self.voice.mic_level,
-                        VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
-                    );
-                    crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
-                    levels
-                } else {
-                    self.voice.levels(self.world.agent_id)
-                };
-                let classic_tags = self.classic_name_tags();
-                self.name_tags = ui::hud::draw(
-                    &ctx,
-                    &p,
-                    &self.skin.icons,
-                    &self.world,
-                    projector,
-                    self.camera.position,
-                    !self.camera.mouselook(),
-                    self.settings.name_tag_distance,
-                    &voice_levels,
-                    &mut self.voice_tags,
-                    {
-                        let s = &self.settings;
-                        // debug: on every tag
-                        let all = s.debug.complexity_tags;
-                        (all || s.tag_complexity).then_some(ui::hud::TagComplexity {
-                            values: &self.scene.avatar_complexity,
-                            areas: &self.scene.avatar_area,
-                            too_complex: &self.scene.too_complex,
-                            max: s.max_complexity,
-                            max_area: s.max_attachment_area,
-                            only_too_complex: !all && s.tag_complexity_too_complex_only,
-                            own: all || s.tag_complexity_own,
-                        })
-                    },
-                    self.scene.loading_bars.then(|| self.scene.loading_avatars()),
-                    (!classic_tags).then_some(ui::hud::PlateFrame {
-                        plates: &mut self.plates,
-                        pictures: &self.avatar_pics,
-                        too_complex: &self.scene.too_complex,
-                        demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
-                    }),
-                );
-                t = self.ui_parts.lap(Part::UiTags, t);
-                if !self.camera.mouselook() {
-                    ui::minimap::draw_beacon(&ctx, &self.world, projector);
-                }
-                ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 self.draw_hud_scale(&ctx);
                 {
                     let mods = crate::build::Mods {
