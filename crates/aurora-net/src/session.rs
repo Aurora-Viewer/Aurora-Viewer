@@ -358,6 +358,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     }
     sh.stats.sim_count.store(0, Ordering::Relaxed);
     *sh.stats.simulator_motion.lock() = Default::default();
+    sh.stats.simulators.lock().clear();
 }
 
 impl Session<'_> {
@@ -702,6 +703,15 @@ impl Session<'_> {
     }
 
     fn publish_motion(&self) {
+        {
+            let mut all = self.sh.stats.simulators.lock();
+            all.clear();
+            all.extend(self.sims.values().map(|sim| crate::stats::SimulatorMotion {
+                handle: Some(sim.handle),
+                time_dilation: sim.time_dilation,
+                last_packet: Some(sim.circuit.last_recv),
+            }));
+        }
         *self.sh.stats.simulator_motion.lock() = self
             .main
             .and_then(|addr| self.sims.get(&addr))

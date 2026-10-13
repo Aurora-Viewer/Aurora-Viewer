@@ -1578,7 +1578,13 @@ impl Scene {
                 world.agent.body_rotation(),
             )
         } else {
-            o.predicted(now)
+            let (mut p, r) = world.objects.predicted(o, now);
+            // LLViewerObject::interpolateLinearMotion: an avatar that is
+            // extrapolated does not sink into the land
+            if o.is_avatar() && o.parent_id == 0 && o.velocity != Vec3::ZERO {
+                p.z = world.avatar_floor(o, p).map_or(p.z, |floor| p.z.max(floor));
+            }
+            (p, r)
         };
         // a standing avatar is drawn turned toward where it goes
         if o.parent_id == 0

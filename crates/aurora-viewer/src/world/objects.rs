@@ -1,5 +1,6 @@
 //! Object store: every prim, mesh and avatar known to the viewer.
 
+use super::motion::{self, Correction};
 use aurora_net::RegionHandle;
 use aurora_net::objects::{ObjectUpdate, ParticleUpdate, TerseUpdate, TextureAnim};
 use aurora_prim::{ExtraParams, TextureEntry, VolumeParams};
@@ -116,7 +117,12 @@ pub struct Object {
     pub velocity: Vec3,
     pub acceleration: Vec3,
     pub angular_velocity: Vec3,
-    pub update_time: Instant,
+    /// Clock of its region when the simulator last reported its motion
+    /// (`ObjectStore::motion_time`); NaN until the store has stamped it.
+    motion_time: f64,
+    /// The last report put it elsewhere than where it was drawn: the gap
+    /// fades instead of showing at once (motion.rs).
+    correction: Option<Correction>,
     /// Full updates carry parentage; terse motion packets do not confirm it.
     pub full_update_serial: u64,
     pub volume: VolumeParams,
@@ -214,7 +220,8 @@ impl Object {
             velocity: u.velocity,
             acceleration: u.acceleration,
             angular_velocity: u.angular_velocity,
-            update_time: Instant::now(),
+            motion_time: f64::NAN,
+            correction: None,
             full_update_serial: 1,
             volume: u.volume,
             te: u.texture_entry,
@@ -305,7 +312,6 @@ impl Object {
         self.velocity = u.velocity;
         self.acceleration = u.acceleration;
         self.angular_velocity = u.angular_velocity;
-        self.update_time = Instant::now();
         self.volume = u.volume;
         if u.texture_entry.is_some() {
             self.te = u.texture_entry;
@@ -339,14 +345,15 @@ impl Object {
         old != Some(new) || (on && new.mode & TextureAnim::SMOOTH == 0)
     }
 
-    pub fn apply_terse(&mut self, t: &TerseUpdate) {
+    /// Apply a terse update (through `ObjectStore::apply_terse`, which also
+    /// stamps the motion).
+    fn apply_terse(&mut self, t: &TerseUpdate) {
         self.state = t.state;
         self.position = t.position;
         self.rotation = t.rotation;
         self.velocity = t.velocity;
         self.acceleration = t.acceleration;
         self.angular_velocity = t.angular_velocity;
-        self.update_time = Instant::now();
         if let Some(te) = &t.texture_entry
             && self.te.as_ref() != Some(te)
         {
@@ -409,25 +416,51 @@ impl Object {
         None
     }
 
-    /// Dead-reckoned local position/rotation at `now`.
-    pub fn predicted(&self, now: Instant) -> (Vec3, Quat) {
-        let dt = now.duration_since(self.update_time).as_secs_f32().min(0.6);
-        if !self.has_motion() {
-            return (self.position, self.rotation);
-        }
-        let p = self.position + self.velocity * dt + self.acceleration * (0.5 * dt * dt);
-        let r = if self.angular_velocity.length_squared() > 1e-8 {
-            let angle = self.angular_velocity.length() * dt;
-            (Quat::from_axis_angle(self.angular_velocity.normalize(), angle) * self.rotation).normalize()
+    /// Local position and rotation drawn at `now`, `motion_time` being the
+    /// clock of its region (`ObjectStore::motion_time`): where its last
+    /// report sends it (motion.rs), and what is left of the gap that report
+    /// opened with where it was drawn.
+    pub fn predicted(&self, now: Instant, motion_time: f64) -> (Vec3, Quat) {
+        let pose = if self.extrapolates() && self.motion_time.is_finite() {
+            motion::extrapolate(&self.reported(), motion_time - self.motion_time)
         } else {
-            self.rotation
+            (self.position, self.rotation)
         };
-        (p, r)
+        match &self.correction {
+            Some(c) if c.leads_to(self.position, self.rotation) => c.apply(pose, now),
+            _ => pose,
+        }
     }
 
-    /// Whether `predicted` moves it (any velocity, acceleration or spin).
-    pub fn has_motion(&self) -> bool {
+    fn reported(&self) -> motion::Reported {
+        motion::Reported {
+            position: self.position,
+            rotation: self.rotation,
+            velocity: self.velocity,
+            acceleration: self.acceleration,
+            angular_velocity: self.angular_velocity,
+        }
+    }
+
+    /// The simulator reported a motion (any velocity, acceleration or spin).
+    fn extrapolates(&self) -> bool {
         self.velocity != Vec3::ZERO || self.acceleration != Vec3::ZERO || self.angular_velocity != Vec3::ZERO
+    }
+
+    /// Whether `predicted` changes from a frame to the next: a reported
+    /// motion, or a correction still fading (`ObjectStore::expire_corrections`
+    /// ends it).
+    pub fn has_motion(&self) -> bool {
+        self.extrapolates() || self.correction.is_some()
+    }
+
+    /// A report was applied at `now`: stamp it with its region's clock and,
+    /// when it left the object where `drawn` says it was not, let the gap
+    /// fade. True when a correction started.
+    fn stamp_motion(&mut self, motion_time: f64, now: Instant, drawn: Option<(Vec3, Quat)>) -> bool {
+        self.motion_time = motion_time;
+        self.correction = drawn.and_then(|drawn| Correction::between(drawn, (self.position, self.rotation), now));
+        self.correction.is_some()
     }
 }
 
@@ -512,9 +545,90 @@ pub struct ObjectStore {
     /// (llSetText), as of the last `refresh_labelled`.
     avatar_slots: BTreeSet<usize>,
     texted_slots: BTreeSet<usize>,
+    /// Clock of each region, in simulator seconds (motion.rs): what the
+    /// objects of the region extrapolate along. Advanced by the world.
+    motion_clocks: HashMap<RegionHandle, f64>,
+    /// Slots whose object has a correction fading (`expire_corrections`).
+    correcting: Vec<usize>,
 }
 
 impl ObjectStore {
+    /// Clock of a region, for `Object::predicted`.
+    pub fn motion_time(&self, region: RegionHandle) -> f64 {
+        self.motion_clocks.get(&region).copied().unwrap_or(0.0)
+    }
+
+    /// Let the clock of a region run for `seconds` of simulator time.
+    pub fn advance_motion(&mut self, region: RegionHandle, seconds: f64) {
+        if seconds > 0.0 {
+            *self.motion_clocks.entry(region).or_insert(0.0) += seconds;
+        }
+    }
+
+    /// Where an object is drawn at `now`, in its parent's (or its region's)
+    /// coordinates.
+    pub fn predicted(&self, o: &Object, now: Instant) -> (Vec3, Quat) {
+        o.predicted(now, self.motion_time(o.key.region))
+    }
+
+    /// End the corrections that have faded: the objects that do not move
+    /// otherwise are still again, at the place of their last report, and
+    /// the scene hears of it.
+    pub fn expire_corrections(&mut self, now: Instant) {
+        if self.correcting.is_empty() {
+            return;
+        }
+        let mut listed = std::mem::take(&mut self.correcting);
+        listed.retain(|&idx| {
+            let Some(o) = self.slots.get_mut(idx).and_then(Option::as_mut) else {
+                return false;
+            };
+            match &o.correction {
+                Some(c) if c.active(now) => true,
+                Some(_) => {
+                    o.correction = None;
+                    self.touched.note(idx);
+                    false
+                }
+                None => false,
+            }
+        });
+        self.correcting = listed;
+    }
+
+    /// Apply a terse update to the object in `idx`.
+    pub fn apply_terse(&mut self, idx: usize, t: &TerseUpdate) {
+        let now = Instant::now();
+        let Some(region) = self.get(idx).map(|o| o.key.region) else {
+            return;
+        };
+        let clock = self.motion_time(region);
+        let Some(o) = self.get_mut(idx) else {
+            return;
+        };
+        let drawn = o.predicted(now, clock);
+        o.apply_terse(t);
+        if o.stamp_motion(clock, now, Some(drawn)) && !self.correcting.contains(&idx) {
+            self.correcting.push(idx);
+        }
+    }
+
+    /// Apply a full update to an object already known. `moved_frame`: its
+    /// parent changed, so its coordinates are not those it was drawn in.
+    fn apply_full(&mut self, idx: usize, region: RegionHandle, u: ObjectUpdate, moved_frame: bool) {
+        let now = Instant::now();
+        let clock = self.motion_time(region);
+        let Some(o) = self.get_mut(idx) else {
+            return;
+        };
+        let drawn = (!moved_frame).then(|| o.predicted(now, clock));
+        o.apply_full(u);
+        o.parent_region = region;
+        if o.stamp_motion(clock, now, drawn) && !self.correcting.contains(&idx) {
+            self.correcting.push(idx);
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.count
     }
@@ -719,8 +833,11 @@ impl ObjectStore {
         }
         self.by_key.remove(&old);
         self.by_key.insert(key, idx);
+        // (the same age of its motion on the clock of its new region)
+        let clocks = (self.motion_time(old.region), self.motion_time(key.region));
         if let Some(o) = self.get_mut(idx) {
             o.key = key;
+            o.motion_time += clocks.1 - clocks.0;
         }
         if let Some(mut kids) = self.children.remove(&old) {
             for &k in &kids {
@@ -806,10 +923,7 @@ impl ObjectStore {
             if parent_changed {
                 self.unlink(idx);
             }
-            if let Some(o) = self.get_mut(idx) {
-                o.apply_full(u);
-                o.parent_region = region;
-            }
+            self.apply_full(idx, region, u, parent_changed);
             if parent_changed {
                 self.link(idx);
             }
@@ -840,10 +954,9 @@ impl ObjectStore {
             if parent_changed {
                 self.unlink(old);
             }
-            if let Some(o) = self.get_mut(old) {
-                o.apply_full(u);
-                o.parent_region = region;
-            }
+            // (it came under another key: its place is not corrected from
+            // where it was drawn in the other region's coordinates)
+            self.apply_full(old, region, u, true);
             if parent_changed {
                 self.link(old);
             }
@@ -854,8 +967,11 @@ impl ObjectStore {
     }
 
     /// Put a new object in a slot, under its key and its UUID.
-    fn insert(&mut self, obj: Object) -> usize {
+    fn insert(&mut self, mut obj: Object) -> usize {
         let key = obj.key;
+        if obj.motion_time.is_nan() {
+            obj.motion_time = self.motion_time(key.region);
+        }
         let idx = match self.free.pop() {
             Some(i) => i,
             None => {
@@ -1326,5 +1442,117 @@ mod tests {
         // an avatar already sent by region 2 is not carried again
         s.carry(avatar, 1, 2);
         assert_eq!(s.get(avatar).expect("avatar").key, key(2, 50));
+    }
+
+    fn terse(local_id: u32, position: Vec3, velocity: Vec3) -> TerseUpdate {
+        TerseUpdate {
+            local_id,
+            state: 0,
+            is_avatar: true,
+            foot_plane: None,
+            position,
+            velocity,
+            acceleration: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            angular_velocity: Vec3::ZERO,
+            texture_entry: None,
+        }
+    }
+
+    fn near(a: Vec3, b: Vec3) {
+        assert!(a.distance(b) < 1e-3, "{a:?} != {b:?}");
+    }
+
+    #[test]
+    fn a_walker_goes_on_along_the_clock_of_its_own_region() {
+        let mut s = ObjectStore::default();
+        let now = Instant::now();
+        // the region has been running for a while when the walker arrives
+        s.advance_motion(1, 100.0);
+        let mut walker = update(10, AVATAR, "");
+        walker.velocity = Vec3::X * 3.2;
+        let idx = s.upsert(1, walker);
+        let drawn = |s: &ObjectStore| s.predicted(s.get(idx).expect("walker"), now).0;
+        near(drawn(&s), Vec3::ZERO);
+        // 5 s without a report: still walking (0.6 s was the old limit)
+        s.advance_motion(1, 5.0);
+        near(drawn(&s), Vec3::X * 16.0);
+        // the clock of another region is not its own
+        s.advance_motion(2, 50.0);
+        near(drawn(&s), Vec3::X * 16.0);
+        // a silent circuit stops the clock: it stays where it was
+        s.advance_motion(1, 0.0);
+        near(drawn(&s), Vec3::X * 16.0);
+        // carried to region 2 (a border crossing): the same age of motion
+        s.carry(idx, 1, 2);
+        near(drawn(&s), Vec3::X * 16.0);
+        s.advance_motion(2, 1.0);
+        near(drawn(&s), Vec3::X * 19.2);
+    }
+
+    #[test]
+    fn a_report_elsewhere_than_drawn_fades_in_instead_of_jumping() {
+        let mut s = ObjectStore::default();
+        let mut walker = update(10, AVATAR, "");
+        walker.velocity = Vec3::X * 3.0;
+        let idx = s.upsert(1, walker);
+        // new: where its first report puts it, nothing to fade
+        assert!(s.correcting.is_empty());
+        s.advance_motion(1, 1.0);
+        let mut touched = Vec::new();
+        s.take_touched(&mut touched);
+        // drawn at x = 3; the simulator says it stopped at x = 2
+        s.apply_terse(idx, &terse(10, Vec3::X * 2.0, Vec3::ZERO));
+        let applied = Instant::now();
+        let at = |ms: u64| applied + Duration::from_millis(ms);
+        let drawn = |s: &ObjectStore, t: Instant| s.predicted(s.get(idx).expect("walker"), t).0;
+        assert!(drawn(&s, at(0)).x > 2.9, "drawn where it was");
+        let half_way = drawn(&s, at(60)).x;
+        assert!((2.4..2.6).contains(&half_way), "{half_way}");
+        near(drawn(&s, at(700)), Vec3::X * 2.0);
+        // at rest, yet placed every frame while it fades
+        assert!(s.get(idx).expect("walker").has_motion());
+        assert_eq!(s.correcting, [idx]);
+        s.expire_corrections(at(100));
+        assert_eq!(s.correcting, [idx]);
+        touched.clear();
+        s.take_touched(&mut touched);
+        // faded: still again, and the scene is told to place it for good
+        s.expire_corrections(at(700));
+        assert!(s.correcting.is_empty());
+        assert!(!s.get(idx).expect("walker").has_motion());
+        touched.clear();
+        s.take_touched(&mut touched);
+        assert_eq!(touched, [idx]);
+        near(drawn(&s, at(701)), Vec3::X * 2.0);
+    }
+
+    #[test]
+    fn a_local_write_or_a_change_of_parent_shows_at_once() {
+        let mut s = ObjectStore::default();
+        let seat = s.upsert(1, update(5, PRIM, ""));
+        let idx = s.upsert(1, update(10, AVATAR, ""));
+        let now = Instant::now();
+        let drawn = |s: &ObjectStore| s.predicted(s.get(idx).expect("object"), now).0;
+        // the build tools drag it after a report that started a correction
+        s.apply_terse(idx, &terse(10, Vec3::X * 2.0, Vec3::ZERO));
+        assert!(drawn(&s).x < 0.1);
+        s.get_mut(idx).expect("object").position = Vec3::X * 5.0;
+        near(drawn(&s), Vec3::X * 5.0);
+        // sitting: the coordinates become those of the seat, nothing to fade
+        let mut seated = update(10, AVATAR, "");
+        seated.parent_id = 5;
+        seated.position = Vec3::Z * 0.5;
+        s.upsert(1, seated);
+        near(drawn(&s), Vec3::Z * 0.5);
+        assert!(s.get(idx).expect("object").correction.is_none());
+        // a full update that leaves it where it is starts nothing
+        let mut same = update(5, PRIM, "");
+        same.text = "open".into();
+        s.upsert(1, same);
+        assert!(!s.get(seat).expect("seat").has_motion());
+        // a move of more than 10 m is a move, not a correction
+        s.apply_terse(seat, &terse(5, Vec3::X * 40.0, Vec3::ZERO));
+        assert!(!s.get(seat).expect("seat").has_motion());
     }
 }
