@@ -542,21 +542,39 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
 // Local light highlights of legacy materials (multiPointLightF). Our light
 // colors are PBR radiances (diffuse divided by pi): SL's classic light
 // colors are those over pi.
-fn legacy_local_spec(spec: vec4<f32>, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
+// A projector's highlight takes the color of its texture, and a face with
+// an environment intensity `env` shows the projector's image (spotLightF).
+fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     var col = vec3<f32>(0.0);
-    if (spec.a <= 0.0) {
+    if (spec.a <= 0.0 && env <= 0.0) {
         return col;
     }
     var lights = light_walk(world_pos, frag);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
         let lt = frame.lights[i];
-        let to_l = lt.pos_radius.xyz - world_pos;
-        let dist = length(to_l);
-        let radius = lt.pos_radius.w;
-        if (dist < radius) {
-            let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
-            let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
-            col += clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        let at = light_at(lt, world_pos);
+        if (at.atten <= 0.0) {
+            continue;
+        }
+        if (spec.a > 0.0) {
+            let s = ll_spec(n, v, at.l, spec.a) * at.atten;
+            col += clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        }
+        if (at.projector && env > 0.0) {
+            // the view reflected to the plane the projector emits from
+            let ref_dir = reflect(-v, n);
+            let ds = dot(ref_dir, lt.proj_dir.xyz);
+            if (ds < 0.0) {
+                let plane = lt.proj_origin.xyz + lt.proj_dir.xyz * (lt.proj_params.x + 0.01);
+                let hit = world_pos + ref_dir * dot(plane - world_pos, lt.proj_dir.xyz) / ds;
+                let stc = lt.proj * vec4<f32>(hit, 1.0);
+                let uv = stc.xy / stc.w;
+                if (stc.z > 0.0 && uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
+                    let levels = projector_levels(lt.proj_tex.x);
+                    let image = projector_specular(lt.proj_tex.x, uv, (1.0 - spec.a) * levels * 0.6, levels);
+                    col += lt.color_falloff.rgb / 3.25 * image.rgb * env;
+                }
+            }
         }
     }
     return col;
@@ -600,7 +618,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
             col = ll_classic_sun_ambient(m.color.rgb, m.n, sh, in.clip.xy, a);
             col = legacy_light(col, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, ll_sun_linear(a), 1.0);
             col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
-                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
+                + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
         }
         col = ll_haze(col, a);
         hazed = true;
@@ -611,7 +629,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0 || m.unlit > 0.0) {
             col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh,
                                frame.sun_color.rgb / PI, 1.0 / PI)
-                + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos, in.clip.xy) + m.emissive;
+                + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) + m.emissive;
         }
     }
     if ((rec.flags.x & FLAG_HIGHLIGHT) != 0u) {

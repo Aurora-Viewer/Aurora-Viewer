@@ -15,6 +15,7 @@ pub mod impostors;
 pub mod inspect;
 pub mod jobs;
 pub mod legacy_mat;
+mod lights;
 pub mod loading;
 mod lod_watch;
 pub mod meshes;
@@ -539,6 +540,9 @@ pub struct Scene {
     /// these instead of every object each frame. May hold removed indices;
     /// readers check the object again.
     pub light_objects: std::collections::BTreeSet<usize>,
+    /// Texture each projector of the frame's light list holds (object
+    /// index: texture, slot), see `lights.rs`.
+    light_textures: HashMap<usize, (Uuid, u32)>,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
@@ -890,6 +894,7 @@ impl Scene {
             system_bounds: Vec::new(),
             visit_tmp: Vec::new(),
             light_objects: Default::default(),
+            light_textures: HashMap::new(),
             mirror_objects: Default::default(),
             selection_wire: HashMap::new(),
             selection_silhouettes: HashSet::new(),

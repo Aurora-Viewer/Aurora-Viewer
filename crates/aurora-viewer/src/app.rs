@@ -13,7 +13,7 @@ use crate::ui_sound::UiSound;
 use crate::world::World;
 use crate::world::env::Environment;
 use aurora_net::{LoginRequest, NetClient, NetCommand, NetEvent, StartLocation, control};
-use aurora_render::{DrawLists, EguiHandOver, FrameParams, PointLight, RenderStats, Renderer};
+use aurora_render::{DrawLists, EguiHandOver, FrameParams, RenderStats, Renderer};
 use glam::{Vec3, Vec4};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -3355,47 +3355,6 @@ impl App {
 
     // ------------------------------------------------------------------ frame
 
-    fn lights(&self) -> Vec<PointLight> {
-        let eye = self.camera.position;
-        let mut lights: Vec<(f32, PointLight)> = Vec::new();
-        for &idx in &self.scene.light_objects {
-            let Some(o) = self.world.objects.get(idx) else {
-                continue;
-            };
-            let Some(l) = o.extra.light else {
-                continue;
-            };
-            let Some(g) = self.scene.gpu.get(idx) else {
-                continue;
-            };
-            if g.hud {
-                continue;
-            }
-            let d = g.center.distance(eye);
-            if d > 96.0 + l.radius * 1.5 {
-                continue;
-            }
-            // the packed light color is already linear (LLLightParams::unpack ->
-            // setLinearColor; pipeline.cpp sends getLightLinearColor() as is),
-            // times 3.25 for the PBR punctual intensity (multiPointLightF)
-            let color = Vec3::new(l.color[0], l.color[1], l.color[2]) * l.color[3] * 3.25;
-            lights.push((
-                d,
-                PointLight {
-                    position: g.center,
-                    // deferred SL lights reach 1.5x their radius with half the
-                    // falloff (pipeline.cpp: getLightRadius() * 1.5,
-                    // getLightFalloff(DEFERRED_LIGHT_FALLOFF = 0.5))
-                    radius: (l.radius * 1.5).clamp(0.1, 30.0),
-                    color,
-                    falloff: l.falloff * 0.5,
-                },
-            ));
-        }
-        lights.sort_by(|a, b| a.0.total_cmp(&b.0));
-        lights.into_iter().take(64).map(|(_, l)| l).collect()
-    }
-
     /// LLAppViewer::idleNameCache: display names of the nearby avatars and
     /// of every name looked up, through the People API once the main
     /// region's capabilities are known (legacy names without it).
@@ -4573,7 +4532,11 @@ impl App {
             self.scene.lists.particles = out;
             t_part = Instant::now();
         }
-        let lights = if in_world { self.lights() } else { Vec::new() };
+        let lights = if in_world {
+            self.scene.local_lights(&self.world, &mut gfx.renderer, self.camera.position)
+        } else {
+            Vec::new()
+        };
         t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
         let probes = if in_world {
             let slots = self.settings.probe_count.clamp(8, 64);

@@ -454,6 +454,74 @@ pub struct PointLight {
     /// Linear color premultiplied by intensity.
     pub color: Vec3,
     pub falloff: f32,
+    /// A light with a texture lights its frustum only, through the texture.
+    pub projector: Option<Projector>,
+}
+
+/// Frustum and texture of a projector (a prim light with a light texture),
+/// as LLPipeline::setupSpotLight gives them to spotLightF.glsl (originally
+/// LGPL 2.1, Linden Research / Firestorm), in world space instead of screen
+/// space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Projector {
+    /// World to the projected texture: after the divide by w, x and y are
+    /// in 0..1 inside the frustum; z < 0 (before the divide) behind its
+    /// near plane.
+    pub matrix: Mat4,
+    /// Apex of the frustum (angular attenuation is taken from it).
+    pub origin: Vec3,
+    /// Direction the projector points to (the prim's -Z).
+    pub direction: Vec3,
+    /// Distance from the apex to the face of the prim the light leaves.
+    pub near: f32,
+    /// Depth of the frustum, from that face to its far plane.
+    pub range: f32,
+    /// Distance from the light at which the texture starts to blur.
+    pub focus: f32,
+    pub ambiance: f32,
+    /// Texture table slot of the projected texture.
+    pub texture: u32,
+}
+
+impl Projector {
+    /// The frustum of a prim at `position` turned by `rotation`, of size
+    /// `scale`: it leaves the prim's -Z face and reaches `reach` (the
+    /// light's radius x 1.5) from the prim. `params`: field of view
+    /// (radians, vertical), focus and ambiance (LLLightImageParams).
+    pub fn new(position: Vec3, rotation: glam::Quat, scale: Vec3, reach: f32, params: Vec3, texture: u32) -> Projector {
+        // a null field of view has no frustum (LL divides by its tangent)
+        let fov = params.x.clamp(0.01, 3.1);
+        let scale = scale.max(Vec3::splat(1e-3));
+        let direction = (rotation * Vec3::NEG_Z).normalize_or(Vec3::NEG_Z);
+        // near plane: the -Z face; the apex is where a frustum of this
+        // field of view has the face's height
+        let face = position + direction * (scale.z * 0.5);
+        let near = (scale.y * 0.5) / (fov * 0.5).tan();
+        let origin = face - direction * near;
+        let far = (reach + near - scale.z).max(near + 1e-3);
+        let light_to_world = Mat4::from_rotation_translation(rotation, origin);
+        // glm::perspective(fov, width / height, near, far)
+        let f = 1.0 / (fov * 0.5).tan();
+        let aspect = scale.x / scale.y;
+        let perspective = Mat4::from_cols(
+            Vec4::new(f / aspect, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, f, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, (far + near) / (near - far), -1.0),
+            Vec4::new(0.0, 0.0, 2.0 * far * near / (near - far), 0.0),
+        );
+        // clip space (-1..1) to texture space (0..1)
+        let bias = Mat4::from_translation(Vec3::splat(0.5)) * Mat4::from_scale(Vec3::splat(0.5));
+        Projector {
+            matrix: bias * perspective * light_to_world.inverse(),
+            origin,
+            direction,
+            near,
+            range: far - near,
+            focus: params.y,
+            ambiance: params.z,
+            texture,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -960,6 +1028,68 @@ impl GpuElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Texture coordinates of a world point, None behind the near plane.
+    fn projected(p: &Projector, at: Vec3) -> Option<Vec3> {
+        let c = p.matrix * at.extend(1.0);
+        (c.z >= 0.0).then(|| c.truncate() / c.w)
+    }
+
+    #[test]
+    fn a_projector_lights_the_frustum_in_front_of_its_face() {
+        // a prim 0.5 m wide and high, 0.2 m deep, pointing down
+        let turn = glam::Quat::IDENTITY;
+        let fov = std::f32::consts::FRAC_PI_2;
+        let p = Projector::new(
+            Vec3::new(10.0, 20.0, 30.0),
+            turn,
+            Vec3::new(0.5, 0.5, 0.2),
+            15.0,
+            Vec3::new(fov, 2.0, 0.3),
+            7,
+        );
+        assert!((p.direction - Vec3::NEG_Z).length() < 1e-6);
+        // the apex is behind the face: half its height at 45 degrees
+        assert!((p.near - 0.25).abs() < 1e-6);
+        assert!((p.origin - Vec3::new(10.0, 20.0, 30.0 - 0.1 + 0.25)).length() < 1e-5);
+        assert!((p.range - (15.0 - 0.2)).abs() < 1e-5);
+        assert_eq!((p.focus, p.ambiance, p.texture), (2.0, 0.3, 7));
+        // on the axis: the middle of the texture
+        let mid = projected(&p, Vec3::new(10.0, 20.0, 25.0)).expect("in front");
+        assert!((mid.truncate() - glam::Vec2::splat(0.5)).length() < 1e-5, "{mid:?}");
+        // at 45 degrees from the axis: its edges
+        let depth = p.origin.z - 25.0;
+        let edge = projected(&p, Vec3::new(10.0 + depth, 20.0, 25.0)).expect("in front");
+        assert!((edge.x - 1.0).abs() < 1e-4 && (edge.y - 0.5).abs() < 1e-4, "{edge:?}");
+        let low = projected(&p, Vec3::new(10.0, 20.0 - depth, 25.0)).expect("in front");
+        assert!((low.x - 0.5).abs() < 1e-4 && low.y.abs() < 1e-4, "{low:?}");
+        // beyond the edge: outside 0..1; above the prim: behind the near plane
+        let out = projected(&p, Vec3::new(10.0 + 2.0 * depth, 20.0, 25.0)).expect("in front");
+        assert!(out.x > 1.0);
+        assert!(projected(&p, Vec3::new(10.0, 20.0, 31.0)).is_none());
+    }
+
+    #[test]
+    fn a_projector_follows_its_prim() {
+        // turned to point east (+X), twice as wide as high
+        let turn = glam::Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2);
+        let p = Projector::new(Vec3::ZERO, turn, Vec3::new(1.0, 0.5, 0.1), 10.0, Vec3::new(1.0, 0.0, 0.0), 0);
+        assert!((p.direction - Vec3::X).length() < 1e-5, "{:?}", p.direction);
+        let mid = projected(&p, Vec3::new(5.0, 0.0, 0.0)).expect("in front");
+        assert!((mid.truncate() - glam::Vec2::splat(0.5)).length() < 1e-4);
+        assert!(projected(&p, Vec3::new(-5.0, 0.0, 0.0)).is_none());
+        // the frustum is as wide as the prim's face is (aspect 2): at the
+        // same angle, the height leaves it and the width does not
+        let d = 5.0 - p.origin.x;
+        let half = d * (0.5f32).tan();
+        let high = projected(&p, Vec3::new(5.0, half * 1.5, 0.0)).expect("in front");
+        let wide = projected(&p, Vec3::new(5.0, 0.0, half * 1.5)).expect("in front");
+        let outside = |t: Vec3| !(0.0..=1.0).contains(&t.x) || !(0.0..=1.0).contains(&t.y);
+        assert!(outside(high) != outside(wide), "{high:?} {wide:?}");
+        // a null field of view stays finite
+        let thin = Projector::new(Vec3::ZERO, turn, Vec3::ONE, 10.0, Vec3::ZERO, 0);
+        assert!(thin.matrix.is_finite() && thin.near.is_finite());
+    }
 
     fn cmd(record: u32) -> DrawCmd {
         DrawCmd {

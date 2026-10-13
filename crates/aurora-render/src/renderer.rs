@@ -48,6 +48,16 @@ const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 struct LightU {
     pos_radius: [f32; 4],
     color_falloff: [f32; 4],
+    // projector (types.rs `Projector`); a point light leaves these at zero
+    proj: [[f32; 4]; 4],
+    /// Apex of the frustum, focus.
+    proj_origin: [f32; 4],
+    /// Direction, depth of the frustum.
+    proj_dir: [f32; 4],
+    /// Near distance, ambiance.
+    proj_params: [f32; 4],
+    /// Texture slot, 1 = projector.
+    proj_tex: [u32; 4],
 }
 
 /// Must match `Frame` in common.wgsl.
@@ -3514,7 +3524,15 @@ impl Backend {
             u.lights[i] = LightU {
                 pos_radius: l.position.extend(l.radius).to_array(),
                 color_falloff: l.color.extend(l.falloff).to_array(),
+                ..LightU::zeroed()
             };
+            if let Some(p) = &l.projector {
+                u.lights[i].proj = p.matrix.to_cols_array_2d();
+                u.lights[i].proj_origin = p.origin.extend(p.focus).to_array();
+                u.lights[i].proj_dir = p.direction.extend(p.range).to_array();
+                u.lights[i].proj_params = [p.near, p.ambiance, 0.0, 0.0];
+                u.lights[i].proj_tex = [p.texture, 1, 0, 0];
+            }
         }
         u
     }

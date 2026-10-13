@@ -758,6 +758,7 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
 | `AURORA_DEMO_PBR_OVERRIDE=1` | Override de matériau GLTF |
 | `AURORA_DEMO_TEXANIM=1` | Animations de texture (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` ou `shell` | Calque lumineux transparent sur une peau lumineuse |
+| `AURORA_DEMO_PROJECTOR=1` ou `point` | Projecteurs (lumières à texture projetée) |
 | `AURORA_DEMO_SKY=<gamma>[,<brume>]` | Ciel EEP classique avec ce gamma |
 | `AURORA_DEMO_OCCLUSION=1` | Mur avec des objets cachés (test d'occlusion) |
 | `AURORA_DEMO_DEBUG="<calques>"` | Calques de débogage |
@@ -782,6 +783,16 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   panneaux alpha — défilement lisse, grille de 4 × 4 images, ping-pong,
   rotation, échelle (masque alpha : prépasse et ombres), un cube animé sur
   une seule face, un matériau legacy (la normal map suit) et une face PBR.
+- **`AURORA_DEMO_PROJECTOR=1|point`** : un projecteur blanc tourné vers un mur
+  à 4,5 m, et un projecteur cyan à 2,5 m du sol tourné vers le bas (flou à
+  partir de 1 m, ambiance 0,3), tous deux avec l'image de démo : quatre
+  quarts de couleur autour d'un disque blanc. À regarder avec
+  `AURORA_DEMO_POS="131,112"` : l'image est projetée sur le mur (vert en
+  haut à gauche, jaune en haut à droite, rouge et bleu en dessous : le haut
+  de l'image suit l'axe Y du prim), le sol n'est éclairé que dans les deux
+  cônes. `point` : les mêmes lumières sans texture, donc ponctuelles, qui
+  éclairent tout autour d'elles ; c'est ce que donnait un projecteur avant
+  d'être géré.
 - **`AURORA_DEMO_GLOW_LAYERS=1|shell`** : deux panneaux « peau » (le premier
   avec un glow de 0,02, le second sans) et, 1 cm devant leur moitié basse, un
   calque rose transparent (alpha de 0 à 1) au glow de 0,02, comme les calques
