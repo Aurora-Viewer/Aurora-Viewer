@@ -24,7 +24,7 @@ use super::texture_picker::TexturePicker;
 use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::World;
-use crate::world::land::{AgentRights, PrimUsage, modifiable_by_agent, owned_by_agent};
+use crate::world::land::{AgentRights, PrimRoom, PrimUsage, modifiable_by_agent, owned_by_agent};
 use aurora_net::{GroupMembership, ParcelInfo, RegionHandle};
 use egui::{RichText, Vec2};
 use std::collections::{HashMap, HashSet};
@@ -521,14 +521,12 @@ fn header(ui: &mut egui::Ui, p: &Palette, v: &View, parcel: &ParcelInfo, map: Op
                 if usage.max > 0 || usage.used > 0 {
                     ui.add_space(2.0);
                     let over = -usage.available();
-                    // the accent while there is room, then the caution and
-                    // the danger colors: the simulator returns what exceeds
-                    let tint = if over > 0 {
-                        Some(p.danger)
-                    } else if usage.fraction() >= 0.9 {
-                        Some(p.warn)
-                    } else {
-                        None
+                    // the accent while there is room, the caution color with
+                    // a quarter left, the danger color with a tenth left
+                    let tint = match usage.room() {
+                        PrimRoom::Plenty => None,
+                        PrimRoom::Low => Some(p.warn),
+                        PrimRoom::Critical => Some(p.danger),
                     };
                     let width = ui.available_width();
                     let gauge = ui

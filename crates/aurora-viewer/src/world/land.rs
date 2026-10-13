@@ -345,6 +345,32 @@ impl PrimUsage {
     }
 }
 
+/// Room left on the owner's land, as the header's gauge colors it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrimRoom {
+    /// More than a quarter of the capacity is free.
+    Plenty,
+    /// A quarter of the capacity or less is left.
+    Low,
+    /// A tenth or less is left, or the capacity is exceeded.
+    Critical,
+}
+
+impl PrimUsage {
+    /// The thresholds are the human's: caution with 25 % left, danger with
+    /// 10 % left.
+    pub fn room(&self) -> PrimRoom {
+        let (left, max) = (i64::from(self.available()), i64::from(self.max));
+        if left * 10 <= max {
+            PrimRoom::Critical
+        } else if left * 4 <= max {
+            PrimRoom::Low
+        } else {
+            PrimRoom::Plenty
+        }
+    }
+}
+
 /// The selected parcel and what was fetched about it.
 #[derive(Debug, Clone)]
 pub struct Selection {
@@ -968,6 +994,20 @@ mod tests {
         // public land has no capacity
         let none = PrimUsage::of(&ParcelInfo::default(), 15000);
         assert_eq!((none.max, none.fraction()), (0, 0.0));
+    }
+
+    #[test]
+    fn the_gauge_warns_with_a_quarter_left_and_alarms_with_a_tenth() {
+        let room = |used: i32| PrimUsage { used, max: 1000 }.room();
+        assert_eq!(room(0), PrimRoom::Plenty);
+        assert_eq!(room(749), PrimRoom::Plenty);
+        // 25 % left
+        assert_eq!(room(750), PrimRoom::Low);
+        assert_eq!(room(899), PrimRoom::Low);
+        // 10 % left, nothing left, more than the land may hold
+        assert_eq!(room(900), PrimRoom::Critical);
+        assert_eq!(room(1000), PrimRoom::Critical);
+        assert_eq!(room(1200), PrimRoom::Critical);
     }
 
     const REGION: RegionHandle = 7;
