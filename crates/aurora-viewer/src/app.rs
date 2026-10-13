@@ -401,6 +401,17 @@ pub struct App {
     capture: Option<(Vec<(u64, std::path::PathBuf)>, bool)>,
 }
 
+/// The bandwidth setting, or AURORA_BANDWIDTH_KBPS for this launch: a value
+/// beyond the range of the Preferences, to measure what a simulator sends
+/// when asked for more (the setting itself is not changed).
+fn bandwidth_kbps(settings: &Settings) -> f32 {
+    std::env::var("AURORA_BANDWIDTH_KBPS")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|kbps| kbps.is_finite())
+        .unwrap_or(settings.bandwidth_kbps as f32)
+}
+
 impl App {
     pub fn new() -> anyhow::Result<App> {
         // found on a background thread while the rest starts
@@ -448,6 +459,7 @@ impl App {
         let cache = crate::settings::cache_dir();
         let disk_cache = crate::cache::DiskCache::new(cache.clone(), settings.cache_size_mb);
         net.set_object_cache_dir(Some(cache.join("objects")));
+        net.set_bandwidth(bandwidth_kbps(&settings));
         let cache_root = cache.clone();
         let egui_ctx = egui::Context::default();
         ui::colors::set(&settings.colors);
@@ -5018,6 +5030,7 @@ impl App {
             self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
             self.net.send(NetCommand::SetDrawDistance(self.settings.draw_distance));
             self.disk_cache.set_limit_mb(self.settings.cache_size_mb);
+            self.net.set_bandwidth(bandwidth_kbps(&self.settings));
         }
         self.handle_actions(actions, event_loop);
         for r in std::mem::take(&mut self.build.ui.requests) {

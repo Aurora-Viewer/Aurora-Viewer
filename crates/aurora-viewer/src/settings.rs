@@ -268,6 +268,9 @@ pub struct Settings {
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
     pub cache_size_mb: u32,
+    /// The most the simulators may send, all channels together, in kb/s
+    /// (Firestorm's ThrottleBandwidthKBPS, with its range and default).
+    pub bandwidth_kbps: u32,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
     /// Volumes and toggles (Firestorm volume panel).
@@ -592,6 +595,7 @@ impl Default for Settings {
             ssr: false,
             anisotropy: 8,
             cache_size_mb: 20480,
+            bandwidth_kbps: 3000,
             chat_bar_width: 0.0,
             audio: AudioSettings::default(),
             media: Default::default(),
@@ -844,6 +848,7 @@ impl Settings {
             _ => 16,
         };
         self.cache_size_mb = self.cache_size_mb.clamp(512, 65536);
+        self.bandwidth_kbps = self.bandwidth_kbps.clamp(50, 3000);
         if !self.chat_bar_width.is_finite() || self.chat_bar_width < 0.0 {
             self.chat_bar_width = 0.0;
         }

@@ -198,8 +198,11 @@ pub enum Command {
     Music(String),
     Ao(bool),
     AoSits(Option<bool>),
-    /// A command Aurora can't do yet (no bandwidth setting, no hover
-    /// height): said in the chat instead of sending the line.
+    /// `bw kbps`: the maximum bandwidth, within the range of Firestorm's
+    /// command (50 to 3,000).
+    Bandwidth(u32),
+    /// A command Aurora can't do yet (no hover height): said in the chat
+    /// instead of sending the line.
     Unavailable(&'static str),
     /// `key2name uuid`: tell the avatar name once known.
     KeyToName(Uuid),
@@ -234,9 +237,6 @@ pub enum Command {
     PasteCamera(CameraSpec),
 }
 
-fn bandwidth_unavailable() -> &'static str {
-    aurora_i18n::tr!("cmdline-mod-aurora-does-not-support-setting-the-maximum-bandwidth-yet")
-}
 fn hover_unavailable() -> &'static str {
     aurora_i18n::tr!("cmdline-mod-aurora-does-not-support-adjusting-avatar-hover-height-yet")
 }
@@ -281,7 +281,7 @@ pub fn parse(text: &str, s: &ChatCommandSettings, mut roll: impl FnMut(u32) -> u
         return i.word().map(|url| Command::Music(url.into()));
     }
     if is(&s.bandwidth) {
-        return i.int().map(|_| Command::Unavailable(bandwidth_unavailable()));
+        return i.int().map(|kbps| Command::Bandwidth(kbps.clamp(50, 3000) as u32));
     }
     if is(&s.ao) {
         return Some(match i.word() {
@@ -496,7 +496,9 @@ mod tests {
             96.0
         );
         assert_eq!(cmd("dd far"), None);
-        assert_eq!(cmd("bw 500"), Some(Command::Unavailable(bandwidth_unavailable())));
+        assert_eq!(cmd("bw 500"), Some(Command::Bandwidth(500)));
+        assert_eq!(cmd("bw 9000"), Some(Command::Bandwidth(3000)));
+        assert_eq!(cmd("bw -4"), Some(Command::Bandwidth(50)));
         assert_eq!(cmd("bw"), None);
         assert_eq!(cmd("cao on"), Some(Command::Ao(true)));
         assert_eq!(cmd("cao off"), Some(Command::Ao(false)));

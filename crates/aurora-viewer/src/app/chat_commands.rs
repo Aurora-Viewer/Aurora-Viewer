@@ -102,6 +102,14 @@ impl App {
                     value0 = format!("{:.0}", self.settings.draw_distance)
                 ));
             }
+            Command::Bandwidth(kbps) => {
+                self.settings.bandwidth_kbps = kbps;
+                self.net.set_bandwidth(kbps as f32);
+                self.report_command(aurora_i18n::tr!(
+                    "app-chat-commands-maximum-bandwidth-set-to-kbps",
+                    value0 = kbps.to_string()
+                ));
+            }
             Command::TeleportToCamera => self.teleport_render_pos(self.camera.position),
             Command::Media { url, mime } => {
                 // LLParcel::setMediaURL / setMediaType on our copy of the

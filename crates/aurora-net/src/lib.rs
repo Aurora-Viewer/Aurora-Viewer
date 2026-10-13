@@ -22,6 +22,7 @@ pub mod social;
 pub mod stats;
 pub mod task_inventory;
 pub mod terrain;
+pub mod throttle;
 pub mod types;
 pub mod xmlrpc;
 
@@ -46,6 +47,11 @@ impl EventSender {
     pub(crate) fn send(&self, ev: NetEvent) -> bool {
         self.0.send((std::time::Instant::now(), ev)).is_ok()
     }
+
+    /// Events the viewer has not taken yet.
+    pub(crate) fn waiting(&self) -> usize {
+        self.0.len()
+    }
 }
 
 /// Handle owned by the viewer: send commands, poll events.
@@ -62,6 +68,8 @@ pub struct NetClient {
     pub fetch_results: crossbeam_channel::Receiver<FetchResult>,
     object_cache_dir: Arc<Mutex<Option<std::path::PathBuf>>>,
     agent_language: Arc<Mutex<(String, bool)>>,
+    /// Bandwidth setting, in kb/s (throttle.rs).
+    bandwidth_kbps: Arc<std::sync::atomic::AtomicU32>,
     caps_http: reqwest::Client,
 }
 
@@ -109,6 +117,7 @@ impl NetClient {
         let controls = Arc::new(Mutex::new(AgentControls::default()));
         let stats = Arc::new(NetStats::default());
         let object_cache_dir = Arc::new(Mutex::new(None));
+        let bandwidth_kbps = Arc::new(std::sync::atomic::AtomicU32::new(throttle::DEFAULT_KBPS as u32));
         let agent_language = Arc::new(Mutex::new((aurora_i18n::language().to_owned(), true)));
         // Asset GETs (ViewerAsset, bake service): same trust as the caps,
         // but like Firestorm's llcorehttp GET (curl without
@@ -137,6 +146,7 @@ impl NetClient {
             stats: stats.clone(),
             object_cache_dir: object_cache_dir.clone(),
             agent_language: agent_language.clone(),
+            bandwidth_kbps: bandwidth_kbps.clone(),
         };
         rt.spawn(async move {
             while let Some(cmd) = cmd_rx.recv().await {
@@ -161,6 +171,7 @@ impl NetClient {
             fetcher,
             fetch_results,
             object_cache_dir,
+            bandwidth_kbps,
             agent_language,
             caps_http: shared_caps_http,
         })
@@ -170,6 +181,14 @@ impl NetClient {
     /// applies to the next session.
     pub fn set_object_cache_dir(&self, dir: Option<std::path::PathBuf>) {
         *self.object_cache_dir.lock() = dir;
+    }
+
+    /// The most the simulators may send, all channels together, in kb/s
+    /// (Firestorm's `ThrottleBandwidthKBPS`); a session under way asks its
+    /// simulator for it within a tick.
+    pub fn set_bandwidth(&self, kbps: f32) {
+        let kbps = kbps.clamp(*throttle::SETTING_KBPS.start(), *throttle::SETTING_KBPS.end());
+        self.bandwidth_kbps.store(kbps as u32, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// LLAgentLanguage::update: keep the choice offline and refresh the sim.

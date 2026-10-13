@@ -23,6 +23,7 @@ use crate::login::{self, LoginError, LoginRequest, LoginResponse};
 use crate::objects;
 use crate::stats::NetStats;
 use crate::terrain;
+use crate::throttle::{self, Throttle};
 use crate::types::*;
 use aurora_llsd::Llsd;
 use aurora_msg::msgs::{self, *};
@@ -134,6 +135,8 @@ pub(crate) struct Shared {
     /// Directory of the per-region object caches (None = disabled).
     pub object_cache_dir: Arc<Mutex<Option<std::path::PathBuf>>>,
     pub agent_language: Arc<Mutex<(String, bool)>>,
+    /// Bandwidth setting, in kb/s (`NetClient::set_bandwidth`).
+    pub bandwidth_kbps: Arc<std::sync::atomic::AtomicU32>,
 }
 
 struct Session<'a> {
@@ -166,6 +169,8 @@ struct Session<'a> {
     /// Object cache of each region, its files read and written off this
     /// loop (session/object_cache.rs).
     object_cache: object_cache::ObjectCaches,
+    /// What the agent's simulator is asked to send at most (throttle.rs).
+    throttle: Throttle,
     /// Mute list download, groups, chat sessions (session_social.rs).
     social: social_net::SocialNet,
     tasks: object_actions::TaskRequests,
@@ -181,6 +186,15 @@ struct Session<'a> {
     inventory_copies: inventory_copies::Pending,
     inventory_merchant_pending: bool,
     next_inventory_callback: u32,
+}
+
+/// The packet counters the bandwidth asked is adjusted from.
+fn packets_counted(stats: &NetStats) -> throttle::Counted {
+    throttle::Counted {
+        received: stats.packets_in.load(Ordering::Relaxed),
+        gaps: stats.seq_gaps.load(Ordering::Relaxed),
+        late: stats.seq_late.load(Ordering::Relaxed),
+    }
 }
 
 fn emit(sh: &Shared, ev: NetEvent) {
@@ -278,6 +292,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         agent_parcel: None,
         pending_named_tp: None,
         object_cache,
+        throttle: Throttle::new(sh.bandwidth_kbps.load(Ordering::Relaxed) as f32, Instant::now()).counting_from(packets_counted(&sh.stats)),
         social: Default::default(),
         tasks: Default::default(),
         land: Default::default(),
@@ -295,6 +310,12 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         next_inventory_callback: 0,
     };
 
+    log::info!(
+        "simulator bandwidth: setting {:.0} kb/s, {:.0} asked at first ({:.0} for the objects)",
+        s.throttle.setting(),
+        s.throttle.asked(),
+        throttle::group(s.throttle.asked())[4]
+    );
     let addr = SocketAddr::V4(SocketAddrV4::new(login.sim_ip, login.sim_port));
     s.add_sim(addr, login.region_handle(), (login.region_size_x, login.region_size_y), true);
     s.set_main(addr, Some(login.seed_capability.clone()));
@@ -485,15 +506,7 @@ impl Session<'_> {
         m.agent_data.circuit_code = self.login.circuit_code;
         self.send(addr, &m, true);
 
-        // Throttle: resend, land, wind, cloud, task, texture, asset (bits/s)
-        let throttles: [f32; 7] = [150_000.0, 170_000.0, 34_000.0, 34_000.0, 800_000.0, 300_000.0, 300_000.0];
-        let mut t = AgentThrottle::default();
-        t.agent_data.agent_id = self.agent_id();
-        t.agent_data.session_id = self.session_id();
-        t.agent_data.circuit_code = self.login.circuit_code;
-        t.throttle.gen_counter = 0;
-        t.throttle.throttles = throttles.iter().flat_map(|f| f.to_le_bytes()).collect();
-        self.send(addr, &t, true);
+        self.send_throttle(addr);
 
         let mut hw = AgentHeightWidth::default();
         hw.agent_data.agent_id = self.agent_id();
@@ -502,6 +515,43 @@ impl Session<'_> {
         hw.height_width_block.height = 1080;
         hw.height_width_block.width = 1920;
         self.send(addr, &hw, true);
+    }
+
+    /// AgentThrottle: what this simulator may send per second on each
+    /// channel (LLViewerThrottleGroup::sendToSim).
+    fn send_throttle(&mut self, addr: SocketAddr) {
+        let mut t = AgentThrottle::default();
+        t.agent_data.agent_id = self.agent_id();
+        t.agent_data.session_id = self.session_id();
+        t.agent_data.circuit_code = self.login.circuit_code;
+        t.throttle.gen_counter = 0;
+        t.throttle.throttles = self.throttle.bits_per_second().iter().flat_map(|f| f.to_le_bytes()).collect();
+        self.send(addr, &t, true);
+    }
+
+    /// The bandwidth asked follows the setting, and the link every five
+    /// seconds (LLViewerThrottle::updateDynamicThrottle); a change goes to
+    /// the agent's simulator, as Firestorm's does.
+    fn update_throttle(&mut self, now: Instant) {
+        let setting = self.sh.bandwidth_kbps.load(Ordering::Relaxed) as f32;
+        let mut changed = false;
+        if setting != self.throttle.setting() {
+            self.throttle = Throttle::new(setting, now).counting_from(packets_counted(&self.sh.stats));
+            log::info!("simulator bandwidth: setting {setting:.0} kb/s, {:.0} asked", self.throttle.asked());
+            changed = true;
+        }
+        self.throttle.note_backlog(self.sh.events.waiting());
+        if let Some(lost) = self.throttle.update_from(now, packets_counted(&self.sh.stats)) {
+            log::info!(
+                "simulator bandwidth: {:.0} kb/s asked ({lost:.1} % of the packets lost in the last 5 s, {} events waiting)",
+                self.throttle.asked(),
+                self.sh.events.waiting()
+            );
+            changed = true;
+        }
+        if changed && let Some(main) = self.main {
+            self.send_throttle(main);
+        }
     }
 
     fn request_caps(&mut self, addr: SocketAddr) {
@@ -801,6 +851,7 @@ impl Session<'_> {
         let now = Instant::now();
         self.publish_motion();
         self.object_cache.save_when_due(now);
+        self.update_throttle(now);
         let stats = self.sh.stats.clone();
         // Deferred CompleteAgentMovement once UseCircuitCode is acked. At
         // login it waits for the ack itself, as llstartup.cpp STATE_WORLD_WAIT
@@ -3671,6 +3722,7 @@ mod event_queue_tests {
             stats: Arc::new(NetStats::default()),
             object_cache_dir: Arc::new(Mutex::new(None)),
             agent_language: Arc::new(Mutex::new(("en".into(), false))),
+            bandwidth_kbps: Default::default(),
         };
         let login = Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
@@ -3720,6 +3772,7 @@ mod event_queue_tests {
             agent_parcel: None,
             pending_named_tp: None,
             object_cache: object_cache::ObjectCaches::new(None).0,
+            throttle: crate::throttle::Throttle::new(crate::throttle::DEFAULT_KBPS, Instant::now()),
             social: Default::default(),
             tasks: Default::default(),
             land: Default::default(),
