@@ -402,7 +402,8 @@ impl App {
                 self.world.map.track_region(&region, pos);
                 self.panels.world_map = true;
             }
-            CtxAction::TeleportToPlace(region, pos) => self.place_confirm = Some((region, pos)),
+            CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
+            CtxAction::TeleportToPlace(region, pos) => self.teleport_to_location(region, pos),
             CtxAction::OpenUrl(url) => {
                 use crate::link_trust::Trust;
                 match crate::link_trust::classify(&url) {

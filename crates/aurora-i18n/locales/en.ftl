@@ -4428,3 +4428,6 @@ search-event-duration = Duration:
 search-event-organizer = Run by:
 search-event-fee = Entry fee:
 search-event-place-info = Show the place details
+ui-context-do-not-show-again = Do not show again
+ui-options-confirm-teleports = Confirm teleports
+ui-options-ask-before-teleporting-to-a-landmark-a-history-entry = Ask before teleporting to a landmark, a history entry or a teleport link

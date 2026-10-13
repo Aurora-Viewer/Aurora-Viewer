@@ -4428,3 +4428,6 @@ search-event-duration = Durée :
 search-event-organizer = Organisateur :
 search-event-fee = Prix d'entrée :
 search-event-place-info = Afficher les détails de l'emplacement
+ui-context-do-not-show-again = Ne plus afficher
+ui-options-confirm-teleports = Confirmer les téléportations
+ui-options-ask-before-teleporting-to-a-landmark-a-history-entry = Demander avant de se téléporter vers un repère, un lieu de l'historique ou un lien de téléportation

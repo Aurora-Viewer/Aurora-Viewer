@@ -602,12 +602,22 @@ pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bo
     answer
 }
 
-/// TeleportViaSLAPP: confirm a teleport asked by a place link. Some(true)
-/// teleports, Some(false) cancels.
-pub fn place_teleport_confirm(ctx: &egui::Context, p: &Palette, region: &str) -> Option<bool> {
+/// TeleportViaSLAPP: the question of a teleport asked by a place link.
+pub fn place_teleport_question(region: &str) -> String {
+    aurora_i18n::tr!("ui-context-do-you-really-want-to-teleport-to", region = region.to_string())
+}
+
+/// A teleport confirmation (TeleportFromLandmark, TeleportToHistoryEntry,
+/// TeleportViaSLAPP: the "okcancelignore" template of notifications.xml).
+/// Some(true) teleports, Some(false) cancels; `dont_ask` is the « Ne plus
+/// afficher » box, which the caller saves as `Settings::confirm_teleports`
+/// once the teleport is accepted. Firestorm keeps the box whatever the
+/// answer (LLNotification::respond, llnotifications.cpp): here « Annuler »
+/// leaves the setting alone, a refused teleport silences nothing.
+pub fn teleport_confirm(ctx: &egui::Context, p: &Palette, id: &str, text: &str, dont_ask: &mut bool) -> Option<bool> {
     use egui::RichText;
     let mut answer = None;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new("place_teleport_confirm")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::new(id)).show(ctx, |ui| {
         ui.set_width(340.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("common-teleport-2"))
@@ -616,15 +626,17 @@ pub fn place_teleport_confirm(ctx: &egui::Context, p: &Palette, region: &str) ->
                 .color(p.ink),
         );
         ui.add_space(6.0);
-        ui.label(
-            RichText::new(aurora_i18n::tr!(
-                "ui-context-do-you-really-want-to-teleport-to",
-                region = region.to_string()
-            ))
-            .size(12.5)
-            .color(p.muted),
+        ui.label(RichText::new(text).size(12.5).color(p.muted));
+        ui.add_space(8.0);
+        super::widgets::checkbox(
+            ui,
+            p,
+            dont_ask,
+            RichText::new(aurora_i18n::tr!("ui-context-do-not-show-again"))
+                .size(12.5)
+                .color(p.muted),
         );
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
             if super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-teleport-3")).clicked() {
                 answer = Some(true);
