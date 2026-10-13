@@ -50,6 +50,7 @@ pub mod places;
 pub mod profile;
 pub mod scripts;
 pub mod search;
+pub mod shape;
 pub mod skin;
 pub mod snap;
 pub mod sound_cues;

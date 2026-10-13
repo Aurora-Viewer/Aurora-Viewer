@@ -143,6 +143,24 @@ struct Region {
 pub fn paint(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: &mut View, size: egui::Vec2) -> egui::Response {
     paint_with_pose(ui, id, model, view, size, None)
 }
+
+/// Appearance hints are buttons in a scrolling list; they do not consume its
+/// wheel or change the camera when the user clicks a minimum/maximum image.
+pub fn paint_hint(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: View, size: egui::Vec2) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
+            rect,
+            callback: Arc::new(Region {
+                id,
+                model,
+                view,
+                pose: None,
+            }),
+        }));
+    }
+    response
+}
 pub fn paint_with_pose(
     ui: &mut egui::Ui,
     id: egui::Id,

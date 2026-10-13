@@ -945,6 +945,14 @@ impl TextureStreamer {
         self.entries.get(id)?.info.map(|i| (i.width, i.height))
     }
 
+    /// Share compressed source bytes with the appearance preview worker.
+    pub fn preview_source(&self, id: &Uuid) -> (Arc<Vec<u8>>, PathBuf) {
+        (
+            self.entries.get(id).map(|e| e.data.clone()).unwrap_or_default(),
+            Self::cache_path(&self.cache_dir, id, true),
+        )
+    }
+
     /// The texture has see-through pixels (None until it is decoded): the
     /// build floater's "Alpha mode" is only offered then.
     pub fn has_alpha(&self, id: &Uuid) -> Option<bool> {

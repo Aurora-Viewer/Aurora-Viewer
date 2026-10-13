@@ -485,6 +485,11 @@ fn facing(dir: Vec3) -> Option<Quat> {
 }
 
 impl Controller {
+    /// Freeze the last local pose for appearance hints; shape deltas are still
+    /// applied independently when each hint is built.
+    pub fn preview_pose(&self) -> (Vec<Quat>, Vec<Vec3>) {
+        (self.rot.clone(), self.pos_delta.clone())
+    }
     pub fn for_control_avatar() -> Self {
         Self {
             control: true,
@@ -875,6 +880,10 @@ impl AnimStreamer {
     /// Gestures wait for preloads to succeed or fail before running steps.
     pub fn asset_settled(&self, id: &Uuid) -> bool {
         self.entries.get(id).is_some_and(|entry| entry.state >= 3)
+    }
+
+    pub fn is_loaded(&self, id: &Uuid) -> bool {
+        self.entries.get(id).is_some_and(|entry| entry.anim.is_some())
     }
 
     /// Register an already-built animation (demo / built-in motions).

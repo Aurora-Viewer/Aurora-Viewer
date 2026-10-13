@@ -3883,6 +3883,10 @@ impl Scene {
         root + Vec3::Z * height
     }
 
+    pub fn preview_pose(&self, avatar: &Uuid) -> (Vec<Quat>, Vec<Vec3>) {
+        self.motions.get(avatar).map(|motion| motion.preview_pose()).unwrap_or_default()
+    }
+
     /// Where a look-at target is (LLHUDEffectLookAt::calcTargetPosition).
     fn look_target_pos(&self, world: &World, source: Uuid, t: &crate::world::lookat::Target, now: Instant) -> Option<Vec3> {
         use crate::world::lookat::{FREELOOK, MOUSELOOK};

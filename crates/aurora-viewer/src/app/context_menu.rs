@@ -225,6 +225,10 @@ impl App {
                 }
             }
             CtxAction::EditWorn(item) => {
+                if Some(item) == crate::shape_editor::worn_shape(&self.world) {
+                    self.open_shape_editor(item);
+                    return;
+                }
                 if let Some(key) = self
                     .world
                     .worn_attachment(&item)

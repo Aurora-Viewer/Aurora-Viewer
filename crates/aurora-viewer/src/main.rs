@@ -32,6 +32,7 @@ mod net_profile;
 mod scene;
 mod screen_rate;
 mod settings;
+mod shape_editor;
 mod slurl;
 mod theme;
 mod ui;

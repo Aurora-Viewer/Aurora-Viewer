@@ -25,6 +25,7 @@ pub mod llm;
 pub mod material;
 pub mod mesh;
 pub mod skeleton;
+pub mod wearable;
 
 pub use anim::{Animation, JointMotion, parse_animation, parse_animation_upload};
 pub use j2k::{DecodeTimings, DecodedImage, J2kInfo, bytes_for_discard, decode_j2k, decode_j2k_timed, j2k_info};

@@ -1186,6 +1186,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PROFILE=<avatar>[:tab]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
+| `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
 | `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets |
@@ -1675,6 +1676,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   settings of the demo, separate from those of the connected viewer.
 - **`AURORA_DEMO_RESTRICTED=1`**: red parcel icons, damage
   enabled, health at 72%.
+
+**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as`**
+opens the editor with a synthetic worn shape, without reading a real inventory or
+connecting to a grid. Category modes select the corresponding controls; `male`
+selects the male shape, `readonly` removes Modify, `nocopy` removes Copy, `dirty`
+opens the unsaved-changes confirmation and `save-as` opens the copy name dialog.
+Combine with `AURORA_DEMO_CLASSIC=1` for a baked system avatar. Move a slider or
+type a value, switch sex, use minimum/maximum
+hints, filter parameters, toggle hints and height units, then Cancel, Save and Save
+As, then reopen the editor to check the saved values. Save receipts and appearance
+updates are simulated only in demo mode. Inspect the preview's framing,
+the persistent footer and the same theme as Appearance; Cancel restores the latest
+server appearance. `--language fr|en`, `AURORA_WINDOW_SIZE` and captures after frame
+900 cover both locales, compact and wide layouts, and asynchronously loaded hints.
+On the grid, also check a rigged body, real baked textures and persistence after
+relogin; only the human connects and performs these checks.
 
 **`AURORA_DEMO_APPEARANCE=gallery|outfits|worn|save|edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:
