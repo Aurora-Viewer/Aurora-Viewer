@@ -1052,6 +1052,7 @@ pub(super) mod tests {
             glow: false,
             pass: super::Pass::Opaque,
             glow_pool: false,
+            system: None,
         };
         for idx in [front, back] {
             scene.gpu[idx].geom = Some(key);

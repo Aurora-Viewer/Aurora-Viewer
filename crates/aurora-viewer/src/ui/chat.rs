@@ -19,6 +19,9 @@ pub struct ChatUi {
     pub has_focus: bool,
     /// Conversation shown in the floater (None = local chat).
     pub selected: Option<uuid::Uuid>,
+    /// Conversation whose entry the list scrolls to: one opened from
+    /// elsewhere (a name's menu, a notification) may be out of its view.
+    reveal: Option<uuid::Uuid>,
     /// The "Contacts" tab is shown instead (FSFloaterContacts docked as
     /// the first tab of FSFloaterIMContainer).
     pub contacts: bool,
@@ -37,6 +40,14 @@ pub struct ChatUi {
 }
 
 impl ChatUi {
+    /// Show a conversation, its entry brought into the view of the list.
+    pub fn open(&mut self, conversation: uuid::Uuid) {
+        self.selected = Some(conversation);
+        self.reveal = Some(conversation);
+        self.show_profile = false;
+        self.contacts = false;
+    }
+
     /// A conversation closed: its filter, find bar and rows go with it.
     pub fn forget(&mut self, conversation: uuid::Uuid) {
         self.searches.remove(&Some(conversation));
@@ -833,6 +844,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
 /// FSFloaterIMContainer have a fixed width too: tab_width="115").
 const LIST_W: f32 = 170.0;
 const ENTRY_W: f32 = 166.0;
+const LIST_ENTRY_H: f32 = 34.0;
 const UNREAD_DOT_R: f32 = 4.0;
 /// Side of the slot every list entry has at its right edge, for its unread
 /// dot or its close button: both are centered in it, on one vertical line
@@ -884,7 +896,7 @@ fn list_entry(
     unread: usize,
     close: Option<&str>,
 ) -> ListEntry {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ENTRY_W, 34.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ENTRY_W, LIST_ENTRY_H), egui::Sense::click());
     // the close button stands over the entry and takes its hover: the entry
     // keeps its hovered face while the pointer is on the button
     let over = resp.hovered() || (close.is_some() && ui.rect_contains_pointer(rect));
@@ -978,6 +990,19 @@ fn list_entry(
     }
 }
 
+/// The part of the conversation list that scrolls, in the `height` left of
+/// its column: with more conversations than fit, the wheel or the bar that
+/// shows at its right edge reaches the others. An entry asked into view
+/// (`scroll_to_me`) is there at once, the window may just have opened.
+fn scrolling_list<R>(ui: &mut egui::Ui, height: f32, entries: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::ScrollArea::vertical()
+        .id_salt("conversation_list")
+        .max_height(height.max(LIST_ENTRY_H))
+        .animated(false)
+        .show(ui, entries)
+        .inner
+}
+
 /// Size of the window before the user resizes it, where there is room.
 const DEFAULT_SIZE: egui::Vec2 = egui::vec2(700.0, 440.0);
 /// The least height it opens with, in a small viewer window.
@@ -1017,9 +1042,7 @@ pub fn show(
     let mut actions = Vec::new();
     let default = default_rect(super::layout::work_area(ctx));
     if let Some(f) = world.social.focus_im.take() {
-        st.selected = Some(f);
-        st.show_profile = false;
-        st.contacts = false;
+        st.open(f);
     }
     let docked = !contacts_settings.torn_off;
     if !docked {
@@ -1044,6 +1067,7 @@ pub fn show(
             ui.vertical(|ui| {
                 ui.set_width(LIST_W);
                 ui.spacing_mut().item_spacing.y = 2.0;
+                let top = ui.cursor().top();
                 // Contacts first (addFloater at START); once torn off the
                 // entry brings its own window up (Firestorm has the toolbar
                 // button for that)
@@ -1075,28 +1099,42 @@ pub fn show(
                     st.contacts = false;
                 }
                 let sessions: Vec<(uuid::Uuid, usize)> = world.social.ims.iter().map(|s| (s.other, s.unread)).collect();
-                for (other, unread) in sessions {
-                    let name = world.session_title(&other);
-                    if !world.is_group_session(&other) {
-                        st.wanted_pics.insert(other);
+                // The conversations scroll under the two entries above, which
+                // stay in reach (the vertical tabs of FSFloaterIMContainer
+                // scroll with the arrows of LLTabContainer, all together).
+                // (kept until its entry is there: the conversation may open
+                // a frame before its first message lists it)
+                let reveal = st.reveal;
+                let left = h - (ui.cursor().top() - top);
+                scrolling_list(ui, left, |ui| {
+                    for (other, unread) in sessions {
+                        let name = world.session_title(&other);
+                        if !world.is_group_session(&other) {
+                            st.wanted_pics.insert(other);
+                        }
+                        let entry = list_entry(
+                            ui,
+                            p,
+                            &name,
+                            Some((pics.get(&other), &name)),
+                            st.selected == Some(other) && !st.contacts,
+                            unread,
+                            Some(close_tip(world, &other)),
+                        );
+                        if reveal == Some(other) {
+                            entry.resp.scroll_to_me(None);
+                            st.reveal = None;
+                        }
+                        if entry.close {
+                            actions.push(ConvAction::Close(other));
+                        } else if entry.resp.clicked() {
+                            st.reveal = None;
+                            st.selected = Some(other);
+                            st.show_profile = false;
+                            st.contacts = false;
+                        }
                     }
-                    let entry = list_entry(
-                        ui,
-                        p,
-                        &name,
-                        Some((pics.get(&other), &name)),
-                        st.selected == Some(other) && !st.contacts,
-                        unread,
-                        Some(close_tip(world, &other)),
-                    );
-                    if entry.close {
-                        actions.push(ConvAction::Close(other));
-                    } else if entry.resp.clicked() {
-                        st.selected = Some(other);
-                        st.show_profile = false;
-                        st.contacts = false;
-                    }
-                }
+                });
             });
             if st.contacts {
                 ui.vertical(|ui| {
@@ -1849,6 +1887,63 @@ mod tests {
             assert_eq!(count(&texts), if cut { 2 } else { 1 }, "{name:?}");
             assert!(!cut || tooltip_shown(&texts, name), "{name:?}");
         }
+    }
+
+    /// More conversations than the list is high: the ones below are out of
+    /// its view, the list scrolls to the one that is opened from elsewhere,
+    /// and the wheel brings the first ones back.
+    #[test]
+    fn conversations_beyond_the_height_of_the_list_are_reached_by_scrolling() {
+        const HEIGHT: f32 = 120.0;
+        let names: Vec<String> = (1..=24).map(|i| format!("Resident{i:02}")).collect();
+        let mut frames = Frames::new();
+        let mut draw = |reveal: Option<usize>, events: Vec<egui::Event>| {
+            let (mut view, mut rects) = (egui::Rect::NOTHING, Vec::new());
+            frames.run(events, |ui| {
+                scrolling_list(ui, HEIGHT, |ui| {
+                    view = ui.clip_rect();
+                    for (i, name) in names.iter().enumerate() {
+                        let e = entry(ui, name, true, false, 0, true);
+                        if reveal == Some(i) {
+                            e.resp.scroll_to_me(None);
+                        }
+                        rects.push(e.resp.rect);
+                    }
+                });
+            });
+            (view, rects)
+        };
+        let (view, rects) = draw(None, Vec::new());
+        assert!(view.height() <= HEIGHT + 1.0, "{view:?}");
+        assert!(view.contains_rect(rects[0]) && !view.intersects(rects[23]));
+        // opened from a notification: its entry comes into view
+        draw(Some(23), Vec::new());
+        let (view, rects) = draw(None, Vec::new());
+        assert!(
+            view.contains_rect(rects[23]) && !view.intersects(rects[0]),
+            "{view:?} {:?}",
+            rects[23]
+        );
+        // the wheel, pointer over the list, goes back to the first ones
+        let over = egui::pos2(rects[23].center().x, view.center().y);
+        draw(None, vec![egui::Event::PointerMoved(over)]);
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 2000.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(None, vec![wheel]);
+        // (the wheel's travel is spread over a few frames)
+        for _ in 0..30 {
+            draw(None, Vec::new());
+        }
+        let (view, rects) = draw(None, Vec::new());
+        assert!(
+            view.contains_rect(rects[0]) && !view.intersects(rects[23]),
+            "{view:?} {:?}",
+            rects[0]
+        );
     }
 
     /// One click at `at` on an entry drawn the same way each frame:

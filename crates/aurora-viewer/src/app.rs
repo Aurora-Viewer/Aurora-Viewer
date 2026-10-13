@@ -1429,6 +1429,7 @@ impl App {
         }
         match ev {
             NetEvent::ObjectProperties(props) => {
+                self.world.on_hud_properties(&props);
                 self.interactions.on_properties(&props);
                 self.build.on_properties(props);
             }
@@ -3984,6 +3985,13 @@ impl App {
             }
             let camera_distance = self.camera.position.distance(self.world.agent.position);
             self.world.agent.update(&self.input, ml, dt, camera_distance);
+            // seated, the agent's position is the one its seat gives it: the
+            // map, the radar, the location bar and the voice read it
+            if self.world.agent.seated
+                && let Some(p) = crate::scene::Scene::seated_agent_position(&self.world, Instant::now())
+            {
+                self.world.agent.follow_seat(p);
+            }
             let frame = crate::camera::FrameInput {
                 dt,
                 now: Instant::now(),
@@ -7637,6 +7645,14 @@ impl ApplicationHandler for App {
                 self.chat_ui.selected = Some(crate::demo::DEMO_LONG_NAME);
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 480.0), conversations);
                 ui::widgets::place_floater(&self.egui_ctx, "people", egui::pos2(8.0, 40.0), people);
+            } else if crate::demo::many_conversations_scenario() {
+                // =many: more conversations than the list shows, the last
+                // one opened as from a notification (the list scrolls to it)
+                self.panels.chat = true;
+                self.panels.perf = false;
+                self.chat_ui
+                    .open(crate::demo::many_conversation(crate::demo::MANY_CONVERSATIONS - 1));
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
             } else if std::env::var_os("AURORA_DEMO_CONV").is_some() {
                 self.panels.chat = true;
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
@@ -8033,6 +8049,12 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            // AURORA_DEMO_CLASSIC: classic avatars, shaped and baked
+            if std::env::var_os("AURORA_DEMO_CLASSIC").is_some() {
+                for ev in crate::demo::classic_events(&self.world.avatar_lib.shape_params) {
+                    self.world.apply(ev);
+                }
+            }
             // AURORA_DEMO_CLOUD=self: our avatar with an invisible head bake,
             // wearing a mesh that cannot be downloaded (issue #121)
             if std::env::var("AURORA_DEMO_CLOUD").is_ok_and(|v| v == "self") {
@@ -8172,6 +8194,35 @@ impl ApplicationHandler for App {
                 self.world.hud_scales = crate::world::hud_scale::HudScales::load(
                     crate::settings::account_dir(&self.world.agent_id).join(crate::world::hud_scale::FILE),
                 );
+                if matches!(
+                    mode.as_str(),
+                    "scale-reattach" | "scale-rename" | "scale-copy" | "scale-temp" | "scale-temp-item" | "scale-temp-instance"
+                ) {
+                    // Deterministic persistence regressions, independent of
+                    // previously saved demo profiles. Disk saves have unit tests.
+                    self.world.hud_scales = crate::world::hud_scale::HudScales::default();
+                    let id = crate::demo::hud::object(31, false).full_id;
+                    if mode == "scale-reattach"
+                        && let Some(item) = self.world.inventory.items.get_mut(&id)
+                    {
+                        item.creator = uuid::Uuid::nil();
+                    }
+                    if matches!(mode.as_str(), "scale-temp" | "scale-temp-item" | "scale-temp-instance") {
+                        self.world.inventory.items.remove(&id);
+                        self.world.inventory.items.remove(&uuid::Uuid::from_u128(8399));
+                        if let Some(root) = self.world.objects.index_of_uuid(&id)
+                            && let Some(o) = self.world.objects.get_mut(root)
+                        {
+                            o.name_values = if mode == "scale-temp-item" {
+                                format!("AttachItemID STRING RW SV {}", uuid::Uuid::from_u128(999_001))
+                            } else if mode == "scale-temp-instance" {
+                                format!("AttachItemID STRING RW SV {id}")
+                            } else {
+                                String::new()
+                            };
+                        }
+                    }
+                }
                 if matches!(mode.as_str(), "zoom" | "edit-zoom" | "drag-zoom") {
                     self.world.hud_zoom = 0.5;
                 }

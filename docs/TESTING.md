@@ -678,10 +678,26 @@ grid.
   HUD without Modify / Move permissions; outline and percentage until frame
   840. `scale-ctrl`, `scale-key`, `scale-secondary` use Ctrl, B or the
   secondary key. `scale-reset` restores 100%; `scale-forget` forgets the
-  profile without changing the current copy. `scale-copy` replaces the HUD
-  with a new UUID with the same name / creator (frame 900) and logs the
-  restored scale. `scale-touch` then clicks the enlarged HUD (frames 880–900).
+  profile without changing the current copy. `scale-touch` then clicks the
+  enlarged HUD (frames 880–900).
   The profiles of these scenarios stay in the demo account folder.
+- `scale-reattach`, `scale-rename`, `scale-copy`, `scale-temp`, `scale-temp-item`,
+  `scale-temp-instance`:
+  start at 100%, enlarge with the HUD key
+  (frame 720), remove the whole linkset and reattach it with new object UUIDs
+  (frame 900). `scale-reattach` keeps the same item without inventory creator
+  metadata; `scale-rename` renames it while detached. `scale-copy` creates a
+  new inventory UUID with a different inventory label but the same object name
+  and creator. `scale-temp` has no inventory item or AttachItemID, like a
+  temporary experience HUD; `scale-temp-item` has a foreign item UUID that
+  changes between appearances and cannot be fetched from our inventory.
+  `scale-temp-instance` uses the rezzed UUID itself as AttachItemID, matching
+  LLViewerObject::isTempAttachment, with no per-instance inventory profile.
+  The real full ObjectProperties request supplies the common name / creator.
+  All six must restore
+  161.1%, including the child and floating text. Profiles are isolated in
+  memory for these scenarios; unit tests cover saving and restarting.
+  Suggested screenshots: 710,760,920.
 - `drag`: grabs the child with ALT (frame 720), moves the whole HUD,
   releases ALT before the click (frame 800), then saves the position on
   left release (frame 840) without touching any script.
@@ -742,9 +758,15 @@ To check with these scenarios:
 - HUD key + wheel: local size from 10% to 800%, Shift for finer steps,
   with no camera zoom nor media scrolling. Right click: "Reset to
   100%" and "Forget saved size". New copies take
-  the profile of the same inventory name / creator on this account; copies
+  the profile of the same object name / creator on this account, including
+  temporary experience HUDs without an inventory item; copies
   already worn keep their independent sizes. Check after a restart,
   detach / reattach, clicking the buttons and moving the HUD.
+  The same inventory item keeps its own size after reattachment or renaming,
+  even before inventory metadata arrives. Separately resized items with the
+  same name / creator must also keep their individual sizes after reattachment.
+  Resize a temporary experience HUD, stand to remove it, then sit again:
+  the new instance must restore the saved size. Verify after restarting too.
 - Demo inventory linked to the current outfit, to test detaching and
   the display in the inventory.
 - World › HUDs menu: show / hide, zoom out / zoom in and normal
@@ -759,6 +781,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
+| `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
@@ -797,6 +820,19 @@ To check with these scenarios:
   must contain "avatar … (own) shown after 3.0 s". Screenshots with
   `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=240,1200`: cloud, then
   avatar.
+- **`AURORA_DEMO_CLASSIC=1`**: the two avatars of the plaza become classic
+  avatars, the system body with a skin bake whose alpha is soft in a band
+  at the waist and cut by a row of holes (an alpha layer), and a hair bake
+  in strands that fade out. Each has a shape far from the default one: ours
+  male with long hair at the back, the wolf heavy (body fat, belly) with
+  big hair and pigtails. The bodies must be solid (the band at
+  the waist shows nothing of what is behind), cut out by the holes, each
+  with its own build; the hair shows its strands and what is behind them
+  where they fade. With `AURORA_DEMO_CAMERA=close,640,500,45` and
+  `AURORA_CAPTURE_FRAMES=700` (1280 × 800): our avatar's back and hair in
+  close-up; with `AURORA_DEMO_POS="133.6,127.9"`, `AURORA_DEMO_CAMERA=ml`
+  and frame 660: the wolf from the front (a grey silhouette, it is over the
+  complexity limit of the demo, but with its build).
 
 ## Rendering and environment
 
@@ -1408,7 +1444,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CONV=1|names[:narrow|wide]`**: `1` opens the conversation of
+- **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many`**: `1` opens the conversation of
   the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user
   name, wide and accented letters) and a conference with a long title
@@ -1420,7 +1456,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   distance, without covering anything; the windows keep the requested width;
   the whole name is shown when hovering a cut name (for a screenshot:
   `AURORA_DEMO_POINTER="85,633,s"` on the conference, `"120,377,s"` on a
-  nearby resident, 1600 × 900 window).
+  nearby resident, 1600 × 900 window). `many` gives 24 conversations to a
+  Conversations window of 600 × 320 px and opens the last one: the window
+  keeps its size, Contacts and Nearby chat stay at the top of the list, the
+  conversations scroll under them (wheel, or the bar that shows at the
+  right edge of the list under the pointer) and the list is scrolled to the
+  conversation that is open.
 - **`AURORA_DEMO_RADAR=1|tp|friends|groups|profile`**: the People window.
   `1`: residents at every range in "Near you" (with
   `AURORA_DEMO_TAGS=1`, those of the name plates, several of whom have a

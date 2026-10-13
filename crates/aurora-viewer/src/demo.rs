@@ -480,6 +480,38 @@ pub fn long_names_scenario() -> Option<(egui::Vec2, egui::Vec2)> {
     })
 }
 
+/// AURORA_DEMO_CONV=many: more conversations than the list of the
+/// Conversations window shows at once.
+pub const MANY_CONVERSATIONS: u32 = 24;
+
+pub fn many_conversation(i: u32) -> Uuid {
+    Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0001_0000_0000 | i as u128)
+}
+
+pub fn many_conversations_scenario() -> bool {
+    std::env::var("AURORA_DEMO_CONV").is_ok_and(|v| v == "many")
+}
+
+/// One instant message from each of `MANY_CONVERSATIONS` residents.
+pub fn many_conversation_events(agent: Uuid) -> Vec<NetEvent> {
+    (0..MANY_CONVERSATIONS)
+        .map(|i| {
+            NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: many_conversation(i),
+                from_name: format!("Resident{:02} Demo", i + 1),
+                to_agent_id: agent,
+                dialog: 0,
+                session_id: Uuid::nil(),
+                message: aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset").into(),
+                offline: false,
+                from_group: false,
+                binary_bucket: Vec::new(),
+                timestamp: 0,
+            })
+        })
+        .collect()
+}
+
 /// Instant messages, a conference invitation, a local chat line and two
 /// nearby avatars, all with names longer than their lists.
 fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
@@ -2820,6 +2852,9 @@ pub fn events() -> Vec<NetEvent> {
     if long_names_scenario().is_some() {
         ev.extend(long_name_events(agent));
     }
+    if many_conversations_scenario() {
+        ev.extend(many_conversation_events(agent));
+    }
     ev
 }
 
@@ -3256,6 +3291,90 @@ pub fn own_rigged_events(wearer: u32) -> Vec<NetEvent> {
         handle: HANDLE,
         objects: vec![worn],
     }]
+}
+
+/// Bakes of AURORA_DEMO_CLASSIC: a skin whose alpha is partly soft and cut
+/// by holes (an alpha layer), and hair in strands that fade out.
+pub const TEX_BAKE_SKIN: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0030);
+pub const TEX_BAKE_HAIR: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0031);
+
+/// Pixels of the classic avatar bakes (RGBA8, 128 × 128).
+fn bake_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    const N: u32 = 128;
+    let hair = *id == TEX_BAKE_HAIR;
+    if !hair && *id != TEX_BAKE_SKIN {
+        return None;
+    }
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    for y in 0..N {
+        for x in 0..N {
+            let (u, v) = (x as f32 / N as f32, y as f32 / N as f32);
+            if hair {
+                // strands along v, opaque at their root and fading to nothing
+                let strand = 0.5 + 0.5 * (u * std::f32::consts::TAU * 24.0).sin();
+                let a = (strand * 1.6 - 0.2).clamp(0.0, 1.0) * (1.15 - v).clamp(0.0, 1.0);
+                let shade = 0.55 + 0.45 * strand;
+                px.extend([(150.0 * shade) as u8, (96.0 * shade) as u8, (52.0 * shade) as u8, (a * 255.0) as u8]);
+            } else {
+                // soft alpha in a band (blended, the body would show what is
+                // behind it) and a row of holes
+                let band = if (0.40..0.60).contains(&v) {
+                    0.35 + 0.5 * (v - 0.5).abs() / 0.1
+                } else {
+                    1.0
+                };
+                let (cx, cy) = ((x % 32) as f32 - 16.0, y as f32 - 100.0);
+                let hole = cx * cx + cy * cy < 36.0;
+                let a = if hole { 0.0 } else { band };
+                let tone = 0.9 + 0.1 * (u * 40.0).sin() * (v * 40.0).sin();
+                px.extend([(214.0 * tone) as u8, (168.0 * tone) as u8, (140.0 * tone) as u8, (a * 255.0) as u8]);
+            }
+        }
+    }
+    Some((px, N, N))
+}
+
+/// AURORA_DEMO_CLASSIC: the two avatars of the plaza as classic avatars, the
+/// system body with bakes whose alpha is not only 0 or 1 and two shapes far
+/// from the default one: ours male with long hair at the back, the wolf
+/// heavy with big hair and pigtails. Their bodies must be solid (never
+/// see-through), cut by the holes of the alpha layer, each with its own
+/// build; the hair shows its strands.
+pub fn classic_events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEvent> {
+    use crate::scene::avatar::{BAKES, IMG_DEFAULT_AVATAR};
+    let mut bakes = TextureEntry::default();
+    for (slot, name, _) in BAKES {
+        if let Some(f) = bakes.faces.get_mut(slot) {
+            f.texture = match name {
+                "head" | "upper" | "lower" => TEX_BAKE_SKIN,
+                "hair" => TEX_BAKE_HAIR,
+                _ => IMG_DEFAULT_AVATAR,
+            };
+        }
+    }
+    let bakes = Arc::new(bakes);
+    // (parameter, weight): male 80, body fat 637, belly 157, breasts 105,
+    // hair volume 763, hair front / sides / back 133 to 135, pigtails 785
+    let looks: [(Uuid, &[(i32, f32)]); 2] = [
+        (DEMO_AGENT, &[(80, 1.0), (135, 0.8)]),
+        (
+            DEMO_LOUP,
+            &[(637, 1.0), (157, 1.0), (105, 0.9), (763, 1.0), (133, 1.0), (134, 1.0), (785, 1.0)],
+        ),
+    ];
+    looks
+        .into_iter()
+        .map(|(avatar_id, changed)| {
+            NetEvent::Appearance(aurora_net::AvatarAppearance {
+                avatar_id,
+                texture_entry: Some(bakes.clone()),
+                visual_params: shapes.values_with(changed),
+                cof_version: 1,
+                hover_height: 0.0,
+                attachments: 0,
+            })
+        })
+        .collect()
 }
 
 /// Mesh worn in AURORA_DEMO_CLOUD=self: an asset the asset server does not
@@ -4282,6 +4401,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if let Some(picture) = tags::picture_pixels(id) {
         return Some(picture);
+    }
+    if let Some(bake) = bake_texture(id) {
+        return Some(bake);
     }
     const N: u32 = 64;
     let tau = std::f32::consts::TAU;
