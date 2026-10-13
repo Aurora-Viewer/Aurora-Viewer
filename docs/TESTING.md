@@ -1259,8 +1259,8 @@ grille.
   pouvoirs.
 - **`AURORA_DEMO_LAND_PRIMS=<utilisés>[,<pas>]`** : avec `AURORA_DEMO_LAND`,
   les objets du terrain du propriétaire dans la région (sur 15 000) ; la
-  jauge de l'en-tête est violette, orange quand il reste 25 % ou moins
-  (`11500`), rouge quand il reste 10 % ou moins (`13900`, ou `16200` au-delà
+  jauge de l'en-tête est violette, orange quand il reste 20 % ou moins
+  (`12200`), rouge quand il reste 10 % ou moins (`13900`, ou `16200` au-delà
   de la capacité). Avec un pas (`10500,450`),
   chaque réponse du simulateur de démo en compte autant de plus : la
   jauge avance toute seule à chaque rafraîchissement de la parcelle

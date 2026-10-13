@@ -522,7 +522,7 @@ fn header(ui: &mut egui::Ui, p: &Palette, v: &View, parcel: &ParcelInfo, map: Op
                     ui.add_space(2.0);
                     let over = -usage.available();
                     // the accent while there is room, the caution color with
-                    // a quarter left, the danger color with a tenth left
+                    // a fifth left, the danger color with a tenth left
                     let tint = match usage.room() {
                         PrimRoom::Plenty => None,
                         PrimRoom::Low => Some(p.warn),
