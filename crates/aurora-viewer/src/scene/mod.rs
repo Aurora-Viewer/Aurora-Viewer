@@ -1643,6 +1643,13 @@ impl Scene {
         Self::object_transform_in(world, idx, now, depth, None)
     }
 
+    /// Object position before its own avatar shape and hover offsets.
+    /// Camera focus must use this directly: adding then subtracting offsets
+    /// loses precision and couples the view to the renderer's pose timing.
+    pub fn object_transform_unshifted(world: &World, idx: usize, now: Instant) -> Option<Xf> {
+        Self::object_transform_raw(world, idx, now, 0, None)
+    }
+
     /// Where our avatar's object is (render space) while it sits on another:
     /// its seat-relative position through the seat's transform, without the
     /// shape offset of the drawn root (sitting branch of
@@ -1661,7 +1668,7 @@ impl Scene {
         let (p, r, hud) = Self::object_transform_raw(world, idx, now, depth, cache)?;
         let o = world.objects.get(idx)?;
         let dz = if o.is_avatar() {
-            world.avatar_root_dz.get(&o.full_id).copied().unwrap_or(0.0)
+            world.avatar_shape_dz.get(&o.full_id).copied().unwrap_or(0.0) + world.appearance_hover(&o.full_id)
         } else {
             0.0
         };
@@ -3710,7 +3717,7 @@ impl Scene {
         // gather work: (slot, anims)
         #[allow(clippy::type_complexity)]
         let mut work: Vec<(usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid, Instant)> = Vec::new();
-        let mut root_dz: Vec<(Uuid, f32)> = Vec::new();
+        let mut shape_dz: Vec<(Uuid, f32)> = Vec::new();
         let mut posed: Vec<(Uuid, usize)> = Vec::new();
         let owners: Vec<(Uuid, u32)> = self.palette_slots.iter().map(|(k, v)| (*k, *v)).collect();
         let changed = self.changed_skeletons(world);
@@ -3793,10 +3800,10 @@ impl Scene {
                         && now.duration_since(s.at).as_secs_f32() < skeleton_max_age(&owner)
                 });
             let (base, dz) = match self.skeletons.get(&owner).filter(|_| cached) {
-                Some(s) => (s.base.clone(), s.root_dz - s.hover_height + world.appearance_hover(&owner)),
+                Some(s) => (s.base.clone(), s.shape_dz),
                 None => self.skeleton_of(world, owner, idx, now),
             };
-            root_dz.push((owner, dz));
+            shape_dz.push((owner, dz));
             work.push((slot as usize, motions, base, owner, pose_now));
             posed.push((owner, slot as usize));
         }
@@ -3826,8 +3833,8 @@ impl Scene {
         // joint matrices for the attachments (rest -> posed, skeleton space)
         let joints = rig.len().min(anim::PALETTE_JOINTS);
         world.avatar_poses.retain(|id, _| posed.iter().any(|p| p.0 == *id));
-        world.avatar_root_dz.clear();
-        world.avatar_root_dz.extend(root_dz);
+        world.avatar_shape_dz.clear();
+        world.avatar_shape_dz.extend(shape_dz);
         self.skeletons
             .retain(|id, _| world.avatar_poses.contains_key(id) || posed.iter().any(|p| p.0 == *id));
         if self.skeleton_member_of.len() > 4 * self.skeletons.values().map(|s| s.members.len()).sum::<usize>() + 1024 {
@@ -3921,7 +3928,8 @@ impl Scene {
     ///   alternate inverse bind matrix is the joint's local position; with
     ///   lock_scale_if_joint_position the joint keeps its default scale),
     /// - LLVOAvatar::updateRootPositionAndRotation: standing/ground-sit roots
-    ///   use body size and shape hover; seated roots use only local hover.
+    ///   use body size and shape hover. Adjustable hover is applied live by
+    ///   object_transform_in, outside this cache (also while seated).
     ///
     /// Joint overrides never cross a control-avatar boundary. Rebuild when
     /// topology, skin metadata or appearance changes, including late assets.
@@ -3952,7 +3960,7 @@ impl Scene {
             if s.members != members {
                 s.members = members;
             }
-            return (s.base.clone(), s.root_dz - s.hover_height + world.appearance_hover(&owner));
+            return (s.base.clone(), s.shape_dz);
         }
         let rig = self.avatar_lib.rig.clone();
         // joint offsets of the worn meshes
@@ -4003,14 +4011,13 @@ impl Scene {
                 scale[j] = rig.scale[j];
             }
         }
-        let root_dz = if avatar {
+        let shape_dz = if avatar {
             let pelvis_shift = local_pos[rig.pelvis].z - rig.local_pos[rig.pelvis].z;
-            let hover_offset = world.appearance_hover(&owner);
             if seated {
-                hover_offset - pelvis_shift
+                -pelvis_shift
             } else {
                 let (pelvis_to_foot, height) = shape::body_size(&rig, &local_pos, &scale);
-                hover - (0.5 * height - pelvis_to_foot) + hover_offset - pelvis_shift
+                hover - (0.5 * height - pelvis_to_foot) - pelvis_shift
             }
         } else {
             0.0
@@ -4023,12 +4030,11 @@ impl Scene {
                 appearance_gen: generation,
                 signature,
                 base: base.clone(),
-                root_dz,
-                hover_height: if avatar { world.appearance_hover(&owner) } else { 0.0 },
+                shape_dz,
                 members,
             },
         );
-        (base, root_dz)
+        (base, shape_dz)
     }
 
     /// Note which objects a skeleton is made of (its previous members that
@@ -4091,7 +4097,7 @@ impl Scene {
         log::info!(
             "attachments of {}: root offset {:.3} m, appearance params {}",
             av.display_name().unwrap_or_default(),
-            world.avatar_root_dz.get(&avatar).copied().unwrap_or(0.0),
+            world.avatar_shape_dz.get(&avatar).copied().unwrap_or(0.0) + world.appearance_hover(&avatar),
             world.visual_params(&avatar).map(|v| v.len()).unwrap_or(0)
         );
         for (te, name, _) in avatar::BAKES {
@@ -4447,9 +4453,7 @@ struct AvatarSkeleton {
     at: Instant,
     appearance_gen: u64,
     base: Arc<anim::SkeletonBase>,
-    root_dz: f32,
-    /// Changing hover adjusts the root without rebuilding the shape/mesh skeleton.
-    hover_height: f32,
+    shape_dz: f32,
     /// Objects whose shape or meshes went into it (see `skeleton_member_of`).
     members: Vec<usize>,
 }
@@ -4595,20 +4599,23 @@ mod tests {
         let mut scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
         let now = Instant::now();
         let (_, dz) = scene.skeleton_of(&world, owner, idx, now);
-        assert!((dz - 0.25).abs() < 1e-5);
-        world.avatar_root_dz.insert(owner, dz);
+        assert!(dz.abs() < 1e-5);
+        world.avatar_shape_dz.insert(owner, dz);
         let (raw, rotation, _) = Scene::object_transform_raw(&world, idx, now, 0, None).expect("raw transform");
         let (posed, _, _) = Scene::object_transform(&world, idx, now, 0).expect("posed transform");
         assert!(posed.abs_diff_eq(raw + rotation * (Vec3::Z * 0.25), 1e-5));
         assert!(!posed.abs_diff_eq(raw + Vec3::Z * 0.25, 1e-3));
         let (base, _) = scene.skeleton_of(&world, owner, idx, now);
         world.hover_height.preview(0.75);
+        // The new hover is visible even before another pose update.
+        let (adjusted_root, _, _) = Scene::object_transform(&world, idx, now, 0).expect("adjusted transform");
+        assert!(adjusted_root.abs_diff_eq(raw + rotation * (Vec3::Z * 0.75), 1e-5));
         let (same_base, adjusted) = scene.skeleton_of(&world, owner, idx, now);
         assert!(Arc::ptr_eq(&base, &same_base), "hover must not rebuild the skeleton");
-        assert!((adjusted - dz - 0.5).abs() < 1e-5);
+        assert_eq!(adjusted, dz);
         world.regions.get_mut(&world.main_region.unwrap()).unwrap().avatar_hover_height = false;
-        let (_, disabled) = scene.skeleton_of(&world, owner, idx, now);
-        assert!((disabled - dz + 0.25).abs() < 1e-5);
+        let (disabled, _, _) = Scene::object_transform(&world, idx, now, 0).expect("unsupported transform");
+        assert!(disabled.abs_diff_eq(raw, 1e-5));
     }
 
     #[test]

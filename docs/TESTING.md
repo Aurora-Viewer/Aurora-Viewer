@@ -169,7 +169,11 @@ when unfocused") is ignored during a screenshot.
   opens the hover-height floater at frame 600. A number sets the height;
   `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
   repeats the cycle with "Affect camera view" enabled; otherwise the camera
-  stays at its original height. Capture at 660, 750, 840 and 1020. `unsupported`
+  stays at its original height. Capture at 660, 750, 840 and 1020; include
+  719, 720 and 721 to catch a camera jump on the first adjusted frame.
+  With the toggle off, drag continuously in both directions: the background
+  must stay fixed throughout, also when seated or using a scripted camera.
+  `unsupported`
   disables adjustment as on a region without AvatarHoverHeightEnabled;
   `failure` simulates a rejected update and exposes Retry. Demo changes stay
   in memory and never contact a grid. Use the slider, its editable value,

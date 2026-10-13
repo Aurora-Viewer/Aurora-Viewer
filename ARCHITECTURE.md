@@ -102,8 +102,10 @@ committed value, ordered background persistence in the account's
 resends after region changes only when SimulatorFeatures and AgentPreferences
 allow it. `NetCommand::SetHoverHeight` posts one finite `hover_height` real;
 its correlated result supports retry without letting an old reply overwrite
-a newer edit. The scene adjusts the cached skeleton's root offset without
-rebuilding its shape; avatar, attachments and camera share that root.
+a newer edit. The skeleton caches only the shape offset; scene transforms
+add the current hover height independently of pose updates. Camera roots
+start from the unshifted object position and add hover only when enabled,
+avoiding a one-frame mismatch and floating-point cancellation while dragging.
 `app/hover_height.rs` drives the lifecycle and the offline scenario.
 
 Avatar name tag height is evaluated with each avatar's skeleton in
