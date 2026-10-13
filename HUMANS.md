@@ -298,7 +298,8 @@ Each choice also exists without the menu, for a script:
 
 The **Release viewer** choice of the tools, or a double-click on
 `RELEASE\build-release.bat` in the project folder. The ready-to-launch exe is
-in `RELEASE\Aurora-Viewer\` (with its assets, like the zip of the releases),
+in `RELEASE\Aurora-Viewer\` (the same folder as the zip of the releases: the
+avatar files and the emoji font are inside the exe),
 and `version.txt` gives the version announced by the viewer and the commit
 built.
 

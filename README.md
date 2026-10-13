@@ -399,6 +399,11 @@ profile (`cargo run -p aurora-viewer`): it behaves like the release build
 without its slow link-time optimization. `./scripts/build-release.ps1`
 builds GitHub's latest `main` with `--release` into `..\RELEASE\`.
 
+That build and the published one carry the emoji font inside the exe
+(`AURORA_EMBED_EMOJI=1` when building, 148 MB more), so the exe works from
+any folder. A build made by hand reads the font from `assets/emoji` of the
+source tree: moved elsewhere, its exe shows emojis without colour.
+
 ### Versions
 
 The **Git tag is the reference for the viewer's version**: `v0.2.0` gives
