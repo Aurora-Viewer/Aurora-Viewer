@@ -504,6 +504,13 @@ impl FrameProfile {
         self.enabled && LightCulling::from_env() == LightCulling::Alternate && self.periods.is_multiple_of(3)
     }
 
+    /// AURORA_PROBE_WALK=alt: likewise, the fragments walk the reflection
+    /// probes once per lookup during one summary in three (`xmode=old`).
+    pub fn probe_walk_per_lookup(&self) -> bool {
+        use aurora_render::probes::ProbeWalk;
+        self.enabled && ProbeWalk::from_env() == ProbeWalk::Alternate && self.periods.is_multiple_of(3)
+    }
+
     /// End a step of the frame now.
     pub fn lap(&mut self, lap: Lap) {
         if self.enabled {

@@ -4638,6 +4638,7 @@ impl App {
             debug_glow: self.settings.debug.glow_view,
             blend_late_discard: self.frame_profile.blend_late_discard(),
             all_lights: self.frame_profile.all_lights(),
+            probe_walk_per_lookup: self.frame_profile.probe_walk_per_lookup(),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -5808,6 +5809,11 @@ impl App {
         if logged || self.sync_alt == 0 {
             self.sync_alt += 1;
             if let Some(old) = crate::scene::sync_sets::alternate_slice(self.sync_alt) {
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
+            // AURORA_PROBE_WALK=alt: the probes walked as before one second in three
+            if aurora_render::probes::ProbeWalk::from_env() == aurora_render::probes::ProbeWalk::Alternate {
+                let old = self.frame_profile.probe_walk_per_lookup();
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three
@@ -7365,9 +7371,10 @@ impl ApplicationHandler for App {
             }
         };
         log::info!(
-            "renderer ready: {} via {} ({} texture slots, GPU timers: {})",
+            "renderer ready: {} via {} ({} texture slots in {} pages at most, GPU timers: {})",
             renderer.info.name,
             renderer.info.backend,
+            renderer.textures.capacity(),
             renderer.info.max_textures,
             renderer.info.timestamps
         );

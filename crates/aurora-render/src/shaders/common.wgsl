@@ -73,7 +73,7 @@ struct Frame {
     // which of `lights` a fragment walks (light_tiles.rs, LightSets)
     light_grid: vec4<f32>,      // x, y: columns and rows per pixel
     light_forward: vec4<f32>,   // camera forward axis (fragment depth)
-    light_mode: vec4<u32>,      // x: 1 = the list narrowed by the sets below, y: 1 = checked, z: 1 = shadow view (AURORA_DEBUG_SHADOWS)
+    light_mode: vec4<u32>,      // x: 1 = the list narrowed by the sets below, y: 1 = checked, z: 1 = shadow view (AURORA_DEBUG_SHADOWS), w: 1 = one walk of the probes per lookup (AURORA_PROBE_WALK)
     // lights that cover each screen column, each screen row and each slice
     // of depth: two sets per element, each its low then its high 32 lights
     light_columns: array<vec4<u32>, 16>,
@@ -149,6 +149,9 @@ struct ProbeSet {
     max_lod: f32,
     enabled: u32,
     _pad: u32,
+    // the box probes (x: probes 0..31, y: 32..63), which sample_probes_pair
+    // looks through first
+    boxes: vec4<u32>,
     probes: array<Probe, 64>,
 };
 @group(0) @binding(9) var<storage, read> probe_set: ProbeSet;
@@ -307,19 +310,14 @@ fn probe_max_lod() -> f32 {
 // from `pos` at mip `lod`. Probe 0 is the default probe, sampled whenever
 // automatic probes are. w = 0 when no probe covers `pos`.
 fn sample_probes(pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec4<f32> {
-    return sample_probes_ex(pos, dir, lod, false, vec3<f32>(0.0), false);
+    let radiance = ProbeLookup(dir, lod, false);
+    return sample_probes_pair(pos, radiance, radiance, false, vec3<f32>(0.0)).a;
 }
 
 // sampleReflectionProbesWater: the default probe and manual probes only
 // (automatic probes are not sampled for water).
 fn sample_probes_water(pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec4<f32> {
     return sample_probes_ex(pos, dir, lod, false, vec3<f32>(0.0), true);
-}
-
-// sampleProbeAmbient: irradiance along the normal `n`, each probe mixed with
-// the sky ambient `amblit` by its ambiance (tapIrradianceMap).
-fn sample_probe_ambient(pos: vec3<f32>, n: vec3<f32>, amblit: vec3<f32>) -> vec4<f32> {
-    return sample_probes_ex(pos, n, 0.0, true, amblit, false);
 }
 
 fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, amblit: vec3<f32>, water: bool) -> vec4<f32> {
@@ -417,6 +415,177 @@ fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, 
         col0 = vec3<f32>(0.0);
     }
     return vec4<f32>(col0 + col1, select(0.0, 1.0, w0 + w1 > 0.0));
+}
+
+// What a fragment asks of the probes: the radiance along `dir` at mip `lod`,
+// or the irradiance along it.
+struct ProbeLookup {
+    dir: vec3<f32>,
+    lod: f32,
+    irradiance: bool,
+}
+
+struct ProbePair {
+    a: vec4<f32>,
+    b: vec4<f32>,
+}
+
+// A probe's contribution to a lookup, along `v` in its cube (tapRefMap,
+// tapIrradianceMap).
+fn probe_tap(i: u32, v: vec3<f32>, lookup: ProbeLookup, amblit: vec3<f32>) -> vec3<f32> {
+    let slot = i32(probe_set.probes[i].slot.x);
+    let scale = probe_set.probes[i].params;
+    if (lookup.irradiance) {
+        let irr = textureSampleLevel(probe_irr_tex, probe_sampler, v, slot, 0.0).rgb * scale.x;
+        return mix(amblit, irr, min(scale.x, 1.0));
+    }
+    return textureSampleLevel(probe_tex, probe_sampler, v, slot, lookup.lod).rgb * scale.y;
+}
+
+// Where a lookup leaves a box probe, from `lp` inside it (boxIntersect; the
+// irradiance lookup pads the box, scale 3).
+fn probe_box_exit(box_inv: mat4x4<f32>, lp: vec3<f32>, pos: vec3<f32>, lookup: ProbeLookup) -> vec3<f32> {
+    let ray = (box_inv * vec4<f32>(lookup.dir, 0.0)).xyz;
+    let scale = select(1.0, 3.0, lookup.irradiance);
+    let first = (vec3<f32>(scale) - lp) / ray;
+    let second = (vec3<f32>(-scale) - lp) / ray;
+    let far = max(first, second);
+    return pos + lookup.dir * min(far.x, min(far.y, far.z));
+}
+
+// sphereIntersect: where a lookup leaves a manual sphere probe.
+fn probe_sphere_exit(c: vec3<f32>, r: f32, pos: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
+    let l = c - pos;
+    let tca = dot(l, dir);
+    let d2 = dot(l, l) - tca * tca;
+    return pos + dir * (tca + sqrt(max(r * r - d2, 0.0)));
+}
+
+// Mix of the automatic (`col0`, weight `w0`) and manual probes of a lookup.
+fn probe_mix(col0_in: vec3<f32>, col1_in: vec3<f32>, w0: f32, w1: f32, dw1: f32, sample_automatic: bool) -> vec4<f32> {
+    var col0 = col0_in;
+    var col1 = col1_in;
+    if (sample_automatic && w0 > 0.0) {
+        col0 /= w0;
+        if (w1 > 0.0) {
+            col1 = mix(col0, col1 / w1, min(dw1, 1.0));
+            col0 = vec3<f32>(0.0);
+        }
+    } else if (w1 > 0.0) {
+        col1 /= w1;
+        col0 = vec3<f32>(0.0);
+    }
+    return vec4<f32>(col0 + col1, select(0.0, 1.0, w0 + w1 > 0.0));
+}
+
+// Two lookups of a fragment (`b` only if `want_b`) in one walk of the
+// probes: which probes cover the point, and with what weight, depends on
+// the point alone. A PBR fragment asks for its ambient and its reflection,
+// a legacy one for its glossy and its environment reflection: each used to
+// walk the list for itself, twice (the box probes first, to know whether
+// the automatic ones may be sampled). The box probes are now found through
+// their mask (`probe_set.boxes`). Same sums, in the same order, as
+// sample_probes_ex, which AURORA_PROBE_WALK=0 brings back to compare.
+fn sample_probes_pair(pos: vec3<f32>, a: ProbeLookup, b: ProbeLookup, want_b: bool, amblit: vec3<f32>) -> ProbePair {
+    var out: ProbePair;
+    out.b = vec4<f32>(0.0);
+    if (frame.light_mode.w != 0u) {
+        out.a = sample_probes_ex(pos, a.dir, a.lod, a.irradiance, amblit, false);
+        if (want_b) {
+            out.b = sample_probes_ex(pos, b.dir, b.lod, b.irradiance, amblit, false);
+        }
+        return out;
+    }
+    let count = min(probe_set.count, 64u);
+    // never let automatic probes encroach on box probes
+    var sample_automatic = true;
+    for (var word = 0u; word < 2u; word++) {
+        var bits = probe_set.boxes[word];
+        while (bits != 0u) {
+            let i = word * 32u + countTrailingZeros(bits);
+            bits &= bits - 1u;
+            if (i < count) {
+                let lp = (probe_set.probes[i].box_inv * vec4<f32>(pos, 1.0)).xyz;
+                if (all(abs(lp) <= vec3<f32>(1.0))) {
+                    sample_automatic = false;
+                }
+            }
+        }
+    }
+    var a0 = vec3<f32>(0.0);
+    var a1 = vec3<f32>(0.0);
+    var b0 = vec3<f32>(0.0);
+    var b1 = vec3<f32>(0.0);
+    var w0 = 0.0;
+    var w1 = 0.0;
+    var dw1 = 0.0;
+    for (var i = 0u; i < count; i++) {
+        let kind = probe_set.probes[i].params.w;
+        let manual = kind != 0.0;
+        if (!manual && !sample_automatic) {
+            continue;
+        }
+        let sphere = probe_set.probes[i].center_radius;
+        let c = sphere.xyz;
+        var va: vec3<f32>;
+        var vb: vec3<f32>;
+        var w: f32;
+        var dw = 0.0;
+        if (kind < 0.0) {
+            // box influence volume with parallax correction
+            let box_inv = probe_set.probes[i].box_inv;
+            let lp = (box_inv * vec4<f32>(pos, 1.0)).xyz;
+            if (any(abs(lp) > vec3<f32>(1.0))) {
+                continue;
+            }
+            va = probe_box_exit(box_inv, lp, pos, a) - c;
+            if (want_b) {
+                vb = probe_box_exit(box_inv, lp, pos, b) - c;
+            }
+            w = max(1.0 - max(max(abs(lp.x), abs(lp.y)), abs(lp.z)), 0.001);
+        } else {
+            let r = sphere.w;
+            let delta = pos - c;
+            if (i != 0u && dot(delta, delta) > r * r) {
+                continue;
+            }
+            if (kind >= 1.0) {
+                // parallax for manual sphere probes only
+                va = probe_sphere_exit(c, r, pos, a.dir) - c;
+                vb = probe_sphere_exit(c, r, pos, b.dir) - c;
+            } else {
+                va = a.dir;
+                vb = b.dir;
+            }
+            // sphereWeight
+            let r1 = r * 0.5;
+            let d = max(length(delta), 0.001);
+            let atten = 1.0 - max(d - r1, 0.0) / max(r - r1, 0.001);
+            let base = probe_set.probes[i].params.z / d;
+            dw = base * atten * max(r, 1.0) * 4.0;
+            w = base * atten;
+        }
+        let ca = probe_tap(i, va, a, amblit) * w;
+        var cb = vec3<f32>(0.0);
+        if (want_b) {
+            cb = probe_tap(i, vb, b, amblit) * w;
+        }
+        if (manual) {
+            a1 += ca;
+            b1 += cb;
+            w1 += w;
+            dw1 += dw;
+        } else {
+            a0 += ca;
+            b0 += cb;
+            w0 += w;
+        }
+    }
+    out.a = probe_mix(a0, a1, w0, w1, dw1, sample_automatic);
+    if (want_b) {
+        out.b = probe_mix(b0, b1, w0, w1, dw1, sample_automatic);
+    }
+    return out;
 }
 
 // Radiance of the environment along `r` for a surface of the given
@@ -880,26 +1049,25 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v:
     let up = n.z * 0.5 + 0.5;
     let hemi = mix(mix(frame.ground_color.rgb, frame.sky_horizon.rgb, clamp(up * 2.0, 0.0, 1.0)),
                    frame.sky_zenith.rgb, clamp(up * 2.0 - 1.0, 0.0, 1.0));
-    // non classic skies: ambient from the probes' irradiance (sampleProbeAmbient)
     var amb = hemi;
-    if (probes_on()) {
-        let s = sample_probe_ambient(world_pos, n, hemi);
-        if (s.w > 0.0) {
-            amb = s.rgb;
-        }
-    }
-    col += diffuse_color * amb * ao;
     let r = reflect(-v, n);
     var env = mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness);
     var occl = (0.35 + 0.65 * shadow) * (1.0 - 0.75 * roughness) * ao;
     if (probes_on()) {
-        // pbrIbl radiance from the reflection probes (ambient occlusion only)
-        let s = sample_probes(world_pos, r, roughness * probe_max_lod());
-        if (s.w > 0.0) {
-            env = s.rgb;
+        // non classic skies: ambient from the probes' irradiance along the
+        // normal, each probe mixed with the sky ambient by its ambiance
+        // (sampleProbeAmbient), and pbrIbl radiance from the probes (ambient
+        // occlusion only), in one walk of the probes
+        let s = sample_probes_pair(world_pos, ProbeLookup(n, 0.0, true), ProbeLookup(r, roughness * probe_max_lod(), false), true, hemi);
+        if (s.a.w > 0.0) {
+            amb = s.a.rgb;
+        }
+        if (s.b.w > 0.0) {
+            env = s.b.rgb;
             occl = ao;
         }
     }
+    col += diffuse_color * amb * ao;
     let mw = mirror_weight(world_pos, n) * clamp(1.0 - roughness * 1.5, 0.0, 1.0);
     if (mw > 0.0) {
         let m = textureSampleLevel(mirror_tex, lin_clamp, screen_uv(frag), 0.0).rgb;

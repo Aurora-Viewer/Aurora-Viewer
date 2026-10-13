@@ -39,6 +39,46 @@ struct ProbeHeader {
     max_lod: f32,
     enabled: u32,
     _pad: u32,
+    /// The box probes of the list: bit `i` of word `i / 32` (`box_mask`).
+    boxes: [u32; 4],
+}
+
+/// How a fragment walks the probes (AURORA_PROBE_WALK; the image is the
+/// same).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProbeWalk {
+    /// Once for both its lookups, the box probes found through their mask
+    /// (the default; `sample_probes_pair` in common.wgsl).
+    Shared,
+    /// Twice per lookup, as before (`0`).
+    PerLookup,
+    /// Either, each frame choosing with
+    /// [`crate::FrameParams::probe_walk_per_lookup`] (`alt`).
+    Alternate,
+}
+
+impl ProbeWalk {
+    pub fn from_env() -> ProbeWalk {
+        static MODE: std::sync::OnceLock<ProbeWalk> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| match std::env::var("AURORA_PROBE_WALK").as_deref().map(str::trim) {
+            Ok("0") => ProbeWalk::PerLookup,
+            Ok("alt") => ProbeWalk::Alternate,
+            _ => ProbeWalk::Shared,
+        })
+    }
+}
+
+/// The box probes of a list (kind below zero), which keep the automatic
+/// probes out of what they enclose: the shaders test these first. The
+/// default probe, first of the list, is never one.
+pub fn box_mask(probes: &[ProbeGpu]) -> [u32; 4] {
+    let mut mask = [0u32; 4];
+    for (i, p) in probes.iter().enumerate().take(MAX_PROBES).skip(1) {
+        if p.params[3] < 0.0 {
+            mask[i / 32] |= 1 << (i % 32);
+        }
+    }
+    mask
 }
 
 pub(crate) struct Probes {
@@ -298,6 +338,7 @@ impl Probes {
             max_lod: (PROBE_MIPS - 1) as f32,
             enabled: u32::from(enabled && n > 0),
             _pad: 0,
+            boxes: box_mask(&probes[..n]),
         };
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&header));
         if n > 0 {
@@ -397,6 +438,44 @@ mod tests {
             let down = ndc(o + f + t * 0.5);
             assert!((down.y + 0.5).abs() < 1e-4 && down.x.abs() < 1e-4, "face {i} t {down:?}");
         }
+    }
+
+    /// The box probes of a list, as the scene shaders look for them: bit
+    /// by bit in the header, which the shader's structure mirrors.
+    #[test]
+    fn box_probes_are_found_through_their_mask() {
+        let probe = |kind: f32| ProbeGpu {
+            center_radius: [0.0; 4],
+            params: [1.0, 1.0, 1.0, kind],
+            slot: [0; 4],
+            box_inv: [[0.0; 4]; 4],
+        };
+        // default, automatic, box, manual sphere, box
+        let mut list = vec![probe(0.0), probe(0.0), probe(-1.0), probe(1.0), probe(-1.0)];
+        assert_eq!(box_mask(&list), [0b10100, 0, 0, 0]);
+        // (the default probe is never one, whatever it says)
+        list[0] = probe(-1.0);
+        assert_eq!(box_mask(&list), [0b10100, 0, 0, 0]);
+        list.resize(40, probe(0.0));
+        list[39] = probe(-1.0);
+        list.resize(MAX_PROBES + 6, probe(-1.0));
+        let mask = box_mask(&list);
+        assert_eq!(mask[1] & 0xff, 0b1000_0000, "probe 39, in the second word");
+        assert_eq!(mask[1] >> 8, 0x00ff_ffff, "then every probe up to the last the shaders see");
+        assert_eq!([mask[2], mask[3]], [0, 0]);
+        assert_eq!(std::mem::size_of::<ProbeHeader>(), 32);
+        let src = include_str!("shaders/common.wgsl");
+        let set = &src[src.find("struct ProbeSet {").expect("ProbeSet")..];
+        let (pad, boxes, list) = (
+            set.find("_pad: u32,"),
+            set.find("boxes: vec4<u32>,"),
+            set.find("probes: array<Probe, 64>,"),
+        );
+        assert!(
+            pad < boxes && boxes < list && pad.is_some(),
+            "the mask sits between the header and the probes"
+        );
+        assert!(src.contains("probe_set.boxes[word]"));
     }
 
     /// What the filter shader repeats of the sizes above.
