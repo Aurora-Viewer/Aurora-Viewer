@@ -1864,7 +1864,7 @@ What the inventory must show with these scenarios:
     bodies, centred on their roots at a constant height through the cycle.
     Compare frames 660 and 780 at 60 fps; also use `AURORA_NAME_TAGS=classic`.
     A change of animation can change its height envelope; its individual
-    frames never move the tag. Real deformer assets still need a grid test.
+    frames never move the tag. Use a human-run grid session to verify real deformer assets.
   - `voice`: Nova out of the voice channel; Tess in the channel, silent
     (green outline, microphone badge) and without a profile picture (the
     icon stays); Orion, a friend, is speaking (halo that follows the level,
