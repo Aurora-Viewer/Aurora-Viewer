@@ -88,6 +88,16 @@ a review or that left the queue.
   and created by `scripts/setup-labels.ps1`, which keeps the other labels.
 - **Dependabot** opens dependency update PRs every week; an agent can check
   them for you, and merges them if you agree.
+- **The wiki** is generated: after each merge that touches a guide, a
+  workflow copies the README, this guide, `ARCHITECTURE.md`, `NOTICE.md` and
+  the files of `docs/` to the Wiki tab, with a sidebar by audience (testers,
+  contributors, technical). Never edit a page in the wiki: it is replaced at
+  the next run; edit the Markdown file in the repository. Two settings are
+  needed once, by hand, on GitHub: create a first page in the Wiki tab (its
+  content does not matter, the wiki does not exist before that), and tick
+  "Restrict editing to collaborators only" under Settings › Features ›
+  Wikis. The workflow can then be started from the Actions tab ("Wiki" ›
+  "Run workflow") or waits for the next change to a guide.
 - **The repository** belongs to the `Aurora-Viewer` organisation; the
   developers are in the `Devs` team.
 

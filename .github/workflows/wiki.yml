@@ -1,0 +1,60 @@
+name: Wiki
+
+# Publishes the guides of the repository to the GitHub wiki. The Markdown
+# files stay the only source: scripts/build-wiki.ps1 generates every page,
+# and a page edited by hand in the wiki is replaced at the next run.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'README.md'
+      - 'HUMANS.md'
+      - 'ARCHITECTURE.md'
+      - 'NOTICE.md'
+      - 'docs/*.md'
+      - 'scripts/build-wiki.ps1'
+      - '.github/workflows/wiki.yml'
+  workflow_dispatch:
+
+# one publication at a time, and the latest one always runs to the end
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: publish the wiki
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # the wiki is a second git repository; it does not exist before a
+      # first page has been created in the Wiki tab
+      - name: Wiki repository
+        id: wiki
+        continue-on-error: true
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: .wiki
+      - name: Wiki not created yet
+        if: steps.wiki.outcome != 'success'
+        run: echo "::warning::The wiki has no page yet. Create a first page in the Wiki tab (see HUMANS.md), then run this workflow again."
+      - name: Generate the pages
+        if: steps.wiki.outcome == 'success'
+        shell: pwsh
+        run: ./scripts/build-wiki.ps1 -Out .wiki
+      - name: Publish
+        if: steps.wiki.outcome == 'success'
+        working-directory: .wiki
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "The wiki is already up to date."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Update from ${GITHUB_SHA::9}"
+          git push

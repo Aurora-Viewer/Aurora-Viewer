@@ -184,6 +184,9 @@ Before each significant commit, and always before the PR:
 - No `unsafe` without a `// SAFETY:` comment that justifies it.
 - Useful, dense comments, like the existing code: why, and which Firestorm
   source. No comments that repeat the code.
+- The wiki is generated from the guides (`scripts/build-wiki.ps1`, run by
+  the Wiki workflow): never edit it, and when you add a guide to `docs/`, add
+  it to the page table of that script in the same PR.
 - One module = one responsibility. Keep the tree described in
   [ARCHITECTURE.md](ARCHITECTURE.md); if you add a module or a folder, update
   ARCHITECTURE.md.
