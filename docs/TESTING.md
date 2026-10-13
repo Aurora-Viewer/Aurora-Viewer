@@ -678,16 +678,25 @@ grid.
   HUD without Modify / Move permissions; outline and percentage until frame
   840. `scale-ctrl`, `scale-key`, `scale-secondary` use Ctrl, B or the
   secondary key. `scale-reset` restores 100%; `scale-forget` forgets the
-  profile without changing the current copy. `scale-copy` replaces the HUD
-  with a new UUID with the same name / creator (frame 900) and logs the
-  restored scale. `scale-touch` then clicks the enlarged HUD (frames 880–900).
+  profile without changing the current copy. `scale-touch` then clicks the
+  enlarged HUD (frames 880–900).
   The profiles of these scenarios stay in the demo account folder.
-- `scale-reattach`, `scale-rename`: start at 100%, enlarge with the HUD key
+- `scale-reattach`, `scale-rename`, `scale-copy`, `scale-temp`, `scale-temp-item`,
+  `scale-temp-instance`:
+  start at 100%, enlarge with the HUD key
   (frame 720), remove the whole linkset and reattach it with new object UUIDs
-  but the same inventory item (frame 900). The former has no creator metadata;
-  the latter renames the inventory item while detached. Both must restore
+  (frame 900). `scale-reattach` keeps the same item without inventory creator
+  metadata; `scale-rename` renames it while detached. `scale-copy` creates a
+  new inventory UUID with a different inventory label but the same object name
+  and creator. `scale-temp` has no inventory item or AttachItemID, like a
+  temporary experience HUD; `scale-temp-item` has a foreign item UUID that
+  changes between appearances and cannot be fetched from our inventory.
+  `scale-temp-instance` uses the rezzed UUID itself as AttachItemID, matching
+  LLViewerObject::isTempAttachment, with no per-instance inventory profile.
+  The real full ObjectProperties request supplies the common name / creator.
+  All six must restore
   161.1%, including the child and floating text. Profiles are isolated in
-  memory for these two scenarios; unit tests cover saving and restarting.
+  memory for these scenarios; unit tests cover saving and restarting.
   Suggested screenshots: 710,760,920.
 - `drag`: grabs the child with ALT (frame 720), moves the whole HUD,
   releases ALT before the click (frame 800), then saves the position on
@@ -749,12 +758,15 @@ To check with these scenarios:
 - HUD key + wheel: local size from 10% to 800%, Shift for finer steps,
   with no camera zoom nor media scrolling. Right click: "Reset to
   100%" and "Forget saved size". New copies take
-  the profile of the same inventory name / creator on this account; copies
+  the profile of the same object name / creator on this account, including
+  temporary experience HUDs without an inventory item; copies
   already worn keep their independent sizes. Check after a restart,
   detach / reattach, clicking the buttons and moving the HUD.
   The same inventory item keeps its own size after reattachment or renaming,
   even before inventory metadata arrives. Separately resized items with the
   same name / creator must also keep their individual sizes after reattachment.
+  Resize a temporary experience HUD, stand to remove it, then sit again:
+  the new instance must restore the saved size. Verify after restarting too.
 - Demo inventory linked to the current outfit, to test detaching and
   the display in the inventory.
 - World › HUDs menu: show / hide, zoom out / zoom in and normal

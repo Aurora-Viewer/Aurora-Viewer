@@ -1425,6 +1425,7 @@ impl App {
         }
         match ev {
             NetEvent::ObjectProperties(props) => {
+                self.world.on_hud_properties(&props);
                 self.interactions.on_properties(&props);
                 self.build.on_properties(props);
             }
@@ -8151,7 +8152,10 @@ impl ApplicationHandler for App {
                 self.world.hud_scales = crate::world::hud_scale::HudScales::load(
                     crate::settings::account_dir(&self.world.agent_id).join(crate::world::hud_scale::FILE),
                 );
-                if matches!(mode.as_str(), "scale-reattach" | "scale-rename") {
+                if matches!(
+                    mode.as_str(),
+                    "scale-reattach" | "scale-rename" | "scale-copy" | "scale-temp" | "scale-temp-item" | "scale-temp-instance"
+                ) {
                     // Deterministic persistence regressions, independent of
                     // previously saved demo profiles. Disk saves have unit tests.
                     self.world.hud_scales = crate::world::hud_scale::HudScales::default();
@@ -8160,6 +8164,21 @@ impl ApplicationHandler for App {
                         && let Some(item) = self.world.inventory.items.get_mut(&id)
                     {
                         item.creator = uuid::Uuid::nil();
+                    }
+                    if matches!(mode.as_str(), "scale-temp" | "scale-temp-item" | "scale-temp-instance") {
+                        self.world.inventory.items.remove(&id);
+                        self.world.inventory.items.remove(&uuid::Uuid::from_u128(8399));
+                        if let Some(root) = self.world.objects.index_of_uuid(&id)
+                            && let Some(o) = self.world.objects.get_mut(root)
+                        {
+                            o.name_values = if mode == "scale-temp-item" {
+                                format!("AttachItemID STRING RW SV {}", uuid::Uuid::from_u128(999_001))
+                            } else if mode == "scale-temp-instance" {
+                                format!("AttachItemID STRING RW SV {id}")
+                            } else {
+                                String::new()
+                            };
+                        }
                     }
                 }
                 if matches!(mode.as_str(), "zoom" | "edit-zoom" | "drag-zoom") {

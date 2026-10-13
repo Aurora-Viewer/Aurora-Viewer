@@ -6,39 +6,9 @@ use uuid::Uuid;
 impl App {
     pub(super) fn refresh_local_huds(&mut self) {
         self.world.refresh_hud_scales();
-        let Some(me) = self
-            .world
-            .objects
-            .index_of_uuid(&self.world.agent_id)
-            .and_then(|i| self.world.objects.get(i))
-        else {
-            return;
-        };
-        let missing: Vec<_> = self
-            .world
-            .objects
-            .children_of(&me.key)
-            .iter()
-            .filter_map(|idx| {
-                let o = self.world.objects.get(*idx)?;
-                if !(31..=38).contains(&o.attachment_point()) {
-                    return None;
-                }
-                o.attachment_item_id()
-                    .filter(|item| !self.world.inventory.items.contains_key(item))
-                    .map(|item| (o.full_id, item))
-            })
-            .collect();
-        let items: Vec<_> = missing
-            .into_iter()
-            .filter(|(id, _)| self.world.hud_scales.request_item(*id))
-            .map(|(_, item)| item)
-            .collect();
-        if !items.is_empty() {
-            self.send(NetCommand::FetchItems {
-                items,
-                owner: self.world.agent_id,
-            });
+        let selected = self.build.roots(&self.world);
+        for command in hud_metadata_commands(&mut self.world, &selected, Instant::now()) {
+            self.send(command);
         }
     }
     /// Own the wheel before media or camera, even on a no-modify/locked HUD.
@@ -73,17 +43,9 @@ impl App {
         let Some(o) = self.world.objects.get(root) else { return true };
         let id = o.full_id;
         let scale = crate::world::hud_scale::wheel_scale(self.world.hud_scales.scale(id), steps, self.shift);
-        let missing_item = o.attachment_item_id().filter(|item| !self.world.inventory.items.contains_key(item));
         self.world.hud_scales.set(id, scale);
         self.world.dirty_hud(root);
-        if let Some(item) = missing_item
-            && self.world.hud_scales.request_item(id)
-        {
-            self.send(NetCommand::FetchItems {
-                items: vec![item],
-                owner: self.world.agent_id,
-            });
-        }
+        self.refresh_local_huds();
         log::debug!("HUD local scale: {:.0}%", scale * 100.0);
         true
     }
@@ -391,21 +353,42 @@ impl App {
                     self.reset_hud_scale(key, true);
                 }
             }
-        } else if self.frame_count == 900 && matches!(mode.as_str(), "scale-copy" | "scale-reattach" | "scale-rename") {
+        } else if self.frame_count == 900
+            && matches!(
+                mode.as_str(),
+                "scale-copy" | "scale-reattach" | "scale-rename" | "scale-temp" | "scale-temp-item" | "scale-temp-instance"
+            )
+        {
             if let Some(root) = root
-                && let Some(item) = self.world.objects.get(root).and_then(|o| o.attachment_item_id())
-                && let Some(mut item) = self.world.inventory.items.get(&item).cloned()
                 && let Some(handle) = self.world.objects.get(root).map(|o| o.key.region)
             {
                 let mut update = crate::demo::hud::object(31, false);
                 update.full_id = Uuid::from_u128(8399);
-                if mode == "scale-copy" {
-                    item.id = update.full_id;
-                } else if mode == "scale-rename" {
-                    item.name = "Renamed demo HUD".into();
+                if matches!(mode.as_str(), "scale-temp" | "scale-temp-item" | "scale-temp-instance") {
+                    update.name_values = if mode == "scale-temp-item" {
+                        format!("AttachItemID STRING RW SV {}", Uuid::from_u128(999_002))
+                    } else if mode == "scale-temp-instance" {
+                        format!("AttachItemID STRING RW SV {}", update.full_id)
+                    } else {
+                        String::new()
+                    };
+                } else if let Some(mut item) = self
+                    .world
+                    .objects
+                    .get(root)
+                    .and_then(|o| o.attachment_item_id())
+                    .and_then(|id| self.world.inventory.items.get(&id))
+                    .cloned()
+                {
+                    if mode == "scale-copy" {
+                        item.id = update.full_id;
+                        item.name = aurora_i18n::tr!("demo-hud-copy-inventory-name").into();
+                    } else if mode == "scale-rename" {
+                        item.name = aurora_i18n::tr!("demo-hud-renamed-inventory-name").into();
+                    }
+                    update.name_values = format!("AttachItemID STRING RW SV {}", item.id);
+                    self.world.inventory.add_items(vec![item]);
                 }
-                update.name_values = format!("AttachItemID STRING RW SV {}", item.id);
-                self.world.inventory.add_items(vec![item]);
                 // Remove the linkset first: the new rezzed object must restore
                 // from its inventory item, with no surviving local instance.
                 self.world.objects.remove_idx(root);
@@ -421,7 +404,12 @@ impl App {
                 }
                 self.world.apply(NetEvent::ObjectUpdates { handle, objects });
             }
-        } else if self.frame_count == 902 && matches!(mode.as_str(), "scale-copy" | "scale-reattach" | "scale-rename") {
+        } else if self.frame_count == 904
+            && matches!(
+                mode.as_str(),
+                "scale-copy" | "scale-reattach" | "scale-rename" | "scale-temp" | "scale-temp-item" | "scale-temp-instance"
+            )
+        {
             if let Some(root) = self.world.objects.index_of_uuid(&Uuid::from_u128(8399)) {
                 log::info!(
                     "demo HUD replacement: mode={mode}, restored_scale={:.3}",
@@ -434,6 +422,66 @@ impl App {
             self.on_left_release();
         }
     }
+}
+
+/// ObjectProperties contains the creator; ObjectPropertiesFamily does not.
+/// Use LLSelectMgr's full ObjectSelect / ObjectDeselect messages without changing
+/// the local selection, and keep anything already selected selected on the sim.
+/// Source: Firestorm indra/newview/llselectmgr.cpp, originally LGPL 2.1.
+fn hud_metadata_commands(world: &mut World, selected: &[usize], now: Instant) -> Vec<NetCommand> {
+    let Some(me) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get(i)) else {
+        return Vec::new();
+    };
+    let roots: Vec<_> = world
+        .objects
+        .children_of(&me.key)
+        .iter()
+        .filter_map(|idx| {
+            let o = world.objects.get(*idx)?;
+            (31..=38)
+                .contains(&o.attachment_point())
+                .then_some((*idx, o.full_id, o.key, o.attachment_item_id()))
+        })
+        .collect();
+    let mut regions = std::collections::BTreeMap::<_, (Vec<u32>, Vec<u32>)>::new();
+    let mut items = Vec::new();
+    for (root, id, key, item) in roots {
+        if world.hud_scales.request_properties(id, now) {
+            let (select, deselect) = regions.entry(key.region).or_default();
+            select.push(key.local_id);
+            if !selected.contains(&root) {
+                deselect.push(key.local_id);
+            }
+        }
+        if let Some(item) = item.filter(|item| !item.is_nil() && (*item != id || world.inventory.items.contains_key(item)))
+            && !world
+                .inventory
+                .items
+                .get(&item)
+                .is_some_and(|it| !it.creator.is_nil() && !it.name.trim().is_empty())
+            && world.hud_scales.request_item(id, now)
+            && !items.contains(&item)
+        {
+            items.push(item);
+        }
+    }
+    let mut commands = Vec::new();
+    for (handle, (local_ids, deselect)) in regions {
+        commands.push(NetCommand::Build(aurora_net::build::BuildCmd::Select { handle, local_ids }));
+        if !deselect.is_empty() {
+            commands.push(NetCommand::Build(aurora_net::build::BuildCmd::Deselect {
+                handle,
+                local_ids: deselect,
+            }));
+        }
+    }
+    if !items.is_empty() {
+        commands.push(NetCommand::FetchItems {
+            items,
+            owner: world.agent_id,
+        });
+    }
+    commands
 }
 
 /// Firestorm's wheel factor with winit's opposite scroll sign; same bounds
@@ -462,6 +510,46 @@ fn accessible_delta(rect: [f32; 4], screen: [f32; 2]) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hud_metadata_queries_are_batched_retry_and_preserve_the_existing_selection() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+            world.apply(event);
+        }
+        world.hud_scales = crate::world::hud_scale::HudScales::default();
+        crate::demo::hud::seed_inventory(&mut world);
+        world.refresh_hud_scales();
+        let id = crate::demo::hud::object(31, false).full_id;
+        let selected = world.objects.index_of_uuid(&id).unwrap();
+        let now = Instant::now();
+        let commands = hud_metadata_commands(&mut world, &[selected], now);
+        assert_eq!(commands.len(), 2);
+        assert!(
+            matches!(&commands[0], NetCommand::Build(aurora_net::build::BuildCmd::Select { local_ids, .. })
+            if local_ids.len() == 8 && local_ids.contains(&crate::demo::hud::FIRST) && !local_ids.contains(&8241))
+        );
+        assert!(
+            matches!(&commands[1], NetCommand::Build(aurora_net::build::BuildCmd::Deselect { local_ids, .. })
+            if local_ids.len() == 7 && !local_ids.contains(&crate::demo::hud::FIRST))
+        );
+        assert!(hud_metadata_commands(&mut world, &[selected], now + Duration::from_secs(9)).is_empty());
+        assert_eq!(
+            hud_metadata_commands(&mut world, &[selected], now + Duration::from_secs(10)).len(),
+            2
+        );
+        let props: Vec<_> = (31..=38)
+            .map(|point| aurora_net::build::ObjectProps {
+                object_id: crate::demo::hud::object(point, false).full_id,
+                name: format!("HUD {point}"),
+                creator_id: Uuid::from_u128(10),
+                full: true,
+                ..Default::default()
+            })
+            .collect();
+        world.on_hud_properties(&props);
+        assert!(hud_metadata_commands(&mut world, &[selected], now + Duration::from_secs(20)).is_empty());
+    }
 
     #[test]
     fn editing_view_wheel_reveals_offscreen_huds_and_preserves_local_sizes() {
