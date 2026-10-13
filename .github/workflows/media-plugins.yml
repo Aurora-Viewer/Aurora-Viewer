@@ -1,0 +1,76 @@
+name: Media plugins
+
+# Builds the pack of media plugins used by the viewer (web through CEF /
+# Dullahan, video and audio through LibVLC). The three Linden Lab binaries
+# (SLPlugin.exe, media_plugin_cef.dll, media_plugin_libvlc.dll, LGPL 2.1) are
+# compiled from a pinned commit of the Firestorm sources; CEF, Dullahan and
+# VLC are the prebuilt packages that commit names in its autobuild.xml, the
+# ones Firestorm ships. Run by hand: the pack only changes with these pins.
+on:
+  workflow_dispatch:
+  # TEMPORARY while the workflow is being written on its branch
+  push:
+    branches: ['feat/media-plugins-pack']
+    paths: ['.github/workflows/media-plugins.yml', 'scripts/package-media-plugins.ps1']
+
+permissions:
+  contents: read
+
+env:
+  PACK_VERSION: '1'
+  FIRESTORM_SHA: c33bfee253160cceefdb7c98d864fbb736e8ed9a
+  BUILD_VARIABLES_SHA: c17312d38377c003977cf5b6dcc83c6042eba194
+  AUTOBUILD_VSVER: '170'
+  AUTOBUILD_VARIABLES_FILE: ${{ github.workspace }}/fs-vars/variables
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      # short folder names: the build tree of the viewer has long paths
+      - name: Firestorm sources
+        uses: actions/checkout@v7
+        with:
+          repository: FirestormViewer/phoenix-firestorm
+          ref: ${{ env.FIRESTORM_SHA }}
+          path: fs
+      - name: Firestorm build variables
+        uses: actions/checkout@v7
+        with:
+          repository: FirestormViewer/fs-build-variables
+          ref: ${{ env.BUILD_VARIABLES_SHA }}
+          path: fs-vars
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Autobuild
+        run: python -m pip install -r fs/requirements.txt
+      # the open-source configuration: no KDU, FMOD nor Havok
+      - name: Configure
+        shell: bash
+        working-directory: fs
+        run: autobuild configure -c ReleaseFS_open -A 64
+      - name: Build the launcher and the two plugins
+        shell: pwsh
+        working-directory: fs
+        run: cmake --build build-vc170-64 --config Release --parallel --target SLPlugin media_plugin_cef media_plugin_libvlc
+      - name: Package
+        shell: pwsh
+        run: |
+          $dir = "Aurora-Media-Plugins-$env:PACK_VERSION-windows-x64"
+          ./scripts/package-media-plugins.ps1 -Source fs -Build fs/build-vc170-64 -Out $dir -Version $env:PACK_VERSION
+          Get-ChildItem "$dir/LICENSES" -Recurse -File | ForEach-Object { $_.FullName }
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+          $hash = (Get-FileHash -LiteralPath "$dir.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $dir.zip" | Set-Content -LiteralPath "$dir.zip.sha256" -Encoding utf8NoBOM
+          "{0}: {1:N1} MB, sha256 {2}" -f "$dir.zip", ((Get-Item "$dir.zip").Length / 1MB), $hash
+          "PACK=$dir.zip" >> $env:GITHUB_ENV
+      - uses: actions/upload-artifact@v7
+        with:
+          name: media-plugins
+          path: |
+            ${{ env.PACK }}
+            ${{ env.PACK }}.sha256
+          compression-level: 0
