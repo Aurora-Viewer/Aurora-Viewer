@@ -1349,7 +1349,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `AURORA_DEMO_LOGIN=empty` for the login screen: Log out is
   disabled. The choices are simulated offline, with no login request.
 - **`AURORA_DEMO_OPTIONS=<section>`**: for example `8` for Shortcuts
-  (HUD move key).
+  (HUD move key). `8:<query>` opens Shortcuts with its search filled in,
+  for example `8:Ctrl` for assigned keys or `8:HUD` for a category;
+  `8:zzzz` shows the empty result. The field stays above the scrolling list,
+  and its clear button restores all actions. Search follows the selected language.
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
   drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Colors): the

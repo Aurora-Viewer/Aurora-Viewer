@@ -7817,7 +7817,12 @@ impl ApplicationHandler for App {
             if std::env::var_os("AURORA_DEMO_OPTIONS").is_some() {
                 self.panels.settings = true;
                 self.panels.perf = false;
-                self.options_ui.tab = std::env::var("AURORA_DEMO_OPTIONS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+                let value = std::env::var("AURORA_DEMO_OPTIONS").unwrap_or_default();
+                let (tab, filter) = value.split_once(':').unwrap_or((&value, ""));
+                self.options_ui.tab = tab.parse().unwrap_or(0);
+                if self.options_ui.tab == 8 {
+                    self.options_ui.shortcut_filter = filter.to_owned();
+                }
             }
             // AURORA_DEMO_PERF=compact|full|network: the performance window in
             // that view (network: full, with its Network section open)
