@@ -7315,6 +7315,7 @@ impl ApplicationHandler for App {
                 return;
             }
         };
+        crate::window_hold::install(&window);
         let size = window.inner_size();
         if std::env::var_os("AURORA_NOVSYNC").is_some() {
             self.settings.vsync = false;

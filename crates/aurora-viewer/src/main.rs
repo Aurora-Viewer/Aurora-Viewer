@@ -33,6 +33,7 @@ mod ui;
 mod ui_sound;
 mod updater;
 mod voice;
+mod window_hold;
 mod world;
 
 fn main() -> anyhow::Result<()> {
