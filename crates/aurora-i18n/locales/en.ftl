@@ -1953,7 +1953,6 @@ world-inventory-actions-the-clipboard-is-empty-or-the-folder-is-protected = The 
 build-ui-object-the-clipboard-does-not-contain-a-vector-x-y = The clipboard does not contain a vector <x, y, z>.
 build-ui-general-next-owner = Next owner:
 build-ui-floaters-next-owner-can = Next owner can:
-app-group-profiles-are-not-available-in-aurora-yet = Group profiles are not available in Aurora yet.
 world-mod-could-not-save-the-profile = Could not save the profile ({ $reason }).
 ui-land-general-owner-contributes-when-deeding-land = Owner contributes when deeding land
 world-status-the-resident-you-messaged-has-enabled-aurora-viewer-s = The resident you messaged has enabled Aurora Viewer's mode that rejects all friendship requests. They do not want to be disturbed by friendship requests, but you can still send them an IM.
@@ -4431,3 +4430,11 @@ search-event-place-info = Show the place details
 ui-context-do-not-show-again = Do not show again
 ui-options-confirm-teleports = Confirm teleports
 ui-options-ask-before-teleporting-to-a-landmark-a-history-entry = Ask before teleporting to a landmark, a history entry or a teleport link
+ui-land-mod-objects-available = Available
+ui-land-mod-objects-capacity-used = { $percent } of the capacity used by the objects on all of this owner's land in the region
+ui-land-mod-objects-over-capacity = { $count ->
+    [one] { $count } object over the capacity, which will be returned
+   *[other] { $count } objects over the capacity, which will be returned
+    }
+ui-group-profile-title = Group Profile
+ui-group-profile-view = View the group's profile

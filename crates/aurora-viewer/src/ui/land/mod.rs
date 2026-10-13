@@ -24,7 +24,7 @@ use super::texture_picker::TexturePicker;
 use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::World;
-use crate::world::land::{AgentRights, modifiable_by_agent, owned_by_agent};
+use crate::world::land::{AgentRights, PrimUsage, modifiable_by_agent, owned_by_agent};
 use aurora_net::{GroupMembership, ParcelInfo, RegionHandle};
 use egui::{RichText, Vec2};
 use std::collections::{HashMap, HashSet};
@@ -264,6 +264,7 @@ impl LandUi {
     }
 
     /// Show the floater; `open` is the panel flag (the top bar ⓘ, menus),
+    /// `region_map` the mini-map's image of the selection's region,
     /// `streams` the saved music streams. True when they changed.
     #[allow(clippy::too_many_arguments)]
     pub fn show(
@@ -272,6 +273,7 @@ impl LandUi {
         p: &Palette,
         world: &mut World,
         images: &HashMap<Uuid, egui::TextureHandle>,
+        region_map: Option<&egui::TextureHandle>,
         streams: &mut Vec<String>,
         demo: bool,
         open: &mut bool,
@@ -356,37 +358,7 @@ impl LandUi {
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
                     if let Some(parcel) = &view.parcel {
-                        widgets::surface(ui, p, |ui| {
-                            ui.set_min_width(ui.available_width());
-                            ui.add(egui::Label::new(RichText::new(&parcel.name).size(18.0).strong().color(p.ink)).truncate());
-                            if let Some(region) = &view.region {
-                                ui.label(RichText::new(&region.name).size(11.0).color(p.muted));
-                            }
-                            ui.horizontal(|ui| {
-                                widgets::stat(
-                                    ui,
-                                    p,
-                                    aurora_i18n::tr!("common-area"),
-                                    &format!("{} m²", aurora_i18n::integer(parcel.area as i64)),
-                                );
-                                widgets::divider(ui, p);
-                                widgets::stat(
-                                    ui,
-                                    p,
-                                    aurora_i18n::tr!("common-objects"),
-                                    &format!(
-                                        "{} / {}",
-                                        parcel.total_prims,
-                                        ((parcel.max_prims as f32 * parcel.prim_bonus).round() as i32).min(
-                                            view.region
-                                                .as_ref()
-                                                .filter(|r| r.max_tasks > 0)
-                                                .map_or(i32::MAX, |r| r.max_tasks as i32)
-                                        )
-                                    ),
-                                );
-                            });
-                        });
+                        header(ui, p, &view, parcel, region_map);
                     }
                     ui.add_space(6.0);
                     widgets::section_header(ui, p, "adjustments-filled", self.tab.label());
@@ -493,6 +465,87 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// Side of the region's map in the header: the height of the texts beside it.
+const HEADER_MAP: f32 = 86.0;
+
+/// The parcel at a glance, over the tabs: the mini-map's image of its
+/// region, its name, its area, and a gauge of the objects on the owner's
+/// land in the region against what it may hold (the "Capacité de la
+/// région" of the objects tab), which follows the simulator while the
+/// floater is open (`Land::tick`). Not in Firestorm's floater.
+fn header(ui: &mut egui::Ui, p: &Palette, v: &View, parcel: &ParcelInfo, map: Option<&egui::TextureHandle>) {
+    let usage = PrimUsage::of(parcel, v.region.as_ref().map_or(0, |r| r.max_tasks));
+    let region = v.region.as_ref().map_or("", |r| r.name.as_str());
+    widgets::surface(ui, p, |ui| {
+        ui.set_min_width(ui.available_width());
+        ui.horizontal(|ui| {
+            let picture = widgets::picture(ui, p, map, Vec2::splat(HEADER_MAP), "map", "");
+            if !region.is_empty() {
+                picture.on_hover_text(region);
+            }
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.add(egui::Label::new(RichText::new(&parcel.name).size(18.0).strong().color(p.ink)).truncate());
+                ui.label(RichText::new(region).size(11.0).color(p.muted));
+                ui.horizontal(|ui| {
+                    widgets::stat(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("common-area"),
+                        &format!("{} m²", aurora_i18n::integer(parcel.area as i64)),
+                    );
+                    // public land holds nothing and has no capacity
+                    if usage.max > 0 || usage.used > 0 {
+                        widgets::divider(ui, p);
+                        widgets::stat(
+                            ui,
+                            p,
+                            aurora_i18n::tr!("common-objects"),
+                            &format!(
+                                "{} / {}",
+                                aurora_i18n::integer(usage.used as i64),
+                                aurora_i18n::integer(usage.max as i64)
+                            ),
+                        );
+                        widgets::divider(ui, p);
+                        widgets::stat(
+                            ui,
+                            p,
+                            aurora_i18n::tr!("ui-land-mod-objects-available"),
+                            &aurora_i18n::integer(usage.available().max(0) as i64),
+                        );
+                    }
+                });
+                if usage.max > 0 || usage.used > 0 {
+                    ui.add_space(2.0);
+                    let over = -usage.available();
+                    // the accent while there is room, then the caution and
+                    // the danger colors: the simulator returns what exceeds
+                    let tint = if over > 0 {
+                        Some(p.danger)
+                    } else if usage.fraction() >= 0.9 {
+                        Some(p.warn)
+                    } else {
+                        None
+                    };
+                    let width = ui.available_width();
+                    let gauge = ui
+                        .scope(|ui| widgets::progress(ui, p, "land_objects", usage.fraction(), width, "", tint))
+                        .response;
+                    let percent = aurora_i18n::number_text(&format!("{:.0} %", usage.fraction() * 100.0));
+                    gauge.on_hover_text(if over > 0 {
+                        aurora_i18n::tr!("ui-land-mod-objects-over-capacity", count = over as i64)
+                    } else {
+                        aurora_i18n::tr!("ui-land-mod-objects-capacity-used", percent = percent)
+                    });
+                }
+            });
+        });
+    });
+}
+
 /// "Aucune parcelle sélectionnée." (no_selection_text) while waiting.
 fn no_selection(ui: &mut egui::Ui, p: &Palette) {
     ui.add_space(8.0);
@@ -543,10 +596,24 @@ fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) {
     let name = world.social.name_of(&id);
     if ui
         .add(egui::Label::new(RichText::new(name).size(12.0).color(p.violet_light)).sense(egui::Sense::click()))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
         .clicked()
     {
         super::profile::request_open(ui.ctx(), id);
+    }
+}
+
+/// A group, by its name or by `label`, that opens its profile (LLSLURL
+/// "group ... inspect").
+fn group_link(ui: &mut egui::Ui, p: &Palette, id: Uuid, label: &str) {
+    if ui
+        .add(egui::Label::new(RichText::new(label).size(12.0).color(p.violet_light)).sense(egui::Sense::click()))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(aurora_i18n::tr!("ui-group-profile-view"))
+        .clicked()
+    {
+        super::group_profile::request_open(ui.ctx(), id);
     }
 }
 

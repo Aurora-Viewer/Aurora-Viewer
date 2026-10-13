@@ -913,7 +913,20 @@ impl World {
             }
             NetEvent::ObjectUpdates { handle, objects } => {
                 let me = self.agent_id;
+                // « À propos du terrain » open on a parcel of this region: a
+                // prim that was not there changes its counts
+                let mut land_changed = false;
+                let land_watches = self.land.watches(handle);
                 for u in objects {
+                    land_changed |= land_watches
+                        && u.pcode == aurora_prim::params::LL_PCODE_VOLUME
+                        && self
+                            .objects
+                            .index_of(&ObjKey {
+                                region: handle,
+                                local_id: u.local_id,
+                            })
+                            .is_none();
                     // diagnostic: bakes-on-mesh textures on something that is
                     // not a mesh (shown as its base prim shape)
                     if u.pcode == aurora_prim::params::LL_PCODE_VOLUME
@@ -948,6 +961,9 @@ impl World {
                             .on_server_update(pos, velocity, acceleration, parent != 0, Some(handle) == self.main_region);
                     }
                 }
+                if land_changed {
+                    self.land.objects_changed(handle, Instant::now());
+                }
                 None
             }
             NetEvent::TerseUpdates { handle, updates } => {
@@ -974,14 +990,25 @@ impl World {
                 None
             }
             NetEvent::ObjectsKilled { handle, local_ids } => {
+                let land_watches = self.land.watches(handle);
+                let mut land_changed = false;
                 for id in local_ids {
                     let key = ObjKey {
                         region: handle,
                         local_id: id,
                     };
+                    land_changed |= land_watches
+                        && self
+                            .objects
+                            .index_of(&key)
+                            .and_then(|i| self.objects.get(i))
+                            .is_some_and(|o| !o.is_avatar());
                     self.objects.remove(&key);
                     // a cache hit replays the cached ones, a full update comes with them
                     self.gltf_overrides.remove(&key);
+                }
+                if land_changed {
+                    self.land.objects_changed(handle, Instant::now());
                 }
                 None
             }

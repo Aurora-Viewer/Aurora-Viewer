@@ -1014,6 +1014,25 @@ impl MiniMap {
         Some(id)
     }
 
+    /// The mini-map's image of a region for another window (the header of
+    /// « À propos du terrain »): its map tile, else the terrain drawn from
+    /// the heights received (no map server, or the tile is not there yet).
+    pub fn region_image(
+        &mut self,
+        ctx: &egui::Context,
+        world: &World,
+        tiles: &mut MapTiles,
+        handle: RegionHandle,
+    ) -> Option<egui::TextureHandle> {
+        let (ox, oy) = aurora_net::handle_to_origin(handle);
+        if let Ok(tile) = tiles.get(1, ox / 256, oy / 256, true) {
+            return Some(tile);
+        }
+        let region = world.regions.get(&handle)?;
+        self.local_terrain(ctx, world, region, Instant::now())?;
+        self.terrain.get(&handle).map(|t| t.tex.clone())
+    }
+
     /// Forget per-region data of regions that are gone.
     pub fn prune(&mut self, world: &World) {
         self.terrain.retain(|h, _| world.regions.contains_key(h));

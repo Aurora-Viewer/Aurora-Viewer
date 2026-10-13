@@ -41,6 +41,23 @@ pub mod powers {
 pub const MIN_PARCEL_AREA: i32 = 128;
 /// The covenant is asked again after a minute (COVENANT_REFRESH_TIME_SEC).
 const COVENANT_REFRESH: Duration = Duration::from_secs(60);
+/// The selected parcel is asked again this long after an object appeared in
+/// its region or left it, so that a burst of objects is one request.
+const REFRESH_DEBOUNCE: Duration = Duration::from_secs(1);
+/// Two refreshes are at least this far apart (a region arriving object by
+/// object must not turn into a stream of requests).
+const REFRESH_MIN_INTERVAL: Duration = Duration::from_secs(3);
+/// With nothing seen changing, the parcel is still asked again this often:
+/// its counts also move for reasons the viewer does not see (objects out of
+/// range, the land impact of an object, an automatic return).
+const REFRESH_IDLE: Duration = Duration::from_secs(15);
+/// No refresh this long after a change sent from here: the simulator must
+/// have it first (the capability's POST is not ordered with the UDP request),
+/// or its answer would show the old values again, and the sound tab would
+/// take a stream just set for a refused one.
+const REFRESH_AFTER_UPDATE: Duration = Duration::from_secs(5);
+/// A refresh without an answer is forgotten after this long.
+const REFRESH_TIMEOUT: Duration = Duration::from_secs(10);
 /// PARCEL_GRID_STEP_METERS.
 const GRID_STEP: f32 = 4.0;
 
@@ -285,6 +302,49 @@ pub struct Covenant {
     pub text: Option<String>,
 }
 
+/// Objects held by the land of the parcel's owner in the region, against
+/// what it may hold: the "[COUNT] sur [MAX] ([AVAILABLE] disponibles)" of
+/// LLPanelLandObjects::refresh (getSimWidePrimCount /
+/// getSimWideMaxPrimCapacity). The parcels of one owner share their capacity,
+/// so this, not the parcel's own count, tells what can still be rezzed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrimUsage {
+    pub used: i32,
+    pub max: i32,
+}
+
+impl PrimUsage {
+    /// `region_max`: the region's object capacity (0 = unknown), which the
+    /// owner's capacity never exceeds whatever the bonus.
+    pub fn of(p: &ParcelInfo, region_max: u32) -> PrimUsage {
+        let mut max = p.sim_max_prims.max(0);
+        if region_max > 0 {
+            max = max.min(i32::try_from(region_max).unwrap_or(i32::MAX));
+        }
+        PrimUsage {
+            used: p.sim_total_prims.max(0),
+            max,
+        }
+    }
+
+    /// Objects that can still be rezzed; negative when some will be returned.
+    pub fn available(&self) -> i32 {
+        self.max - self.used
+    }
+
+    /// Part of the capacity used, 0 to 1 (full when there is no capacity
+    /// but objects, empty when there is neither).
+    pub fn fraction(&self) -> f32 {
+        if self.max > 0 {
+            (self.used as f32 / self.max as f32).clamp(0.0, 1.0)
+        } else if self.used > 0 {
+            1.0
+        } else {
+            0.0
+        }
+    }
+}
+
 /// The selected parcel and what was fetched about it.
 #[derive(Debug, Clone)]
 pub struct Selection {
@@ -306,11 +366,30 @@ pub struct Selection {
     env_key: Option<(i32, i32)>,
     /// Bumped on every answer, so the floater reloads its fields.
     pub revision: u64,
+    /// Rectangle of the request (west, south, east, north), sent again by a
+    /// refresh.
+    rect: (f32, f32, f32, f32),
+    /// When the parcel is asked again (`Land::tick`), and not before
+    /// `refresh_hold` (a change sent from here).
+    refresh_at: Instant,
+    refresh_hold: Instant,
+    /// The last refresh sent, and whether its answer is still awaited.
+    refresh_sent: Option<Instant>,
+    refresh_pending: bool,
+    /// The parcel was changed from here while that refresh was on its way:
+    /// its answer is older than what the floater shows.
+    refresh_stale: bool,
 }
 
 impl Selection {
-    fn new(handle: RegionHandle) -> Selection {
+    fn new(handle: RegionHandle, rect: (f32, f32, f32, f32)) -> Selection {
         Selection {
+            rect,
+            refresh_at: Instant::now() + REFRESH_IDLE,
+            refresh_hold: Instant::now(),
+            refresh_sent: None,
+            refresh_pending: false,
+            refresh_stale: false,
             handle,
             parcel: None,
             result: land::PARCEL_RESULT_NO_DATA,
@@ -373,7 +452,51 @@ impl Land {
         if east - west <= 1.0 || north - south <= 1.0 {
             return;
         }
-        self.sel = Some(Selection::new(handle));
+        self.sel = Some(Selection::new(handle, (west, south, east, north)));
+        self.send(LandCommand::Select {
+            handle,
+            west,
+            south,
+            east,
+            north,
+            snap: true,
+        });
+    }
+
+    /// The selection is a parcel of `handle`: objects coming and going there
+    /// change what the floater shows.
+    pub fn watches(&self, handle: RegionHandle) -> bool {
+        self.sel.as_ref().is_some_and(|s| s.handle == handle && s.parcel.is_some())
+    }
+
+    /// An object appeared in the selection's region or left it: its prim
+    /// counts are asked again shortly.
+    pub fn objects_changed(&mut self, handle: RegionHandle, now: Instant) {
+        if let Some(sel) = self.sel.as_mut().filter(|s| s.handle == handle && s.parcel.is_some()) {
+            sel.refresh_at = sel.refresh_at.min(now + REFRESH_DEBOUNCE);
+        }
+    }
+
+    /// Ask the selected parcel again when its refresh is due, so the floater
+    /// follows the simulator while it stays open. Firestorm only asks on a
+    /// new selection (its counts stay as they were when the floater opened);
+    /// the request is the same ParcelPropertiesRequest. Once a frame.
+    pub fn tick(&mut self, now: Instant) {
+        let Some(sel) = self.sel.as_mut().filter(|s| s.parcel.is_some()) else {
+            return;
+        };
+        let since_sent = sel.refresh_sent.map(|t| now.saturating_duration_since(t));
+        if sel.refresh_pending && since_sent.is_some_and(|d| d < REFRESH_TIMEOUT) {
+            return;
+        }
+        if now < sel.refresh_at.max(sel.refresh_hold) || since_sent.is_some_and(|d| d < REFRESH_MIN_INTERVAL) {
+            return;
+        }
+        sel.refresh_sent = Some(now);
+        sel.refresh_pending = true;
+        sel.refresh_stale = false;
+        sel.refresh_at = now + REFRESH_IDLE;
+        let (handle, (west, south, east, north)) = (sel.handle, sel.rect);
         self.send(LandCommand::Select {
             handle,
             west,
@@ -572,9 +695,32 @@ impl Land {
         let local_id = info.local_id;
         let changed = sel.local_id() != Some(local_id);
         let env_version = info.env_version;
+        // the answer of a refresh, for the parcel already shown (cut or
+        // joined meanwhile, it is a new selection)
+        let refresh = std::mem::take(&mut sel.refresh_pending) && !changed;
+        let now = Instant::now();
+        if refresh && std::mem::take(&mut sel.refresh_stale) {
+            // asked before a change made here: what the floater shows is
+            // newer, the parcel is asked again once that change is through
+            sel.refresh_at = now;
+            return;
+        }
+        sel.refresh_at = now + REFRESH_IDLE;
         sel.parcel = Some(info);
         sel.result = result;
         sel.revision += 1;
+        if refresh {
+            // the parcel itself only: its lists, its traffic and its key are
+            // kept (asking for the lists empties them, and the rows selected
+            // in the floater with them); the environment follows its version
+            let ask_env = ctx.agent_region == Some(handle) && sel.env_key != Some((local_id, env_version));
+            if ask_env {
+                sel.env_key = Some((local_id, env_version));
+                sel.env = EnvState::Loading;
+                self.send(LandCommand::EnvironmentRequest { local_id });
+            }
+            return;
+        }
         if changed {
             sel.owners = OwnerList::Idle;
             sel.env = EnvState::None;
@@ -645,6 +791,10 @@ impl Land {
         f(&mut u);
         apply_update(Arc::make_mut(p), &u);
         sel.revision += 1;
+        // a refresh on its way was asked before this change, and the next
+        // one waits for the simulator to have it
+        sel.refresh_stale = sel.refresh_pending;
+        sel.refresh_hold = Instant::now() + REFRESH_AFTER_UPDATE;
         let handle = sel.handle;
         self.send(LandCommand::Update {
             handle,
@@ -795,6 +945,171 @@ mod tests {
         assert!(add_entry(&mut list, &owner, Uuid::from_u128(2), 0));
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].time, 0);
+    }
+
+    #[test]
+    fn prim_usage_is_the_owner_s_in_the_region() {
+        let mut p = ParcelInfo {
+            total_prims: 61,
+            max_prims: 3750,
+            sim_total_prims: 5387,
+            sim_max_prims: 15000,
+            ..Default::default()
+        };
+        let u = PrimUsage::of(&p, 0);
+        assert_eq!((u.used, u.max, u.available()), (5387, 15000, 9613));
+        assert!((u.fraction() - 5387.0 / 15000.0).abs() < 1e-6);
+        // never more than the region holds, whatever the bonus
+        assert_eq!(PrimUsage::of(&p, 5000).max, 5000);
+        // over the capacity: a full bar, the excess is to be returned
+        p.sim_total_prims = 16000;
+        let over = PrimUsage::of(&p, 0);
+        assert_eq!((over.available(), over.fraction()), (-1000, 1.0));
+        // public land has no capacity
+        let none = PrimUsage::of(&ParcelInfo::default(), 15000);
+        assert_eq!((none.max, none.fraction()), (0, 0.0));
+    }
+
+    const REGION: RegionHandle = 7;
+
+    fn parcel(local_id: i32, used: i32, name: &str) -> Arc<ParcelInfo> {
+        Arc::new(ParcelInfo {
+            local_id,
+            name: name.into(),
+            sim_total_prims: used,
+            sim_max_prims: 100,
+            ..Default::default()
+        })
+    }
+
+    fn answer(land: &mut Land, info: Arc<ParcelInfo>) {
+        let ctx = SelectionContext {
+            agent_region: Some(REGION),
+            region_id: Uuid::nil(),
+        };
+        let ev = LandEvent::Selected {
+            handle: REGION,
+            info,
+            result: land::PARCEL_RESULT_SUCCESS,
+        };
+        land.apply(ev, &ctx);
+    }
+
+    /// (parcel requests, list requests) queued since the last call.
+    fn asked(land: &mut Land) -> (usize, usize) {
+        let cmds = land.take_commands();
+        let count = |f: fn(&LandCommand) -> bool| cmds.iter().filter(|c| matches!(c, NetCommand::Land(l) if f(l))).count();
+        (
+            count(|l| matches!(l, LandCommand::Select { .. })),
+            count(|l| matches!(l, LandCommand::AccessListRequest { .. })),
+        )
+    }
+
+    fn selected(land: &mut Land) -> Instant {
+        land.select_at(REGION, Vec3::new(10.0, 10.0, 0.0), (256.0, 256.0));
+        answer(land, parcel(1, 10, "A"));
+        assert_eq!(asked(land), (1, 1));
+        Instant::now()
+    }
+
+    #[test]
+    fn the_selected_parcel_follows_the_objects_of_its_region() {
+        let mut land = Land::default();
+        land.select_at(REGION, Vec3::new(10.0, 10.0, 0.0), (256.0, 256.0));
+        assert_eq!(asked(&mut land), (1, 0));
+        // nothing to refresh before the parcel is known
+        land.objects_changed(REGION, Instant::now());
+        land.tick(Instant::now() + REFRESH_IDLE * 2);
+        assert_eq!(asked(&mut land), (0, 0));
+        answer(&mut land, parcel(1, 10, "A"));
+        assert_eq!(asked(&mut land), (0, 1));
+        let t = Instant::now();
+        land.tick(t + REFRESH_DEBOUNCE);
+        assert_eq!(asked(&mut land), (0, 0), "nothing changed yet");
+        // an object in another region is not ours to count
+        land.objects_changed(REGION + 1, t);
+        land.tick(t + REFRESH_DEBOUNCE);
+        assert_eq!(asked(&mut land), (0, 0));
+        // a burst of objects in ours is one request, a moment later
+        land.objects_changed(REGION, t);
+        land.objects_changed(REGION, t + REFRESH_DEBOUNCE / 4);
+        land.tick(t + REFRESH_DEBOUNCE / 2);
+        assert_eq!(asked(&mut land), (0, 0));
+        let sent = t + REFRESH_DEBOUNCE;
+        land.tick(sent);
+        assert_eq!(asked(&mut land), (1, 0));
+        // none while its answer is awaited
+        land.objects_changed(REGION, sent);
+        land.tick(sent + REFRESH_MIN_INTERVAL);
+        assert_eq!(asked(&mut land), (0, 0));
+        // the answer brings the counts and keeps the lists (and their rows)
+        let entry = AccessEntry {
+            id: Uuid::from_u128(2),
+            time: 0,
+            flags: 0,
+        };
+        land.sel.as_mut().expect("selection").access.push(entry);
+        answer(&mut land, parcel(1, 12, "A"));
+        let sel = land.sel.as_ref().expect("selection");
+        assert_eq!(sel.parcel.as_ref().map(|p| p.sim_total_prims), Some(12));
+        assert_eq!(sel.access.len(), 1);
+        assert_eq!(asked(&mut land), (0, 0));
+        // two refreshes keep their distance
+        land.objects_changed(REGION, sent + REFRESH_DEBOUNCE);
+        land.tick(sent + REFRESH_DEBOUNCE * 2);
+        assert_eq!(asked(&mut land), (0, 0));
+        land.tick(sent + REFRESH_MIN_INTERVAL);
+        assert_eq!(asked(&mut land), (1, 0));
+    }
+
+    #[test]
+    fn the_selected_parcel_is_asked_again_when_idle() {
+        let mut land = Land::default();
+        let t = selected(&mut land);
+        land.tick(t + REFRESH_IDLE / 2);
+        assert_eq!(asked(&mut land), (0, 0));
+        land.tick(t + REFRESH_IDLE + REFRESH_DEBOUNCE);
+        assert_eq!(asked(&mut land), (1, 0));
+        // a refresh never answered is sent again later
+        land.tick(t + REFRESH_IDLE + REFRESH_TIMEOUT);
+        assert_eq!(asked(&mut land), (0, 0));
+        land.tick(t + REFRESH_IDLE * 2 + REFRESH_TIMEOUT);
+        assert_eq!(asked(&mut land), (1, 0));
+    }
+
+    #[test]
+    fn a_refresh_does_not_undo_a_change_made_meanwhile() {
+        let mut land = Land::default();
+        let t = selected(&mut land);
+        land.objects_changed(REGION, t);
+        land.tick(t + REFRESH_DEBOUNCE);
+        assert_eq!(asked(&mut land), (1, 0));
+        // renamed here while the refresh is on its way: its answer is older
+        land.update(|u| u.name = "B".into());
+        answer(&mut land, parcel(1, 10, "A"));
+        let name = |land: &Land| land.sel.as_ref().and_then(|s| s.parcel.as_ref()).map(|p| p.name.clone());
+        assert_eq!(name(&land).as_deref(), Some("B"));
+        // and the parcel is asked again, once the simulator has the change
+        land.take_commands();
+        land.objects_changed(REGION, Instant::now());
+        land.tick(Instant::now() + REFRESH_MIN_INTERVAL + REFRESH_DEBOUNCE);
+        assert_eq!(asked(&mut land), (0, 0));
+        land.tick(Instant::now() + REFRESH_AFTER_UPDATE);
+        assert_eq!(asked(&mut land), (1, 0));
+        answer(&mut land, parcel(1, 10, "B"));
+        assert_eq!(name(&land).as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn a_refresh_finding_another_parcel_is_a_new_selection() {
+        let mut land = Land::default();
+        let t = selected(&mut land);
+        land.objects_changed(REGION, t);
+        land.tick(t + REFRESH_DEBOUNCE);
+        assert_eq!(asked(&mut land), (1, 0));
+        // the parcel was cut: the piece under the selection has its own lists
+        answer(&mut land, parcel(2, 3, "C"));
+        assert_eq!(asked(&mut land), (0, 1));
     }
 
     #[test]
