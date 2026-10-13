@@ -54,6 +54,7 @@ pub fn show_document(
         worn_labels: Default::default(),
         points: Vec::new(),
         appearance_busy: false,
+        touchable: Default::default(),
         names: Default::default(),
     };
     dialogs::preview(ctx, p, icons, inv, drag_inventory, st, images, &prefs, &mut actions);
@@ -115,6 +116,8 @@ pub struct Facts {
     pub worn_labels: std::collections::HashMap<Uuid, String>,
     pub points: Vec<(u8, bool, String)>,
     pub appearance_busy: bool,
+    /// Worn objects that handle touches (enable_attachment_touch).
+    pub touchable: HashSet<Uuid>,
     pub names: std::collections::HashMap<Uuid, String>,
 }
 
@@ -143,6 +146,7 @@ impl Facts {
             worn_labels,
             points,
             appearance_busy,
+            touchable: world.touchable_attachment_items(),
             names: Default::default(),
         }
     }
@@ -1566,6 +1570,7 @@ mod tests {
                 worn_labels: Default::default(),
                 points: vec![],
                 appearance_busy: false,
+                touchable: Default::default(),
                 names: Default::default(),
             };
             let palette = crate::theme::Theme::default().palette();
@@ -1671,6 +1676,7 @@ mod tests {
             worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
+            touchable: Default::default(),
             names: Default::default(),
         };
         let mut prefs = InventoryPreferences::default();
@@ -1733,6 +1739,7 @@ mod tests {
             worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
+            touchable: Default::default(),
             names: Default::default(),
         };
         let mut prefs = InventoryPreferences::default();
@@ -1795,6 +1802,7 @@ mod tests {
                 worn_labels: Default::default(),
                 points: vec![],
                 appearance_busy: false,
+                touchable: Default::default(),
                 names: Default::default(),
             };
             let palette = crate::theme::Theme::default().palette();
@@ -2026,6 +2034,7 @@ mod tests {
             worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
+            touchable: Default::default(),
             names: Default::default(),
         };
         let mut prefs = InventoryPreferences::default();
@@ -2099,6 +2108,7 @@ mod tests {
             worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
+            touchable: Default::default(),
             names: Default::default(),
         };
         let mut prefs = InventoryPreferences::default();
@@ -2217,6 +2227,7 @@ mod tests {
                         worn_labels: Default::default(),
                         points: Vec::new(),
                         appearance_busy: false,
+                        touchable: Default::default(),
                         names: Default::default(),
                     },
                     &mut Vec::new(),
@@ -2327,6 +2338,7 @@ mod tests {
                         worn_labels: Default::default(),
                         points: Vec::new(),
                         appearance_busy: false,
+                        touchable: Default::default(),
                         names: Default::default(),
                     },
                     &mut actions,
@@ -2434,6 +2446,7 @@ mod tests {
                         worn_labels: Default::default(),
                         points: Vec::new(),
                         appearance_busy: false,
+                        touchable: Default::default(),
                         names: Default::default(),
                     },
                     &mut Vec::new(),
@@ -2503,6 +2516,7 @@ mod tests {
                             worn_labels: Default::default(),
                             points: Vec::new(),
                             appearance_busy: false,
+                            touchable: Default::default(),
                             names: Default::default(),
                         },
                         &mut Vec::new(),

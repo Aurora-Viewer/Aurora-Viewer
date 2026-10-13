@@ -12,6 +12,7 @@ mod flexible;
 pub mod hover;
 pub mod hud;
 pub mod impostors;
+pub mod inspect;
 pub mod jobs;
 pub mod legacy_mat;
 pub mod loading;

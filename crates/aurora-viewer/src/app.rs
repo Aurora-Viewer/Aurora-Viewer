@@ -33,12 +33,14 @@ mod color_picker;
 mod context_menu;
 mod hud_drag;
 mod imports;
+mod inspect;
 mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
 mod object_actions;
 mod scripts;
 mod task_notecards;
+mod worn_demo;
 
 enum Screen {
     Login,
@@ -273,6 +275,7 @@ pub struct App {
     /// Mini-map and world map state, map server tiles.
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
+    inspect_ui: ui::inspect::InspectUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     people_map_ui: ui::minimap::MiniMap,
     worldmap_ui: ui::worldmap::WorldMapUi,
@@ -596,6 +599,7 @@ impl App {
             contacts_ui: Default::default(),
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
+            inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
             people_map_ui: Default::default(),
             worldmap_ui: Default::default(),
@@ -4158,10 +4162,13 @@ impl App {
             self.build
                 .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
             self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
-            // the attachment the open menu is about, outlined like a child
-            // prim of a selection (worn objects are not selected in Aurora)
+            // another avatar's attachment the open menu is about, outlined
+            // like a child prim of a selection (it cannot be selected)
             for idx in self.menu_outline() {
                 self.scene.selection_wire.entry(idx).or_insert(false);
+            }
+            for (idx, current) in self.inspect_outline() {
+                self.scene.selection_wire.entry(idx).or_insert(current);
             }
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
             let selected_faces = self.build.face_selection(&self.world, &self.settings.build);
@@ -5168,6 +5175,7 @@ impl App {
                 self.inventory_ui.show_original(&self.world.inventory, crate::demo::DEMO_OFFER);
             }
         }
+        self.demo_worn_steps();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -6702,6 +6710,20 @@ impl App {
                 }
                 self.panels.about_land = open;
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
+                if self.inspect_ui.open {
+                    let (rows, totals) = self.inspect_rows();
+                    let mut columns = self.settings.inspect_columns;
+                    if let Some(id) = self.inspect_ui.show(&ctx, &p, &rows, &totals, &mut columns) {
+                        self.profile_ui.open(&mut self.world, id);
+                    }
+                    if columns != self.settings.inspect_columns {
+                        self.settings.inspect_columns = columns;
+                        self.settings.save();
+                    }
+                    if !self.inspect_ui.open {
+                        self.inspect_closed();
+                    }
+                }
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 // links and names clicked anywhere (LLAgentHandler)
                 if let Some(id) = ui::profile::take_open_request(&ctx) {
@@ -7997,6 +8019,13 @@ impl ApplicationHandler for App {
                     self.on_app_event(e);
                 }
                 self.media.demo_entry(object, face, &url);
+            }
+            // AURORA_DEMO_WORN: an object worn on our avatar's back
+            if std::env::var_os("AURORA_DEMO_WORN").is_some() {
+                for ev in crate::demo::worn::events() {
+                    self.world.apply(ev);
+                }
+                crate::demo::worn::seed_inventory(&mut self.world);
             }
             // HUD fixtures exercise screen-space rendering and the same
             // linked-object touch / inventory paths as real attachments.

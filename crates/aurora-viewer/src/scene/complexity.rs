@@ -20,7 +20,7 @@ use super::{AlphaKind, Pass, Scene, avatar, classify};
 use crate::world::World;
 
 const COMPLEXITY_BODY_PART_COST: u32 = 200;
-const MAX_ATTACHMENT_COMPLEXITY: f32 = 1.0e6;
+pub(super) const MAX_ATTACHMENT_COMPLEXITY: f32 = 1.0e6;
 const ARC_PARTICLE_COST: f32 = 1.0;
 const ARC_PARTICLE_MAX: f32 = 2048.0;
 const ARC_LIGHT_COST: f32 = 500.0;
@@ -175,7 +175,7 @@ impl Scene {
     }
 
     /// LLVOVolume::getRenderCost of one prim; its textures go into `textures`.
-    fn prim_render_cost(&self, world: &World, idx: usize, textures: &mut HashSet<Uuid>) -> f32 {
+    pub(super) fn prim_render_cost(&self, world: &World, idx: usize, textures: &mut HashSet<Uuid>) -> f32 {
         let Some(o) = world.objects.get(idx) else {
             return 0.0;
         };

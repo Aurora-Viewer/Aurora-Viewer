@@ -818,6 +818,36 @@ impl World {
             .collect()
     }
 
+    /// The root prim of the object our avatar wears from inventory item
+    /// `item` (LLVOAvatar::getWornAttachment).
+    pub fn worn_attachment(&self, item: &Uuid) -> Option<usize> {
+        if item.is_nil() {
+            return None;
+        }
+        let me = self.objects.get(self.objects.index_of_uuid(&self.agent_id)?)?;
+        self.objects
+            .children_of(&me.key)
+            .iter()
+            .copied()
+            .find(|i| self.objects.get(*i).and_then(|o| o.attachment_item_id()) == Some(*item))
+    }
+
+    /// Worn items whose object handles touches (enable_attachment_touch:
+    /// flagHandleTouch of the attachment's root).
+    pub fn touchable_attachment_items(&self) -> HashSet<Uuid> {
+        let Some(me) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
+            return HashSet::new();
+        };
+        self.objects
+            .children_of(&me.key)
+            .iter()
+            .filter_map(|i| self.objects.get(*i))
+            .filter(|o| o.update_flags & crate::ui::context::flags::HANDLE_TOUCH != 0)
+            .filter_map(|o| o.attachment_item_id())
+            .filter(|id| !id.is_nil())
+            .collect()
+    }
+
     pub fn worn_attachment_points(&self) -> HashMap<Uuid, u8> {
         self.objects
             .index_of_uuid(&self.agent_id)

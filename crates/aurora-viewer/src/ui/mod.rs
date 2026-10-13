@@ -24,6 +24,7 @@ pub mod fonts;
 pub mod group_profile;
 pub mod hud;
 pub mod icons;
+pub mod inspect;
 pub mod inventory;
 pub mod land;
 pub mod layout;

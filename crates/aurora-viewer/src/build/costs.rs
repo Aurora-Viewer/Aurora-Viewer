@@ -140,7 +140,7 @@ impl BuildTool {
         // the parcel under the first object, unless the selection spans
         // several regions (LLCrossParcelFunctor, coarse version)
         if by_region_count(&roots) == 1
-            && !self.hud_selected(world)
+            && !self.attachment_selected(world)
             && let Some(off) = world.region_offset(first_region)
         {
             let l = first_pos - off;
