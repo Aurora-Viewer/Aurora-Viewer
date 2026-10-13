@@ -8,7 +8,7 @@
 A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 [![Download](docs/readme/button-download.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/latest)&nbsp;
-[![Discord](docs/readme/button-discord.svg)](https://discord.gg/swn83ftMXS)&nbsp;
+[![Discord](docs/readme/button-discord.svg)](https://discord.gg/TK4nbMGmKt)&nbsp;
 [![Website](docs/readme/button-website.svg)](https://auroraviewer.com)
 
 [![CI](https://github.com/Aurora-Viewer/Aurora-Viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/actions/workflows/ci.yml)
@@ -505,7 +505,7 @@ Behaviour follows Firestorm: its sources are expected next to the repository
 (`../phoenix-firestorm`, cloned from
 [FirestormViewer/phoenix-firestorm](https://github.com/FirestormViewer/phoenix-firestorm)).
 
-Questions and ideas are welcome on [Discord](https://discord.gg/swn83ftMXS).
+Questions and ideas are welcome on [Discord](https://discord.gg/TK4nbMGmKt).
 
 ## License
 
