@@ -2681,7 +2681,8 @@ impl Backend {
             depth_format: Some(SHADOW_FORMAT),
             depth_bias: wgpu::DepthBiasState {
                 constant: 2,
-                slope_scale: 2.0,
+                // (the merge of two cascades makes up for it: shadow_merge.rs)
+                slope_scale: crate::shadow_cull::SLOPE_BIAS,
                 clamp: 0.0,
             },
             constants: &[],
