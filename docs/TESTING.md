@@ -745,8 +745,8 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   restaient en nuage pendant les 60 s de la limite (issue #121) : bake de
   tête invisible (calque alpha), haut et bas texturés, un mesh porté que le
   serveur d'assets n'a pas (404) et un chapeau. Il doit apparaître environ
-  5 s après son arrivée, sans tête et sans le mesh, et le journal contenir
-  « avatar … (own) shown after 5.0 s ». Captures avec `AURORA_FPS_LIMIT=60`
+  3 s après son arrivée, sans tête et sans le mesh, et le journal contenir
+  « avatar … (own) shown after 3.0 s ». Captures avec `AURORA_FPS_LIMIT=60`
   et `AURORA_CAPTURE_FRAMES=240,1200` : nuage, puis avatar.
 
 ## Rendu et environnement
@@ -936,6 +936,7 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
 | `AURORA_DEMO_RADAR=1` | Résidents autour de soi pour le radar de Personnes (toutes les portées) |
 | `AURORA_DEMO_OPTIONS=<section>` | Ouvre les préférences sur une section |
 | `AURORA_DEMO_PERF=compact` ou `full` | Ouvre la fenêtre Performances, compacte ou complète |
+| `AURORA_DEMO_BUY_CURRENCY=<mode>` | Solde de démo et fenêtre « Acheter des L$ » |
 | `AURORA_DEMO_LOGIN=<mode>` | Écran de connexion hors ligne |
 | `AURORA_NEWS_URL=<url>` | Actualités de la connexion lues ailleurs que sur `main` |
 | `AURORA_DEMO_CRASH=<mode>` | Plantage hors ligne et fenêtre de récupération |
@@ -976,6 +977,19 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
 
 ### Détails
 
+- **`AURORA_DEMO_BUY_CURRENCY=<mode>`** : donne un solde de 479 L$ et ouvre
+  « Acheter des L$ ». Le service d'achat est simulé (taux inventé) : aucun
+  L$ réel, aucune requête envoyée. `click` n'ouvre rien : cliquer sur le
+  solde de la barre du haut, ou Moi › Acheter des L$…. `empty` : montant
+  vide, « environ US$ 0.00 », Acheter grisé. Un nombre (`1000` par défaut) :
+  montant saisi et coût estimé ; en retapant un montant, « Estimation en
+  cours… » reste 2 s après la dernière frappe. `confirm` et `password` :
+  confirmation ouverte, simple ou avec mot de passe (OK grisé tant qu'il est
+  vide). `direct` : achat sans confirmation. `error` : refus du service
+  affiché dans la fenêtre, avec son lien. `nopayment` : compte sans moyen de
+  paiement. `grid` : grille sans service d'achat connu. Après Acheter puis
+  OK : la fenêtre se ferme, le solde augmente et la cloche reçoit la
+  notification.
 - **`AURORA_DEMO_IMPORTS=texture|destination|material|mesh|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`** :
   écrit des fichiers propres à ce lancement dans `.scratch/import-demo/<uuid>/`
   puis ouvre le parcours choisi : image RGBA, matériau PBR, cube Collada,

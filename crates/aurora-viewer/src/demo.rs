@@ -2985,6 +2985,7 @@ pub fn cloud_self_events() -> Vec<NetEvent> {
             visual_params: Vec::new(),
             cof_version: 1,
             hover_height: 0.0,
+            attachments: 0,
         }),
     ]
 }

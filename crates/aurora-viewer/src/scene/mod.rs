@@ -4341,6 +4341,7 @@ mod tests {
             visual_params: Vec::new(),
             cof_version: 1,
             hover_height: 0.25,
+            attachments: 0,
         }));
         let idx = world.objects.index_of_uuid(&owner).expect("demo avatar");
         let seat_idx = world.objects.parent_of(world.objects.get(idx).expect("avatar")).expect("seat");

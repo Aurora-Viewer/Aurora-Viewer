@@ -5,6 +5,7 @@
 
 mod asset_imports;
 mod build_cmds;
+mod currency;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
@@ -1458,6 +1459,8 @@ impl Session<'_> {
                 message.agent_data.session_id = self.session_id();
                 self.send_main(&message, true);
             }
+            NetCommand::CurrencyQuote { helper, amount } => self.currency_quote(helper, amount),
+            NetCommand::BuyCurrency { helper, quote, password } => self.buy_currency(helper, quote, password),
             NetCommand::FetchInventoryThumbnail { request, asset, resize } => {
                 let cap = self.main_cap("ViewerAsset");
                 let http = self.sh.caps_http.clone();
@@ -2896,6 +2899,13 @@ impl Session<'_> {
                     visual_params: m.visual_param.iter().map(|p| p.param_value).collect(),
                     cof_version: m.appearance_data.first().map(|a| a.cof_version).unwrap_or(0),
                     hover_height: m.appearance_hover.first().map(|h| h.hover_height.z).unwrap_or(0.0),
+                    attachments: m
+                        .attachment_block
+                        .iter()
+                        .filter(|a| !a.id.is_nil())
+                        .map(|a| a.id)
+                        .collect::<std::collections::HashSet<_>>()
+                        .len() as u32,
                 }),
             );
         } else if id == SimulatorViewerTimeMessage::ID {

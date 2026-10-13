@@ -246,6 +246,9 @@ pub struct World {
     /// `tp_storage` (LLViewerParcelMgr's teleport finished signal): global
     /// position and when it happened.
     tp_record: Option<(glam::DVec3, Instant)>,
+    /// Since when our avatar wears objects the region it is in has not sent
+    /// (`drop_left_behind`).
+    left_behind_since: Option<Instant>,
     /// Landmark assets and the handles of their regions.
     pub landmarks: landmarks::Landmarks,
     /// World map regions, items, tracking and parcel overlays.
@@ -357,6 +360,7 @@ impl World {
             tp_history: tphistory::TeleportHistory::default(),
             tp_storage: Default::default(),
             tp_record: None,
+            left_behind_since: None,
             landmarks: Default::default(),
             map: worldmap::WorldMap::default(),
             place_details: Default::default(),
@@ -409,6 +413,78 @@ impl World {
         if self.tp_record.is_some_and(|(_, at)| now.duration_since(at).as_secs_f32() > 5.0) {
             self.record_arrival();
         }
+        self.drop_left_behind(now);
+    }
+
+    /// What is stored by object key follows the objects that changed key
+    /// without being removed (border crossing, renumbering).
+    fn move_rekeyed(&mut self) {
+        for (old, new) in self.objects.take_rekeyed() {
+            if let Some(sides) = self.gltf_overrides.remove(&old) {
+                self.gltf_overrides.insert(new, sides);
+            }
+        }
+    }
+
+    /// process_kill_object: our avatar is never killed, and neither is what
+    /// it wears during a teleport or when another region than the agent's
+    /// asks for it (the one left by a teleport or a border crossing):
+    /// Firestorm's FSExperimentalLostAttachmentsFix, FIRE-12004, on by
+    /// default. Otherwise the agent's region detaches what it says.
+    fn kill_is_ignored(&self, key: &ObjKey) -> bool {
+        let Some(mut idx) = self.objects.index_of(key) else {
+            return false;
+        };
+        let Some(own) = self.objects.index_of_uuid(&self.agent_id) else {
+            return false;
+        };
+        if idx == own {
+            return true;
+        }
+        if Some(key.region) == self.main_region && !self.teleporting {
+            return false;
+        }
+        for _ in 0..16 {
+            match self.objects.get(idx).and_then(|o| self.objects.parent_of(o)) {
+                Some(p) if p == own => return true,
+                Some(p) => idx = p,
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// What our avatar wore that the region it arrived in did not send
+    /// again (taken off on the way, or a kill ignored above): removed once
+    /// that region has had the time to send it. Firestorm keeps such ghosts
+    /// until its next attachment refresh.
+    fn drop_left_behind(&mut self, now: Instant) {
+        const LEFT_BEHIND_AFTER: f32 = 15.0;
+        let Some(avatar) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
+            self.left_behind_since = None;
+            return;
+        };
+        let (key, region) = (avatar.key, avatar.key.region);
+        let stale = |w: &World, i: &usize| w.objects.get(*i).is_some_and(|o| o.key.region != region);
+        if !self.objects.children_of(&key).iter().any(|i| stale(self, i)) {
+            self.left_behind_since = None;
+            return;
+        }
+        let since = *self.left_behind_since.get_or_insert(now);
+        // (not counted while the avatar itself still waits for that region)
+        if key.local_id == objects::CARRIED_LOCAL_ID {
+            self.left_behind_since = Some(now);
+            return;
+        }
+        if now.duration_since(since).as_secs_f32() < LEFT_BEHIND_AFTER {
+            return;
+        }
+        let gone: Vec<usize> = self.objects.children_of(&key).iter().copied().filter(|i| stale(self, i)).collect();
+        log::info!("{} worn objects not sent by the region arrived in: removed", gone.len());
+        for i in gone {
+            self.objects.remove_idx(i);
+        }
+        self.left_behind_since = None;
     }
 
     pub fn main_origin(&self) -> Option<(u32, u32)> {
@@ -719,6 +795,12 @@ impl World {
         self.appearances.get(avatar).map(|(a, _)| a.cof_version).unwrap_or(-1)
     }
 
+    /// Worn objects the simulator listed in the avatar's last appearance
+    /// (LLVOAvatar::mSimAttachments); 0 when it listed none.
+    pub fn announced_attachments(&self, avatar: &Uuid) -> usize {
+        self.appearances.get(avatar).map(|(a, _)| a.attachments as usize).unwrap_or(0)
+    }
+
     /// Inventory items attached to our avatar (AttachItemID name-values).
     pub fn worn_attachment_items(&self) -> HashSet<Uuid> {
         let Some(idx) = self.objects.index_of_uuid(&self.agent_id) else {
@@ -991,6 +1073,7 @@ impl World {
                             .on_server_update(pos, velocity, acceleration, parent != 0, Some(handle) == self.main_region);
                     }
                 }
+                self.move_rekeyed();
                 if land_changed {
                     self.land.objects_changed(handle, Instant::now());
                 }
@@ -1027,6 +1110,9 @@ impl World {
                         region: handle,
                         local_id: id,
                     };
+                    if self.kill_is_ignored(&key) {
+                        continue;
+                    }
                     land_changed |= land_watches
                         && self
                             .objects
@@ -1144,7 +1230,18 @@ impl World {
                 None
             }
             NetEvent::RegionRemoved { handle } => {
-                self.objects.remove_region(handle);
+                // LLViewerObjectList::killObject never destroys gAgentAvatarp:
+                // it moves to the agent's region with what it wears, which
+                // the destination then sends under its own ids
+                let kept = match (self.objects.index_of_uuid(&self.agent_id), self.main_region) {
+                    (Some(own), Some(main)) if main != handle => {
+                        self.objects.carry(own, handle, main);
+                        self.objects.subtree(own)
+                    }
+                    _ => Vec::new(),
+                };
+                self.objects.remove_region(handle, &kept);
+                self.move_rekeyed();
                 self.gltf_overrides.retain(|k, _| k.region != handle);
                 self.regions.remove(&handle);
                 self.coarse.remove(&handle);
@@ -2181,12 +2278,8 @@ impl World {
         let Some(avatar) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
             return false;
         };
-        if avatar.parent_id == 0 {
+        let Some(seat) = avatar.parent_key() else {
             return false;
-        }
-        let seat = ObjKey {
-            region: avatar.key.region,
-            local_id: avatar.parent_id,
         };
         self.animation_sources.keys().any(|source| {
             let Some(mut object) = self.objects.index_of_uuid(source).and_then(|i| self.objects.get(i)) else {
@@ -2200,14 +2293,7 @@ impl World {
                 if object.key == seat {
                     return true;
                 }
-                if object.parent_id == 0 {
-                    return false;
-                }
-                let parent = ObjKey {
-                    region: object.key.region,
-                    local_id: object.parent_id,
-                };
-                let Some(next) = self.objects.index_of(&parent).and_then(|i| self.objects.get(i)) else {
+                let Some(next) = self.objects.parent_of(object).and_then(|i| self.objects.get(i)) else {
                     return false;
                 };
                 object = next;
@@ -2253,12 +2339,9 @@ impl World {
         let Some(avatar) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
             return;
         };
-        if avatar.parent_id == 0 || (avatar.key.region == region && avatar.parent_id == parent) {
+        // (the same seat under its new key when both crossed a border)
+        let Some(seat_key) = avatar.parent_key().filter(|k| *k != ObjKey { region, local_id: parent }) else {
             return;
-        }
-        let seat_key = ObjKey {
-            region: avatar.key.region,
-            local_id: avatar.parent_id,
         };
         let seat = self.objects.index_of(&seat_key).into_iter();
         let children = self.objects.children_of(&seat_key).iter().copied();
@@ -2915,5 +2998,106 @@ mod motion_tests {
         let count = world.notifications.list.len();
         world.apply(menu());
         assert_eq!(world.notifications.list.len(), count);
+    }
+
+    /// Our avatar wearing a prim in the demo region, and a second region.
+    fn worn_fixture() -> (
+        World,
+        aurora_net::objects::ObjectUpdate,
+        aurora_net::objects::ObjectUpdate,
+        RegionHandle,
+        RegionHandle,
+    ) {
+        let (mut world, avatar, here) = fixture();
+        let mut worn = avatar.clone();
+        worn.local_id = avatar.local_id + 1;
+        worn.full_id = Uuid::from_u128(0xBEEF);
+        worn.parent_id = avatar.local_id;
+        worn.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        worn.state = 0x20;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![avatar.clone(), worn.clone()],
+        });
+        let there = here + (256u64 << 32);
+        world.ensure_region(there, (256, 256));
+        (world, avatar, worn, here, there)
+    }
+
+    #[test]
+    fn our_avatar_and_what_it_wears_survive_a_teleport_to_another_region() {
+        let (mut world, avatar, worn, here, there) = worn_fixture();
+        let me = world.agent_id;
+        let own = world.objects.index_of_uuid(&me).expect("avatar");
+        let worn_idx = world.objects.index_of_uuid(&worn.full_id).expect("worn");
+        world.apply(NetEvent::MainRegionChanged { handle: there });
+        // the region left asks to remove both, then goes away
+        world.apply(NetEvent::ObjectsKilled {
+            handle: here,
+            local_ids: vec![worn.local_id, avatar.local_id],
+        });
+        assert_eq!(world.objects.index_of_uuid(&me), Some(own));
+        assert_eq!(world.objects.index_of_uuid(&worn.full_id), Some(worn_idx));
+        world.apply(NetEvent::RegionRemoved { handle: here });
+        assert_eq!(world.objects.index_of_uuid(&me), Some(own));
+        assert_eq!(world.objects.index_of_uuid(&worn.full_id), Some(worn_idx));
+        let key = world.objects.get(own).expect("avatar").key;
+        assert_eq!((key.region, key.local_id), (there, objects::CARRIED_LOCAL_ID));
+        // the destination sends them under its own ids: the same objects
+        let mut avatar2 = avatar.clone();
+        avatar2.local_id = 7001;
+        let mut worn2 = worn.clone();
+        worn2.local_id = 7002;
+        worn2.parent_id = 7001;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: there,
+            objects: vec![avatar2, worn2],
+        });
+        assert_eq!(world.objects.index_of_uuid(&me), Some(own));
+        assert_eq!(world.objects.index_of_uuid(&worn.full_id), Some(worn_idx));
+        let w = world.objects.get(worn_idx).expect("worn");
+        assert_eq!(w.key.region, there);
+        assert_eq!(world.objects.parent_of(w), Some(own));
+        // nothing is left behind to remove
+        let t = Instant::now();
+        world.flush_arrival(t);
+        world.flush_arrival(t + std::time::Duration::from_secs(60));
+        assert_eq!(world.objects.index_of_uuid(&worn.full_id), Some(worn_idx));
+    }
+
+    #[test]
+    fn worn_object_the_destination_never_sends_is_removed() {
+        let (mut world, avatar, worn, here, there) = worn_fixture();
+        world.apply(NetEvent::MainRegionChanged { handle: there });
+        world.apply(NetEvent::RegionRemoved { handle: here });
+        let t = Instant::now();
+        // not counted while our avatar itself has not come
+        world.flush_arrival(t);
+        world.flush_arrival(t + std::time::Duration::from_secs(30));
+        assert!(world.objects.index_of_uuid(&worn.full_id).is_some());
+        let mut avatar2 = avatar.clone();
+        avatar2.local_id = 7001;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: there,
+            objects: vec![avatar2],
+        });
+        world.flush_arrival(t + std::time::Duration::from_secs(31));
+        world.flush_arrival(t + std::time::Duration::from_secs(44));
+        assert!(world.objects.index_of_uuid(&worn.full_id).is_some());
+        world.flush_arrival(t + std::time::Duration::from_secs(46));
+        assert!(world.objects.index_of_uuid(&worn.full_id).is_none());
+        assert!(world.objects.index_of_uuid(&world.agent_id).is_some());
+    }
+
+    #[test]
+    fn the_agent_region_still_detaches_what_we_wear() {
+        let (mut world, avatar, worn, here, _) = worn_fixture();
+        // our avatar is never removed, even by its own region
+        world.apply(NetEvent::ObjectsKilled {
+            handle: here,
+            local_ids: vec![avatar.local_id, worn.local_id],
+        });
+        assert!(world.objects.index_of_uuid(&world.agent_id).is_some());
+        assert!(world.objects.index_of_uuid(&worn.full_id).is_none());
     }
 }

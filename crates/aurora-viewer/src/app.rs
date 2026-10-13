@@ -26,6 +26,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 mod ao;
 mod bug_report;
+mod buy_currency;
 mod chat_commands;
 mod click_pick;
 mod color_picker;
@@ -270,6 +271,7 @@ pub struct App {
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
     inspect_ui: ui::inspect::InspectUi,
+    buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     people_map_ui: ui::minimap::MiniMap,
     worldmap_ui: ui::worldmap::WorldMapUi,
     map_tiles: ui::map_tiles::MapTiles,
@@ -592,6 +594,7 @@ impl App {
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
             inspect_ui: Default::default(),
+            buy_currency_ui: Default::default(),
             people_map_ui: Default::default(),
             worldmap_ui: Default::default(),
             map_tiles: ui::map_tiles::MapTiles::new(),
@@ -791,7 +794,7 @@ impl App {
                 }
                 return;
             }
-            if self.demo_script_command(&cmd) {
+            if self.demo_script_command(&cmd) || self.demo_currency_command(&cmd) {
                 return;
             }
             if matches!(cmd, NetCommand::RequestInventoryMerchant) {
@@ -1176,6 +1179,7 @@ impl App {
         self.scene.jobs.discard(imports);
         self.record_inventory_logout();
         self.inventory_ui = Default::default();
+        self.buy_currency_ui = Default::default();
         self.task_notecards.clear();
         self.script_editors.disconnected();
         self.demo_script_sources.clear();
@@ -1601,6 +1605,8 @@ impl App {
             NetEvent::LoggedOut => {
                 self.back_to_login(None);
             }
+            NetEvent::CurrencyQuote { amount, result } => self.buy_currency_ui.quote_reply(amount, result),
+            NetEvent::CurrencyBought(result) => self.currency_bought(result),
             // LLSetDisplayNameReply + LLFloaterDisplayName::onCacheSetName
             NetEvent::SetDisplayNameReply { status, reason, content } => {
                 log::info!("display name change: {status} {reason}");
@@ -5347,6 +5353,7 @@ impl App {
                 self.send(NetCommand::SetDisplayName { old, new });
                 self.display_name_ui.open();
             }
+            self.demo_buy_currency();
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
         // the window, moving), Loup Violet looks at a point north of him
@@ -5775,6 +5782,9 @@ impl App {
         if let Some((old, new)) = a.set_display_name {
             self.send(NetCommand::SetDisplayName { old, new });
         }
+        for cmd in a.currency {
+            self.send(cmd);
+        }
         for to in a.offer_tp {
             self.net.send(NetCommand::OfferTeleport {
                 to,
@@ -5877,6 +5887,7 @@ impl App {
                 let me = self.world.agent_id;
                 self.profile_ui.open(&mut self.world, me);
             }
+            BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::ChatPrefs => {
                 self.panels.settings = true;
                 self.options_ui.tab = ui::options::TAB_CHAT;
@@ -6690,6 +6701,7 @@ impl App {
                         self.inspect_closed();
                     }
                 }
+                a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 // links and names clicked anywhere (LLAgentHandler)
                 if let Some(id) = ui::profile::take_open_request(&ctx) {
                     self.profile_ui.open(&mut self.world, id);
@@ -7140,6 +7152,8 @@ struct UiActions {
     object_confirm: Option<Option<i32>>,
     /// Display name change to send (old, new).
     set_display_name: Option<(String, String)>,
+    /// Estimate and purchase requests of the Buy L$ window.
+    currency: Vec<NetCommand>,
 }
 
 impl ApplicationHandler for App {

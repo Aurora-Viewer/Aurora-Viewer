@@ -15,6 +15,11 @@ pub struct ObjKey {
     pub local_id: u32,
 }
 
+/// Local id of our avatar between the removal of the region it was in and
+/// the first update from the one it arrived in (`ObjectStore::carry`). No
+/// simulator is expected to give it to an object.
+pub const CARRIED_LOCAL_ID: u32 = u32::MAX;
+
 /// Client-only appearance; never included in simulator texture/material edits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LocalAppearance {
@@ -96,6 +101,10 @@ pub struct Object {
     pub key: ObjKey,
     pub full_id: Uuid,
     pub parent_id: u32,
+    /// Region of the parent's key: this object's own, except after its
+    /// parent moved to another region and until its own update comes from
+    /// there (LLViewerObject::setRegion takes the children along).
+    pub parent_region: RegionHandle,
     pub pcode: u8,
     pub state: u8,
     pub click_action: u8,
@@ -190,6 +199,7 @@ impl Object {
             },
             full_id: u.full_id,
             parent_id: u.parent_id,
+            parent_region: region,
             pcode: u.pcode,
             state: u.state,
             click_action: u.click_action,
@@ -233,6 +243,14 @@ impl Object {
     }
 
     /// Apply a full update; flags what changed.
+    /// Key of its parent (None for a root).
+    pub fn parent_key(&self) -> Option<ObjKey> {
+        (self.parent_id != 0).then_some(ObjKey {
+            region: self.parent_region,
+            local_id: self.parent_id,
+        })
+    }
+
     pub fn apply_full(&mut self, u: ObjectUpdate) {
         if !u.full_id.is_nil() && self.full_id != u.full_id {
             self.render.local_volume = None;
@@ -461,6 +479,8 @@ pub struct ObjectStore {
     pub graveyard: Vec<Object>,
     /// Their slot indices, in removal order (a slot may be reused since).
     pub removed_slots: Vec<usize>,
+    /// Keys changed without the object being removed (`take_rekeyed`).
+    rekeyed: Vec<(ObjKey, ObjKey)>,
     /// Objects changed since the scene last took them, each once.
     touched: ChangeFeed,
     /// By slot: a new object the scene has not synced yet.
@@ -638,12 +658,9 @@ impl ObjectStore {
         let existing = self.children_of(&key);
         if existing.len() != indices.len()
             || indices.iter().collect::<std::collections::HashSet<_>>().len() != indices.len()
-            || indices.iter().any(|idx| {
-                !existing.contains(idx)
-                    || self
-                        .get(*idx)
-                        .is_none_or(|o| o.parent_id != key.local_id || o.key.region != key.region)
-            })
+            || indices
+                .iter()
+                .any(|idx| !existing.contains(idx) || self.get(*idx).is_none_or(|o| o.parent_key() != Some(key)))
         {
             return false;
         }
@@ -653,37 +670,112 @@ impl ObjectStore {
     }
 
     fn link(&mut self, idx: usize) {
-        let Some(o) = self.get(idx) else {
+        let Some(pk) = self.get(idx).and_then(Object::parent_key) else {
             return;
         };
-        if o.parent_id != 0 {
-            let pk = ObjKey {
-                region: o.key.region,
-                local_id: o.parent_id,
-            };
-            let v = self.children.entry(pk).or_default();
-            if !v.contains(&idx) {
-                v.push(idx);
-            }
+        let v = self.children.entry(pk).or_default();
+        if !v.contains(&idx) {
+            v.push(idx);
         }
     }
 
     fn unlink(&mut self, idx: usize) {
-        let Some(o) = self.get(idx) else {
+        let Some(pk) = self.get(idx).and_then(Object::parent_key) else {
             return;
         };
-        if o.parent_id != 0 {
-            let pk = ObjKey {
-                region: o.key.region,
-                local_id: o.parent_id,
-            };
-            if let Some(v) = self.children.get_mut(&pk) {
-                v.retain(|&c| c != idx);
-                if v.is_empty() {
-                    self.children.remove(&pk);
+        if let Some(v) = self.children.get_mut(&pk) {
+            v.retain(|&c| c != idx);
+            if v.is_empty() {
+                self.children.remove(&pk);
+            }
+        }
+    }
+
+    /// Give an object another key (new local id, or another region), keeping
+    /// its slot and what hangs from it: LLViewerObjectList::processObjectUpdate
+    /// finds an object by its UUID and only updates its local id and region,
+    /// and LLViewerObject::setRegion takes its children along. The children
+    /// keep their own key until their update comes from the new region.
+    fn rekey(&mut self, idx: usize, key: ObjKey) {
+        let Some(old) = self.get(idx).map(|o| o.key) else {
+            return;
+        };
+        if old == key {
+            return;
+        }
+        self.by_key.remove(&old);
+        self.by_key.insert(key, idx);
+        if let Some(o) = self.get_mut(idx) {
+            o.key = key;
+        }
+        if let Some(mut kids) = self.children.remove(&old) {
+            for &k in &kids {
+                if let Some(c) = self.get_mut(k) {
+                    c.parent_region = key.region;
+                    c.parent_id = key.local_id;
+                }
+                self.touch(k);
+            }
+            // (those that came from the new region before their parent)
+            for k in self.children.remove(&key).unwrap_or_default() {
+                if !kids.contains(&k) {
+                    kids.push(k);
+                }
+            }
+            self.children.insert(key, kids);
+        }
+        self.rekeyed.push((old, key));
+        self.touch(idx);
+    }
+
+    /// Make a root of an object whose parent goes away without it.
+    fn detach(&mut self, idx: usize) {
+        self.unlink(idx);
+        if let Some(o) = self.get_mut(idx) {
+            o.parent_id = 0;
+        }
+        self.touch(idx);
+    }
+
+    /// Keys changed by `rekey` since last taken (old, new), for what is
+    /// stored by key outside the store.
+    pub fn take_rekeyed(&mut self) -> Vec<(ObjKey, ObjKey)> {
+        std::mem::take(&mut self.rekeyed)
+    }
+
+    /// An object and everything linked under it.
+    pub fn subtree(&self, idx: usize) -> Vec<usize> {
+        let mut out = vec![idx];
+        let mut next = 0;
+        while let Some(&i) = out.get(next) {
+            next += 1;
+            if let Some(o) = self.get(i) {
+                for &k in self.children_of(&o.key) {
+                    if !out.contains(&k) {
+                        out.push(k);
+                    }
                 }
             }
         }
+        out
+    }
+
+    /// Our avatar leaves `from` for `to` before `to` has sent it:
+    /// LLViewerObjectList::killObject never destroys gAgentAvatarp, it moves
+    /// it to the agent's region, with what it wears. A seat stays behind.
+    /// The avatar waits under `CARRIED_LOCAL_ID` for its update from `to`.
+    pub fn carry(&mut self, idx: usize, from: RegionHandle, to: RegionHandle) {
+        if from == to || self.get(idx).is_none_or(|o| o.key.region != from) {
+            return;
+        }
+        self.detach(idx);
+        self.rekey(
+            idx,
+            ObjKey {
+                region: to,
+                local_id: CARRIED_LOCAL_ID,
+            },
+        );
     }
 
     /// Insert or update from a full update. Returns the slot index.
@@ -693,13 +785,16 @@ impl ObjectStore {
             local_id: u.local_id,
         };
         if let Some(&idx) = self.by_key.get(&key) {
-            let parent_changed = self.get(idx).is_some_and(|o| o.parent_id != u.parent_id);
+            let parent_changed = self
+                .get(idx)
+                .is_some_and(|o| o.parent_id != u.parent_id || o.parent_region != region);
             let old_uuid = self.get(idx).map(|o| o.full_id);
             if parent_changed {
                 self.unlink(idx);
             }
             if let Some(o) = self.get_mut(idx) {
                 o.apply_full(u);
+                o.parent_region = region;
             }
             if parent_changed {
                 self.link(idx);
@@ -714,35 +809,32 @@ impl ObjectStore {
             self.touch(idx);
             return idx;
         }
-        // An object with the same UUID may exist under another region (crossing).
-        if let Some(&old) = self.by_uuid.get(&u.full_id) {
-            if self.get(old).is_some_and(|o| o.key.region != region) {
-                // caller handles GPU cleanup through `take_removed`
-                self.remove_idx(old);
-            } else if let Some(old_key) = self.get(old).map(|o| o.key) {
-                // same region, new local id: the simulator renumbered it; keep
-                // the object (its state, animations, attachments) under the new
-                // id, as LLViewerObjectList::processObjectUpdate does
+        // The same UUID under another key: the simulator renumbered it, or
+        // it came from another region (border crossing, teleport of what we
+        // wear). Keep the object (its state, animations, attachments) under
+        // the new key, as LLViewerObjectList::processObjectUpdate does.
+        if let Some(&old) = self.by_uuid.get(&u.full_id)
+            && let Some(old_key) = self.get(old).map(|o| o.key)
+        {
+            if old_key.region == region {
                 log::info!("object {} renumbered: local id {} -> {}", u.full_id, old_key.local_id, u.local_id);
-                self.by_key.remove(&old_key);
-                self.by_key.insert(key, old);
-                if let Some(kids) = self.children.remove(&old_key) {
-                    self.children.insert(key, kids);
-                }
-                let parent_changed = self.get(old).is_some_and(|o| o.parent_id != u.parent_id);
-                if parent_changed {
-                    self.unlink(old);
-                }
-                if let Some(o) = self.get_mut(old) {
-                    o.key = key;
-                    o.apply_full(u);
-                }
-                if parent_changed {
-                    self.link(old);
-                }
-                self.touch(old);
-                return old;
             }
+            self.rekey(old, key);
+            let parent_changed = self
+                .get(old)
+                .is_some_and(|o| o.parent_id != u.parent_id || o.parent_region != region);
+            if parent_changed {
+                self.unlink(old);
+            }
+            if let Some(o) = self.get_mut(old) {
+                o.apply_full(u);
+                o.parent_region = region;
+            }
+            if parent_changed {
+                self.link(old);
+            }
+            self.touch(old);
+            return old;
         }
         let obj = Object::from_update(region, u);
         let idx = match self.free.pop() {
@@ -794,10 +886,22 @@ impl ObjectStore {
         }
     }
 
-    /// Remove every object of a region.
-    pub fn remove_region(&mut self, region: RegionHandle) {
-        let idxs: Vec<usize> = self.by_key.iter().filter(|(k, _)| k.region == region).map(|(_, &i)| i).collect();
+    /// Remove every object of a region, except `kept` (our avatar and what
+    /// it wears, still to come from the region it arrived in).
+    pub fn remove_region(&mut self, region: RegionHandle, kept: &[usize]) {
+        let idxs: Vec<usize> = self
+            .by_key
+            .iter()
+            .filter(|(k, i)| k.region == region && !kept.contains(i))
+            .map(|(_, &i)| i)
+            .collect();
         for i in idxs {
+            // (a kept object hanging from a removed one stays, as a root)
+            for k in self.get(i).map(|o| self.children_of(&o.key).to_vec()).unwrap_or_default() {
+                if kept.contains(&k) {
+                    self.detach(k);
+                }
+            }
             self.remove_idx(i);
         }
     }
@@ -808,13 +912,7 @@ impl ObjectStore {
 
     /// Parent index of an object, if its parent is known.
     pub fn parent_of(&self, o: &Object) -> Option<usize> {
-        if o.parent_id == 0 {
-            return None;
-        }
-        self.index_of(&ObjKey {
-            region: o.key.region,
-            local_id: o.parent_id,
-        })
+        self.index_of(&o.parent_key()?)
     }
 }
 
@@ -906,7 +1004,7 @@ mod tests {
         assert_eq!(ids(&mut s.texted()), [10]);
         assert_eq!((s.avatar_slots.len(), s.texted_slots.len()), (1, 1));
         // a region left takes its objects out of the lists
-        s.remove_region(1);
+        s.remove_region(1, &[]);
         s.refresh_labelled();
         assert_eq!(s.avatars().count() + s.texted().count(), 0);
         assert!(s.avatar_slots.is_empty() && s.texted_slots.is_empty());
@@ -1016,5 +1114,105 @@ mod tests {
         // new animation
         let c = TexAnimClock::after_update(None, &anim(SMOOTH_ON, 1.0), t1);
         assert_eq!((c.start, c.phase), (t1, 0.0));
+    }
+
+    use aurora_prim::params::{LL_PCODE_LEGACY_AVATAR as AVATAR, LL_PCODE_VOLUME as PRIM};
+
+    /// `id` under another local id, as another region sends it.
+    fn resent(id: u32, local_id: u32, parent_id: u32, pcode: u8) -> ObjectUpdate {
+        let mut u = update(local_id, pcode, "");
+        u.full_id = Uuid::from_u128(id as u128);
+        u.parent_id = parent_id;
+        u
+    }
+
+    /// An avatar (10) wearing a prim (11) with a linked prim (12), in region 1.
+    fn dressed() -> (ObjectStore, usize, usize, usize) {
+        let mut s = ObjectStore::default();
+        let avatar = s.upsert(1, update(10, AVATAR, ""));
+        let worn = s.upsert(1, resent(11, 11, 10, PRIM));
+        let linked = s.upsert(1, resent(12, 12, 11, PRIM));
+        s.take_rekeyed();
+        (s, avatar, worn, linked)
+    }
+
+    fn key(region: RegionHandle, local_id: u32) -> ObjKey {
+        ObjKey { region, local_id }
+    }
+
+    #[test]
+    fn object_coming_from_another_region_keeps_its_slot_and_what_hangs_from_it() {
+        let (mut s, avatar, worn, linked) = dressed();
+        // the avatar crosses to region 2, which sends it first
+        assert_eq!(s.upsert(2, resent(10, 50, 0, AVATAR)), avatar);
+        assert_eq!(s.get(avatar).expect("avatar").key, key(2, 50));
+        assert!(s.removed_slots.is_empty(), "nothing was destroyed");
+        assert_eq!(s.index_of(&key(1, 10)), None);
+        assert_eq!(s.take_rekeyed(), [(key(1, 10), key(2, 50))]);
+        // what it wears follows it, under the key it had
+        assert_eq!(s.children_of(&key(2, 50)), [worn]);
+        let w = s.get(worn).expect("worn");
+        assert_eq!((w.key, w.parent_key()), (key(1, 11), Some(key(2, 50))));
+        assert_eq!(s.parent_of(w), Some(avatar));
+        // the region left asks to remove the avatar: no longer its object
+        s.remove(&key(1, 10));
+        assert!(s.get(avatar).is_some());
+        // region 2 sends the worn prim, then its linked prim
+        assert_eq!(s.upsert(2, resent(11, 51, 50, PRIM)), worn);
+        assert_eq!(s.children_of(&key(2, 50)), [worn]);
+        assert_eq!(s.children_of(&key(2, 51)), [linked]);
+        assert_eq!(s.get(linked).expect("linked").parent_key(), Some(key(2, 51)));
+        assert_eq!(s.upsert(2, resent(12, 52, 51, PRIM)), linked);
+        assert_eq!(s.children_of(&key(2, 51)), [linked]);
+        assert_eq!(s.count, 3);
+        assert!(s.removed_slots.is_empty());
+    }
+
+    #[test]
+    fn worn_object_sent_before_its_avatar_joins_it_again() {
+        let (mut s, avatar, worn, _) = dressed();
+        // region 2 sends the worn prim before the avatar it hangs from
+        assert_eq!(s.upsert(2, resent(11, 51, 50, PRIM)), worn);
+        assert!(s.children_of(&key(1, 10)).is_empty());
+        assert_eq!(s.parent_of(s.get(worn).expect("worn")), None);
+        assert_eq!(s.upsert(2, resent(10, 50, 0, AVATAR)), avatar);
+        assert_eq!(s.children_of(&key(2, 50)), [worn]);
+        assert_eq!(s.parent_of(s.get(worn).expect("worn")), Some(avatar));
+    }
+
+    #[test]
+    fn renumbered_object_takes_its_children_along() {
+        let (mut s, avatar, worn, _) = dressed();
+        assert_eq!(s.upsert(1, resent(10, 60, 0, AVATAR)), avatar);
+        assert_eq!(s.children_of(&key(1, 60)), [worn]);
+        assert_eq!(s.parent_of(s.get(worn).expect("worn")), Some(avatar));
+    }
+
+    #[test]
+    fn our_avatar_outlives_the_region_it_left() {
+        let (mut s, avatar, worn, linked) = dressed();
+        // it sat on a seat of region 1, next to another object
+        let seat = s.upsert(1, update(30, PRIM, ""));
+        s.upsert(1, resent(10, 10, 30, AVATAR));
+        let other = s.upsert(1, update(40, PRIM, ""));
+        assert_eq!(s.children_of(&key(1, 30)), [avatar]);
+        // region 1 goes before region 2 has sent anything
+        s.carry(avatar, 1, 2);
+        let kept = s.subtree(avatar);
+        assert_eq!(kept, [avatar, worn, linked]);
+        s.remove_region(1, &kept);
+        assert!(s.get(seat).is_none() && s.get(other).is_none());
+        let a = s.get(avatar).expect("avatar");
+        assert_eq!((a.key, a.parent_id), (key(2, CARRIED_LOCAL_ID), 0));
+        assert_eq!(s.parent_of(s.get(worn).expect("worn")), Some(avatar));
+        assert_eq!(s.parent_of(s.get(linked).expect("linked")), Some(worn));
+        assert_eq!(s.count, 3);
+        // region 2 sends it under its own id
+        assert_eq!(s.upsert(2, resent(10, 50, 0, AVATAR)), avatar);
+        assert_eq!(s.index_of(&key(2, CARRIED_LOCAL_ID)), None);
+        assert_eq!(s.children_of(&key(2, 50)), [worn]);
+        // an avatar already sent by region 2 is not carried again
+        s.carry(avatar, 1, 2);
+        assert_eq!(s.get(avatar).expect("avatar").key, key(2, 50));
     }
 }
