@@ -120,6 +120,15 @@ impl MeshAlloc {
     }
 }
 
+/// A full buffer is replaced by one twice its size, its content copied on
+/// the GPU. What holds the frame then is not the copy (32 MB: 0.2 ms) but
+/// the first use of the new buffer: fresh video memory costs about 21 µs
+/// per MB the first time anything touches it, the whole buffer at once
+/// (22 ms for 1 GB on an RTX 4090; `new_buffer_first_use`, below). Hence
+/// the doubling: growing by less, or ahead of need a slice of the copy per
+/// frame (tried: same stalls, more of them), allocates more buffers and
+/// pays more. Only smaller buffers would make these stalls small, and a
+/// draw reads one vertex buffer.
 pub struct GeometryArena {
     pub vertex_buffer: wgpu::Buffer,
     /// Parallel stream of `SkinVertex` (same element offsets as vertices).
@@ -128,6 +137,8 @@ pub struct GeometryArena {
     vertices: RangeAllocator,
     indices: RangeAllocator,
     max_buffer_size: u64,
+    /// A growth was refused at the largest buffer: said once.
+    full: bool,
 }
 
 const VERTEX_SIZE: u64 = std::mem::size_of::<Vertex>() as u64;
@@ -144,6 +155,7 @@ impl GeometryArena {
             vertices: RangeAllocator::new(vcap),
             indices: RangeAllocator::new(icap),
             max_buffer_size,
+            full: false,
         }
     }
 
@@ -164,6 +176,17 @@ impl GeometryArena {
         (self.vertices.used() as u64, self.indices.used() as u64)
     }
 
+    /// The arena cannot grow any more: the meshes it has no room for are
+    /// not drawn, which the log must say (once).
+    fn refused(&mut self, what: &str, bytes: u64) {
+        if !std::mem::replace(&mut self.full, true) {
+            log::warn!(
+                "{what} arena full at {} MB, the largest buffer of this GPU: the meshes it has no room for are not drawn",
+                bytes / (1024 * 1024)
+            );
+        }
+    }
+
     fn grow_vertices(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, need: u32) -> bool {
         let old = self.vertices.capacity();
         let mut new_cap = old.saturating_mul(2);
@@ -173,6 +196,7 @@ impl GeometryArena {
         if new_cap as u64 * VERTEX_SIZE > self.max_buffer_size {
             new_cap = (self.max_buffer_size / VERTEX_SIZE) as u32;
             if new_cap <= old || new_cap - old < need {
+                self.refused("vertex", old as u64 * VERTEX_SIZE);
                 return false;
             }
         }
@@ -200,6 +224,7 @@ impl GeometryArena {
         if new_cap as u64 * 2 > self.max_buffer_size {
             new_cap = (self.max_buffer_size / 2) as u32 & !1;
             if new_cap <= old || new_cap - old < need {
+                self.refused("index", old as u64 * 2);
                 return false;
             }
         }
@@ -744,6 +769,50 @@ mod tests {
         // (and the mirror holds what was set)
         assert_eq!(store.get(97).map(|r| r.tex[0]), Some(1_000_097));
         assert_eq!(store.get(69_999).map(|r| r.tex[0]), Some(69_999));
+    }
+
+    /// What the first use of a new buffer costs, by size: the measurement
+    /// behind the comment of `GeometryArena`. Needs a GPU, prints its times:
+    /// `cargo test -p aurora-render new_buffer_first_use -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn new_buffer_first_use() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            ..Default::default()
+        })) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: adapter.limits(),
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        eprintln!("{}", adapter.get_info().name);
+        let make = |mb: u64| GeometryArena::make(&device, "test", mb << 20, wgpu::BufferUsages::VERTEX);
+        let timed = |work: &dyn Fn()| {
+            let t = std::time::Instant::now();
+            work();
+            queue.submit([]);
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            t.elapsed().as_secs_f64() * 1e3
+        };
+        let source = make(64);
+        timed(&|| queue.write_buffer(&source, 0, &[0u8; 4]));
+        for mb in [256u64, 512, 1024] {
+            let buffer = make(mb);
+            let first = timed(&|| queue.write_buffer(&buffer, 0, &[0u8; 4]));
+            let second = timed(&|| queue.write_buffer(&buffer, 8, &[0u8; 4]));
+            let copy = timed(&|| {
+                let mut enc = device.create_command_encoder(&Default::default());
+                enc.copy_buffer_to_buffer(&source, 0, &buffer, (mb - 32) << 20, 32 << 20);
+                queue.submit([enc.finish()]);
+            });
+            eprintln!("{mb} MB: first use {first:.2} ms, second {second:.2} ms, 32 MB copied into it {copy:.2} ms");
+            assert!(second < first, "the first use of a buffer is the one that costs");
+        }
     }
 
     #[test]

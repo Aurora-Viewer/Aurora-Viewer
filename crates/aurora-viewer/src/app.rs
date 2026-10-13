@@ -353,6 +353,8 @@ pub struct App {
     demo_place: Option<crate::world::place_details::Source>,
     /// AURORA_DEMO_STREAM: objects and textures arriving in waves.
     stream_demo: Option<crate::demo::stream::StreamDemo>,
+    /// AURORA_DEMO_GEOMETRY: meshes filling the geometry arena.
+    geometry_demo: Option<crate::demo::geometry::GeometryDemo>,
     /// Parcel snapshots and group names the place profiles want.
     place_images: std::collections::HashSet<uuid::Uuid>,
     place_groups: std::collections::HashSet<uuid::Uuid>,
@@ -661,6 +663,7 @@ impl App {
             place_images: Default::default(),
             demo_place: None,
             stream_demo: None,
+            geometry_demo: None,
             place_groups: Default::default(),
             land_ui: Default::default(),
             group_profile_ui: Default::default(),
@@ -5333,6 +5336,9 @@ impl App {
             self.toggle_ground_sit();
             log::info!("demo sit button: sitting {}", self.world.agent.is_sitting());
         }
+        if let (Some(demo), Some(g)) = (&mut self.geometry_demo, &mut self.gfx) {
+            demo.tick(self.frame_count, &mut g.renderer);
+        }
         if let (Some(demo), Some(g)) = (&mut self.stream_demo, &mut self.gfx) {
             let pending = self.scene.stats.geom_pending;
             demo.tick(
@@ -8012,6 +8018,7 @@ impl ApplicationHandler for App {
                 }
             }
             self.stream_demo = crate::demo::stream::StreamDemo::from_env();
+            self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             if let Some(n) = crate::demo::texture_stress_count() {
                 if let Some(g) = &mut self.gfx {
                     self.scene.textures.install_demo_stress(&mut g.renderer, 0..n);

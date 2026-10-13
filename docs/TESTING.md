@@ -913,6 +913,7 @@ To check with these scenarios:
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>]` | Streaming stutter test |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
+| `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
 
 ### Details
 
@@ -965,6 +966,18 @@ To check with these scenarios:
     (`AURORA_BLEND_EARLY_DISCARD`): it only pays off where empty
     areas are in one piece on screen. `32,24,90,256` (large empty
     stretches) shows it, `32,24,60,16` (fine strands) gains nothing.
+- **`AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]`**: after the loading fade,
+  meshes of 60,000 vertices keep entering the geometry arena until it
+  holds `mb` megabytes of them (800 if the value is not a number), at 25 MB
+  a second unless told otherwise (Knotty beach loads about 22 MB a second
+  for 35 s). They are not drawn: the scenario only makes the arena outgrow
+  its buffers, in the frames of the ordinary demo. The log gives each
+  growth (`vertex arena grown to … MB`) and the end (`demo geometry: …
+  meshes, … MB in the arena after … s`). With `AURORA_PROFILE=1`, read
+  `max=` and `r_acquire` in `max:` on the seconds of a growth; with
+  `AURORA_PROFILE_FRAMES=1`, the `render profile` line of the slow frame.
+  What a growth costs is the first use of the new buffer, about 21 µs per
+  MB (`aurora-render/src/arena.rs`).
 - **`AURORA_DEMO_LIGHTS=<n>`**: n small local lights (64 if the value
   is not a number, 256 at most), glowing spheres of 6 cm at
   head height, spaced 1.6 m apart on the crowd's plaza and beyond,

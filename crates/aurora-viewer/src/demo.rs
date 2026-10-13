@@ -22,6 +22,10 @@ pub mod eep;
 /// Environment selector library and script (AURORA_DEMO_ENV_SELECT).
 #[path = "demo_env.rs"]
 pub mod env;
+/// Meshes filling the geometry arena until it outgrows its buffers
+/// (AURORA_DEMO_GEOMETRY).
+#[path = "demo_geometry.rs"]
+pub mod geometry;
 /// Names and chat in the characters residents use (AURORA_DEMO_GLYPHS).
 #[path = "demo_glyphs.rs"]
 pub mod glyphs;
