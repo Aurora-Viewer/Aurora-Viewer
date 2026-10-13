@@ -26,7 +26,7 @@ pub(crate) fn take_boundary(primitives: &mut Vec<egui::ClippedPrimitive>) -> Opt
 /// Step between two taps of the shader, in UI points.
 const STEP: f32 = 3.0;
 /// Farthest tap of the shader, in steps (shaders/ui_blur.wgsl).
-const LAST_TAP: f32 = 3.2307692308;
+const LAST_TAP: f32 = 3.230_769_2;
 
 /// The rectangles of a blur limited to a part of the image, in pixels as
 /// [x, y, width, height].
