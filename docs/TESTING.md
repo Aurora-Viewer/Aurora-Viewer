@@ -1723,6 +1723,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MSAA_PREPASS=0` or `alt` | MSAA without the prepass of its depth, or both alternately |
 | `AURORA_NOVSYNC=1` | Turns off vertical sync |
 | `AURORA_PRESENT_MODE=<mode>` | Forces the present mode of the swapchain |
+| `AURORA_WINDOW_HOLD=0` | No frames while a mouse button is held on the window frame or the system menu is open, as before (Windows) |
 | `AURORA_CPU_CULL=1` | Draw lists built on the CPU |
 | `AURORA_LIST_INDEX=0` or `check` | Draw lists that walk all the objects as before, or check of their index |
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
@@ -1847,6 +1848,26 @@ What the inventory must show with these scenarios:
   fallback when the GPU does not have `MULTI_DRAW_INDIRECT_COUNT`) instead
   of sorting them on the GPU, to compare; `cull=cpu|gpu` in the
   `perf summary` line.
+- **`AURORA_WINDOW_HOLD=0`** (Windows): by default, the viewer keeps
+  drawing while Windows holds its window: a mouse button pressed on the
+  title bar, a border or the close / maximize / minimize button, a move or
+  a resize, the system menu open. Windows follows those in a message loop
+  of its own, in which the usual request for the next frame is never made;
+  a helper thread (`window_hold.rs`) asks for the frames for as long as the
+  hold lasts, and sleeps the rest of the time. During a hold the frame
+  limiter does not wait on the main thread, which Windows needs for its
+  loop: the helper waits between two frames, and spaces them out (60 a
+  second at most) while the cursor moves, so that a dragged or resized
+  window keeps following the cursor.
+  - `0`: no helper, as before: the image stays still for the whole hold,
+    which `perf summary` shows as one long `between` in `max:`.
+  - It needs real mouse input, there is no demo scenario: hold the button
+    for a second or two on each of those spots with `AURORA_PROFILE=1` and
+    read `max=` and `between=` of the second (a hold of 1.5 s: 1,500 ms
+    with `0`, 20 to 30 ms at most without). The buttons must still act
+    when released on them, and not when released elsewhere; a window
+    dragged or resized with fast mouse moves must stay under the cursor,
+    as with `0`.
 - **`AURORA_TEXTURE_TODO=0|check`**: by default, the texture streamer
   (`TextureStreamer::update`) only visits at each frame the textures that
   have work: a first disk read, or a finer level than the one on the GPU

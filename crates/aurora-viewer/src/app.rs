@@ -5074,8 +5074,12 @@ impl App {
             crate::cli::get().fps_limit,
         );
         let paced_by_vsync = gfx.renderer.vsync() && cap >= monitor_hz - 0.5;
-        if cap >= 1.0 && !paced_by_vsync {
-            let target = Duration::from_secs_f32(1.0 / cap);
+        let target = (cap >= 1.0 && !paced_by_vsync).then(|| Duration::from_secs_f32(1.0 / cap));
+        // (while Windows holds the window, this thread is left to its loop:
+        // the wait is done between the frames, on another thread)
+        if !crate::window_hold::paces(target)
+            && let Some(target) = target
+        {
             let spent = self.frame_start.elapsed();
             if spent < target {
                 let rest = target - spent;
@@ -7315,6 +7319,7 @@ impl ApplicationHandler for App {
                 return;
             }
         };
+        crate::window_hold::install(&window);
         let size = window.inner_size();
         if std::env::var_os("AURORA_NOVSYNC").is_some() {
             self.settings.vsync = false;
