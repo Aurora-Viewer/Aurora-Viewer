@@ -8494,6 +8494,12 @@ impl ApplicationHandler for App {
                 self.panels.minimap = false;
                 self.panels.perf = false;
             }
+            // AURORA_DEMO_EMOJI_PICKER=1: the conversation window open on its
+            // emoji picker (colour emoji font)
+            if std::env::var_os("AURORA_DEMO_EMOJI_PICKER").is_some() {
+                self.panels.chat = true;
+                self.chat_ui.emoji_open = true;
+            }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)
             if std::env::var_os("AURORA_DEMO_SOUND").is_some() {

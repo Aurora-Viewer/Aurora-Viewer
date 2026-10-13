@@ -368,7 +368,12 @@ impl Emoji {
                                 ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
                             }
                             if let Some(t) = self.texture(ui.ctx(), *c) {
-                                let ir = rect.shrink(3.0);
+                                // keep the image's proportions: the 2D font's
+                                // bitmaps are wider than tall (136 × 128)
+                                let slot = rect.shrink(3.0);
+                                let size = t.size_vec2();
+                                let ir =
+                                    egui::Rect::from_center_size(slot.center(), size * (slot.width() / size.x).min(slot.height() / size.y));
                                 ui.painter().image(
                                     t.id(),
                                     ir,
