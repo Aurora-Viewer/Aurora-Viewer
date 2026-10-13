@@ -252,6 +252,7 @@ mod tests {
             radius,
             color: Vec3::ONE,
             falloff: 0.5,
+            projector: None,
         }
     }
 

@@ -1904,6 +1904,134 @@ pub fn events() -> Vec<NetEvent> {
             ));
         }
     }
+    // AURORA_DEMO_PROJECTOR=1|point: a projector (a light with a light
+    // texture) 4.5 m from a wall, turned to it, another one above the
+    // ground turned down, with ambiance, a pool light under a slab and an
+    // ordinary point light (fixed ids). The first lights the wall through
+    // its image; the ground stays dark outside the frustums. `point`: the
+    // projectors without their texture, as plain point lights, to compare.
+    if let Ok(mode) = std::env::var("AURORA_DEMO_PROJECTOR") {
+        let floor = height(cx, cy) + 0.35;
+        let wall = [0.82, 0.82, 0.82, 1.0];
+        add(prim(
+            9711,
+            Vec3::new(139.0, 114.5, floor + 2.0),
+            Quat::IDENTITY,
+            Vec3::new(0.2, 6.0, 4.0),
+            boxp,
+            te(wall, 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        let image = (mode != "point").then_some(aurora_prim::extra::LightImageParams {
+            texture: TEX_PROJECTED,
+            params: Vec3::new(1.0, 0.0, 0.0),
+        });
+        // -Z of the prim to the east
+        add(prim(
+            9712,
+            Vec3::new(134.5, 114.5, floor + 2.0),
+            Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2),
+            Vec3::new(0.3, 0.3, 0.1),
+            boxp,
+            te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
+            ExtraParams {
+                light: Some(LightParams {
+                    color: [1.0, 1.0, 1.0, 1.0],
+                    radius: 10.0,
+                    cutoff: 0.0,
+                    falloff: 0.5,
+                }),
+                light_image: image,
+                ..Default::default()
+            },
+            "",
+        ));
+        // above the ground, turned down, blurred from 1 m on, with ambiance
+        add(prim(
+            9713,
+            Vec3::new(133.0, 114.6, floor + 2.5),
+            Quat::IDENTITY,
+            Vec3::new(0.3, 0.3, 0.1),
+            boxp,
+            te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
+            ExtraParams {
+                light: Some(LightParams {
+                    color: [0.5, 1.0, 1.0, 1.0],
+                    radius: 6.0,
+                    cutoff: 0.0,
+                    falloff: 0.0,
+                }),
+                light_image: image.map(|i| aurora_prim::extra::LightImageParams {
+                    params: Vec3::new(1.4, 1.0, 0.3),
+                    ..i
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+        // a pool light: a very wide projector turned down, 2 m under a
+        // slab with a normal map and 4 m beside its middle. It lights
+        // nothing above itself; as a point light, it lights the sides of
+        // the slab's relief that lean towards it.
+        let mut slab = TextureEntry::default();
+        for f in slab.faces.iter_mut() {
+            f.color = [0.85, 0.82, 0.8, 1.0];
+            f.material_id = MAT_BUMPY;
+        }
+        let ground = g(136.4, 111.0);
+        add(prim(
+            9714,
+            Vec3::new(136.4, 111.0, ground + 0.12),
+            Quat::IDENTITY,
+            Vec3::new(3.4, 3.4, 0.2),
+            boxp,
+            Arc::new(slab),
+            ExtraParams::default(),
+            "",
+        ));
+        add(prim(
+            9715,
+            Vec3::new(132.4, 110.6, ground - 2.0),
+            Quat::IDENTITY,
+            Vec3::new(0.3, 0.39, 0.18),
+            boxp,
+            te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
+            ExtraParams {
+                light: Some(LightParams {
+                    color: [0.5, 1.0, 1.0, 0.7],
+                    radius: 20.0,
+                    cutoff: 0.0,
+                    falloff: 0.0,
+                }),
+                light_image: image.map(|i| aurora_prim::extra::LightImageParams {
+                    params: Vec3::new(3.0, 20.0, 0.0),
+                    ..i
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+        // an ordinary point light beside them, the same in both modes
+        add(prim(
+            9716,
+            Vec3::new(137.8, 117.2, floor + 1.0),
+            Quat::IDENTITY,
+            Vec3::splat(0.2),
+            boxp,
+            te([1.0, 0.7, 0.3, 1.0], 0, true, 0.0),
+            ExtraParams {
+                light: Some(LightParams {
+                    color: [1.0, 0.7, 0.3, 1.0],
+                    radius: 3.0,
+                    cutoff: 0.0,
+                    falloff: 0.5,
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+    }
     // a little city of boxes
     for i in 0..6 {
         for j in 0..4 {
@@ -3697,7 +3825,7 @@ fn hair_texture(empty: u32, period: u32) -> (Vec<u8>, u32, u32) {
 /// The procedural texture `id` takes a mip chain (the others are the
 /// 64-texel test panels, kept as they are).
 pub fn local_texture_mips(id: &Uuid) -> bool {
-    *id == TEX_HAIR
+    *id == TEX_HAIR || *id == TEX_PROJECTED
 }
 
 #[cfg(test)]
@@ -3940,6 +4068,9 @@ pub const TEX_FRAMES: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_000
 /// Parcel snapshot of AURORA_DEMO_PLACE: a night landscape (sky with an
 /// aurora, hills, water), top row first.
 pub const TEX_SNAPSHOT: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0006);
+/// Image of the demo projectors (AURORA_DEMO_PROJECTOR): four colored
+/// quarters, red at the top left, around a white disc.
+pub const TEX_PROJECTED: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0007);
 const MAT_NONE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0001);
 const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002);
 const MAT_EMISSIVE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0003);
@@ -4043,6 +4174,20 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
                     [214, 196, 160, 255]
                 } else {
                     [170, 120, 84, 255]
+                }
+            } else if *id == TEX_PROJECTED {
+                let (dx, dy) = (fx - 31.5, fy - 31.5);
+                if dx * dx + dy * dy < 100.0 {
+                    [255, 255, 255, 255]
+                } else if dx.abs() < 1.5 || dy.abs() < 1.5 {
+                    [0, 0, 0, 255]
+                } else {
+                    match (dx < 0.0, dy < 0.0) {
+                        (true, true) => [230, 40, 40, 255],
+                        (false, true) => [40, 200, 60, 255],
+                        (true, false) => [50, 80, 230, 255],
+                        (false, false) => [230, 210, 40, 255],
+                    }
                 }
             } else {
                 return None;
