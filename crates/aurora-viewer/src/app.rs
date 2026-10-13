@@ -32,6 +32,7 @@ mod click_pick;
 mod color_picker;
 mod context_menu;
 mod cursor_hold;
+mod gestures;
 mod hover_height;
 mod hud_drag;
 mod imports;
@@ -396,6 +397,7 @@ pub struct App {
     lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    gesture_state: gestures::State,
     imports: crate::imports::Imports,
     task_transfer: Option<ui::inventory::task_drop::PendingTransfer>,
     /// Inventory edits asked by the world (`World::take_inventory_edits`),
@@ -713,6 +715,7 @@ impl App {
             lighting_was_open: false,
             demo: false,
             inventory_ui: Default::default(),
+            gesture_state: Default::default(),
             imports: Default::default(),
             task_transfer: None,
             world_edits: Default::default(),
@@ -746,6 +749,9 @@ impl App {
     }
 
     fn send(&mut self, cmd: NetCommand) {
+        if self.demo && self.gesture_demo_command(&cmd) {
+            return;
+        }
         if self.demo
             && let NetCommand::SetHoverHeight { region, request, value } = &cmd
         {
@@ -1262,6 +1268,7 @@ impl App {
         self.scene.jobs.discard(imports);
         self.record_inventory_logout();
         self.inventory_ui = Default::default();
+        self.gesture_state = Default::default();
         self.buy_currency_ui = Default::default();
         self.task_notecards.clear();
         self.script_editors.disconnected();
@@ -1327,10 +1334,15 @@ impl App {
             return;
         }
         if let NetEvent::InventoryCreated(item) = ev {
+            let gesture = item.asset_type == 21;
             let id = item.id;
             self.world.inventory.add_items(vec![item]);
             self.inventory_ui.show_original(&self.world.inventory, id);
             self.inventory_ui.begin_rename(&self.world.inventory, id);
+            if gesture && self.gesture_state.new_editor {
+                self.gesture_state.new_editor = false;
+                self.gesture_action(ui::gestures::Action::Open(id));
+            }
             return;
         }
         if let NetEvent::InventoryMerchant(result) = ev {
@@ -1341,6 +1353,10 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if self.gesture_save_pending(request, item) {
+                self.gesture_saved(request, item, result);
+                return;
+            }
             self.inventory_content_saved(request, item, result);
             return;
         }
@@ -1359,6 +1375,7 @@ impl App {
             return;
         }
         if let NetEvent::InventoryOperationFailed(reason) = ev {
+            self.gesture_state.new_editor = false;
             self.inventory_ui.message = reason;
             return;
         }
@@ -1367,6 +1384,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.gesture_metadata_result(request, &result) {
+                return;
+            }
             if self.build.replacement_inventory_result(request, &result) {
                 return;
             }
@@ -1393,6 +1413,10 @@ impl App {
                 self.ao_import_result(item, result.clone());
             }
             self.inventory_preview(item, asset, result);
+            return;
+        }
+        if let NetEvent::GestureLoaded { item, asset, result } = ev {
+            self.gesture_loaded(item, asset, result);
             return;
         }
         if let NetEvent::TaskNotecardPreview {
@@ -1574,6 +1598,7 @@ impl App {
                         crate::settings::account_dir(&l.agent_id).join(crate::world::hover_height::FILE),
                     )
                 };
+                self.restore_gestures(&l.raw);
                 self.net_profile.reset();
                 self.login_form.transition = None;
                 self.login_form.busy = false;
@@ -2052,6 +2077,7 @@ impl App {
                 self.panels.people_tab = 0;
             }
             Action::Inventory => ui::widgets::toggle_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
+            Action::Gestures => ui::widgets::toggle_floater(&self.egui_ctx, "gestures", &mut self.panels.gestures),
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
             Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
             Action::TeleportHistory => self.toggle_teleport_history(),
@@ -3993,6 +4019,7 @@ impl App {
                 self.auto_away = false;
             }
             self.world.tick_social();
+            self.update_gestures();
             for cmd in self.world.take_social_commands() {
                 self.send(cmd);
             }
@@ -5978,7 +6005,14 @@ impl App {
 
     /// Local chat from the chat bar or the conversations window: a chat bar
     /// command (FSCmdLine) or a line sent on its channel.
-    fn send_local_chat(&mut self, c: ui::chat::OutgoingChat) {
+    fn send_local_chat(&mut self, mut c: ui::chat::OutgoingChat) {
+        if c.channel == 0 {
+            let (revised, gesture) = self.gesture_state.manager.revise(&c.message);
+            c.message = revised;
+            if let Some(id) = gesture {
+                self.gesture_play(id, None);
+            }
+        }
         if c.message.is_empty() || (c.channel == 0 && self.chat_command(&c.message)) {
             return;
         }
@@ -6928,6 +6962,7 @@ impl App {
                     }
                 }
                 self.panels.inventory = open;
+                self.show_gestures(&ctx, &p);
                 if self.settings.inventory != inventory_preferences {
                     self.settings.save();
                 }
@@ -8742,6 +8777,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => {
+                self.gesture_state.manager.release(None);
                 self.numeric_drag.cancel();
                 self.build.reset_selection_wheel();
                 self.focused = false;
@@ -8806,6 +8842,27 @@ impl ApplicationHandler for App {
                     }
                     // Releases always go through so keys never get stuck.
                     let typing = self.egui_ctx.egui_wants_keyboard_input();
+                    use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+                    let gesture_key = crate::gestures::keys::from_key(code, &ke.key_without_modifiers());
+                    if !pressed && let Some(key) = gesture_key {
+                        self.gesture_state.manager.release(Some(key));
+                    }
+                    if pressed
+                        && !ke.repeat
+                        && !typing
+                        && self.in_world()
+                        && !self.alt
+                        && self.profile_ui.focused_web().is_none()
+                        && self.search_ui.focused_web().is_none()
+                        && let Some(key) = gesture_key
+                        && let Some(id) = self
+                            .gesture_state
+                            .manager
+                            .key_trigger(key, u32::from(self.ctrl) | if self.shift { 4 } else { 0 })
+                    {
+                        self.gesture_play(id, Some(key));
+                        return;
+                    }
                     // a profile's web page that was clicked gets the keyboard
                     let web = match self.profile_ui.focused_web() {
                         Some(p) => Some(p),

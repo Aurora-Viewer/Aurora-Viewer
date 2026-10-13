@@ -273,6 +273,10 @@ impl App {
                 self.scene.sounds.play_ui(self.audio_engine.as_ref(), asset);
             }
             InvAction::Preview(id) => {
+                if self.world.inventory.items.get(&id).is_some_and(|it| it.asset_type == 21) {
+                    self.gesture_action(crate::ui::gestures::Action::Open(id));
+                    return;
+                }
                 if let Some(f) = self.world.inventory.folders.get_mut(&id) {
                     f.state = crate::world::inventory::FetchState::Unknown;
                     self.world.inventory.request(id);
@@ -412,6 +416,7 @@ impl App {
             }
             InvAction::Thumbnail { request, item, input } => self.inventory_image_action(request, item, input),
             InvAction::TeleportLandmark(_) => {}
+            InvAction::Gesture(action) => self.gesture_action(action),
         }
     }
 

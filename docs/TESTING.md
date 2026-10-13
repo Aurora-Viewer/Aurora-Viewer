@@ -1187,6 +1187,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
+| `AURORA_DEMO_GESTURES=manager\|editor\|play` | Gesture manager, step editor and playback |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -1704,6 +1705,23 @@ disappears from the inventory, that Ctrl adds to the contents without a new cube
 and that Esc creates nothing. Online, validate real objects, forbidden land,
 the Trash / Library, neighbouring regions, the group of the land and
 objects already worn; the human logs in and carries out these tests.
+
+**`AURORA_DEMO_GESTURES=manager|editor|play`** — three synthetic gestures:
+chat with a replacement and F8 shortcut, an animated pose on F9, and an
+inactive chime on F10. `manager` opens the list; `editor` also opens the
+chat gesture's editor; `play` starts the chat and animation at frame 650.
+Capture at frame 620 for the list/editor, 680 during playback and 800
+after the explicit pause. Sounds stay muted unless `AURORA_DEMO_SOUND=1`.
+Check Ctrl+G, filtering and active-only/enabled switches, sorting and
+multiple selection, inventory Open/Play/Activate/Deactivate, all four step
+types, stock/inventory animation choices, Shift/Ctrl and key choices,
+preview/stop, reordering, saving and discard confirmation. Chat steps keep
+their channel prefixes (`/28574 T4`); the demo never connects to a grid.
+Online validation is performed by the human: activate and play existing
+gestures, chat/key triggers on the real keyboard, save/reopen modified
+gestures, permissions, outfit switching, teleport and restoration after
+relogging. A rejected save must keep the draft, and deactivation must stop
+only the gesture's requested motions.
 
 **`AURORA_DEMO_INVENTORY`** — opens a synthetic inventory: personal
 folder, subfolder, outfits, objects, documents, texture, sound, gesture,
