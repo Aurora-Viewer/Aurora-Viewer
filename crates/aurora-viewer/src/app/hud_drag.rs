@@ -391,7 +391,7 @@ impl App {
                     self.reset_hud_scale(key, true);
                 }
             }
-        } else if self.frame_count == 900 && mode == "scale-copy" {
+        } else if self.frame_count == 900 && matches!(mode.as_str(), "scale-copy" | "scale-reattach" | "scale-rename") {
             if let Some(root) = root
                 && let Some(item) = self.world.objects.get(root).and_then(|o| o.attachment_item_id())
                 && let Some(mut item) = self.world.inventory.items.get(&item).cloned()
@@ -399,17 +399,34 @@ impl App {
             {
                 let mut update = crate::demo::hud::object(31, false);
                 update.full_id = Uuid::from_u128(8399);
-                item.id = update.full_id;
+                if mode == "scale-copy" {
+                    item.id = update.full_id;
+                } else if mode == "scale-rename" {
+                    item.name = "Renamed demo HUD".into();
+                }
                 update.name_values = format!("AttachItemID STRING RW SV {}", item.id);
                 self.world.inventory.add_items(vec![item]);
-                self.world.apply(NetEvent::ObjectUpdates {
-                    handle,
-                    objects: vec![update],
-                });
+                // Remove the linkset first: the new rezzed object must restore
+                // from its inventory item, with no surviving local instance.
+                self.world.objects.remove_idx(root);
+                self.world.refresh_hud_scales();
+                let mut objects = vec![update];
+                for event in crate::demo::hud::events() {
+                    if let NetEvent::ObjectUpdates { objects: updates, .. } = event {
+                        objects.extend(updates.into_iter().filter(|o| o.local_id == crate::demo::hud::CHILD).map(|mut o| {
+                            o.full_id = Uuid::from_u128(8398);
+                            o
+                        }));
+                    }
+                }
+                self.world.apply(NetEvent::ObjectUpdates { handle, objects });
             }
-        } else if self.frame_count == 902 && mode == "scale-copy" {
+        } else if self.frame_count == 902 && matches!(mode.as_str(), "scale-copy" | "scale-reattach" | "scale-rename") {
             if let Some(root) = self.world.objects.index_of_uuid(&Uuid::from_u128(8399)) {
-                log::info!("demo HUD replacement: restored_scale={:.3}", self.world.hud_scale(root));
+                log::info!(
+                    "demo HUD replacement: mode={mode}, restored_scale={:.3}",
+                    self.world.hud_scale(root)
+                );
             }
         } else if self.frame_count == 880 && mode == "scale-touch" {
             self.on_left_press();

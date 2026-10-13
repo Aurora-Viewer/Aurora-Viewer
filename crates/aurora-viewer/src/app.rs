@@ -8151,6 +8151,17 @@ impl ApplicationHandler for App {
                 self.world.hud_scales = crate::world::hud_scale::HudScales::load(
                     crate::settings::account_dir(&self.world.agent_id).join(crate::world::hud_scale::FILE),
                 );
+                if matches!(mode.as_str(), "scale-reattach" | "scale-rename") {
+                    // Deterministic persistence regressions, independent of
+                    // previously saved demo profiles. Disk saves have unit tests.
+                    self.world.hud_scales = crate::world::hud_scale::HudScales::default();
+                    let id = crate::demo::hud::object(31, false).full_id;
+                    if mode == "scale-reattach"
+                        && let Some(item) = self.world.inventory.items.get_mut(&id)
+                    {
+                        item.creator = uuid::Uuid::nil();
+                    }
+                }
                 if matches!(mode.as_str(), "zoom" | "edit-zoom" | "drag-zoom") {
                     self.world.hud_zoom = 0.5;
                 }

@@ -682,6 +682,13 @@ grid.
   with a new UUID with the same name / creator (frame 900) and logs the
   restored scale. `scale-touch` then clicks the enlarged HUD (frames 880–900).
   The profiles of these scenarios stay in the demo account folder.
+- `scale-reattach`, `scale-rename`: start at 100%, enlarge with the HUD key
+  (frame 720), remove the whole linkset and reattach it with new object UUIDs
+  but the same inventory item (frame 900). The former has no creator metadata;
+  the latter renames the inventory item while detached. Both must restore
+  161.1%, including the child and floating text. Profiles are isolated in
+  memory for these two scenarios; unit tests cover saving and restarting.
+  Suggested screenshots: 710,760,920.
 - `drag`: grabs the child with ALT (frame 720), moves the whole HUD,
   releases ALT before the click (frame 800), then saves the position on
   left release (frame 840) without touching any script.
@@ -745,6 +752,9 @@ To check with these scenarios:
   the profile of the same inventory name / creator on this account; copies
   already worn keep their independent sizes. Check after a restart,
   detach / reattach, clicking the buttons and moving the HUD.
+  The same inventory item keeps its own size after reattachment or renaming,
+  even before inventory metadata arrives. Separately resized items with the
+  same name / creator must also keep their individual sizes after reattachment.
 - Demo inventory linked to the current outfit, to test detaching and
   the display in the inventory.
 - World › HUDs menu: show / hide, zoom out / zoom in and normal

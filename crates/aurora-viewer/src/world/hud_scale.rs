@@ -1,5 +1,6 @@
 //! Aurora's per-HUD visual zoom. Simulator transforms remain untouched.
-//! Inventory name + creator identify replacement copies; the file is per account.
+//! Inventory item UUIDs survive reattachment; name + creator identify new copies.
+//! The profile file is per account and still accepts the original name/creator format.
 use super::World;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -28,15 +29,20 @@ pub struct Identity {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Profile {
-    identity: Identity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    item: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity: Option<Identity>,
     scale: f32,
 }
 
 #[derive(Default)]
 struct Local {
     scale: f32,
+    item: Option<Uuid>,
     identity: Option<Identity>,
     edited: bool,
+    forgotten: bool,
     offset: Vec3,
     requested_item: bool,
     needs_clamp: bool,
@@ -84,11 +90,14 @@ impl HudScales {
         };
         let profiles = profiles
             .into_iter()
-            .filter(|p| !p.identity.name.is_empty() && !p.identity.creator.is_nil() && p.scale.is_finite())
+            .filter(|p| p.scale.is_finite())
             .map(|mut p| {
+                p.item = p.item.filter(|id| !id.is_nil());
+                p.identity = p.identity.filter(|i| !i.name.is_empty() && !i.creator.is_nil());
                 p.scale = p.scale.clamp(MIN, MAX);
                 p
             })
+            .filter(|p| p.item.is_some() || p.identity.is_some())
             .collect();
         let (tx, rx) = mpsc::channel::<Vec<Profile>>();
         let worker = std::thread::Builder::new().name("aurora-hud-scales".into()).spawn(move || {
@@ -137,13 +146,64 @@ impl HudScales {
         }
     }
 
-    fn remember(&mut self, identity: Identity, scale: f32) {
-        if let Some(p) = self.profiles.iter_mut().find(|p| p.identity == identity) {
-            p.scale = scale;
-        } else {
-            self.profiles.push(Profile { identity, scale });
+    fn saved_scale(&self, item: Option<Uuid>, identity: Option<&Identity>) -> Option<f32> {
+        let exact = item.and_then(|item| self.profiles.iter().rev().find(|p| p.item == Some(item)));
+        exact
+            .or_else(|| {
+                identity.and_then(|identity| {
+                    self.profiles
+                        .iter()
+                        .rev()
+                        .find(|p| p.item.is_none() && p.identity.as_ref() == Some(identity))
+                })
+            })
+            .map(|p| p.scale)
+    }
+
+    fn remember(&mut self, item: Option<Uuid>, identity: Option<Identity>, scale: f32) {
+        if item.is_none() && identity.is_none() {
+            return;
         }
-        self.save();
+        // The item profile keeps independently resized copies and survives a
+        // rename or missing creator metadata. The generic profile retains
+        // Aurora's name + creator fallback for genuinely new inventory copies.
+        let mut changed = item.is_some_and(|item| self.remember_item(item, identity.clone(), scale));
+        if let Some(identity) = identity {
+            if let Some(p) = self
+                .profiles
+                .iter_mut()
+                .find(|p| p.item.is_none() && p.identity.as_ref() == Some(&identity))
+            {
+                changed |= p.scale != scale;
+                p.scale = scale;
+            } else {
+                self.profiles.push(Profile {
+                    item: None,
+                    identity: Some(identity),
+                    scale,
+                });
+                changed = true;
+            }
+        }
+        if changed {
+            self.save();
+        }
+    }
+
+    fn remember_item(&mut self, item: Uuid, identity: Option<Identity>, scale: f32) -> bool {
+        if let Some(p) = self.profiles.iter_mut().find(|p| p.item == Some(item)) {
+            let changed = p.scale != scale || p.identity != identity;
+            p.identity = identity;
+            p.scale = scale;
+            changed
+        } else {
+            self.profiles.push(Profile {
+                item: Some(item),
+                identity,
+                scale,
+            });
+            true
+        }
     }
 
     pub fn scale(&self, id: Uuid) -> f32 {
@@ -190,52 +250,74 @@ impl HudScales {
         s.scale = scale.clamp(MIN, MAX);
         s.needs_clamp = true;
         s.edited = true;
-        if let Some(identity) = s.identity.clone() {
-            self.remember(identity, scale.clamp(MIN, MAX));
-        }
+        s.forgotten = false;
+        let (item, identity, scale) = (s.item, s.identity.clone(), s.scale);
+        self.remember(item, identity, scale);
     }
 
     pub fn has_profile(&self, id: Uuid) -> bool {
         self.local
             .get(&id)
-            .and_then(|s| s.identity.as_ref())
-            .is_some_and(|i| self.profiles.iter().any(|p| &p.identity == i))
+            .is_some_and(|s| self.saved_scale(s.item, s.identity.as_ref()).is_some())
     }
 
     /// The current copy keeps its zoom; subsequent copies start at 100%.
     pub fn forget(&mut self, id: Uuid) {
         if let Some(s) = self.local.get_mut(&id) {
             s.edited = false;
-            if let Some(identity) = &s.identity {
-                self.profiles.retain(|p| &p.identity != identity);
-                self.save();
-            }
+            s.forgotten = true;
+            let (item, identity) = (s.item, s.identity.clone());
+            self.forget_saved(item, identity.as_ref());
         }
     }
 
-    fn refresh(&mut self, roots: &[(Uuid, Option<Identity>)]) {
-        self.local.retain(|id, _| roots.iter().any(|(root, _)| root == id));
-        for (id, identity) in roots {
+    fn forget_saved(&mut self, item: Option<Uuid>, identity: Option<&Identity>) {
+        let before = self.profiles.len();
+        self.profiles
+            .retain(|p| !(item.is_some() && p.item == item || p.item.is_none() && identity.is_some() && p.identity.as_ref() == identity));
+        if self.profiles.len() != before {
+            self.save();
+        }
+    }
+
+    fn refresh(&mut self, roots: &[(Uuid, Option<Uuid>, Option<Identity>)]) {
+        self.local.retain(|id, _| roots.iter().any(|(root, _, _)| root == id));
+        for (id, item, identity) in roots {
             let s = self.local.entry(*id).or_insert_with(|| Local {
                 scale: 1.0,
                 ..Default::default()
             });
-            if s.identity == *identity {
+            // An ObjectUpdate or a delayed inventory snapshot may temporarily
+            // omit metadata. Keep what this worn instance already told us.
+            let identity = identity
+                .clone()
+                .or_else(|| (item.is_none() || *item == s.item).then(|| s.identity.clone()).flatten());
+            let item = item.or(s.item);
+            if s.item == item && s.identity == identity {
                 continue;
             }
+            s.item = item;
             s.identity = identity.clone();
-            if let Some(identity) = identity {
-                if s.edited {
-                    let scale = s.scale;
-                    self.remember(identity.clone(), scale);
-                } else {
-                    s.scale = self
-                        .profiles
-                        .iter()
-                        .rev()
-                        .find(|p| &p.identity == identity)
-                        .map_or(1.0, |p| p.scale);
+            if s.forgotten {
+                self.forget_saved(item, identity.as_ref());
+            } else if s.edited {
+                let scale = s.scale;
+                self.remember(item, identity, scale);
+            } else {
+                let saved = self.saved_scale(item, identity.as_ref());
+                if let Some(s) = self.local.get_mut(id) {
+                    s.scale = saved.unwrap_or(1.0);
                     s.needs_clamp = true;
+                }
+                // Bind inherited legacy/copy profiles once. Merely restoring
+                // an exact item must not change the default for future copies.
+                if let (Some(item), Some(scale)) = (item, saved) {
+                    let new_identity = identity.is_some() && self.profiles.iter().any(|p| p.item == Some(item) && p.identity != identity);
+                    if new_identity {
+                        self.remember(Some(item), identity, scale);
+                    } else if self.remember_item(item, identity, scale) {
+                        self.save();
+                    }
                 }
             }
         }
@@ -295,22 +377,25 @@ impl World {
                         if !(31..=38).contains(&o.attachment_point()) {
                             return None;
                         }
-                        let identity = o
-                            .attachment_item_id()
+                        // LLViewerObject::extractAttachmentItemID (Firestorm
+                        // llviewerobject.cpp, originally LGPL 2.1): this is the
+                        // stable inventory UUID, unlike the rezzed object UUID.
+                        let item = o.attachment_item_id().filter(|id| !id.is_nil());
+                        let identity = item
                             .and_then(|id| self.inventory.items.get(&id))
                             .filter(|item| !item.creator.is_nil() && !item.name.trim().is_empty())
                             .map(|item| Identity {
                                 name: item.name.trim().to_owned(),
                                 creator: item.creator,
                             });
-                        Some((o.full_id, identity))
+                        Some((o.full_id, item, identity))
                     })
                     .collect()
             })
             .unwrap_or_default();
-        let before: Vec<_> = roots.iter().map(|(id, _)| self.hud_scales.scale(*id)).collect();
+        let before: Vec<_> = roots.iter().map(|(id, _, _)| self.hud_scales.scale(*id)).collect();
         self.hud_scales.refresh(&roots);
-        for ((id, _), before) in roots.iter().zip(before) {
+        for ((id, _, _), before) in roots.iter().zip(before) {
             if before != self.hud_scales.scale(*id)
                 && let Some(root) = self.objects.index_of_uuid(id)
             {
@@ -323,6 +408,179 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hud_world() -> World {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+            world.apply(event);
+        }
+        world.hud_scales = HudScales::default();
+        crate::demo::hud::seed_inventory(&mut world);
+        world.refresh_hud_scales();
+        world
+    }
+
+    fn reattach(world: &mut World, point: u8, instance: u128) -> usize {
+        let mut update = crate::demo::hud::object(point, false);
+        let old = world.objects.index_of_uuid(&update.full_id).unwrap();
+        let handle = world.objects.get(old).unwrap().key.region;
+        world.objects.remove_idx(old);
+        world.refresh_hud_scales();
+        update.full_id = Uuid::from_u128(instance);
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update],
+        });
+        world.refresh_hud_scales();
+        world.objects.index_of_uuid(&Uuid::from_u128(instance)).unwrap()
+    }
+
+    #[test]
+    fn reattached_inventory_item_restores_scale_without_creator_metadata() {
+        let mut world = hud_world();
+        let id = crate::demo::hud::object(31, false).full_id;
+        world.inventory.items.get_mut(&id).unwrap().creator = Uuid::nil();
+        world.hud_scales = HudScales::default();
+        world.refresh_hud_scales();
+        world.hud_scales.set(id, 1.7);
+        let root = reattach(&mut world, 31, 900_001);
+        assert_eq!(world.hud_scale(root), 1.7);
+    }
+
+    #[test]
+    fn reattached_inventory_item_restores_scale_after_rename() {
+        let mut world = hud_world();
+        let id = crate::demo::hud::object(31, false).full_id;
+        world.hud_scales.set(id, 1.7);
+        world.inventory.items.get_mut(&id).unwrap().name = "Renamed HUD".into();
+        let root = reattach(&mut world, 31, 900_002);
+        assert_eq!(world.hud_scale(root), 1.7);
+    }
+
+    #[test]
+    fn same_name_inventory_items_restore_their_independent_sizes() {
+        let mut world = hud_world();
+        let a = crate::demo::hud::object(31, false).full_id;
+        let b = crate::demo::hud::object(35, false).full_id;
+        let name = world.inventory.items[&a].name.clone();
+        world.inventory.items.get_mut(&b).unwrap().name = name;
+        world.refresh_hud_scales();
+        world.hud_scales.set(a, 1.7);
+        world.hud_scales.set(b, 0.6);
+        let root = reattach(&mut world, 31, 900_003);
+        assert_eq!(world.hud_scale(root), 1.7);
+        assert_eq!(world.hud_scales.scale(b), 0.6);
+    }
+
+    #[test]
+    fn reattached_item_restores_before_inventory_arrives() {
+        let mut world = hud_world();
+        let id = crate::demo::hud::object(31, false).full_id;
+        world.inventory.items.remove(&id);
+        world.hud_scales = HudScales::default();
+        world.refresh_hud_scales();
+        world.hud_scales.set(id, 1.7);
+        assert!(world.hud_scales.has_profile(id));
+        let root = reattach(&mut world, 31, 900_004);
+        assert_eq!(world.hud_scale(root), 1.7);
+    }
+
+    #[test]
+    fn delayed_profile_resolution_refreshes_the_whole_linkset_without_server_changes() {
+        let mut world = hud_world();
+        let id = crate::demo::hud::object(31, false).full_id;
+        let item = world.inventory.items.remove(&id).unwrap();
+        world.hud_scales = HudScales::default();
+        world
+            .hud_scales
+            .remember(None, Some(identity(&item.name, item.creator.as_u128())), 1.7);
+        world.refresh_hud_scales();
+        let root = world.objects.index_of_uuid(&id).unwrap();
+        let family = crate::build::family(&world, root);
+        assert_eq!(family.len(), 2);
+        let server_scales: Vec<_> = family.iter().map(|idx| world.objects.get(*idx).unwrap().scale).collect();
+        world.objects.take_touched(&mut Vec::new());
+        world.inventory.add_items(vec![item]);
+        world.refresh_hud_scales();
+        for (idx, server_scale) in family.into_iter().zip(server_scales) {
+            let object = world.objects.get(idx).unwrap();
+            assert!(world.objects.touched().contains(&idx));
+            assert_eq!(object.scale, server_scale);
+            assert_eq!(world.hud_scale(idx), 1.7);
+        }
+    }
+
+    #[test]
+    fn delayed_metadata_keeps_an_edited_size_and_missing_updates_keep_known_identity() {
+        let [a, b, item] = [1, 2, 101].map(Uuid::from_u128);
+        let identity = identity("HUD", 10);
+        let mut scales = HudScales::default();
+        scales.remember(None, Some(identity.clone()), 2.0);
+        scales.refresh(&[(a, Some(item), None)]);
+        scales.set(a, 1.7);
+        scales.refresh(&[(a, Some(item), Some(identity.clone()))]);
+        assert_eq!(scales.scale(a), 1.7);
+        scales.refresh(&[(a, None, None)]);
+        scales.set(a, 0.6);
+        scales.refresh(&[]);
+        scales.refresh(&[(b, Some(item), Some(identity))]);
+        assert_eq!(scales.scale(b), 0.6);
+    }
+
+    #[test]
+    fn forgetting_one_item_keeps_other_saved_copies_and_the_current_size() {
+        let [a, b, c, item_a, item_b] = [1, 2, 3, 101, 102].map(Uuid::from_u128);
+        let identity = identity("HUD", 10);
+        let mut scales = HudScales::default();
+        scales.refresh(&[(a, Some(item_a), Some(identity.clone())), (b, Some(item_b), Some(identity.clone()))]);
+        scales.set(a, 1.7);
+        scales.set(b, 0.6);
+        scales.forget(a);
+        assert_eq!(scales.scale(a), 1.7);
+        assert!(!scales.has_profile(a));
+        scales.refresh(&[]);
+        scales.refresh(&[
+            (a, Some(item_a), Some(identity.clone())),
+            (b, Some(item_b), Some(identity.clone())),
+            (c, Some(Uuid::from_u128(103)), Some(identity)),
+        ]);
+        assert_eq!(scales.scale(a), 1.0);
+        assert_eq!(scales.scale(b), 0.6);
+        assert_eq!(scales.scale(c), 1.0);
+    }
+
+    #[test]
+    fn forgetting_before_metadata_arrives_does_not_restore_or_resave_the_current_copy() {
+        let [a, b, item] = [1, 2, 101].map(Uuid::from_u128);
+        let identity = identity("HUD", 10);
+        let mut scales = HudScales::default();
+        scales.remember(None, Some(identity.clone()), 2.0);
+        scales.refresh(&[(a, Some(item), None)]);
+        scales.set(a, 1.7);
+        scales.forget(a);
+        scales.refresh(&[(a, Some(item), Some(identity.clone()))]);
+        assert_eq!(scales.scale(a), 1.7);
+        assert!(!scales.has_profile(a));
+        scales.refresh(&[]);
+        scales.refresh(&[(b, Some(item), Some(identity))]);
+        assert_eq!(scales.scale(b), 1.0);
+    }
+
+    #[test]
+    fn legacy_name_profiles_bind_to_items_before_the_generic_size_changes() {
+        let [a, b, item_a, item_b] = [1, 2, 101, 102].map(Uuid::from_u128);
+        let identity = identity("HUD", 10);
+        let legacy = serde_json::json!([{ "identity": identity, "scale": 1.7 }]);
+        let mut scales = HudScales::default();
+        scales.profiles = serde_json::from_value(legacy).unwrap();
+        scales.refresh(&[(a, Some(item_a), Some(identity.clone())), (b, Some(item_b), Some(identity.clone()))]);
+        assert_eq!(scales.scale(a), 1.7);
+        assert_eq!(scales.scale(b), 1.7);
+        scales.set(b, 0.6);
+        scales.refresh(&[]);
+        scales.refresh(&[(a, Some(item_a), Some(identity))]);
+        assert_eq!(scales.scale(a), 1.7);
+    }
 
     fn identity(name: &str, creator: u128) -> Identity {
         Identity {
@@ -347,19 +605,19 @@ mod tests {
         let [a, b, c, d] = [1, 2, 3, 4].map(Uuid::from_u128);
         let profile = identity("HUD", 10);
         let mut scales = HudScales::default();
-        scales.refresh(&[(a, Some(profile.clone())), (b, Some(profile.clone()))]);
+        scales.refresh(&[(a, None, Some(profile.clone())), (b, None, Some(profile.clone()))]);
         scales.set(a, 1.7);
         assert_eq!(scales.scale(b), 1.0);
         let bytes = serde_json::to_vec(&scales.profiles).unwrap();
         let mut restored = HudScales::default();
         restored.profiles = serde_json::from_slice(&bytes).unwrap();
-        restored.refresh(&[(c, Some(profile.clone())), (d, Some(identity("HUD", 11)))]);
+        restored.refresh(&[(c, None, Some(profile.clone())), (d, None, Some(identity("HUD", 11)))]);
         assert_eq!(restored.scale(c), 1.7);
         assert_eq!(restored.scale(d), 1.0);
         restored.forget(c);
         assert_eq!(restored.scale(c), 1.7);
         restored.refresh(&[]);
-        restored.refresh(&[(a, Some(profile))]);
+        restored.refresh(&[(a, None, Some(profile))]);
         assert_eq!(restored.scale(a), 1.0);
     }
 
@@ -368,14 +626,14 @@ mod tests {
         let id = Uuid::from_u128(1);
         let profile = identity("HUD", 10);
         let mut scales = HudScales::default();
-        scales.refresh(&[(id, None)]);
+        scales.refresh(&[(id, None, None)]);
         scales.set(id, 2.0);
-        scales.refresh(&[(id, Some(profile.clone()))]);
+        scales.refresh(&[(id, None, Some(profile.clone()))]);
         assert!(scales.has_profile(id));
         assert_eq!(scales.profiles[0].scale, 2.0);
         scales.set(id, 1.0);
         scales.refresh(&[]);
-        scales.refresh(&[(Uuid::from_u128(2), Some(profile))]);
+        scales.refresh(&[(Uuid::from_u128(2), None, Some(profile))]);
         assert_eq!(scales.scale(Uuid::from_u128(2)), 1.0);
     }
 
@@ -386,16 +644,26 @@ mod tests {
         let id = Uuid::from_u128(1);
         let profile = identity("HUD", 10);
         let mut scales = HudScales::load(path.clone());
-        scales.refresh(&[(id, Some(profile.clone()))]);
+        scales.refresh(&[(id, Some(id), None)]);
         scales.set(id, 2.0);
         scales.set(id, 1.8);
         drop(scales);
+        let saved: Vec<Profile> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(saved.iter().any(|p| p.item == Some(id) && p.scale == 1.8));
         let mut restored = HudScales::load(path.clone());
-        restored.refresh(&[(id, Some(profile.clone()))]);
-        assert_eq!(restored.scale(id), 1.8);
+        let instance = Uuid::from_u128(2);
+        restored.refresh(&[(instance, Some(id), None)]);
+        assert_eq!(restored.scale(instance), 1.8);
+        restored.refresh(&[(instance, Some(id), Some(profile.clone()))]);
+        let copy = Uuid::from_u128(3);
+        restored.refresh(&[
+            (instance, Some(id), Some(profile.clone())),
+            (copy, Some(copy), Some(profile.clone())),
+        ]);
+        assert_eq!(restored.scale(copy), 1.8);
         let other_path = folder.join("other-account.json");
         let mut other = HudScales::load(other_path);
-        other.refresh(&[(id, Some(profile))]);
+        other.refresh(&[(id, Some(id), Some(profile))]);
         assert_eq!(other.scale(id), 1.0);
         drop(other);
         drop(restored);
