@@ -756,6 +756,9 @@ impl App {
         if !matches!(mode.as_str(), "completion" | "completion-send") {
             return;
         }
+        // The synthetic keystrokes own egui focus even when the automated
+        // demo window is behind the user's current desktop window.
+        raw.focused = true;
         match self.frame_count {
             540 => self.chat_ui.focus_request = true,
             550 => raw.events.push(egui::Event::Text("/ej".into())),
