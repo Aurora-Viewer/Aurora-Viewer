@@ -36,11 +36,11 @@ same rules, same defaults — while rethinking the user interface.
 <table>
   <tr>
     <td width="25%" align="center" valign="top">
-      <h3>5×</h3>
+      <h3>≈ 5×</h3>
       the frame rate of a classic viewer in a busy store
     </td>
     <td width="25%" align="center" valign="top">
-      <h3>½</h3>
+      <h3>≈ ½</h3>
       the video memory for the same textures
     </td>
     <td width="25%" align="center" valign="top">
