@@ -48,16 +48,22 @@ const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 struct LightU {
     pos_radius: [f32; 4],
     color_falloff: [f32; 4],
-    // projector (types.rs `Projector`); a point light leaves these at zero
-    proj: [[f32; 4]; 4],
+}
+
+/// Projector of a light (types.rs `Projector`), kept apart from `LightU`:
+/// every lit fragment reads the lights, few of them are projectors.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ProjectorU {
+    matrix: [[f32; 4]; 4],
     /// Apex of the frustum, focus.
-    proj_origin: [f32; 4],
+    origin: [f32; 4],
     /// Direction, depth of the frustum.
-    proj_dir: [f32; 4],
+    dir: [f32; 4],
     /// Near distance, ambiance.
-    proj_params: [f32; 4],
-    /// Texture slot, 1 = projector.
-    proj_tex: [u32; 4],
+    params: [f32; 4],
+    /// Texture slot.
+    tex: [u32; 4],
 }
 
 /// Must match `Frame` in common.wgsl.
@@ -109,6 +115,10 @@ struct FrameU {
     lights: [LightU; MAX_LIGHTS],
     /// Which of `lights` a fragment walks (light_tiles.rs).
     light_sets: LightSets,
+    /// Projector of light `i`, for the lights of `light_projectors`.
+    projectors: [ProjectorU; MAX_LIGHTS],
+    /// Bit `i` (low word, then high word): light `i` is a projector.
+    light_projectors: [u32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -3524,14 +3534,16 @@ impl Backend {
             u.lights[i] = LightU {
                 pos_radius: l.position.extend(l.radius).to_array(),
                 color_falloff: l.color.extend(l.falloff).to_array(),
-                ..LightU::zeroed()
             };
             if let Some(p) = &l.projector {
-                u.lights[i].proj = p.matrix.to_cols_array_2d();
-                u.lights[i].proj_origin = p.origin.extend(p.focus).to_array();
-                u.lights[i].proj_dir = p.direction.extend(p.range).to_array();
-                u.lights[i].proj_params = [p.near, p.ambiance, 0.0, 0.0];
-                u.lights[i].proj_tex = [p.texture, 1, 0, 0];
+                u.projectors[i] = ProjectorU {
+                    matrix: p.matrix.to_cols_array_2d(),
+                    origin: p.origin.extend(p.focus).to_array(),
+                    dir: p.direction.extend(p.range).to_array(),
+                    params: [p.near, p.ambiance, 0.0, 0.0],
+                    tex: [p.texture, 0, 0, 0],
+                };
+                u.light_projectors[i / 32] |= 1 << (i % 32);
             }
         }
         u

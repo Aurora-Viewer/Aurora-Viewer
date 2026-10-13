@@ -551,8 +551,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
     }
     var lights = light_walk(world_pos, frag);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let lt = frame.lights[i];
-        let at = light_at(lt, world_pos);
+        let at = light_at(i, world_pos, lights.projectors);
         if (at.atten <= 0.0) {
             continue;
         }
@@ -562,17 +561,18 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         }
         if (at.projector && env > 0.0) {
             // the view reflected to the plane the projector emits from
+            let pj = frame.projectors[i];
             let ref_dir = reflect(-v, n);
-            let ds = dot(ref_dir, lt.proj_dir.xyz);
+            let ds = dot(ref_dir, pj.dir.xyz);
             if (ds < 0.0) {
-                let plane = lt.proj_origin.xyz + lt.proj_dir.xyz * (lt.proj_params.x + 0.01);
-                let hit = world_pos + ref_dir * dot(plane - world_pos, lt.proj_dir.xyz) / ds;
-                let stc = lt.proj * vec4<f32>(hit, 1.0);
+                let plane = pj.origin.xyz + pj.dir.xyz * (pj.params.x + 0.01);
+                let hit = world_pos + ref_dir * dot(plane - world_pos, pj.dir.xyz) / ds;
+                let stc = pj.matrix * vec4<f32>(hit, 1.0);
                 let uv = stc.xy / stc.w;
                 if (stc.z > 0.0 && uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
-                    let levels = projector_levels(lt.proj_tex.x);
-                    let image = projector_specular(lt.proj_tex.x, uv, (1.0 - spec.a) * levels * 0.6, levels);
-                    col += lt.color_falloff.rgb / 3.25 * image.rgb * env;
+                    let levels = projector_levels(pj.tex.x);
+                    let image = projector_specular(pj.tex.x, uv, (1.0 - spec.a) * levels * 0.6, levels);
+                    col += frame.lights[i].color_falloff.rgb / 3.25 * image.rgb * env;
                 }
             }
         }
