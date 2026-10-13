@@ -120,6 +120,11 @@ The choices are recorded in the annotated tag, then published with the
 release; they still apply to users who skip a version. The other files of
 the profile are not reset.
 
+After a release, the agent that published it moves the finished tasks of
+`TASKS.md` to `docs/TASKS_ARCHIVE.md` (a small `docs` PR), so that the list
+stays short. If you published the release yourself with the tools, ask an
+agent: "archive the finished tasks".
+
 You can also ask an agent: "release 0.4.0" (or "make a release": it suggests
 the number). In both cases, GitHub Actions builds the viewer, creates the
 release with the Windows zip and writes the notes, sorted by category, from
@@ -349,7 +354,7 @@ for the format of the packages and their policy.
 | What | Where |
 |---|---|
 | Viewer code | `crates/` (see [ARCHITECTURE.md](ARCHITECTURE.md)) |
-| Task tracking | [TASKS.md](TASKS.md) |
+| Task tracking | [TASKS.md](TASKS.md) (open work and what was finished since the last release); older finished tasks in [docs/TASKS_ARCHIVE.md](docs/TASKS_ARCHIVE.md) |
 | Agents' working folders | `work\`, in the project folder |
 | Firestorm sources (reference) | `phoenix-firestorm\`, in the project folder |
 | Settings, skins, layout | `%APPDATA%\Aurora\AuroraViewer\config\` |

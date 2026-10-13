@@ -363,7 +363,8 @@ its own task in its own git worktree:
 - [AGENTS.md](AGENTS.md) — rules for AI agents (testing, safety, PRs, reviews)
 - [HUMANS.md](HUMANS.md) — how the repository works for humans
 - [ARCHITECTURE.md](ARCHITECTURE.md) — scope, crates and file layout
-- [TASKS.md](TASKS.md) — what is done, in progress and to do
+- [TASKS.md](TASKS.md) — what is in progress and to do; finished work is in
+  [docs/TASKS_ARCHIVE.md](docs/TASKS_ARCHIVE.md)
 - [docs/BRANDING.md](docs/BRANDING.md) — palette, logos, icons and UI rules
 - [docs/TESTING.md](docs/TESTING.md) — test switches (demo scenarios,
   captures, diagnostics) and profiling

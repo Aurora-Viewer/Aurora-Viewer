@@ -213,14 +213,25 @@ Before each significant commit, and always before the PR:
 
 [TASKS.md](TASKS.md) is the reference list: ✅ done (and verified on the grid
 when it depends on it), 🟡 done but not yet verified on the grid, 🔧 in
-progress, ⬜ to do. Write every new or updated line in English; the lines
-written in French before rule 1.6 are being translated.
+progress, ⬜ to do. It is written in English.
 
 - Update it **as soon as a step moves forward**: set the line to 🔧 when your
   task starts, to ✅ when it is validated, with a summary of what was done
   (rule taken from Firestorm, options, demo variable…).
 - What is left to do goes in a clear ⬜ "later" line.
 - Do not rewrite the lines of other tasks.
+- **Archive.** `TASKS.md` holds the open work (⬜, 🔧, 🟡) and what was
+  finished since the last release; older finished tasks are in
+  [docs/TASKS_ARCHIVE.md](docs/TASKS_ARCHIVE.md), under the same headings.
+  Do not read the archive at the start of a session: search it when you need
+  the history of a feature. After a release is published (section 13), the
+  agent that published it creates a `docs` task, runs
+  `./scripts/archive-tasks.ps1 -Apply` and opens the PR; when the human
+  published the release themselves, they ask an agent to do it. The script
+  moves every ✅ task with its sub-lines and leaves the rest, including a ✅
+  task that still lists an open point (a ⬜, 🔧 or 🟡 sub-line); without
+  `-Apply` it only lists what would move. Never archive by hand, and never a
+  🟡 task: it stays until it is verified on the grid.
 
 ## 7. Interface and branding
 
@@ -492,6 +503,7 @@ the review comment.
   The Release workflow builds the viewer and publishes the zip; give the
   release link to the human. The notes are generated from the type labels of
   the PRs (`.github/release.yml`), hence the importance of labelling well.
+  Then archive the finished tasks (section 6).
 - Dependabot PRs (dependency updates): check that they build, pass the tests
   and the demo, then tell the human; merge them (`merge-pr.ps1`) only with
   their agreement.
