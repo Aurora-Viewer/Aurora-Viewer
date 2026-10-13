@@ -1786,7 +1786,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_SOUND=1` | World and interface sounds audible |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
-| `AURORA_DEMO_TAGS=voice`, `status` or `cycle` | Name plates in all their states, at the three distances |
+| `AURORA_DEMO_TAGS=voice`, `status`, `cycle` or `wall` | Name plates in all their states, at the three distances; behind a wall |
 
 ### Details
 
@@ -1819,6 +1819,15 @@ What the inventory must show with these scenarios:
   - `status`: Nova away (amber dot), Tess do not disturb (red dot), Orion
     out of the channel (heart and triangle only), Lune typing while away.
   - `cycle`: switches from one to the other every six seconds.
+  - `wall`: the states of `voice`, with the wall in front of Nova and Tess
+    instead of behind them, and two violet boxes that carry the same
+    floating text, one of them behind the wall. The scene hides the labels
+    behind it: nothing of Nova's plate shows, the wall's edge cuts Tess's
+    plate, Sol's pill and the floating text of the hidden box along a
+    smooth line, and the box in the open keeps its text. Orion and those on
+    the right are whole. `AURORA_LABEL_OCCLUSION=0` gives the image without
+    the cut. To look at in `AURORA_AA=3`, `5` and `6` (with 5, the cut must
+    not shimmer from one frame to the next).
   - The pictures are generated gradients (`demo_tags::picture_pixels`),
     requested as on the grid: profile, then texture, at most four per
     second, the nearest first; our avatar and La Brume have the same one.
@@ -1853,6 +1862,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
 | `AURORA_NAME_TAGS=classic`, `plate` or `alt` | Style of the avatar name tags for this launch |
+| `AURORA_LABEL_OCCLUSION=0` | Name tags and floating texts drawn over the scene, as before, instead of behind what is in front of them |
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 without its disk cache |
 | `AURORA_RENDER_THREAD=0` | Frames drawn on the main thread |
@@ -1891,6 +1901,13 @@ What the inventory must show with these scenarios:
   `AURORA_FPS_LIMIT=120`. With a still camera, a plate that has not moved
   is redrawn without a copy: the cost in motion shows when turning the
   camera during the reading.
+- **`AURORA_LABEL_OCCLUSION=0`**: the avatar name tags (plates and classic)
+  and the floating texts are no longer compared with the scene's depth
+  (`aurora-render/src/label_depth.rs`): egui-wgpu draws them over the scene,
+  as before, and they show through walls. The image only differs where the
+  scene is in front of a label. Scene: `AURORA_DEMO_TAGS=wall`; cost:
+  `r_egui`, `gpu=` and `draws=` of `perf summary` in a crowd
+  (`AURORA_DEMO_CROWD=40`, `AURORA_DEMO_POS="129,134"`).
 - **`AURORA_TEXTURE_BUDGET_MB=<n>`**: the texture pages must not exceed
   n MB, whatever the "Texture memory" setting and the video memory the
   driver announces (`scene/texture_budget.rs`). Used to put the viewer

@@ -29,6 +29,7 @@ fn tag(n: u128, distance: f32, content: Content) -> Tag<'static> {
     Tag {
         id: Uuid::from_u128(n),
         anchor: Pos2::new(400.0, 300.0),
+        at: glam::Vec3::new(10.0, 0.0, 2.0),
         distance,
         fade: 1.0,
         content,
@@ -91,9 +92,25 @@ fn text_color(shapes: &[egui::Shape], text: &str) -> Option<Color32> {
     found
 }
 
+/// The screen of `frame`: the rectangle of the marks that say where a plate
+/// stands in the world (`aurora_render::world_label_at`).
+const SCREEN: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(800.0, 600.0));
+
+/// The plates that blur the world: a region of their own size each.
 fn blurred(shapes: &[egui::Shape]) -> usize {
     let mut n = 0;
-    walk(shapes, &mut |shape| n += usize::from(matches!(shape, egui::Shape::Callback(_))));
+    walk(shapes, &mut |shape| {
+        n += usize::from(matches!(shape, egui::Shape::Callback(c) if c.rect != SCREEN))
+    });
+    n
+}
+
+/// The marks of where the plates stand, one before each plate.
+fn marks(shapes: &[egui::Shape]) -> usize {
+    let mut n = 0;
+    walk(shapes, &mut |shape| {
+        n += usize::from(matches!(shape, egui::Shape::Callback(c) if c.rect == SCREEN))
+    });
     n
 }
 
@@ -586,6 +603,8 @@ fn only_the_nearest_plates_blur_the_world() {
     let (rects, shapes) = frame(&ctx, &mut Plates::default(), &tags, 1.0);
     assert_eq!(rects.len(), tags.len());
     assert_eq!(blurred(&shapes), MAX_GLASS);
+    // each plate says where it stands: the scene hides what is behind it
+    assert_eq!(marks(&shapes), tags.len());
 }
 
 #[test]

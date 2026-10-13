@@ -1,13 +1,16 @@
 //! Name plates in every state and at the three distance levels
-//! (AURORA_DEMO_TAGS=voice|status|cycle, docs/TESTING.md): five residents
-//! in a row in front of the start position, two farther (compact pills) and
-//! two beyond (the name alone). A white wall stands behind the two on the
-//! left, to see the glass over a bright background too.
+//! (AURORA_DEMO_TAGS=voice|status|cycle|wall, docs/TESTING.md): five
+//! residents in a row in front of the start position, two farther (compact
+//! pills) and two beyond (the name alone). A white wall stands behind the
+//! two on the left, to see the glass over a bright background too.
 //!
 //! `voice`: out of the channel, in it and silent, speaking (a friend drawn
 //! as too complex), typing, blocked. `status`: away, do not disturb, the
 //! friend out of the channel, typing while away, blocked. `cycle` goes from
-//! one to the other every six seconds.
+//! one to the other every six seconds. `wall`: the states of `voice`, the
+//! wall in front of the two on the left, and two boxes with the same
+//! floating text, one behind the wall: what the scene hides has no label
+//! (ui/label_cover.rs).
 
 use super::{HANDLE, IDLE_ANIM, floor_at, prim, shape, te};
 use aurora_net::NetEvent;
@@ -22,6 +25,7 @@ pub enum Mode {
     Voice,
     Status,
     Cycle,
+    Wall,
 }
 
 /// Seconds a set of states lasts with `cycle`.
@@ -32,6 +36,7 @@ pub fn mode() -> Option<Mode> {
     *MODE.get_or_init(|| match std::env::var("AURORA_DEMO_TAGS").ok()?.trim() {
         "status" => Some(Mode::Status),
         "cycle" => Some(Mode::Cycle),
+        "wall" => Some(Mode::Wall),
         _ => Some(Mode::Voice),
     })
 }
@@ -40,7 +45,7 @@ pub fn mode() -> Option<Mode> {
 /// status set.
 fn status_set(mode: Mode, time: f64) -> bool {
     match mode {
-        Mode::Voice => false,
+        Mode::Voice | Mode::Wall => false,
         Mode::Status => true,
         Mode::Cycle => (time / CYCLE) as u64 % 2 == 1,
     }
@@ -91,10 +96,12 @@ fn residents() -> [Resident; 9] {
         r(ORION, 6.5, 2.4, "Orion", aurora_i18n::tr!("demo-orion-the-great"), wolves, Some(1)),
         r(LUNE, 6.5, -2.3, "Lune", "", "Aurora Builders", Some(2)),
         r(BRUME, 6.5, -4.7, "Brume", "La Brume", "", Some(0)),
-        r(SOL, 23.0, 5.0, "Sol", "Sol ♪", wolves, None),
-        r(IRIS, 23.0, -5.0, "Iris", "", "", None),
-        r(VEGA, 46.0, 4.5, "Vega", "", "", None),
-        r(ATLAS, 46.0, -4.5, "Atlas", "", "", None),
+        // the far ones to the right of the plaza's torus, which would hide
+        // them and their names
+        r(SOL, 23.0, 10.5, "Sol", "Sol ♪", wolves, None),
+        r(IRIS, 23.0, -8.5, "Iris", "", "", None),
+        r(VEGA, 46.0, -15.0, "Vega", "", "", None),
+        r(ATLAS, 46.0, 16.5, "Atlas", "", "", None),
     ]
 }
 
@@ -212,8 +219,26 @@ pub fn events() -> Vec<NetEvent> {
         });
     }
     // a white wall behind the two on the left: the glass over a bright
-    // background, next to the same plates over the darker scene
-    let wall = glam::Vec2::new(sx, sy) + ahead * 9.5 + left * 6.1;
+    // background, next to the same plates over the darker scene; with
+    // `wall` it stands in front of them and hides them, names included
+    let hiding = mode() == Some(Mode::Wall);
+    if hiding {
+        // the same floating text behind the wall and in the open
+        for (k, side) in [3.8, -3.0].into_iter().enumerate() {
+            let at = glam::Vec2::new(sx, sy) + ahead * 4.4 + left * side;
+            objects.push(prim(
+                110_110 + k as u32,
+                Vec3::new(at.x, at.y, floor_at(at.x, at.y) + 0.3),
+                Quat::IDENTITY,
+                Vec3::splat(0.6),
+                boxp,
+                te([0.55, 0.36, 0.96, 1.0], 0, false, 0.0),
+                ExtraParams::default(),
+                aurora_i18n::tr!("demo-welcome-card"),
+            ));
+        }
+    }
+    let wall = glam::Vec2::new(sx, sy) + ahead * if hiding { 3.5 } else { 9.5 } + left * 6.1;
     objects.push(prim(
         110_100,
         Vec3::new(wall.x, wall.y, floor_at(wall.x, wall.y) + 1.9),
