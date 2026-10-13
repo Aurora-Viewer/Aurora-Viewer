@@ -1,23 +1,23 @@
 ﻿<#
 .SYNOPSIS
-    Montre la place prise par les compilations (dossiers target) et libère
-    ce qui peut l'être. Par défaut, n'efface RIEN : il faut -Apply.
+    Shows the space taken by builds (target folders) and frees what can be
+    freed. By default, deletes NOTHING: -Apply is required.
 
 .DESCRIPTION
-    Ne supprime que des dossiers de compilation Cargo (reconnus au fichier
-    CACHEDIR.TAG que Cargo crée), et seulement à ces endroits :
-      - dépôt principal : target\<profil> (debug, ci…), jamais target\release
-        sauf avec -IncludeRelease ;
-      - dossiers de tâche : work\<tâche>\target, seulement avec -Tasks (la
-        tâche devra tout recompiler) ;
-      - RELEASE\src\target (build-release.ps1), seulement avec
-        -IncludeRelease (le prochain build release repartira de zéro).
-    Refuse de travailler pendant une compilation ou si un viewer tourne.
+    Only deletes Cargo build folders (recognised by the CACHEDIR.TAG file
+    that Cargo creates), and only in these places:
+      - main repository: target\<profile> (debug, ci…), never target\release
+        except with -IncludeRelease;
+      - task folders: work\<task>\target, only with -Tasks (the task will
+        have to rebuild everything);
+      - RELEASE\src\target (build-release.ps1), only with -IncludeRelease
+        (the next release build will start from scratch).
+    Refuses to work during a build or while a viewer is running.
 
 .EXAMPLE
-    ./scripts/clean.ps1                 # affiche les tailles, n'efface rien
-    ./scripts/clean.ps1 -Apply          # libère target\debug, target\ci… du dépôt
-    ./scripts/clean.ps1 -Tasks -Apply   # libère aussi les target des tâches
+    ./scripts/clean.ps1                 # shows the sizes, deletes nothing
+    ./scripts/clean.ps1 -Apply          # frees target\debug, target\ci… of the repository
+    ./scripts/clean.ps1 -Tasks -Apply   # also frees the target folders of the tasks
 #>
 param(
     [switch]$Apply,
@@ -48,14 +48,14 @@ $mainTarget = Join-Path $p.Main 'target'
 if (Test-Path -LiteralPath $mainTarget) {
     foreach ($d in Get-ChildItem -LiteralPath $mainTarget -Directory -Force) {
         $keep = ($d.Name -eq 'release') -and -not $IncludeRelease
-        $items += @{ Path = $d.FullName; What = "dépôt : target\$($d.Name)"; Delete = -not $keep; Root = $mainTarget; Tag = $mainTarget }
+        $items += @{ Path = $d.FullName; What = "repository: target\$($d.Name)"; Delete = -not $keep; Root = $mainTarget; Tag = $mainTarget }
     }
 }
 if (Test-Path -LiteralPath $p.Work) {
     foreach ($t in Get-ChildItem -LiteralPath $p.Work -Directory -Force) {
         $tt = Join-Path $t.FullName 'target'
         if (Test-Path -LiteralPath $tt) {
-            $items += @{ Path = $tt; What = "tâche : $($t.Name)\target"; Delete = [bool]$Tasks; Root = $t.FullName; Tag = $tt }
+            $items += @{ Path = $tt; What = "task: $($t.Name)\target"; Delete = [bool]$Tasks; Root = $t.FullName; Tag = $tt }
         }
     }
 }
@@ -64,36 +64,36 @@ $relTarget = Join-Path $relSrc 'target'
 if (Test-Path -LiteralPath $relTarget) {
     $items += @{ Path = $relTarget; What = 'RELEASE\src\target'; Delete = [bool]$IncludeRelease; Root = $relSrc; Tag = $relTarget }
 }
-if (-not $items) { Write-Host "Aucun dossier de compilation."; exit 0 }
+if (-not $items) { Write-Host "No build folder."; exit 0 }
 
 $total = 0.0; $freed = 0.0
 foreach ($i in $items) {
     $size = Get-SizeGB $i.Path
     $total += $size
-    $action = if ($i.Delete) { 'à libérer' } else { 'gardé' }
+    $action = if ($i.Delete) { 'to free' } else { 'kept' }
     if ($i.Delete) { $freed += $size }
-    Write-Host ("{0,8} Go  {1,-10}  {2}" -f $size, $action, $i.What)
+    Write-Host ("{0,8} GB  {1,-10}  {2}" -f $size, $action, $i.What)
 }
-Write-Host ("{0,8} Go  au total, {1} Go libérables" -f [math]::Round($total, 1), [math]::Round($freed, 1))
+Write-Host ("{0,8} GB  in total, {1} GB can be freed" -f [math]::Round($total, 1), [math]::Round($freed, 1))
 
 if (-not $Apply) {
-    Write-Host "`nRien n'a été supprimé. Relance avec -Apply pour libérer la place (et -Tasks pour les dossiers de tâche)." -ForegroundColor Yellow
+    Write-Host "`nNothing was deleted. Run again with -Apply to free the space (and -Tasks for the task folders)." -ForegroundColor Yellow
     exit 0
 }
 
 $busy = Get-Process cargo, rustc, clippy-driver, aurora-viewer -ErrorAction SilentlyContinue
 if ($busy) {
-    throw "Compilation ou viewer en cours ($(($busy.Name | Sort-Object -Unique) -join ', ')) : réessaie quand ils sont terminés."
+    throw "A build or a viewer is running ($(($busy.Name | Sort-Object -Unique) -join ', ')): try again when they have finished."
 }
 foreach ($i in $items | Where-Object { $_.Delete }) {
     if (-not (Test-Deletable $i.Path $i.Tag $i.Root)) {
-        Write-Warning "Ignoré (pas un dossier de compilation Cargo) : $($i.Path)"
+        Write-Warning "Skipped (not a Cargo build folder): $($i.Path)"
         continue
     }
     Remove-Item -LiteralPath $i.Path -Recurse -Force -ErrorAction Continue
     if (Test-Path -LiteralPath $i.Path) {
-        Write-Warning "Pas entièrement supprimé (fichier verrouillé ?) : $($i.Path)"
+        Write-Warning "Not fully deleted (locked file?): $($i.Path)"
     } else {
-        Write-Host "Libéré : $($i.What)" -ForegroundColor Green
+        Write-Host "Freed: $($i.What)" -ForegroundColor Green
     }
 }

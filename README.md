@@ -8,11 +8,11 @@
 
 [![CI](https://github.com/Aurora-Viewer/Aurora-Viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Aurora-Viewer/Aurora-Viewer?include_prereleases&color=8B5CF6)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases)
-[![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-4F46E5)](LICENSE)
+[![License: GPLv3](https://img.shields.io/badge/license-GPLv3-4F46E5)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-5EEAD4?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-Windows-070B1F)](#build)
 
-[Français](#en-français) · [Aurora vs Firestorm](#how-aurora-differs-from-firestorm) · [Roadmap](#roadmap) · [Build](#build) · [Contributing](#contributing)
+[Aurora vs Firestorm](#how-aurora-differs-from-firestorm) · [Roadmap](#roadmap) · [Build](#build) · [Contributing](#contributing)
 
 </div>
 
@@ -36,7 +36,7 @@ upscaling and anti-aliasing are planned (see the [roadmap](#roadmap)).
 - It speaks the same protocol as Firestorm (same messages, capabilities,
   request rates and defaults), so the servers see a well-behaved, familiar
   client.
-- Open source (GPL-3.0-or-later), with credit to the Linden / Firestorm code
+- Open source (GPLv3), with credit to the Linden / Firestorm code
   it ports logic from (see [NOTICE.md](NOTICE.md)).
 
 **Rendering engine**
@@ -92,14 +92,15 @@ The texture memory budget is set automatically from the detected VRAM.
   step-by-step progress.
 - Teleports within the same region are instant, with no loading screen.
 - Movement keys adapt to the keyboard layout on first launch (WASD or ZQSD).
-- Interface en français et en anglais : détection du système, choix enregistré
-  dans les Préférences et changement immédiat. Les catalogues Fluent permettent
-  d'ajouter une langue ; voir [le guide de traduction](docs/TRANSLATING.md).
-- Double-clic sur le titre d’une fenêtre pour la replier en barre déplaçable,
-  puis la restaurer avec ses dimensions et son contenu.
-- À la fermeture : dialogue sur fond flouté avec Quitter, Déconnecter vers
-  l’écran de connexion et Annuler. Échap annule ; la déconnexion est attendue
-  avant de fermer le viewer.
+- The interface is available in English and French: system language
+  detection, a choice saved in Preferences and applied at once. Fluent
+  catalogues make it possible to add a language; see
+  [the translation guide](docs/TRANSLATING.md).
+- Double-click a window's title to collapse it into a movable bar, then
+  restore it with its size and content.
+- On closing: a dialog over a blurred background with Quit, Log out (back to
+  the login screen) and Cancel. Esc cancels; the viewer waits for the logout
+  before closing.
 
 **Things Firestorm doesn't have**
 
@@ -143,43 +144,42 @@ The texture memory budget is set automatically from the detected VRAM.
 
 ![Login screen](docs/screenshots/login.jpg)
 
-## Signaler un bug pendant l’alpha
+## Reporting a bug during the alpha
 
-L’icône de bug dans la barre du haut, le menu Aide, l’écran de connexion et
-le bouton « Envoyer un rapport de plantage » après un crash ouvrent le même
-formulaire. Après un crash, les données viennent de la session arrêtée.
-Décrivez le problème et vérifiez les informations
-de l’onglet Données ; décochez celles que vous souhaitez garder privées.
-L’interface suit la langue choisie, même avec le formulaire ouvert. La capture
-et les diagnostics filtrés sont facultatifs. Le fichier destiné à GitHub utilise
-des rubriques anglaises ; votre description garde la langue de votre saisie.
-Un nouveau rapport s’ouvre sur Description. Fermer puis rouvrir le formulaire
-reprend le brouillon au même endroit jusqu’à l’envoi ou la fermeture du viewer.
-Dans le mode navigateur, cliquez sur « J’ai publié le rapport » après la
-publication sur GitHub pour commencer un autre rapport.
-Après une capture prise dans Aurora, cocher ou décocher « Inclure l’interface »
-reprend automatiquement la photo ; les fichiers importés restent inchangés.
+The bug icon in the top bar, the Help menu, the login screen and the "Send a
+crash report" button after a crash open the same form. After a crash, the
+data comes from the session that stopped. Describe the problem and check the
+information in the Data tab; untick what you want to keep private. The
+interface follows the chosen language, even with the form open. The
+screenshot and the filtered diagnostics are optional. The file meant for
+GitHub uses English headings; your description stays in the language you
+typed it in. A new report opens on Description. Closing then reopening the
+form resumes the draft at the same place until it is sent or the viewer is
+closed. In browser mode, click "I have published the report" after publishing
+on GitHub to start another report. After a screenshot taken in Aurora,
+ticking or unticking "Include the interface" retakes the picture
+automatically; imported files stay unchanged.
 
-Deux modes, tous deux avec un compte GitHub : « Envoyer depuis Aurora »,
-présenté en premier et sélectionné par défaut, ou ouvrir une issue préremplie
-dans le navigateur. L’envoi depuis Aurora demande d’autoriser son application
-GitHub ; l’autorisation reste uniquement en mémoire
-jusqu’à la fermeture du viewer ou sa déconnexion ; aucune publication ne suit
-automatiquement l’autorisation. Sans compte, enregistrez une copie locale.
+Two modes, both with a GitHub account: "Send from Aurora", shown first and
+selected by default, or opening a pre-filled issue in the browser. Sending
+from Aurora asks you to authorise its GitHub application; the authorisation
+stays in memory only, until the viewer is closed or logged out; nothing is
+published automatically after the authorisation. Without an account, save a
+local copy.
 
-L’envoi depuis Aurora publie l’image choisie sur auroraviewer.com et l’affiche
-dans l’issue. Une option distincte de l’onglet Données, décochée par défaut,
-permet de joindre le ZIP des journaux aux développeurs ; son lien demande une
-connexion GitHub autorisée dans le dépôt privé. Les fichiers restent dans le
-Cellar privé. Un envoi interrompu peut être terminé sur la même issue.
-Dans le navigateur, ajoutez l’image manuellement depuis le dossier `public`.
-Si le texte est trop long pour un lien, Aurora le copie intégralement pour le
-coller dans GitHub. Ne publiez jamais le dossier `private-do-not-upload`.
-Le bouton de barre se masque dans Préférences › Interface.
+Sending from Aurora publishes the chosen image on auroraviewer.com and shows
+it in the issue. A separate option of the Data tab, unticked by default,
+attaches the ZIP of the logs for the developers; its link requires a GitHub
+login authorised in the private repository. The files stay in the private
+Cellar. An interrupted upload can be finished on the same issue. In the
+browser, add the image by hand from the `public` folder. If the text is too
+long for a link, Aurora copies it in full so that you can paste it into
+GitHub. Never publish the `private-do-not-upload` folder. The bar button can
+be hidden in Preferences › Interface.
 
-Test hors ligne : `AURORA_DEMO=1` et `AURORA_DEMO_BUG_REPORT=1` ouvrent un rapport
-exemple ; l’envoi est simulé et le navigateur reste fermé. Voir
-[TESTING.md](docs/TESTING.md) et la [configuration GitHub](docs/BUG_REPORTING.md).
+Offline test: `AURORA_DEMO=1` and `AURORA_DEMO_BUG_REPORT=1` open a sample
+report; sending is simulated and the browser stays closed. See
+[TESTING.md](docs/TESTING.md) and the [GitHub configuration](docs/BUG_REPORTING.md).
 
 ## Roadmap
 
@@ -246,14 +246,14 @@ profile (`cargo run -p aurora-viewer`): it behaves like the release build
 without its slow link-time optimization. `./scripts/build-release.ps1`
 builds GitHub's latest `main` with `--release` into `..\RELEASE\`.
 
-Le **tag Git est la référence de la version du viewer** : `v0.2.0` donne
-`0.2.0` partout (titre, interface, journaux et clients réseau). Entre deux
-tags, `0.2.0+7.gabcdef123` indique le nombre de commits et l'identifiant
-court. La version des crates dans `Cargo.toml` ne sert pas de numéro au
-viewer. Une archive de sources sans Git peut être compilée avec
-`AURORA_VERSION_TAG=v0.2.0` ; sinon elle s'identifie comme
-`0.0.0+0.gunknown`. Le workflow Release contrôle la version annoncée par
-l'exe avant publication ; le build local la note aussi dans `version.txt`.
+The **Git tag is the reference for the viewer's version**: `v0.2.0` gives
+`0.2.0` everywhere (title, interface, logs and network clients). Between two
+tags, `0.2.0+7.gabcdef123` gives the number of commits and the short
+identifier. The version of the crates in `Cargo.toml` is not the viewer's
+number. A source archive without Git can be built with
+`AURORA_VERSION_TAG=v0.2.0`; otherwise it identifies itself as
+`0.0.0+0.gunknown`. The Release workflow checks the version announced by the
+exe before publishing; the local build also writes it to `version.txt`.
 
 ### Command line
 
@@ -261,41 +261,44 @@ l'exe avant publication ; le build local la note aussi dans `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
-| `--language <code>` | Force la langue de cette instance (`en`, `fr`, ou une autre langue ajoutée aux catalogues), sans modifier le choix enregistré |
+| `--language <code>` | Forces the language of this instance (`en`, `fr`, or another language added to the catalogues), without changing the saved choice |
 | `-h`, `--help` | Shows the help |
-| `-V`, `--version` | Affiche la version compilée puis quitte, sans fenêtre, journal ni réseau |
+| `-V`, `--version` | Prints the built version then exits, with no window, log or network |
 
 - `--title`: the build profile ends the title (Dev, Release, Debug); the log
   file is `aurora-<text>.log` (`aurora-demo-<text>.log` in demo mode).
 - `--fps-limit`: applies an extra limit to this process, including captures
   and online sessions; a lower user preference remains effective.
-- `--language` : accepte aussi `--language=fr`. Une langue non disponible
-  utilise l'anglais ; l'argument est destiné aux démos et aux captures.
+- `--language`: also accepts `--language=fr`. An unavailable language falls
+  back to English; the argument is meant for demos and screenshots.
 
-Le viewer suit d'abord la langue enregistrée dans **Préférences › Interface ›
-Langue**, puis celle du système si « Langue du système » est sélectionné.
-L'anglais sert de repli. Le changement s'applique immédiatement ; le réglage
-« Langue visible aux scripts » est activé par défaut, comme Firestorm.
-Les traductions se trouvent dans `crates/aurora-i18n/locales/` :
-[guide de traduction](docs/TRANSLATING.md).
+The viewer first follows the language saved in **Preferences › Interface ›
+Language**, then the system's if "System language" is selected. English is
+the fallback. The change applies at once; the "Language visible to scripts"
+setting is on by default, like Firestorm. The translations are in
+`crates/aurora-i18n/locales/`: [translation guide](docs/TRANSLATING.md).
 
 The frame limiter is enabled at **120 fps by default** and can be disabled
-or adjusted in Préférences › Graphismes › Fluidité. Saved preferences are
+or adjusted in Preferences › Graphics › Smoothness. Saved preferences are
 preserved.
 
 ### Animation Overrider (AO)
 
-Le bouton **AO** de la barre du bas ouvre la gestion de l’Animation Overrider intégré. Les ensembles sont conservés sous `#Firestorm/#AO` ; importez une notecard ZHAO depuis le même dossier que ses animations. L’AO est désactivé initialement, comme dans Firestorm. `cao on` / `cao off` l’activent ou le désactivent ; `cao sit` bascule l’assise, `cao sit off` remplace l’assise et `cao sit on` conserve l’assise standard, comme Firestorm. Le scénario de démo est décrit dans [les options de test](docs/TESTING.md#avatars-et-animations).
+The **AO** button of the bottom bar opens the built-in Animation Overrider.
+Sets are kept under `#Firestorm/#AO`; import a ZHAO notecard from the same
+folder as its animations. The AO is off at first, as in Firestorm. `cao on` /
+`cao off` turn it on or off; `cao sit` toggles the sit, `cao sit off` replaces
+the sit and `cao sit on` keeps the standard sit, like Firestorm. The demo
+scenario is described in
+[the test options](docs/TESTING.md#avatars-and-animations).
 
 ### Notecards
 
-Les notes affichent les images, repères et autres éléments intégrés avec leur
-icône et leur nom dans le texte. Glisser un élément depuis l’inventaire pour
-l’insérer ; un clic gauche l’ouvre directement, et le clic droit propose
-Ouvrir ou Copier dans l’inventaire. Enregistrer (Ctrl+S) conserve leurs
-permissions.
-Les scénarios de démo sont décrits dans
-[le guide de test](docs/TESTING.md#interface).
+Notecards show images, landmarks and other embedded items with their icon and
+name in the text. Drag an item from the inventory to insert it; a left click
+opens it directly, and the right click offers Open or Copy to inventory. Save
+(Ctrl+S) keeps their permissions. The demo scenarios are described in
+[the testing guide](docs/TESTING.md#interface).
 
 ### Test switches
 
@@ -320,29 +323,30 @@ cargo run -p aurora-viewer
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_<NAME>=…` | A demo scenario: a window, a stress scene, a camera script… |
-| `AURORA_DEMO_PIE=1` / `0` | Force le menu circulaire / en liste dans la démo, sans modifier la préférence ; à combiner avec `AURORA_DEMO_RCLICK` |
+| `AURORA_DEMO_PIE=1` / `0` | Forces the pie menu / the list menu in the demo, without changing the preference; combine with `AURORA_DEMO_RCLICK` |
 | `AURORA_CAPTURE=<file.png>` | Saves a capture of a frame |
 | `AURORA_PROFILE=1` | Writes one profiling line per second to the log |
 
-Les démos d'éditeur de scripts (`AURORA_DEMO_SCRIPTS`) : `close-brace` /
-`object-close-brace` vérifient le retrait des accolades fermantes ; `colors`,
-`color-picker`, `color-accept` et `color-cancel` montrent les vecteurs RVB et
-le nuancier partagé. Les scénarios complets sont dans [docs/TESTING.md](docs/TESTING.md).
+The script editor demos (`AURORA_DEMO_SCRIPTS`): `close-brace` /
+`object-close-brace` check the outdent of closing braces; `colors`,
+`color-picker`, `color-accept` and `color-cancel` show the RGB vectors and
+the shared colour picker. The full scenarios are in
+[docs/TESTING.md](docs/TESTING.md).
 
-L'éditeur propose aussi `Ctrl+K` (ou `Ctrl+/`) pour les commentaires de lignes,
-`Ctrl+Maj+K` pour les commentaires de bloc, et Tab / Maj+Tab pour le retrait des
-lignes sélectionnées. Les flèches de la marge replient les blocs entre accolades ;
-le menu Édition propose Tout replier / Tout déplier. Les démos `comment-lines`,
-`comment-block`, `multiline-indent`, `multiline-outdent`, `folding` et
-`object-folding` permettent de vérifier ces actions hors ligne.
+The editor also offers `Ctrl+K` (or `Ctrl+/`) for line comments,
+`Ctrl+Shift+K` for block comments, and Tab / Shift+Tab to indent or outdent
+the selected lines. The arrows in the margin fold the blocks between braces;
+the Edit menu offers Collapse all / Expand all. The `comment-lines`,
+`comment-block`, `multiline-indent`, `multiline-outdent`, `folding` and
+`object-folding` demos check these actions offline.
 
-Le menu clic droit de l’inventaire propose « Déplacer vers… » pour un dossier,
-un élément ou une sélection multiple. Saisir un nom dans le filtre de la
-fenêtre, choisir le dossier de destination puis valider avec Déplacer.
+The inventory's right-click menu offers "Move to…" for a folder, an item or a
+multiple selection. Type a name in the window's filter, choose the
+destination folder then confirm with Move.
 
 The full list of switches (demo scenarios, captures, forced settings,
 diagnostics) and how to read the profiling output are in
-[docs/TESTING.md](docs/TESTING.md) (in French).
+[docs/TESTING.md](docs/TESTING.md).
 
 Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
 
@@ -371,30 +375,9 @@ Behaviour follows Firestorm: its sources are expected next to the repository
 ## License
 
 Aurora Viewer is free software under the
-[GNU General Public License v3.0 or later](LICENSE). Parts of it are ported
+[GNU General Public License v3](LICENSE). Parts of it are ported
 from the Second Life viewer and Firestorm (originally LGPL 2.1); see
 [NOTICE.md](NOTICE.md) for details and third-party licenses.
 
 Aurora Viewer is not affiliated with Linden Lab or the Firestorm project.
 Second Life® is a trademark of Linden Research, Inc.
-
----
-
-## En français
-
-**Aurora Viewer** est un viewer Second Life moderne écrit en Rust : rendu GPU
-récent (wgpu / Vulkan), interface plate et soignée, et un comportement fidèle
-à Firestorm (mêmes messages, mêmes règles, mêmes valeurs par défaut).
-
-- **Ce qui le distingue de Firestorm :** un moteur écrit de zéro, piloté par
-  le GPU, et une interface repensée ; voir
-  [How Aurora differs from Firestorm](#how-aurora-differs-from-firestorm) et
-  la [feuille de route](#roadmap).
-- **Compiler :** voir [Build](#build) ci-dessus (Windows, Rust stable).
-- **Tester sans compte :** `AURORA_DEMO=1` lance un mode démo hors ligne ;
-  la liste des options est dans [docs/TESTING.md](docs/TESTING.md).
-- **Contribuer :** le dépôt est pensé pour des humains travaillant avec des
-  agents IA ; lis [HUMANS.md](HUMANS.md) (humains) et
-  [AGENTS.md](AGENTS.md) (agents). Le suivi des tâches est dans
-  [TASKS.md](TASKS.md).
-- **Licence :** GPL-3.0-or-later, voir [NOTICE.md](NOTICE.md).

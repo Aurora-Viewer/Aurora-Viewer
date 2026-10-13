@@ -53,7 +53,7 @@ function Start-GitHubWatch {
     $repo = Get-RepoSlug
     if (-not $repo) { return }
     gh auth status *> $null
-    if ($LASTEXITCODE -ne 0) { $GitHub.Error = 'pas connecté à GitHub'; return }
+    if ($LASTEXITCODE -ne 0) { $GitHub.Error = 'not logged in to GitHub'; return }
     $ps = [powershell]::Create()
     [void]$ps.AddScript({
         param($State, $Query, $Owner, $Name)
@@ -97,26 +97,26 @@ function Format-Duration([TimeSpan]$T) {
     else { '{0}:{1:00}' -f [int][Math]::Floor($T.TotalMinutes), $T.Seconds }
 }
 
-# Short age for a column: '55 sec', '04 min', '02 hrs', '03 jrs', '02 sem',
-# '05 moi', '01 yrs'. Units all take 3 letters so numbers and units line up
+# Short age for a column: '55 sec', '04 min', '02 hrs', '03 day', '02 wks',
+# '05 mos', '01 yrs'. Units all take 3 letters so numbers and units line up
 # from one row to the next.
 function Format-Age([datetime]$When) {
     $t = (Get-Date) - $When
     if ($t.TotalMinutes -lt 1) { '{0:00} sec' -f [int][Math]::Floor($t.TotalSeconds) }
     elseif ($t.TotalHours -lt 1) { '{0:00} min' -f [int][Math]::Floor($t.TotalMinutes) }
     elseif ($t.TotalDays -lt 1) { '{0:00} hrs' -f [int][Math]::Floor($t.TotalHours) }
-    elseif ($t.TotalDays -lt 7) { '{0:00} jrs' -f [int][Math]::Floor($t.TotalDays) }
-    elseif ($t.TotalDays -lt 30) { '{0:00} sem' -f [int][Math]::Floor($t.TotalDays / 7) }
-    elseif ($t.TotalDays -lt 365) { '{0:00} moi' -f [int][Math]::Floor($t.TotalDays / 30) }
+    elseif ($t.TotalDays -lt 7) { '{0:00} day' -f [int][Math]::Floor($t.TotalDays) }
+    elseif ($t.TotalDays -lt 30) { '{0:00} wks' -f [int][Math]::Floor($t.TotalDays / 7) }
+    elseif ($t.TotalDays -lt 365) { '{0:00} mos' -f [int][Math]::Floor($t.TotalDays / 30) }
     else { '{0:00} yrs' -f [int][Math]::Floor($t.TotalDays / 365) }
 }
 
 function Format-Ago([datetime]$When) {
     $t = (Get-Date) - $When
-    if ($t.TotalMinutes -lt 1) { "il y a $([int]$t.TotalSeconds) s" }
-    elseif ($t.TotalHours -lt 1) { "il y a $([int]$t.TotalMinutes) min" }
-    elseif ($t.TotalDays -lt 1) { "il y a $([int]$t.TotalHours) h" }
-    else { "il y a $([int]$t.TotalDays) j" }
+    if ($t.TotalMinutes -lt 1) { "$([int]$t.TotalSeconds) s ago" }
+    elseif ($t.TotalHours -lt 1) { "$([int]$t.TotalMinutes) min ago" }
+    elseif ($t.TotalDays -lt 1) { "$([int]$t.TotalHours) h ago" }
+    else { "$([int]$t.TotalDays) d ago" }
 }
 
 # What a pull request looks like on screen.
@@ -196,28 +196,27 @@ function Get-PrRows {
 # The square drawn before a count or a PR number, in the status colour.
 $StatusMark = '■'
 
-# Footer, as coloured segments: "PR ■ 3 ouvertes ■ 1 CI ■ 1 en file ■ 1 prête
-# ■ 1 rouge", or why there is nothing.
+# Footer, as coloured segments: "PR ■ 3 open ■ 1 CI ■ 1 queued ■ 1 ready
+# ■ 1 red", or why there is nothing.
 function Get-PrSummary {
     if (-not $GitHub.Data) {
-        if ($GitHub.Error) { return , @("GitHub : $($GitHub.Error)", 'warn') }
+        if ($GitHub.Error) { return , @("GitHub: $($GitHub.Error)", 'warn') }
         return , @('GitHub…', 'muted')
     }
     $rows = @(Get-PrRows)
-    if (-not $rows) { return , @('PR : aucune ouverte', 'muted') }
+    if (-not $rows) { return , @('PR: none open', 'muted') }
     $counts = @(
-        @($rows.Count, 'ouverte', 'violet_light'),
+        @($rows.Count, 'open', 'violet_light'),
         @(@($rows | Where-Object CiRunning).Count, 'CI', 'amber'),
-        @(@($rows | Where-Object { $_.QueueState -in 'Queued', 'Blocked' }).Count, 'en file', 'teal'),
-        @(@($rows | Where-Object { $_.Status -eq 'success' }).Count, 'prête', 'success'),
-        @(@($rows | Where-Object { $_.CiState -eq 'Fail' }).Count, 'rouge', 'danger')
+        @(@($rows | Where-Object { $_.QueueState -in 'Queued', 'Blocked' }).Count, 'queued', 'teal'),
+        @(@($rows | Where-Object { $_.Status -eq 'success' }).Count, 'ready', 'success'),
+        @(@($rows | Where-Object { $_.CiState -eq 'Fail' }).Count, 'red', 'danger')
     )
     $segments = @(, @('PR', 'muted'))
     foreach ($c in $counts) {
         if (-not $c[0]) { continue }
-        $label = if ($c[1] -ne 'CI' -and $c[1] -ne 'en file' -and $c[0] -gt 1) { "$($c[1])s" } else { $c[1] }
         $segments += , @("  $StatusMark ", $c[2])
-        $segments += , @("$($c[0]) $label", 'ink')
+        $segments += , @("$($c[0]) $($c[1])", 'ink')
     }
     $segments
 }
@@ -252,18 +251,18 @@ function Update-PrNotifications {
         foreach ($n in $before.Keys) {
             if (-not $now.ContainsKey($n)) {
                 $m = $repo.merged.nodes | Where-Object { $_.number -eq $n } | Select-Object -First 1
-                if ($m) { Send-Toast "PR #$n fusionnée" $m.title }
+                if ($m) { Send-Toast "PR #$n merged" $m.title }
                 continue
             }
             $was = $before[$n]; $is = $now[$n]
-            if ($is.CiState -eq 'Fail' -and $was.CiState -ne 'Fail') { Send-Toast "CI rouge sur la PR #$n" $is.Title }
-            if ($was.QueueState -in 'Queued', 'Blocked' -and $is.QueueState -notin 'Queued', 'Blocked') { Send-Toast "PR #$n sortie de la file de fusion" $is.Title }
+            if ($is.CiState -eq 'Fail' -and $was.CiState -ne 'Fail') { Send-Toast "CI red on PR #$n" $is.Title }
+            if ($was.QueueState -in 'Queued', 'Blocked' -and $is.QueueState -notin 'Queued', 'Blocked') { Send-Toast "PR #$n left the merge queue" $is.Title }
         }
         foreach ($n in $now.Keys) {
-            if (-not $before.ContainsKey($n)) { Send-Toast "Nouvelle PR #$n ($($now[$n].Author))" $now[$n].Title }
+            if (-not $before.ContainsKey($n)) { Send-Toast "New PR #$n ($($now[$n].Author))" $now[$n].Title }
         }
         if ($mainState -in 'FAILURE', 'ERROR' -and $script:PrSeen.Main -notin 'FAILURE', 'ERROR') {
-            Send-Toast 'main est rouge' 'La CI de main a échoué : vérifie la dernière fusion.'
+            Send-Toast 'main is red' 'CI failed on main: check the last merge.'
         }
     }
     $script:PrSeen = @{ Rows = $now; Main = $mainState }
@@ -376,9 +375,9 @@ function Show-PrPanel {
             $mainState = if ($GitHub.Data) { $GitHub.Data.data.repository.defaultBranchRef.target.statusCheckRollup.state }
             # switch skips a null value entirely, default included: test it first
             $main = if (-not $mainState) { '…', 'muted' } else { switch ($mainState) { 'SUCCESS' { 'CI OK', 'success' } { $_ -in 'FAILURE', 'ERROR' } { 'CI FAIL', 'danger' } { $_ -in 'PENDING', 'EXPECTED' } { 'CI RUN', 'amber' } default { '?', 'muted' } } }
-            $fresh = if ($GitHub.Updated) { Format-Ago $GitHub.Updated } else { 'chargement…' }
-            Write-PanelLine @(@(' Aurora · PR', 'violet_light'), @('   main  ', 'muted'), @("$StatusMark $($main[0])", $main[1]), @("   à jour $fresh", 'muted_dim'), @("   $(Get-Date -Format 'HH:mm:ss')", 'muted_dim')) $w
-            if ($GitHub.Error) { Write-PanelLine @(@(" GitHub : $($GitHub.Error)", 'warn')) $w }
+            $fresh = if ($GitHub.Updated) { Format-Ago $GitHub.Updated } else { 'loading…' }
+            Write-PanelLine @(@(' Aurora · PR', 'violet_light'), @('   main  ', 'muted'), @("$StatusMark $($main[0])", $main[1]), @("   updated $fresh", 'muted_dim'), @("   $(Get-Date -Format 'HH:mm:ss')", 'muted_dim')) $w
+            if ($GitHub.Error) { Write-PanelLine @(@(" GitHub: $($GitHub.Error)", 'warn')) $w }
             Write-PanelLine @(, @((' ' + ('─' * ($w - 2))), 'muted_dim')) $w
 
             # The body, as lines to write (S: segments, Pr: index of the PR in
@@ -417,10 +416,10 @@ function Show-PrPanel {
             # lists of indexes: test their .Count, @(0) alone is false
 
             if (-not $rows) {
-                & $line @(, @($(if ($GitHub.Data) { ' Aucune PR ouverte.' } else { ' Chargement…' }), 'muted'))
+                & $line @(, @($(if ($GitHub.Data) { ' No open PR.' } else { ' Loading…' }), 'muted'))
             }
             if ($queued.Count) {
-                & $heading 'FILE DE FUSION' $queued.Count
+                & $heading 'MERGE QUEUE' $queued.Count
                 foreach ($i in $queued) {
                     $c = $cells[$i]; $r = $c.Row
                     $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light'))
@@ -435,7 +434,7 @@ function Show-PrPanel {
             }
             if ($open.Count) {
                 if ($queued.Count) { & $line @(, @('', 'muted')) }
-                & $heading 'PR OUVERTES' $open.Count
+                & $heading 'OPEN PRs' $open.Count
                 foreach ($i in $open) {
                     $c = $cells[$i]; $r = $c.Row
                     $start = @(@(" $StatusMark ", $r.Status), @(("#$($r.Number)").PadRight(6), 'violet_light'))
@@ -453,7 +452,7 @@ function Show-PrPanel {
             $prLines = $body.Count
             if ($merged) {
                 & $line @(, @('', 'muted'))
-                & $heading 'FUSIONNÉES RÉCEMMENT'
+                & $heading 'RECENTLY MERGED'
                 for ($j = 0; $j -lt $merged.Count; $j++) {
                     $m = $merged[$j]
                     $titleW = [Math]::Max(10, $w - 9 - $mergedAuthorW - $diffW - $whenW)
@@ -487,13 +486,13 @@ function Show-PrPanel {
             for ($j = $from; $j -lt $from + $count; $j++) { Write-PanelLine $body[$j].S $w -Selected:($rows -and $body[$j].Pr -eq $sel) }
             if ($count -lt $body.Count) {
                 $hidden = $rows.Count - @($body.GetRange($from, $count) | Where-Object { $_.Pr -ge 0 }).Count
-                Write-PanelLine @(, @(" ↕ $hidden autre(s) PR, ↑↓ pour les voir", 'muted_dim')) $w
+                Write-PanelLine @(, @(" ↕ $hidden more PR(s), ↑↓ to see them", 'muted_dim')) $w
             }
             Write-PanelLine @(, @((' ' + ('─' * ($w - 2))), 'muted_dim')) $w
             # what the square before a PR number says
             Write-PanelLine @(@(" $StatusMark", 'danger'), @(' FAIL  ', 'muted_dim'), @($StatusMark, 'amber'), @(' CI RUN  ', 'muted_dim'), @($StatusMark, 'teal'), @(' QUEUE  ', 'muted_dim'),
                 @($StatusMark, 'warn'), @(' REVIEW WARN  ', 'muted_dim'), @($StatusMark, 'success'), @(' READY  ', 'muted_dim'), @($StatusMark, 'violet_light'), @(' REVIEW PENDING  ', 'muted_dim'), @($StatusMark, 'muted_dim'), @(' DRAFT', 'muted_dim')) $w
-            Write-PanelLine @(, @(' ↑↓ choisir · Entrée ouvrir · R rafraîchir · Échap retour', 'muted_dim')) $w
+            Write-PanelLine @(, @(' ↑↓ choose · Enter open · R refresh · Esc back', 'muted_dim')) $w
             # erase what a longer previous frame left below
             if ($Interactive -and $Vt) { Write-Host "$Esc[J" -NoNewline }
             else { for ($i = $script:PanelRow; $i -lt $lastHeight; $i++) { Write-PanelLine @(@('', 'muted')) $w } }

@@ -83,11 +83,11 @@ function Show-Checks($Checks, [string]$Title, [switch]$Summary) {
     $width = $w1 + $w2 + $(if ($Summary) { 0 } else { 32 })
     Write-Color "  $Title" ink
     Write-Rule $width
-    Write-Color ('  ' + 'Élément'.PadRight($w1) + 'Trouvé'.PadRight($w2) + $(if (-not $Summary) { 'Ce que je fais' })) muted
+    Write-Color ('  ' + 'Item'.PadRight($w1) + 'Found'.PadRight($w2) + $(if (-not $Summary) { 'What I do' })) muted
     Write-Rule $width
     foreach ($c in $Checks) {
         if ($Summary -and $c.State -eq 'always') { continue }
-        $found = switch ($c.State) { 'todo' { '• absent' } 'always' { '-' } default { "• $($c.Found)" } }
+        $found = switch ($c.State) { 'todo' { '• missing' } 'always' { '-' } default { "• $($c.Found)" } }
         if ($found.Length -gt $w2 - 2) { $found = $found.Substring(0, $w2 - 3) + '…' }
         $color = switch ($c.State) { 'ok' { 'success' } 'info' { 'teal' } 'always' { 'muted_dim' } default { 'warn' } }
         Write-Color ('  ' + $c.Item.PadRight($w1)) ink -NoNewline
@@ -177,23 +177,23 @@ function Read-Key([string]$Hints, [string]$Size) {
 function Wait-Back {
     Write-Host ''
     if (-not $Interactive -and -not $KeySource) { return }
-    Write-Color '  Échap, Retour arrière ou Entrée : revenir au menu' muted_dim
-    do { $k = Read-Key 'Échap retour' } until ($k.Key -in 'Escape', 'Backspace', 'Enter', 'Spacebar')
+    Write-Color '  Esc, Backspace or Enter: back to the menu' muted_dim
+    do { $k = Read-Key 'Esc back' } until ($k.Key -in 'Escape', 'Backspace', 'Enter', 'Spacebar')
 }
 
-# Yes / no on one key: O or Enter is yes, N, Esc or Backspace is no.
+# Yes / no on one key: Y or Enter is yes, N, Esc or Backspace is no.
 function Read-YesNo([string]$Question) {
     Write-Host ''
     Write-Color "  $Question " ink -NoNewline
-    Write-Color '[O/n] ' violet_light -NoNewline
+    Write-Color '[Y/n] ' violet_light -NoNewline
     if (-not $Interactive -and -not $KeySource) {
         $a = Read-Host
         return -not ($a -match '^\s*(n|non|no)\s*$')
     }
     while ($true) {
-        $k = Read-Key 'O oui · N ou Échap non'
-        if ($k.Key -in 'Enter' -or $k.KeyChar -in 'o', 'O', 'y', 'Y') { Write-Color 'oui' success; return $true }
-        if ($k.Key -in 'Escape', 'Backspace' -or $k.KeyChar -in 'n', 'N') { Write-Color 'non' muted; return $false }
+        $k = Read-Key 'Y yes · N or Esc no'
+        if ($k.Key -in 'Enter' -or $k.KeyChar -in 'y', 'Y') { Write-Color 'yes' success; return $true }
+        if ($k.Key -in 'Escape', 'Backspace' -or $k.KeyChar -in 'n', 'N') { Write-Color 'no' muted; return $false }
     }
 }
 
@@ -213,12 +213,12 @@ function Read-Text([string]$Prompt) {
 # resized, so a menu with something above it gives it as $Header.
 function Show-Menu([string]$Title, [object[]]$Items, [scriptblock]$Header, [int]$Selected = 0) {
     if (-not $Items.Count) { return $null }
-    $hints = '↑↓ choisir · Entrée valider · Échap retour'
+    $hints = '↑↓ choose · Enter confirm · Esc back'
     if (-not $Interactive -and -not $KeySource) {
         if ($Header) { & $Header }
         Write-Title $Title
         foreach ($it in $Items) { Write-Color "    $($it.Key)  $($it.Label)" ink }
-        $a = Read-Text 'Ton choix (vide : retour) :'
+        $a = Read-Text 'Your choice (empty: back):'
         return $Items | Where-Object { $_.Key -eq $a } | Select-Object -First 1
     }
     $cursorVisible = $true

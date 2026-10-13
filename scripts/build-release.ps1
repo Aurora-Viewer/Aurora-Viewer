@@ -1,20 +1,20 @@
 ﻿<#
 .SYNOPSIS
-    Compile le dernier main de GitHub (ou une PR) en --release, à côté du
-    dépôt : ..\RELEASE\Aurora-Viewer\aurora-viewer.exe, prêt à lancer.
+    Builds the latest main of GitHub (or a PR) in --release, next to the
+    repository: ..\RELEASE\Aurora-Viewer\aurora-viewer.exe, ready to launch.
 
 .DESCRIPTION
-    Le code compilé vient toujours de GitHub, jamais du dépôt local : ni les
-    changements non commités ni les commits non poussés n'y entrent.
-    ..\RELEASE\src est un worktree réservé, remis à chaque fois sur le commit
-    demandé ; son target\ est gardé d'un build à l'autre (seul ce qui a
-    changé est recompilé). version.txt donne la version annoncée par le
-    viewer et le commit compilé ; le tag git fait foi.
-    Le premier lancement crée ..\RELEASE\build-release.bat (double-clic).
+    The code built always comes from GitHub, never from the local
+    repository: neither uncommitted changes nor unpushed commits go into it.
+    ..\RELEASE\src is a reserved worktree, reset each time on the requested
+    commit; its target\ is kept from one build to the next (only what
+    changed is rebuilt). version.txt gives the version reported by the
+    viewer and the commit built; the git tag is authoritative.
+    The first run creates ..\RELEASE\build-release.bat (double-click).
 
 .EXAMPLE
-    ./scripts/build-release.ps1          # dernier main de GitHub
-    ./scripts/build-release.ps1 -Pr 42   # la PR n°42
+    ./scripts/build-release.ps1          # latest main of GitHub
+    ./scripts/build-release.ps1 -Pr 42   # PR 42
 #>
 param([int]$Pr)
 . "$PSScriptRoot\common.ps1"
@@ -42,7 +42,7 @@ if (-not (Test-Path -LiteralPath $bat)) {
     ) | Set-Content -LiteralPath $bat -Encoding ASCII -ErrorAction Stop
 }
 
-if (Test-InUse $out) { throw "Le viewer de $out est ouvert : ferme-le, puis relance." }
+if (Test-InUse $out) { throw "The viewer in $out is open: close it, then run again." }
 
 # the commit to build, straight from GitHub
 if ($Pr) {
@@ -73,7 +73,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $src $font))) {
     }
 }
 
-Write-Host "Compilation de $what ($($sha.Substring(0, 9))) en --release…" -ForegroundColor Cyan
+Write-Host "Building $what ($($sha.Substring(0, 9))) in --release…" -ForegroundColor Cyan
 $sw = [Diagnostics.Stopwatch]::StartNew()
 Push-Location $src
 # A shell inherited from a release job must not stamp another commit with
@@ -96,7 +96,7 @@ $verifyVersion = Join-Path $src 'scripts\verify-version.ps1'
 if (Test-Path -LiteralPath $verifyVersion) {
     $reportedVersion = (& $builtExe --version | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $reportedVersion -notmatch '^Aurora Viewer (\S+)$') {
-        throw "Le viewer compilé n'a pas annoncé une version valide : '$reportedVersion'."
+        throw "The built viewer did not report a valid version: '$reportedVersion'."
     }
     $exactTag = git -C $src describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exact-match 2>$null
     if ($LASTEXITCODE -eq 0) { & $verifyVersion -Exe $builtExe -Tag $exactTag.Trim() }
@@ -109,10 +109,10 @@ if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force
 & $package -Exe (Join-Path $src 'target\release\aurora-viewer.exe') -Out $out -Source $src
 @(
     if ($reportedVersion) { $reportedVersion }
-    "$what : $((git -C $src log -1 --format='%h %s (%ci)').Trim())"
-    "compilé le $(Get-Date -Format 'dd/MM/yyyy HH:mm')"
+    "${what}: $((git -C $src log -1 --format='%h %s (%ci)').Trim())"
+    "built on $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
 ) | Set-Content -LiteralPath (Join-Path $out 'version.txt') -Encoding UTF8 -ErrorAction Stop
 
 Write-Host ""
-Write-Host "Prêt en $([math]::Floor($sw.Elapsed.TotalMinutes)) min $($sw.Elapsed.Seconds) s : $out\aurora-viewer.exe" -ForegroundColor Green
-Write-Host "Double-clic sur $bat pour recompiler (build-release.bat 42 : la PR n°42)."
+Write-Host "Ready in $([math]::Floor($sw.Elapsed.TotalMinutes)) min $($sw.Elapsed.Seconds) s: $out\aurora-viewer.exe" -ForegroundColor Green
+Write-Host "Double-click $bat to rebuild (build-release.bat 42: PR 42)."

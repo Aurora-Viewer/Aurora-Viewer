@@ -1,344 +1,349 @@
-# Imports d’assets — référence Firestorm
+# Asset imports — Firestorm reference
 
-Cette matrice suit les imports depuis le disque et leurs aperçus locaux.
-Elle sert à vérifier les options, les valeurs par défaut, le protocole et
-les erreurs, avant la validation humaine sur grille. Une fenêtre affichée
-ne suffit pas à considérer son import comme terminé.
+This matrix tracks the imports from disk and their local previews.
+It is used to check the options, the default values, the protocol and
+the errors, before the human validation on the grid. A window that is
+displayed is not enough to consider its import finished.
 
-Périmètre confirmé le 12/10/2026 : textures, matériaux, meshes, sons,
-animations, lots et aperçus locaux. Les imports de linksets, EEP et
-Windlight sont recensés pour des tâches ultérieures dans `TASKS.md`.
+Scope confirmed on 2026-10-12: textures, materials, meshes, sounds,
+animations, bulk uploads and local previews. The imports of linksets, EEP
+and Windlight are listed for later tasks in `TASKS.md`.
 
-Référence consultée : Firestorm `d942e1118d01c3383ef7d6b64f248af77452b0dc`
-(12/10/2026). Les choix visibles suivent cette révision des sources.
+Reference consulted: Firestorm `d942e1118d01c3383ef7d6b64f248af77452b0dc`
+(2026-10-12). The visible choices follow this revision of the sources.
 
-## Parcours commun
+## Common workflow
 
-- Choisir un ou plusieurs fichiers ; nom et description ; dossier de
-  destination par type, y compris les cinq dossiers personnalisés existants.
-  Le sélecteur de destination propose un filtre par nom, sans modifier le
-  dossier sélectionné pendant la saisie. Les destinations respectent les
-  protections de l’inventaire ; leur liste est mise en cache et virtualisée.
-- Liste compacte : une ligne par fichier, sans mention « Prêt » ; progression,
-  succès, annulation et erreur indiqués par une icône avec infobulle.
-- Permissions des chargements : prochain propriétaire (modifier, copier,
-  transférer), groupe et tout le monde ; ne pas accorder des droits que le
-  serveur n’a pas confirmés.
-- Prix issu des avantages du compte et des capacités de la région ; solde
-  suffisant ; confirmation explicite avant chaque opération payante.
-- Analyse, conversion et encodage en arrière-plan ; progression, annulation,
-  erreurs par fichier ; pas de nouvelle tentative automatique d’un envoi
-  dont le résultat est inconnu (risque de double facturation).
-- Réponse du serveur puis relecture d’inventaire avant de déclarer le succès.
-- Fichiers invalides, dimensions/durées/tailles hors limites, capabilities
-  absentes, refus et expiration : conserver le brouillon et expliquer l’erreur.
+- Choose one or more files; name and description; destination folder per
+  type, including the five existing custom folders.
+  The destination picker offers a filter by name, without changing the
+  selected folder while typing. The destinations respect the inventory
+  protections; their list is cached and virtualised.
+- Compact list: one line per file, without a "Ready" mention; progress,
+  success, cancellation and error shown by an icon with a tooltip.
+- Upload permissions: next owner (modify, copy, transfer), group and
+  everyone; do not grant rights that the server has not confirmed.
+- Price taken from the account benefits and the region capabilities;
+  sufficient balance; explicit confirmation before each paid operation.
+- Analysis, conversion and encoding in the background; progress,
+  cancellation, errors per file; no automatic retry of an upload whose
+  result is unknown (risk of being charged twice).
+- Server response then inventory re-read before declaring success.
+- Invalid files, dimensions/durations/sizes out of limits, missing
+  capabilities, refusal and timeout: keep the draft and explain the error.
 
-Sources : `llviewermenufile.cpp`, `llviewerassetupload.cpp`,
+Sources: `llviewermenufile.cpp`, `llviewerassetupload.cpp`,
 `llfloaterperms.cpp`, `llagentbenefits.cpp`, `panel_preferences_uploads.xml`.
 
 ## Textures
 
-- Formats de la boîte de fichiers Firestorm et validation RGB/RGBA.
-- Dimensions avant/après redimensionnement, dimensions maximales X/Y,
-  puissances de deux, 2K et tarif associé ; lot limité à 1024 au choix.
-- Compression sans perte pour les petites textures (surface ≤ 128²),
-  réglage `LosslessJ2CUpload` ; JPEG2000 de chargement pour les autres.
-- Détection du canal alpha presque opaque, suppression proposée et
-  conservation volontaire après avertissement.
-- Aperçu image avec déplacement/zoom ; cheveux, tête/corps masculin ou
-  féminin, jupe et sculpted prim avec rotation/zoom.
-- Ancienne case de texture temporaire : visible dans Firestorm seulement sans
-  server-side baking, mais `TemporaryUpload` n’est plus lu par son parcours
-  d’envoi dans cette révision. Les régions SL actuelles utilisent le baking ;
-  aucun faux chargement gratuit n’est proposé par Aurora. Les aperçus locaux
-  restent gratuits et n’envoient aucun asset au serveur.
+- Formats of the Firestorm file dialog and RGB/RGBA validation.
+- Dimensions before/after resizing, maximum X/Y dimensions, powers of two,
+  2K and the associated fee; bulk optionally limited to 1024.
+- Lossless compression for small textures (area ≤ 128²), `LosslessJ2CUpload`
+  setting; upload JPEG2000 for the others.
+- Detection of an almost opaque alpha channel, removal offered and
+  deliberate keeping after a warning.
+- Image preview with pan/zoom; hair, male or female head/body, skirt and
+  sculpted prim with rotation/zoom.
+- Former temporary texture checkbox: visible in Firestorm only without
+  server-side baking, but `TemporaryUpload` is no longer read by its upload
+  path in this revision. Current SL regions use baking; Aurora offers no
+  fake free upload. Local previews stay free and send no asset to the
+  server.
 
-Sources : `llfloaterimagepreview.cpp`, `floater_image_preview.xml`,
+Sources: `llfloaterimagepreview.cpp`, `floater_image_preview.xml`,
 `llviewertexturelist.cpp`, `llimageraw.cpp`.
 
-## Sons
+## Sounds
 
-- WAV : restrictions PCM, canaux, fréquence, profondeur et durée ; conversion
-  vers le son Vorbis de Second Life, avec les paramètres Firestorm.
-- Nom/description, tarif et destination ; aperçu sonore local.
-  Les commandes Jouer et Arrêter sont placées côte à côte.
+- WAV: PCM restrictions, channels, sample rate, bit depth and duration;
+  conversion to the Vorbis sound of Second Life, with the Firestorm
+  parameters.
+- Name/description, fee and destination; local sound preview.
+  The Play and Stop controls are placed side by side.
 
-Sources : `llfloaternamedesc.cpp`, `llaudio/llvorbisencode.cpp`,
+Sources: `llfloaternamedesc.cpp`, `llaudio/llvorbisencode.cpp`,
 `floater_sound_preview.xml`.
 
 ## Animations
 
-- `.anim` : validation sans altération des données, notamment des contraintes.
-  Les marqueurs de boucle négatifs et autres valeurs temporelles finies des
-  exporteurs sont acceptés comme par `LLKeyframeMotion::deserialize`.
-- BVH : hiérarchie, canaux et ordre des axes, pose de référence, traduction
-  des articulations, suppression des pistes fixes, réduction des clés.
-- Priorité 2 par défaut ; boucle désactivée ; entrée/sortie en pourcentage
-  ou en images ; fondus de 0,3 s ; poses des mains et expressions.
-- Aperçu local : debout/marche/assis/vol, lecture/pause/arrêt, curseur temporel,
-  caméra, rechargement du fichier, statistiques et erreurs de parsing.
-  Cliquer une animation dans la liste relance sa lecture depuis le début,
-  y compris si elle avait déjà été jouée ou arrêtée.
-  « Jouer aussi sur mon avatar » est commun à toutes les animations et
-  mémorisé dans les réglages du viewer, activé ou désactivé. La case est
-  placée à droite des commandes de lecture.
-  La pause et le curseur pilotent également l’aperçu sur notre avatar ;
-  les fins de ces mouvements locaux ne produisent aucun arrêt réseau.
-- Imports par lot : `.anim` acceptés, BVH exclus comme Firestorm.
+- `.anim`: validation without altering the data, in particular the
+  constraints. Negative loop markers and other finite time values from
+  exporters are accepted as by `LLKeyframeMotion::deserialize`.
+- BVH: hierarchy, channels and axis order, reference pose, translation of
+  the joint names, removal of fixed tracks, key reduction.
+- Priority 2 by default; loop disabled; in/out as a percentage or in
+  frames; fades of 0.3 s; hand poses and expressions.
+- Local preview: standing/walking/sitting/flying, play/pause/stop, time
+  slider, camera, reload of the file, statistics and parsing errors.
+  Clicking an animation in the list restarts its playback from the
+  beginning, including if it had already been played or stopped.
+  "Also play on my avatar" is shared by all the animations and saved in the
+  viewer settings, enabled or disabled. The checkbox is placed to the right
+  of the playback controls.
+  Pause and the slider also drive the preview on our avatar; the ends of
+  these local motions produce no network stop.
+- Bulk imports: `.anim` accepted, BVH excluded like Firestorm.
 
-Sources : `llfloaterbvhpreview.cpp`,
+Sources: `llfloaterbvhpreview.cpp`,
 `llcharacter/llbvhloader.cpp`, `llcharacter/llkeyframemotion.cpp`,
 `floater_animation_bvh_preview.xml`, `floater_animation_anim_preview.xml`.
 
-## Matériaux PBR
+## PBR materials
 
-- glTF/GLB : choix du matériau ou import de tous les matériaux du document.
-- Couleur de base/RGBA, normal, métallique/rugosité (canaux G/B), émission,
-  facteurs, opacité/masque/mélange, seuil alpha et double face. Les transformations
-  des textures sont remises à zéro pour l’asset d’inventaire comme dans
-  `sanitizeAssetMaterial` ; elles appartiennent aux overrides des faces.
-- Retrait de l’alpha des cartes techniques et occlusion distincte redimensionnée
-  puis fusionnée en R dans ORM ; R vaut 255 sans occlusion. Une carte
-  d’occlusion seule crée une carte ORM blanche en G/B.
-- Textures externes/embarquées/locales ou UUID d’inventaire ; résolution
-  maximale, suppression/remplacement, coût détaillé des textures.
-- Réutiliser les textures partagées ; envoyer les textures avant le matériau,
-  puis remplacer leurs références par les UUID confirmés.
-- Matériau sans frais propres ; création et sauvegarde comme un asset
-  `material`, enveloppe LLSD version 1.1 / `GLTF 2.0`.
-- Aperçu local et sauvegarde du matériau importé avec les permissions.
-  Les propriétés sont placées à côté de l’aperçu ; les quatre cartes
-  utilisent des colonnes alignées dans une fenêtre adaptée au contenu ;
-  les noms longs sont tronqués avec leur texte complet au survol.
+- glTF/GLB: choice of the material or import of all the materials of the
+  document.
+- Base colour/RGBA, normal, metallic/roughness (G/B channels), emissive,
+  factors, opaque/mask/blend, alpha cutoff and double sided. The texture
+  transforms are reset to zero for the inventory asset as in
+  `sanitizeAssetMaterial`; they belong to the overrides of the faces.
+- Removal of the alpha of the technical maps and separate occlusion resized
+  then merged into R in ORM; R is 255 without occlusion. An occlusion map
+  alone creates an ORM map that is white in G/B.
+- External/embedded/local textures or inventory UUIDs; maximum resolution,
+  removal/replacement, detailed cost of the textures.
+- Reuse the shared textures; send the textures before the material, then
+  replace their references with the confirmed UUIDs.
+- Material with no fee of its own; creation and saving as a `material`
+  asset, LLSD envelope version 1.1 / `GLTF 2.0`.
+- Local preview and saving of the imported material with the permissions.
+  The properties are placed next to the preview; the four maps use aligned
+  columns in a window fitted to the content; long names are truncated, with
+  their full text on hover.
 
-Sources : `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
+Sources: `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
 `llprimitive/llgltfmaterial.cpp`, `lllocalgltfmaterials.cpp`.
 
 ## Meshes
 
-- Collada et glTF/GLB selon les filtres de cette version Firestorm ; instances,
-  matériaux, coordonnées, unités, transformations et rigging.
-- Quatre LOD : fichier, génération, réutilisation ; compteurs et validation
-  des faces/instances, suffixes et recherche des fichiers associés.
-  La fenêtre présente l’aperçu à droite des champs nom, description et
-  destination ; trois sections LOD, Collisions et Import se trouvent dessous.
-  Le LOD Haut est affiché par défaut, sans second sélecteur de niveau.
-  Aides, compteurs et statistiques utilisent la taille normale du texte.
-  Dans Import, les options du modèle et celles de chargement occupent
-  deux colonnes ; les cinq suffixes sont alignés dessous dans une grille
-  adaptée à la largeur disponible. Le préréglage physique reste sur une
-  ligne complète. Les commandes de caméra sont indiquées au survol du modèle.
-  Chaque LOD possède un bloc encadré avec titre, source, fichier et nombre de
-  triangles ; cliquer son niveau l’affiche dans l’aperçu. Modifier une source,
-  un mode, un seuil ou un budget affiche aussi le LOD concerné. Le survol
-  du compteur indique sa proportion de triangles par rapport à l’original.
-  Le glissement des champs numériques reste continu au bord de l’écran,
-  avec le curseur maintenu près du champ ; le clic permet toujours la saisie.
-  Les outils de visualisation et les réglages avancés restent accessibles sans masquer
-  le modèle. Le calcul des frais se trouve dans le pied de fenêtre.
-  Les cases sont carrées et contrastées ; les lignes des menus conservent
-  leur taille au survol et lors d’un changement de sélection.
-- Génération de LOD : méthodes, triangles, erreur et normales lissées ;
-  valeurs et presets de la fenêtre de référence.
-  Le mode triangles utilise un seuil interne de 100 % comme Firestorm ;
-  le seuil d’erreur enregistré ne s’applique qu’au mode erreur. AUTO soude
-  les sommets exportés identiques dans les deux modes, comme Firestorm,
-  puis retire les copies inutilisées avant simplification pour éviter
-  qu’elles ne soient encore traitées comme des raccords bloqués.
-  Le seuil est affiché en pourcentage de la taille du modèle ; son aide
-  explique le compromis entre fidélité et simplification. Il limite la
-  déformation, sans imposer un nombre de triangles ; préserver les coutures
-  de normales et d’UV peut laisser presque tous les triangles, même avec un
-  seuil élevé. La méthode rapide accepte davantage de simplification aux
-  coutures. AUTO réduit aussi
-  progressivement les raccords de normales et d’UV, puis utilise la méthode
-  rapide si nécessaire, comme Firestorm lorsque le budget est dépassé de
-  plus de 80 %. Les faces gardent leur emplacement de matériau.
-  Le choix « Fichier » ouvre le sélecteur avant de modifier une source sans fichier ;
-  annuler conserve l’ancien LOD. Charger un fichier valide ou changer
-  de niveau débloque un aperçu ayant échoué, sans accepter de résultat ancien.
-  Pendant le recalcul, l’ancien modèle reste affiché et l’emplacement garde
-  sa hauteur ; les changements rapprochés sont regroupés avant le lancement
-  du worker. Les onglets de type et de section utilisent ceux de l’inventaire.
-  Un refus mesh conserve le statut HTTP, le code et les messages de validation
-  fournis par le serveur, dans une zone bornée. Seuls ces champs sont lus ;
-  URLs, chemins et caractères de contrôle sont retirés.
-  les quatre codes de validation MAV expliqués par Firestorm sont aussi
-  expliqués en français et en anglais.
-  Les droits d’import mesh sont signalés séparément. Un échec après transfert garde l’avertissement
-  d’issue inconnue, ses détails disponibles, et ne déclenche aucun nouvel envoi.
-- Palettes glTF : articulations reconnues, joints pondérés prioritaires puis
-  joints inutilisés des groupes actifs, limite de 110 comme la référence.
-- Physique : fichier/LOD/préréglage, analyse convexe, simplification,
-  paramètres des méthodes, progression et annulation ; limites des coques,
-  sommets, triangles dégénérés et objets minces.
-- Échelle/dimensions, inclusion des textures, poids des articulations,
-  positions des articulations, verrouillage de l’échelle et décalage du bassin.
-- Aperçu : LOD, arêtes, textures, guide UV, physique éclatée, poids,
-  articulations et overrides ; caméra et couleurs enregistrées.
-- Triangles de physique dégénérés : tolérance `ll_is_degenerate`, diagnostic
-  et couleurs de surbrillance ; devis refusé tant que la physique brute reste
-  invalide. Les paramètres d’instance gardent les LOD et coques en cache.
-- Calcul serveur préalable des poids et du prix, détail du prix/streaming/
-  physique, état d’autorisation du compte, remise à zéro et journal.
-- Envoi de l’asset et de ses instances par le protocole mesh Firestorm.
+- Collada and glTF/GLB according to the filters of this Firestorm version;
+  instances, materials, coordinates, units, transforms and rigging.
+- Four LODs: file, generation, reuse; counters and validation of the
+  faces/instances, suffixes and search for the associated files.
+  The window shows the preview to the right of the name, description and
+  destination fields; three sections, LOD, Collisions and Upload, sit below.
+  The High LOD is shown by default, without a second level selector.
+  Help texts, counters and statistics use the normal text size.
+  In Upload, the options of the model and those of the upload take two
+  columns; the five suffixes are aligned below in a grid fitted to the
+  available width. The physics preset stays on a full line. The camera
+  controls are shown when hovering the model.
+  Each LOD has a framed block with title, source, file and number of
+  triangles; clicking its level shows it in the preview. Changing a source,
+  a mode, a threshold or a budget also shows the LOD concerned. Hovering
+  the counter shows its proportion of triangles relative to the original.
+  Dragging the numeric fields stays continuous at the edge of the screen,
+  with the cursor kept near the field; a click still allows typing.
+  The visualisation tools and the advanced settings stay accessible without
+  hiding the model. The fee calculation is in the window footer.
+  The checkboxes are square and contrasted; the menu rows keep their size
+  on hover and when the selection changes.
+- LOD generation: methods, triangles, error and smoothed normals; values
+  and presets of the reference window.
+  The triangle mode uses an internal threshold of 100% like Firestorm; the
+  saved error threshold only applies to the error mode. AUTO welds the
+  identical exported vertices in both modes, like Firestorm, then removes
+  the unused copies before simplification so that they are not still
+  treated as locked seams.
+  The threshold is shown as a percentage of the model size; its help
+  explains the trade-off between fidelity and simplification. It limits
+  the deformation, without imposing a number of triangles; preserving the
+  normal and UV seams can leave almost all the triangles, even with a high
+  threshold. The fast method accepts more simplification at the seams.
+  AUTO also progressively reduces the normal and UV seams, then uses the
+  fast method if necessary, like Firestorm when the budget is exceeded by
+  more than 80%. The faces keep their material slot.
+  The "File" choice opens the picker before changing a source that has no
+  file; cancelling keeps the old LOD. Loading a valid file or changing
+  level unblocks a preview that had failed, without accepting an old result.
+  During the recalculation, the old model stays displayed and the slot keeps
+  its height; changes close together are grouped before the worker is
+  started. The type and section tabs use those of the inventory.
+  A mesh refusal keeps the HTTP status, the code and the validation messages
+  provided by the server, in a bounded area. Only these fields are read;
+  URLs, paths and control characters are removed.
+  The four MAV validation codes explained by Firestorm are also
+  explained in French and in English.
+  The mesh import rights are reported separately. A failure after the
+  transfer keeps the unknown-outcome warning, its available details, and
+  triggers no new upload.
+- glTF palettes: recognised joints, weighted joints first then unused
+  joints of the active groups, limit of 110 like the reference.
+- Physics: file/LOD/preset, convex analysis, simplification, parameters of
+  the methods, progress and cancellation; limits of the hulls, vertices,
+  degenerate triangles and thin objects.
+- Scale/dimensions, inclusion of the textures, joint weights, joint
+  positions, scale lock and pelvis offset.
+- Preview: LOD, edges, textures, UV guide, exploded physics, weights,
+  joints and overrides; camera and colours saved.
+- Degenerate physics triangles: `ll_is_degenerate` tolerance, diagnosis
+  and highlight colours; quote refused as long as the raw physics stays
+  invalid. The instance parameters keep the LODs and hulls cached.
+- Prior server calculation of the weights and of the price, breakdown of
+  the price/streaming/physics, authorisation state of the account, reset
+  and log.
+- Upload of the asset and of its instances through the Firestorm mesh
+  protocol.
 
-Sources : `llfloatermodelpreview.cpp`, `llmodelpreview.cpp`,
+Sources: `llfloatermodelpreview.cpp`, `llmodelpreview.cpp`,
 `llmeshrepository.cpp`, `llprimitive/llmodel.cpp`,
 `floater_model_preview.xml`, `menu_model_import_gear_default.xml`.
 
-## Lots et autres imports de la référence
+## Bulk uploads and other imports of the reference
 
-- Lot hétérogène : textures/sons/`.anim`/matériaux, exclusions annoncées,
-  total avant confirmation, limitation 1K, progression et erreurs individuelles.
-- Chargements locaux de textures, matériaux et meshes dans un même sélecteur,
-  sans changer de mode ; les documents glTF/GLB sont reconnus selon leur contenu.
-  Commandes communes : appliquer à la sélection, retirer de la sélection et
-  placer un prim support. Les textures et matériaux s’appliquent aux faces
-  choisies (ou à toutes les faces), sans modifier les données serveur ; le
-  retrait restaure leur état courant. Réactualisation après modification du
-  fichier et aucune facturation. Le bouton Fermer du pied de fenêtre est retiré.
-  La préparation utilise le pool de staging conservé par la scène et la
-  publication GPU passe explicitement par la boucle de rendu, y compris lorsque
-  l’interface ne détient pas le contexte graphique. Les slots retirés sont
-  libérés par cette même boucle.
-- La bibliothèque locale reste enregistrée entre les lancements dans
-  `local_previews.json`, au sein du profil privé du viewer. Elle conserve les
-  références aux sources, leurs identifiants, les réglages de texture/PBR/LOD,
-  les cartes personnalisées, la surveillance et la caméra d’aperçu ; aucun
-  pixel ni mesh source n’est recopié. Les applications aux objets sont
-  séparées par compte et grille et se rétablissent lorsque les objets arrivent.
-  Un fichier absent reste dans la liste avec une erreur et garde ses réglages.
-  « Enlever » supprime sa référence et ses applications enregistrées, sans
-  effacer le fichier source. Les changements sont regroupés sur un writer
-  dédié, remplacent atomiquement le fichier et sont vidés à la déconnexion
-  ou fermeture normale. Une bibliothèque illisible est préservée.
-  Cette persistance est une amélioration Aurora demandée par l’utilisateur.
-- Le sélecteur de construction expose les textures diffuses et matériaux PBR
-  locaux publiés. Choisir leur ligne applique la surcouche sans commande réseau ;
-  OK conserve le lien, Annuler restaure les apparences locales précédentes,
-  y compris sur une sélection mixte. Passer à un asset d’inventaire retire
-  la surcouche des seules faces concernées. Ces liens suivent la même persistance
-  que les commandes de la fenêtre d’import. Les sélecteurs de cartes techniques,
-  sculpt et projecteur restent réservés aux assets d’inventaire.
-- Mesh local : choix du modèle, unités en mètres optionnelles, dimensions
-  importées, application/retrait de la sélection et prim support ; surveillance
-  désactivée par défaut, période de 3 s réglable dès 0,1 s comme Firestorm.
-  La préparation et l’installation des données mesh sont indépendantes du
-  contexte graphique détenu temporairement par la boucle de rendu : appliquer,
-  recharger ou placer un prim support fonctionne aussi depuis l’interface.
-- Environnements : réglages EEP et anciens presets Windlight, imports multiples.
-- Sauvegardes de linksets Firestorm : reconstruction des prims et du contenu,
-  réutilisation/envoi des assets, options de textures temporaires, décalage.
-  Ce parcours repose aussi sur les outils de construction et leurs accusés.
-- Les imports CSV des accès parcelle et les imports AO existants restent
-  des parcours distincts et doivent garder leur comportement.
+- Mixed bulk upload: textures/sounds/`.anim`/materials, announced
+  exclusions, total before confirmation, 1K limit, progress and individual
+  errors.
+- Local loading of textures, materials and meshes in a single picker,
+  without changing mode; glTF/GLB documents are recognised by their content.
+  Shared commands: apply to the selection, remove from the selection and
+  place a support prim. Textures and materials apply to the chosen faces
+  (or to all the faces), without changing the server data; the removal
+  restores their current state. Refresh after a change to the file and no
+  charge. The Close button of the window footer is removed.
+  The preparation uses the staging pool kept by the scene and the GPU
+  publication goes explicitly through the render loop, including when the
+  interface does not hold the graphics context. The removed slots are
+  freed by this same loop.
+- The local library stays saved between launches in
+  `local_previews.json`, inside the private profile of the viewer. It keeps
+  the references to the sources, their identifiers, the texture/PBR/LOD
+  settings, the custom maps, the watching and the preview camera; no pixel
+  and no source mesh is copied. The applications to objects are separated
+  by account and grid and are restored when the objects arrive.
+  A missing file stays in the list with an error and keeps its settings.
+  "Remove" deletes its reference and its saved applications, without
+  erasing the source file. The changes are grouped on a dedicated writer,
+  replace the file atomically and are flushed at logout or normal closing.
+  An unreadable library is preserved.
+  This persistence is an Aurora improvement requested by the user.
+- The build picker exposes the published local diffuse textures and PBR
+  materials. Choosing their row applies the overlay without a network
+  command; OK keeps the link, Cancel restores the previous local
+  appearances, including on a mixed selection. Switching to an inventory
+  asset removes the overlay from the faces concerned only. These links
+  follow the same persistence as the commands of the import window. The
+  pickers of technical maps, sculpt and projector stay reserved for
+  inventory assets.
+- Local mesh: choice of the model, optional units in metres, imported
+  dimensions, application to/removal from the selection and support prim;
+  watching disabled by default, period of 3 s adjustable from 0.1 s like
+  Firestorm.
+  The preparation and the installation of the mesh data are independent of
+  the graphics context held temporarily by the render loop: applying,
+  reloading or placing a support prim also works from the interface.
+- Environments: EEP settings and old Windlight presets, multiple imports.
+- Firestorm linkset backups: rebuilding of the prims and of the contents,
+  reuse/upload of the assets, temporary texture options, offset.
+  This workflow also relies on the build tools and their acknowledgements.
+- The existing CSV imports of parcel access and AO imports remain separate
+  workflows and must keep their behaviour.
 
-Sources : `llfloaterbulkupload.cpp`, `llviewermenufile.cpp`,
+Sources: `llfloaterbulkupload.cpp`, `llviewermenufile.cpp`,
 `lllocalbitmaps.cpp`, `fslocalmesh*.cpp`, `llsettings*.cpp`,
 `fsfloaterimport.cpp`, `floater_fs_import.xml`.
 
 ## Validation
 
-Pour chaque ligne : règles pures et codecs testés hors ligne ; serveur HTTP
-local pour négociation/envoi/confirmation/refus ; captures des fenêtres et
-parcours de démo ; puis essais par l’humain des prix, droits et résultats sur
-grille. Aucune connexion ni opération réelle sur grille par l’agent.
+For each line: pure rules and codecs tested offline; local HTTP server for
+negotiation/upload/confirmation/refusal; screenshots of the windows and demo
+workflows; then tests by the human of the prices, rights and results on the
+grid. No real connection or operation on the grid by the agent.
 
-État : parcours et viewer de test validés par l’humain le 12/10/2026,
-avec accord de fusion. Les codecs,
-les parcours réseau HTTP/UDP, les brouillons et les aperçus GPU sont présents.
-Les captures texture, son, animation, matériau, mesh et application locale ont
-été examinées : aperçu à droite des champs pour le mesh et des paramètres pour le matériau,
-au-dessus pour les autres types ; actions et coût accessibles
-dans le pied de fenêtre. Les tests couvrent notamment
-la préparation ORM, les trois modes V-HACD, les poids de LOD, les palettes glTF,
-les limites d’échelle, le rechargement des dépendances et la conservation
-des accusés après annulation. La validation globale du viewer ne constitue
-pas un relevé détaillé des envois payants sur grille : prix, permissions,
-inventaire créé et rendu des assets restent dans le protocole d’essai
-ci-dessous. Aucun résultat par type n’est affirmé sans compte rendu humain.
+Status: workflows and test viewer validated by the human on 2026-10-12,
+with agreement to merge. The codecs,
+the HTTP/UDP network paths, the drafts and the GPU previews are present.
+The texture, sound, animation, material, mesh and local application
+screenshots have been examined: preview to the right of the fields for the
+mesh and of the parameters for the material, above for the other types;
+actions and cost accessible in the window footer. The tests cover in
+particular the ORM preparation, the three V-HACD modes, the LOD weights, the
+glTF palettes, the scale limits, the reloading of the dependencies and the
+keeping of the acknowledgements after cancellation. The overall validation
+of the viewer is not a detailed record of the paid uploads on the grid:
+prices, permissions, created inventory and rendering of the assets remain
+in the test protocol below. No result per type is claimed without a human
+report.
 
-Vérifications locales : `check.ps1` vert, 1 498 tests réussis  22 ignorés,
-Clippy sans avertissement. Profilage de la scène démo : moyenne CPU de
-l’interface sur les trois dernières périodes, 0,37 ms sans la fenêtre puis
-0,57 ms avec l’aperçu PBR (0,51 ms animation, 0,51 ms mesh local). Les
-traitements des fichiers et de la physique restent sur les workers.
-Après clarification de la fenêtre mesh : captures LOD / collisions /
-options d’import, application locale et libellé d’animation examinés ;
-moyenne CPU de l’interface de 0,57 ms sur les trois dernières périodes
-du scénario mesh. Les réglages réseau et la préparation des assets restent
-identiques.
+Local checks: `check.ps1` green, 1,498 tests passed, 22 ignored, Clippy
+without warnings. Profiling of the demo scene: average interface CPU over
+the last three periods, 0.37 ms without the window then 0.57 ms with the
+PBR preview (0.51 ms animation, 0.51 ms local mesh). The processing of the
+files and of the physics stays on the workers.
+After clarification of the mesh window: LOD / collisions / upload options
+screenshots, local application and animation label examined; average
+interface CPU of 0.57 ms over the last three periods of the mesh scenario.
+The network settings and the preparation of the assets remain identical.
 
-Après unification des aperçus locaux : sélection mixte des trois types,
-application GPU, retrait et détection du prim support vérifiés en démo
-pour les textures et matériaux ; application du mesh local vérifiée aussi.
-Les tests couvrent les boutons des trois types, la détection glTF et la
-restauration de l’état serveur après mise à jour d’un objet.
+After unification of the local previews: mixed selection of the three
+types, GPU application, removal and detection of the support prim checked
+in the demo for textures and materials; application of the local mesh
+checked too. The tests cover the buttons of the three types, the glTF
+detection and the restoration of the server state after an object update.
 
-Les fixtures humaines ont aussi été lues et préparées hors ligne : neuf
-meshes avec leurs quatre LOD et leur physique, 58 textures, une image
-1024 × 1536 et un WAV de 0,3 s. Les fichiers associés sont chargés avec les
-suffixes personnalisés `lowest/low/medium/high/physics`. Les triangles de
-chaque LOD sont conservés et les requêtes mesh sont encodées sans envoi.
-Un autre lot de 79 animations natives a été validé : octets originaux
-conservés et poses calculées sans valeur non finie. Les comptes agrégés
-restent distincts de `check.ps1` ; les fichiers personnels et leur inventaire
-ne sont pas incorporés aux fixtures du dépôt ni aux traces publiées.
+The human fixtures were also read and prepared offline: nine meshes with
+their four LODs and their physics, 58 textures, a 1024 × 1536 image and a
+WAV of 0.3 s. The associated files are loaded with the custom suffixes
+`lowest/low/medium/high/physics`. The triangles of each LOD are kept and
+the mesh requests are encoded without being sent.
+Another batch of 79 native animations was validated: original bytes kept
+and poses computed without any non-finite value. The aggregate counts
+remain separate from `check.ps1`; the personal files and their inventory
+are not incorporated into the repository fixtures nor into the published
+traces.
 
-La branche a été synchronisée avec les 26 PR fusionnées depuis la PR 154,
-jusqu’à la PR 181 incluse. Les imports conservent le sélecteur d’inventaire
-hiérarchique, la sélection des faces invisibles, les nouvelles ancres GPU et
-l’évaluation temporelle de leurs aperçus d’animation. Les tests de persistance
-vérifient redémarrage, réglages des trois types, cartes personnalisées,
-isolation des applications, source absente/retrouvée, suppression explicite
-et sauvegarde corrompue conservée.
+The branch was synchronised with the 26 PRs merged since PR 154, up to and
+including PR 181. The imports keep the hierarchical inventory picker, the
+selection of invisible faces, the new GPU anchors and the time evaluation
+of their animation previews. The persistence tests check restart, settings
+of the three types, custom maps, isolation of the applications,
+missing/found source, explicit deletion and corrupted save file kept.
 
-### Essais humains
+### Human tests
 
-Cliquer sur **Contenu → Importer…** ouvre la fenêtre sur **Texture**. Survoler
-**Importer…** affiche les types d’assets : cliquer sur un type ouvre son
-onglet et propose immédiatement de choisir les fichiers. Les onglets de la
-fenêtre permettent ensuite de changer de type sans ouvrir le sélecteur.
+Clicking **Contents → Import…** opens the window on **Texture**. Hovering
+**Import…** shows the asset types: clicking a type opens its tab and
+immediately offers to choose the files. The tabs of the window then allow
+changing type without opening the picker.
 
-Parcourir les onglets :
+Go through the tabs:
 
-- **Textures / matériaux** : choisir un fichier, vérifier dimensions et
-  alpha, modifier les cartes et facteurs PBR, faire pivoter et zoomer
-  l’aperçu. Les matériaux d’inventaire utilisent glTF/GLB ; les recettes
-  JSON d’un paquet d’assemblage ne sont pas des assets glTF importables.
-- **Meshes** : ouvrir un HIGH, choisir ses LOD et sa physique, vérifier
-  compteurs, dimensions, normales, analyse convexe et couleurs. Pour les
-  associations automatiques, régler les cinq suffixes dans les préférences
-  d’import avant d’ouvrir le fichier. Modifier un paramètre après un devis
-  doit imposer un nouveau calcul, sans réutiliser une offre périmée.
-- **Animations / sons** : lecture, arrêt et rechargement ; pour une
-  animation, pause, curseur, boucle et aperçu sur notre avatar. La pose
-  doit suivre le curseur immédiatement et rester fixe pendant la pause.
-- **Lots / local** : vérifier le total et la confirmation, annuler les
-  fichiers restants, conserver les reçus acquis. Pour un mesh local,
-  appliquer puis retirer sur un objet sélectionné ; le retrait restitue
-  son apparence d’origine. Tester une modification du fichier avec
-  surveillance activée.
+- **Textures / materials**: choose a file, check dimensions and alpha,
+  edit the PBR maps and factors, rotate and zoom the preview. Inventory
+  materials use glTF/GLB; the JSON recipes of an assembly package are not
+  importable glTF assets.
+- **Meshes**: open a HIGH, choose its LODs and its physics, check counters,
+  dimensions, normals, convex analysis and colours. For the automatic
+  associations, set the five suffixes in the import preferences before
+  opening the file. Changing a parameter after a quote must force a new
+  calculation, without reusing a stale offer.
+- **Animations / sounds**: play, stop and reload; for an animation, pause,
+  slider, loop and preview on our avatar. The pose must follow the slider
+  immediately and stay still during the pause.
+- **Bulk / local**: check the total and the confirmation, cancel the
+  remaining files, keep the receipts already obtained. For a local mesh,
+  apply then remove on a selected object; the removal gives back its
+  original appearance. Test a change to the file with watching enabled.
 
-Sur la grille, l’humain se connecte puis valide prix et débit du solde,
-dossiers, droits et assets réellement créés pour chaque type. Contrôler
-aussi le refus serveur et la reprise du brouillon : les réglages restent
-présents, avec l’avertissement de vérifier l’inventaire lorsque l’issue
-d’un transfert payant est inconnue.
+On the grid, the human logs in then validates the price and the debit of
+the balance, the folders, the rights and the assets really created for each
+type. Also check the server refusal and the resumption of the draft: the
+settings stay present, with the warning to check the inventory when the
+outcome of a paid transfer is unknown.
 
-La physique utilise la branche libre V-HACD 4.1 de Firestorm : résolution en
-nombre de voxels, limite de coques/sommets, erreur de volume et modes
-Flood/Surface/Raycast. Le code natif est figé à une révision publique BSD,
-avec annulation et progression. Les traitements de modèles sont parallèles
-sur les workers Rust, sans multiplier les threads natifs par modèle.
+The physics uses the free V-HACD 4.1 branch of Firestorm: resolution in
+number of voxels, limit of hulls/vertices, volume error and
+Flood/Surface/Raycast modes. The native code is pinned to a public BSD
+revision, with cancellation and progress. The model processing is parallel
+on the Rust workers, without multiplying the native threads per model.
 
-Le brouillon garde au maximum 512 assets et 1 Gio de sources, avec 256 fichiers
-par sélection. Le premier fichier au-delà de la limite produit une ligne
-d’erreur explicite ; le reste peut être ajouté après retrait de fichiers.
+The draft keeps at most 512 assets and 1 GiB of sources, with 256 files per
+selection. The first file beyond the limit produces an explicit error
+line; the rest can be added after removing files.
 
-Écart volontaire : un transfert payant dont l’issue est inconnue n’est pas
-renvoyé automatiquement. Le brouillon reste disponible avec une demande de
-vérification de l’inventaire, pour éviter un second paiement après perte de
-la réponse du serveur. Les paquets d’un même transfert UDP conservent leur
-politique de retransmission normale.
+Deliberate difference: a paid transfer whose outcome is unknown is not sent
+again automatically. The draft stays available with a request to check the
+inventory, to avoid a second payment after the loss of the server's
+response. The packets of a same UDP transfer keep their normal
+retransmission policy.

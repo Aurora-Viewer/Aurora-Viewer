@@ -6,7 +6,7 @@ function Get-UpdatePolicy([string]$RepoPath, [string]$Tag, [string]$BaseTag, [st
     foreach ($field in $fields) { $policy[$field] = $null }
     if ($Ref) {
         $json = git -C $RepoPath show "${Ref}:update-policy.json"
-        if ($LASTEXITCODE -ne 0) { throw 'Politique du commit à publier introuvable.' }
+        if ($LASTEXITCODE -ne 0) { throw 'Policy of the commit to publish not found.' }
         $defaults = ($json -join "`n") | ConvertFrom-Json
     } else {
         $defaults = Get-Content -Raw -LiteralPath (Join-Path $RepoPath 'update-policy.json') | ConvertFrom-Json
@@ -14,9 +14,9 @@ function Get-UpdatePolicy([string]$RepoPath, [string]$Tag, [string]$BaseTag, [st
     $previous = $null
     if ($BaseTag) {
         $message = git -C $RepoPath for-each-ref '--format=%(contents)' "refs/tags/$BaseTag"
-        if ($LASTEXITCODE -ne 0) { throw 'Lecture du tag impossible.' }
+        if ($LASTEXITCODE -ne 0) { throw 'Could not read the tag.' }
         $line = @($message | Where-Object { $_ -like 'Aurora-Update-Policy: *' })
-        if ($line.Count -gt 1) { throw 'Plusieurs politiques dans le tag.' }
+        if ($line.Count -gt 1) { throw 'Several policies in the tag.' }
         if ($line.Count -eq 1) {
             $previous = $line[0].Substring('Aurora-Update-Policy: '.Length) | ConvertFrom-Json
             Assert-UpdatePolicy $previous $BaseTag.TrimStart('v')
@@ -25,7 +25,7 @@ function Get-UpdatePolicy([string]$RepoPath, [string]$Tag, [string]$BaseTag, [st
     foreach ($field in $fields) {
         $values = @($defaults.$field, $previous.$field) | Where-Object { $_ }
         foreach ($value in $values) {
-            if ($value -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw "Seuil invalide : $field." }
+            if ($value -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw "Invalid threshold: $field." }
             if (-not $policy[$field] -or [version]$value -gt [version]$policy[$field]) { $policy[$field] = $value }
         }
     }
@@ -33,31 +33,31 @@ function Get-UpdatePolicy([string]$RepoPath, [string]$Tag, [string]$BaseTag, [st
 }
 
 function Assert-UpdatePolicy($Policy, [string]$Version) {
-    if ($Policy.schema -ne 1 -or $Policy.version -cne $Version) { throw 'Politique incompatible avec le tag.' }
+    if ($Policy.schema -ne 1 -or $Policy.version -cne $Version) { throw 'Policy does not match the tag.' }
     $core = ($Version -split '-')[0]
     foreach ($field in 'minimum_supported_version', 'cache_invalidation_before', 'settings_reset_before') {
         $value = $Policy.$field
         if ($value -and ($value -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$' -or [version]$value -gt [version]$core)) {
-            throw "Seuil invalide pour $field : $value."
+            throw "Invalid threshold for ${field}: $value."
         }
     }
 }
 
 function Read-ReleaseMaintenance($Policy) {
-    $cache = Show-Menu 'Étape 2/3 · Cache des utilisateurs' @(
-        @{ Key = '1'; Label = 'Conserver le cache'; Hint = 'choix habituel, téléchargement des données évité'; Clear = $false }
-        @{ Key = '2'; Label = "Forcer l’invalidation du cache"; Hint = 'cache vidé au premier démarrage de cette version'; Clear = $true }
-    ) { Show-Logo 'Nouvelle release'; Write-Color "  Version choisie : v$($Policy.version)" teal }
+    $cache = Show-Menu 'Step 2/3 · User cache' @(
+        @{ Key = '1'; Label = 'Keep the cache'; Hint = 'usual choice, no data to download again'; Clear = $false }
+        @{ Key = '2'; Label = "Force cache invalidation"; Hint = 'cache cleared at the first start of this version'; Clear = $true }
+    ) { Show-Logo 'New release'; Write-Color "  Chosen version: v$($Policy.version)" teal }
     if (-not $cache) { return }
     $core = ($Policy.version -split '-')[0]
     $cacheThreshold = if ($cache.Clear) { $core } else { $Policy.cache_invalidation_before }
-    $settings = Show-Menu 'Étape 3/3 · Paramètres des utilisateurs' @(
-        @{ Key = '1'; Label = 'Conserver et migrer automatiquement'; Hint = 'migrations codées dans le viewer, choix habituel'; Reset = $false }
-        @{ Key = '2'; Label = 'Réinitialiser les paramètres'; Hint = 'retour aux valeurs par défaut ; annoncé avant installation'; Reset = $true }
+    $settings = Show-Menu 'Step 3/3 · User settings' @(
+        @{ Key = '1'; Label = 'Keep and migrate automatically'; Hint = 'migrations coded in the viewer, usual choice'; Reset = $false }
+        @{ Key = '2'; Label = 'Reset the settings'; Hint = 'back to the default values; announced before installation'; Reset = $true }
     ) {
-        Show-Logo 'Nouvelle release'
-        Write-Color "  Version choisie : v$($Policy.version)" teal
-        Write-Color "  Cache : $(if ($cacheThreshold) { 'vidé pour les versions antérieures à ' + $cacheThreshold } else { 'conservé' })." muted
+        Show-Logo 'New release'
+        Write-Color "  Chosen version: v$($Policy.version)" teal
+        Write-Color "  Cache: $(if ($cacheThreshold) { 'cleared for versions before ' + $cacheThreshold } else { 'kept' })." muted
     }
     if (-not $settings) { return }
     if ($cache.Clear) { $Policy.cache_invalidation_before = $core }
