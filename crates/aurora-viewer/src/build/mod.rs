@@ -1621,13 +1621,21 @@ impl BuildTool {
 
     /// Selection outlines, manipulators, land brush and selection rectangle
     /// over the scene.
-    pub fn draw_overlay(&mut self, ctx: &egui::Context, world: &World, scene: &crate::scene::Scene, s: &BuildSettings, mods: Mods) {
+    pub fn draw_overlay(
+        &mut self,
+        ctx: &egui::Context,
+        pal: &crate::theme::Palette,
+        world: &World,
+        scene: &crate::scene::Scene,
+        s: &BuildSettings,
+        mods: Mods,
+    ) {
         if !self.open && !self.menu_selection {
             return;
         }
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("build_overlay")));
         let cam = self.cam;
-        let mut p = draw::Painter3d::new(painter, &cam);
+        let mut p = draw::Painter3d::new(painter, &cam, *pal);
         let now = Instant::now();
         if s.show_highlight && !self.face_mode() && !self.manip.dragging() {
             let prims = self.color_highlighted(world);

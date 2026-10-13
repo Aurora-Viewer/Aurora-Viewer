@@ -317,44 +317,75 @@ fn vec_block(
     let spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 2.0;
     ui.label(RichText::new(title).size(11.0).color(p.muted));
-    let width = ((ui.available_width() - 12.0) / 3.0).max(40.0);
+    // Three cells cut out of one row: equal widths from edge to edge and one
+    // baseline, whatever the length of the values.
+    const GAP: f32 = 6.0;
+    const HEIGHT: f32 = 28.0;
+    const MARK: f32 = 2.0;
+    const LETTER: f32 = 10.0;
     let row = ui.add_enabled_ui(enabled, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            for (axis, value) in v.iter_mut().enumerate() {
-                egui::Frame::new()
-                    .fill(p.field)
-                    .stroke(egui::Stroke::new(1.0, p.raised))
-                    .corner_radius(ui.visuals().window_corner_radius)
-                    .inner_margin(egui::Margin {
-                        left: 6,
-                        right: 4,
-                        top: 1,
-                        bottom: 2,
-                    })
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.x = 3.0;
-                        ui.spacing_mut().interact_size.y = 23.0;
-                        ui.spacing_mut().button_padding.y = 3.0;
-                        ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
-                        ui.visuals_mut().widgets.hovered.bg_stroke = egui::Stroke::NONE;
-                        ui.visuals_mut().widgets.active.bg_stroke = egui::Stroke::NONE;
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(["X", "Y", "Z"][axis]).size(10.0).color(p.muted));
-                            e = e.or(super::common::spin_with_min_decimals(
-                                ui,
-                                value,
-                                increment,
-                                range[axis].clone(),
-                                decimals,
-                                (width - 23.0).max(20.0),
-                                mixed[axis],
-                                if which == 2 { 1 } else { 3 },
-                            ));
-                        });
-                    });
-            }
-        })
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), HEIGHT), egui::Sense::hover());
+        let width = ((rect.width() - 2.0 * GAP) / 3.0).max(40.0);
+        let radius = ui.visuals().window_corner_radius;
+        for (axis, value) in v.iter_mut().enumerate() {
+            let left = rect.left() + axis as f32 * (width + GAP);
+            let cell = egui::Rect::from_min_size(egui::pos2(left, rect.top()), egui::vec2(width, HEIGHT));
+            let color = crate::build::draw::axis_color(p, axis);
+            ui.painter()
+                .rect(cell, radius, p.field, egui::Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
+            // axis mark on the left edge, in the color of the manipulator's axis
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(cell.min, egui::vec2(MARK, HEIGHT)),
+                egui::CornerRadius {
+                    nw: radius.nw,
+                    sw: radius.sw,
+                    ne: 0,
+                    se: 0,
+                },
+                color,
+            );
+            let inner = egui::Rect::from_min_max(
+                egui::pos2(cell.left() + MARK + 5.0, cell.top() + 1.0),
+                egui::pos2(cell.right() - 2.0, cell.bottom() - 1.0),
+            );
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(inner)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.spacing_mut().interact_size.y = 23.0;
+                    ui.spacing_mut().button_padding.y = 3.0;
+                    // the value sits in the cell itself: no second face under it
+                    let widgets = &mut ui.visuals_mut().widgets;
+                    widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                    widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                    widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                    widgets.active.bg_stroke = egui::Stroke::NONE;
+                    // The letter is smaller than the value: the row would
+                    // level their tops. Lowered by half the difference of
+                    // their capital heights (about 0.7 em), it sits on the
+                    // middle of the digits.
+                    let value_size = egui::TextStyle::Button.resolve(ui.style()).size;
+                    let galley = ui
+                        .painter()
+                        .layout_no_wrap(["X", "Y", "Z"][axis].to_owned(), egui::FontId::proportional(LETTER), color);
+                    let (letter, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+                    let drop = 0.35 * (value_size - LETTER).max(0.0);
+                    ui.painter().galley(letter.min + egui::vec2(0.0, drop), galley, color);
+                    e = e.or(super::common::spin_with_min_decimals(
+                        ui,
+                        value,
+                        increment,
+                        range[axis].clone(),
+                        decimals,
+                        (inner.right() - letter.right() - 2.0).max(20.0),
+                        mixed[axis],
+                        if which == 2 { 1 } else { 3 },
+                    ));
+                },
+            );
+        }
     });
     // Keep the per-vector C / P / system paste commands in the row menu,
     // while the visible heading actions follow the active manipulator.

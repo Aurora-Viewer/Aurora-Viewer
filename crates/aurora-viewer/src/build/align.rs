@@ -8,7 +8,7 @@
 //! of the box (« force », the default) or, with Shift, packs them there
 //! without overlapping.
 
-use super::draw::{Painter3d, rgba};
+use super::draw::{Painter3d, axis_color, fade};
 use super::geom::Cam;
 use super::{BuildTool, family};
 use crate::scene::Scene;
@@ -235,23 +235,22 @@ impl BuildTool {
         true
     }
 
-    /// QToolAlign::render: the grey box and the six cones.
+    /// QToolAlign::render: the box and the six cones, in the colors of the
+    /// manipulators (axis colors, the accent of the theme under the cursor).
     pub fn align_draw(&self, p: &mut Painter3d, world: &World) {
         if !self.align_allowed(world) {
             return;
         }
         let Some(b) = self.align_box(world, Instant::now()) else { return };
         let (c, e) = (b.center(), b.extent());
-        p.cube(c, glam::Quat::IDENTITY, e * 0.5, rgba(0.7, 0.7, 0.7, 0.1));
+        let pal = p.pal;
+        p.cube(c, glam::Quat::IDENTITY, e * 0.5, fade(pal.ink, 0.08));
         let base = Self::cone_size(p.cam, c);
         for axis in 0..3 {
             for direction in [-1.0f32, 1.0] {
                 let lit = self.align.hover == Some((axis, direction));
                 let size = if lit { base * 1.25 } else { base };
-                let k = if lit { 1.5 } else { 1.0 };
-                let mut col = [0.0, 0.0, 0.0];
-                col[axis] = 0.7 * k;
-                let color = rgba(col[0], col[1], col[2], 0.5 * k);
+                let color = if lit { pal.violet_light } else { fade(axis_color(&pal, axis), 0.7) };
                 let arrows = if self.align.force { 2 } else { 1 };
                 for i in 0..arrows {
                     let mut v = Vec3::ZERO;

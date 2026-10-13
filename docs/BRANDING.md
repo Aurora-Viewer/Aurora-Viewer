@@ -45,6 +45,11 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
 | amber | `#FCD34D` | mise en avant douce (favoris, notes) |
 | rose | `#F472B6` | rare : catégories, accents ludiques |
 
+Les axes de la construction prennent trois de ces couleurs, partout où un axe est
+montré (gizmo d’édition, cases X / Y / Z de « Transformer », afficheur des valeurs) :
+X `danger`, Y `success`, Z `indigo_light` (`build::draw::axis_color`). Le survol et
+le glissement d’une poignée passent en `violet_light`, comme toute sélection.
+
 ## Règles de design
 
 - **L'apparence vient du thème.** Une fenêtre n'écrit ni couleur, ni rayon,

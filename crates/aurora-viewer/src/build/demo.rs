@@ -105,7 +105,7 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
             let mut v = Vec3::ZERO;
             for j in 0..3 {
                 if j != i {
-                    v[j] = at_g[j].signum() * 1.8 * len;
+                    v[j] = at_g[j].signum() * super::manip::PLANE_OFFSET * len;
                 }
             }
             c + g.rotation * v
