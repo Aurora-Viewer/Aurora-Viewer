@@ -2111,10 +2111,11 @@ impl App {
             .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
         // a rigged mesh or a worn mesh shown there: the GPU alone poses it
         let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit);
+        let hit = shown.map_or(hit, |d| Some(d.hit.point));
         // on our avatar: a surface inside its box under the cursor (nothing
         // in front of it); or, when the ray goes through the box without
         // touching anything (body not drawn yet), close to the body's axis
-        let avatar_hit = ray.and_then(|(o, d)| {
+        let avatar_hit = ray.filter(|_| shown.is_none_or(|d| !d.blend)).and_then(|(o, d)| {
             let (t0, t1, axis) = self.own_avatar_ray(o, d)?;
             match hit.map(|p| (p - o).dot(d)) {
                 Some(t) if t < t0 - 0.05 => None,
@@ -2175,6 +2176,7 @@ impl App {
             return;
         }
         if !on_avatar
+            && shown.is_none()
             && !self.alt
             && !self.ctrl
             && !self.shift
@@ -2917,20 +2919,23 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_ACTIONS") else {
             return;
         };
+        if mode.ends_with("-ready") && !mode.starts_with("blend-") && !mode.starts_with("mask-") {
+            return;
+        }
         let id = crate::demo::action_mode_id(&mode);
         let click_frame = if mode.starts_with("linked-") { 724 } else { 284 };
         if self.frame_count == 260
-            && (id == 0 || id == 980 || id == 981)
+            && (id == 0 || id == 980 || id == 981 || mode.starts_with("blend-") || mode.starts_with("mask-"))
             && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(971))
             && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
         {
             let direction = (self.camera.position - pos).normalize_or(-Vec3::X);
             let rotation = glam::Quat::from_rotation_arc(Vec3::X, direction);
-            self.world.apply(crate::demo::action_overlay(
-                if id == 980 { 980 } else { 981 },
-                pos + direction * 1.0,
-                rotation,
-            ));
+            self.world.apply(if mode.starts_with("blend-") || mode.starts_with("mask-") {
+                crate::demo::alpha_click_overlay(&mode, pos + direction * 1.0, rotation)
+            } else {
+                crate::demo::action_overlay(if id == 980 { 980 } else { 981 }, pos + direction * 1.0, rotation)
+            });
         }
         if self.frame_count == 275 && (mode == "pause" || mode == "open-media-playing") {
             self.media.play_parcel(&self.world, &self.settings.media);
@@ -2943,7 +2948,10 @@ impl App {
             m.status = aurora_media::MediaStatus::Playing;
         }
         if id != 0
-            && (click_frame - 4..=click_frame).contains(&self.frame_count)
+            // Hold the late hover sample on target as well: native focus
+            // events may have moved the cursor since the initial projection.
+            && ((click_frame - 4..=click_frame).contains(&self.frame_count)
+                || (mode.ends_with("-ready") && (640..=650).contains(&self.frame_count)))
             && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(id))
             && let Some(pos) = Scene::object_transform(&self.world, idx, Instant::now(), 0).map(|(pos, _, _)| match id {
                 985 => pos + Vec3::new(-1.05, 0.0, 0.7),
@@ -2954,10 +2962,12 @@ impl App {
         {
             self.cursor_pos = cursor;
         }
-        if id != 0 && self.frame_count == click_frame {
+        if id != 0 && self.frame_count == click_frame && !mode.ends_with("-ready") {
             if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
                 self.click(click_pick::Click::Build);
+            } else if mode.ends_with("-menu") {
+                self.open_context_menu();
             } else {
                 self.on_left_press();
             }
@@ -3061,12 +3071,20 @@ impl App {
             let Some(picked) = self.click_pick() else {
                 return false;
             };
-            let hit = picked.depth;
+            let (hit, target) = if matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
+                self.scene
+                    .selection_pick(&self.world, picked.ray, picked.depth, true, self.settings.draw_distance)
+            } else {
+                (
+                    picked.depth,
+                    picked.depth.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now())),
+                )
+            };
             // a rigged mesh is selected where it is shown (Firestorm: with
             // the move tool only, LLToolCompTranslate)
             let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
                 Some(d) => (Some(d.hit.point), Some(d.idx)),
-                None => (hit, hit.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now()))),
+                None => (hit, target),
             };
             (hit, target, picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y)))
         };
@@ -4220,13 +4238,15 @@ impl App {
                         shift: self.shift,
                     };
                     self.media.build_mode = self.build.open;
-                    let point = self.scene.interaction_point(
-                        &self.world,
-                        Some(ray),
-                        gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
-                        self.build.open,
-                        self.settings.draw_distance,
-                    );
+                    let displayed = gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1);
+                    let point = if self.build.open {
+                        self.scene
+                            .interaction_point(&self.world, Some(ray), displayed, true, self.settings.draw_distance)
+                    } else {
+                        self.scene
+                            .hover_pick(&self.world, Some(ray), displayed, self.settings.draw_distance)
+                            .0
+                    };
                     let depth = point.map(|p| (p - ray.0).dot(ray.1));
                     let (ray, depth, hud) = self
                         .scene
@@ -4860,7 +4880,8 @@ impl App {
             && self.media_cursor.is_none()
             && !ctx.is_pointer_over_egui()
             && !ctx.egui_wants_pointer_input()
-            && let Some(idx) = self.scene.hover_hud(&self.world, self.cursor_pos).or_else(|| {
+        {
+            let hovered = self.scene.hover_hud(&self.world, self.cursor_pos).or_else(|| {
                 // Preserve the world hover cache (scene/hover.rs).
                 self.scene.hover_object(
                     &self.world,
@@ -4868,20 +4889,29 @@ impl App {
                     gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
                     self.settings.draw_distance,
                 )
-            })
-            && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
-        {
-            if let Some(cmd) = self.interactions.hover_request(target) {
-                self.send(cmd);
+            });
+            if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+                log::info!(
+                    "demo cursor hover: prim={:?}, action={:?}",
+                    hovered.and_then(|idx| self.world.objects.get(idx)).map(|o| o.key.local_id),
+                    hovered.and_then(|idx| crate::interaction::cursor_action(&self.world, idx, &self.interactions.props)),
+                );
             }
-            if let Some(action) = crate::interaction::cursor_action(&self.world, idx, &self.interactions.props) {
-                if self.demo && self.frame_count == 722 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
-                    log::info!("demo action hover: {action:?}, prim={}", target.clicked.local_id);
+            if let Some(idx) = hovered
+                && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
+            {
+                if let Some(cmd) = self.interactions.hover_request(target) {
+                    self.send(cmd);
                 }
-                if action == crate::interaction::Action::Touch {
-                    full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
+                if let Some(action) = crate::interaction::cursor_action(&self.world, idx, &self.interactions.props) {
+                    if self.demo && self.frame_count == 722 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+                        log::info!("demo action hover: {action:?}, prim={}", target.clicked.local_id);
+                    }
+                    if action == crate::interaction::Action::Touch {
+                        full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
+                    }
+                    full.platform_output.cursor_image = self.cursors.image(action, self.media.parcel_status_playing());
                 }
-                full.platform_output.cursor_image = self.cursors.image(action, self.media.parcel_status_playing());
             }
         }
         if let Some(h) = &self.interactions.held {
@@ -4929,6 +4959,13 @@ impl App {
             // would show it again in the middle of the drag
             full.platform_output.cursor_icon = egui::CursorIcon::None;
             full.platform_output.cursor_image = None;
+        }
+        if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+            log::info!(
+                "demo cursor output: icon={:?}, bitmap={}",
+                full.platform_output.cursor_icon,
+                full.platform_output.cursor_image.is_some(),
+            );
         }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);

@@ -873,18 +873,16 @@ fn vs_pick(in: VsIn) -> PickOut {
     return out;
 }
 
-// Record + 1, depth and surface coordinates of the face shown: a masked
-// face where it passes its alpha test (fs_depth_mask), a blended one where
-// it draws anything (fs_blend).
+// Record + 1, depth and surface coordinates: Mask keeps its displayed
+// cutout; Blend always intercepts the click, including zero-alpha texels.
 @fragment
 fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
-    if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
         // (the level the scene samples: each texel of the target is a
         // pixel of the screen)
         let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
-        let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u;
-        if (a < select(0.004, max(rec.params.w, 0.01), masked)) {
+        if (a < max(rec.params.w, 0.01)) {
             discard;
         }
     }

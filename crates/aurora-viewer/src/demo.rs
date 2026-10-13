@@ -1297,6 +1297,12 @@ pub fn action_mode_id(mode: &str) -> u32 {
         "linked-sit" => return 986,
         _ => {}
     }
+    if mode.starts_with("transparent-") || mode.starts_with("invisible-") {
+        return 976;
+    }
+    if mode.starts_with("blend-") || mode.starts_with("mask-") {
+        return 976;
+    }
     if mode.starts_with("open-media") {
         return 978;
     }
@@ -1370,10 +1376,54 @@ pub fn action_overlay(id: u32, pos: Vec3, rotation: Quat) -> NetEvent {
     }
 }
 
+/// A non-actionable face placed before Buy. Blend blocks every texel;
+/// Mask's zero-alpha texture lets the click reach Buy.
+pub fn alpha_click_overlay(mode: &str, pos: Vec3, rotation: Quat) -> NetEvent {
+    let texture = match mode.trim_end_matches("-ready") {
+        "blend-faint" => TEX_PICK_FAINT,
+        "blend-half" => TEX_PICK_HALF,
+        "blend-solid" => BLANK_TEXTURE,
+        _ => TEX_PICK_ZERO,
+    };
+    let material = if mode.starts_with("mask-") { MAT_MASK } else { MAT_BLEND };
+    let mut object = action_object(976, 0, 138.0, 126.0, [0.7, 0.55, 0.8, 1.0], "");
+    object.position = pos;
+    object.rotation = rotation;
+    object.scale = Vec3::new(0.12, 2.0, 2.0);
+    if let Some(te) = object.texture_entry.as_mut() {
+        for face in &mut Arc::make_mut(te).faces {
+            face.texture = texture;
+            face.material_id = material;
+        }
+    }
+    NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![object],
+    }
+}
+
 /// All click actions, plus an inherited Buy on a child. Named modes isolate
 /// a target and App::demo_action_steps exercises the real picking / input.
 pub fn action_events() -> Vec<NetEvent> {
     let mode = std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default();
+    if mode.starts_with("blend-") || mode.starts_with("mask-") {
+        let behind = action_object(971, 2, 138.0, 126.0, [0.35, 0.65, 0.8, 1.0], "");
+        return vec![
+            NetEvent::ObjectUpdates {
+                handle: HANDLE,
+                objects: vec![behind],
+            },
+            NetEvent::Balance(250),
+        ];
+    }
+    if mode.starts_with("transparent-") || mode.starts_with("invisible-") {
+        let alpha = if mode.starts_with("invisible-") { 0.0 } else { 0.4 };
+        let o = action_object(976, 0, 138.0, 126.0, [0.7, 0.55, 0.8, alpha], "");
+        return vec![NetEvent::ObjectUpdates {
+            handle: HANDLE,
+            objects: vec![o],
+        }];
+    }
     if mode.starts_with("linked-") {
         // The root's hollow geometry encloses a larger child's seat: its
         // smaller bounding box must not steal hits on the seat inside it.
@@ -4106,6 +4156,10 @@ const MAT_NONE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0001
 const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002);
 const MAT_EMISSIVE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0003);
 const MAT_BUMPY: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0004);
+const MAT_BLEND: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0005);
+const TEX_PICK_ZERO: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0012);
+const TEX_PICK_FAINT: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0013);
+const TEX_PICK_HALF: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0014);
 
 /// (texture, legacy material, hover text) of the test panels.
 fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
@@ -4121,6 +4175,15 @@ fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
 
 /// Pixels of a procedural demo texture (RGBA8, 64×64; the hair demo's 256×256).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    let alpha = match *id {
+        TEX_PICK_ZERO => Some(0),
+        TEX_PICK_FAINT => Some(1),
+        TEX_PICK_HALF => Some(128),
+        _ => None,
+    };
+    if let Some(alpha) = alpha {
+        return Some(([196, 181, 253, alpha].repeat(64 * 64), 64, 64));
+    }
     if *id == TEX_HAIR {
         let (empty, period) = hair_demo().map_or((60, 16), |h| (h.empty, h.period));
         return Some(hair_texture(empty, period));
@@ -4264,6 +4327,7 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
         alpha_cutoff: 0,
     };
     vec![
+        (MAT_BLEND, base.clone()),
         (
             MAT_NONE,
             LegacyMaterial {
