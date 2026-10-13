@@ -566,8 +566,22 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         return col;
     }
     var lights = light_walk(world_pos, frag);
-    for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let at = light_at(i, world_pos, lights.projectors);
+    var spots = projector_walk(lights);
+    if (spec.a > 0.0) {
+        for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
+            let lt = frame.lights[i];
+            let to_l = lt.pos_radius.xyz - world_pos;
+            let dist = length(to_l);
+            let radius = lt.pos_radius.w;
+            if (dist < radius) {
+                let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
+                let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
+                col += clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            }
+        }
+    }
+    for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
+        let at = projector_at(i, world_pos, n);
         if (at.atten <= 0.0) {
             continue;
         }
@@ -575,7 +589,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
             let s = ll_spec(n, v, at.l, spec.a) * at.atten;
             col += clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
         }
-        if (at.projector && env > 0.0) {
+        if (env > 0.0) {
             // the view reflected to the plane the projector emits from
             let pj = frame.projectors[i];
             let ref_dir = reflect(-v, n);
@@ -586,9 +600,8 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
                 let stc = pj.matrix * vec4<f32>(hit, 1.0);
                 let uv = stc.xy / stc.w;
                 if (stc.z > 0.0 && uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
-                    let levels = projector_levels(pj.tex.x);
-                    let image = projector_specular(pj.tex.x, uv, (1.0 - spec.a) * levels * 0.6, levels);
-                    col += frame.lights[i].color_falloff.rgb / 3.25 * image.rgb * env;
+                    let image = projector_specular(pj.tex.x, uv, (1.0 - spec.a) * 0.6);
+                    col += frame.lights[i].color_falloff.rgb / 3.25 * image.rgb * at.shadow * env;
                 }
             }
         }

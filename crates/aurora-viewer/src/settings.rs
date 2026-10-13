@@ -200,6 +200,9 @@ pub struct Settings {
     pub look_at_range: f32,
     /// 0 off, 1 low, 2 medium, 3 high, 4 ultra
     pub shadow_quality: u8,
+    /// The two projectors that weigh most on screen cast shadows
+    /// (Firestorm RenderShadowDetail 2, "Sun/Moon + Projectors", its default).
+    pub projector_shadows: bool,
     /// 0 none, 1 FXAA, 2 MSAA 2x, 3 MSAA 4x, 4 MSAA 8x, 5 TAA, 6 SMAA (the
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
     /// featuretable.txt)
@@ -559,6 +562,7 @@ impl Default for Settings {
             look_at: false,
             look_at_range: 10.0,
             shadow_quality: 3,
+            projector_shadows: true,
             antialiasing: 6,
             tonemapper: 0,
             fps_cap: true,

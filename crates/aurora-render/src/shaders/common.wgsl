@@ -83,6 +83,12 @@ struct Frame {
     // `light_projectors` (x: lights 0..31, y: lights 32..63)
     projectors: array<ProjectorLight, 64>,
     light_projectors: vec4<u32>,
+    // shadow maps of the two projectors that cast shadows: world to the
+    // clip space of each, its light (-1: none), and what it leaves unlit
+    // of its shadows (1 - fade)
+    spot_vp: array<mat4x4<f32>, 2>,
+    spot_lights: vec4<i32>,
+    spot_fade: vec4<f32>,
 };
 
 struct DrawRecord {
@@ -189,36 +195,48 @@ fn light_set(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
         & light_table_set(frame.light_slices[slice >> 1u], slice);
 }
 
-// The lights a fragment walks: those left in `held`, or, without the sets,
-// the list from `at` to `end`.
+// The lights a fragment walks: the point lights left in `held` (bit i for
+// `frame.lights[i]`), and its projectors. The two are walked apart, each
+// with its own loop, and the point lights' is written out in each lighting
+// function: sharing one loop and one `LightAt` with the projectors cost
+// 0.09 ms of GPU time a frame with 64 point lights and no projector.
 struct LightWalk {
     held: vec2<u32>,
-    at: u32,
-    end: u32,
-    // the lights of the frame's list that are projectors (read once a
-    // fragment, not once a light)
     projectors: vec2<u32>,
 };
 
+// Bits of the first `n` lights of the frame's list.
+fn light_first(n: u32) -> vec2<u32> {
+    let part = (1u << (n & 31u)) - 1u;
+    let lo = select(part, 0xffffffffu, n >= 32u);
+    let hi = select(select(part, 0xffffffffu, n >= 64u), 0u, n <= 32u);
+    return vec2<u32>(lo, hi);
+}
+
 fn light_walk(world_pos: vec3<f32>, frag: vec2<f32>) -> LightWalk {
-    var walk: LightWalk;
-    walk.projectors = frame.light_projectors.xy;
+    // the lights of the fragment's sets or, without the sets, the list
+    var held = light_first(u32(frame.params.w));
     if (frame.light_mode.x != 0u) {
-        walk.held = light_set(world_pos, frag);
-    } else {
-        walk.end = u32(frame.params.w);
+        held = light_set(world_pos, frag);
     }
+    let projectors = frame.light_projectors.xy;
+    var walk: LightWalk;
+    walk.held = held & ~projectors;
+    walk.projectors = held & projectors;
     return walk;
 }
 
-// Next light of the walk, in the order of the frame's list either way (the
-// lights are summed in that order); -1 at its end.
+// The walk of the fragment's projectors.
+fn projector_walk(walk: LightWalk) -> LightWalk {
+    var w: LightWalk;
+    w.held = walk.projectors;
+    w.projectors = vec2<u32>(0u);
+    return w;
+}
+
+// Next light of the walk, in the order of the frame's list (the lights
+// are summed in that order); -1 at its end.
 fn next_light(walk: ptr<function, LightWalk>) -> i32 {
-    let at = (*walk).at;
-    if (at < (*walk).end) {
-        (*walk).at = at + 1u;
-        return i32(at);
-    }
     let lo = (*walk).held.x;
     if (lo != 0u) {
         (*walk).held.x = lo & (lo - 1u);
@@ -803,21 +821,29 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v:
     }
     // local lights
     var lights = light_walk(world_pos, frag);
+    var spots = projector_walk(lights);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let at = light_at(i, world_pos, lights.projectors);
-        if (at.atten > 0.0) {
-            let ll = at.l;
+        let lt = frame.lights[i];
+        let to_l = lt.pos_radius.xyz - world_pos;
+        let dist = length(to_l);
+        let radius = lt.pos_radius.w;
+        if (dist < radius) {
+            let ll = to_l / max(dist, 1e-4);
             let lnl = max(dot(n, ll), 0.0);
             if (lnl > 0.0) {
+                let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
                 let h = normalize(ll + v);
                 let nh = max(dot(n, h), 0.0);
                 let vh = max(dot(v, h), 0.0);
                 let f = f_schlick(f0, vh);
                 let spec = d_ggx(nh, a) * v_smith(nv, lnl, a) * f;
                 let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-                col += (kd + spec) * lnl * (at.color * at.atten + projector_ambiance(at, lnl, 0.0));
+                col += (kd + spec) * lt.color_falloff.rgb * lnl * atten;
             }
         }
+    }
+    for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
+        col += pbr_local_light(projector_at(i, world_pos, n), n, v, f0, a, nv, diffuse_color);
     }
     // ambient: hemisphere diffuse + sky reflection
     let up = n.z * 0.5 + 0.5;
@@ -1006,28 +1032,77 @@ fn projector_sample(slot: u32, tc: vec2<f32>, lod: f32) -> vec4<f32> {
     return vec4<f32>(srgb_to_linear(c.rgb), c.a);
 }
 
-// getTexture2DLodDiffuse: the blurred levels fade out at the image's edges.
-fn projector_diffuse(slot: u32, tc: vec2<f32>, lod: f32, levels: f32) -> vec4<f32> {
-    var ret = projector_sample(slot, tc, lod);
+// getTexture2DLodDiffuse: the image at `blur` of its mip chain (LL's lod /
+// proj_lod), fading out at its edges as it blurs. The fade is LL's
+// lod / (proj_lod x 0.5), that is twice `blur`: it does not depend on the
+// levels the texture has here (a plain white one has a single level and
+// still gets the soft edges of its beam).
+fn projector_diffuse(slot: u32, tc: vec2<f32>, blur: f32) -> vec4<f32> {
+    var ret = projector_sample(slot, tc, blur * projector_levels(slot));
     let dist = vec2<f32>(0.5) - abs(tc - vec2<f32>(0.5));
-    let edge = 0.25 * min(lod / max(levels * 0.5, 1e-4), 1.0);
+    let edge = 0.25 * min(2.0 * blur, 1.0);
     if (edge > 0.0) {
         ret *= clamp(min(dist.x, dist.y) / edge, 0.0, 1.0);
     }
     return ret;
 }
 
-// texture2DLodSpecular: the projector's image seen in a shiny face.
-fn projector_specular(slot: u32, tc: vec2<f32>, lod: f32, levels: f32) -> vec4<f32> {
-    var ret = projector_sample(slot, tc, lod);
+// texture2DLodSpecular: the projector's image seen in a shiny face. LL's
+// extra factor counts the levels left under the one read; ours are counted
+// as those of an image at least 32 pixels wide.
+fn projector_specular(slot: u32, tc: vec2<f32>, blur: f32) -> vec4<f32> {
+    let levels = projector_levels(slot);
+    var ret = projector_sample(slot, tc, blur * levels);
     let dist = vec2<f32>(0.5) - abs(tc - vec2<f32>(0.5));
     var d = min(dist.x, dist.y);
-    d *= min(1.0, d * (levels - lod));
-    let edge = 0.25 * min(lod / max(levels * 0.5, 1e-4), 1.0);
+    d *= min(1.0, d * max(levels, 5.0) * (1.0 - blur));
+    let edge = 0.25 * min(2.0 * blur, 1.0);
     if (edge > 0.0) {
         ret *= clamp(d / edge, 0.0, 1.0);
     }
     return ret;
+}
+
+// Light left by the shadow map of projector `i` (1: lit, or no map), as
+// spotLightF.glsl with sampleSpotShadow / pcfSpotShadow (shadowUtil.glsl):
+// the two projectors that weigh most on screen have a map, in the halves of
+// the top row of the shadow atlas's fourth tile. Like Firestorm's, these
+// shadows stop with the sun's (the last tenth of its shadow distance).
+fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (frame.params.z < 0.5 || (i != frame.spot_lights.x && i != frame.spot_lights.y)) {
+        return 1.0;
+    }
+    let k = select(0u, 1u, i == frame.spot_lights.y);
+    let far = frame.cascade_splits.z;
+    let depth = distance(world_pos, frame.camera_pos.xyz);
+    if (depth >= far) {
+        return 1.0;
+    }
+    // RenderSpotShadowOffset: the point is moved 4 cm along its normal
+    let lp = frame.spot_vp[k] * vec4<f32>(world_pos + n * 0.04, 1.0);
+    if (lp.w <= 0.0) {
+        return 1.0;
+    }
+    let ndc = lp.xyz / lp.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
+        return 1.0;
+    }
+    // a map is a quarter of the atlas wide: its texel in map coordinates
+    let texel = 4.0 / f32(textureDimensions(shadow_map).x);
+    let origin = vec2<f32>(0.5 + 0.25 * f32(k), 0.5);
+    var sum = 0.0;
+    // pcfSpotShadow's five taps
+    let taps = array<vec2<f32>, 5>(
+        vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
+    for (var t = 0; t < 5; t++) {
+        let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, origin + at * 0.25, ndc.z - 0.0002);
+    }
+    var s = sum * 0.2;
+    // the map fades in and out as its projector takes or loses it
+    s = clamp(s + select(frame.spot_fade.x, frame.spot_fade.y, k == 1u), 0.0, 1.0);
+    return mix(1.0, s, clamp((far - depth) / (far * 0.1), 0.0, 1.0));
 }
 
 // What a local light sends to a point.
@@ -1042,19 +1117,21 @@ struct LightAt {
     amb_color: vec3<f32>,
     ambiance: f32,
     projector: bool,
+    // a projector's shadow map on the point (already in `color`)
+    shadow: f32,
 };
 
-// Light `i` of the frame's list, `projectors` those of the list that are
-// projectors (`LightWalk::projectors`).
-fn light_at(i: i32, world_pos: vec3<f32>, projectors: vec2<u32>) -> LightAt {
+// Projector `i` of the frame's list on a point of normal `n`.
+fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> LightAt {
     let lt = frame.lights[i];
     var at: LightAt;
+    at.shadow = 1.0;
     at.atten = 0.0;
     at.l = vec3<f32>(0.0, 0.0, 1.0);
     at.color = vec3<f32>(0.0);
     at.amb_color = vec3<f32>(0.0);
     at.ambiance = 0.0;
-    at.projector = false;
+    at.projector = true;
     let to_l = lt.pos_radius.xyz - world_pos;
     let dist = length(to_l);
     let radius = lt.pos_radius.w;
@@ -1062,14 +1139,6 @@ fn light_at(i: i32, world_pos: vec3<f32>, projectors: vec2<u32>) -> LightAt {
         return at;
     }
     let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
-    let bits = select(projectors.x, projectors.y, i >= 32);
-    if (((bits >> (u32(i) & 31u)) & 1u) == 0u) {
-        at.atten = atten;
-        at.l = to_l / max(dist, 1e-4);
-        at.color = lt.color_falloff.rgb;
-        return at;
-    }
-    at.projector = true;
     let pj = frame.projectors[i];
     // behind the projector's near plane: nothing
     let tc = pj.matrix * vec4<f32>(world_pos, 1.0);
@@ -1086,21 +1155,70 @@ fn light_at(i: i32, world_pos: vec3<f32>, projectors: vec2<u32>) -> LightAt {
     }
     // the texture blurs with the distance from the light, past the focus
     let slot = pj.tex.x;
-    let levels = projector_levels(slot);
     let l_dist = -dot(to_l, pj.dir.xyz);
-    let lod = clamp((l_dist - pj.origin.w) / pj.dir.w, 0.0, 1.0) * levels;
-    let c = projector_diffuse(slot, uv, lod, levels);
-    at.color = lt.color_falloff.rgb * c.rgb * c.a;
+    let c = projector_diffuse(slot, uv, clamp((l_dist - pj.origin.w) / pj.dir.w, 0.0, 1.0));
+    // the beam is shadowed, the ambiance is not (spotLightF)
+    at.shadow = projector_shadow(i, world_pos, n);
+    at.color = lt.color_falloff.rgb * c.rgb * c.a * at.shadow;
     at.ambiance = pj.params.y;
     if (at.ambiance > 0.0) {
         // getTexture2DLodAmbient: the image's mean color (its last level),
         // fading from the middle of the frustum to its corners
-        var amb = projector_sample(slot, vec2<f32>(0.5), levels);
+        var amb = projector_sample(slot, vec2<f32>(0.5), projector_levels(slot));
         let off = uv - vec2<f32>(0.5);
         amb *= clamp((0.25 - dot(off, off)) / 0.25, 0.0, 1.0);
         at.amb_color = lt.color_falloff.rgb * amb.rgb * amb.a;
     }
     return at;
+}
+
+// One local light on a PBR surface (shade_pbr).
+fn pbr_local_light(at: LightAt, n: vec3<f32>, v: vec3<f32>, f0: vec3<f32>, a: f32, nv: f32, diffuse_color: vec3<f32>) -> vec3<f32> {
+    let lnl = max(dot(n, at.l), 0.0);
+    if (at.atten <= 0.0 || lnl <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let h = normalize(at.l + v);
+    let nh = max(dot(n, h), 0.0);
+    let vh = max(dot(v, h), 0.0);
+    let f = f_schlick(f0, vh);
+    let spec = d_ggx(nh, a) * v_smith(nv, lnl, a) * f;
+    let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
+    return (kd + spec) * lnl * (at.color * at.atten + projector_ambiance(at, lnl, 0.0));
+}
+
+// One local light on a classic surface (multiPointLightF, spotLightF); our
+// colors carry the 3.25 PBR factor.
+fn ll_diffuse_light(at: LightAt, n: vec3<f32>, base: vec3<f32>) -> vec3<f32> {
+    if (at.atten <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let nl = dot(n, at.l);
+    var local = vec3<f32>(0.0);
+    if (nl > 0.0) {
+        local = at.color / 3.25 * nl * at.atten * base;
+    }
+    if (at.projector) {
+        // spotLightF: the ambiance lights the faces turned away
+        let lit = max(nl, 0.0) * at.atten;
+        local += base * projector_ambiance(at, max(nl, 0.0), lit) / 3.25 * max(-nl, 0.0);
+    }
+    return local;
+}
+
+// One local light on a PBR surface under a classic sky (multiPointLightF,
+// spotLightF: a projector's ambiance is lit like its beam).
+fn ll_pbr_light(at: LightAt, n: vec3<f32>, v: vec3<f32>, f0: vec3<f32>, ra: f32, nv: f32, diffuse_color: vec3<f32>) -> vec3<f32> {
+    let lnl = max(dot(n, at.l), 0.0);
+    if (at.atten <= 0.0 || lnl <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let h = normalize(at.l + v);
+    let f = f_schlick(f0, max(dot(v, h), 0.0));
+    let spec = d_ggx(max(dot(n, h), 0.0), ra) * v_smith(nv, lnl, ra) * f;
+    let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
+    let intensity = at.atten * at.color + projector_ambiance(at, lnl, 0.0);
+    return intensity * clamp(lnl * (diff + spec), vec3<f32>(0.0), vec3<f32>(10.0));
 }
 
 // getProjectedLightAmbiance: light a projector adds whatever the angle,
@@ -1251,21 +1369,22 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
 // attenuation x albedo, with its final_scale.
 fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     var local = vec3<f32>(0.0);
-    // our colors carry the 3.25 PBR factor
     var lights = light_walk(world_pos, frag);
+    var spots = projector_walk(lights);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let at = light_at(i, world_pos, lights.projectors);
-        if (at.atten > 0.0) {
-            let nl = dot(n, at.l);
+        let lt = frame.lights[i];
+        let to_l = lt.pos_radius.xyz - world_pos;
+        let dist = length(to_l);
+        let radius = lt.pos_radius.w;
+        if (dist < radius) {
+            let nl = dot(n, to_l / max(dist, 1e-4));
             if (nl > 0.0) {
-                local += at.color / 3.25 * nl * at.atten * base;
-            }
-            if (at.projector) {
-                // spotLightF: the ambiance lights the faces turned away
-                let lit = max(nl, 0.0) * at.atten;
-                local += base * projector_ambiance(at, max(nl, 0.0), lit) / 3.25 * max(-nl, 0.0);
+                local += lt.color_falloff.rgb / 3.25 * nl * ll_light_atten(dist / radius, lt.color_falloff.w) * base;
             }
         }
+    }
+    for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
+        local += ll_diffuse_light(projector_at(i, world_pos, n), n, base);
     }
     return local * ll_local_scale();
 }
@@ -1337,21 +1456,27 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
     let nv = max(dot(n, v), 1e-4);
     var col = vec3<f32>(0.0);
     var lights = light_walk(world_pos, frag);
+    var spots = projector_walk(lights);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let at = light_at(i, world_pos, lights.projectors);
-        if (at.atten > 0.0) {
-            let ll = at.l;
+        let lt = frame.lights[i];
+        let to_l = lt.pos_radius.xyz - world_pos;
+        let dist = length(to_l);
+        let radius = lt.pos_radius.w;
+        if (dist < radius) {
+            let ll = to_l / max(dist, 1e-4);
             let lnl = max(dot(n, ll), 0.0);
             if (lnl > 0.0) {
                 let h = normalize(ll + v);
                 let f = f_schlick(f0, max(dot(v, h), 0.0));
                 let spec = d_ggx(max(dot(n, h), 0.0), ra) * v_smith(nv, lnl, ra) * f;
                 let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-                // a projector's ambiance is lit like its beam (spotLightF)
-                let intensity = at.atten * at.color + projector_ambiance(at, lnl, 0.0);
+                let intensity = ll_light_atten(dist / radius, lt.color_falloff.w) * lt.color_falloff.rgb;
                 col += intensity * clamp(lnl * (diff + spec), vec3<f32>(0.0), vec3<f32>(10.0));
             }
         }
+    }
+    for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
+        col += ll_pbr_light(projector_at(i, world_pos, n), n, v, f0, ra, nv, diffuse_color);
     }
     return col * ll_local_scale();
 }

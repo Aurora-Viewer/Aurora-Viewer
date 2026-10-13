@@ -19,8 +19,8 @@
 //! and it alone uses the queue.
 
 use crate::gpu_cull::{
-    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, COUNT_PRE1, COUNT_PRE2, CullFrame, GpuCull, MAIN_BINS,
-    REGION_PRE1, REGION_PRE2, frame_flags,
+    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, BIN_SPOT, COUNT_PRE1, COUNT_PRE2, CullFrame, GpuCull,
+    MAIN_BINS, REGION_PRE1, REGION_PRE2, SPOT_SHADOWS, frame_flags,
 };
 use crate::helpers::Helpers;
 use crate::light_tiles::{self, LightCulling, LightSets};
@@ -119,6 +119,13 @@ struct FrameU {
     projectors: [ProjectorU; MAX_LIGHTS],
     /// Bit `i` (low word, then high word): light `i` is a projector.
     light_projectors: [u32; 4],
+    /// World to the clip space of each projector shadow map.
+    spot_vp: [[[f32; 4]; 4]; SPOT_SHADOWS],
+    /// Light of each projector shadow map (-1: none).
+    spot_lights: [i32; 4],
+    /// What each map leaves of its shadows unlit: 1 - fade (spotLightF's
+    /// shadow_fade).
+    spot_fade: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -380,6 +387,17 @@ impl Smaa {
             pass.draw(0..3, 0..1);
         }
     }
+}
+
+/// The projector shadow maps of a frame: each projector of the frame's list
+/// that casts shadows, with the view-projection of its map. None without
+/// shadows (reflections, probe faces and impostor pictures draw none).
+fn spot_shadow_views(f: &FrameParams) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+    f.spot_shadows.map(|s| {
+        let s = s.filter(|_| f.shadows)?;
+        let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
+        Some((s, light.projector?.shadow_matrix))
+    })
 }
 
 /// Screen-space glow as LLPipeline::generateGlow / combineGlow (originally LGPL 2.1,
@@ -1789,6 +1807,8 @@ struct Ranges {
     /// the alpha test.
     shadow: [(u64, u32); CASCADES],
     shadow_alpha: [(u64, u32); CASCADES],
+    /// Casters of the CPU lists in each projector shadow map.
+    spot: [(u64, u32); SPOT_SHADOWS],
 }
 
 impl Backend {
@@ -2014,7 +2034,8 @@ impl Backend {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let shadow_buffers: Vec<wgpu::Buffer> = (0..CASCADES)
+        // one per cascade, then one per projector shadow map
+        let shadow_buffers: Vec<wgpu::Buffer> = (0..CASCADES + SPOT_SHADOWS)
             .map(|_| {
                 device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("shadow vp"),
@@ -3546,6 +3567,12 @@ impl Backend {
                 u.light_projectors[i / 32] |= 1 << (i % 32);
             }
         }
+        u.spot_lights = [-1; 4];
+        for (k, (spot, vp)) in spot_shadow_views(f).into_iter().enumerate().filter_map(|(k, v)| Some((k, v?))) {
+            u.spot_vp[k] = vp.to_cols_array_2d();
+            u.spot_lights[k] = spot.light as i32;
+            u.spot_fade[k] = 1.0 - spot.fade.clamp(0.0, 1.0);
+        }
         u
     }
 
@@ -3886,7 +3913,10 @@ impl Backend {
                 bytemuck::cast_slice(&lists.impostor_sprites[..n_sprites]),
             );
         }
-        for (i, m) in cascades.iter().enumerate() {
+        // projector shadow maps of the frame (none without shadows)
+        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] = spot_shadow_views(f).map(|v| v.map(|(_, m)| m));
+        for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
+            let Some(m) = m else { continue };
             let u = ShadowU {
                 vp: m.to_cols_array_2d(),
                 anim_clock: [self.anim_now[0], self.anim_now[1], 0, 0],
@@ -4010,6 +4040,19 @@ impl Backend {
                 }
             }
         }
+        // casters of the CPU lists in each projector's shadow map
+        let mut spot_lists: [Vec<DrawCmd>; SPOT_SHADOWS] = Default::default();
+        for (k, vp) in spot_vp.iter().enumerate() {
+            let Some(vp) = vp else { continue };
+            let planes = crate::gpu_cull::view_planes(*vp).map(|p| p.to_array());
+            spot_lists[k].extend(
+                lists
+                    .shadow_casters
+                    .iter()
+                    .filter(|c| crate::gpu_cull::sphere_in(&planes, c.center, c.radius))
+                    .map(|c| c.cmd),
+            );
+        }
 
         // ---- indirect args
         self.indirect_cpu.clear();
@@ -4093,7 +4136,7 @@ impl Backend {
                     flags |= bit;
                 }
             }
-            let frame = CullFrame::new(g, &cascades, &caster_planes, [water_vp, mirror_vp, probe_vp], flags);
+            let frame = CullFrame::new(g, &cascades, &caster_planes, [water_vp, mirror_vp, probe_vp], spot_vp, flags);
             self.cull
                 .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, frame);
         }
@@ -4130,6 +4173,9 @@ impl Backend {
         for i in 0..CASCADES {
             rg.shadow[i] = push(cpu, &shadow_lists[i]);
             rg.shadow_alpha[i] = push(cpu, &shadow_alpha_lists[i]);
+        }
+        for (range, list) in rg.spot.iter_mut().zip(&spot_lists) {
+            *range = push(cpu, list);
         }
         let needed = (self.indirect_cpu.len() * std::mem::size_of::<DrawIndexedIndirect>()) as u64;
         if needed > self.indirect.size() {
@@ -4304,7 +4350,7 @@ impl Backend {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            if gpu_on || rg.shadow.iter().chain(&rg.shadow_alpha).any(|r| r.1 > 0) {
+            if gpu_on || rg.shadow.iter().chain(&rg.shadow_alpha).chain(&rg.spot).any(|r| r.1 > 0) {
                 pass.set_bind_group(1, &self.records_bind_group, &[]);
                 pass.set_bind_group(2, &scene.textures, &[]);
                 pass.set_vertex_buffer(0, scene.vertices.slice(..));
@@ -4338,6 +4384,28 @@ impl Backend {
                     1 => pass_mark(&mut pass, MARK_SHADOW_C1_END),
                     _ => {}
                 }
+            }
+            // projector shadow maps: the halves of the top row of the
+            // atlas's fourth tile, every caster with the alpha test
+            let half = size / 2;
+            for (k, vp) in spot_vp.iter().enumerate() {
+                if vp.is_none() {
+                    continue;
+                }
+                let (x, y) = (size + k as u32 * half, size);
+                pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
+                pass.set_scissor_rect(x, y, half, half);
+                pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
+                let (off, count) = rg.spot[k];
+                if count == 0 && !gpu_on {
+                    continue;
+                }
+                pass.set_pipeline(&self.pipelines.shadow);
+                if count > 0 {
+                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                    calls.set(calls.get() + 1);
+                }
+                draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
             }
         }
 
