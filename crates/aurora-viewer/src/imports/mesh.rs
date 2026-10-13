@@ -611,6 +611,10 @@ impl Imports {
         let Some(Source::Mesh(draft)) = &mut entry.source else {
             return;
         };
+        if self.mesh_permission_account != world.agent_id {
+            self.mesh_permission_account = world.agent_id;
+            self.mesh_permission_denied = false;
+        }
         draft.invalidate_quote();
         let request_id = Uuid::new_v4();
         let generation = entry.preview_generation;
@@ -645,10 +649,16 @@ impl Imports {
                 draft.pending = None;
                 match result {
                     Ok(quote) => {
+                        self.mesh_permission_denied = false;
                         draft.quoted_at = Some(std::time::Instant::now());
                         draft.quote = Some(quote);
                     }
-                    Err(error) => self.message = ui::error(error),
+                    Err(error) => {
+                        if matches!(error, Error::MeshPermission) {
+                            self.mesh_permission_denied = true;
+                        }
+                        self.message = ui::error(error);
+                    }
                 }
                 return;
             }

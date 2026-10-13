@@ -68,14 +68,23 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     imports.demo_mode = mode.clone();
     imports.choice = match mode.as_str() {
         "texture" | "destination" => Choice::Texture,
-        "material" | "material-cube" | "material-aurora" | "material-maps" | "material-zoom" | "material-texture-zoom" => Choice::Material,
-        "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" => Choice::Mesh,
+        "material"
+        | "material-cube"
+        | "material-aurora"
+        | "material-maps"
+        | "material-zoom"
+        | "material-texture-zoom"
+        | "material-loading" => Choice::Material,
+        "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" | "mesh-normals" => {
+            Choice::Mesh
+        }
         "animation" | "animation-own" => Choice::Animation,
         "sound" => Choice::Sound,
         mode if mode.starts_with("local") => Choice::Local,
         _ => Choice::Bulk,
     };
     imports.permissions_open = mode == "permissions";
+    imports.mesh_permission_denied = mode == "bulk-mesh-denied";
     let choice = imports.choice;
     if mode == "local-restored" {
         return;
@@ -108,6 +117,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                         ("animation-demo.anim", Choice::Animation),
                     ],
                     Choice::Sound => &[("sound-demo.wav", Choice::Sound)],
+                    Choice::Bulk if mode == "bulk-mesh-denied" => &[("mesh-demo.dae", Choice::Bulk), ("texture-demo.png", Choice::Bulk)],
                     Choice::Local if local_mesh => &[("mesh-demo.dae", Choice::Local)],
                     Choice::Local if mode.starts_with("local-material") => &[("material-demo.gltf", Choice::Local)],
                     Choice::Local if mode.starts_with("local-texture") => &[("texture-demo.png", Choice::Local)],
@@ -142,7 +152,10 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                                     };
                                 }
                             }
-                            if matches!(mode.as_str(), "material-maps" | "material-zoom" | "material-texture-zoom") {
+                            if matches!(
+                                mode.as_str(),
+                                "material-maps" | "material-zoom" | "material-texture-zoom" | "material-loading"
+                            ) {
                                 for entry in &mut loaded {
                                     if let Some(Source::Material { images, .. }) = &mut entry.source {
                                         for slot in 1..4 {
@@ -166,6 +179,14 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                                 for entry in &mut loaded {
                                     if let Some(Source::Mesh(draft)) = &mut entry.source {
                                         draft.preview_lod = 0;
+                                    }
+                                }
+                            }
+                            if mode == "mesh-normals" {
+                                for entry in &mut loaded {
+                                    if let Some(Source::Mesh(draft)) = &mut entry.source {
+                                        draft.options.normals = true;
+                                        draft.options.crease = 105.0;
                                     }
                                 }
                             }

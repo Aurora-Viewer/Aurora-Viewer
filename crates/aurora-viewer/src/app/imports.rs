@@ -14,6 +14,9 @@ impl App {
             self.world.balance = Some(1000);
             self.imports.demo_started = true;
             crate::imports::demo::start(&mut self.imports, &self.scene.jobs, ctx);
+            if self.imports.demo_mode == "bulk-mesh-denied" {
+                self.imports.mesh_permission_account = self.world.agent_id;
+            }
         }
         if !self.imports.persistence.started() {
             let persistence_path = if self.demo && !self.imports.demo_mode.is_empty() {

@@ -64,18 +64,20 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
             if preview.is_none() && key.is_some() && !entry.material_large_pending[slot] {
                 actions.push(Action::LargeMap(id, slot));
             }
-        } else if let Some(model) = &entry.model {
-            aurora_render::preview::paint(
-                ui,
-                egui::Id::new(("large_import_preview", id)),
-                model.clone(),
-                &mut entry.view,
-                size,
-            );
+        } else {
+            if let Some(model) = &entry.model {
+                aurora_render::preview::paint(
+                    ui,
+                    egui::Id::new(("large_import_preview", id)),
+                    model.clone(),
+                    &mut entry.view,
+                    size,
+                );
+            } else {
+                widgets::picture(ui, p, None, size, "cube-3d-sphere", "");
+            }
             camera_hint(ui, p);
             preview_camera_controls(ui, p, &mut entry.view);
-        } else {
-            ui.spinner();
         }
     });
     if !open || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {

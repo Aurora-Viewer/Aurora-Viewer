@@ -1049,7 +1049,7 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   paiement. `grid` : grille sans service d'achat connu. Après Acheter puis
   OK : la fenêtre se ferme, le solde augmente et la cloche reçoit la
   notification.
-- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-zoom|material-texture-zoom|mesh|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|permissions|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`** :
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`** :
   écrit des fichiers propres à ce lancement dans `.scratch/import-demo/<uuid>/`
   puis ouvre le parcours choisi : image RGBA, matériau PBR, cube Collada,
   animations BVH / `.anim` et son WAV synthétique. Vérifier les paramètres, les
@@ -1064,7 +1064,7 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   désactiver Copier impose Transférer, sans modifier les autres lignes.
   Les cartes LOD sélectionnent l’aperçu par
   un clic dans toute leur surface ; les champs restent éditables normalement.
-  `material-maps` affiche les quatre vignettes de cartes. Le menu « Modèle
+  `material-maps` affiche les quatre cartes en grille 2 × 2, sans défilement, avec cadres carrés et proportions originales ; `material-loading` garde exactement le cadre 3D et les gestes avec un modèle en attente. Le menu « Modèle
   d’aperçu » permet de passer entre Sphère, Cube et Aurora 3D. Glisser tourne,
   Maj + glisser ou le bouton du milieu déplacent dans les axes de l’écran,
   la molette zoome ; « Réinitialiser la vue » et le double-clic restaurent
@@ -1080,6 +1080,8 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   description et destination se trouvent dans la section Import ; Permissions
   reste un onglet principal commun. Haut est affiché par défaut ; cliquer
   une carte LOD change l’aperçu, y compris dans un champ ou sur un résultat.
+  `mesh-normals` affiche 105° sans caractère parasite ; les compteurs sont à droite des sources et critères, avec la proportion conservée en dessous.
+  `bulk-mesh-denied` simule un compte connecté sans droit d’import mesh : le lot contient un mesh et une texture, le message indique le refus mesh ; décocher le mesh permet d’importer la texture. Recalculer les frais simule le même refus.
   `mesh-low` affiche Très bas pour comparer réellement les géométries et
   leurs compteurs. Choisir « Fichier » pour un LOD généré doit ouvrir le
   sélecteur ; annuler conserve le LOD, choisir un fichier valide relance

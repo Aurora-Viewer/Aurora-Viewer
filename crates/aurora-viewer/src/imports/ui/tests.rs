@@ -96,7 +96,10 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
     let mut entry = Entry::new(
         "material.gltf".into(),
         Ok(Source::Material {
-            value: PbrMaterial::default(),
+            value: PbrMaterial {
+                alpha_mode: aurora_assets::AlphaMode::Mask,
+                ..Default::default()
+            },
             images: Box::new(std::array::from_fn(|_| Some(map.clone()))),
         }),
         Default::default(),
@@ -185,7 +188,7 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
             let Some(Source::Material { value, images }) = &mut entry.source else {
                 panic!("material")
             };
-            material(
+            material_panel::show(
                 ui,
                 &theme.palette(),
                 entry.id,
@@ -194,12 +197,14 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
                 &mut Vec::new(),
                 &mut entry.material_shape,
                 &entry.material_previews,
-                entry.model.as_ref().map(|model| (model, &mut entry.view)),
+                &mut Preferences::default(),
+                entry.model.as_ref(),
+                &mut entry.view,
             );
         },
     );
     thumbnails_output.textures_delta.clear();
-    for texture in [texture_ids[0], texture_ids[2]] {
+    for texture in texture_ids {
         assert!(
             thumbnails_output
                 .shapes
@@ -226,6 +231,10 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
         (default.yaw, default.pitch, default.distance, default.pan)
     );
     let output = frame(Vec::new(), &mut imports);
+    let original_canvas = ctx
+        .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("material_canvas", imports.entries[0].id))))
+        .expect("material canvas");
+    let original_hint = position(&output, aurora_i18n::tr!("import-preview-gestures"));
     let sphere = position(&output, aurora_i18n::tr!("import-preview-sphere"));
     for pressed in [true, false] {
         drop(frame(click(sphere, pressed), &mut imports));
@@ -238,6 +247,96 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
     assert!(imports.entries[0].material_shape == preview::MaterialShape::Cube);
     assert_eq!(imports.entries[0].preview_generation, 1);
     assert!(imports.entries[0].model.is_none());
+    let pending = frame(Vec::new(), &mut imports);
+    let pending_canvas = ctx
+        .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("material_canvas", imports.entries[0].id))))
+        .expect("pending canvas");
+    assert_eq!(pending_canvas, original_canvas, "loading a new shape retains the exact canvas");
+    assert_eq!(
+        position(&pending, aurora_i18n::tr!("import-preview-gestures")),
+        original_hint,
+        "gestures remain under the canvas while it is loading"
+    );
+    let cards = [0, 2, 3, 1].map(|slot| {
+        ctx.data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("material_card", imports.entries[0].id, slot))))
+            .expect("map card")
+    });
+    assert_eq!(cards[0].top(), cards[1].top());
+    assert_eq!(cards[2].top(), cards[3].top());
+    assert!(cards[1].left() > cards[0].right() && cards[2].top() > cards[0].bottom());
+    assert!(cards[3].bottom() <= 640.0, "all four maps fit in the original compact window");
+}
+
+#[test]
+fn import_footer_distinguishes_connection_mesh_access_quotes_and_missing_prices() {
+    let account = Uuid::from_u128(40);
+    let mut mesh_entry = Entry::new(
+        "mesh.dae".into(),
+        Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
+        Default::default(),
+    );
+    let request = Uuid::new_v4();
+    let Some(Source::Mesh(draft)) = &mut mesh_entry.source else {
+        panic!("mesh")
+    };
+    draft.pending = Some((request, 0));
+    let texture = Entry::new(
+        "image.png".into(),
+        Ok(Source::Texture(Arc::new(DecodedImage {
+            width: 1,
+            height: 1,
+            components: 3,
+            data: vec![255; 3],
+            discard: 0,
+        }))),
+        Default::default(),
+    );
+    let mut imports = Imports {
+        choice: Choice::Bulk,
+        entries: vec![mesh_entry, texture],
+        mesh_permission_account: account,
+        ..Default::default()
+    };
+    let prices = Prices {
+        texture: Some(10),
+        ..Default::default()
+    };
+    assert_eq!(
+        price_label(&imports, &prices, false, account),
+        aurora_i18n::tr!("import-price-unavailable")
+    );
+    assert_eq!(
+        price_label(&imports, &prices, true, account),
+        aurora_i18n::tr!("import-mesh-fee-required")
+    );
+    imports.mesh_quoted(request, Err(Error::MeshPermission));
+    assert!(mesh_blocked(&imports, true, account));
+    assert_eq!(
+        price_label(&imports, &prices, true, account),
+        aurora_i18n::tr!("import-mesh-account-denied")
+    );
+    assert!(
+        !mesh_blocked(&imports, true, Uuid::from_u128(41)),
+        "another account does not inherit a previous refusal"
+    );
+    imports.entries[0].selected = false;
+    assert!(
+        !mesh_blocked(&imports, true, account),
+        "an unselected mesh cannot block texture imports"
+    );
+    assert_eq!(
+        price_label(&imports, &prices, true, account),
+        aurora_i18n::tr!("import-total", cost = 10)
+    );
+    assert_eq!(
+        price_label(&imports, &Prices::default(), true, account),
+        aurora_i18n::tr!("import-price-pending")
+    );
+    imports.entries[1].status = Status::Error("bad pixels".into());
+    assert_eq!(
+        price_label(&imports, &prices, true, account),
+        aurora_i18n::tr!("import-fix-errors-before-upload")
+    );
 }
 
 #[test]

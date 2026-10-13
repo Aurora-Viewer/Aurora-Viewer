@@ -323,22 +323,27 @@ fn mesh_controls(
                             },
                         ))
                         .corner_radius(ui.visuals().window_corner_radius)
-                        .inner_margin(6);
+                        .inner_margin(4);
                     let response = frame.show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
+                        let controls_width = (ui.available_width() - 38.0 - 100.0 - 2.0 * ui.spacing().item_spacing.x).max(254.0);
                         ui.horizontal_top(|ui| {
-                            let icon = ui
-                                .add_sized(Vec2::splat(38.0), egui::Button::new("").selected(selected))
-                                .on_hover_text(aurora_i18n::tr!("import-lod-level", level = lod_label(level)));
-                            lod_icon(ui, icon.rect, level, if selected { p.on_accent } else { p.muted });
+                            ui.allocate_ui_with_layout(Vec2::new(38.0, 60.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                                ui.set_width(38.0);
+                                ui.add_space(11.0);
+                                let icon = ui
+                                    .add_sized(Vec2::splat(38.0), egui::Button::new("").selected(selected))
+                                    .on_hover_text(aurora_i18n::tr!("import-lod-level", level = lod_label(level)));
+                                lod_icon(ui, icon.rect, level, if selected { p.on_accent } else { p.muted });
+                            });
                             let lod = &mut draft.lods[level];
                             let mut edited = false;
-                            ui.vertical(|ui| {
+                            ui.allocate_ui_with_layout(Vec2::new(controls_width, 60.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                ui.set_width(controls_width);
                                 ui.horizontal(|ui| {
                                     let mut source = lod.source;
                                     egui::ComboBox::from_id_salt("source")
-                                        .width(if source == mesh::LodSource::File { 116.0 } else { 184.0 })
-                                        .selected_text(RichText::new(lod_source(source)).small())
+                                        .width(if source == mesh::LodSource::File { 128.0 } else { 216.0 })
+                                        .selected_text(lod_source(source))
                                         .show_ui(ui, |ui| {
                                             for choice in [
                                                 mesh::LodSource::File,
@@ -366,18 +371,6 @@ fn mesh_controls(
                                     {
                                         actions.push(Action::MeshFile(id, level));
                                     }
-                                    if let Some(count) = actual {
-                                        ui.label(
-                                            RichText::new(aurora_i18n::tr!("import-lod-count", count = count))
-                                                .small()
-                                                .color(p.muted),
-                                        )
-                                        .on_hover_text(aurora_i18n::tr!(
-                                            "import-lod-result-help",
-                                            original = triangles,
-                                            remaining = aurora_i18n::number(count as f64 * 100.0 / triangles.max(1) as f64, 1)
-                                        ));
-                                    }
                                 });
                                 ui.horizontal(|ui| {
                                     if lod.source == mesh::LodSource::File {
@@ -385,15 +378,12 @@ fn mesh_controls(
                                     } else if lod.source != mesh::LodSource::Above {
                                         let before = lod.error_mode;
                                         egui::ComboBox::from_id_salt("criterion")
-                                            .width(146.0)
-                                            .selected_text(
-                                                RichText::new(if lod.error_mode {
-                                                    aurora_i18n::tr!("import-error-threshold")
-                                                } else {
-                                                    aurora_i18n::tr!("import-triangle-target")
-                                                })
-                                                .small(),
-                                            )
+                                            .width(156.0)
+                                            .selected_text(if lod.error_mode {
+                                                aurora_i18n::tr!("import-error-threshold")
+                                            } else {
+                                                aurora_i18n::tr!("import-triangle-target")
+                                            })
                                             .show_ui(ui, |ui| {
                                                 selection(ui, &mut lod.error_mode, false, aurora_i18n::tr!("import-triangle-target"));
                                                 selection(ui, &mut lod.error_mode, true, aurora_i18n::tr!("import-error-threshold"));
@@ -402,7 +392,7 @@ fn mesh_controls(
                                         edited |= if lod.error_mode {
                                             let mut percent = lod.error * 100.0;
                                             let response = ui.add_sized(
-                                                Vec2::new(74.0, 26.0),
+                                                Vec2::new(82.0, 26.0),
                                                 egui::DragValue::new(&mut percent).range(0.0..=100.0).speed(0.01).suffix(" %"),
                                             );
                                             if response.changed() {
@@ -410,14 +400,45 @@ fn mesh_controls(
                                             }
                                             response.changed()
                                         } else {
-                                            ui.add_sized(
-                                                Vec2::new(74.0, 26.0),
-                                                egui::DragValue::new(&mut lod.triangles).range(0..=triangles),
-                                            )
-                                            .changed()
+                                            let changed = ui
+                                                .add_sized(
+                                                    Vec2::new(82.0, 26.0),
+                                                    egui::DragValue::new(&mut lod.triangles).range(0..=triangles),
+                                                )
+                                                .changed();
+                                            ui.label(RichText::new(aurora_i18n::tr!("import-triangles-unit")).small().color(p.muted));
+                                            changed
                                         };
                                     }
                                 });
+                            });
+                            ui.allocate_ui_with_layout(Vec2::new(100.0, 60.0), egui::Layout::top_down(egui::Align::Max), |ui| {
+                                ui.set_width(100.0);
+                                if let Some(count) = actual {
+                                    ui.label(
+                                        RichText::new(aurora_i18n::tr!(
+                                            "import-lod-count-short",
+                                            count = aurora_i18n::number(count as f64, 0)
+                                        ))
+                                        .strong()
+                                        .color(p.ink),
+                                    )
+                                    .on_hover_text(aurora_i18n::tr!(
+                                        "import-lod-result-help",
+                                        original = triangles,
+                                        remaining = aurora_i18n::number(count as f64 * 100.0 / triangles.max(1) as f64, 1)
+                                    ));
+                                    if level < 3 {
+                                        ui.label(
+                                            RichText::new(aurora_i18n::tr!(
+                                                "import-lod-retained",
+                                                percent = aurora_i18n::number(count as f64 * 100.0 / triangles.max(1) as f64, 1)
+                                            ))
+                                            .small()
+                                            .color(p.muted_dim),
+                                        );
+                                    }
+                                }
                             });
                             if edited {
                                 draft.preview_lod = level;
@@ -446,7 +467,9 @@ fn mesh_controls(
                     ui.label(RichText::new(aurora_i18n::tr!("import-crease-angle")).small());
                     ui.add_sized(
                         Vec2::new(62.0, 26.0),
-                        egui::DragValue::new(&mut draft.options.crease).range(0.0..=180.0).suffix("Â°"),
+                        egui::DragValue::new(&mut draft.options.crease)
+                            .range(0.0..=180.0)
+                            .suffix("\u{00b0}"),
                     );
                 });
             });
@@ -740,6 +763,74 @@ fn lod_icon(ui: &egui::Ui, rect: egui::Rect, level: usize, color: egui::Color32)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn smoothing_angle_uses_the_degree_symbol_without_a_spurious_character() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let mut draft = crate::imports::tests::mesh_fixture();
+        draft.options.normals = true;
+        draft.options.crease = 105.0;
+        let entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+        let mut imports = Imports {
+            open: true,
+            demo_started: true,
+            choice: Choice::Mesh,
+            active: Some(entry.id),
+            entries: vec![entry],
+            ..Default::default()
+        };
+        let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut output = None;
+        for _ in 0..4 {
+            let mut frame = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    crate::imports::ui::show(
+                        ui.ctx(),
+                        &theme.palette(),
+                        &mut imports,
+                        &mut Preferences::default(),
+                        &world,
+                        &Default::default(),
+                    );
+                },
+            );
+            frame.textures_delta.clear();
+            output = Some(frame);
+        }
+        let output = output.expect("settled frame");
+        let labels: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.text()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            labels.iter().any(|text| text.starts_with("105"))
+                && labels.contains(&"\u{00b0}")
+                && labels.iter().all(|text| !text.contains('\u{00c2}')),
+            "numeric value and separate degree suffix: {labels:?}"
+        );
+        for shape in &output.shapes {
+            if let egui::epaint::Shape::Text(text) = &shape.shape
+                && (text.galley.text().starts_with("105") || text.galley.text() == "\u{00b0}")
+            {
+                assert!(
+                    shape
+                        .clip_rect
+                        .contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())),
+                    "the whole angle remains visible in the compact importer"
+                );
+            }
+        }
+    }
 
     #[test]
     fn editing_the_error_threshold_selects_the_lod_and_rebuilds_its_geometry() {

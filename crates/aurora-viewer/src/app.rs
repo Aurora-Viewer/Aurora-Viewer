@@ -712,11 +712,15 @@ impl App {
             if let NetCommand::QuoteMesh { request, .. } = &cmd {
                 self.on_app_event(NetEvent::MeshQuoted {
                     request: *request,
-                    result: Ok(aurora_net::inventory::mesh_upload::Quote {
-                        token: uuid::Uuid::new_v4(),
-                        cost: 11,
-                        data: aurora_llsd::Llsd::new_map(),
-                    }),
+                    result: if self.imports.demo_mode == "bulk-mesh-denied" {
+                        Err(aurora_net::inventory::upload::Error::MeshPermission)
+                    } else {
+                        Ok(aurora_net::inventory::mesh_upload::Quote {
+                            token: uuid::Uuid::new_v4(),
+                            cost: 11,
+                            data: aurora_llsd::Llsd::new_map(),
+                        })
+                    },
                 });
                 return;
             }
