@@ -141,6 +141,19 @@ fn editor_save_and_preview_carry_draft_without_mutating_loaded_asset() {
 }
 
 #[test]
+fn clicking_another_name_selects_its_row_instead_of_selecting_text() {
+    let mut f = Fixture::new();
+    let item = Uuid::from_u128(951005);
+    let mut gesture = f.inv.items[&Uuid::from_u128(8106)].clone();
+    gesture.id = item;
+    gesture.name = "Z other gesture".into();
+    f.inv.add_items(vec![gesture]);
+    f.settle();
+    f.click("Z other gesture");
+    assert_eq!(f.state.selected, BTreeSet::from([item]));
+}
+
+#[test]
 fn pending_save_disables_duplicate_requests_and_failure_keeps_draft() {
     let mut f = Fixture::new();
     f.editor();

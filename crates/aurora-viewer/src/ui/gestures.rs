@@ -213,12 +213,13 @@ pub fn show(
                                         p.muted
                                     });
                                     let text = if active { text.strong() } else { text };
-                                    ui.add_sized(
-                                        [columns[0], 24.0],
-                                        egui::Label::new(text)
-                                            .truncate()
-                                            .halign(egui::Align::Min)
-                                            .sense(egui::Sense::hover()),
+                                    ui.allocate_ui_with_layout(
+                                        Vec2::new(columns[0], 24.0),
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| {
+                                            ui.set_min_size(Vec2::new(columns[0], 24.0));
+                                            ui.add(egui::Label::new(text).truncate().selectable(false).sense(egui::Sense::hover()));
+                                        },
                                     );
                                     let (trigger, shortcut) = manager.entries.get(&id).map_or_else(
                                         || ("---".to_owned(), "---".to_owned()),
@@ -234,12 +235,14 @@ pub fn show(
                                         [columns[1], 24.0],
                                         egui::Label::new(RichText::new(trigger).color(color))
                                             .truncate()
+                                            .selectable(false)
                                             .sense(egui::Sense::hover()),
                                     );
                                     ui.add_sized(
                                         [columns[2], 24.0],
                                         egui::Label::new(RichText::new(shortcut).color(color))
                                             .truncate()
+                                            .selectable(false)
                                             .sense(egui::Sense::hover()),
                                     );
                                 },
