@@ -4619,7 +4619,6 @@ import-price-pending = The upload price is unavailable for this asset type.
 
 # Gesture manager and editor
 gesture-title = Gestures
-gesture-title-shortcut = Gestures (Ctrl+G)
 gesture-trigger = Trigger
 gesture-key = Key
 gesture-replacement = Replacement

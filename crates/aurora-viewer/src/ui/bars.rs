@@ -408,14 +408,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "conversations",
             &mut panels.chat,
         );
-        flip(
-            ui,
-            p,
-            "hand-move",
-            aurora_i18n::tr!("gesture-title-shortcut"),
-            &mut panels.gestures,
-            true,
-        );
+        if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), "Ctrl+G") {
+            panels.gestures = !panels.gestures;
+        }
         for (tab, icon, label) in [
             (1, "users", aurora_i18n::tr!("common-friends")),
             (0, "radar-filled", aurora_i18n::tr!("common-nearby-people")),
@@ -553,14 +548,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             &mut panels.inventory,
         );
         import_menu(ui, p, action);
-        flip(
-            ui,
-            p,
-            "hand-move",
-            aurora_i18n::tr!("gesture-title-shortcut"),
-            &mut panels.gestures,
-            true,
-        );
+        if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), "Ctrl+G") {
+            panels.gestures = !panels.gestures;
+        }
     });
     if advanced {
         menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("common-advanced"), true, |ui| {

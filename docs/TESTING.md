@@ -1723,7 +1723,8 @@ same completion is available in the conversations window's local chat,
 with instant messages and numeric channel prefixes keeping their input.
 `communicate` starts with the gesture manager closed, clicks the wolf menu
 at frame 540 and hovers Communicate at frame 560: capture frame 620 to see
-the Gestures (Ctrl+G) entry below Conversations. `communicate-open` also
+the Gestures entry below Conversations, with Ctrl+G in the shortcut column.
+`communicate-open` also
 clicks that entry at frame 650: capture frame 800 to check that the manager
 opens through the actual menu control.
 Check Ctrl+G, filtering and active-only/enabled switches, sorting and

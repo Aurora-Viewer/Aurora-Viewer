@@ -4619,7 +4619,6 @@ import-price-pending = Tarif indisponible pour ce type d’import.
 
 # Gesture manager and editor
 gesture-title = Gestes
-gesture-title-shortcut = Gestes (Ctrl+G)
 gesture-trigger = Déclencheur
 gesture-key = Touche
 gesture-replacement = Substitution
