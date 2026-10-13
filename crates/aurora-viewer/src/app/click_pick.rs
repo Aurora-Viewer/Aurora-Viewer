@@ -462,10 +462,12 @@ impl App {
         }
         match note {
             DemoNote::Camera(frame) => log::info!(
-                "demo camera f{frame}: {} (mouse {:?}, agent yaw {:.2})",
+                "demo camera f{frame}: {} (mouse {:?}, agent yaw {:.2}, right orbit={}, menu={})",
                 self.camera.describe(),
                 self.mouse_mode,
-                self.world.agent.yaw
+                self.world.agent.yaw,
+                self.right_gesture.orbit,
+                self.context_menu.is_some()
             ),
             DemoNote::Action(mode) => log::info!(
                 "demo action click: {mode}; dialog={}, seated={}, contents={}, parcel_playing={}, parcel_paused={}, selected={:?}, focus={:?}, media_url={}",

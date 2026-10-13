@@ -177,6 +177,15 @@ when unfocused") is ignored during a screenshot.
   seat that rotates, with a seat camera and an animation started by a linked
   prim (frame 300), then standing up and a request to stop it (frame 700;
   `camera/demo.rs`).
+  Right-button scenarios also take physical cursor coordinates `(x,y)`:
+  `right-click,x,y` moves slightly on both axes; `right-jitter,x,y` repeats
+  small back-and-forth movements for 60 frames. Both must keep the camera
+  still and open the context menu on release at frame 661. `right-drag,x,y`
+  and `right-slow,x,y` move continuously with the button held (6 pixels and
+  1 pixel per frame respectively): orbit starts after the 10-point displacement
+  threshold and no menu opens on release. Capture at frames 590 and 700;
+  `demo camera` logs the orbit and menu states. Combine with
+  `AURORA_DEMO_PIE=1` to check the pie menu.
 - **`AURORA_DEMO_TP`**: teleport after the fade of the initial loading
   (frame 240 at the earliest). `1` or `"x,y,z"`: immediate local arrival,
   without a loading screen; `remote` simulates the progress between regions.

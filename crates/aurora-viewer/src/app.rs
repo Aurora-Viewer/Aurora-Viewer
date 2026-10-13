@@ -95,6 +95,27 @@ enum MouseMode {
     FocusOrbit,
 }
 
+/// Aurora also uses a held right button to orbit, unlike LLToolPie::handleRightMouseDown
+/// (indra/newview/lltoolpie.cpp), which opens the menu immediately. Keep that extension
+/// from stealing ordinary clicks: jitter within 10 UI points never starts an orbit.
+#[derive(Default)]
+struct RightGesture {
+    offset: (f32, f32),
+    orbit: bool,
+}
+
+impl RightGesture {
+    fn motion(&mut self, dx: f32, dy: f32, pixels_per_point: f32) -> bool {
+        if !self.orbit {
+            self.offset.0 += dx / pixels_per_point;
+            self.offset.1 += dy / pixels_per_point;
+            self.orbit = self.offset.0 * self.offset.0 + self.offset.1 * self.offset.1 >= 10.0 * 10.0;
+        }
+        // Once dragging, reversing direction must neither pause the orbit nor open a menu.
+        self.orbit
+    }
+}
+
 /// SL timings (llviewerinput.cpp): double-tap window / nudge phase, auto-fly.
 const NUDGE_TIME: f32 = 0.25;
 /// How fast the avatar turns toward the camera / walking direction while
@@ -166,8 +187,8 @@ pub struct App {
     left_down: bool,
     /// Clicks that wait for the depth under them, and what follows them.
     clicks: click_pick::ClickWait,
-    /// Mouse travel while the right button is held (click vs orbit drag).
-    right_moved: f32,
+    /// Displacement while the right button is held (click vs orbit drag).
+    right_gesture: RightGesture,
     /// Open right-click menu.
     context_menu: Option<ui::context::ContextMenu>,
     /// What a left-button drag does (steer the avatar, orbit a focus point).
@@ -557,7 +578,7 @@ impl App {
             alt: false,
             left_down: false,
             clicks: Default::default(),
-            right_moved: 0.0,
+            right_gesture: RightGesture::default(),
             context_menu: None,
             mouse_mode: MouseMode::None,
             build: Default::default(),
@@ -1820,8 +1841,7 @@ impl App {
             let width = self.gfx.as_ref().map(|g| g.renderer.size().0 as f32).unwrap_or(1280.0);
             self.camera.drag(mode, dx, dy, width, &mut self.world.agent);
         } else if self.right_drag {
-            self.right_moved += dx.abs() + dy.abs();
-            if self.right_moved < 4.0 {
+            if !self.right_gesture.motion(dx, dy, self.egui_ctx.pixels_per_point()) {
                 return; // maybe a click: do not move the camera yet
             }
             self.camera.orbit_drag(dx, dy, s, &mut self.world.agent);
@@ -1848,6 +1868,7 @@ impl App {
                 }
                 Step::Press => self.on_left_press(),
                 Step::Release => self.on_left_release(),
+                Step::RightButton(pressed) => self.mouse_input(MouseButton::Right, pressed, false),
                 Step::Drag(dx, dy) => self.camera_mouse_delta(dx, dy),
                 Step::Walk(on) => {
                     if on {
@@ -3224,8 +3245,8 @@ impl App {
             self.check_temp_run();
         }
         if pressed {
-            self.right_moved = 0.0;
-        } else if was_drag && self.right_moved < 4.0 && self.mouse_mode == MouseMode::None {
+            self.right_gesture = RightGesture::default();
+        } else if was_drag && !self.right_gesture.orbit && self.mouse_mode == MouseMode::None {
             // a click (no drag): context menu
             self.open_context_menu();
         }
@@ -8913,9 +8934,49 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_files, frame_cap};
+    use super::{RightGesture, capture_files, frame_cap};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn right_click_tolerates_small_straight_and_diagonal_motion() {
+        for (dx, dy) in [(7.0, 0.0), (0.0, -7.0), (6.0, 6.0)] {
+            let mut gesture = RightGesture::default();
+            assert!(!gesture.motion(dx, dy, 1.0));
+            assert!(!gesture.orbit);
+        }
+    }
+
+    #[test]
+    fn right_click_jitter_does_not_accumulate_travel() {
+        let mut gesture = RightGesture::default();
+        for _ in 0..100 {
+            assert!(!gesture.motion(2.0, -1.0, 1.0));
+            assert!(!gesture.motion(-2.0, 1.0, 1.0));
+        }
+        assert!(!gesture.orbit);
+    }
+
+    #[test]
+    fn right_orbit_starts_even_with_slow_motion_and_stays_active_on_return() {
+        let mut gesture = RightGesture::default();
+        for _ in 0..9 {
+            assert!(!gesture.motion(1.0, 0.0, 1.0));
+        }
+        assert!(gesture.motion(1.0, 0.0, 1.0));
+        assert!(gesture.motion(-10.0, 0.0, 1.0));
+        assert!(gesture.motion(0.25, -0.25, 1.0));
+        assert!(gesture.orbit);
+    }
+
+    #[test]
+    fn right_orbit_threshold_scales_with_the_interface() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let mut gesture = RightGesture::default();
+            assert!(!gesture.motion(6.0 * scale, 6.0 * scale, scale));
+            assert!(gesture.motion(0.0, 2.0 * scale, scale));
+        }
+    }
 
     #[test]
     fn frame_cap_rules() {
