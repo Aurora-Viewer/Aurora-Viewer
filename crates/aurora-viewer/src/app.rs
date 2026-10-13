@@ -3981,6 +3981,13 @@ impl App {
             }
             let camera_distance = self.camera.position.distance(self.world.agent.position);
             self.world.agent.update(&self.input, ml, dt, camera_distance);
+            // seated, the agent's position is the one its seat gives it: the
+            // map, the radar, the location bar and the voice read it
+            if self.world.agent.seated
+                && let Some(p) = crate::scene::Scene::seated_agent_position(&self.world, Instant::now())
+            {
+                self.world.agent.follow_seat(p);
+            }
             let frame = crate::camera::FrameInput {
                 dt,
                 now: Instant::now(),

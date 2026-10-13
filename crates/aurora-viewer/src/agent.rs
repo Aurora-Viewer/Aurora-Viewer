@@ -209,6 +209,10 @@ impl AgentState {
         let was_seated = self.seated;
         self.seated = seated;
         if seated {
+            // LLVOAvatar::sitOnObject: sitting ends the flight
+            if !was_seated {
+                self.flying = false;
+            }
             // Parent-relative coordinates must never enter standing prediction.
             self.velocity = Vec3::ZERO;
             self.acceleration = Vec3::ZERO;
@@ -241,6 +245,19 @@ impl AgentState {
         self.last_server = now;
         self.last_prediction = now;
         self.has_server = true;
+    }
+
+    /// Seated, the agent is where its seat carries it: the avatar object's
+    /// place in the world, computed through the seat every frame (sitting
+    /// branch of LLAgent::setPositionAgent, indra/newview/llagent.cpp).
+    /// Standing up starts from there.
+    pub fn follow_seat(&mut self, position: Vec3) {
+        if !self.seated || !position.is_finite() {
+            return;
+        }
+        self.position = position;
+        self.server_pos = position;
+        self.predicted_pos = position;
     }
 
     pub fn predicted_position(&self) -> Vec3 {
@@ -309,6 +326,10 @@ impl AgentState {
         // object center above the floor: half the default body height (SL
         // places the pelvis 0.13 m above it, see Scene::skeleton_of)
         const STAND: f32 = 0.84;
+        if self.seated {
+            // the seat places the avatar (`follow_seat`), not the keys
+            return;
+        }
         let dt = dt.min(0.1);
         let fwd = self.forward();
         let left = Vec3::new(-fwd.y, fwd.x, 0.0);
@@ -678,6 +699,37 @@ mod tests {
         near(agent.position, standing);
         agent.predict_at(at(now, 1.1), 1.0, 0.0);
         near(agent.predicted_position(), standing + Vec3::Y * 0.1);
+    }
+
+    #[test]
+    fn a_seated_agent_is_where_its_seat_carries_it() {
+        let (mut agent, now) = moving(Vec3::X, Vec3::ZERO);
+        // standing, the seat has no say
+        agent.follow_seat(Vec3::splat(50.0));
+        near(agent.position, Vec3::ZERO);
+        // seated: the flight ends, the report is seat-relative and the seat
+        // gives the place
+        agent.flying = true;
+        agent.on_server_update_at(Vec3::Z * 0.4, Vec3::ZERO, Vec3::ZERO, true, true, now);
+        assert!(!agent.flying);
+        let carried = Vec3::new(200.0, 30.0, 45.0);
+        agent.follow_seat(carried);
+        near(agent.position, carried);
+        near(agent.predicted_position(), carried);
+        agent.follow_seat(Vec3::splat(f32::NAN));
+        near(agent.position, carried);
+        // the keys do not move a seated avatar (demo), and standing up 1 m
+        // from the seat is neither a jump nor a correction
+        let forward = MoveInput {
+            forward: true,
+            ..MoveInput::default()
+        };
+        agent.simulate_locally(&forward, false, Some(0.0), 0.1);
+        agent.update(&forward, false, 0.1, 5.0);
+        near(agent.position, carried);
+        agent.on_server_update_at(carried + Vec3::X, Vec3::ZERO, Vec3::ZERO, false, true, at(now, 1.0));
+        near(agent.position, carried + Vec3::X);
+        assert_eq!(agent.take_corrections(), Corrections::default());
     }
 
     #[test]

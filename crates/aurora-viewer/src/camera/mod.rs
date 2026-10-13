@@ -1508,6 +1508,33 @@ mod tests {
         assert!(cam.target.distance(Vec3::new(129.0, 128.0, 26.0)) < 0.01, "{:?}", cam.target);
     }
 
+    /// Seated on an object that sets no seat camera, the rear view is behind
+    /// the avatar on its seat, wherever it stood before sitting.
+    #[test]
+    fn seated_rear_view_goes_with_the_seat() {
+        let s = CameraSettings::default();
+        let stood = Vec3::new(132.0, 126.0, 32.9);
+        let mut w = world_at(stood);
+        w.agent_id = crate::demo::DEMO_AGENT;
+        for frame in [250, 300] {
+            // (the seat camera of the SitResponse is not given to the camera)
+            for event in crate::demo::sit_events(frame) {
+                if let aurora_net::NetEvent::ObjectUpdates { handle, .. } = &event {
+                    w.main_region = Some(*handle);
+                }
+                w.apply(event);
+            }
+        }
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let seated = Scene::seated_agent_position(&w, Instant::now()).expect("seated");
+        assert!(seated.distance(stood) > 5.0, "{seated:?}");
+        // CameraOffsetRearView (-3, 0, 0.75) and FocusOffsetRearView (1, 0, 1),
+        // without the head offset of a standing avatar
+        assert!((cam.position.distance(seated) - 3.09).abs() < 0.05, "{:?}", cam.position);
+        assert!((cam.target.distance(seated) - 1.41).abs() < 0.05, "{:?}", cam.target);
+    }
+
     /// A camera at rest must not move at all, whatever the frame times: high
     /// above the ground the smallest change of the view shows on the edges
     /// of close objects. Coordinates and frame times of the report (alt
