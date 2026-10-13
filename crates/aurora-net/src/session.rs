@@ -2899,6 +2899,13 @@ impl Session<'_> {
                     visual_params: m.visual_param.iter().map(|p| p.param_value).collect(),
                     cof_version: m.appearance_data.first().map(|a| a.cof_version).unwrap_or(0),
                     hover_height: m.appearance_hover.first().map(|h| h.hover_height.z).unwrap_or(0.0),
+                    attachments: m
+                        .attachment_block
+                        .iter()
+                        .filter(|a| !a.id.is_nil())
+                        .map(|a| a.id)
+                        .collect::<std::collections::HashSet<_>>()
+                        .len() as u32,
                 }),
             );
         } else if id == SimulatorViewerTimeMessage::ID {

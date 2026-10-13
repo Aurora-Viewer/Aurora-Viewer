@@ -295,6 +295,9 @@ pub struct AvatarAppearance {
     pub visual_params: Vec<u8>,
     pub cof_version: i32,
     pub hover_height: f32,
+    /// Worn objects the simulator lists (AttachmentBlock entries with an
+    /// id, each once: LLVOAvatar::mSimAttachments).
+    pub attachments: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
