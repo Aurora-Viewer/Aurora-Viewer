@@ -563,7 +563,20 @@ mod tests {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 900.0))),
                 ..Default::default()
             },
-            |ui| teleport_overlay(ui.ctx(), &p, None, None, "Loading", "Lagune", "Scene", Some(1.0), 1.0, &Place::default()),
+            |ui| {
+                teleport_overlay(
+                    ui.ctx(),
+                    &p,
+                    None,
+                    None,
+                    "Loading",
+                    "Lagune",
+                    "Scene",
+                    Some(1.0),
+                    1.0,
+                    &Place::default(),
+                )
+            },
         );
         output.textures_delta.clear();
         let painted = output.shapes.iter().any(|clipped| match &clipped.shape {
