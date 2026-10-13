@@ -780,6 +780,12 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
         discard;
     }
+    // Blended and alpha-tested: the hair, eyelashes and skirt of a system
+    // avatar (LLDrawPoolAvatar::beginPostDeferredPass, minimum alpha).
+    let rec = records[in.record];
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
+        discard;
+    }
     let c = shade_material(in, m).color;
     if (c.a < 0.004) {
         discard;
@@ -934,7 +940,8 @@ fn fs_shadow(in: ShadowOut) {
     let rec = records[in.record];
     let alpha = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
     if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
-        if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
+        // (a blended face that is also alpha-tested casts like a blended one)
+        if ((rec.flags.x & FLAG_ALPHA_BLEND) == 0u) {
             if (alpha < rec.params.w) { discard; }
         } else {
             if (alpha < 0.05) { discard; }

@@ -781,6 +781,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
+| `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
@@ -819,6 +820,19 @@ To check with these scenarios:
   must contain "avatar … (own) shown after 3.0 s". Screenshots with
   `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=240,1200`: cloud, then
   avatar.
+- **`AURORA_DEMO_CLASSIC=1`**: the two avatars of the plaza become classic
+  avatars, the system body with a skin bake whose alpha is soft in a band
+  at the waist and cut by a row of holes (an alpha layer), and a hair bake
+  in strands that fade out. Each has a shape far from the default one: ours
+  male with long hair at the back, the wolf heavy (body fat, belly) with
+  big hair and pigtails. The bodies must be solid (the band at
+  the waist shows nothing of what is behind), cut out by the holes, each
+  with its own build; the hair shows its strands and what is behind them
+  where they fade. With `AURORA_DEMO_CAMERA=close,640,500,45` and
+  `AURORA_CAPTURE_FRAMES=700` (1280 × 800): our avatar's back and hair in
+  close-up; with `AURORA_DEMO_POS="133.6,127.9"`, `AURORA_DEMO_CAMERA=ml`
+  and frame 660: the wolf from the front (a grey silhouette, it is over the
+  complexity limit of the demo, but with its build).
 
 ## Rendering and environment
 

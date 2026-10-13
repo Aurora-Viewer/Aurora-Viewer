@@ -8027,6 +8027,12 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            // AURORA_DEMO_CLASSIC: classic avatars, shaped and baked
+            if std::env::var_os("AURORA_DEMO_CLASSIC").is_some() {
+                for ev in crate::demo::classic_events(&self.world.avatar_lib.shape_params) {
+                    self.world.apply(ev);
+                }
+            }
             // AURORA_DEMO_CLOUD=self: our avatar with an invisible head bake,
             // wearing a mesh that cannot be downloaded (issue #121)
             if std::env::var("AURORA_DEMO_CLOUD").is_ok_and(|v| v == "self") {

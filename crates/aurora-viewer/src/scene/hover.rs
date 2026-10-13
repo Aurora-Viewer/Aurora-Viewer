@@ -1001,6 +1001,7 @@ mod tests {
             glow: false,
             pass: crate::scene::Pass::Opaque,
             glow_pool: false,
+            system: None,
         }
     }
 
