@@ -1,8 +1,10 @@
 //! Editing the worn shape without replacing authoritative server state.
 //! LLPanelEditWearable / LLAgentWearables (Firestorm, originally LGPL 2.1).
 
+pub mod camera;
 pub mod catalog;
 pub mod demo;
+mod material;
 mod preview;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -16,7 +18,12 @@ use aurora_render::preview::Model;
 use rayon::prelude::*;
 use std::{
     collections::HashMap,
-    sync::{Arc, mpsc},
+    hash::{Hash, Hasher},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -64,6 +71,7 @@ type Hint = (i32, bool, Arc<Model>);
 pub struct State {
     pub open: bool,
     pub group: usize,
+    pub camera_pending: bool,
     pub(crate) category_wheel: f32,
     pub(crate) category_wheel_frame: Option<u64>,
     pub filter: String,
@@ -76,7 +84,14 @@ pub struct State {
     pub close_confirmation: bool,
     pub close_after_save: bool,
     pub models: HashMap<(i32, bool), Arc<Model>>,
+    /// Live avatar edits continue during dragging; comparison images wait
+    /// until the control is released and edits have settled.
+    pub editing: bool,
+    edited_at: Option<Instant>,
+    hint_keys: HashMap<i32, u64>,
+    worker_generation: Arc<AtomicU64>,
     pub(crate) demo_mesh: Option<mpsc::Receiver<Result<demo::MeshAsset, String>>>,
+    pub(crate) demo_drag: Option<Instant>,
     snapshot: Option<Arc<preview::Snapshot>>,
     snapshot_key: u64,
     snapshot_ready_key: Option<u64>,
@@ -85,8 +100,6 @@ pub struct State {
     snapshot_rx: mpsc::Receiver<(u64, preview::Snapshot)>,
     checked: Instant,
     generation: u64,
-    models_generation: u64,
-    models_key: Option<u64>,
     model_pending: Option<(u64, u64)>,
     model_tx: mpsc::Sender<(u64, u64, Vec<Hint>)>,
     model_rx: mpsc::Receiver<(u64, u64, Vec<Hint>)>,
@@ -99,6 +112,7 @@ impl Default for State {
         Self {
             open: false,
             group: 0,
+            camera_pending: false,
             category_wheel: 0.0,
             category_wheel_frame: None,
             filter: String::new(),
@@ -111,7 +125,12 @@ impl Default for State {
             close_confirmation: false,
             close_after_save: false,
             models: HashMap::new(),
+            editing: false,
+            edited_at: None,
+            hint_keys: HashMap::new(),
+            worker_generation: Arc::new(AtomicU64::new(1)),
             demo_mesh: None,
+            demo_drag: None,
             snapshot: None,
             snapshot_key: 0,
             snapshot_ready_key: None,
@@ -120,8 +139,6 @@ impl Default for State {
             snapshot_rx,
             checked: Instant::now() - Duration::from_secs(1),
             generation: 1,
-            models_generation: 0,
-            models_key: None,
             model_pending: None,
             model_tx,
             model_rx,
@@ -153,8 +170,10 @@ impl State {
         }
         self.open = true;
         self.message.clear();
+        self.camera_pending = true;
         self.draft = None;
         self.models.clear();
+        self.hint_keys.clear();
         self.snapshot = None;
         self.snapshot_ready_key = None;
         self.group = 0;
@@ -217,7 +236,8 @@ impl State {
 
     pub fn changed(&mut self, world: &mut World) {
         self.generation = self.generation.wrapping_add(1);
-        self.models_generation = 0;
+        self.worker_generation.store(self.generation, Ordering::Relaxed);
+        self.edited_at = Some(Instant::now());
         if let Some(draft) = &self.draft {
             let values = world
                 .avatar_lib
@@ -228,10 +248,13 @@ impl State {
     }
 
     pub fn close(&mut self, world: &mut World) {
+        self.generation = self.generation.wrapping_add(1);
+        self.worker_generation.store(self.generation, Ordering::Relaxed);
         self.open = false;
         self.loading = None;
         self.draft = None;
         self.models.clear();
+        self.hint_keys.clear();
         self.snapshot = None;
         self.snapshot_ready_key = None;
         self.close_confirmation = false;
@@ -327,7 +350,6 @@ impl State {
                 let old = self.snapshot.replace(Arc::new(snapshot));
                 scene.jobs.discard(old);
                 self.snapshot_ready_key = Some(key);
-                self.models_generation = 0;
             } else {
                 scene.jobs.discard(snapshot);
             }
@@ -335,13 +357,17 @@ impl State {
         while let Ok((generation, key, models)) = self.model_rx.try_recv() {
             self.model_pending = None;
             if generation == self.generation && Some(key) == self.snapshot_ready_key {
+                if let Some(draft) = &self.draft {
+                    for (id, _, _) in &models {
+                        self.hint_keys
+                            .insert(*id, hint_key(key, world.server_visual_params(), &draft.edited.params, *id));
+                    }
+                }
                 let old: Vec<_> = models
                     .into_iter()
                     .filter_map(|(id, max, model)| self.models.insert((id, max), model))
                     .collect();
                 scene.jobs.discard(old);
-                self.models_generation = generation;
-                self.models_key = Some(key);
             } else {
                 scene.jobs.discard(models);
             }
@@ -369,24 +395,42 @@ impl State {
             return;
         };
         if !self.hints
+            || self.editing
+            || self.edited_at.is_some_and(|time| time.elapsed() < Duration::from_millis(180))
             || self.model_pending.is_some()
             || self.model_requested.elapsed() < Duration::from_millis(80)
-            || (self.models_generation == self.generation
-                && self.models_key == Some(key)
-                && visible
-                    .iter()
-                    .all(|id| self.models.contains_key(&(*id, false)) && self.models.contains_key(&(*id, true))))
         {
             return;
         }
-        let visible = visible.to_vec();
+        // A slider's own value is replaced by min/max in its hints: moving
+        // that slider cannot change its comparison images.
+        let visible: Vec<_> = visible
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.hint_keys.get(id) != Some(&hint_key(key, world.server_visual_params(), &draft.edited.params, *id))
+                    || !self.models.contains_key(&(*id, false))
+                    || !self.models.contains_key(&(*id, true))
+            })
+            .collect();
+        if visible.is_empty() {
+            return;
+        }
         let snapshot = snapshot.clone();
         let lib = world.avatar_lib.clone();
         let values = world.server_visual_params().to_vec();
         let params = draft.edited.params.clone();
         let generation = self.generation;
+        let worker_generation = self.worker_generation.clone();
         self.model_pending = Some((generation, key));
         self.model_requested = Instant::now();
+        if let Some(start) = self.demo_drag {
+            log::info!(
+                "shape hints: dispatch {} comparison images; demo_elapsed={:.2}s",
+                visible.len() * 2,
+                start.elapsed().as_secs_f32()
+            );
+        }
         let tx = self.model_tx.clone();
         let ctx = ctx.clone();
         jobs.run(move || {
@@ -396,14 +440,28 @@ impl State {
                 .flat_map(|param| [(param, false), (param, true)])
                 .collect::<Vec<_>>()
                 .into_par_iter()
-                .map(|(param, max)| {
+                .filter_map(|(param, max)| {
+                    if worker_generation.load(Ordering::Relaxed) != generation {
+                        return None;
+                    }
                     let mut changed = params.clone();
                     changed.insert(param.id, if max { param.max } else { param.min });
-                    (param.id, max, snapshot.model(&lib, &values, &changed, param.group, param.elevation))
+                    Some((param.id, max, snapshot.model(&lib, &values, &changed, param.group, param.elevation)))
                 })
                 .collect();
             let _ = tx.send((generation, key, models));
             ctx.request_repaint();
         });
     }
+}
+
+fn hint_key(snapshot: u64, values: &[u8], params: &std::collections::BTreeMap<i32, f32>, excluded: i32) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    snapshot.hash(&mut hasher);
+    values.hash(&mut hasher);
+    for (id, value) in params.iter().filter(|(id, _)| **id != excluded) {
+        id.hash(&mut hasher);
+        value.to_bits().hash(&mut hasher);
+    }
+    hasher.finish()
 }

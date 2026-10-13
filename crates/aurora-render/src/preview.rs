@@ -6,7 +6,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 use wgpu::util::DeviceExt;
 
@@ -50,6 +50,8 @@ pub struct Material {
     pub alpha_mode: u32,
     pub normal_scale: f32,
     pub double_sided: bool,
+    /// Affine UV rows per map, in the preview's top-left image space.
+    pub uv: [[[f32; 4]; 2]; 4],
 }
 impl Default for Material {
     fn default() -> Self {
@@ -62,6 +64,7 @@ impl Default for Material {
             alpha_mode: 0,
             normal_scale: 1.0,
             double_sided: true,
+            uv: [[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]; 4],
         }
     }
 }
@@ -213,6 +216,7 @@ struct Uniform {
     edge_color: [f32; 4],
     ambient: [f32; 4],
     surface: [f32; 4],
+    uv: [[[f32; 4]; 2]; 4],
 }
 struct GpuPart {
     vertices: wgpu::Buffer,
@@ -230,6 +234,7 @@ struct Pipelines {
     triangles: wgpu::RenderPipeline,
     edges: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
+    assets: SharedAssets,
 }
 struct Target {
     model: Arc<Model>,
@@ -245,6 +250,22 @@ struct Target {
 pub(crate) struct Cache {
     pipeline: Option<Pipelines>,
     targets: HashMap<egui::Id, Target>,
+}
+
+type ImageMap = HashMap<(usize, bool), (Option<Weak<Image>>, wgpu::TextureView)>;
+#[derive(Default)]
+struct SharedAssets {
+    images: ImageMap,
+    vertices: HashMap<usize, (Weak<[Vertex]>, wgpu::Buffer)>,
+    indices: HashMap<usize, (Weak<[u32]>, wgpu::Buffer, wgpu::Buffer)>,
+}
+impl SharedAssets {
+    fn retain(&mut self) {
+        self.images
+            .retain(|_, (owner, _)| owner.as_ref().is_none_or(|owner| owner.strong_count() > 0));
+        self.vertices.retain(|_, (owner, _)| owner.strong_count() > 0);
+        self.indices.retain(|_, (owner, _, _)| owner.strong_count() > 0);
+    }
 }
 
 impl Pipelines {
@@ -356,6 +377,7 @@ impl Pipelines {
             triangles,
             edges,
             sampler,
+            assets: SharedAssets::default(),
         }
     }
 }
@@ -365,7 +387,7 @@ impl Target {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         egui: &mut egui_wgpu::Renderer,
-        pipeline: &Pipelines,
+        pipeline: &mut Pipelines,
         model: Arc<Model>,
         size: [u32; 2],
     ) -> Self {
@@ -390,8 +412,8 @@ impl Target {
         let color = target("Preview color", wgpu::TextureFormat::Rgba8Unorm);
         let depth = target("Preview depth", wgpu::TextureFormat::Depth32Float);
         let texture = egui.register_native_texture(device, &color, wgpu::FilterMode::Linear);
+        let assets = &mut pipeline.assets;
         let mut parts = Vec::new();
-        let mut images = HashMap::<(usize, bool), wgpu::TextureView>::new();
         for (source, part) in model.parts.iter().enumerate() {
             if part.vertices.is_empty() || part.indices.is_empty() {
                 continue;
@@ -403,13 +425,33 @@ impl Target {
                     usage,
                 })
             };
-            let vertices = buffer("Preview vertices", bytemuck::cast_slice(&part.vertices), wgpu::BufferUsages::VERTEX);
-            let indices = buffer("Preview indices", bytemuck::cast_slice(&part.indices), wgpu::BufferUsages::INDEX);
-            let mut lines = Vec::with_capacity(part.indices.len() * 2);
-            for triangle in part.indices.as_chunks::<3>().0 {
-                lines.extend_from_slice(&[triangle[0], triangle[1], triangle[1], triangle[2], triangle[2], triangle[0]]);
-            }
-            let edges = buffer("Preview edges", bytemuck::cast_slice(&lines), wgpu::BufferUsages::INDEX);
+            let key = Arc::as_ptr(&part.vertices) as *const () as usize;
+            let vertices = if let Some((owner, buffer)) = assets.vertices.get(&key)
+                && owner.strong_count() > 0
+            {
+                buffer.clone()
+            } else {
+                let vertices = buffer("Preview vertices", bytemuck::cast_slice(&part.vertices), wgpu::BufferUsages::VERTEX);
+                assets.vertices.insert(key, (Arc::downgrade(&part.vertices), vertices.clone()));
+                vertices
+            };
+            let key = Arc::as_ptr(&part.indices) as *const () as usize;
+            let (indices, edges) = if let Some((owner, indices, edges)) = assets.indices.get(&key)
+                && owner.strong_count() > 0
+            {
+                (indices.clone(), edges.clone())
+            } else {
+                let indices = buffer("Preview indices", bytemuck::cast_slice(&part.indices), wgpu::BufferUsages::INDEX);
+                let mut lines = Vec::with_capacity(part.indices.len() * 2);
+                for triangle in part.indices.as_chunks::<3>().0 {
+                    lines.extend_from_slice(&[triangle[0], triangle[1], triangle[1], triangle[2], triangle[2], triangle[0]]);
+                }
+                let edges = buffer("Preview edges", bytemuck::cast_slice(&lines), wgpu::BufferUsages::INDEX);
+                assets
+                    .indices
+                    .insert(key, (Arc::downgrade(&part.indices), indices.clone(), edges.clone()));
+                (indices, edges)
+            };
             let uniform = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Preview parameters"),
                 size: std::mem::size_of::<Uniform>() as u64,
@@ -436,7 +478,9 @@ impl Target {
                         image.as_ref().map_or(if slot == 1 { 1 } else { 2 }, |i| Arc::as_ptr(i) as usize),
                         srgb,
                     );
-                    if let Some(view) = images.get(&key) {
+                    if let Some((owner, view)) = assets.images.get(&key)
+                        && owner.as_ref().is_none_or(|owner| owner.strong_count() > 0)
+                    {
                         return view.clone();
                     }
                     let defaults = [[255u8; 4], [128, 128, 255, 255], [255; 4], [255; 4]];
@@ -477,7 +521,7 @@ impl Target {
                         },
                     );
                     let view = texture.create_view(&Default::default());
-                    images.insert(key, view.clone());
+                    assets.images.insert(key, (image.as_ref().map(Arc::downgrade), view.clone()));
                     view
                 })
                 .collect();
@@ -509,7 +553,7 @@ impl Target {
                 indices,
                 edges,
                 count: part.indices.len() as u32,
-                edge_count: lines.len() as u32,
+                edge_count: (part.indices.len() / 3 * 6) as u32,
                 uniform,
                 bones,
                 source,
@@ -585,6 +629,7 @@ impl Target {
                 },
                 ambient: [view.ambient[0], view.ambient[1], view.ambient[2], 1.0],
                 surface: [material.normal_scale, if material.double_sided { 1.0 } else { 0.0 }, 0.0, 0.0],
+                uv: material.uv,
             };
             queue.write_buffer(&part.uniform, 0, bytemuck::bytes_of(&uniforms));
         }
@@ -700,6 +745,11 @@ impl Cache {
                 false
             }
         });
+        // Image UUIDs are immutable; all min/max views share their GPU maps.
+        // Weak owners bound the cache to the images still held by previews.
+        if let Some(pipeline) = &mut self.pipeline {
+            pipeline.assets.retain();
+        }
     }
 }
 
@@ -888,6 +938,7 @@ mod tests {
                 edge_color: [0.0; 4],
                 ambient: [0.2, 0.2, 0.2, 1.0],
                 surface: [1.0, 1.0, 0.0, 0.0],
+                uv: Material::default().uv,
             }),
             wgpu::BufferUsages::UNIFORM,
         );

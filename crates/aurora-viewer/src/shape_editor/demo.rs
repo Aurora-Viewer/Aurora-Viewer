@@ -34,7 +34,9 @@ pub fn asset(library: &AvatarLibrary, rigged: bool) -> Result<MeshAsset, String>
                     codec::Vertex {
                         position: if rigged { position } else { inverse.transform_point3(position) }.to_array(),
                         normal: normal.to_array(),
-                        uv: vertex.uv,
+                        // The system library has top-left UVs; mesh assets
+                        // store SL texture coordinates (bottom-left).
+                        uv: [vertex.uv[0], 1.0 - vertex.uv[1]],
                         joints: [0; 4],
                         weights: [1.0, 0.0, 0.0, 0.0],
                     }

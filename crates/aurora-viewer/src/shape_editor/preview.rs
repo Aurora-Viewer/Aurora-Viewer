@@ -2,6 +2,7 @@
 //! per snapshot off the frame thread, then visible min/max hints are morphed
 //! on workers. The existing GPU preview pass draws without a readback.
 
+use super::material::Face;
 use crate::{
     scene::{
         Scene,
@@ -15,7 +16,6 @@ use rayon::prelude::*;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     hash::{Hash, Hasher},
-    path::PathBuf,
     sync::Arc,
 };
 use uuid::Uuid;
@@ -25,16 +25,33 @@ struct RawMesh {
     data: Option<Arc<Vec<u8>>>,
     skin: Option<Arc<aurora_assets::SkinInfo>>,
     rigid: Option<Rigid>,
-    textures: Vec<Uuid>,
-    colors: Vec<[f32; 4]>,
+    appearance: Vec<Face>,
 }
 struct Mesh {
     asset: Uuid,
     faces: Arc<Vec<aurora_assets::MeshFace>>,
+    geometry: Arc<Vec<Geometry>>,
     skin: Option<Arc<aurora_assets::SkinInfo>>,
     rigid: Option<Rigid>,
-    textures: Vec<Uuid>,
-    colors: Vec<[f32; 4]>,
+    appearance: Vec<Face>,
+}
+type Geometry = (Arc<[Vertex]>, Arc<[u32]>);
+fn geometry(face: &aurora_assets::MeshFace) -> Geometry {
+    (
+        face.positions
+            .iter()
+            .enumerate()
+            .map(|(i, p)| Vertex {
+                position: *p,
+                normal: face.normals.get(i).copied().unwrap_or([0.0, 0.0, 1.0]),
+                uv: face.uvs.get(i).copied().unwrap_or_default(),
+                joints: face.joints.get(i).copied().unwrap_or_default().map(u32::from),
+                weights: face.weights.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 0.0]),
+            })
+            .collect::<Vec<_>>()
+            .into(),
+        face.indices.iter().map(|i| u32::from(*i)).collect::<Vec<_>>().into(),
+    )
 }
 #[derive(Clone)]
 struct Rigid {
@@ -44,7 +61,7 @@ struct Rigid {
     local: Mat4,
 }
 pub struct Input {
-    textures: HashMap<Uuid, (Arc<Vec<u8>>, PathBuf)>,
+    textures: HashMap<Uuid, crate::scene::textures::PreviewSource>,
     body: HashMap<usize, Uuid>,
     hidden_bakes: u64,
     meshes: Vec<RawMesh>,
@@ -53,6 +70,7 @@ pub struct Input {
 }
 pub struct Snapshot {
     textures: HashMap<Uuid, Arc<Image>>,
+    revisions: HashMap<Uuid, crate::scene::textures::PreviewRevision>,
     body: HashMap<usize, Uuid>,
     hidden_bakes: u64,
     meshes: Vec<Mesh>,
@@ -146,38 +164,18 @@ impl Input {
                         value.to_bits().hash(&mut mesh_hash);
                     }
                 }
-                let textures: Vec<Uuid> = object
-                    .te
-                    .as_ref()
-                    .map(|te| {
-                        te.faces
-                            .iter()
-                            .map(|face| {
-                                crate::scene::avatar::bake_slot_for(&face.texture)
-                                    .and_then(|(slot, _)| out.body.get(&slot).copied())
-                                    .unwrap_or(face.texture)
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                textures.hash(&mut mesh_hash);
-                let colors: Vec<_> = object
-                    .te
-                    .as_ref()
-                    .map(|te| te.faces.iter().map(|face| face.color).collect())
-                    .unwrap_or_default();
-                for color in &colors {
-                    for channel in color {
-                        channel.to_bits().hash(&mut mesh_hash);
-                    }
+                let appearance: Vec<_> = (0..aurora_prim::te::MAX_TES)
+                    .map(|face| Face::capture(world, scene, object, face, root))
+                    .collect();
+                for face in &appearance {
+                    face.hash(&mut mesh_hash);
                 }
                 out.meshes.push(RawMesh {
                     asset: id,
                     data,
                     skin,
                     rigid,
-                    textures,
-                    colors,
+                    appearance,
                 });
                 signatures.push((object.full_id, mesh_hash.finish()));
             }
@@ -188,7 +186,11 @@ impl Input {
             .body
             .values()
             .copied()
-            .chain(out.meshes.iter().flat_map(|mesh| mesh.textures.iter().copied()))
+            .chain(
+                out.meshes
+                    .iter()
+                    .flat_map(|mesh| mesh.appearance.iter().flat_map(|face| face.textures)),
+            )
             .collect();
         let mut ids: Vec<_> = ids.into_iter().collect();
         ids.sort();
@@ -198,7 +200,7 @@ impl Input {
             }
             let source = scene.textures.preview_source(&id);
             id.hash(&mut hasher);
-            source.0.len().hash(&mut hasher);
+            source.revision().hash(&mut hasher);
             out.textures.insert(id, source);
         }
         out.key = hasher.finish();
@@ -206,24 +208,16 @@ impl Input {
     }
 
     pub fn prepare(self, previous: Option<Arc<Snapshot>>) -> Snapshot {
+        let revisions = self.textures.iter().map(|(id, source)| (*id, source.revision())).collect();
         let textures = self
             .textures
             .into_par_iter()
-            .filter_map(|(id, (bytes, path))| {
-                let bytes = if bytes.is_empty() {
-                    std::fs::read(path).ok().map(Arc::new).unwrap_or(bytes)
-                } else {
-                    bytes
-                };
-                let image = aurora_assets::decode_j2k(&bytes, 2)
-                    .ok()
-                    .map(|pixels| {
-                        Arc::new(Image {
-                            size: [pixels.width, pixels.height],
-                            rgba: crate::scene::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize)
-                                .into(),
-                        })
-                    })
+            .filter_map(|(id, source)| {
+                let image = previous
+                    .as_ref()
+                    .filter(|old| old.revisions.get(&id) == Some(&source.revision()))
+                    .and_then(|old| old.textures.get(&id).cloned())
+                    .or_else(|| source.image(id))
                     .or_else(|| previous.as_ref().and_then(|snapshot| snapshot.textures.get(&id).cloned()));
                 image.map(|image| (id, image))
             })
@@ -252,6 +246,16 @@ impl Input {
                     })?;
                 Some(Mesh {
                     asset: mesh.asset,
+                    geometry: previous
+                        .as_ref()
+                        .and_then(|snapshot| {
+                            snapshot
+                                .meshes
+                                .iter()
+                                .find(|ready| ready.asset == mesh.asset)
+                                .map(|ready| ready.geometry.clone())
+                        })
+                        .unwrap_or_else(|| Arc::new(faces.iter().map(geometry).collect())),
                     faces,
                     skin: mesh.skin.or_else(|| {
                         previous.as_ref().and_then(|snapshot| {
@@ -263,13 +267,13 @@ impl Input {
                         })
                     }),
                     rigid: mesh.rigid,
-                    textures: mesh.textures,
-                    colors: mesh.colors,
+                    appearance: mesh.appearance,
                 })
             })
             .collect();
         Snapshot {
             textures,
+            revisions,
             body: self.body,
             hidden_bakes: self.hidden_bakes,
             meshes,
@@ -391,9 +395,9 @@ impl Snapshot {
                 textures: [texture, None, None, None],
                 material: Material {
                     alpha_mode: if matches!(part.name, "hair" | "eyelashes" | "skirt") {
-                        2
-                    } else {
                         1
+                    } else {
+                        2
                     },
                     alpha_cutoff: 0.5,
                     ..Default::default()
@@ -402,7 +406,7 @@ impl Snapshot {
             });
         }
         for mesh in &self.meshes {
-            let (faces, textures) = (&mesh.faces, &mesh.textures);
+            let faces = &mesh.faces;
             let binding = mesh.skin.as_ref().filter(|skin| !skin.joint_names.is_empty()).map(|skin| {
                 let joints: Vec<_> = skin
                     .joint_names
@@ -436,39 +440,45 @@ impl Snapshot {
                 .unwrap_or(Mat4::IDENTITY);
             let normal_transform = glam::Mat3::from_mat4(transform).inverse().transpose();
             for (index, face) in faces.iter().enumerate() {
-                if textures.get(index) == Some(&IMG_INVISIBLE) {
+                let Some(appearance) = mesh.appearance.get(index).or_else(|| mesh.appearance.first()) else {
+                    continue;
+                };
+                if appearance.textures[0] == IMG_INVISIBLE || appearance.material.color[3] < 0.004 {
                     continue;
                 }
-                let vertices = face
-                    .positions
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| Vertex {
-                        position: transform.transform_point3(Vec3::from_array(*p)).to_array(),
-                        normal: (normal_transform * Vec3::from_array(face.normals.get(i).copied().unwrap_or([0.0, 0.0, 1.0])))
-                            .normalize_or(Vec3::Z)
-                            .to_array(),
-                        uv: face.uvs.get(i).copied().unwrap_or_default(),
-                        joints: face.joints.get(i).copied().unwrap_or_default().map(u32::from),
-                        weights: face.weights.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 0.0]),
-                    })
-                    .collect::<Vec<_>>();
-                let texture = textures.get(index).and_then(|id| self.textures.get(id)).cloned();
-                let color = mesh.colors.get(index).copied().unwrap_or([1.0; 4]);
-                let blend = color[3] < 1.0
-                    || texture
+                let (vertices, indices) = mesh.geometry.get(index).cloned().unwrap_or_else(|| geometry(face));
+                let vertices = if binding.is_some() {
+                    vertices
+                } else {
+                    vertices
+                        .iter()
+                        .map(|v| Vertex {
+                            position: transform.transform_point3(Vec3::from_array(v.position)).to_array(),
+                            normal: (normal_transform * Vec3::from_array(v.normal)).normalize_or(Vec3::Z).to_array(),
+                            ..*v
+                        })
+                        .collect::<Vec<_>>()
+                        .into()
+                };
+                let textures = appearance.textures.map(|id| self.textures.get(&id).cloned());
+                let blend = appearance.material.color[3] < 1.0
+                    || textures[0]
                         .as_ref()
                         .is_some_and(|image| image.rgba.iter().skip(3).step_by(4).any(|alpha| *alpha != 0 && *alpha != 255));
                 parts.push(Part {
                     diagnostic: false,
-                    vertices: vertices.into(),
-                    indices: face.indices.iter().map(|i| u32::from(*i)).collect::<Vec<_>>().into(),
-                    textures: [texture, None, None, None],
+                    vertices,
+                    indices,
+                    textures,
                     material: Material {
-                        color,
-                        alpha_mode: if blend { 2 } else { 1 },
-                        alpha_cutoff: 0.5,
-                        ..Default::default()
+                        alpha_mode: if appearance.alpha_explicit {
+                            appearance.material.alpha_mode
+                        } else if blend {
+                            1
+                        } else {
+                            2
+                        },
+                        ..appearance.material
                     },
                     skin: binding.clone(),
                 });
@@ -507,6 +517,7 @@ mod tests {
     fn empty() -> Snapshot {
         Snapshot {
             textures: HashMap::new(),
+            revisions: HashMap::new(),
             body: HashMap::new(),
             hidden_bakes: 0,
             meshes: Vec::new(),
@@ -515,6 +526,109 @@ mod tests {
     }
     fn scene(library: Arc<AvatarLibrary>) -> Scene {
         Scene::new(std::env::temp_dir().join(format!("aurora-shape-hints-{}", Uuid::new_v4())), library)
+    }
+
+    #[test]
+    fn texture_hints_read_progressive_jpeg_and_cache_only_bc7_pixels() {
+        let scene = scene(Arc::new(AvatarLibrary::load()));
+        let id = Uuid::from_u128(111);
+        let source = scene.textures.preview_source(&id);
+        let rgba = [210u8, 120, 60, 255].repeat(64 * 64);
+        let jpeg = aurora_assets::j2k::encode_texture_j2k(64, 64, 4, &rgba, true).expect("texture");
+        std::fs::write(source.jpeg.with_extension("part"), jpeg).expect("progressive cache");
+        let image = source.image(id).expect("progressive pixels");
+        assert_eq!(&image.rgba[..4], &[210, 120, 60, 255]);
+        let mips = aurora_render::build_mips(64, 64, rgba, 16);
+        let chain = aurora_render::bc7::encode_chain(&mips, false).expect("blocks");
+        let meta = crate::scene::texture_cache::Meta {
+            info: aurora_assets::J2kInfo {
+                width: 64,
+                height: 64,
+                components: 4,
+                levels: 6,
+            },
+            discard: 0,
+            alpha: crate::scene::jobs::AlphaKind::Opaque,
+            alpha_channel: false,
+        };
+        let source = scene.textures.preview_source(&id);
+        std::fs::remove_file(source.jpeg.with_extension("part")).expect("only BC7 remains");
+        std::fs::write(
+            &source.blocks,
+            crate::scene::texture_cache::encode(&meta, None, &chain).expect("cache"),
+        )
+        .expect("write");
+        let image = source.image(id).expect("cache-only pixels");
+        assert_eq!(image.size, [64, 64]);
+        for (actual, expected) in image.rgba[..4].iter().zip([210u8, 120, 60, 255]) {
+            assert!(actual.abs_diff(expected) < 5);
+        }
+    }
+
+    #[test]
+    fn dragging_keeps_live_avatar_edits_and_waits_to_refresh_comparison_images() {
+        let (mut world, mut state) = crate::shape_editor::tests::fixture();
+        let scene = scene(world.avatar_lib.clone());
+        let ctx = egui::Context::default();
+        state.snapshot = Some(Arc::new(empty()));
+        state.snapshot_ready_key = Some(1);
+        let param = super::super::catalog::PARAMS.iter().find(|p| p.id == 33).expect("height");
+        state.editing = true;
+        let before = world.visual_params(&world.agent_id).expect("preview").to_vec();
+        for tick in 0..100 {
+            state
+                .draft
+                .as_mut()
+                .expect("draft")
+                .set(param, param.min + (param.max - param.min) * tick as f32 / 100.0);
+            state.changed(&mut world);
+            // Even a long pause while holding the slider cannot dispatch hints.
+            state.edited_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+            state.request_hints(&world, &scene.jobs, &ctx, &[33]);
+            assert!(state.model_pending.is_none());
+        }
+        assert_ne!(world.visual_params(&world.agent_id).expect("edited"), before);
+        state.editing = false;
+        state.edited_at = Some(std::time::Instant::now());
+        state.request_hints(&world, &scene.jobs, &ctx, &[33]);
+        assert!(state.model_pending.is_none(), "numeric edits coalesce too");
+        state.edited_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        state.request_hints(&world, &scene.jobs, &ctx, &[33]);
+        assert!(state.model_pending.is_some(), "one batch after release");
+    }
+
+    #[test]
+    fn a_slider_own_endpoints_and_rigged_geometry_are_reused() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let mut scene = scene(world.avatar_lib.clone());
+        let asset = super::super::demo::asset(&world.avatar_lib, true).expect("head");
+        scene
+            .meshes
+            .insert_local(super::super::demo::ASSET, asset.data, asset.header, asset.skin);
+        world.objects.upsert(
+            world.main_region.expect("region"),
+            super::super::demo::object(&world).expect("object"),
+        );
+        let snapshot = Input::capture(&world, &scene).prepare(None);
+        let a = snapshot.model(&world.avatar_lib, &[], &BTreeMap::from([(33, -2.3)]), 1, 0.0);
+        let b = snapshot.model(&world.avatar_lib, &[], &BTreeMap::from([(33, 2.0)]), 1, 0.0);
+        assert!(Arc::ptr_eq(
+            &a.parts.last().expect("a").vertices,
+            &b.parts.last().expect("b").vertices
+        ));
+        assert!(Arc::ptr_eq(
+            &a.parts.last().expect("a").indices,
+            &b.parts.last().expect("b").indices
+        ));
+        let mut params = BTreeMap::from([(33, 0.0), (80, 0.0)]);
+        let key = super::super::hint_key(1, &[], &params, 33);
+        params.insert(33, 2.0);
+        assert_eq!(key, super::super::hint_key(1, &[], &params, 33));
+        params.insert(80, 1.0);
+        assert_ne!(key, super::super::hint_key(1, &[], &params, 33));
     }
 
     #[test]
@@ -601,16 +715,30 @@ mod tests {
             meshes: vec![Mesh {
                 asset: id,
                 faces: faces.clone(),
+                geometry: Arc::new(Vec::new()),
                 skin: None,
                 rigid: None,
-                textures: vec![id],
-                colors: Vec::new(),
+                appearance: vec![Face {
+                    textures: [id, Uuid::nil(), Uuid::nil(), Uuid::nil()],
+                    material: Material::default(),
+                    alpha_explicit: false,
+                }],
             }],
             pose: (vec![Quat::IDENTITY], vec![Vec3::ZERO]),
             ..empty()
         };
         let input = Input {
-            textures: HashMap::from([(id, (Arc::new(vec![0]), PathBuf::new()))]),
+            textures: HashMap::from([(
+                id,
+                crate::scene::textures::PreviewSource {
+                    bytes: Arc::new(vec![0]),
+                    jpeg: Default::default(),
+                    blocks: Default::default(),
+                    decoded: None,
+                    size: None,
+                    procedural: false,
+                },
+            )]),
             body: HashMap::new(),
             hidden_bakes: 0,
             meshes: vec![RawMesh {
@@ -618,8 +746,14 @@ mod tests {
                 data: None,
                 skin: None,
                 rigid: None,
-                textures: vec![id],
-                colors: vec![[0.5; 4]],
+                appearance: vec![Face {
+                    textures: [id, Uuid::nil(), Uuid::nil(), Uuid::nil()],
+                    material: Material {
+                        color: [0.5; 4],
+                        ..Default::default()
+                    },
+                    alpha_explicit: false,
+                }],
             }],
             pose: (vec![Quat::from_rotation_z(1.0)], vec![Vec3::ONE]),
             key: 2,
@@ -627,7 +761,7 @@ mod tests {
         let next = input.prepare(Some(Arc::new(previous)));
         assert!(Arc::ptr_eq(&next.textures[&id], &image));
         assert!(Arc::ptr_eq(&next.meshes[0].faces, &faces));
-        assert_eq!(next.meshes[0].colors, vec![[0.5; 4]]);
+        assert_eq!(next.meshes[0].appearance[0].material.color, [0.5; 4]);
         assert_eq!(next.pose.0, vec![Quat::IDENTITY]);
     }
 
@@ -670,6 +804,7 @@ mod tests {
         let tint = [0.25, 0.5, 0.75, 0.8];
         let snapshot = Snapshot {
             textures: HashMap::new(),
+            revisions: HashMap::new(),
             body: HashMap::new(),
             hidden_bakes: 0,
             meshes: vec![Mesh {
@@ -682,13 +817,20 @@ mod tests {
                     weights: vec![[1.0, 0.0, 0.0, 0.0]; 3],
                     ..Default::default()
                 }]),
+                geometry: Arc::new(Vec::new()),
                 skin: Some(Arc::new(aurora_assets::SkinInfo {
                     joint_names: vec!["mChest".into()],
                     inverse_bind: vec![library.rig.default_world_inv[chest]],
                     ..Default::default()
                 })),
-                textures: Vec::new(),
-                colors: vec![tint],
+                appearance: vec![Face {
+                    textures: [Uuid::nil(); 4],
+                    material: Material {
+                        color: tint,
+                        ..Default::default()
+                    },
+                    alpha_explicit: false,
+                }],
             }],
             pose: Default::default(),
         };
@@ -696,7 +838,7 @@ mod tests {
         let high = snapshot.model(&library, &[], &BTreeMap::from([(33, 2.0)]), 8, -0.5);
         let mesh = low.parts.last().expect("rigged face");
         assert_eq!(mesh.material.color, tint);
-        assert_eq!(mesh.material.alpha_mode, 2);
+        assert_eq!(mesh.material.alpha_mode, 1);
         assert_ne!(
             mesh.skin.as_ref().expect("skin").rest,
             high.parts.last().expect("face").skin.as_ref().expect("skin").rest
@@ -709,6 +851,7 @@ mod tests {
         let library = AvatarLibrary::load();
         let snapshot = Snapshot {
             textures: HashMap::new(),
+            revisions: HashMap::new(),
             body: HashMap::from([(8, IMG_INVISIBLE)]),
             hidden_bakes: 0,
             meshes: Vec::new(),
@@ -725,6 +868,7 @@ mod tests {
         );
         let without_mask = Snapshot {
             textures: HashMap::new(),
+            revisions: HashMap::new(),
             body: HashMap::new(),
             hidden_bakes: 0,
             meshes: Vec::new(),
@@ -737,6 +881,7 @@ mod tests {
         // With a head visible, facial controls change its actual vertices.
         let visible = Snapshot {
             textures: HashMap::new(),
+            revisions: HashMap::new(),
             body: HashMap::new(),
             hidden_bakes: 0,
             meshes: Vec::new(),

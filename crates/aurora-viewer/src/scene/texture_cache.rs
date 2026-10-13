@@ -186,11 +186,30 @@ fn u32_at(b: &[u8], at: usize) -> Option<u32> {
 /// level it holds when that is coarser. None for a missing, older or
 /// damaged file.
 pub fn read(path: &Path, want: u8) -> Option<Transcoded> {
+    read_for(path, |_| want)
+}
+
+/// Coarse preview reads stay bounded even before the streamer knows the
+/// texture's dimensions. Select from the cache header before loading blocks.
+pub fn read_preview(path: &Path) -> Option<Transcoded> {
+    read_for(path, |head| {
+        preview_discard(u32_at(head, 12).unwrap_or(0), u32_at(head, 16).unwrap_or(0))
+    })
+}
+pub fn preview_discard(mut width: u32, mut height: u32) -> u8 {
+    let mut discard = 0;
+    while width.max(height) > 256 && discard < 15 {
+        (width, height) = (width.div_ceil(2), height.div_ceil(2));
+        discard += 1;
+    }
+    discard
+}
+fn read_for(path: &Path, want: impl FnOnce(&[u8]) -> u8) -> Option<Transcoded> {
     let mut file = std::fs::File::open(path).ok()?;
     let file_len = file.metadata().ok()?.len();
     let mut head = vec![0u8; (HEADER + MAX_LEVELS * 8).min(file_len as usize)];
     file.read_exact(&mut head).ok()?;
-    let parsed = parse(&head, file_len, want)?;
+    let parsed = parse(&head, file_len, want(&head))?;
     match parsed {
         Parsed::KeepRgba => Some(Transcoded::KeepRgba),
         Parsed::Bc7 { mut cached, mask, data } => {

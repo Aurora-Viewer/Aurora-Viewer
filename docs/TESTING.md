@@ -1677,7 +1677,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_RESTRICTED=1`**: red parcel icons, damage
   enabled, health at 72%.
 
-**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|mesh-head|static-head`**
+**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|mesh-head|static-head|pbr-head|mesh-drag`**
 opens the editor with a synthetic worn shape, without reading a real inventory or
 connecting to a grid. Category modes select the corresponding controls; `male`
 selects the male shape, `readonly` removes Modify, `nocopy` removes Copy, `dirty`
@@ -1689,6 +1689,12 @@ over the category row goes forward/backward, stays within Body/Legs and does not
 scroll the parameter list. The self-avatar/attachment menu's Appearance › Edit
 Shape opens this editor. Asset arrivals and AO cycles must keep ready hint images
 visible, with no repeated "Preparing preview" placeholders.
+`pbr-head` uses a PBR skin material over a conflicting blue texture-entry tint;
+the head must retain its textured skin color in the world and in the hints.
+`mesh-drag` sweeps Head Size for six seconds, starting two seconds after opening:
+the live head changes smoothly, existing comparison images remain visible and
+the log has no hint dispatch during the sweep (one refresh after release).
+Switch Body / Head / Torso / Legs: the main camera smoothly frames each area.
 Combine with `AURORA_DEMO_CLASSIC=1` for a baked system avatar. Move a slider or
 type a value, switch sex, use minimum/maximum
 hints, filter parameters, toggle hints and height units, then Cancel, Save and Save

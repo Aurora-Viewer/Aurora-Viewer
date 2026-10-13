@@ -854,6 +854,58 @@ pub struct TextureStreamer {
     watch: LoadWatch,
 }
 
+/// Coarse pixels for an isolated appearance preview, decoded on a worker.
+pub struct PreviewSource {
+    pub bytes: Arc<Vec<u8>>,
+    pub jpeg: PathBuf,
+    pub blocks: PathBuf,
+    pub decoded: Option<u8>,
+    pub size: Option<(u32, u32)>,
+    pub procedural: bool,
+}
+pub type PreviewRevision = (usize, Option<u8>, Option<(u32, u32)>, bool);
+impl PreviewSource {
+    pub fn revision(&self) -> PreviewRevision {
+        (self.bytes.len(), self.decoded, self.size, self.procedural)
+    }
+    pub fn image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
+        let image = |width, height, rgba: Vec<u8>| {
+            Arc::new(aurora_render::preview::Image {
+                size: [width, height],
+                rgba: rgba.into(),
+            })
+        };
+        if self.procedural
+            && let Some((pixels, w, h)) = crate::demo::local_texture(&id)
+        {
+            return Some(image(w, h, pixels));
+        }
+        if let Some(texture_cache::Transcoded::Bc7(cached)) = texture_cache::read_preview(&self.blocks)
+            && let Some((w, h, blocks)) = cached.levels.first()
+            && let Some(rgba) = aurora_render::bc7::decode_level(blocks, *w, *h)
+        {
+            return Some(image(*w, *h, rgba));
+        }
+        let bytes = if self.bytes.is_empty() {
+            // Progressive downloads may only have a .part cache. Their ready
+            // coarse pixels are already visible in the main scene.
+            std::fs::read(&self.jpeg)
+                .or_else(|_| std::fs::read(self.jpeg.with_extension("part")))
+                .ok()
+                .map(Arc::new)?
+        } else {
+            self.bytes
+        };
+        let info = aurora_assets::j2k_info(&bytes)?;
+        let pixels = aurora_assets::decode_j2k(&bytes, texture_cache::preview_discard(info.width, info.height)).ok()?;
+        Some(image(
+            pixels.width,
+            pixels.height,
+            super::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize),
+        ))
+    }
+}
+
 impl TextureStreamer {
     pub fn new(cache_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(cache_dir.join("tex"));
@@ -945,12 +997,18 @@ impl TextureStreamer {
         self.entries.get(id)?.info.map(|i| (i.width, i.height))
     }
 
-    /// Share compressed source bytes with the appearance preview worker.
-    pub fn preview_source(&self, id: &Uuid) -> (Arc<Vec<u8>>, PathBuf) {
-        (
-            self.entries.get(id).map(|e| e.data.clone()).unwrap_or_default(),
-            Self::cache_path(&self.cache_dir, id, true),
-        )
+    /// Share source bytes and cache locations, never GPU readback or disk IO
+    /// on the frame thread. A cache-only load must also invalidate hints.
+    pub fn preview_source(&self, id: &Uuid) -> PreviewSource {
+        let entry = self.entries.get(id);
+        PreviewSource {
+            bytes: entry.map(|e| e.data.clone()).unwrap_or_default(),
+            jpeg: Self::cache_path(&self.cache_dir, id, true),
+            blocks: Self::transcoded_path(&self.cache_dir, id),
+            decoded: entry.and_then(|e| e.decoded),
+            size: entry.and_then(|e| e.info).map(|i| (i.width, i.height)),
+            procedural: self.local_slots.contains_key(id),
+        }
     }
 
     /// The texture has see-through pixels (None until it is decoded): the

@@ -92,6 +92,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
     let had_copy = st.copy_name.is_some();
     let mut visible = Vec::new();
     let mut changed = false;
+    st.editing = false;
     let mut open = true;
     let mut close = false;
     let mut reset = false;
@@ -310,6 +311,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
                                         draft.set(param, param.min + (param.max - param.min) * percent / 100.0);
                                         changed = true;
                                     }
+                                    st.editing |= a.dragged() || b.dragged() || b.has_focus();
                                 });
                                 ui.add_space(9.0);
                             });

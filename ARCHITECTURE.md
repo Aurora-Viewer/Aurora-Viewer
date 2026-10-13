@@ -129,6 +129,8 @@ virtualisation and a fixed Save As / Cancel / Save footer. `app/shape_editor.rs`
 opens it from Appearance, the self-avatar/attachment menu or the worn shape's
 inventory menu, restores the camera
 on closing and provides `AURORA_DEMO_SHAPE`.
+`shape_editor/camera.rs` frames the posed skeleton by category (whole body,
+head, torso or legs), using the existing camera transition.
 
 The draft overrides only our avatar's visual parameter view in `World`; incoming
 appearances stay authoritative underneath and Cancel restores the newest one.
@@ -143,8 +145,18 @@ attachment joint and local parent chain. Content signatures exclude animation
 cycles and sort attachment identities; active snapshot/model keys remain separate
 from pending ones, so refreshes replace ready images without a loading flash.
 Decoded geometry is shared across texture updates; temporarily missing source
-bytes retain the same asset's ready geometry/pixels. `shape_editor/demo.rs` builds
-rigged/static mesh-head fixtures on workers through the ordinary asset codec.
+bytes retain the same asset's ready geometry/pixels.
+Texture sources include progressive JPEG2000, cache-only BC7 and procedural
+demo pixels, with small decodes on workers and no frame-thread disk access.
+`shape_editor/material.rs` resolves texture entries, legacy normal/alpha settings,
+PBR materials and face overrides, with BOM redirection and per-map UV transforms.
+Dragging updates the live avatar immediately; hints coalesce after release and
+180 ms without edits, and obsolete workers stop before the next comparison.
+Each slider's own endpoints ignore its current value. Immutable rigged vertices
+and indices are shared across models; the render preview cache also shares their
+GPU buffers and textures, releasing unused assets through weak owners.
+`shape_editor/demo.rs` builds rigged/static mesh-head fixtures on workers
+through the ordinary asset codec, including PBR and continuous-slider scenarios.
 The category row consumes discrete wheel events once per frame and accumulates
 trackpad deltas. Hint visibility and height units are saved
 in Settings. The main scene continues to use its normal shape/morph streaming.
