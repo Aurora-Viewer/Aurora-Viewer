@@ -73,7 +73,7 @@ struct Frame {
     // which of `lights` a fragment walks (light_tiles.rs, LightSets)
     light_grid: vec4<f32>,      // x, y: columns and rows per pixel
     light_forward: vec4<f32>,   // camera forward axis (fragment depth)
-    light_mode: vec4<u32>,      // x: 1 = the list narrowed by the sets below, y: 1 = checked
+    light_mode: vec4<u32>,      // x: 1 = the list narrowed by the sets below, y: 1 = checked, z: 1 = shadow view (AURORA_DEBUG_SHADOWS)
     // lights that cover each screen column, each screen row and each slice
     // of depth: two sets per element, each its low then its high 32 lights
     light_columns: array<vec4<u32>, 16>,
@@ -695,6 +695,37 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
         }
     }
     return sum / 16.0;
+}
+
+// AURORA_DEBUG_SHADOWS (frame.light_mode.z): instead of the image, the
+// cascade each pixel reads — red, green, blue from the finest, mixed where
+// two are blended, black beyond the shadow distance — darkened where the
+// pixel is in shadow. The choice mirrors shadow_factor.
+fn shadow_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> vec3<f32> {
+    if (frame.light_mode.z == 0u) {
+        return col;
+    }
+    let splits = frame.cascade_splits;
+    var own_depth = vertex_depth;
+    if (splits.w > 0.5) {
+        own_depth = distance(world_pos, frame.camera_pos.xyz);
+    }
+    var w = vec3<f32>(0.0);
+    if (own_depth <= splits.z) {
+        var k = 0u;
+        if (own_depth > splits.x) { k = 1u; }
+        if (own_depth > splits.y) { k = 2u; }
+        w[k] = 1.0;
+        if (k < 2u) {
+            let start = select(0.0, splits.x, k == 1u);
+            let end = select(splits.x, splits.y, k == 1u);
+            let band = (end - start) * 0.15;
+            let t = clamp((own_depth - (end - band)) / max(band, 1e-4), 0.0, 1.0);
+            w[k] = 1.0 - t;
+            w[k + 1u] = t;
+        }
+    }
+    return w * (0.12 + 0.88 * shadow_factor(world_pos, n, vertex_depth));
 }
 
 fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {

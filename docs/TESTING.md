@@ -1773,6 +1773,7 @@ What the inventory must show with these scenarios:
 | `AURORA_RENDER_THREAD=0` | Frames drawn on the main thread |
 | `AURORA_EYE_RELATIVE=0` | Vertices of the objects and the terrain computed in region coordinates |
 | `AURORA_SHADOW_LEGACY=1` | Shadows drawn by the old path |
+| `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
@@ -2034,19 +2035,37 @@ What the inventory must show with these scenarios:
   view. To be seen with `AURORA_DEMO_ALTITUDE=2085` and
   `AURORA_DEMO_CAMERA=drift,690,420,84` on consecutive screenshots (frames
   800 to 899): the edge of the panel drifts steadily, or jitters with `0`.
-- **`AURORA_SHADOW_LEGACY=1|splits|ab`**: to compare the image and the
-  measurements of the shadows. By default, each cascade only draws the
-  objects whose shadow can fall on what the view reads in it
+- **`AURORA_SHADOW_LEGACY=1|splits|separate|ab|merge`**: to compare the
+  image and the measurements of the shadows. By default, each cascade only
+  draws the objects whose shadow can fall on what the view reads in it
   (`aurora-render/src/shadow_cull.rs`), the opaque faces are drawn without
-  a fragment shader, and the cascade of a pixel is chosen from its own
-  distance to the camera.
+  a fragment shader, the cascade of a pixel is chosen from its own distance
+  to the camera, and an opaque object that the cascade before already holds
+  is not drawn again: that part of the cascade is filled from the finer
+  map (`aurora-render/src/shadow_merge.rs`), so most objects are drawn in
+  one cascade only.
+  - `separate`: each cascade draws all its objects, as before. An object
+    whose shadow reaches two or three cascades is drawn in each: in a
+    crowd, every avatar.
+  - `merge`: with `AURORA_PROFILE=1`, `separate` one second in three and
+    the default path the other two (`shadow_path=separate|new`). In the
+    demo crowd (`AURORA_DEMO_CROWD=40`, `AURORA_DEMO_ANIMESH=1`,
+    `AURORA_DEMO_ANIMESH_TRIS=200000`, `AURORA_FPS_LIMIT=500`): about half
+    the shadow triangles (`st_k0` + `st_k1` + `st_k2`), at noon as at
+    sunset (`AURORA_DEMO_TOD=3`). Nothing must be seen changing from one
+    second to the next.
+  - Expected image difference with `separate`: none but the place of a
+    shadow edge within a texel of its cascade (the finer map is read at the
+    centre of each texel of the coarser one, where a draw would have
+    sampled the object). The alpha-tested faces are drawn in every cascade
+    as before, since a finer map cuts their texture out differently.
   - `1`: the old path. All the objects of each cascade's square, all the
     faces with the alpha test, and the cascade chosen from the distance
     interpolated between the vertices of the triangle.
   - `splits`: only the old choice of the cascade. The image is then that of
     the old path to the pixel; the objects close to the camera stay drawn
     in the far cascades.
-  - `ab`: with `AURORA_PROFILE=1`, the old path, the new one and `splits`
+  - `ab`: with `AURORA_PROFILE=1`, the old path, the default one and `splits`
     in turn, one second each, in the same session and under the same
     outside load. `shadow_path=legacy|new|splits` in the `perf summary`
     line tells which one drew the second; compare `shadow_draws`,
@@ -2057,6 +2076,13 @@ What the inventory must show with these scenarios:
     cascades moves, and the shadows close to the camera are sharper there
     (they were reading a farther cascade than the terrain and the small
     neighbouring objects).
+- **`AURORA_DEBUG_SHADOWS=1`**: instead of the image, objects and terrain
+  show the cascade each pixel reads — red, green then blue from the finest,
+  mixed where two cascades are blended, black beyond the shadow distance —
+  darkened where the pixel is in shadow (`shadow_view` in `common.wgsl`).
+  Used to compare two shadow paths whatever the lighting: capture the same
+  frame with `AURORA_SHADOW_LEGACY=distance` and without, the dark areas
+  must be the same in both, apart from their edges.
 - **`AURORA_PROFILE=1`**: one `perf summary` line per second, plus one
   `perf settings` line when the settings change. The background fps cap
   ("Limit when unfocused") is ignored: a window without focus is still

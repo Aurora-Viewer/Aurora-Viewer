@@ -1134,6 +1134,8 @@ pub(crate) struct Backend {
     shadow_buffers: Vec<wgpu::Buffer>,
     shadow_bind_groups: Vec<wgpu::BindGroup>,
     shadow_size: u32,
+    /// Opaque casters shared between the cascades (shadow_merge.rs).
+    shadow_merge: crate::shadow_merge::ShadowMerge,
     post_buffer: wgpu::Buffer,
     post_sampler: wgpu::Sampler,
     shadow_sampler: wgpu::Sampler,
@@ -2014,6 +2016,7 @@ impl Backend {
 
         let shadow_size = 2048u32;
         let shadow_view = Self::make_shadow_atlas(&device, shadow_size);
+        let shadow_merge = crate::shadow_merge::ShadowMerge::new(&device, &shadow_view, shadow_size, SHADOW_FORMAT);
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -2214,6 +2217,7 @@ impl Backend {
             shadow_buffers,
             shadow_bind_groups,
             shadow_size,
+            shadow_merge,
             post_buffer,
             post_sampler,
             shadow_sampler,
@@ -2677,7 +2681,8 @@ impl Backend {
             depth_format: Some(SHADOW_FORMAT),
             depth_bias: wgpu::DepthBiasState {
                 constant: 2,
-                slope_scale: 2.0,
+                // (the merge of two cascades makes up for it: shadow_merge.rs)
+                slope_scale: crate::shadow_cull::SLOPE_BIAS,
                 clamp: 0.0,
             },
             constants: &[],
@@ -3227,6 +3232,7 @@ impl Backend {
         if shadows_dirty {
             self.shadow_view = Self::make_shadow_atlas(&self.device, res);
             self.shadow_size = res;
+            self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
         }
         self.settings = s;
         if s.aa == AntiAliasing::Taa {
@@ -3424,7 +3430,7 @@ impl Backend {
             let radius = corners.iter().map(|c| c.distance(center)).fold(0.0f32, f32::max).max(1.0);
             let radius = (radius * 16.0).ceil() / 16.0;
             let up = if light_dir.z.abs() > 0.99 { Vec3::Y } else { Vec3::Z };
-            let eye = center - light_dir * (radius + 400.0);
+            let eye = center - light_dir * (radius + crate::shadow_cull::CASCADE_DEPTH_PAD);
             let mut view = glam::camera::rh::view::look_at_mat4(eye, center, up);
             // snap to texel grid to avoid shimmering when the camera moves.
             // The grid is anchored on a world point near the cascade (its
@@ -3440,7 +3446,8 @@ impl Backend {
             let origin = view.transform_point3(anchor);
             let snapped = Vec3::new((origin.x / texel).round() * texel, (origin.y / texel).round() * texel, origin.z);
             view = Mat4::from_translation(snapped - origin) * view;
-            let proj = glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, 0.1, radius * 2.0 + 800.0);
+            let depth = radius * 2.0 + 2.0 * crate::shadow_cull::CASCADE_DEPTH_PAD;
+            let proj = glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, 0.1, depth);
             out[i] = proj * view;
             near = split;
         }
@@ -3808,6 +3815,10 @@ impl Backend {
             main.light_sets.mode[1] = u32::from(light_culling == LightCulling::Check);
         }
         stats.light_tiles = light_tiles_on;
+        // AURORA_DEBUG_SHADOWS: the cascade each pixel reads and its shadow,
+        // instead of the image (shadow_view in common.wgsl)
+        static SHADOW_VIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        main.light_sets.mode[2] = u32::from(*SHADOW_VIEW.get_or_init(|| std::env::var_os("AURORA_DEBUG_SHADOWS").is_some()));
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
@@ -4022,6 +4033,25 @@ impl Backend {
             [crate::shadow_cull::CASTER_PLANES_ALL; CASCADES]
         };
         let shadow_depth_only = shadow_path & crate::shadow_cull::path::DEPTH_ONLY != 0;
+        // Opaque casters that the cascade before holds are left out of a
+        // cascade, which takes their depth from that finer map
+        // (shadow_merge.rs): both pairs of cascades, or none.
+        let merges: [Option<crate::shadow_cull::Merge>; crate::shadow_merge::STEPS] =
+            if f.shadows && shadow_depth_only && shadow_path & crate::shadow_cull::path::MERGE != 0 {
+                std::array::from_fn(|i| crate::shadow_cull::merge_of(&cascades, i + 1, self.shadow_size, self.shadow_merge.scratch_size()))
+            } else {
+                [None; crate::shadow_merge::STEPS]
+            };
+        let merges: Option<[crate::shadow_cull::Merge; crate::shadow_merge::STEPS]> = match merges {
+            [Some(a), Some(b)] => Some([a, b]),
+            _ => None,
+        };
+        let merge_size = if merges.is_some() { self.shadow_size as f32 } else { 0.0 };
+        if let Some(merges) = &merges {
+            for (step, m) in merges.iter().enumerate() {
+                self.shadow_merge.write(&self.queue, step, m, self.shadow_size);
+            }
+        }
         let mut shadow_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
         let mut shadow_alpha_lists: [Vec<DrawCmd>; CASCADES] = Default::default();
         if f.shadows {
@@ -4029,6 +4059,9 @@ impl Backend {
                 for c in &lists.shadow_casters {
                     if !crate::gpu_cull::in_cascade(m, c.center, c.radius)
                         || !crate::shadow_cull::casts_into(&caster_planes[ci], c.center, c.radius)
+                        || (!c.alpha
+                            && shadow_depth_only
+                            && crate::shadow_cull::merged_from_finer(&cascades, &caster_planes, merge_size, ci, c.center, c.radius))
                     {
                         continue;
                     }
@@ -4136,7 +4169,15 @@ impl Backend {
                     flags |= bit;
                 }
             }
-            let frame = CullFrame::new(g, &cascades, &caster_planes, [water_vp, mirror_vp, probe_vp], spot_vp, flags);
+            let frame = CullFrame::new(
+                g,
+                &cascades,
+                &caster_planes,
+                merge_size,
+                [water_vp, mirror_vp, probe_vp],
+                spot_vp,
+                flags,
+            );
             self.cull
                 .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, frame);
         }
@@ -4333,79 +4374,119 @@ impl Backend {
             mark(&mut encoder, MARK_SHADOW_C1_END);
         }
         if f.shadows {
-            // one pass for all cascades, each in its atlas tile
-            let ts = if take_first() { ts_begin(&self.timer) } else { None };
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("shadow"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: ts,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            if gpu_on || rg.shadow.iter().chain(&rg.shadow_alpha).chain(&rg.spot).any(|r| r.1 > 0) {
-                pass.set_bind_group(1, &self.records_bind_group, &[]);
-                pass.set_bind_group(2, &scene.textures, &[]);
-                pass.set_vertex_buffer(0, scene.vertices.slice(..));
-                pass.set_vertex_buffer(1, scene.skin.slice(..));
-                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+            // What the atlas passes draw, in order: each cascade in its
+            // tile, then the projectors' maps. One pass, unless the
+            // cascades are merged: the pass then ends after the opaque
+            // casters of the first and of the second cascade, whose tile is
+            // copied to the scratch map and laid over the next cascade
+            // (shadow_merge.rs). The alpha-tested casters come after the
+            // copy: every cascade draws its own.
+            #[derive(Clone, Copy)]
+            enum Step {
+                Opaque(usize),
+                Alpha(usize),
+                Merge(usize),
+                Spots,
             }
+            use Step::*;
+            const ONE_PASS: &[&[Step]] = &[&[Opaque(0), Alpha(0), Opaque(1), Alpha(1), Opaque(2), Alpha(2), Spots]];
+            const MERGED: &[&[Step]] = &[
+                &[Opaque(0)],
+                &[Alpha(0), Opaque(1), Merge(0)],
+                &[Alpha(1), Opaque(2), Merge(1), Alpha(2), Spots],
+            ];
             let size = self.shadow_size;
-            for ci in 0..CASCADES {
-                let (x, y) = ((ci as u32 % 2) * size, (ci as u32 / 2) * size);
-                pass.set_viewport(x as f32, y as f32, size as f32, size as f32, 0.0, 1.0);
-                pass.set_scissor_rect(x, y, size, size);
-                pass.set_bind_group(3, &self.shadow_bind_groups[ci], &[]);
-                // depth only, then alpha tested: the depth kept is the
-                // nearest whatever the order
-                for (pipe, (off, count), bin) in [
-                    (&self.pipelines.shadow_depth, rg.shadow[ci], BIN_SHADOW + ci),
-                    (&self.pipelines.shadow, rg.shadow_alpha[ci], BIN_SHADOW_ALPHA + ci),
-                ] {
-                    if count == 0 && !gpu_on {
-                        continue;
-                    }
-                    pass.set_pipeline(pipe);
-                    if count > 0 {
-                        pass.multi_draw_indexed_indirect(&self.indirect, off, count);
-                        calls.set(calls.get() + 1);
-                    }
-                    draw_bin(&mut pass, None, bin, bin);
-                }
-                match ci {
-                    0 => pass_mark(&mut pass, MARK_SHADOW_C0_END),
-                    1 => pass_mark(&mut pass, MARK_SHADOW_C1_END),
-                    _ => {}
-                }
-            }
-            // projector shadow maps: the halves of the top row of the
-            // atlas's fourth tile, every caster with the alpha test
             let half = size / 2;
-            for (k, vp) in spot_vp.iter().enumerate() {
-                if vp.is_none() {
-                    continue;
+            let passes = if merges.is_some() { MERGED } else { ONE_PASS };
+            for (i, steps) in passes.iter().enumerate() {
+                let ts = if i == 0 && take_first() { ts_begin(&self.timer) } else { None };
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("shadow"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.shadow_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: if i == 0 { wgpu::LoadOp::Clear(1.0) } else { wgpu::LoadOp::Load },
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: ts,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                if gpu_on || rg.shadow.iter().chain(&rg.shadow_alpha).chain(&rg.spot).any(|r| r.1 > 0) {
+                    pass.set_bind_group(1, &self.records_bind_group, &[]);
+                    pass.set_bind_group(2, &scene.textures, &[]);
+                    pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                    pass.set_vertex_buffer(1, scene.skin.slice(..));
+                    pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
                 }
-                let (x, y) = (size + k as u32 * half, size);
-                pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
-                pass.set_scissor_rect(x, y, half, half);
-                pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
-                let (off, count) = rg.spot[k];
-                if count == 0 && !gpu_on {
-                    continue;
+                for step in steps.iter().copied() {
+                    match step {
+                        Opaque(ci) | Alpha(ci) => {
+                            let (x, y) = ((ci as u32 % 2) * size, (ci as u32 / 2) * size);
+                            pass.set_viewport(x as f32, y as f32, size as f32, size as f32, 0.0, 1.0);
+                            pass.set_scissor_rect(x, y, size, size);
+                            pass.set_bind_group(3, &self.shadow_bind_groups[ci], &[]);
+                            // depth only, then alpha tested: the depth kept
+                            // is the nearest whatever the order
+                            let (pipe, (off, count), bin) = match step {
+                                Opaque(_) => (&self.pipelines.shadow_depth, rg.shadow[ci], BIN_SHADOW + ci),
+                                _ => (&self.pipelines.shadow, rg.shadow_alpha[ci], BIN_SHADOW_ALPHA + ci),
+                            };
+                            if count > 0 || gpu_on {
+                                pass.set_pipeline(pipe);
+                                if count > 0 {
+                                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                                    calls.set(calls.get() + 1);
+                                }
+                                draw_bin(&mut pass, None, bin, bin);
+                            }
+                            match step {
+                                Alpha(0) => pass_mark(&mut pass, MARK_SHADOW_C0_END),
+                                Alpha(1) => pass_mark(&mut pass, MARK_SHADOW_C1_END),
+                                _ => {}
+                            }
+                        }
+                        Merge(k) => {
+                            if let Some(merges) = &merges {
+                                self.shadow_merge.merge(&mut pass, k, &merges[k], size);
+                            }
+                        }
+                        Spots => {
+                            // projector shadow maps: the halves of the top
+                            // row of the atlas's fourth tile, every caster
+                            // with the alpha test
+                            for (k, vp) in spot_vp.iter().enumerate() {
+                                if vp.is_none() {
+                                    continue;
+                                }
+                                let (x, y) = (size + k as u32 * half, size);
+                                pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
+                                pass.set_scissor_rect(x, y, half, half);
+                                pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
+                                let (off, count) = rg.spot[k];
+                                if count == 0 && !gpu_on {
+                                    continue;
+                                }
+                                pass.set_pipeline(&self.pipelines.shadow);
+                                if count > 0 {
+                                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                                    calls.set(calls.get() + 1);
+                                }
+                                draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
+                            }
+                        }
+                    }
                 }
-                pass.set_pipeline(&self.pipelines.shadow);
-                if count > 0 {
-                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
-                    calls.set(calls.get() + 1);
+                drop(pass);
+                // the tile whose opaque casters were just drawn, for the next cascade
+                if let Some(merges) = &merges
+                    && i + 1 < passes.len()
+                {
+                    self.shadow_merge.extract(&mut encoder, i, &merges[i]);
                 }
-                draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
             }
         }
 
