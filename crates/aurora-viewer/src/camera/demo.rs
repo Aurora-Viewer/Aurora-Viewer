@@ -26,6 +26,8 @@
 //!   the camera orbits and no menu opens on release
 //! - `scripted`: follow from 300, locked second source at 500, clear it at
 //!   700 (first source resumes), clear the first at 850 (normal view).
+//! - `scripted-sit`: sit at 300, root camera at 320, linked locked camera
+//!   at 500, stand at 700 without a ClearFollowCamProperties packet.
 
 /// What the app does this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -225,9 +227,12 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             610 | 630 | 660 => out.push(Step::Log),
             _ => {}
         },
-        "sit" => {
+        mode @ ("sit" | "scripted-sit") => {
             if (250..=700).contains(&frame) {
                 out.push(Step::SitEvents);
+            }
+            if mode == "scripted-sit" && matches!(frame, 320 | 500) {
+                out.push(Step::FollowEvents);
             }
             if matches!(frame, 290 | 302 | 320 | 360 | 400 | 500 | 600 | 700 | 702 | 720 | 760) {
                 out.push(Step::Log);
@@ -248,6 +253,25 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
         _ => {}
     }
     out
+}
+
+pub fn sit_follow_events(frame: u64, handle: aurora_net::RegionHandle, subject: glam::Vec3) -> Vec<aurora_net::NetEvent> {
+    let mut events = follow_events(if frame == 320 { 300 } else { frame }, handle, subject);
+    // The actual seat and linked prim of demo::sit_events. In particular,
+    // standing at 700 must release these locally, without a clear packet.
+    events.retain_mut(|event| {
+        if let aurora_net::NetEvent::SetFollowCam { object, .. } = event {
+            *object = if frame == 320 {
+                crate::demo::action_id(950)
+            } else {
+                uuid::Uuid::from_u128(951)
+            };
+            true
+        } else {
+            false
+        }
+    });
+    events
 }
 
 pub fn follow_events(frame: u64, handle: aurora_net::RegionHandle, subject: glam::Vec3) -> Vec<aurora_net::NetEvent> {

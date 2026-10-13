@@ -1245,6 +1245,8 @@ impl Camera {
                 self.seat = None;
                 self.sit_camera = None;
                 self.pitch = 0.0;
+                self.fov_zoom = 0.0;
+                agent.pitch = 0.0;
             }
             (None, None) => {}
         }
@@ -1628,6 +1630,49 @@ mod tests {
         assert!(cam.third_person());
         assert!(cam.position.distance(normal.0) < 0.01);
         assert!(cam.target.distance(normal.1) < 0.01);
+    }
+
+    #[test]
+    fn standing_from_scripted_sit_releases_the_locked_view_without_clear_messages() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(132.0, 126.0, 32.9));
+        w.agent_id = crate::demo::DEMO_AGENT;
+        let mut cam = Camera::default();
+        for at in [250, 300, 320, 500, 640] {
+            for event in crate::demo::sit_events(at) {
+                if let aurora_net::NetEvent::ObjectUpdates { handle, .. } = &event {
+                    w.main_region = Some(*handle);
+                }
+                if let Some(aurora_net::NetEvent::SitResponse {
+                    object,
+                    camera_eye,
+                    camera_at,
+                    force_mouselook,
+                }) = w.apply(event)
+                {
+                    cam.on_sit_response(object, camera_eye, camera_at, force_mouselook);
+                }
+            }
+            if matches!(at, 320 | 500) {
+                for event in demo::sit_follow_events(at, w.main_region.expect("seat region"), w.agent.position) {
+                    w.apply(event);
+                }
+            }
+            settle(&mut cam, &mut w, &s);
+        }
+        assert_eq!(cam.mode, CameraMode::Follow);
+        assert!(cam.follow.position_locked);
+        let locked = cam.position;
+        for event in crate::demo::sit_events(700) {
+            assert!(!matches!(event, aurora_net::NetEvent::ClearFollowCam { .. }));
+            w.apply(event);
+        }
+        assert!(!w.scripted_camera.has_active());
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.third_person());
+        assert!(cam.sit_camera.is_none());
+        assert!(cam.position.distance(locked) > 1.0);
+        assert!(cam.view().is_finite());
     }
 
     #[test]

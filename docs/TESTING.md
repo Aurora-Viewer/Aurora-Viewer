@@ -166,7 +166,7 @@ when unfocused") is ignored during a screenshot.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|wheel|fly|sit|scripted`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|wheel|fly|sit|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
@@ -191,6 +191,11 @@ when unfocused") is ignored during a screenshot.
   walk at 580–660. Clear that source at 700 (the first resumes), then clear
   the first at 850 (normal rear view). Capture at 480, 640, 800 and 920 to
   compare the follow, lock, priority restoration and final clear stages.
+  `scripted-sit`: the turning seat scenario, with its root's follow camera
+  activated at frame 320 and a locked camera from its linked prim at 500.
+  Standing at 700 sends only an avatar parent update, without a camera-clear
+  message: both seat sources must be deactivated locally, and the camera
+  must return to third person. Capture at 640 (locked) and 760 (released).
 - **`AURORA_DEMO_TP`**: teleport after the fade of the initial loading
   (frame 240 at the earliest). `1` or `"x,y,z"`: immediate local arrival,
   without a loading screen; `remote` simulates the progress between regions.

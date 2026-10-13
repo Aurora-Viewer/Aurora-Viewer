@@ -57,6 +57,10 @@ pub(crate) struct Sources {
 }
 
 impl Sources {
+    pub fn has_active(&self) -> bool {
+        !self.stack.is_empty()
+    }
+
     pub fn active(&self) -> Option<&Params> {
         self.stack.last().and_then(|id| self.params.get(id))
     }
@@ -124,9 +128,15 @@ impl Sources {
     }
 
     pub fn clear(&mut self, object: Uuid) {
-        self.stack.retain(|id| *id != object);
+        self.deactivate(object);
         self.params.remove(&object);
         self.regions.remove(&object);
+    }
+
+    /// getOffObject / detachObject deactivate the source without discarding
+    /// its parameters. Only CAMERA_ACTIVE can reactivate it afterwards.
+    pub fn deactivate(&mut self, object: Uuid) {
+        self.stack.retain(|id| *id != object);
     }
 
     pub fn clear_region(&mut self, region: aurora_net::RegionHandle, keep: impl Fn(Uuid) -> bool) {
@@ -334,6 +344,29 @@ mod tests {
         s.clear(Uuid::from_u128(1));
         set(&mut s, 1, &[(12, 1.0)]);
         assert_eq!(s.active().expect("defaults").distance, 3.0);
+    }
+
+    #[test]
+    fn local_deactivation_retains_parameters_without_reactivating_on_partial_updates() {
+        let mut s = Sources::default();
+        set(&mut s, 1, &[(12, 1.0), (7, 6.0), (21, 1.0)]);
+        set(&mut s, 2, &[(12, 1.0), (7, 9.0)]);
+        s.deactivate(Uuid::from_u128(2));
+        assert_eq!(s.active().expect("previous object").distance, 6.0);
+        set(&mut s, 2, &[(0, 30.0)]);
+        assert_eq!(s.active().expect("partial update keeps priority").distance, 6.0);
+        set(&mut s, 2, &[(12, 1.0)]);
+        let p = s.active().expect("explicit reactivation");
+        assert_eq!((p.distance, p.pitch), (9.0, 30.0));
+        for _ in 0..1000 {
+            set(&mut s, 2, &[(12, 1.0)]);
+        }
+        assert_eq!(s.stack, [Uuid::from_u128(1), Uuid::from_u128(2)]);
+        // Clearing a background source must neither release nor move the top.
+        s.clear(Uuid::from_u128(1));
+        assert_eq!(s.active().expect("foreground remains").distance, 9.0);
+        s.clear(Uuid::from_u128(2));
+        assert!(!s.has_active());
     }
 
     #[test]
