@@ -1425,6 +1425,7 @@ impl App {
         }
         match ev {
             NetEvent::ObjectProperties(props) => {
+                self.world.on_hud_properties(&props);
                 self.interactions.on_properties(&props);
                 self.build.on_properties(props);
             }
@@ -3980,6 +3981,13 @@ impl App {
             }
             let camera_distance = self.camera.position.distance(self.world.agent.position);
             self.world.agent.update(&self.input, ml, dt, camera_distance);
+            // seated, the agent's position is the one its seat gives it: the
+            // map, the radar, the location bar and the voice read it
+            if self.world.agent.seated
+                && let Some(p) = crate::scene::Scene::seated_agent_position(&self.world, Instant::now())
+            {
+                self.world.agent.follow_seat(p);
+            }
             let frame = crate::camera::FrameInput {
                 dt,
                 now: Instant::now(),
@@ -4638,7 +4646,7 @@ impl App {
             debug_glow: self.settings.debug.glow_view,
             blend_late_discard: self.frame_profile.blend_late_discard(),
             all_lights: self.frame_profile.all_lights(),
-            probe_walk_per_lookup: self.frame_profile.probe_walk_per_lookup(),
+            probe_walk_list: self.frame_profile.probe_walk_list(),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -5811,9 +5819,9 @@ impl App {
             if let Some(old) = crate::scene::sync_sets::alternate_slice(self.sync_alt) {
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
-            // AURORA_PROBE_WALK=alt: the probes walked as before one second in three
+            // AURORA_PROBE_WALK=alt: the whole probe list walked one second in three
             if aurora_render::probes::ProbeWalk::from_env() == aurora_render::probes::ProbeWalk::Alternate {
-                let old = self.frame_profile.probe_walk_per_lookup();
+                let old = self.frame_profile.probe_walk_list();
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three
@@ -8158,6 +8166,35 @@ impl ApplicationHandler for App {
                 self.world.hud_scales = crate::world::hud_scale::HudScales::load(
                     crate::settings::account_dir(&self.world.agent_id).join(crate::world::hud_scale::FILE),
                 );
+                if matches!(
+                    mode.as_str(),
+                    "scale-reattach" | "scale-rename" | "scale-copy" | "scale-temp" | "scale-temp-item" | "scale-temp-instance"
+                ) {
+                    // Deterministic persistence regressions, independent of
+                    // previously saved demo profiles. Disk saves have unit tests.
+                    self.world.hud_scales = crate::world::hud_scale::HudScales::default();
+                    let id = crate::demo::hud::object(31, false).full_id;
+                    if mode == "scale-reattach"
+                        && let Some(item) = self.world.inventory.items.get_mut(&id)
+                    {
+                        item.creator = uuid::Uuid::nil();
+                    }
+                    if matches!(mode.as_str(), "scale-temp" | "scale-temp-item" | "scale-temp-instance") {
+                        self.world.inventory.items.remove(&id);
+                        self.world.inventory.items.remove(&uuid::Uuid::from_u128(8399));
+                        if let Some(root) = self.world.objects.index_of_uuid(&id)
+                            && let Some(o) = self.world.objects.get_mut(root)
+                        {
+                            o.name_values = if mode == "scale-temp-item" {
+                                format!("AttachItemID STRING RW SV {}", uuid::Uuid::from_u128(999_001))
+                            } else if mode == "scale-temp-instance" {
+                                format!("AttachItemID STRING RW SV {id}")
+                            } else {
+                                String::new()
+                            };
+                        }
+                    }
+                }
                 if matches!(mode.as_str(), "zoom" | "edit-zoom" | "drag-zoom") {
                     self.world.hud_zoom = 0.5;
                 }

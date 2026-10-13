@@ -507,7 +507,7 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
 // local light highlights are separate (legacy_local_spec), as LL adds them
 // in another pass (multiPointLightF).
 fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>,
-                world_pos: vec3<f32>, shadow: f32, sun_lin: vec3<f32>, sky_scale: f32) -> vec3<f32> {
+                world_pos: vec3<f32>, frag: vec2<f32>, shadow: f32, sun_lin: vec3<f32>, sky_scale: f32) -> vec3<f32> {
     var col = col_in;
     if (spec.a <= 0.0 && env <= 0.0) {
         return mix(col, base, unlit);
@@ -522,9 +522,11 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         // (both in one walk of the probes)
         let both = sample_probes_pair(
             world_pos,
+            frag,
             ProbeLookup(r, (1.0 - spec.a) * probe_max_lod(), false),
             ProbeLookup(r, 0.0, false),
             env > 0.0,
+            true,
             vec3<f32>(0.0),
         );
         let g = both.a;
@@ -654,7 +656,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
                 + ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, in.clip.xy);
         } else {
             col = ll_classic_sun_ambient(m.color.rgb, m.n, sh, in.clip.xy, a);
-            col = legacy_light(col, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, ll_sun_linear(a), 1.0);
+            col = legacy_light(col, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh, ll_sun_linear(a), 1.0);
             col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
                 + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
         }
@@ -665,7 +667,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         let sh = max(shadow_factor(in.world_pos, m.n, in.view_depth), m.unlit);
         col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, sh, in.clip.xy) + m.emissive;
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0 || m.unlit > 0.0) {
-            col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh,
+            col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh,
                                frame.sun_color.rgb / PI, 1.0 / PI)
                 + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) + m.emissive;
         }

@@ -14,6 +14,9 @@ use uuid::Uuid;
 
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
+/// The local asset server of its `net=` option.
+#[path = "demo_asset_server.rs"]
+pub mod asset_server;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_chatlog.rs"]
 pub mod chatlog;
@@ -2471,6 +2474,41 @@ pub fn events() -> Vec<NetEvent> {
             "",
         ));
         id += 1;
+    }
+    // AURORA_DEMO_PROBES=1: two manual reflection probes on the plaza, as
+    // invisible prims: a box turned on itself, which the crowd's camera
+    // (AURORA_DEMO_POS="135,134") stands in, and a sphere east of it
+    if std::env::var_os("AURORA_DEMO_PROBES").is_some() {
+        for (offset, rot, scale, flags, ambiance) in [
+            (
+                Vec3::new(-2.0, 4.0, 3.0),
+                Quat::from_rotation_z(0.4),
+                Vec3::new(10.0, 8.0, 6.0),
+                0x1,
+                1.0,
+            ),
+            (Vec3::new(6.0, 2.0, 2.0), Quat::IDENTITY, Vec3::splat(12.0), 0x0, 0.5),
+        ] {
+            let (x, y) = (cx + offset.x, cy + offset.y);
+            add(prim(
+                id,
+                Vec3::new(x, y, g(x, y) + offset.z),
+                rot,
+                scale,
+                boxp,
+                te([1.0, 1.0, 1.0, 0.0], 0, false, 0.0),
+                ExtraParams {
+                    reflection_probe: Some(aurora_prim::extra::ReflectionProbeParams {
+                        ambiance,
+                        clip_distance: 0.0,
+                        flags,
+                    }),
+                    ..Default::default()
+                },
+                "",
+            ));
+            id += 1;
+        }
     }
     // glass panel (alpha blend)
     add(prim(

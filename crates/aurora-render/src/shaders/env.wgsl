@@ -336,7 +336,7 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     var radiance = sky_color(vec3<f32>(r.x, r.y, abs(r.z)));
     if (probes_on() && !underwater) {
         // without a planar reflection the water reflects its probes
-        let s = sample_probes_water(in.world_pos, vec3<f32>(r.x, r.y, abs(r.z)), 0.0);
+        let s = sample_probes_water(in.world_pos, in.clip.xy, vec3<f32>(r.x, r.y, abs(r.z)), 0.0);
         if (s.w > 0.0) {
             radiance = s.rgb;
         }

@@ -536,6 +536,9 @@ pub struct Scene {
     system_bounds: Vec<animesh::JointBounds>,
     /// Objects visited by the CPU lists this frame (reused).
     visit_tmp: Vec<(usize, bool)>,
+    /// Objects whose faces were built since the lists were last made: the
+    /// size of their textures on screen is noted at once.
+    fresh_usage: std::collections::HashSet<usize>,
     /// What the lists look for in each object slot (list_index.rs).
     list_index: list_index::ListIndex,
     /// Objects with light parameters (kept by `sync_object`, which sees every
@@ -898,6 +901,7 @@ impl Scene {
             removal_pending: Vec::new(),
             system_bounds: Vec::new(),
             visit_tmp: Vec::new(),
+            fresh_usage: Default::default(),
             list_index: Default::default(),
             light_objects: Default::default(),
             light_textures: HashMap::new(),
@@ -1548,6 +1552,18 @@ impl Scene {
         Self::object_transform_in(world, idx, now, depth, None)
     }
 
+    /// Where our avatar's object is (render space) while it sits on another:
+    /// its seat-relative position through the seat's transform, without the
+    /// shape offset of the drawn root (sitting branch of
+    /// LLAgent::setPositionAgent). None when standing or before the seat is
+    /// known.
+    pub fn seated_agent_position(world: &World, now: Instant) -> Option<Vec3> {
+        let idx = world.objects.index_of_uuid(&world.agent_id)?;
+        let o = world.objects.get(idx).filter(|o| o.parent_id != 0)?;
+        world.objects.parent_of(o)?;
+        Self::object_transform_raw(world, idx, now, 0, None).map(|(p, _, _)| p)
+    }
+
     /// `object_transform`, taking the parents' transforms from `cache` when
     /// they were placed this frame (same `now`, so the same result).
     fn object_transform_in(world: &World, idx: usize, now: Instant, depth: u32, cache: Option<&XfCache>) -> Option<Xf> {
@@ -1957,6 +1973,7 @@ impl Scene {
     fn finish_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
         // (new faces: what the cursor is over may have changed)
         self.pick.changed(idx);
+        self.fresh_usage.insert(idx);
         let alpha = &self.textures.alpha_by_slot;
         let channel = &self.textures.alpha_channel_by_slot;
         let mut last_slot = None;
@@ -3099,6 +3116,12 @@ impl Scene {
         // lists the special ones, the usage slice, the selection, the
         // pictured impostors and, in debug, all
         let usage_phase = (self.frame % 30) as usize;
+        // Objects whose faces were built since the last frame have the size
+        // of their textures on screen noted now rather than at their turn,
+        // up to 30 frames away: a new texture is then asked for at the rank
+        // and for the range that size calls for, not blindly.
+        let mut fresh = std::mem::take(&mut self.fresh_usage);
+        let usage_due = |i: usize| i % 30 == usage_phase || fresh.contains(&i);
         let mut visit = std::mem::take(&mut self.visit_tmp);
         visit.clear();
         if gpu_mode {
@@ -3110,7 +3133,7 @@ impl Scene {
                 // objects, on the frames a picture is taken)
                 let capturing = !plan.capture.is_empty();
                 for (i, bits) in self.list_index.with(list_index::DRAWN) {
-                    let usage = i % 30 == usage_phase;
+                    let usage = usage_due(i);
                     if usage
                         || bits & list_index::SPECIAL != 0
                         || debug
@@ -3126,7 +3149,7 @@ impl Scene {
                     if g.faces.is_empty() || g.hud {
                         continue;
                     }
-                    let usage = i % 30 == usage_phase;
+                    let usage = usage_due(i);
                     if usage || g.special || debug || selection.contains_key(&i) || self.selection_faces.contains_key(&i) || captured(g, i)
                     {
                         visit.push((i, usage));
@@ -3134,8 +3157,10 @@ impl Scene {
                 }
             }
         } else {
-            visit.extend((0..self.gpu.len()).map(|i| (i, i % 30 == usage_phase)));
+            visit.extend((0..self.gpu.len()).map(|i| (i, usage_due(i))));
         }
+        fresh.clear();
+        self.fresh_usage = fresh;
         let full = !gpu_mode;
         let ctx = CullCtx {
             view,
@@ -4411,6 +4436,35 @@ mod tests {
         let (posed, _, _) = Scene::object_transform(&world, idx, now, 0).expect("posed transform");
         assert!(posed.abs_diff_eq(raw + rotation * (Vec3::Z * 0.25), 1e-5));
         assert!(!posed.abs_diff_eq(raw + Vec3::Z * 0.25, 1e-3));
+    }
+
+    #[test]
+    fn seated_agent_position_goes_through_the_seat() {
+        fn apply(world: &mut World, frame: u64) {
+            for event in crate::demo::sit_events(frame) {
+                if let NetEvent::ObjectUpdates { handle, .. } = &event {
+                    world.main_region = Some(*handle);
+                }
+                world.apply(event);
+            }
+        }
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        let now = Instant::now();
+        apply(&mut world, 250);
+        assert_eq!(Scene::seated_agent_position(&world, now), None);
+        apply(&mut world, 300);
+        let idx = world.objects.index_of_uuid(&world.agent_id).expect("demo avatar");
+        let seat_idx = world.objects.parent_of(world.objects.get(idx).expect("avatar")).expect("seat");
+        // the seat moved and tipped over like a vehicle: the avatar, 0.4 m
+        // above its centre, goes with it
+        let seat = world.objects.get_mut(seat_idx).expect("seat");
+        seat.position = Vec3::new(40.0, 200.0, 60.0);
+        seat.rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        let carried = Scene::seated_agent_position(&world, now).expect("seated");
+        assert!(carried.abs_diff_eq(Vec3::new(40.0, 199.6, 60.0), 1e-4), "{carried:?}");
+        apply(&mut world, 700);
+        assert_eq!(Scene::seated_agent_position(&world, now), None);
     }
 
     /// The demo region with a prim linked under Violet Wolf's hat, the

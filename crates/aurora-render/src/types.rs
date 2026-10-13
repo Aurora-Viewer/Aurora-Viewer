@@ -805,8 +805,8 @@ pub struct FrameParams {
     /// frame's fragments walk the whole light list.
     pub all_lights: bool,
     /// Comparison ([`crate::probes::ProbeWalk::Alternate`]): this frame's
-    /// fragments walk the probes once per lookup.
-    pub probe_walk_per_lookup: bool,
+    /// fragments walk the whole probe list.
+    pub probe_walk_list: bool,
 }
 
 /// Where the blended faces drop their invisible fragments (`fs_blend` in

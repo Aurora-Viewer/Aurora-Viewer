@@ -49,6 +49,17 @@ pub struct LoadTotals {
     /// Textures read back from the transcoded cache: sent to the GPU
     /// without a decode.
     pub transcoded: u64,
+    /// Downloaded textures that showed their first pixels, and the time
+    /// each waited for them since its first request, in milliseconds.
+    pub first_shown: u64,
+    pub first_wait_ms: u64,
+    /// First requests sent before the size on screen was known: at the
+    /// same rank as every other, and for the smallest range.
+    pub first_blind: u64,
+    /// The same weighted by the area each covers on screen, in pixels: how
+    /// long a pixel of a new texture stays without its picture.
+    pub first_area: u64,
+    pub first_area_wait: u64,
 }
 
 impl LoadTotals {
@@ -77,7 +88,23 @@ impl LoadTotals {
             cache_hits: self.cache_hits - start.cache_hits,
             cache_misses: self.cache_misses - start.cache_misses,
             transcoded: self.transcoded - start.transcoded,
+            first_shown: self.first_shown - start.first_shown,
+            first_wait_ms: self.first_wait_ms - start.first_wait_ms,
+            first_blind: self.first_blind - start.first_blind,
+            first_area: self.first_area - start.first_area,
+            first_area_wait: self.first_area_wait - start.first_area_wait,
         }
+    }
+
+    /// A downloaded texture covering `px` pixels on screen showed its first
+    /// pixels `wait` after its first request.
+    pub fn first_pixels(&mut self, wait: Duration, px: f32) {
+        let ms = wait.as_millis() as u64;
+        let side = px.clamp(16.0, 2048.0) as u64;
+        self.first_shown += 1;
+        self.first_wait_ms += ms;
+        self.first_area += side * side;
+        self.first_area_wait += side * side * ms;
     }
 
     /// The log line of an episode (`running`: still under way) that took
@@ -88,7 +115,9 @@ impl LoadTotals {
         format!(
             "texture load{}: {:.1} s, {loaded}/{total} textures loaded; {} decodes ({} of a texture already shown, {} compressed to BC7; discard 0..5: {:?}), \
              {:.1} Mpx; decode CPU {:.1} s (codec {:.1}, convert {:.1}, rgba {:.1}, mips {:.1}, bc7 {:.1}, staging {:.1}); \
-             downloaded {:.1} MB in {} replies; disk cache {} hits / {} misses, {} read as BC7 without a decode",
+             downloaded {:.1} MB in {} replies; disk cache {} hits / {} misses, {} read as BC7 without a decode; \
+             first pixels of {} downloaded textures {:.2} s after their request on average, {:.2} s weighted by their size on screen \
+             ({} asked before that size was known)",
             if running { " (running)" } else { "" },
             took.as_secs_f64(),
             self.decodes(),
@@ -108,6 +137,10 @@ impl LoadTotals {
             self.cache_hits,
             self.cache_misses,
             self.transcoded,
+            self.first_shown,
+            self.first_wait_ms as f64 / 1e3 / self.first_shown.max(1) as f64,
+            self.first_area_wait as f64 / 1e3 / self.first_area.max(1) as f64,
+            self.first_blind,
         )
     }
 }
@@ -350,13 +383,18 @@ mod tests {
             ..Default::default()
         };
         m.read_into(&mut totals);
+        // a small texture shown at once, a large one after two round trips
+        totals.first_pixels(Duration::from_millis(200), 100.0);
+        totals.first_pixels(Duration::from_millis(600), 300.0);
         assert_eq!(totals.by_discard, [1, 0, 0, 0, 0, 1]);
         assert_eq!(totals.codec_us, 80_000);
         assert_eq!(
             totals.describe(Duration::from_millis(12_340), false, (2, 3)),
             "texture load: 12.3 s, 2/3 textures loaded; 2 decodes (1 of a texture already shown, 1 compressed to BC7; discard 0..5: [1, 0, 0, 0, 0, 1]), \
              1.0 Mpx; decode CPU 0.1 s (codec 0.1, convert 0.0, rgba 0.0, mips 0.0, bc7 0.0, staging 0.0); \
-             downloaded 2.5 MB in 3 replies; disk cache 1 hits / 1 misses, 7 read as BC7 without a decode"
+             downloaded 2.5 MB in 3 replies; disk cache 1 hits / 1 misses, 7 read as BC7 without a decode; \
+             first pixels of 2 downloaded textures 0.40 s after their request on average, 0.56 s weighted by their size on screen \
+             (0 asked before that size was known)"
         );
         assert!(
             totals
