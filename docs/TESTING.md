@@ -520,6 +520,27 @@ No real L$ and no connection to a grid.
 - `buy-confirm`, `pay-confirm`: confirm the simulated transaction.
 - `linked-touch`, `linked-sit`: hollow root with Touch and child seat with
   Sit, overlapping bounding boxes; checks the prim actually aimed at.
+- `transparent-menu`, `transparent-build`: cube with 60% transparency,
+  without a Touch script or click action; right click opens its menu and
+  left click in edit mode selects it. `invisible-menu`, `invisible-build`
+  repeat these gestures with 100% transparency and no draw record.
+  Capture after frame 620 and inspect `demo action click`: selection must
+  contain prim 976, and `demo menu` must target that prim.
+- `transparent-ready`, `invisible-ready`: the same cubes without an automatic
+  click, for manual testing (near x=138, y=126).
+- `blend-zero`, `blend-faint`, `blend-half`, `blend-solid`: non-actionable
+  panel before a Buy object, with texture alpha 0, 1/255, 128/255 or 255/255.
+  Left click must reach panel 976 and leave `dialog=false`. The GPU response
+  `demo drawn pick` must include it in `blend` for the first three modes,
+  even at zero alpha. `mask-zero` uses the zero-alpha texture in Mask mode:
+  the click must reach Buy (971), with `dialog=true` and no panel in the GPU
+  response. Capture after frame 620.
+- Add `-ready` to the five Blend / Mask modes above to test hover without
+  an automatic click. At frame 650, `demo cursor hover` must report
+  `prim=Some(976), action=None` before Blend at every opacity, and
+  `prim=Some(971), action=Some(Buy)` through the Mask hole. Enable
+  `AURORA_HOVER_CHECK=1` to compare the cache and index with the full search;
+  media hover behind Blend must respect the same depth limit.
 
 Transaction windows, with the same variable:
 

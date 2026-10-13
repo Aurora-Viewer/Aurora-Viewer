@@ -395,7 +395,7 @@ impl App {
         let shown = self
             .scene
             .designated(&self.world, gesture, &picked.drawn, picked.ray, found, self.build.open);
-        if self.clicks.scripted() {
+        if self.clicks.scripted() || self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
             // AURORA_DEMO_CLICKS: what the click designates, against two
             // things the CPU knows by itself: the object the click was
             // aimed at (`rigged`), and the posed bounds of the object
@@ -505,19 +505,23 @@ impl App {
         let now = Instant::now();
         let build = self.build.open;
         let tools = build && !self.alt && matches!(click, Click::Press | Click::Build);
-        let (point, idx) = if tools {
-            (depth, depth.and_then(|p| self.scene.pick_at(&self.world, p, now)))
-        } else {
-            let point = self.scene.action_point(&self.world, ray, depth, build, self.settings.draw_distance);
-            let idx = if click == Click::Menu || self.alt {
-                point.and_then(|p| self.scene.interaction_at(&self.world, p, now, build))
+        let (point, idx) =
+            if click == Click::Menu || tools && matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
+                self.scene
+                    .selection_pick(&self.world, ray, depth, build, self.settings.draw_distance)
+            } else if tools {
+                (depth, depth.and_then(|p| self.scene.pick_at(&self.world, p, now)))
             } else {
-                point
-                    .zip(ray)
-                    .and_then(|(p, r)| self.scene.interaction_at_ray(&self.world, p, r, true))
+                let point = self.scene.action_point(&self.world, ray, depth, build, self.settings.draw_distance);
+                let idx = if self.alt {
+                    point.and_then(|p| self.scene.interaction_at(&self.world, p, now, build))
+                } else {
+                    point
+                        .zip(ray)
+                        .and_then(|(p, r)| self.scene.interaction_at_ray(&self.world, p, r, true))
+                };
+                (point, idx)
             };
-            (point, idx)
-        };
         (point, idx.and_then(|i| self.world.objects.get(i)).map(|o| o.key.local_id))
     }
 

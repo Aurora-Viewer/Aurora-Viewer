@@ -27,8 +27,8 @@
 //! Camera clicks (Alt + click, Focus tool) only aim at a surface: they keep
 //! the depth alone and ask nothing here.
 //!
-//! [`reaches`] is that rule, alone and tested; the hover cursor must ask it
-//! the same question as the left click (`Gesture::Touch`).
+//! [`reaches`] is that rule, alone and tested. Blend faces intercept a
+//! press regardless of their texel opacity or the presence of an action.
 
 use super::*;
 use aurora_net::TouchSurface;
@@ -37,7 +37,7 @@ use aurora_render::{Drawn, DrawnFace};
 /// What the pointer is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gesture {
-    /// Left click and the hover cursor that announces it (LLToolPie).
+    /// Left click (LLToolPie).
     Touch,
     /// Right click: the menu of what is shown.
     Menu,
@@ -56,25 +56,21 @@ pub struct Status {
     pub avatar: bool,
     /// CLICK_ACTION_IGNORE.
     pub ignored: bool,
-    /// A left click does something on it (touch, sit, buy...).
-    pub actionable: bool,
     /// The build tools may select it.
     pub selectable: bool,
 }
 
 /// Whether `gesture` designates the object of a face drawn under it rather
-/// than what the CPU search finds. `blend`: the face is alpha-blended.
-pub fn reaches(gesture: Gesture, blend: bool, s: Status, build_open: bool) -> bool {
+/// than what the CPU search finds. Material cutouts are handled by the pick
+/// pass itself; Blend intercepts presses even without an action.
+pub fn reaches(gesture: Gesture, s: Status, build_open: bool) -> bool {
     // LLVOVolume::lineSegmentIntersect: IGNORE is not picked outside the
     // build tools, rigged or not
     if s.ignored && !build_open {
         return false;
     }
     match gesture {
-        // like a prim: an opaque or masked face stops the click; a blended
-        // one only takes it when the click does something on the object
-        // (Scene::transparent_action_point)
-        Gesture::Touch => s.posed_by_gpu && !s.avatar && (!blend || s.actionable),
+        Gesture::Touch => s.posed_by_gpu && !s.avatar,
         // the menu of what is shown (pick_transparent, pick_rigged): the
         // attachment in front of an avatar rather than the avatar
         Gesture::Menu => s.posed_by_gpu || s.worn || s.avatar,
@@ -117,7 +113,6 @@ impl Scene {
             worn: worn && !g.hud,
             avatar: g.is_avatar,
             ignored: o.click_action == crate::interaction::code::IGNORE,
-            actionable: crate::interaction::target(world, idx, &HashMap::new()).is_some(),
             selectable: crate::build::selectable(world, idx),
         }
     }
@@ -125,7 +120,7 @@ impl Scene {
     /// The object `gesture` designates among the faces drawn under its
     /// pixel, if it is one the drawn faces speak for ([`reaches`]). `ray`:
     /// the cursor ray; `found`: the point the CPU search settled on, which
-    /// keeps the click when it is in front (an actionable transparent prim
+    /// keeps the click when it is in front (a transparent prim
     /// before the rigged mesh).
     pub fn designated(
         &self,
@@ -144,7 +139,7 @@ impl Scene {
         [(drawn.blend, true), (drawn.opaque, false)].into_iter().find_map(|(hit, blend)| {
             let hit = hit?;
             let (idx, face) = self.record_object(hit.record)?;
-            (along(hit.point) <= limit && reaches(gesture, blend, self.drawn_status(world, idx), build_open)).then_some(DrawnObject {
+            (along(hit.point) <= limit && reaches(gesture, self.drawn_status(world, idx), build_open)).then_some(DrawnObject {
                 idx,
                 face,
                 blend,
@@ -184,39 +179,26 @@ mod tests {
         worn: false,
         avatar: false,
         ignored: false,
-        actionable: false,
         selectable: true,
     };
 
     /// Gesture x target: what Aurora designates from the drawn faces.
     #[test]
-    fn every_gesture_reaches_a_rigged_mesh_like_a_prim_of_its_kind() {
+    fn every_gesture_reaches_a_rigged_mesh_without_requiring_an_action() {
         let animesh = RIGGED;
-        let scripted = Status {
-            actionable: true,
-            ..RIGGED
-        };
-        let worn_self = Status {
+        let worn_self = Status { worn: true, ..RIGGED };
+        let worn_other = Status {
             worn: true,
             selectable: false,
-            ..RIGGED
-        };
-        let worn_other_scripted = Status {
-            worn: true,
-            selectable: false,
-            actionable: true,
             ..RIGGED
         };
         for build in [false, true] {
-            for target in [animesh, scripted, worn_self, worn_other_scripted] {
-                // an opaque or masked face: the click lands on it (Firestorm:
-                // right click and move tool only)
-                assert!(reaches(Gesture::Touch, false, target, build));
-                assert!(reaches(Gesture::Menu, false, target, build));
-                assert!(reaches(Gesture::Menu, true, target, build));
-                assert_eq!(reaches(Gesture::Build, false, target, build), target.selectable);
-                // a blended face: a left click only when it acts on the object
-                assert_eq!(reaches(Gesture::Touch, true, target, build), target.actionable);
+            for target in [animesh, worn_self, worn_other] {
+                // Material cutouts are resolved by the GPU. Every remaining
+                // surface stops the press, even a non-actionable Blend face.
+                assert!(reaches(Gesture::Touch, target, build));
+                assert!(reaches(Gesture::Menu, target, build));
+                assert_eq!(reaches(Gesture::Build, target, build), target.selectable);
             }
         }
     }
@@ -225,10 +207,10 @@ mod tests {
     fn ignore_is_seen_through_outside_the_build_tools() {
         let ignored = Status { ignored: true, ..RIGGED };
         for gesture in [Gesture::Touch, Gesture::Menu, Gesture::Build] {
-            assert!(!reaches(gesture, false, ignored, false), "{gesture:?}");
+            assert!(!reaches(gesture, ignored, false), "{gesture:?}");
         }
-        assert!(reaches(Gesture::Menu, false, ignored, true));
-        assert!(reaches(Gesture::Build, false, ignored, true));
+        assert!(reaches(Gesture::Menu, ignored, true));
+        assert!(reaches(Gesture::Build, ignored, true));
     }
 
     #[test]
@@ -236,11 +218,10 @@ mod tests {
         // a prim on the ground: picking.rs, as before
         let prim = Status {
             selectable: true,
-            actionable: true,
             ..Status::default()
         };
         for gesture in [Gesture::Touch, Gesture::Menu, Gesture::Build] {
-            assert!(!reaches(gesture, false, prim, false), "{gesture:?}");
+            assert!(!reaches(gesture, prim, false), "{gesture:?}");
         }
         // a worn prim and an avatar: only the menu takes them from what is
         // drawn (the attachment in front of its wearer)
@@ -253,9 +234,9 @@ mod tests {
             ..Status::default()
         };
         for s in [worn_prim, avatar] {
-            assert!(reaches(Gesture::Menu, false, s, false));
-            assert!(!reaches(Gesture::Touch, false, s, false));
-            assert!(!reaches(Gesture::Build, false, s, false));
+            assert!(reaches(Gesture::Menu, s, false));
+            assert!(!reaches(Gesture::Touch, s, false));
+            assert!(!reaches(Gesture::Build, s, false));
         }
     }
 }
