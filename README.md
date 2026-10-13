@@ -120,7 +120,7 @@ are planned or in progress: they are not in the viewer yet.
   unknown or dangerous, judged locally with nothing sent anywhere.
 - **Parcel permissions at a glance**: the icons show everything, green for
   allowed and red for forbidden, instead of the restrictions only.
-- **HUDs you can move and resize**: Alt + drag moves a HUD without opening
+- **HUDs you can move and resize**: Ctrl + drag moves a HUD without opening
   the build tools, and scrolling with the same key resizes it — even a
   no-modify one. Sizes are remembered ([details](#huds)).
 - **Faces in the conversation**: local chat bubbles show the speaker's
@@ -229,7 +229,7 @@ preserved.
 
 ### HUDs
 
-HUDs can be moved directly with Alt + drag (the key is configurable), without
+HUDs can be moved directly with Ctrl + drag (the key is configurable), without
 opening the build tools. Hold the same key and scroll over a HUD to resize it
 locally (Shift gives finer steps), including no-modify HUDs. Sizes from 10%
 to 800% are saved per account by inventory name and creator, then restored on

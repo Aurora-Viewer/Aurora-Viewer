@@ -721,12 +721,12 @@ grid.
   161.1%, including the child and floating text. Profiles are isolated in
   memory for these scenarios; unit tests cover saving and restarting.
   Suggested screenshots: 710,760,920.
-- `drag`: grabs the child with ALT (frame 720), moves the whole HUD,
-  releases ALT before the click (frame 800), then saves the position on
+- `drag`: grabs the child with Ctrl (frame 720), moves the whole HUD,
+  releases Ctrl before the click (frame 800), then saves the position on
   left release (frame 840) without touching any script.
 - `drag-zoom`: the same at 50%; `drag-ignore`: on a child with the
-  IGNORE action; `drag-ctrl`: Ctrl instead of ALT; `drag-key`: the B key
-  instead of ALT; `drag-secondary`: ALT as primary key and Ctrl as
+  IGNORE action; `drag-ctrl`: explicitly binds Ctrl; `drag-key`: the B key
+  instead of Ctrl; `drag-secondary`: ALT as primary key and Ctrl as
   secondary key, moving with the latter.
 - `menu`, `edit`, `edit-zoom`: right click on the child, Edit and
   moving the linkset by the Y handle, also at 50%.
@@ -768,10 +768,12 @@ around frames 720 (menu), 770 (edit, inspect) and 850 (move).
 
 To check with these scenarios:
 
-- ALT + left click held on the visible geometry moves the HUD without
+- Ctrl + left click held on the visible geometry moves the HUD without
   opening the tools; grab hand on hover and while moving.
+- Alt and Shift+Alt do not start a HUD move. A camera drag started in the
+  world continues when the pointer crosses a HUD.
 - Preferences › Shortcuts › HUDs, between Windows and Debug: two keys
-  configurable like the other shortcuts (ALT as primary by default,
+  configurable like the other shortcuts (Ctrl as primary by default,
   secondary empty), click to capture, right click to clear and Esc to
   cancel. To choose Ctrl, ALT or Shift alone, press then release;
   combinations and assignable mouse buttons are also accepted.

@@ -8597,9 +8597,9 @@ impl ApplicationHandler for App {
                 }
                 if mode.starts_with("drag") || mode.starts_with("scale") || mode == "edit-scroll" {
                     let code = match mode.as_str() {
-                        "drag-ctrl" | "scale-ctrl" => KeyCode::ControlLeft,
+                        "drag-secondary" | "scale-secondary" => KeyCode::AltLeft,
                         "drag-key" | "scale-key" => KeyCode::KeyB,
-                        _ => KeyCode::AltLeft,
+                        _ => KeyCode::ControlLeft,
                     };
                     self.settings.keybinds.set(
                         Action::HudDrag,
