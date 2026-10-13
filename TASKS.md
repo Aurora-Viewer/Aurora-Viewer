@@ -80,6 +80,8 @@ What comes before the rest (requested by the human).
 
 ## Rendering
 
+- ⬜ Classic avatars: fix alpha / transparency issues, especially their hair, and incorrect shape rendering. Reported by the human on 2026-10-13 with a screenshot; reproduce and compare with Firestorm.
+
 - 🟡 Built-in AO (`ao/`, `app/ao.rs`, `ui/ao.rs`; Firestorm's AOEngine / AOSet): AO button in the bottom bar, enabling / pause / standing poses, `#Firestorm/#AO` sets with selection, creation, duplication, renaming, deletion and import of ZHAO notecards; links to the original animations, order, sequential / random cycles, simultaneous groups, independent tracks and Always state. Optional / smart sit (sources of the seat and of its linkset), disabling of the standing poses in mouselook, swimming, concurrent typing and transitions kept; enabling and last set per account, default set shared with Firestorm, `cao` commands. Catalogue refreshed on inventory changes; loading errors displayed, explicit retry, changes confirmed by AIS. Formatting / Clippy green, 924 tests passed and 12 ignored, including 19 AO tests; demo screenshots of the transitions, cycles and enabled / disabled modes examined (`AURORA_DEMO_AO=1|transitions|off`). Human agreement for the PR and the merge on 2026-10-11; the implementation still has to be completed and the online tests redone (see the TODO below).
 - ⬜ Built-in AO, continued: complete the work and the parity with Firestorm from real trials; redo the online tests on Agni with existing sets, import of notecards, loading of the animations, walk / run / fly / swim, groups / tracks / cycles, smart sits, pause / disabling, persistence after reconnection and teleports. Fix the differences found before considering the feature fully validated on the grid.
 
