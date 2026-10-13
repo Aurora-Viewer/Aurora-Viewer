@@ -3424,7 +3424,7 @@ impl Backend {
             let radius = corners.iter().map(|c| c.distance(center)).fold(0.0f32, f32::max).max(1.0);
             let radius = (radius * 16.0).ceil() / 16.0;
             let up = if light_dir.z.abs() > 0.99 { Vec3::Y } else { Vec3::Z };
-            let eye = center - light_dir * (radius + 400.0);
+            let eye = center - light_dir * (radius + crate::shadow_cull::CASCADE_DEPTH_PAD);
             let mut view = glam::camera::rh::view::look_at_mat4(eye, center, up);
             // snap to texel grid to avoid shimmering when the camera moves.
             // The grid is anchored on a world point near the cascade (its
@@ -3440,7 +3440,8 @@ impl Backend {
             let origin = view.transform_point3(anchor);
             let snapped = Vec3::new((origin.x / texel).round() * texel, (origin.y / texel).round() * texel, origin.z);
             view = Mat4::from_translation(snapped - origin) * view;
-            let proj = glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, 0.1, radius * 2.0 + 800.0);
+            let depth = radius * 2.0 + 2.0 * crate::shadow_cull::CASCADE_DEPTH_PAD;
+            let proj = glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, 0.1, depth);
             out[i] = proj * view;
             near = split;
         }
@@ -3483,10 +3484,17 @@ impl Backend {
         u.fog = f.fog_color.extend(f.fog_density).to_array();
         let n_lights = f.lights.len().min(MAX_LIGHTS);
         u.params = [f.exposure, f.water_height, if f.shadows { 1.0 } else { 0.0 }, n_lights as f32];
-        let pixel_splits = self.shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0;
+        // how a pixel chooses its cascade (shadow_factor): 0 the distance
+        // interpolated from its triangle, 1 its own, 2 the finest cascade
+        // that covers it
+        let cascade_choice = match self.shadow_path {
+            p if p & crate::shadow_cull::path::COVERAGE != 0 => 2.0,
+            p if p & crate::shadow_cull::path::PIXEL_SPLITS != 0 => 1.0,
+            _ => 0.0,
+        };
         // the whole list for every fragment; the main view narrows it (render)
         u.light_sets = LightSets::whole();
-        u.cascade_splits = [splits[0], splits[1], splits[2], if pixel_splits { 1.0 } else { 0.0 }];
+        u.cascade_splits = [splits[0], splits[1], splits[2], cascade_choice];
         u.screen = [
             self.config.width as f32,
             self.config.height as f32,
@@ -3760,6 +3768,9 @@ impl Backend {
         self.anim_now = self.anim_clock.now(Instant::now());
         self.shadow_path = crate::shadow_cull::current_path();
         let (cascades, splits) = self.cascade_matrices(f);
+        if splits[2] > crate::shadow_cull::COVER_MAX_FAR {
+            self.shadow_path &= !crate::shadow_cull::path::COVERAGE;
+        }
         let unjittered_vp = f.proj * f.view;
         let jittered;
         let fu: &FrameParams = if self.taa.is_some() {
@@ -3808,6 +3819,10 @@ impl Backend {
             main.light_sets.mode[1] = u32::from(light_culling == LightCulling::Check);
         }
         stats.light_tiles = light_tiles_on;
+        // AURORA_DEBUG_SHADOWS: the cascade each pixel reads and its shadow,
+        // instead of the image (shadow_view in common.wgsl)
+        static SHADOW_VIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        main.light_sets.mode[2] = u32::from(*SHADOW_VIEW.get_or_init(|| std::env::var_os("AURORA_DEBUG_SHADOWS").is_some()));
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
@@ -4002,8 +4017,16 @@ impl Backend {
         // casters that can shadow what the view samples in it
         // (shadow_cull.rs); opaque ones are drawn depth only.
         let shadow_path = self.shadow_path;
+        // cascades chosen by coverage: a cascade may be read at any
+        // distance, and a caster a finer cascade covers is left out of it
+        let coverage = shadow_path & crate::shadow_cull::path::COVERAGE != 0;
+        let cover_size = if f.shadows && coverage { self.shadow_size as f32 } else { 0.0 };
         let caster_planes = if f.shadows && shadow_path & crate::shadow_cull::path::TIGHT != 0 {
-            let (near, far) = crate::shadow_cull::cascade_reach(splits, shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0);
+            let (near, far) = if coverage {
+                ([0.0; CASCADES], [splits[2]; CASCADES])
+            } else {
+                crate::shadow_cull::cascade_reach(splits, shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0)
+            };
             crate::shadow_cull::cascade_caster_planes(
                 &crate::shadow_cull::ReceiverView {
                     inv_view: f.view.inverse(),
@@ -4029,6 +4052,7 @@ impl Backend {
                 for c in &lists.shadow_casters {
                     if !crate::gpu_cull::in_cascade(m, c.center, c.radius)
                         || !crate::shadow_cull::casts_into(&caster_planes[ci], c.center, c.radius)
+                        || crate::shadow_cull::covered_by_finer(&cascades, cover_size, ci, c.center, c.radius)
                     {
                         continue;
                     }
@@ -4136,7 +4160,15 @@ impl Backend {
                     flags |= bit;
                 }
             }
-            let frame = CullFrame::new(g, &cascades, &caster_planes, [water_vp, mirror_vp, probe_vp], spot_vp, flags);
+            let frame = CullFrame::new(
+                g,
+                &cascades,
+                &caster_planes,
+                cover_size,
+                [water_vp, mirror_vp, probe_vp],
+                spot_vp,
+                flags,
+            );
             self.cull
                 .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, frame);
         }

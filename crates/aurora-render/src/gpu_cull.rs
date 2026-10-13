@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 
-use crate::shadow_cull::{SHADOW_PLANES, casts_into};
+use crate::shadow_cull::{SHADOW_PLANES, casts_into, covered_by_finer};
 use crate::types::{DrawIndexedIndirect, SKELETON_ANCHOR, SkinBind};
 use crate::writes::GpuWrites;
 
@@ -301,7 +301,9 @@ pub struct CullFrame {
     pub shadow_planes: [[[f32; 4]; SHADOW_PLANES]; 3],
     /// Camera, draw distance.
     pub eye: [f32; 4],
-    /// Shadow distance, reflection distance, pixel scale.
+    /// Shadow distance, reflection distance, pixel scale, side of a cascade
+    /// in texels when the cascades are chosen by coverage (0: by distance;
+    /// `shadow_cull::covered_by_finer`).
     pub dist: [f32; 4],
     /// Faces, objects, slots per bin, `frame_flags`.
     pub sizes: [u32; 4],
@@ -314,11 +316,13 @@ impl CullFrame {
     /// their caster planes and the water reflection, mirror and probe face
     /// view-projections (`flags` says which are drawn); sizes are filled by
     /// `GpuCull::prepare`. `spots`: view-projections of the projector shadow
-    /// maps that are drawn.
+    /// maps that are drawn. `cover_size`: side of a cascade in texels when
+    /// the cascades are chosen by coverage, 0 otherwise.
     pub fn new(
         view: &GpuCullView,
         cascades: &[Mat4; 3],
         shadow_planes: &[[[f32; 4]; SHADOW_PLANES]; 3],
+        cover_size: f32,
         [water, mirror, probe]: [Mat4; 3],
         spots: [Option<Mat4>; SPOT_SHADOWS],
         mut flags: u32,
@@ -340,7 +344,7 @@ impl CullFrame {
             cascades: cascades.map(|m| m.to_cols_array_2d()),
             shadow_planes: *shadow_planes,
             eye: view.eye.extend(view.draw_distance).to_array(),
-            dist: [view.shadow_distance, view.reflection_distance, view.pixel_scale, 0.0],
+            dist: [view.shadow_distance, view.reflection_distance, view.pixel_scale, cover_size],
             sizes: [0, 0, 0, flags],
             groups: [0; 4],
         }
@@ -437,8 +441,9 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
     if casts && (p != pass::BLEND || o.flags & (object_flags::RIGGED | object_flags::AVATAR) != 0) {
         let depth_only = (p == pass::OPAQUE || p == pass::OPAQUE_2S) && fl & frame_flags::SHADOW_ALPHA_ALL == 0;
         let bin = if depth_only { BIN_SHADOW } else { BIN_SHADOW_ALPHA };
-        for (k, cm) in frame.cascades.iter().enumerate() {
-            if in_cascade(&Mat4::from_cols_array_2d(cm), c, r) && casts_into(&frame.shadow_planes[k], c, r) {
+        let cascades = frame.cascades.map(|m| Mat4::from_cols_array_2d(&m));
+        for (k, cm) in cascades.iter().enumerate() {
+            if in_cascade(cm, c, r) && casts_into(&frame.shadow_planes[k], c, r) && !covered_by_finer(&cascades, frame.dist[3], k, c, r) {
                 m |= 1 << (bin + k);
             }
         }
@@ -1768,6 +1773,10 @@ mod tests {
         frame.shadow_planes[1][0] = [-1.0, 0.0, 0.0, 5.0];
         frame.shadow_planes[2][3] = [0.6, 0.0, 0.8, 10.0];
         frame.shadow_planes[2][SHADOW_PLANES - 1] = [-0.6, 0.0, -0.8, 30.0];
+        // cascades chosen by coverage: squares of 10, 25 and 50 m, the
+        // casters a finer one covers left out of the coarser ones
+        frame.cascades = [0.1, 0.04, 0.02].map(|s| Mat4::from_scale(Vec3::new(s, s, 0.01)).to_cols_array_2d());
+        frame.dist[3] = 2048.0;
         frame.probe = view_planes(
             glam::camera::rh::proj::directx::perspective_infinite_reverse(1.5, 1.0, 0.1)
                 * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::Y, Vec3::Z),
@@ -1828,8 +1837,16 @@ mod tests {
         }
         assert!(expect.iter().take(MAIN_BINS + 3).all(|e| !e.is_empty()), "every bin used");
         assert!(
-            expect[BIN_SHADOW_ALPHA..].iter().all(|e| !e.is_empty()),
+            expect[BIN_SHADOW_ALPHA..BIN_SHADOW_ALPHA + 3].iter().all(|e| !e.is_empty()),
             "alpha tested casters in every cascade"
+        );
+        let cascades = frame.cascades.map(|m| Mat4::from_cols_array_2d(&m));
+        let left_out = (0..n_obj as usize)
+            .filter(|&o| covered_by_finer(&cascades, frame.dist[3], 2, spheres[o].0, spheres[o].1))
+            .count();
+        assert!(
+            left_out > 50 && left_out < n_obj as usize - 50,
+            "{left_out} objects left out of the third cascade"
         );
         // the casters' statistics of each cascade
         for k in 0..3 {
