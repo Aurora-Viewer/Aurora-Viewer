@@ -71,7 +71,7 @@ impl Scene {
             if !state.sim.matches(p.softness, scale.z) {
                 state.sim.reconfigure(p.softness, scale.z, pos, rot);
             }
-            let dt = now.saturating_duration_since(state.last).as_secs_f32();
+            let dt = now.saturating_duration_since(state.last).as_secs_f64();
             state.last = now;
             let region = world.regions.get(&o.key.region);
             let offset = world.region_offset(o.key.region).unwrap_or(Vec3::ZERO);
@@ -85,7 +85,7 @@ impl Scene {
             let mesh = aurora_prim::volume::generate_flexible_volume(
                 &o.volume,
                 aurora_prim::volume::DETAIL_SCALES[g.lod as usize % 4],
-                &state.sim.path(pos, rot),
+                &state.sim.render_path(pos, rot),
                 scale,
             );
             // Only selected flexies need silhouette topology. Build it

@@ -5,6 +5,10 @@
 use crate::extra::FlexibleParams;
 use glam::{Quat, Vec3};
 
+// LLVolumeImplFlexible::updateClass / SEC_PER_FLEXI_FRAME. The legacy
+// displacement-based forces are calibrated for this cadence, not display FPS.
+const STEP_SECONDS: f64 = 1.0 / 60.0;
+
 #[derive(Clone, Copy, Debug)]
 struct Section {
     position: Vec3,
@@ -22,7 +26,11 @@ pub struct FlexiblePoint {
 
 pub struct Flexible {
     sections: Vec<Section>,
+    previous: Vec<Section>,
     length: f32,
+    remainder: f64,
+    frame_position: Vec3,
+    frame_rotation: Quat,
 }
 
 impl Flexible {
@@ -30,7 +38,7 @@ impl Flexible {
         let length = finite(length, 1.0).clamp(0.001, 64.0);
         let n = 1usize << softness.min(3);
         let direction = rotation * Vec3::Z;
-        let sections = (0..=n)
+        let sections: Vec<_> = (0..=n)
             .map(|i| Section {
                 position: position + direction * (length * (i as f32 / n as f32 - 0.5)),
                 velocity: Vec3::ZERO,
@@ -38,14 +46,22 @@ impl Flexible {
                 rotation,
             })
             .collect();
-        Self { sections, length }
+        Self {
+            previous: sections.clone(),
+            sections,
+            length,
+            remainder: 0.0,
+            frame_position: position,
+            frame_rotation: rotation,
+        }
     }
 
     /// Keep inertia when the render origin moves to another region.
     pub fn shift(&mut self, delta: Vec3) {
-        for s in &mut self.sections {
+        for s in self.sections.iter_mut().chain(&mut self.previous) {
             s.position += delta;
         }
+        self.frame_position += delta;
     }
 
     pub fn matches(&self, softness: u8, length: f32) -> bool {
@@ -84,22 +100,41 @@ impl Flexible {
             });
         }
         self.sections = sections;
+        self.previous.clone_from(&self.sections);
         self.length = length;
+        self.frame_position = position;
+        self.frame_rotation = rotation;
     }
 
-    /// Long frames are bounded as in Firestorm, and split to keep the length
-    /// and angle constraints stable. Velocity is stored in metres/second so
-    /// inertia does not depend on the display refresh rate.
-    pub fn update(&mut self, params: FlexibleParams, position: Vec3, rotation: Quat, dt: f32, wind: impl Fn(Vec3) -> Vec3) {
-        let dt = finite(dt, 0.0).clamp(0.0, 0.2);
+    /// Firestorm's 60 Hz clock, with bounded catch-up after long frames.
+    /// Interpolate the parent at each physics tick: reusing the final pose
+    /// for every substep would make low-FPS attachments receive one big jump.
+    pub fn update(&mut self, params: FlexibleParams, position: Vec3, rotation: Quat, dt: f64, wind: impl Fn(Vec3) -> Vec3) {
+        let dt = if dt.is_finite() { dt.clamp(0.0, 0.2) } else { 0.0 };
         if dt == 0.0 || !position.is_finite() || !rotation.is_finite() {
             return;
         }
-        let steps = (dt * 60.0).ceil().max(1.0) as u32;
-        let dt = dt / steps as f32;
-        for _ in 0..steps {
-            self.step(params, position, rotation, dt, &wind);
+        self.remainder += dt;
+        // Only absorb floating-point roundoff at a tick boundary, never
+        // round each frame up to an extra physics step (issue #172).
+        while self.remainder + 1e-12 >= STEP_SECONDS {
+            self.remainder = (self.remainder - STEP_SECONDS).max(0.0);
+            let t = ((dt - self.remainder) / dt).clamp(0.0, 1.0) as f32;
+            let tick_position = if t == 1.0 || self.frame_position == position {
+                position
+            } else {
+                self.frame_position.lerp(position, t)
+            };
+            let tick_rotation = if t == 1.0 || self.frame_rotation == rotation {
+                rotation
+            } else {
+                self.frame_rotation.slerp(rotation, t)
+            };
+            self.previous.clone_from(&self.sections);
+            self.step(params, tick_position, tick_rotation, STEP_SECONDS as f32, &wind);
         }
+        self.frame_position = position;
+        self.frame_rotation = rotation;
     }
 
     fn step(&mut self, p: FlexibleParams, position: Vec3, rotation: Quat, dt: f32, wind: &impl Fn(Vec3) -> Vec3) {
@@ -154,15 +189,44 @@ impl Flexible {
     /// softness uses fewer simulation sections. Detail never reduces the
     /// physical simulation or makes nearby flexies step at different rates.
     pub fn path(&self, position: Vec3, rotation: Quat) -> [FlexiblePoint; 9] {
+        self.sample_path(&self.sections, position, rotation)
+    }
+
+    /// Blend the two last physics states with one tick of latency. The
+    /// anchor follows the current parent immediately; interpolated segment
+    /// directions preserve lengths instead of shrinking a bending chain.
+    /// This is a render-only path: interpolation never feeds back into physics.
+    pub fn render_path(&self, position: Vec3, rotation: Quat) -> [FlexiblePoint; 9] {
         let n = self.sections.len() - 1;
+        let alpha = (self.remainder / STEP_SECONDS).clamp(0.0, 1.0) as f32;
+        let mut sections = [self.sections[0]; 9];
+        sections[0].position = position - rotation * Vec3::Z * (self.length * 0.5);
+        sections[0].direction = rotation * Vec3::Z;
+        sections[0].rotation = rotation;
+        for i in 1..=n {
+            let a = self.previous[i];
+            let b = self.sections[i];
+            let direction = a.direction.lerp(b.direction, alpha).normalize_or(b.direction);
+            sections[i] = Section {
+                position: sections[i - 1].position + direction * (self.length / n as f32),
+                direction,
+                rotation: a.rotation.slerp(b.rotation, alpha),
+                ..b
+            };
+        }
+        self.sample_path(&sections[..=n], position, rotation)
+    }
+
+    fn sample_path(&self, sections: &[Section], position: Vec3, rotation: Quat) -> [FlexiblePoint; 9] {
+        let n = sections.len() - 1;
         let length = self.length / n as f32;
         let derivative = |i: usize| {
             if i == 0 {
-                (self.sections[1].position - self.sections[0].position) / length
+                (sections[1].position - sections[0].position) / length
             } else if i == n {
-                (self.sections[n].position - self.sections[n - 1].position) / length
+                (sections[n].position - sections[n - 1].position) / length
             } else {
-                (self.sections[i + 1].position - self.sections[i - 1].position) / (2.0 * length)
+                (sections[i + 1].position - sections[i - 1].position) / (2.0 * length)
             }
         };
         let inv = rotation.conjugate();
@@ -170,8 +234,8 @@ impl Flexible {
             let t = i as f32 * n as f32 / 8.0;
             let k = (t as usize).min(n - 1);
             let u = t - k as f32;
-            let a = self.sections[k];
-            let b = self.sections[k + 1];
+            let a = sections[k];
+            let b = sections[k + 1];
             let c = derivative(k) * length;
             let y = derivative(k + 1) * length - c;
             let x = b.position - a.position - c;
@@ -202,6 +266,170 @@ mod tests {
             wind_sensitivity: 0.0,
             user_force: Vec3::ZERO,
         }
+    }
+
+    fn pose(t: f64, moving: bool) -> (Vec3, Quat) {
+        let base = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        if moving {
+            (Vec3::new(0.5, 1.0, 0.2) * t as f32, Quat::from_rotation_z(0.4 * t as f32) * base)
+        } else {
+            (Vec3::ZERO, base)
+        }
+    }
+
+    fn assert_sections_near(actual: &[Section], expected: &[Section], position_tolerance: f32) {
+        for (a, b) in actual.iter().zip(expected) {
+            assert!(
+                a.position.distance(b.position) < position_tolerance,
+                "position: {:?} != {:?}",
+                a.position,
+                b.position
+            );
+            assert!(
+                a.velocity.distance(b.velocity) < position_tolerance * 100.0,
+                "velocity: {:?} != {:?}",
+                a.velocity,
+                b.velocity
+            );
+            assert!(
+                a.rotation.abs_diff_eq(b.rotation, position_tolerance),
+                "rotation: {:?} != {:?}",
+                a.rotation,
+                b.rotation
+            );
+        }
+    }
+
+    #[test]
+    fn forces_and_parent_motion_follow_the_same_physics_clock_at_30_to_500_fps() {
+        // Compare the whole transient, not only its final equilibrium. At
+        // 59 FPS the former ceil(dt * 60) ran 118 physics steps per second.
+        for softness in 0..=3 {
+            for moving in [false, true] {
+                let mut p = params();
+                p.softness = softness;
+                p.wind_sensitivity = 5.0;
+                p.user_force = Vec3::new(0.5, 1.0, 0.0);
+                let wind = |sample: Vec3| Vec3::new(2.0 + sample.y * 0.1, 0.0, 0.0);
+                let (pos, rot) = pose(0.0, moving);
+                let mut reference = Flexible::new(softness, 4.0, pos, rot);
+                let mut states = vec![reference.sections.clone()];
+                for tick in 1..=120 {
+                    let (pos, rot) = pose(tick as f64 * STEP_SECONDS, moving);
+                    reference.update(p, pos, rot, STEP_SECONDS, wind);
+                    states.push(reference.sections.clone());
+                }
+                for fps in [30, 59, 60, 61, 90, 120, 144, 240, 500] {
+                    let (pos, rot) = pose(0.0, moving);
+                    let mut actual = Flexible::new(softness, 4.0, pos, rot);
+                    for frame in 1..=fps * 2 {
+                        let (pos, rot) = pose(frame as f64 / fps as f64, moving);
+                        actual.update(p, pos, rot, 1.0 / fps as f64, wind);
+                        let tick = (frame * 60 / fps) as usize;
+                        assert_sections_near(&actual.sections, &states[tick], if moving { 0.01 } else { 1e-5 });
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fluctuating_fps_keep_elapsed_time_and_interpolate_parent_substeps() {
+        let (pos, rot) = pose(0.0, true);
+        let mut reference = Flexible::new(2, 4.0, pos, rot);
+        let mut states = vec![reference.sections.clone()];
+        for tick in 1..=120 {
+            let (pos, rot) = pose(tick as f64 * STEP_SECONDS, true);
+            reference.update(params(), pos, rot, STEP_SECONDS, |_| Vec3::ZERO);
+            states.push(reference.sections.clone());
+        }
+        let mut actual = Flexible::new(2, 4.0, pos, rot);
+        let mut elapsed: f64 = 0.0;
+        for dt in [1.0 / 500.0, 1.0 / 59.0, 1.0 / 61.0, 1.0 / 144.0, 1.0 / 30.0].into_iter().cycle() {
+            let dt = f64::min(dt, 2.0 - elapsed);
+            elapsed += dt;
+            let (pos, rot) = pose(elapsed, true);
+            actual.update(params(), pos, rot, dt, |_| Vec3::ZERO);
+            let tick = ((elapsed / STEP_SECONDS + 1e-10).floor() as usize).min(120);
+            assert_sections_near(&actual.sections, &states[tick], 0.002);
+            if elapsed >= 2.0 {
+                break;
+            }
+        }
+        assert!(actual.remainder < 1e-10);
+    }
+
+    #[test]
+    fn render_interpolation_is_continuous_and_never_changes_physics() {
+        let rot = pose(0.0, false).1;
+        let mut f = Flexible::new(3, 4.0, Vec3::ZERO, rot);
+        let initial = f.render_path(Vec3::ZERO, rot);
+        f.update(params(), Vec3::ZERO, rot, STEP_SECONDS, |_| Vec3::ZERO);
+        let physics = f.sections.clone();
+        let mut last = initial[8].position;
+        for _ in 0..3 {
+            f.update(params(), Vec3::ZERO, rot, STEP_SECONDS * 0.25, |_| Vec3::ZERO);
+            let path = f.render_path(Vec3::ZERO, rot);
+            assert!(path[8].position.distance(last) > 0.001, "display frames between ticks must move");
+            last = path[8].position;
+            assert_sections_near(&f.sections, &physics, 1e-6);
+            for pair in path.windows(2) {
+                assert!((pair[0].position.distance(pair[1].position) - 0.5).abs() < 1e-5);
+            }
+        }
+        f.update(params(), Vec3::ZERO, rot, STEP_SECONDS * 0.25 - 1e-7, |_| Vec3::ZERO);
+        let before_tick = f.render_path(Vec3::ZERO, rot);
+        f.update(params(), Vec3::ZERO, rot, 1e-7, |_| Vec3::ZERO);
+        let after_tick = f.render_path(Vec3::ZERO, rot);
+        for (a, b) in before_tick.iter().zip(after_tick) {
+            assert!(a.position.distance(b.position) < 1e-4, "interpolation must not jump at a tick");
+            assert!(a.rotation.abs_diff_eq(b.rotation, 1e-4));
+        }
+    }
+
+    #[test]
+    fn interpolated_render_anchor_and_origin_shift_follow_the_current_parent() {
+        let rot = pose(0.0, false).1;
+        let mut f = Flexible::new(3, 4.0, Vec3::ZERO, rot);
+        for _ in 0..45 {
+            f.update(params(), Vec3::ZERO, rot, 1.0 / 144.0, |_| Vec3::ZERO);
+        }
+        let pos = Vec3::new(0.1, 0.2, 0.3);
+        let rot = Quat::from_rotation_z(0.1) * rot;
+        f.update(params(), pos, rot, 1.0 / 500.0, |_| Vec3::ZERO);
+        let before = f.render_path(pos, rot);
+        assert!(before[0].position.distance(-Vec3::Z * 2.0) < 1e-5);
+        assert!(before[0].rotation.abs_diff_eq(Quat::IDENTITY, 1e-5));
+        let shift = Vec3::new(-256.0, 256.0, 0.0);
+        f.shift(shift);
+        let after = f.render_path(pos + shift, rot);
+        for (a, b) in before.iter().zip(after) {
+            assert!(a.position.distance(b.position) < 1e-4);
+            assert!(a.rotation.abs_diff_eq(b.rotation, 1e-5));
+        }
+        assert!(f.frame_position.distance(pos + shift) < 1e-5);
+        f.reconfigure(1, 6.0, pos + shift, rot);
+        let resized = f.render_path(pos + shift, rot);
+        assert!(resized[0].position.distance(-Vec3::Z * 3.0) < 1e-4);
+        assert!(resized.iter().all(|p| p.position.is_finite() && p.rotation.is_finite()));
+    }
+
+    #[test]
+    fn invalid_times_do_not_advance_physics_and_long_frames_have_bounded_catch_up() {
+        let rot = pose(0.0, false).1;
+        let mut f = Flexible::new(2, 4.0, Vec3::ZERO, rot);
+        let initial = f.sections.clone();
+        for dt in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            f.update(params(), Vec3::ZERO, rot, dt, |_| Vec3::ZERO);
+            assert_sections_near(&f.sections, &initial, 1e-6);
+        }
+        f.update(params(), Vec3::ZERO, rot, 10.0, |_| Vec3::ZERO);
+        let mut reference = Flexible::new(2, 4.0, Vec3::ZERO, rot);
+        for _ in 0..12 {
+            reference.update(params(), Vec3::ZERO, rot, STEP_SECONDS, |_| Vec3::ZERO);
+        }
+        assert_sections_near(&f.sections, &reference.sections, 1e-6);
+        assert!(f.remainder < 1e-10);
     }
 
     #[test]

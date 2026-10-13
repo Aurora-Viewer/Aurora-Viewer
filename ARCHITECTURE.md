@@ -381,8 +381,14 @@ détail du propriétaire actuel et du prochain propriétaire au survol ; les
 liens d'inventaire reprennent les droits de leur original.
 
 Les prims flexibles ont leur simulation propre (`aurora-prim/src/flexible.rs`,
-port de `LLVolumeImplFlexible`) et une géométrie unique par objet. La scène
-(`scene/flexible.rs`) calcule en parallèle les forces, le chemin déformé,
+port de `LLVolumeImplFlexible`) et une géométrie unique par objet. La physique
+accumule le temps réel en double précision et avance par pas fixes
+de 1/60 s, comme l'horloge `SEC_PER_FLEXI_FRAME` de Firestorm, avec au plus
+0,2 s de rattrapage par image. Le placement du parent est interpolé à chaque
+pas. Le rendu interpole les deux derniers états physiques (retard d'un pas),
+avec longueurs conservées et base ancrée au placement courant du parent ;
+cette interpolation ne revient jamais dans la simulation.
+La scène (`scene/flexible.rs`) calcule en parallèle les forces, le chemin déformé,
 les normales, les limites et les triangles de sélection ; elle réécrit
 seulement les sommets dans leurs allocations GPU existantes. Le vent de chaque
 région est reçu par `LayerData` (deux patches DCT), interpolé comme `LLWind`.

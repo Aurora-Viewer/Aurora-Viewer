@@ -399,6 +399,16 @@ Pour vérifier l'édition, ajouter `AURORA_DEMO_BUILD=move,object:90000` ou
 translucide et poignées de taille. `stretch,object:90000,fz,100,0` tire la face
 opposée à la base ; le flexible garde sa courbure pendant le changement de taille.
 
+Pour vérifier la cadence ([#172](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/172)),
+utiliser `AURORA_DEMO_FLEXIBLE=1`, `AURORA_NOVSYNC=1`, puis les plafonds
+`AURORA_FPS_LIMIT=30|59|60|61|144|500` dans des lancements séparés. La gravité,
+le vent, la force et la réaction de la dernière prim au parent mobile doivent
+garder la même vitesse en temps réel ; les images supplémentaires lissent le
+mouvement. Vérifier aussi la plaque `edit` (pivot, contour et redimensionnement)
+et la scène `300`. Les tests unitaires comparent les trajectoires physiques
+complètes à 30–500 images/s, les cadences variables, le lissage entre les pas,
+l'ancrage, le changement d'origine et le rattrapage après une image longue.
+
 **`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|experience|experience-save|workbench|object-workbench|insert-filter|insert-empty|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`** :
 ouvre un éditeur de script depuis l'inventaire, le contenu d'un objet ou
 les deux à l'image 280. `save` et `object-save` enregistrent une source
