@@ -52,6 +52,10 @@ pub struct NetPeriod {
     pub http_failed: u64,
     pub http_retries: u64,
     pub http_kbps: f32,
+    /// Event queue polls that ended without an event after the simulator
+    /// held them, and those counted as errors.
+    pub eq_idle: u64,
+    pub eq_errors: u64,
 }
 
 /// What the Performance window keeps beyond the last period.
@@ -166,6 +170,8 @@ impl NetProfile {
             http_failed: since(snap.http_failed, prev.http_failed),
             http_retries: since(snap.http_retries, prev.http_retries),
             http_kbps: kbps(snap.http_bytes, prev.http_bytes),
+            eq_idle: since(snap.eq_idle_polls, prev.eq_idle_polls),
+            eq_errors: since(snap.eq_errors, prev.eq_errors),
         };
         if peaks.input_delay_ms.is_some() {
             self.totals.input_delay_ms = peaks.input_delay_ms;
@@ -188,7 +194,8 @@ fn summary(p: &NetPeriod) -> String {
     format!(
         "ping={} avg={} | udp in={:.0} out={:.0} pkt/s {:.0} / {:.0} kb/s | resent={} given_up={} dup={} unacked={} gaps={} late={} \
          | loop_max={:.2} | events={} left_max={} wait_max={:.2} | agent_updates={} input_delay_max={input} \
-         | corrections={} largest={:.2} | http active={} queued={} done={} failed={} retries={} {:.0} kb/s",
+         | corrections={} largest={:.2} | http active={} queued={} done={} failed={} retries={} {:.0} kb/s \
+         | event_queue idle={} errors={}",
         p.ping_ms,
         p.ping_avg_ms,
         p.packets_in,
@@ -214,6 +221,8 @@ fn summary(p: &NetPeriod) -> String {
         p.http_failed,
         p.http_retries,
         p.http_kbps,
+        p.eq_idle,
+        p.eq_errors,
     )
 }
 
@@ -244,6 +253,8 @@ mod tests {
         stats.ping_ms.store(187, Ordering::Relaxed);
         stats.http_bytes.fetch_add(125_000, Ordering::Relaxed);
         stats.http_retries.fetch_add(1, Ordering::Relaxed);
+        stats.eq_idle_polls.fetch_add(4, Ordering::Relaxed);
+        stats.eq_errors.fetch_add(1, Ordering::Relaxed);
         stats.agent_update_sent();
         p.event_applied(t, t + Duration::from_millis(12));
         p.event_applied(t, t + Duration::from_millis(4));
@@ -272,6 +283,7 @@ mod tests {
             line.contains("| corrections=1 largest=2.50 | http active=0 queued=0 done=0 failed=0 retries=1 500 kb/s"),
             "{line}"
         );
+        assert!(line.ends_with("| event_queue idle=4 errors=1"), "{line}");
 
         // the next period starts from nothing
         p.end_frame_at(&stats, t + PERIOD * 4).expect("third period");

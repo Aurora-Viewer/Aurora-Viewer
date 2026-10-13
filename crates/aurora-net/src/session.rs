@@ -15,7 +15,7 @@ mod object_actions;
 mod scripts;
 mod task_notecard;
 
-use crate::caps::{self, EqEvent};
+use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::login::{self, LoginError, LoginRequest, LoginResponse};
 use crate::objects;
@@ -142,7 +142,7 @@ struct Session<'a> {
     login: Arc<LoginResponse>,
     sims: HashMap<SocketAddr, Sim>,
     main: Option<SocketAddr>,
-    eq_tx: mpsc::UnboundedSender<EqEvent>,
+    eq_tx: mpsc::UnboundedSender<EqMessage>,
     caps_tx: mpsc::UnboundedSender<(SocketAddr, Result<HashMap<String, String>, String>)>,
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
     inventory_move_tx: mpsc::UnboundedSender<inventory_moves::Request>,
@@ -323,9 +323,12 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     None => break,
                 }
             }
-            Some(e) = eq_rx.recv() => {
+            Some(m) = eq_rx.recv() => {
                 woke = Instant::now();
-                s.on_eq_event(e);
+                match m {
+                    EqMessage::Event(e) => s.on_eq_event(e),
+                    EqMessage::Lost(sim) => s.on_eq_lost(sim),
+                }
             }
             Some((addr, caps)) = caps_rx.recv() => {
                 woke = Instant::now();
@@ -506,6 +509,7 @@ impl Session<'_> {
                 eq,
                 addr,
                 self.eq_tx.clone(),
+                self.sh.stats.clone(),
             )));
         }
         let caps = Arc::new(caps);
@@ -2256,6 +2260,34 @@ impl Session<'_> {
 
     fn sim_for_handle(&self, handle: RegionHandle) -> Option<SocketAddr> {
         self.sims.iter().find(|(_, s)| s.handle == handle).map(|(a, _)| *a)
+    }
+
+    /// The event queue of a simulator gave up. Like LLEventPollImpl (the end
+    /// of eventPollCoro): without the queue of the agent's region teleports,
+    /// IM sessions, parcel events and region crossings all fail and nothing
+    /// gets better before a new login, so the session ends now with the
+    /// "connection lost" message; a neighbour only loses its own events.
+    fn on_eq_lost(&mut self, addr: SocketAddr) {
+        // (a queue replaced since, after a new seed capability, is not lost)
+        if !self
+            .sims
+            .get(&addr)
+            .is_some_and(|sim| sim.eq_task.as_ref().is_some_and(JoinHandle::is_finished))
+        {
+            return;
+        }
+        if self.main != Some(addr) {
+            log::warn!("event queue of neighbour {addr} lost: it stays without its events");
+            return;
+        }
+        log::warn!("event queue of the agent's region {addr} lost: disconnecting");
+        emit(
+            self.sh,
+            NetEvent::Disconnected {
+                reason: aurora_i18n::tr!("session-connection-to-the-region-was-lost").into(),
+            },
+        );
+        self.finished = true;
     }
 
     fn on_eq_event(&mut self, e: EqEvent) {

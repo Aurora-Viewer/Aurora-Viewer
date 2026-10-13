@@ -165,15 +165,91 @@ pub struct EqEvent {
     pub body: Llsd,
 }
 
-/// Long-poll `EventQueueGet` until the receiver is dropped or the cap 404s.
-pub async fn event_queue_loop(http: reqwest::Client, url: String, sim: std::net::SocketAddr, tx: mpsc::UnboundedSender<EqEvent>) {
+/// What an event queue hands to the session.
+#[derive(Debug, Clone)]
+pub enum EqMessage {
+    Event(EqEvent),
+    /// The poll of this simulator stopped after too many errors in a row:
+    /// nothing it sends through the queue will arrive any more.
+    Lost(std::net::SocketAddr),
+}
+
+// LLEventPollImpl::eventPollCoro (indra/newview/lleventpoll.cpp, originally
+// LGPL 2.1): wait 1 s + 3 s per error already counted, give up after 15
+// (about 5 minutes); the simulator holds a request 20 to 30 s, so one that
+// lasted 10 s was held and brought no event.
+const ERROR_RETRY: Duration = Duration::from_secs(1);
+const ERROR_RETRY_INC: Duration = Duration::from_secs(3);
+const MAX_ERRORS: u32 = 15;
+const MIN_HELD: Duration = Duration::from_secs(10);
+
+/// How a poll ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PollEnd {
+    /// A 200, with or without events.
+    Reply,
+    Status(u16),
+    /// Our own timeout.
+    Timeout,
+    /// The connection failed or was cut before a complete reply.
+    Transport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Next {
+    /// Poll again at once.
+    Again,
+    /// An error: poll again after this wait.
+    Wait(Duration),
+    /// The simulator closed the queue.
+    Closed,
+    GiveUp,
+}
+
+/// What to do after a poll that lasted `held`, with `errors` counted in a
+/// row before it (LLEventPollImpl::eventPollCoro). A poll the simulator held
+/// and that then ended without events is the normal "no event": a timeout,
+/// one of its gateway statuses, or the held connection being cut, which is
+/// how its end shows through our HTTP client about once a minute in a quiet
+/// place. Counting those as errors, as before, stopped the queue for good
+/// after twenty minutes without an event.
+fn after_poll(end: PollEnd, held: Duration, errors: &mut u32) -> Next {
+    let no_event = match end {
+        PollEnd::Reply => true,
+        PollEnd::Status(404 | 410) => return Next::Closed,
+        PollEnd::Status(499 | 500 | 502 | 503 | 504) | PollEnd::Timeout | PollEnd::Transport => held >= MIN_HELD,
+        PollEnd::Status(_) => false,
+    };
+    if no_event {
+        *errors = 0;
+        return Next::Again;
+    }
+    if *errors >= MAX_ERRORS {
+        return Next::GiveUp;
+    }
+    let wait = ERROR_RETRY + ERROR_RETRY_INC * *errors;
+    *errors += 1;
+    Next::Wait(wait)
+}
+
+/// Long-poll `EventQueueGet` until the receiver is dropped, the simulator
+/// closes the queue (404) or too many polls in a row fail.
+pub async fn event_queue_loop(
+    http: reqwest::Client,
+    url: String,
+    sim: std::net::SocketAddr,
+    tx: mpsc::UnboundedSender<EqMessage>,
+    stats: std::sync::Arc<crate::NetStats>,
+) {
+    use std::sync::atomic::Ordering;
     let mut ack: Llsd = Llsd::Undef;
-    let mut failures = 0u32;
+    let mut errors = 0u32;
     loop {
         if tx.is_closed() {
             return;
         }
         let body = llsd_map! { "ack" => ack.clone(), "done" => false };
+        let started = std::time::Instant::now();
         let fut = http
             .post(&url)
             .header("Content-Type", "application/llsd+xml")
@@ -181,58 +257,64 @@ pub async fn event_queue_loop(http: reqwest::Client, url: String, sim: std::net:
             .timeout(Duration::from_secs(75))
             .body(to_xml(&body))
             .send();
-        match fut.await {
-            Ok(resp) => {
-                let status = resp.status().as_u16();
-                match status {
-                    200 => {
-                        failures = 0;
-                        let Ok(bytes) = resp.bytes().await else {
-                            continue;
-                        };
-                        let Ok(v) = from_xml(&bytes) else {
-                            log::warn!("event queue: malformed LLSD");
-                            continue;
-                        };
-                        ack = v["id"].clone();
-                        for ev in v["events"].as_array() {
-                            let e = EqEvent {
-                                sim,
-                                message: ev["message"].as_str().to_owned(),
-                                body: ev["body"].clone(),
-                            };
-                            if tx.send(e).is_err() {
-                                return;
+        // (errors are described without their URL: it is a capability)
+        let (end, why) = match fut.await {
+            Ok(resp) => match resp.status().as_u16() {
+                200 => match resp.bytes().await {
+                    Ok(bytes) => {
+                        match from_xml(&bytes) {
+                            // like Firestorm, a reply without an id keeps the previous ack
+                            Ok(v) if !v["id"].is_undef() => {
+                                ack = v["id"].clone();
+                                for ev in v["events"].as_array() {
+                                    let e = EqEvent {
+                                        sim,
+                                        message: ev["message"].as_str().to_owned(),
+                                        body: ev["body"].clone(),
+                                    };
+                                    if tx.send(EqMessage::Event(e)).is_err() {
+                                        return;
+                                    }
+                                }
                             }
+                            Ok(_) => log::warn!("event queue for {sim}: reply without an id"),
+                            Err(_) => log::warn!("event queue for {sim}: malformed LLSD"),
                         }
+                        (PollEnd::Reply, String::new())
                     }
-                    // Timeouts on the server side: just poll again.
-                    499 | 500 | 502 | 503 | 504 => {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                    404 | 410 => {
-                        log::info!("event queue for {sim} closed ({status})");
-                        return;
-                    }
-                    _ => {
-                        failures += 1;
-                        log::warn!("event queue status {status}");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                    }
+                    Err(e) => (PollEnd::Transport, e.without_url().to_string()),
+                },
+                status => (PollEnd::Status(status), format!("status {status}")),
+            },
+            Err(e) if e.is_timeout() => (PollEnd::Timeout, String::new()),
+            Err(e) => (PollEnd::Transport, e.without_url().to_string()),
+        };
+        let held = started.elapsed();
+        match after_poll(end, held, &mut errors) {
+            Next::Again => {
+                if end != PollEnd::Reply {
+                    stats.eq_idle_polls.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            Err(e) => {
-                if e.is_timeout() {
-                    continue;
-                }
-                failures += 1;
-                log::warn!("event queue error: {e}");
-                tokio::time::sleep(Duration::from_millis((500 * failures.min(10)) as u64)).await;
+            Next::Closed => {
+                log::info!("event queue for {sim} closed ({why})");
+                return;
             }
-        }
-        if failures > 20 {
-            log::warn!("event queue for {sim} giving up");
-            return;
+            Next::Wait(wait) => {
+                stats.eq_errors.fetch_add(1, Ordering::Relaxed);
+                log::warn!(
+                    "event queue for {sim}: {why} after {:.1} s, error {errors} of {MAX_ERRORS} in a row, next poll in {} s",
+                    held.as_secs_f32(),
+                    wait.as_secs()
+                );
+                tokio::time::sleep(wait).await;
+            }
+            Next::GiveUp => {
+                stats.eq_errors.fetch_add(1, Ordering::Relaxed);
+                log::warn!("event queue for {sim}: {why}, giving up after {MAX_ERRORS} errors in a row");
+                let _ = tx.send(EqMessage::Lost(sim));
+                return;
+            }
         }
     }
 }
@@ -241,6 +323,145 @@ pub async fn event_queue_loop(http: reqwest::Client, url: String, sim: std::net:
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const HELD: Duration = Duration::from_secs(30);
+    const FAST: Duration = Duration::from_millis(200);
+
+    #[test]
+    fn a_quiet_place_never_stops_the_event_queue() {
+        // every way a held poll ends without an event, for hours
+        let mut errors = 0;
+        for _ in 0..500 {
+            for end in [PollEnd::Transport, PollEnd::Status(502), PollEnd::Timeout, PollEnd::Status(499)] {
+                assert_eq!(after_poll(end, HELD, &mut errors), Next::Again);
+            }
+        }
+        assert_eq!(errors, 0);
+        // the threshold is the 10 s the simulator holds a request at least
+        assert_eq!(after_poll(PollEnd::Transport, MIN_HELD, &mut errors), Next::Again);
+        assert_eq!(
+            after_poll(PollEnd::Transport, MIN_HELD - FAST, &mut errors),
+            Next::Wait(ERROR_RETRY)
+        );
+    }
+
+    #[test]
+    fn fast_failures_back_off_like_firestorm_then_give_up() {
+        let mut errors = 0;
+        let mut total = Duration::ZERO;
+        for n in 0..MAX_ERRORS {
+            // a refused connection, a gateway error at once, a forbidden cap
+            let end = [PollEnd::Transport, PollEnd::Status(503), PollEnd::Status(403)][n as usize % 3];
+            let Next::Wait(wait) = after_poll(end, FAST, &mut errors) else {
+                panic!("error {n} should be retried");
+            };
+            assert_eq!(wait, Duration::from_secs(1 + 3 * u64::from(n)));
+            total += wait;
+        }
+        // "~5 minutes, by the above rules" (lleventpoll.cpp)
+        assert_eq!(total, Duration::from_secs(330));
+        assert_eq!(after_poll(PollEnd::Transport, FAST, &mut errors), Next::GiveUp);
+        // a status that is not a gateway one is an error however long it took
+        let mut errors = 0;
+        assert_eq!(after_poll(PollEnd::Status(403), HELD, &mut errors), Next::Wait(ERROR_RETRY));
+    }
+
+    #[test]
+    fn a_reply_or_a_held_poll_forgets_the_errors() {
+        for recovery in [(PollEnd::Reply, FAST), (PollEnd::Status(502), HELD), (PollEnd::Transport, HELD)] {
+            let mut errors = 0;
+            for _ in 0..MAX_ERRORS {
+                after_poll(PollEnd::Transport, FAST, &mut errors);
+            }
+            assert_eq!(after_poll(recovery.0, recovery.1, &mut errors), Next::Again, "{recovery:?}");
+            // back to the first wait, not to the give-up
+            assert_eq!(after_poll(PollEnd::Transport, FAST, &mut errors), Next::Wait(ERROR_RETRY));
+        }
+    }
+
+    #[test]
+    fn a_missing_queue_is_closed_at_once() {
+        let mut errors = 3;
+        assert_eq!(after_poll(PollEnd::Status(404), FAST, &mut errors), Next::Closed);
+        assert_eq!(after_poll(PollEnd::Status(410), HELD, &mut errors), Next::Closed);
+        assert_eq!(errors, 3);
+    }
+
+    /// Serve canned HTTP replies, one connection each; `None` cuts the
+    /// connection without a reply.
+    async fn poll_server(replies: Vec<Option<Vec<u8>>>) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local simulator");
+        let url = format!("http://{}/cap/queue", listener.local_addr().expect("local address"));
+        let handle = tokio::spawn(async move {
+            let mut bodies = Vec::new();
+            for reply in replies {
+                let (mut socket, _) = listener.accept().await.expect("poll");
+                let mut request = Vec::new();
+                let body = loop {
+                    let mut buf = [0; 2048];
+                    let n = socket.read(&mut buf).await.expect("read poll");
+                    assert_ne!(n, 0, "incomplete poll");
+                    request.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&request);
+                    if let Some((_, body)) = text.split_once("\r\n\r\n")
+                        && body.contains("</llsd>")
+                    {
+                        break body.to_string();
+                    }
+                };
+                bodies.push(body);
+                if let Some(reply) = reply {
+                    socket.write_all(&reply).await.expect("write reply");
+                }
+                let _ = socket.shutdown().await;
+            }
+            bodies
+        });
+        (url, handle)
+    }
+
+    fn reply(status: &str, body: &[u8]) -> Option<Vec<u8>> {
+        let mut r = format!("HTTP/1.1 {status}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+        r.extend_from_slice(body);
+        Some(r)
+    }
+
+    #[tokio::test]
+    async fn events_are_delivered_and_acknowledged_across_an_error() {
+        let events = to_xml(&llsd_map! {
+            "id" => 7,
+            "events" => Llsd::Array(vec![llsd_map! { "message" => "TeleportFinish", "body" => llsd_map! { "n" => 1 } }]),
+        });
+        // events, then a cut connection (a counted error: 1 s wait), a reply
+        // without an id, and the queue closes
+        let (url, server) = poll_server(vec![
+            reply("200 OK", &events),
+            None,
+            reply("200 OK", &to_xml(&llsd_map! { "events" => Llsd::Array(vec![]) })),
+            reply("404 Not Found", b""),
+        ])
+        .await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let sim: std::net::SocketAddr = "127.0.0.1:9".parse().expect("address");
+        let http = reqwest::Client::builder().no_proxy().build().expect("HTTP client");
+        let stats = std::sync::Arc::new(crate::NetStats::default());
+        event_queue_loop(http, url, sim, tx, stats.clone()).await;
+        let snap = stats.snapshot();
+        assert_eq!((snap.eq_errors, snap.eq_idle_polls), (1, 0));
+        let Some(EqMessage::Event(e)) = rx.recv().await else {
+            panic!("event");
+        };
+        assert_eq!((e.sim, e.message.as_str(), e.body["n"].as_i32()), (sim, "TeleportFinish", 1));
+        assert!(rx.recv().await.is_none(), "a closed queue is not a lost one");
+        let bodies = server.await.expect("server");
+        assert_eq!(bodies.len(), 4);
+        let acks: Vec<i32> = bodies
+            .iter()
+            .map(|b| from_xml(b.as_bytes()).expect("poll LLSD")["ack"].as_i32())
+            .collect();
+        // the ack of the events is repeated until a reply brings a new id
+        assert_eq!(acks, [0, 7, 7, 7]);
+    }
 
     #[tokio::test]
     async fn seed_post_advertises_object_animation_without_requiring_a_cap_url() {

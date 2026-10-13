@@ -2268,6 +2268,12 @@ the variable.
   for good and sent again during it. The line `asset host <name> answers in
   HTTP/…` appears once per host: the protocol decides how many requests one
   connection carries.
+- `event_queue idle= errors=`: polls of the simulators' event queues that
+  ended without an event after being held 10 s or more (the normal case:
+  about two a minute per simulator in a quiet place), and polls counted as
+  errors (ended sooner, or refused). Fifteen errors in a row, each one
+  waited for 3 s longer than the one before, close the queue; when it is the
+  agent's region the session ends with "connection lost", as in Firestorm.
 
 ### Object under the cursor
 

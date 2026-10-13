@@ -52,6 +52,10 @@ pub struct NetStats {
     pub http_failed: AtomicU64,
     /// Asset requests sent again after a retryable failure.
     pub http_retries: AtomicU64,
+    /// Event queue polls the simulator held and that ended without an event
+    /// (the normal case in a quiet place), and those counted as errors.
+    pub eq_idle_polls: AtomicU64,
+    pub eq_errors: AtomicU64,
     pub sim_count: AtomicU32,
     pub object_cache_hits: AtomicU64,
     pub object_cache_misses: AtomicU64,
@@ -96,6 +100,8 @@ pub struct NetStatsSnapshot {
     pub http_completed: u64,
     pub http_failed: u64,
     pub http_retries: u64,
+    pub eq_idle_polls: u64,
+    pub eq_errors: u64,
     pub sim_count: u32,
     pub object_cache_hits: u64,
     pub object_cache_misses: u64,
@@ -164,6 +170,8 @@ impl NetStats {
             http_completed: l(&self.http_completed),
             http_failed: l(&self.http_failed),
             http_retries: l(&self.http_retries),
+            eq_idle_polls: l(&self.eq_idle_polls),
+            eq_errors: l(&self.eq_errors),
             sim_count: self.sim_count.load(Ordering::Relaxed),
             object_cache_hits: l(&self.object_cache_hits),
             object_cache_misses: l(&self.object_cache_misses),
