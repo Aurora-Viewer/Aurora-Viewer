@@ -40,7 +40,7 @@ impl Backdrop {
 
     /// A new capture (RGBA8, opaque): reduce, blur, keep and save it.
     /// `wait`: do it now (the viewer is closing), else in a thread.
-    pub fn set_capture(&mut self, w: u32, h: u32, rgba: Vec<u8>, wait: bool) {
+    pub fn set_capture(&mut self, w: u32, h: u32, rgba: std::sync::Arc<Vec<u8>>, wait: bool) {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let job = move || {
             let Some((sw, sh, small)) = blurred(w, h, &rgba) else {
@@ -50,8 +50,15 @@ impl Backdrop {
             if let Some(dir) = p.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
-            if let Err(e) = image::save_buffer(&p, &small, sw, sh, image::ExtendedColorType::Rgba8) {
-                log::debug!("last view not saved: {e}");
+            if let Some(image) = image::RgbaImage::from_raw(sw, sh, small.clone()) {
+                let mut bytes = std::io::Cursor::new(Vec::new());
+                if image::DynamicImage::ImageRgba8(image)
+                    .write_to(&mut bytes, image::ImageFormat::Png)
+                    .is_ok()
+                    && let Err(error) = crate::atomic_file::write(&p, &bytes.into_inner())
+                {
+                    log::debug!("last view not saved: {error}");
+                }
             }
             let _ = tx.send(egui::ColorImage::from_rgba_unmultiplied([sw as usize, sh as usize], &small));
         };

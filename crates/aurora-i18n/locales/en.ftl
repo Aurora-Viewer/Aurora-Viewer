@@ -1,4 +1,37 @@
 language-name = English
+login-accounts-title = Choose your account
+login-accounts-first-title = Add your first account
+login-accounts-last-place = Last visited place
+login-accounts-place-after-visit = Available after your first visit
+login-accounts-count = { $count ->
+    [0] No saved accounts
+    [one] { $count } saved account
+   *[other] { $count } saved accounts
+    }
+login-accounts-add = Add an account
+login-accounts-manage = Manage accounts
+login-accounts-manager-description = Review the login details remembered for each account.
+login-accounts-reorder = Drag accounts to change their order on the login screen.
+login-accounts-reorder-failed = The account order could not be saved. Please try again.
+login-accounts-search = Search by account, grid or starting location
+login-accounts-no-results = No matching account
+login-accounts-start-summary = Start: { $location }
+login-accounts-password-not-saved = Password not remembered
+login-accounts-mfa-saved = 2FA: remember for 30 days
+login-accounts-mfa-not-saved = 2FA: one-use code
+login-accounts-forget-mfa = Forget 2FA
+login-accounts-confirm-title = Confirm this action
+login-accounts-confirm-password = Forget the password remembered for { $name }? It will need to be entered at the next login.
+login-accounts-confirm-mfa = Forget the 30-day 2FA authorization for { $name }? A new code will be requested at the next login.
+login-accounts-confirm-remove = Remove { $name } from this viewer and forget its saved password and 2FA authorization?
+login-accounts-local-only = Changes apply only to this viewer's saved accounts.
+login-accounts-remember-mfa = Remember this account on this computer for 30 days
+login-accounts-mfa-once = Unchecked: the code is used for this login only.
+login-accounts-remembered = Password remembered
+login-accounts-password-needed = Enter your password
+login-accounts-forget-password = Forget password
+login-accounts-remove = Remove account
+login-accounts-confirm = This affects only { $name }. Confirm?
 
 import-title = Import assets
 import-open-inventory = Show in inventory

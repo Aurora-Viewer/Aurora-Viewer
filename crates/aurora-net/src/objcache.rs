@@ -249,9 +249,10 @@ impl Snapshot {
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let tmp = self.path.with_extension("tmp");
-        std::fs::write(&tmp, content)?;
-        std::fs::rename(&tmp, &self.path)
+        let tmp = self.path.with_extension(format!("{}.tmp", Uuid::new_v4()));
+        let result = std::fs::write(&tmp, content).and_then(|()| std::fs::rename(&tmp, &self.path));
+        let _ = std::fs::remove_file(&tmp);
+        result
     }
 }
 
@@ -331,5 +332,39 @@ mod tests {
         assert_eq!(again.len(), 1);
         assert!(again.write().is_err());
         let _ = std::fs::remove_file(&blocker);
+    }
+
+    #[test]
+    fn concurrent_snapshots_publish_complete_files() {
+        let dir = std::env::temp_dir().join(format!("aurora-objc-{}", Uuid::new_v4()));
+        let region = Uuid::new_v4();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let writers: Vec<_> = [1_u8, 2]
+            .into_iter()
+            .map(|value| {
+                let dir = dir.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let mut cache = RegionObjectCache::empty(&dir, region);
+                    barrier.wait();
+                    for round in 0_u32..8 {
+                        let revision = u32::from(value) + round * 2;
+                        cache.put(42, revision, 0, &vec![revision as u8; 8192]);
+                        let snapshot = cache.snapshot().expect("changed");
+                        snapshot.write().expect("atomic snapshot");
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().expect("writer completed");
+        }
+        let cache = RegionObjectCache::load(&dir, region);
+        assert_eq!(cache.len(), 1);
+        let entry = cache.get(42, 15).or_else(|| cache.get(42, 16)).expect("complete entry");
+        assert_eq!(entry.data.len(), 8192);
+        assert!(entry.data.iter().all(|byte| u32::from(*byte) == entry.crc));
+        assert_eq!(std::fs::read_dir(&dir).expect("cache directory").count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
