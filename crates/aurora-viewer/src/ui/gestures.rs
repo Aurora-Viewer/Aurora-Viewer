@@ -152,7 +152,9 @@ pub fn show(
         .show(ctx, p, open, |ui| {
             let check_width = ui.spacing().interact_size.y;
             let usable = (ui.available_width() - check_width - ui.spacing().item_spacing.x * 4.0 - 10.0).max(150.0);
-            let columns = [usable * 0.56, usable * 0.28, usable * 0.16];
+            let key_width = 70.0_f32.min(usable * 0.24);
+            let trigger_width = 110.0_f32.min(usable * 0.32);
+            let columns = [usable - key_width - trigger_width, trigger_width, key_width];
             ui.horizontal(|ui| {
                 ui.add_space(check_width + ui.spacing().item_spacing.x);
                 for (column, key) in [(0, "common-name"), (1, "gesture-trigger"), (2, "gesture-key")] {
@@ -211,7 +213,13 @@ pub fn show(
                                         p.muted
                                     });
                                     let text = if active { text.strong() } else { text };
-                                    ui.add_sized([columns[0], 24.0], egui::Label::new(text).truncate().sense(egui::Sense::hover()));
+                                    ui.add_sized(
+                                        [columns[0], 24.0],
+                                        egui::Label::new(text)
+                                            .truncate()
+                                            .halign(egui::Align::Min)
+                                            .sense(egui::Sense::hover()),
+                                    );
                                     let (trigger, shortcut) = manager.entries.get(&id).map_or_else(
                                         || ("---".to_owned(), "---".to_owned()),
                                         |entry| {
@@ -429,6 +437,13 @@ impl GesturesUi {
             rows.reverse();
         }
 
+        self.selected.retain(|id| rows.contains(id));
+        if self.selected.is_empty()
+            && let Some(id) = rows.first()
+        {
+            self.selected.insert(*id);
+            self.anchor = Some(*id);
+        }
         self.rows = rows;
     }
 }
