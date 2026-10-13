@@ -566,8 +566,16 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         return col;
     }
     var lights = light_walk(world_pos, frag);
-    for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        let at = light_at(i, world_pos, lights.projectors);
+    var spots = projector_walk(lights);
+    if (spec.a > 0.0) {
+        for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
+            let at = point_at(i, world_pos);
+            let s = ll_spec(n, v, at.l, spec.a) * at.atten;
+            col += clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        }
+    }
+    for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
+        let at = projector_at(i, world_pos);
         if (at.atten <= 0.0) {
             continue;
         }
@@ -575,7 +583,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
             let s = ll_spec(n, v, at.l, spec.a) * at.atten;
             col += clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
         }
-        if (at.projector && env > 0.0) {
+        if (env > 0.0) {
             // the view reflected to the plane the projector emits from
             let pj = frame.projectors[i];
             let ref_dir = reflect(-v, n);
