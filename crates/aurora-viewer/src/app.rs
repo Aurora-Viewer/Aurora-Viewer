@@ -2111,10 +2111,11 @@ impl App {
             .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
         // a rigged mesh or a worn mesh shown there: the GPU alone poses it
         let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit);
+        let hit = shown.map_or(hit, |d| Some(d.hit.point));
         // on our avatar: a surface inside its box under the cursor (nothing
         // in front of it); or, when the ray goes through the box without
         // touching anything (body not drawn yet), close to the body's axis
-        let avatar_hit = ray.and_then(|(o, d)| {
+        let avatar_hit = ray.filter(|_| shown.is_none_or(|d| !d.blend)).and_then(|(o, d)| {
             let (t0, t1, axis) = self.own_avatar_ray(o, d)?;
             match hit.map(|p| (p - o).dot(d)) {
                 Some(t) if t < t0 - 0.05 => None,
@@ -2175,6 +2176,7 @@ impl App {
             return;
         }
         if !on_avatar
+            && shown.is_none()
             && !self.alt
             && !self.ctrl
             && !self.shift
@@ -2917,23 +2919,23 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_ACTIONS") else {
             return;
         };
-        if mode.ends_with("-ready") {
+        if mode.ends_with("-ready") && !mode.starts_with("blend-") && !mode.starts_with("mask-") {
             return;
         }
         let id = crate::demo::action_mode_id(&mode);
         let click_frame = if mode.starts_with("linked-") { 724 } else { 284 };
         if self.frame_count == 260
-            && (id == 0 || id == 980 || id == 981)
+            && (id == 0 || id == 980 || id == 981 || mode.starts_with("blend-") || mode.starts_with("mask-"))
             && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(971))
             && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
         {
             let direction = (self.camera.position - pos).normalize_or(-Vec3::X);
             let rotation = glam::Quat::from_rotation_arc(Vec3::X, direction);
-            self.world.apply(crate::demo::action_overlay(
-                if id == 980 { 980 } else { 981 },
-                pos + direction * 1.0,
-                rotation,
-            ));
+            self.world.apply(if mode.starts_with("blend-") || mode.starts_with("mask-") {
+                crate::demo::alpha_click_overlay(&mode, pos + direction * 1.0, rotation)
+            } else {
+                crate::demo::action_overlay(if id == 980 { 980 } else { 981 }, pos + direction * 1.0, rotation)
+            });
         }
         if self.frame_count == 275 && (mode == "pause" || mode == "open-media-playing") {
             self.media.play_parcel(&self.world, &self.settings.media);
@@ -2957,7 +2959,7 @@ impl App {
         {
             self.cursor_pos = cursor;
         }
-        if id != 0 && self.frame_count == click_frame {
+        if id != 0 && self.frame_count == click_frame && !mode.ends_with("-ready") {
             if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
                 self.click(click_pick::Click::Build);

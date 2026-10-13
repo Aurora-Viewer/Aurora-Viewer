@@ -16,6 +16,13 @@ pub struct PickFace {
     pub accel: PickAccel,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FacePick {
+    Surface,
+    Inventory,
+    Blend,
+}
+
 impl PickFace {
     pub fn new(positions: Vec<[f32; 3]>, uvs: Vec<[f32; 2]>, indices: Vec<u16>) -> PickFace {
         PickFace {
@@ -231,7 +238,7 @@ impl Scene {
                     g.center + Vec3::new(0.35, 0.35, 1.0),
                 )
             } else {
-                self.face_hit_mode(world, idx, ray, now, false, true).map(|h| h.t)
+                self.face_hit_mode(world, idx, ray, now, false, FacePick::Inventory).map(|h| h.t)
             };
             if let Some(t) = t
                 && t > 0.0
@@ -299,7 +306,7 @@ impl Scene {
         now: Instant,
         include_hidden: bool,
     ) -> Option<pick::FaceHit> {
-        self.face_hit_mode(world, idx, ray, now, include_hidden, false)
+        self.face_hit_mode(world, idx, ray, now, include_hidden, FacePick::Surface)
     }
 
     fn face_hit_mode(
@@ -309,7 +316,7 @@ impl Scene {
         ray: (Vec3, Vec3),
         now: Instant,
         include_hidden: bool,
-        inventory_pick: bool,
+        mode: FacePick,
     ) -> Option<pick::FaceHit> {
         let o = world.objects.get(idx)?;
         let g = self.gpu.get(idx)?;
@@ -322,7 +329,7 @@ impl Scene {
         ray_box(inv.transform_point3(ray.0), inv.transform_vector3(ray.1), geom.min, geom.max)?;
         counts.boxes.fetch_add(1, Relaxed);
         let faces = geom.pick_faces.iter().enumerate().filter_map(|(face, f)| {
-            if inventory_pick {
+            if mode == FacePick::Inventory {
                 let draw = geom
                     .faces
                     .get(face)
@@ -331,6 +338,9 @@ impl Scene {
                 if draw.is_none_or(|f| matches!(f.pass, Pass::Hidden)) {
                     return None;
                 }
+            }
+            if mode == FacePick::Blend && !self.blend_face(world, o, g, face) {
+                return None;
             }
             if !include_hidden && o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004) {
                 return None;
@@ -344,7 +354,7 @@ impl Scene {
                 indices: &f.indices,
             })
         });
-        if inventory_pick {
+        if mode == FacePick::Inventory {
             return faces
                 .filter_map(|face| {
                     let hit = pick::ray_faces(std::iter::once(face), model, ray.0, ray.1)?;
@@ -396,6 +406,44 @@ impl Scene {
             }
             material.double_sided
         })
+    }
+
+    /// The material mode, independent of texel opacity. In particular, a
+    /// hidden Blend face still blocks presses, while a Mask face keeps its
+    /// displayed cutout. Draw records already hold the resolved modes;
+    /// omitted TE faces need the material and its override read directly.
+    fn blend_face(&self, world: &World, o: &Object, g: &ObjGpu, face: usize) -> bool {
+        if let Some(draw) = g.faces.iter().find(|draw| usize::from(draw.te_index) == face) {
+            if let Some(mode) = draw.pbr_alpha {
+                return mode == 1;
+            }
+            if let Some(mode) = draw.legacy_alpha {
+                return mode == legacy_mat::alpha_mode::BLEND;
+            }
+            let alpha = self
+                .textures
+                .alpha_by_slot
+                .get(draw.base_slot as usize)
+                .copied()
+                .unwrap_or_default();
+            return draw.te_alpha < 0.999 || alpha == AlphaKind::Blend;
+        }
+        if let Some(id) = o.visual_material(face) {
+            let mut material = self.materials.peek(&id).map(|m| (*m).clone()).unwrap_or_default();
+            if let Some((_, ov)) = world
+                .gltf_overrides
+                .get(&o.key)
+                .and_then(|s| s.iter().rev().find(|(fi, _)| usize::from(*fi) == face))
+            {
+                material.apply_override(ov);
+            }
+            return material.alpha_mode == aurora_assets::AlphaMode::Blend;
+        }
+        let tf = o.visual_texture_face(face);
+        if let Some(material) = self.legacy_mats.peek(&tf.material_id) {
+            return material.diffuse_alpha_mode == legacy_mat::alpha_mode::BLEND;
+        }
+        tf.color[3] < 0.999
     }
 
     /// The distance at which the ray meets the triangles of an object
@@ -768,7 +816,36 @@ impl Scene {
         if build {
             return point;
         }
-        self.transparent_action_point(world, ray?, point, true, far, None)
+        let ray = ray?;
+        let point = self.transparent_action_point(world, ray, point, true, far, None);
+        // User-requested priority: Blend geometry always stops a left press,
+        // even at zero texel alpha and with no action. Firestorm's competing
+        // visible/actionable pick must not send the click to an object behind.
+        // Mask surfaces continue to use the existing depth/action search.
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        let limit = point.map_or(far, |p| (p - ray.0).dot(ray.1)).min(far);
+        let now = Instant::now();
+        candidates
+            .par_iter()
+            .filter_map(|&idx| {
+                let g = self.gpu.get(idx)?;
+                let o = world.objects.get(idx)?;
+                if g.hud
+                    || g.is_avatar
+                    || g.rigged
+                    || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
+                    || o.click_action == crate::interaction::code::IGNORE
+                    || !ray_may_hit(g, ray)
+                {
+                    return None;
+                }
+                let hit = self.face_hit_mode(world, idx, ray, now, true, FacePick::Blend)?;
+                (hit.t.is_finite() && hit.t < limit).then_some((hit.t, idx))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)))
+            .map(|(t, _)| ray.0 + ray.1 * t)
+            .or(point)
     }
 
     pub fn interaction_at(&self, world: &World, point: Vec3, now: Instant, build: bool) -> Option<usize> {
@@ -798,7 +875,7 @@ impl Scene {
         let mut picked = None;
         for (idx, g) in self.pick_objects(among) {
             let Some(o) = world.objects.get(idx) else { continue };
-            if g.faces.is_empty()
+            if (g.faces.is_empty() && g.geom.is_none())
                 || g.hud
                 || g.is_avatar
                 || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
@@ -1333,6 +1410,7 @@ pub(super) mod tests {
         assert!(crate::interaction::target(&world, front, &HashMap::new()).is_none());
         for (te_alpha, pbr_alpha, legacy_alpha, tex_alpha) in [
             (0.5, None, None, AlphaKind::Opaque),
+            (1.0, Some(1), None, AlphaKind::Opaque),
             (1.0, Some(2), None, AlphaKind::Opaque),
             (1.0, None, Some(1), AlphaKind::Opaque),
             (1.0, None, None, AlphaKind::Blend),
@@ -1353,8 +1431,10 @@ pub(super) mod tests {
                     (Some(front_point), Some(front))
                 );
             }
-            // Left-click actions and hover keep their existing priorities.
-            assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(depth));
+            // Mask keeps its displayed cutout; Blend now stops left presses.
+            let action = if pbr_alpha == Some(2) { depth } else { front_point };
+            assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(action));
+            assert_eq!(scene.interaction_point(&world, Some(ray), Some(depth), false, 100.0), Some(depth));
         }
         // Fully invisible TE faces are omitted from draw records altogether.
         scene.gpu[front].faces.clear();
@@ -1449,6 +1529,162 @@ pub(super) mod tests {
                 (Some(depth), Some(back))
             );
         }
+    }
+
+    #[test]
+    fn blend_press_blocks_an_actionable_object_for_every_opacity() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
+        world.objects.get_mut(front).unwrap().update_flags = 0;
+        world.objects.get_mut(back).unwrap().click_action = crate::interaction::code::BUY;
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let texture = Uuid::from_u128(8889);
+        scene
+            .textures
+            .pick_masks
+            .insert(texture, super::super::textures::PickMask::from_rgba(2, 2, &[0; 16]).unwrap());
+        scene.textures.alpha_by_slot = vec![AlphaKind::Blend];
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let depth = Vec3::new(6.5, 0.0, 50.0);
+        for (pbr, legacy) in [(None, None), (Some(1), None), (None, Some(legacy_mat::alpha_mode::BLEND))] {
+            for alpha in [1.0, 0.5, 0.001, 0.0] {
+                let draw = &mut scene.gpu[front].faces[0];
+                draw.tex_id = texture;
+                draw.pbr_alpha = pbr;
+                draw.legacy_alpha = legacy;
+                draw.te_alpha = alpha;
+                for f in &mut Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces {
+                    f.color[3] = alpha;
+                }
+                assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(front_point));
+                assert_eq!(scene.action_point(&world, Some(ray), None, false, 100.0), Some(front_point));
+                assert_eq!(scene.interaction_at_ray(&world, front_point, ray, true), Some(front));
+                assert!(crate::interaction::target(&world, front, &HashMap::new()).is_none());
+                // A genuinely nearer opaque surface still occludes Blend.
+                let nearer = Vec3::new(1.0, 0.0, 50.0);
+                assert_eq!(scene.action_point(&world, Some(ray), Some(nearer), false, 100.0), Some(nearer));
+            }
+        }
+        // Mask's transparent pixels retain their existing pass-through.
+        scene.gpu[front].faces[0].te_alpha = 1.0;
+        for f in &mut Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces {
+            f.color[3] = 1.0;
+        }
+        for (pbr, legacy) in [(Some(2), None), (None, Some(legacy_mat::alpha_mode::MASK))] {
+            scene.gpu[front].faces[0].pbr_alpha = pbr;
+            scene.gpu[front].faces[0].legacy_alpha = legacy;
+            assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(depth));
+        }
+    }
+
+    #[test]
+    fn blend_press_tests_the_intersected_face_in_a_mixed_material_object() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
+        world.objects.get_mut(front).unwrap().update_flags = 0;
+        let source = scene.geom_ready(&scene.gpu[front].geom.unwrap()).unwrap();
+        let geometry = GpuGeom {
+            faces: vec![
+                source.faces[0],
+                Some(aurora_render::MeshAlloc {
+                    index_offset: 6,
+                    ..source.faces[0].unwrap()
+                }),
+            ],
+            min: source.min,
+            max: source.max,
+            joint_bounds: Vec::new(),
+            pick_faces: vec![
+                Some(PickFace::new(
+                    source.pick_faces[0].as_ref().unwrap().positions.clone(),
+                    source.pick_faces[0].as_ref().unwrap().uvs.clone(),
+                    source.pick_faces[0].as_ref().unwrap().indices.clone(),
+                )),
+                Some(PickFace::new(
+                    vec![[-0.5, 0.2, -0.5], [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [-0.5, 0.2, 0.5]],
+                    vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                    vec![0, 2, 1, 0, 3, 2],
+                )),
+            ],
+        };
+        let key = GeomKey::Prim { hash: 124, lod: 0 };
+        scene.geoms.insert(
+            key,
+            GeomEntry {
+                refs: 1,
+                zero_since: 0,
+                state: GeomState::Ready(Arc::new(geometry)),
+            },
+        );
+        scene.gpu[front].geom = Some(key);
+        scene.gpu[front].faces[0].pbr_alpha = Some(2);
+        let mut blend = scene.gpu[front].faces[0];
+        blend.te_index = 1;
+        blend.cmd.first_index = 6;
+        blend.pbr_alpha = Some(1);
+        scene.gpu[front].faces.push(blend);
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        // The Mask face is crossed, but the Blend face elsewhere on the same
+        // object must not fill its transparent hole.
+        for y in [0.0, 0.3] {
+            let ray = (Vec3::new(0.0, y, 50.0), Vec3::X);
+            let depth = Vec3::new(6.5, y, 50.0);
+            let expected = if y == 0.0 { depth } else { Vec3::new(2.5, y, 50.0) };
+            assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(expected));
+        }
+    }
+
+    #[test]
+    fn blend_press_reaches_omitted_faces_and_respects_material_overrides() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let material = Uuid::from_u128(8890);
+        let object = world.objects.get_mut(front).unwrap();
+        object.click_action = crate::interaction::code::NONE;
+        object.update_flags = 0;
+        object.extra.render_materials.push((0, material));
+        for f in &mut Arc::make_mut(object.te.as_mut().unwrap()).faces {
+            f.color[3] = 0.0;
+        }
+        let object_key = object.key;
+        scene.materials.insert(material, aurora_assets::PbrMaterial::default());
+        scene.gpu[front].faces.clear();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let depth = Vec3::new(6.5, 0.0, 50.0);
+        for mode in [aurora_assets::AlphaMode::Blend, aurora_assets::AlphaMode::Mask] {
+            world.gltf_overrides.insert(
+                object_key,
+                vec![(
+                    0,
+                    aurora_assets::material::PbrOverride {
+                        alpha_mode: Some(mode),
+                        ..Default::default()
+                    },
+                )]
+                .into(),
+            );
+            let expected = if mode == aurora_assets::AlphaMode::Blend {
+                front_point
+            } else {
+                depth
+            };
+            assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(expected));
+        }
+        assert_eq!(scene.interaction_at_ray(&world, front_point, ray, true), Some(front));
     }
 
     #[test]

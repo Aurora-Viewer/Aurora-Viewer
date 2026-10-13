@@ -16,7 +16,7 @@
 //! and lower neighbours: a 2 × 2 target whose texels hold the record, the
 //! depth and the surface coordinates of the face there. Two passes: opaque
 //! and masked faces (alpha tested as displayed), then blended faces in
-//! front of them (where their texel shows). Nothing is drawn nor allocated
+//! front of them (including zero-alpha texels, which stop a click). Nothing is drawn nor allocated
 //! per frame when nobody asks: the cost is one pass over the visible
 //! geometry, vertex work only, in the frame of a click.
 //!

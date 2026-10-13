@@ -395,7 +395,7 @@ impl App {
         let shown = self
             .scene
             .designated(&self.world, gesture, &picked.drawn, picked.ray, found, self.build.open);
-        if self.clicks.scripted() {
+        if self.clicks.scripted() || self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
             // AURORA_DEMO_CLICKS: what the click designates, against two
             // things the CPU knows by itself: the object the click was
             // aimed at (`rigged`), and the posed bounds of the object
