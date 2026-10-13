@@ -1,6 +1,5 @@
 //! GPU memory arenas: one big vertex buffer, one big u16 index buffer and
 //! a storage buffer of draw records, all sub-allocated on the CPU side.
-//! The geometry buffers grow ahead of need, a slice per frame (`Pool`).
 
 use crate::gpu_cull::{CullFace, DirtyChunks, GpuTable};
 use crate::types::{DrawRecord, SkinVertex, Vertex};
@@ -121,216 +120,25 @@ impl MeshAlloc {
     }
 }
 
-/// Share of a pool in use that starts its growth: early enough for the move
-/// to end, at [`COPY_PER_FRAME`], long before the pool is full.
-const GROW_AT: (u64, u64) = (7, 8);
-
-/// Bytes of a pool's widest stream moved to its larger buffers each frame.
-/// A buffer is copied by the GPU, which draws nothing meanwhile: in one go,
-/// the 768 MB of vertices of a crowded region held a frame for 14 ms (8 ms
-/// for 384 MB). 32 MB is about half a millisecond.
-const COPY_PER_FRAME: u64 = 32 * 1024 * 1024;
-
-/// AURORA_ARENA_GROWTH=whole: a pool only grows once it is full, to twice
-/// its size, copied at once, as before — to compare.
-fn grows_at_once() -> bool {
-    static WHOLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *WHOLE.get_or_init(|| std::env::var("AURORA_ARENA_GROWTH").is_ok_and(|v| v.trim() == "whole"))
-}
-
-/// Capacity a pool of `cap` elements grows to, with room for `need` more:
-/// half as much again (it grows before it is full, so doubling would leave
-/// it less than half used; `double`: twice, the growth at once), an even
-/// count, `max` at most. `None` when `max` cannot hold `need` more.
-fn grown(cap: u32, need: u32, max: u32, double: bool) -> Option<u32> {
-    let larger = if double { cap as u64 * 2 } else { cap as u64 * 3 / 2 };
-    let want = larger.max(cap as u64 + need as u64 + 1) & !1;
-    let new = want.min(max as u64 & !1) as u32;
-    (new > cap && new - cap >= need).then_some(new)
-}
-
-/// One buffer of a pool: `stride` bytes per element.
-struct Stream {
-    buffer: wgpu::Buffer,
-    stride: u64,
-    label: &'static str,
-    usage: wgpu::BufferUsages,
-}
-
-/// Larger buffers a pool is moving to: the first `copied` elements are in
-/// them, like everything written since the move started.
-struct Move {
-    buffers: Vec<wgpu::Buffer>,
-    capacity: u32,
-    copied: u32,
-}
-
-/// Parallel buffers sub-allocated together (the vertices and their skin
-/// stream; the indices). A draw reads one buffer, so a pool that is full
-/// has to move to a larger one. It starts early (`GROW_AT`) and copies a
-/// slice per frame (`advance`) while it goes on serving its old capacity;
-/// what is written meanwhile goes to both sets of buffers. The frame the
-/// last slice goes, the larger buffers take over. Only an allocation that
-/// finds no room before that (a burst, or no hole wide enough) copies the
-/// rest at once, as every growth used to.
-struct Pool {
-    streams: Vec<Stream>,
-    ranges: RangeAllocator,
-    moving: Option<Move>,
-    /// Elements the largest buffer allowed holds.
-    max: u32,
-    /// Growths refused for lack of room, to say so once.
-    full: bool,
-}
-
-impl Pool {
-    fn new(device: &wgpu::Device, capacity: u32, max_buffer_size: u64, streams: &[(&'static str, u64, wgpu::BufferUsages)]) -> Pool {
-        let widest = streams.iter().map(|s| s.1).max().unwrap_or(1);
-        Pool {
-            streams: streams
-                .iter()
-                .map(|&(label, stride, usage)| Stream {
-                    buffer: make_buffer(device, label, capacity as u64 * stride, usage),
-                    stride,
-                    label,
-                    usage,
-                })
-                .collect(),
-            ranges: RangeAllocator::new(capacity),
-            moving: None,
-            max: (max_buffer_size / widest).min(u32::MAX as u64) as u32,
-            full: false,
-        }
-    }
-
-    fn bytes(&self) -> u64 {
-        let held: u64 = self.streams.iter().map(|s| s.buffer.size()).sum();
-        held + self.moving.iter().flat_map(|m| &m.buffers).map(|b| b.size()).sum::<u64>()
-    }
-
-    /// Create the larger buffers; the copy follows, slice by slice.
-    fn start(&mut self, device: &wgpu::Device, need: u32) -> bool {
-        let Some(capacity) = grown(self.ranges.capacity(), need, self.max, grows_at_once()) else {
-            if !self.full {
-                self.full = true;
-                log::warn!(
-                    "{} cannot grow beyond {} MB, the largest buffer of this GPU: the meshes it has no room for are not drawn",
-                    self.streams[0].label,
-                    self.streams[0].buffer.size() / (1024 * 1024)
-                );
-            }
-            return false;
-        };
-        self.moving = Some(Move {
-            buffers: self
-                .streams
-                .iter()
-                .map(|s| make_buffer(device, s.label, capacity as u64 * s.stride, s.usage))
-                .collect(),
-            capacity,
-            copied: 0,
-        });
-        true
-    }
-
-    /// Copy up to `elements` more to the larger buffers, which take over
-    /// once everything is there. Recorded after the writes and the copies
-    /// already made into the old buffers this frame.
-    fn step(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, elements: u32) {
-        let Some(m) = &mut self.moving else {
-            return;
-        };
-        let old = self.ranges.capacity();
-        // (even: the indices are two bytes and a copy counts in fours)
-        let count = (elements.max(2) & !1).min(old - m.copied);
-        if count > 0 {
-            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("arena growth") });
-            for (s, to) in self.streams.iter().zip(&m.buffers) {
-                let at = m.copied as u64 * s.stride;
-                enc.copy_buffer_to_buffer(&s.buffer, at, to, at, count as u64 * s.stride);
-            }
-            uploads.flush(writes, Some(enc));
-            m.copied += count;
-        }
-        if m.copied < old {
-            return;
-        }
-        let Some(m) = self.moving.take() else {
-            return;
-        };
-        for (s, to) in self.streams.iter_mut().zip(m.buffers) {
-            s.buffer = to;
-        }
-        self.ranges.grow(m.capacity);
-        let s = &self.streams[0];
-        log::info!("{} grown to {} MB", s.label, s.buffer.size() / (1024 * 1024));
-    }
-
-    /// The frame's slice of a move under way.
-    fn advance(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue) {
-        let widest = self.streams.iter().map(|s| s.stride).max().unwrap_or(1);
-        self.step(device, writes, uploads, (COPY_PER_FRAME / widest) as u32);
-    }
-
-    /// A range of `len` elements. Starts the pool's growth when it is
-    /// nearly full; without room now, ends the move under way at once, then
-    /// grows on the spot as a last resort.
-    fn alloc(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, len: u32) -> Option<u32> {
-        let mut at = self.ranges.alloc(len);
-        if at.is_none() && self.moving.is_some() {
-            self.step(device, writes, uploads, u32::MAX);
-            at = self.ranges.alloc(len);
-        }
-        if at.is_none() && self.start(device, len) {
-            self.step(device, writes, uploads, u32::MAX);
-            at = self.ranges.alloc(len);
-        }
-        let (used, capacity) = (self.ranges.used() as u64, self.ranges.capacity() as u64);
-        if at.is_some() && self.moving.is_none() && used * GROW_AT.1 >= capacity * GROW_AT.0 && !grows_at_once() {
-            self.start(device, 0);
-        }
-        at
-    }
-
-    /// Buffers a write to stream `i` goes to: the one drawn from, and the
-    /// larger one while the pool moves.
-    fn targets(&self, i: usize) -> impl Iterator<Item = &wgpu::Buffer> {
-        std::iter::once(&self.streams[i].buffer).chain(self.moving.iter().map(move |m| &m.buffers[i]))
-    }
-
-    /// Write elements of stream `i` from the main thread's memory.
-    fn write(&self, writes: &mut GpuWrites, i: usize, at: u32, data: &[u8]) {
-        for buffer in self.targets(i) {
-            writes.write_buffer(buffer, at as u64 * self.streams[i].stride, data);
-        }
-    }
-
-    /// Copy elements of stream `i` from a staged region.
-    fn copy_staged(&self, device: &wgpu::Device, uploads: &mut UploadQueue, staged: &crate::upload::Staged, range: (u64, u64), i: usize, at: u32) {
-        for buffer in self.targets(i) {
-            uploads.copy_to_buffer(device, staged, range, buffer, at as u64 * self.streams[i].stride);
-        }
-    }
-}
-
-fn make_buffer(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size,
-        usage: usage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    })
-}
-
-/// Streams of the vertex pool.
-const VERTICES: usize = 0;
-const SKIN: usize = 1;
-
+/// A full buffer is replaced by one twice its size, its content copied on
+/// the GPU. What holds the frame then is not the copy (32 MB: 0.2 ms) but
+/// the first use of the new buffer: fresh video memory costs about 21 µs
+/// per MB the first time anything touches it, the whole buffer at once
+/// (22 ms for 1 GB on an RTX 4090; `new_buffer_first_use`, below). Hence
+/// the doubling: growing by less, or ahead of need a slice of the copy per
+/// frame (tried: same stalls, more of them), allocates more buffers and
+/// pays more. Only smaller buffers would make these stalls small, and a
+/// draw reads one vertex buffer.
 pub struct GeometryArena {
-    /// Vertices, and the parallel stream of `SkinVertex` (same element
-    /// offsets).
-    vertices: Pool,
-    indices: Pool,
+    pub vertex_buffer: wgpu::Buffer,
+    /// Parallel stream of `SkinVertex` (same element offsets as vertices).
+    pub skin_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    vertices: RangeAllocator,
+    indices: RangeAllocator,
+    max_buffer_size: u64,
+    /// A growth was refused at the largest buffer: said once.
+    full: bool,
 }
 
 const VERTEX_SIZE: u64 = std::mem::size_of::<Vertex>() as u64;
@@ -341,46 +149,93 @@ impl GeometryArena {
         let vcap: u32 = 2 * 1024 * 1024; // 48 MB
         let icap: u32 = 8 * 1024 * 1024; // 16 MB
         Self {
-            vertices: Pool::new(
-                device,
-                vcap,
-                max_buffer_size,
-                &[
-                    ("vertex arena", VERTEX_SIZE, wgpu::BufferUsages::VERTEX),
-                    ("skin arena", SKIN_SIZE, wgpu::BufferUsages::VERTEX),
-                ],
-            ),
-            indices: Pool::new(device, icap, max_buffer_size, &[("index arena", 2, wgpu::BufferUsages::INDEX)]),
+            vertex_buffer: Self::make(device, "vertex arena", vcap as u64 * VERTEX_SIZE, wgpu::BufferUsages::VERTEX),
+            skin_buffer: Self::make(device, "skin arena", vcap as u64 * SKIN_SIZE, wgpu::BufferUsages::VERTEX),
+            index_buffer: Self::make(device, "index arena", icap as u64 * 2, wgpu::BufferUsages::INDEX),
+            vertices: RangeAllocator::new(vcap),
+            indices: RangeAllocator::new(icap),
+            max_buffer_size,
+            full: false,
         }
     }
 
-    /// The buffers the frame draws from.
-    pub fn vertex_buffer(&self) -> &wgpu::Buffer {
-        &self.vertices.streams[VERTICES].buffer
+    fn make(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage: usage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        })
     }
 
-    pub fn skin_buffer(&self) -> &wgpu::Buffer {
-        &self.vertices.streams[SKIN].buffer
-    }
-
-    pub fn index_buffer(&self) -> &wgpu::Buffer {
-        &self.indices.streams[0].buffer
-    }
-
-    /// Video memory held, the larger buffers of a move under way included.
     pub fn bytes(&self) -> u64 {
-        self.vertices.bytes() + self.indices.bytes()
+        self.vertex_buffer.size() + self.skin_buffer.size() + self.index_buffer.size()
     }
 
     pub fn used(&self) -> (u64, u64) {
-        (self.vertices.ranges.used() as u64, self.indices.ranges.used() as u64)
+        (self.vertices.used() as u64, self.indices.used() as u64)
     }
 
-    /// Once a frame, after its uploads: the slice of each pool that is
-    /// moving to larger buffers.
-    pub fn advance(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue) {
-        self.vertices.advance(device, writes, uploads);
-        self.indices.advance(device, writes, uploads);
+    /// The arena cannot grow any more: the meshes it has no room for are
+    /// not drawn, which the log must say (once).
+    fn refused(&mut self, what: &str, bytes: u64) {
+        if !std::mem::replace(&mut self.full, true) {
+            log::warn!(
+                "{what} arena full at {} MB, the largest buffer of this GPU: the meshes it has no room for are not drawn",
+                bytes / (1024 * 1024)
+            );
+        }
+    }
+
+    fn grow_vertices(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, need: u32) -> bool {
+        let old = self.vertices.capacity();
+        let mut new_cap = old.saturating_mul(2);
+        while new_cap - old < need {
+            new_cap = new_cap.saturating_mul(2);
+        }
+        if new_cap as u64 * VERTEX_SIZE > self.max_buffer_size {
+            new_cap = (self.max_buffer_size / VERTEX_SIZE) as u32;
+            if new_cap <= old || new_cap - old < need {
+                self.refused("vertex", old as u64 * VERTEX_SIZE);
+                return false;
+            }
+        }
+        let nb = Self::make(device, "vertex arena", new_cap as u64 * VERTEX_SIZE, wgpu::BufferUsages::VERTEX);
+        let ns = Self::make(device, "skin arena", new_cap as u64 * SKIN_SIZE, wgpu::BufferUsages::VERTEX);
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grow vb") });
+        enc.copy_buffer_to_buffer(&self.vertex_buffer, 0, &nb, 0, old as u64 * VERTEX_SIZE);
+        enc.copy_buffer_to_buffer(&self.skin_buffer, 0, &ns, 0, old as u64 * SKIN_SIZE);
+        // the writes and the copies already recorded into the old buffers
+        // come first: the journal keeps the growth at this point of the frame
+        uploads.flush(writes, Some(enc));
+        self.vertex_buffer = nb;
+        self.skin_buffer = ns;
+        self.vertices.grow(new_cap);
+        log::info!("vertex arena grown to {} MB", new_cap as u64 * VERTEX_SIZE / (1024 * 1024));
+        true
+    }
+
+    fn grow_indices(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, need: u32) -> bool {
+        let old = self.indices.capacity();
+        let mut new_cap = old.saturating_mul(2);
+        while new_cap - old < need {
+            new_cap = new_cap.saturating_mul(2);
+        }
+        if new_cap as u64 * 2 > self.max_buffer_size {
+            new_cap = (self.max_buffer_size / 2) as u32 & !1;
+            if new_cap <= old || new_cap - old < need {
+                self.refused("index", old as u64 * 2);
+                return false;
+            }
+        }
+        let nb = Self::make(device, "index arena", new_cap as u64 * 2, wgpu::BufferUsages::INDEX);
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grow ib") });
+        enc.copy_buffer_to_buffer(&self.index_buffer, 0, &nb, 0, old as u64 * 2);
+        uploads.flush(writes, Some(enc));
+        self.index_buffer = nb;
+        self.indices.grow(new_cap);
+        log::info!("index arena grown to {} MB", new_cap as u64 * 2 / (1024 * 1024));
+        true
     }
 
     /// Vertex and index ranges for a mesh, growing the arena when full.
@@ -393,10 +248,30 @@ impl GeometryArena {
         icount: u32,
     ) -> Option<MeshAlloc> {
         let ialloc = (icount + 1) & !1;
-        let voff = self.vertices.alloc(device, writes, uploads, vcount)?;
-        let Some(ioff) = self.indices.alloc(device, writes, uploads, ialloc) else {
-            self.vertices.ranges.free(voff, vcount);
-            return None;
+        let voff = match self.vertices.alloc(vcount) {
+            Some(o) => o,
+            None => {
+                if !self.grow_vertices(device, writes, uploads, vcount) {
+                    return None;
+                }
+                self.vertices.alloc(vcount)?
+            }
+        };
+        let ioff = match self.indices.alloc(ialloc) {
+            Some(o) => o,
+            None => {
+                if !self.grow_indices(device, writes, uploads, ialloc) {
+                    self.vertices.free(voff, vcount);
+                    return None;
+                }
+                match self.indices.alloc(ialloc) {
+                    Some(o) => o,
+                    None => {
+                        self.vertices.free(voff, vcount);
+                        return None;
+                    }
+                }
+            }
         };
         Some(MeshAlloc {
             vertex_offset: voff,
@@ -422,19 +297,19 @@ impl GeometryArena {
         let icount = indices.len() as u32;
         let m = self.reserve(device, writes, uploads, vertices.len() as u32, icount)?;
         let (voff, ioff) = (m.vertex_offset, m.index_offset);
-        self.vertices.write(writes, VERTICES, voff, bytemuck::cast_slice(vertices));
+        writes.write_buffer(&self.vertex_buffer, voff as u64 * VERTEX_SIZE, bytemuck::cast_slice(vertices));
         if let Some(sk) = skin
             && sk.len() == vertices.len()
         {
-            self.vertices.write(writes, SKIN, voff, bytemuck::cast_slice(sk));
+            writes.write_buffer(&self.skin_buffer, voff as u64 * SKIN_SIZE, bytemuck::cast_slice(sk));
         }
         if icount % 2 == 1 {
             let mut padded = Vec::with_capacity(m.index_alloc_len() as usize);
             padded.extend_from_slice(indices);
             padded.push(*indices.last().unwrap_or(&0));
-            self.indices.write(writes, 0, ioff, bytemuck::cast_slice(&padded));
+            writes.write_buffer(&self.index_buffer, ioff as u64 * 2, bytemuck::cast_slice(&padded));
         } else {
-            self.indices.write(writes, 0, ioff, bytemuck::cast_slice(indices));
+            writes.write_buffer(&self.index_buffer, ioff as u64 * 2, bytemuck::cast_slice(indices));
         }
         Some(m)
     }
@@ -450,20 +325,16 @@ impl GeometryArena {
     ) -> Option<MeshAlloc> {
         let m = self.reserve(device, writes, uploads, mesh.vertex_count, mesh.index_count)?;
         let [vertices, skin, indices] = mesh.ranges();
-        self.vertices.copy_staged(device, uploads, &mesh.data, vertices, VERTICES, m.vertex_offset);
-        self.vertices.copy_staged(device, uploads, &mesh.data, skin, SKIN, m.vertex_offset);
-        self.indices.copy_staged(device, uploads, &mesh.data, indices, 0, m.index_offset);
+        let voff = m.vertex_offset as u64;
+        uploads.copy_to_buffer(device, &mesh.data, vertices, &self.vertex_buffer, voff * VERTEX_SIZE);
+        uploads.copy_to_buffer(device, &mesh.data, skin, &self.skin_buffer, voff * SKIN_SIZE);
+        uploads.copy_to_buffer(device, &mesh.data, indices, &self.index_buffer, m.index_offset as u64 * 2);
         Some(m)
     }
 
-    /// New vertices for a mesh of the arena (as many as it holds).
-    pub fn write_vertices(&self, writes: &mut GpuWrites, m: MeshAlloc, vertices: &[Vertex]) {
-        self.vertices.write(writes, VERTICES, m.vertex_offset, bytemuck::cast_slice(vertices));
-    }
-
     pub fn free(&mut self, m: MeshAlloc) {
-        self.vertices.ranges.free(m.vertex_offset, m.vertex_count);
-        self.indices.ranges.free(m.index_offset, m.index_alloc_len());
+        self.vertices.free(m.vertex_offset, m.vertex_count);
+        self.indices.free(m.index_offset, m.index_alloc_len());
     }
 }
 
@@ -753,8 +624,7 @@ mod tests {
         let mut arena = GeometryArena::new(&device, 1 << 30);
         // a frame as the render thread runs it: the journal in order, then
         // the frame's copies, then the emptied staging chunks mapped again
-        let frame = |arena: &mut GeometryArena, writes: &mut GpuWrites, uploads: &mut UploadQueue| {
-            arena.advance(&device, writes, uploads);
+        let frame = |writes: &mut GpuWrites, uploads: &mut UploadQueue| {
             writes.replay(&mut crate::writes::QueueSink(&queue));
             let mut frame = uploads.take_frame();
             queue.submit(frame.take_commands());
@@ -775,7 +645,6 @@ mod tests {
         };
         // enough vertices and indices to outgrow both arenas (2 M / 8 M)
         let mut live = Vec::new();
-        let (mut moves, mut deformed) = (0usize, None);
         for i in 0..80u32 {
             let (vcount, icount) = (60_000, 300_001 + (i % 2));
             let (v, sk, idx) = mesh(i, vcount, icount);
@@ -789,28 +658,15 @@ mod tests {
                 arena.alloc(&device, &mut writes, &mut uploads, &v, skinned.then_some(&sk[..]), &idx)
             }
             .expect("room in the arena");
-            live.push((i, i, alloc, skinned));
-            moves += usize::from(arena.vertices.moving.is_some());
-            if arena.vertices.moving.as_ref().is_some_and(|m| m.copied > 0) && deformed.is_none() {
-                // a mesh already copied to the larger buffers gets new
-                // vertices while the move goes on: both sets must hold them
-                let (_, _, first, _) = live[0];
-                let (v, _, _) = mesh(1000, first.vertex_count, 6);
-                arena.write_vertices(&mut writes, first, &v);
-                live[0].0 = 1000;
-                deformed = Some(i);
-            }
+            live.push((i, alloc, skinned));
             if i % 2 == 1 {
                 // a frame: the copies are submitted, the chunks come back
-                frame(&mut arena, &mut writes, &mut uploads);
+                frame(&mut writes, &mut uploads);
                 device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
             }
         }
-        frame(&mut arena, &mut writes, &mut uploads);
-        assert!(arena.vertices.ranges.capacity() > 2 * 1024 * 1024 && arena.indices.ranges.capacity() > 8 * 1024 * 1024);
-        assert!(moves > 2 && deformed.is_some(), "the vertex pool moved over several frames ({moves}), a mesh deformed meanwhile");
-        // a move still under way does not hide anything: the buffers drawn
-        // from hold every mesh
+        frame(&mut writes, &mut uploads);
+        assert!(arena.vertices.capacity() > 2 * 1024 * 1024 && arena.indices.capacity() > 8 * 1024 * 1024);
         let read = |buffer: &wgpu::Buffer, offset: u64, size: u64| -> Vec<u8> {
             let out = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
@@ -825,25 +681,24 @@ mod tests {
             device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
             out.get_mapped_range(..).expect("mapped").to_vec()
         };
-        for (shape, i, m, skinned) in live {
-            let (v, _, _) = mesh(shape, m.vertex_count, 6);
-            let (_, sk, idx) = mesh(i, m.vertex_count, m.index_count);
+        for (i, m, skinned) in live {
+            let (v, sk, idx) = mesh(i, m.vertex_count, m.index_count);
             let got = read(
-                arena.vertex_buffer(),
+                &arena.vertex_buffer,
                 m.vertex_offset as u64 * VERTEX_SIZE,
                 m.vertex_count as u64 * VERTEX_SIZE,
             );
             assert!(got == bytemuck::cast_slice::<_, u8>(&v), "mesh {i} vertices");
             if skinned {
                 let got = read(
-                    arena.skin_buffer(),
+                    &arena.skin_buffer,
                     m.vertex_offset as u64 * SKIN_SIZE,
                     m.vertex_count as u64 * SKIN_SIZE,
                 );
                 assert!(got == bytemuck::cast_slice::<_, u8>(&sk), "mesh {i} skin");
             }
             // the padded allocation: an odd count repeats its last index
-            let got = read(arena.index_buffer(), m.index_offset as u64 * 2, m.index_alloc_len() as u64 * 2);
+            let got = read(&arena.index_buffer, m.index_offset as u64 * 2, m.index_alloc_len() as u64 * 2);
             let mut padded = idx.clone();
             padded.resize(m.index_alloc_len() as usize, idx[idx.len() - 1]);
             assert!(got == bytemuck::cast_slice::<_, u8>(&padded), "mesh {i} indices");
@@ -916,20 +771,48 @@ mod tests {
         assert_eq!(store.get(69_999).map(|r| r.tex[0]), Some(69_999));
     }
 
+    /// What the first use of a new buffer costs, by size: the measurement
+    /// behind the comment of `GeometryArena`. Needs a GPU, prints its times:
+    /// `cargo test -p aurora-render new_buffer_first_use -- --ignored --nocapture`.
     #[test]
-    fn pools_grow_by_half_within_the_largest_buffer() {
-        assert_eq!(grown(2_000_000, 0, u32::MAX, false), Some(3_000_000));
-        assert_eq!(grown(2_000_000, 0, u32::MAX, true), Some(4_000_000));
-        // room for what is asked, an even count
-        assert_eq!(grown(1_000, 5_001, u32::MAX, false), Some(6_002));
-        assert_eq!(grown(1_001, 0, u32::MAX, false), Some(1_500));
-        // up to the largest buffer, then no further
-        assert_eq!(grown(80_000_000, 0, 89_478_485, false), Some(89_478_484));
-        assert_eq!(grown(89_478_484, 0, 89_478_485, false), None);
-        assert_eq!(grown(80_000_000, 20_000_000, 89_478_485, true), None);
-        // a pool starts growing with an eighth of it still free, which a
-        // frame's slice covers many times over
-        const { assert!(GROW_AT.0 < GROW_AT.1 && COPY_PER_FRAME >= 8 * 1024 * 1024) };
+    #[ignore]
+    fn new_buffer_first_use() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            ..Default::default()
+        })) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: adapter.limits(),
+            ..Default::default()
+        }))
+        .expect("GPU device");
+        eprintln!("{}", adapter.get_info().name);
+        let make = |mb: u64| GeometryArena::make(&device, "test", mb << 20, wgpu::BufferUsages::VERTEX);
+        let timed = |work: &dyn Fn()| {
+            let t = std::time::Instant::now();
+            work();
+            queue.submit([]);
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            t.elapsed().as_secs_f64() * 1e3
+        };
+        let source = make(64);
+        timed(&|| queue.write_buffer(&source, 0, &[0u8; 4]));
+        for mb in [256u64, 512, 1024] {
+            let buffer = make(mb);
+            let first = timed(&|| queue.write_buffer(&buffer, 0, &[0u8; 4]));
+            let second = timed(&|| queue.write_buffer(&buffer, 8, &[0u8; 4]));
+            let copy = timed(&|| {
+                let mut enc = device.create_command_encoder(&Default::default());
+                enc.copy_buffer_to_buffer(&source, 0, &buffer, (mb - 32) << 20, 32 << 20);
+                queue.submit([enc.finish()]);
+            });
+            eprintln!("{mb} MB: first use {first:.2} ms, second {second:.2} ms, 32 MB copied into it {copy:.2} ms");
+            assert!(second < first, "the first use of a buffer is the one that costs");
+        }
     }
 
     #[test]

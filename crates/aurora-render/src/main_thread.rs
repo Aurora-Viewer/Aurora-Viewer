@@ -90,9 +90,9 @@ fn scene_gpu(
         joint_boxes: cull.boxes.buffer().clone(),
         record_slots: records.slot_count(),
         textures: textures.bind_group.clone(),
-        vertices: geometry.vertex_buffer().clone(),
-        skin: geometry.skin_buffer().clone(),
-        indices: geometry.index_buffer().clone(),
+        vertices: geometry.vertex_buffer.clone(),
+        skin: geometry.skin_buffer.clone(),
+        indices: geometry.index_buffer.clone(),
     }
 }
 
@@ -570,7 +570,11 @@ impl Renderer {
         if vertices.len() != mesh.vertex_count as usize {
             return false;
         }
-        self.geometry.write_vertices(&mut self.writes, mesh, vertices);
+        self.writes.write_buffer(
+            &self.geometry.vertex_buffer,
+            mesh.vertex_offset as u64 * std::mem::size_of::<Vertex>() as u64,
+            bytemuck::cast_slice(vertices),
+        );
         self.vertices_uploaded += std::mem::size_of_val(vertices) as u64;
         true
     }
@@ -673,8 +677,6 @@ impl Renderer {
         self.cull.objects.flush(&self.device, &mut self.writes);
         self.cull.boxes.flush(&self.device, &mut self.writes);
         self.textures.maintain(&self.device, &mut self.writes, &mut self.uploads, false);
-        // (after the frame's uploads: the slice copied sees them)
-        self.geometry.advance(&self.device, &mut self.writes, &mut self.uploads);
         let uploads = self.uploads.take_frame();
         let mut stats = RenderStats {
             records_uploaded: self.records.uploaded,

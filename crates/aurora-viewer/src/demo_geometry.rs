@@ -6,8 +6,7 @@
 //! `vertex arena grown to` lines of the log and, with AURORA_PROFILE=1,
 //! `frame_max`, `r_acquire` and `r_resources` in `max:` around them. The
 //! meshes are not drawn: only the arena's growth is measured, in the frames
-//! of the ordinary demo. AURORA_ARENA_GROWTH=whole brings back the growth
-//! in one copy, to compare.
+//! of the ordinary demo.
 
 use aurora_render::{MeshAlloc, Renderer, Vertex};
 use std::time::{Duration, Instant};
