@@ -13,6 +13,7 @@
 
 pub mod demo;
 mod focus;
+pub(crate) mod follow;
 mod settings;
 
 pub use focus::FocusObject;
@@ -78,6 +79,7 @@ fn angle_between(a: Vec3, b: Vec3) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraMode {
     ThirdPerson,
+    Follow,
     Mouselook,
 }
 
@@ -156,6 +158,10 @@ struct AvatarFrame {
     root: Vec3,
     /// gAgent.getPositionGlobal: the avatar object's position.
     position: Vec3,
+    /// Follow camera uses the rendered root, including hover height.
+    follow_root: Vec3,
+    /// Seated avatar render rotation, including its local rotation.
+    rotation: Option<Quat>,
     /// Rotation of the object we sit on.
     seat: Option<Quat>,
 }
@@ -222,6 +228,8 @@ pub struct Camera {
     time_in_air: f32,
     collide_plane: Vec4,
     sit_camera: Option<SitCamera>,
+    follow: follow::Simulation,
+    follow_available: bool,
     force_mouselook: bool,
     seat: Option<Seat>,
     fov_zoom: f32,
@@ -273,6 +281,8 @@ impl Default for Camera {
             time_in_air: 0.0,
             collide_plane: Vec4::ZERO,
             sit_camera: None,
+            follow: Default::default(),
+            follow_available: false,
             force_mouselook: false,
             seat: None,
             fov_zoom: 0.0,
@@ -286,6 +296,8 @@ impl Default for Camera {
             avatar: AvatarFrame {
                 root: start,
                 position: start,
+                follow_root: start,
+                rotation: None,
                 seat: None,
             },
             head: start + Vec3::Z * 0.7,
@@ -388,9 +400,37 @@ impl Camera {
         }
     }
 
-    /// LLAgentCamera::changeCameraToDefault (no follow cam yet).
+    /// LLAgentCamera::changeCameraToDefault.
     pub fn change_to_default(&mut self, agent: &mut AgentState, s: &CameraSettings) {
-        self.change_to_third_person(agent, s, true);
+        if self.follow_available {
+            self.change_to_follow(agent, s);
+        } else {
+            self.change_to_third_person(agent, s, true);
+        }
+    }
+
+    fn follow_rotation(&self, agent: &AgentState) -> Quat {
+        // Seated follow cam uses the avatar's render rotation, including
+        // the seat and avatar local rotation (LLAgentCamera::updateCamera).
+        self.avatar.rotation.unwrap_or_else(|| self.frame_rotation(agent))
+    }
+
+    fn change_to_follow(&mut self, agent: &AgentState, s: &CameraSettings) {
+        if self.mode == CameraMode::Follow {
+            return;
+        }
+        let animate = !self.mouselook();
+        self.last_mode = self.mode;
+        self.mode = CameraMode::Follow;
+        self.fov_zoom = 0.0;
+        // reset uses the current view, so activation does not jump.
+        self.follow
+            .reset(self.position, self.target, self.avatar.follow_root, self.follow_rotation(agent));
+        if animate {
+            self.start_animation(s);
+        } else {
+            self.anim = None;
+        }
     }
 
     /// LLAgentCamera::changeCameraToThirdPerson.
@@ -641,6 +681,7 @@ impl Camera {
     /// moves the camera origin with the agent): everything kept in render
     /// space moves by `delta`, so that a border crossing shows nothing.
     pub fn shift(&mut self, delta: Vec3) {
+        self.follow.shift(delta);
         for p in [
             &mut self.position,
             &mut self.target,
@@ -651,6 +692,7 @@ impl Camera {
             &mut self.head,
             &mut self.avatar.root,
             &mut self.avatar.position,
+            &mut self.avatar.follow_root,
         ] {
             *p += delta;
         }
@@ -709,7 +751,7 @@ impl Camera {
 
     /// LLAgentCamera::cameraOrbitAround.
     fn orbit_around(&mut self, radians: f32, agent: &mut AgentState) {
-        if self.focus_on_avatar && self.third_person() {
+        if self.focus_on_avatar && !self.mouselook() {
             agent.yaw += radians;
         } else {
             self.focus_offset_target = Quat::from_rotation_z(radians) * self.focus_offset_target;
@@ -853,6 +895,12 @@ impl Camera {
         if self.mouselook() {
             if clicks > 0.0 && s.wheel_exits_mouselook {
                 self.change_to_default(agent, s);
+            }
+            return false;
+        }
+        if self.mode == CameraMode::Follow && self.focus_on_avatar {
+            if !s.disable_wheel_zoom && self.follow.zoom(clicks) {
+                self.change_to_mouselook(agent, s, false);
             }
             return false;
         }
@@ -1052,6 +1100,30 @@ impl Camera {
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
         self.sync_seat(&mut world.agent, s);
+        self.follow_available = world.scripted_camera.active().is_some();
+        if self.third_person() && self.focus_on_avatar && self.follow_available {
+            self.change_to_follow(&world.agent, s);
+        }
+        if self.mode == CameraMode::Follow {
+            if let Some(params) = world.scripted_camera.active() {
+                if !self.initialized {
+                    // Login / teleport starts at the avatar's new location;
+                    // never smooth a follow simulation from the old region.
+                    let eye = self
+                        .sit_camera_point(world, f.now, true)
+                        .unwrap_or_else(|| self.third_person_camera(&world.agent, s, f));
+                    let at = self
+                        .sit_camera_point(world, f.now, false)
+                        .unwrap_or(self.avatar.position + self.frame_rotation(&world.agent) * s.focus_offset());
+                    self.follow
+                        .reset(eye, at, self.avatar.follow_root, self.follow_rotation(&world.agent));
+                }
+                self.follow
+                    .update(params, self.avatar.follow_root, self.follow_rotation(&world.agent), dt);
+            } else {
+                self.change_to_third_person(&mut world.agent, s, true);
+            }
+        }
         let world = &*world;
         let agent = &world.agent;
         self.head = self.avatar.position + Vec3::Z * HEAD_HEIGHT;
@@ -1173,6 +1245,8 @@ impl Camera {
                 self.seat = None;
                 self.sit_camera = None;
                 self.pitch = 0.0;
+                self.fov_zoom = 0.0;
+                agent.pitch = 0.0;
             }
             (None, None) => {}
         }
@@ -1233,11 +1307,12 @@ impl Camera {
         let agent = &world.agent;
         let mut camera = match self.mode {
             CameraMode::Mouselook => self.mouselook_eye(agent),
+            CameraMode::Follow if self.focus_on_avatar => self.follow.eye,
             CameraMode::ThirdPerson if self.focus_on_avatar => match self.sit_camera_point(world, f.now, true) {
                 Some(p) => p,
                 None => self.third_person_camera(agent, s, f),
             },
-            CameraMode::ThirdPerson => self.focus_target + self.focus_offset,
+            CameraMode::ThirdPerson | CameraMode::Follow => self.focus_target + self.focus_offset,
         };
         if !s.disable_constraints {
             let offset = camera - self.avatar.position;
@@ -1327,12 +1402,13 @@ impl Camera {
     fn calc_focus_target(&self, world: &World, s: &CameraSettings, now: Instant) -> Vec3 {
         let agent = &world.agent;
         match self.mode {
+            CameraMode::Follow if self.focus_on_avatar => self.follow.at,
             CameraMode::Mouselook => {
                 let (y, p) = (agent.yaw, agent.pitch);
                 self.mouselook_eye(agent) + Vec3::new(y.cos() * p.cos(), y.sin() * p.cos(), p.sin())
             }
-            CameraMode::ThirdPerson if !self.focus_on_avatar => self.focus_target,
-            CameraMode::ThirdPerson => match self.sit_camera_point(world, now, false) {
+            CameraMode::ThirdPerson | CameraMode::Follow if !self.focus_on_avatar => self.focus_target,
+            CameraMode::ThirdPerson | CameraMode::Follow => match self.sit_camera_point(world, now, false) {
                 Some(p) => p,
                 None => self.avatar.position + self.frame_rotation(agent) * s.focus_offset(),
             },
@@ -1377,7 +1453,14 @@ impl Camera {
     }
 
     pub fn view(&self) -> Mat4 {
-        glam::camera::rh::view::look_at_mat4(self.position, self.target, Vec3::Z)
+        // Scripts may set identical eye / focus points or look vertically.
+        let direction = self.forward();
+        let up = if direction.cross(Vec3::Z).length_squared() < 1e-6 {
+            Vec3::Y
+        } else {
+            Vec3::Z
+        };
+        glam::camera::rh::view::look_to_mat4(self.position, direction, up)
     }
 
     pub fn proj(&self, aspect: f32) -> Mat4 {
@@ -1394,13 +1477,15 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
     let fallback = AvatarFrame {
         root: agent.position,
         position: agent.position,
+        follow_root: agent.position,
+        rotation: None,
         seat: None,
     };
     let id = world.agent_id;
     let Some(idx) = world.objects.index_of_uuid(&id) else {
         return fallback;
     };
-    let Some((p, _, _)) = Scene::object_transform(world, idx, now, 0) else {
+    let Some((p, rotation, _)) = Scene::object_transform(world, idx, now, 0) else {
         return fallback;
     };
     let seat = world
@@ -1420,6 +1505,8 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
     AvatarFrame {
         root: p - Vec3::Z * hover,
         position: p - Vec3::Z * dz,
+        follow_root: p,
+        rotation: seat.map(|_| rotation),
         seat,
     }
 }
@@ -1494,6 +1581,184 @@ mod tests {
         for _ in 0..300 {
             cam.update(w, s, &frame(1.0 / 60.0));
         }
+    }
+
+    fn script(w: &mut World, object: Uuid, properties: Vec<(i32, f32)>) {
+        w.main_region = Some(1);
+        w.apply(aurora_net::NetEvent::SetFollowCam {
+            handle: 1,
+            object,
+            properties,
+        });
+    }
+
+    #[test]
+    fn scripted_camera_clear_returns_to_normal_and_mouselook_takes_precedence() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let normal = (cam.position, cam.target);
+        let object = Uuid::from_u128(123);
+        script(
+            &mut w,
+            object,
+            vec![
+                (12, 1.0),
+                (14, 125.0),
+                (15, 124.0),
+                (16, 30.0),
+                (18, 129.0),
+                (19, 128.0),
+                (20, 26.0),
+                (21, 1.0),
+                (22, 1.0),
+            ],
+        );
+        settle(&mut cam, &mut w, &s);
+        assert_eq!(cam.mode, CameraMode::Follow);
+        assert!(cam.position.distance(Vec3::new(125.0, 124.0, 30.0)) < 0.001);
+        assert!(cam.target.distance(Vec3::new(129.0, 128.0, 26.0)) < 0.001);
+        cam.toggle_mouselook(&mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.mouselook());
+        cam.toggle_mouselook(&mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        assert_eq!(cam.mode, CameraMode::Follow);
+        w.apply(aurora_net::NetEvent::ClearFollowCam { object });
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.third_person());
+        assert!(cam.position.distance(normal.0) < 0.01);
+        assert!(cam.target.distance(normal.1) < 0.01);
+    }
+
+    #[test]
+    fn standing_from_scripted_sit_releases_the_locked_view_without_clear_messages() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(132.0, 126.0, 32.9));
+        w.agent_id = crate::demo::DEMO_AGENT;
+        let mut cam = Camera::default();
+        for at in [250, 300, 320, 500, 640] {
+            for event in crate::demo::sit_events(at) {
+                if let aurora_net::NetEvent::ObjectUpdates { handle, .. } = &event {
+                    w.main_region = Some(*handle);
+                }
+                if let Some(aurora_net::NetEvent::SitResponse {
+                    object,
+                    camera_eye,
+                    camera_at,
+                    force_mouselook,
+                }) = w.apply(event)
+                {
+                    cam.on_sit_response(object, camera_eye, camera_at, force_mouselook);
+                }
+            }
+            if matches!(at, 320 | 500) {
+                for event in demo::sit_follow_events(at, w.main_region.expect("seat region"), w.agent.position) {
+                    w.apply(event);
+                }
+            }
+            settle(&mut cam, &mut w, &s);
+        }
+        assert_eq!(cam.mode, CameraMode::Follow);
+        assert!(cam.follow.position_locked);
+        let locked = cam.position;
+        for event in crate::demo::sit_events(700) {
+            assert!(!matches!(event, aurora_net::NetEvent::ClearFollowCam { .. }));
+            w.apply(event);
+        }
+        assert!(!w.scripted_camera.has_active());
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.third_person());
+        assert!(cam.sit_camera.is_none());
+        assert!(cam.position.distance(locked) > 1.0);
+        assert!(cam.view().is_finite());
+    }
+
+    #[test]
+    fn alt_camera_overrides_script_and_reset_restores_it() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        script(&mut w, Uuid::from_u128(123), vec![(12, 1.0), (7, 6.0)]);
+        settle(&mut cam, &mut w, &s);
+        let focus = Vec3::new(135.0, 130.0, 27.0);
+        cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        assert!(!cam.focus_on_avatar);
+        assert!(cam.target.distance(focus) < 0.001);
+        cam.handle_reset_view(&mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.focus_on_avatar);
+        assert_eq!(cam.mode, CameraMode::Follow);
+        assert!(cam.target.distance(focus) > 2.0);
+    }
+
+    #[test]
+    fn teleport_restarts_unlocked_follow_at_the_arriving_avatar() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        script(&mut w, Uuid::from_u128(123), vec![(12, 1.0), (7, 6.0)]);
+        settle(&mut cam, &mut w, &s);
+        w.agent.position = Vec3::new(128.0, 128.0, 2100.0);
+        cam.on_teleport_arrival(&s);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!(cam.position.distance(w.agent.position) < 10.0);
+        assert!(cam.target.distance(w.agent.position) < 3.0);
+    }
+
+    #[test]
+    fn scripted_coincident_and_vertical_focus_produce_finite_views() {
+        let mut cam = Camera {
+            position: Vec3::new(128.0, 128.0, 25.0),
+            ..Default::default()
+        };
+        for target in [cam.position, cam.position + Vec3::Z, cam.position - Vec3::Z] {
+            cam.target = target;
+            let view = cam.view();
+            assert!(view.is_finite());
+            assert!((view.determinant() - 1.0).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn killing_script_source_exposes_previous_source_and_logout_clears_it() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        w.agent_id = crate::demo::DEMO_AGENT;
+        let mut cam = Camera::default();
+        for ev in crate::demo::sit_events(250) {
+            if let aurora_net::NetEvent::ObjectUpdates { handle, .. } = &ev {
+                w.main_region = Some(*handle);
+            }
+            w.apply(ev);
+        }
+        let source = w
+            .objects
+            .iter()
+            .find(|(_, o)| !o.is_avatar())
+            .map(|(_, o)| (o.full_id, o.key))
+            .expect("seat");
+        let previous = Uuid::from_u128(123);
+        let handle = w.main_region.expect("region");
+        for (object, distance) in [(previous, 6.0), (source.0, 9.0)] {
+            w.apply(aurora_net::NetEvent::SetFollowCam {
+                handle,
+                object,
+                properties: vec![(12, 1.0), (7, distance)],
+            });
+        }
+        settle(&mut cam, &mut w, &s);
+        assert_eq!(cam.follow.distance, 9.0);
+        w.apply(aurora_net::NetEvent::ObjectsKilled {
+            handle,
+            local_ids: vec![source.1.local_id],
+        });
+        settle(&mut cam, &mut w, &s);
+        assert_eq!(cam.follow.distance, 6.0);
+        w.reset();
+        assert!(w.scripted_camera.active().is_none());
     }
 
     #[test]

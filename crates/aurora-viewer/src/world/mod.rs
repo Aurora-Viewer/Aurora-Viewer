@@ -134,6 +134,7 @@ pub struct World {
     pub regions: HashMap<RegionHandle, Region>,
     pub main_region: Option<RegionHandle>,
     pub objects: ObjectStore,
+    pub(crate) scripted_camera: crate::camera::follow::Sources,
     /// When the clocks of the regions were last advanced (`advance_motion`).
     motion_tick: Instant,
     /// GLTF material overrides by object, (face, override) pairs. Kept apart
@@ -317,6 +318,7 @@ impl World {
             regions: HashMap::new(),
             main_region: None,
             objects: ObjectStore::default(),
+            scripted_camera: Default::default(),
             motion_tick: Instant::now(),
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
@@ -448,6 +450,11 @@ impl World {
             }
             _ => Vec::new(),
         };
+        self.scripted_camera.clear_region(handle, |id| {
+            self.objects
+                .index_of_uuid(&id)
+                .is_some_and(|i| kept.contains(&i) || self.objects.get(i).is_some_and(|o| o.key.region != handle))
+        });
         self.objects.remove_region(handle, &kept);
         self.move_rekeyed();
         self.gltf_overrides.retain(|k, _| k.region != handle);
@@ -519,6 +526,7 @@ impl World {
         let gone: Vec<usize> = self.objects.children_of(&key).iter().copied().filter(|i| stale(self, i)).collect();
         log::info!("{} worn objects not sent by the region arrived in: removed", gone.len());
         for i in gone {
+            self.release_linkset_camera(i, true);
             self.objects.remove_idx(i);
         }
         self.left_behind_since = None;
@@ -537,6 +545,12 @@ impl World {
         self.ensure_region(handle, (256, 256));
         if old == Some(handle) {
             return false;
+        }
+        if let Some(old) = old {
+            let (ox, oy) = aurora_net::handle_to_origin(old);
+            let (nx, ny) = aurora_net::handle_to_origin(handle);
+            self.scripted_camera
+                .shift(Vec3::new((ox as f64 - nx as f64) as f32, (oy as f64 - ny as f64) as f32, 0.0));
         }
         if let Some(old) = old
             && self.arrived_once
@@ -1173,6 +1187,7 @@ impl World {
                     if is_me {
                         self.on_seat_parent_change(handle, parent);
                     }
+                    self.on_camera_parent_change(handle, &u);
                     self.objects.upsert(handle, u);
                     if is_me {
                         self.agent
@@ -1208,6 +1223,20 @@ impl World {
                 }
                 None
             }
+            NetEvent::SetFollowCam {
+                handle,
+                object,
+                properties,
+            } => {
+                if let Some(origin) = self.region_offset(handle) {
+                    self.scripted_camera.set(object, handle, &properties, origin);
+                }
+                None
+            }
+            NetEvent::ClearFollowCam { object } => {
+                self.scripted_camera.clear(object);
+                None
+            }
             NetEvent::ObjectsKilled { handle, local_ids } => {
                 let land_watches = self.land.watches(handle);
                 let mut land_changed = false;
@@ -1225,6 +1254,13 @@ impl World {
                             .index_of(&key)
                             .and_then(|i| self.objects.get(i))
                             .is_some_and(|o| !o.is_avatar());
+                    if let Some(i) = self.objects.index_of(&key) {
+                        for child in self.objects.subtree(i) {
+                            if let Some(o) = self.objects.get(child) {
+                                self.scripted_camera.clear(o.full_id);
+                            }
+                        }
+                    }
                     self.objects.remove(&key);
                     // a cache hit replays the cached ones, a full update comes with them
                     self.gltf_overrides.remove(&key);
@@ -2430,6 +2466,62 @@ impl World {
         self.animation_preview_clock = self.local_preview.filter(|p| p.id == id).map(|_| (id, start, sample));
     }
 
+    /// LLVOAvatar::getOffObject and LLVOAvatarSelf::detachObject
+    /// (indra/newview/llvoavatar.cpp / llvoavatarself.cpp, LGPL 2.1): release
+    /// only the seat/attachment and its linked prims, keeping unrelated
+    /// sources (including what the seated avatar wears) intact.
+    fn release_linkset_camera(&mut self, root: usize, clear: bool) {
+        let Some(object) = self.objects.get(root) else {
+            return;
+        };
+        let children = self.objects.children_of(&object.key).iter().copied();
+        for idx in std::iter::once(root).chain(children) {
+            if let Some(object) = self.objects.get(idx).filter(|o| !o.is_avatar()) {
+                if clear {
+                    self.scripted_camera.clear(object.full_id);
+                } else {
+                    self.scripted_camera.deactivate(object.full_id);
+                }
+            }
+        }
+    }
+
+    /// Run before upsert unlinks the old parent. Local release is mandatory
+    /// even when no ClearFollowCamProperties arrives from the simulator.
+    fn on_camera_parent_change(&mut self, region: RegionHandle, update: &aurora_net::objects::ObjectUpdate) {
+        if !self.scripted_camera.has_active() || (update.pcode != aurora_prim::params::LL_PCODE_LEGACY_AVATAR && update.parent_id != 0) {
+            return;
+        }
+        let Some(idx) = self.objects.index_of_uuid(&update.full_id) else {
+            return;
+        };
+        let Some(object) = self.objects.get(idx) else {
+            return;
+        };
+        let new_parent = (update.parent_id != 0).then_some(ObjKey {
+            region,
+            local_id: update.parent_id,
+        });
+        if object.parent_key() == new_parent {
+            return;
+        }
+        let Some(parent) = self.objects.parent_of(object) else {
+            return;
+        };
+        if object.is_avatar() {
+            // The seat can be rekeyed during a crossing; parent_key follows
+            // that rekey above, so a still-seated update releases nothing.
+            self.release_linkset_camera(parent, false);
+        } else if update.parent_id == 0
+            && self
+                .objects
+                .get(parent)
+                .is_some_and(|p| p.is_avatar() && p.full_id == self.agent_id)
+        {
+            self.release_linkset_camera(idx, false);
+        }
+    }
+
     /// Port of LLVOAvatar::getOffObject / LLVOAvatarSelf::stopMotionFromSource
     /// (indra/newview/llvoavatar.cpp, llvoavatarself.cpp, LGPL 2.1). Run before
     /// replacing our object's parent, while the old seat/linkset is known.
@@ -2568,6 +2660,165 @@ mod motion_tests {
             objects: vec![seat, child, ao, avatar.clone()],
         });
         (world, avatar, handle, root, linked)
+    }
+
+    fn camera_source(world: &mut World, handle: RegionHandle, object: Uuid, locked: bool) {
+        world.apply(NetEvent::SetFollowCam {
+            handle,
+            object,
+            properties: vec![(12, 1.0), (21, f32::from(u8::from(locked)))],
+        });
+    }
+
+    #[test]
+    fn standing_deactivates_seat_and_linked_cameras_without_a_clear_packet() {
+        let (mut world, mut avatar, handle, root, linked) = seated_fixture();
+        camera_source(&mut world, handle, root, true);
+        camera_source(&mut world, handle, linked, true);
+        avatar.parent_id = 0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar.clone()],
+        });
+        assert!(!world.scripted_camera.has_active());
+        // Stand releases both sources but keeps the parameters of each one.
+        for source in [root, linked] {
+            world.apply(NetEvent::SetFollowCam {
+                handle,
+                object: source,
+                properties: vec![(0, 20.0)],
+            });
+            assert!(!world.scripted_camera.has_active());
+            world.apply(NetEvent::SetFollowCam {
+                handle,
+                object: source,
+                properties: vec![(12, 1.0)],
+            });
+            assert!(world.scripted_camera.active().expect("retained camera").position_locked);
+            world.scripted_camera.deactivate(source);
+        }
+        // Repeated standing updates cannot revoke a subsequently active source.
+        camera_source(&mut world, handle, root, true);
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar],
+        });
+        assert!(world.scripted_camera.has_active());
+    }
+
+    #[test]
+    fn standing_preserves_an_active_attachment_camera_and_same_seat_updates() {
+        let (mut world, mut avatar, handle, root, linked) = seated_fixture();
+        let worn = Uuid::from_u128(999);
+        camera_source(&mut world, handle, worn, false);
+        camera_source(&mut world, handle, root, true);
+        camera_source(&mut world, handle, linked, true);
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar.clone()],
+        });
+        assert!(world.scripted_camera.active().expect("still seated").position_locked);
+        avatar.parent_id = 0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar],
+        });
+        assert!(!world.scripted_camera.active().expect("attachment resumes").position_locked);
+    }
+
+    #[test]
+    fn changing_seats_releases_the_old_linkset_and_preserves_the_new_source() {
+        let (mut world, mut avatar, handle, root, linked) = seated_fixture();
+        camera_source(&mut world, handle, root, true);
+        camera_source(&mut world, handle, linked, true);
+        let other = Uuid::from_u128(952);
+        camera_source(&mut world, handle, other, false);
+        avatar.parent_id = 952;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar],
+        });
+        assert!(!world.scripted_camera.active().expect("new seat camera").position_locked);
+        world.apply(NetEvent::ClearFollowCam { object: other });
+        assert!(!world.scripted_camera.has_active(), "neither old seat source can resume");
+    }
+
+    #[test]
+    fn detaching_an_attachment_releases_its_root_and_linked_cameras() {
+        let (mut world, avatar, handle, root, _) = seated_fixture();
+        let mut worn = avatar.clone();
+        worn.full_id = Uuid::from_u128(999);
+        worn.local_id = 999;
+        worn.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        worn.parent_id = avatar.local_id;
+        let mut child = worn.clone();
+        child.full_id = Uuid::from_u128(1000);
+        child.local_id = 1000;
+        child.parent_id = worn.local_id;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![worn.clone(), child.clone()],
+        });
+        camera_source(&mut world, handle, root, false);
+        camera_source(&mut world, handle, worn.full_id, true);
+        camera_source(&mut world, handle, child.full_id, true);
+        worn.parent_id = 0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![worn],
+        });
+        assert!(!world.scripted_camera.active().expect("seat resumes").position_locked);
+        world.apply(NetEvent::ClearFollowCam { object: root });
+        assert!(!world.scripted_camera.has_active());
+        world.apply(NetEvent::SetFollowCam {
+            handle,
+            object: child.full_id,
+            properties: vec![(12, 1.0)],
+        });
+        assert!(world.scripted_camera.active().expect("retained detached params").position_locked);
+    }
+
+    #[test]
+    fn deleting_a_source_clears_its_linked_camera_params_and_preserves_an_unrelated_source() {
+        let (mut world, _, handle, root, linked) = seated_fixture();
+        let other = Uuid::from_u128(777);
+        camera_source(&mut world, handle, other, false);
+        camera_source(&mut world, handle, root, true);
+        camera_source(&mut world, handle, linked, true);
+        world.apply(NetEvent::ObjectsKilled {
+            handle,
+            local_ids: vec![950],
+        });
+        assert!(!world.scripted_camera.active().expect("unrelated camera survives").position_locked);
+        world.apply(NetEvent::ClearFollowCam { object: other });
+        assert!(!world.scripted_camera.has_active());
+        for source in [root, linked] {
+            world.apply(NetEvent::SetFollowCam {
+                handle,
+                object: source,
+                properties: vec![(12, 1.0)],
+            });
+            assert!(!world.scripted_camera.active().expect("fresh default params").position_locked);
+        }
+    }
+
+    #[test]
+    fn crossing_with_a_rekeyed_seat_does_not_deactivate_its_camera() {
+        let (mut world, mut avatar, handle, root, _) = seated_fixture();
+        camera_source(&mut world, handle, root, true);
+        let mut seat = avatar.clone();
+        seat.full_id = root;
+        seat.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        seat.local_id = 1950;
+        seat.parent_id = 0;
+        let there = handle + (256u64 << 32);
+        avatar.local_id = 19000;
+        avatar.parent_id = seat.local_id;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: there,
+            objects: vec![seat, avatar],
+        });
+        assert!(world.scripted_camera.active().expect("vehicle camera preserved").position_locked);
     }
 
     #[test]
