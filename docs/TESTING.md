@@ -1701,6 +1701,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PRESENT_MODE=<mode>` | Forces the present mode of the swapchain |
 | `AURORA_CPU_CULL=1` | Draw lists built on the CPU |
 | `AURORA_LIST_INDEX=0` or `check` | Draw lists that walk all the objects as before, or check of their index |
+| `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
@@ -1822,6 +1823,26 @@ What the inventory must show with these scenarios:
   fallback when the GPU does not have `MULTI_DRAW_INDIRECT_COUNT`) instead
   of sorting them on the GPU, to compare; `cull=cpu|gpu` in the
   `perf summary` line.
+- **`AURORA_TEXTURE_TODO=0|check`**: by default, the texture streamer
+  (`TextureStreamer::update`) only visits at each frame the textures that
+  have work: a first disk read, or a finer level than the one on the GPU
+  to read, decode or download. A texture is listed when it gets some, and
+  the counts shown by the performance window (loaded, downloading,
+  failing) are kept as the textures change. Same loading, same image.
+  - `0`: every texture is walked at each frame, as before, to compare
+    `s_tex_update` in `perf summary`.
+  - `check`: one frame in thirty, the list and the counts are compared
+    with a walk of every texture; the log gives the differences
+    (`texture todo check`). There must be none, in demo mode as on the
+    grid.
+  - The `streaming:` line of the log, every 30 s, gives the textures
+    listed (`with work`): a few at rest (those that never load), all of
+    them while a region arrives.
+  - In demo mode: `AURORA_DEMO_STREAM=6000,6000` with
+    `AURORA_FPS_LIMIT=240` (6,000 textures kept loaded), with `,leave`
+    (released then evicted), and with `AURORA_TEXTURE_BUDGET_MB=96` and
+    `AURORA_DEMO_POS="168,126"` (lowered under memory pressure, then
+    loaded again).
 - **`AURORA_LIST_INDEX=0|check`**: by default, the draw lists and those of
   the HUDs find the avatars, the objects with transparent or glowing faces,
   the slice of the texture tracking and the worn HUDs in one byte per
