@@ -109,8 +109,10 @@ pub(super) fn world_menu(target: &Target, f: &Facts, point: Vec3) -> Vec<Entry> 
         Target::Attachment { key } => attachment_self_menu(&mut entries, f, *key),
         Target::Avatar { id, own: true, .. } => self_menu(&mut entries, f, *id),
         Target::Avatar {
-            id, attachment: Some(_), ..
-        } => attachment_other_menu(&mut entries, f, *id, point),
+            id,
+            attachment: Some(attachment),
+            ..
+        } => attachment_other_menu(&mut entries, f, *id, *attachment, point),
         Target::Avatar { id, .. } => avatar_menu(&mut entries, f, *id, point),
         Target::Ground => land_menu(&mut entries, f, point),
     }
@@ -168,7 +170,7 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
     ui.separator();
     ui.submenu("box", aurora_i18n::tr!("common-object"), true, |ui| {
         ui.todo("info-circle-filled", aurora_i18n::tr!("common-profile"));
-        ui.todo("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"));
+        ui.item("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"), CtxAction::Inspect(id));
         ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
         ui.separator();
         // linking needs two selected objects: build tools only
@@ -256,7 +258,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.item_if(
         "pencil-filled",
         aurora_i18n::tr!("common-edit"),
-        f.object.edit_hud,
+        f.object.edit,
         CtxAction::EditAttachment(key),
     );
     ui.todo("paint-filled", aurora_i18n::tr!("ui-context-edit-pbr-material"));
@@ -289,7 +291,12 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.separator();
     community_submenu(ui, f.me);
     ui.todo("info-circle-filled", aurora_i18n::tr!("ui-context-object-profile"));
-    ui.todo("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect"));
+    ui.item_if(
+        "zoom-scan-filled",
+        aurora_i18n::tr!("ui-context-inspect-2"),
+        !f.object.id.is_nil(),
+        CtxAction::Inspect(f.object.id),
+    );
     ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
     ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
     ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
@@ -377,7 +384,7 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
 /// apply (Dump XML, Block Particle Owner, Freeze / Eject without the
 /// rights, Remove From Display Exceptions without an exception) are left
 /// out the same way.
-fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
+fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid, point: Vec3) {
     ui.item("user-filled", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
     ui.item_if(
         "user-plus",
@@ -432,7 +439,11 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
             CtxAction::SetRender(id, 0),
         );
     }
-    ui.todo("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"));
+    ui.item(
+        "zoom-scan-filled",
+        aurora_i18n::tr!("ui-context-inspect-2"),
+        CtxAction::Inspect(attachment),
+    );
     ui.todo("code", aurora_i18n::tr!("ui-context-script-info"));
     ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
     ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
@@ -660,7 +671,7 @@ mod tests {
             "-",
             "ui-context-community>",
             "ui-context-object-profile",
-            "ui-context-inspect",
+            "ui-context-inspect-2",
             "ui-context-script-information",
             "ui-context-derender-temporarily",
             "ui-context-derender-blacklist",

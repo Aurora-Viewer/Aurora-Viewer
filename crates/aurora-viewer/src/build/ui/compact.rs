@@ -388,7 +388,8 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
             };
             if ui
                 .add_enabled(
-                    selected,
+                    // LLSelectMgr::canDuplicate: not what we wear
+                    selected && !tool.attachment_selected(world),
                     button
                         .fill(p.field)
                         .stroke(Stroke::new(1.0, p.raised))
@@ -405,7 +406,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
                 p,
                 "link",
                 aurora_i18n::tr!("build-compact-link"),
-                !tool.hud_selected(world) && !s.edit_linked && tool.roots(world).len() >= 2,
+                !tool.attachment_selected(world) && !s.edit_linked && tool.roots(world).len() >= 2,
             )
             .clicked()
             {
@@ -416,7 +417,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
                 p,
                 "unlink",
                 aurora_i18n::tr!("build-compact-unlink"),
-                !tool.hud_selected(world) && selected,
+                !tool.attachment_selected(world) && selected,
             )
             .clicked()
             {

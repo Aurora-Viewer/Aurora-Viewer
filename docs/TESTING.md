@@ -613,6 +613,7 @@ automatiquement les données Linkset Data.
 | Variable | Effet |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | HUDs portés : affichage, toucher, déplacement, édition |
+| `AURORA_DEMO_WORN=<mode>` | Objet porté sur le corps : menus, Modifier, Inspecter |
 
 ### Détails
 
@@ -657,6 +658,26 @@ grille.
   `faces-turned` retourne tous les panneaux de 180° : la colonne avant
   devient vide, l'arrière apparaît, le double face reste visible. Les
   libellés flottants restent visibles dans les deux sens.
+
+**`AURORA_DEMO_WORN=1|menu|edit|move|inspect`** — notre avatar porte dans le
+dos (point Colonne) un objet de deux prims, tactile, modifiable, lié à un
+objet de l’inventaire (« Sac à dos de démo », dans la tenue actuelle). Aucun
+accès à une grille.
+
+- `1` : objet porté seul, pour tester à la main le clic droit sur l’objet,
+  dans l’inventaire et dans Apparence › Tenue actuelle.
+- `menu` : clic droit sur l’objet à l’image 700 (`menu_attachment_self.xml`).
+- `edit` : puis « Modifier » à l’image 740 : fenêtre de construction, objet
+  entouré, flèches alignées sur le point d’attachement, position locale dans
+  Transformation.
+- `move` : comme `edit`, puis tire la flèche Z de 80 px (images 780–830) ; le
+  journal écrit `demo worn edit: local position=…, attachment=9`.
+- `inspect` : « Inspecter » à l’image 740 : la fenêtre liste la racine et le
+  prim lié, leurs chiffres et les totaux ; le prim de la ligne en
+  surbrillance est entouré en jaune, les autres en bleu.
+
+Les étapes sont comptées en images : capturer avec `AURORA_FPS_LIMIT=60`,
+vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
 
 À vérifier avec ces scénarios :
 

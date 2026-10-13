@@ -86,6 +86,18 @@ pub(super) fn context_menu(
                 attach_menu(ui, p, world, it.id, true, actions);
             }
         }
+        // "touch" / "edit" of a worn object (updateItemsVisibility); editing
+        // worn clothing waits for the appearance editor
+        if worn && it.asset_type == 6 {
+            let touch = world.touchable_attachment_items().contains(&it.id);
+            if menu::item_if(ui, p, "click-filled", aurora_i18n::tr!("ui-context-touch"), touch) {
+                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::TouchWorn(it.id));
+            }
+            let edit = world.worn_attachment(&it.id).is_some();
+            if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit"), edit) {
+                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(it.id));
+            }
+        }
         if worn
             && it.asset_type != 13
             && menu::item(

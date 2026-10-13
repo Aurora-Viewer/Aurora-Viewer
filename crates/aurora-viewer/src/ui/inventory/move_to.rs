@@ -336,6 +336,7 @@ mod tests {
             worn_labels: Default::default(),
             points: Vec::new(),
             appearance_busy: false,
+            touchable: Default::default(),
             names: Default::default(),
         }
     }

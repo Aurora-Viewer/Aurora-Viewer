@@ -174,14 +174,21 @@ pub(super) fn frame(
     let prims = highlighted_of(world, sel, linked).len();
     let mut grid = super::grid_of(s, Some(&bounds), grid_ref);
     if grid.world
-        && sel
-            .first()
-            .and_then(|k| world.objects.index_of(k))
-            .and_then(|i| Scene::object_transform(world, i, now, 0))
-            .is_some_and(|(_, _, hud)| hud)
+        && let Some(primary) = sel.first().and_then(|k| world.objects.index_of(k))
     {
-        // LLSelectMgr::getGrid caps the HUD world grid to half a screen unit.
-        grid.scale = grid.scale.min(Vec3::splat(0.5));
+        match super::select_type(world, primary) {
+            // LLSelectMgr::getGrid caps the HUD world grid to half a screen unit.
+            super::SelectType::Hud => grid.scale = grid.scale.min(Vec3::splat(0.5)),
+            // ... and gives a worn object the frame of its attachment point
+            // for world grid: the arrows follow the limb it is worn on
+            super::SelectType::Attachment => {
+                if let Some((origin, rotation)) = super::edit_parent(world, super::root_of(world, primary), now) {
+                    grid.origin = origin;
+                    grid.rotation = rotation;
+                }
+            }
+            super::SelectType::World => {}
+        }
     }
     // FSBuildPrefs_ActualRoot (LLManip::getPivotPoint): pivot on the
     // primary object's root prim rather than the selection's center
@@ -1096,10 +1103,11 @@ fn save_movers(world: &World, sel: &[ObjKey], linked: bool, mode: EditMode, now:
     let selected: std::collections::HashSet<usize> = prims.iter().copied().collect();
     let mut out = Vec::new();
     for idx in prims {
-        let (Some(o), Some((pos, rot, hud))) = (world.objects.get(idx), Scene::object_transform(world, idx, now, 0)) else {
+        let (Some(o), Some((pos, rot, _))) = (world.objects.get(idx), Scene::object_transform(world, idx, now, 0)) else {
             continue;
         };
-        if hud {
+        // what we wear moves without the modify right (FLAGS_OBJECT_MOVE)
+        if super::select_type(world, idx) != super::SelectType::World {
             let flags = world.objects.get(super::root_of(world, idx)).map_or(0, |o| o.update_flags);
             if flags & crate::ui::context::flags::OBJECT_MOVE == 0
                 || ((linked || mode == EditMode::Stretch) && o.update_flags & crate::ui::context::flags::OBJECT_MODIFY == 0)

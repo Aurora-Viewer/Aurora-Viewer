@@ -121,6 +121,8 @@ pub struct Settings {
     /// FSUseStandalonePlaceDetailsFloater: landmarks, place links and history
     /// entries open in their own window instead of the Places window.
     pub standalone_place_details: bool,
+    /// FSInspectColumnConfig: columns of the Inspect window (ui/inspect.rs).
+    pub inspect_columns: u32,
     /// LandmarksSortedByDate: the Landmarks tab of Places sorted by date.
     pub landmarks_by_date: bool,
     /// Ask before a teleport to a landmark, a history entry or a place link
@@ -513,6 +515,7 @@ impl Default for Settings {
             show_chat: true,
             show_minimap: true,
             standalone_place_details: false,
+            inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             landmarks_by_date: true,
             confirm_teleports: true,
             maps: MapSettings::default(),

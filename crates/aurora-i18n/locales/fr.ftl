@@ -1582,7 +1582,6 @@ build-ui-object-try-pasting-from-clipboard = { "Essaie de coller " }{ $n }{ " de
 world-inventory-demo-right-click-tests = Essais du clic droit
 build-manip-east = Est
 ui-appearance-items-stomach = Estomac
-ui-context-inspect = Examiner
 demo-example = Exemple
 ui-land-experiences-allowed-experiences = Exp. autorisées :
 ui-land-experiences-blocked-experiences = Exp. bloquées :
@@ -4431,3 +4430,34 @@ search-event-place-info = Afficher les détails de l'emplacement
 ui-context-do-not-show-again = Ne plus afficher
 ui-options-confirm-teleports = Confirmer les téléportations
 ui-options-ask-before-teleporting-to-a-landmark-a-history-entry = Demander avant de se téléporter vers un repère, un lieu de l'historique ou un lien de téléportation
+inspect-title = Inspecter les objets
+inspect-col-name = Nom de l'objet
+inspect-col-description = Description
+inspect-col-owner = Propriétaire
+inspect-col-creator = Créateur
+inspect-col-faces = Faces
+inspect-col-vertices = Sommets
+inspect-col-triangles = Triangles
+inspect-col-tmem = TMem (Ko)
+inspect-col-vram = VRAM (Ko)
+inspect-col-created = Date de création
+inspect-date = { $day }/{ $month }/{ $year } { $hour }:{ $minute }
+inspect-empty = Aucun objet à inspecter.
+inspect-group-owner = [{ $name }] (groupe)
+inspect-owner-profile = Voir le profil du propriétaire…
+inspect-owner-profile-tip = Profil du propriétaire de l'objet en surbrillance
+inspect-creator-profile = Voir le profil du créateur…
+inspect-creator-profile-tip = Profil du créateur d'origine de l'objet en surbrillance
+inspect-options = Colonnes affichées
+inspect-totals = Totaux
+inspect-totals-objects = { $objects ->
+    [one] { $objects } objet
+   *[other] { $objects } objets
+    }, { $prims ->
+    [one] { $prims } prim
+   *[other] { $prims } prims
+    }
+inspect-totals-visible = Faces visibles
+inspect-totals-complexity = Complexité
+inspect-totals-textures = Textures
+demo-worn-item = Sac à dos de démo

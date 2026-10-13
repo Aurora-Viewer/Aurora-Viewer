@@ -43,6 +43,9 @@ pub mod stream;
 /// Name plates in every state and at each distance (AURORA_DEMO_TAGS).
 #[path = "demo_tags.rs"]
 pub mod tags;
+/// A worn object of ours (AURORA_DEMO_WORN).
+#[path = "demo_worn.rs"]
+pub mod worn;
 
 /// Walkable floor of the demo (plaza top, else the terrain), for the
 /// offline movement stand-in.
