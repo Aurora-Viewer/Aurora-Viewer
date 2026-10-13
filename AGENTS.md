@@ -85,7 +85,7 @@ best implementation for Aurora.
 - In ported code, name the source in a module or function comment, for
   example: `Port of LLMotionController::updateMotionsByType
   (indra/llcharacter/llmotioncontroller.cpp, originally LGPL 2.1)`. This code
-  is distributed under GPL-3.0-or-later (see [NOTICE.md](NOTICE.md)).
+  is distributed under the GPLv3 (see [NOTICE.md](NOTICE.md)).
 - An implementation that differs from Firestorm's is normal. A difference in
   **visible behaviour** (feature, rendering, defaults) is not: only when it
   is justified (and then better for the user), and noted in the code and in
@@ -153,7 +153,7 @@ cargo run -p aurora-viewer -- --title "Test avatar-gaze"
   `scripts/automation-window-border.ps1` with the viewer's PID (not
   `cargo`'s). The dashed yellow outline tells the human to let the agent
   drive the window. See the [launch command on
-  Windows](docs/TESTING.md#fenêtres-de-test-automatisé-sous-windows).
+  Windows](docs/TESTING.md#automated-test-windows-on-windows).
 - Automatic screenshots: `AURORA_CAPTURE=<file.png>`,
   `AURORA_CAPTURE_EXIT=1`, `AURORA_CAPTURE_FRAMES=620` (after the loading
   fade). Look at your screenshots: they are your visual check.
@@ -203,7 +203,7 @@ Before each significant commit, and always before the PR:
     needs it, as soon as it gains performance or smoothness, with no
     functional or visual regression;
   - measure before and after (`AURORA_PROFILE=1`, see
-    [docs/TESTING.md](docs/TESTING.md#profilage)) and give the numbers in the
+    [docs/TESTING.md](docs/TESTING.md#profiling)) and give the numbers in the
     PR.
 - **No regression of the rewrite**: if you change a behaviour ported from
   Firestorm, check it again against the Firestorm sources (the behaviour and

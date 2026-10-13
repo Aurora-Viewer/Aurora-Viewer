@@ -1,21 +1,20 @@
-# Traduire le viewer
+# Translating the viewer
 
-Chaque langue possède un catalogue Fluent dans `crates/aurora-i18n/locales/`.
-Le français est dans `fr.ftl`, l'anglais dans `en.ftl`. Les fichiers sont
-embarqués à la compilation ; ajouter `de.ftl`, par exemple, ajoute une langue
-aux Préférences sans changer le code Rust. Le nom du fichier doit être un
-identifiant de langue, comme `de` ou `pt-BR`, et `language-name` contient le
-nom que ses locuteurs reconnaissent.
+Each language has a Fluent catalogue in `crates/aurora-i18n/locales/`.
+French is in `fr.ftl`, English in `en.ftl`. The files are embedded at build
+time; adding `de.ftl`, for example, adds a language to the Preferences
+without changing the Rust code. The file name must be a language
+identifier, such as `de` or `pt-BR`, and `language-name` holds the name
+that its speakers recognise.
 
-Le choix enregistré prime sur l'OS ; « Langue du système » suit l'OS. Les
-variantes régionales utilisent le catalogue exact s'il existe, puis celui de
-la langue principale. Une langue indisponible ou un message absent utilise
-l'anglais. La langue et sa visibilité pour les scripts sont envoyées au
-simulateur par `UpdateAgentLanguage`, après connexion, changement de région
-ou modification des préférences, selon `LLAgentLanguage::update` de Firestorm.
+The saved choice takes precedence over the OS; "System language" follows the
+OS. Regional variants use the exact catalogue if it exists, then the one of
+the main language. An unavailable language or a missing message uses
+English. The language and its visibility to scripts are sent to the
+simulator through `UpdateAgentLanguage`, after login, a region change or a
+change to the preferences, following Firestorm's `LLAgentLanguage::update`.
 
-Un nouveau texte utilise une clé explicite et les deux traductions dans la
-même PR :
+A new text uses an explicit key and both translations in the same PR:
 
 ```rust
 ui.label(aurora_i18n::tr!("inventory-empty"));
@@ -32,45 +31,45 @@ inventory-empty = L'inventaire est vide.
 resident-online = { $name } est en ligne.
 ```
 
-Les noms de variables doivent être identiques dans toutes les langues.
-Transmettre un nombre directement permet à Fluent de choisir le pluriel :
+Variable names must be identical in every language.
+Passing a number directly lets Fluent choose the plural:
 
 ```rust
 let label = aurora_i18n::tr!("inventory-count", count = items.len());
 ```
 
 ```ftl
-# en.ftl : 0 et 2 sont au pluriel
+# en.ftl: 0 and 2 are plural
 inventory-count = { $count ->
     [one] { $count } item
    *[other] { $count } items
     }
 
-# fr.ftl : 0 et 1 sont au singulier
+# fr.ftl: 0 and 1 are singular
 inventory-count = { $count ->
     [one] { $count } élément
    *[other] { $count } éléments
     }
 ```
 
-`tr!` emprunte les libellés sans variables au cache ; un message à variables
-renvoie une `String`. `Localized<T>` met en cache un tableau de libellés pour
-chaque langue, afin qu'un changement s'applique aussi aux menus déjà ouverts.
-Les dates sont des messages avec des composantes nommées. Pour les décimales
-visibles, utiliser `number` ou `number_text`, et `integer` pour regrouper les
-milliers ; les contrôles egui emploient le
-même séparateur, et `parse_number` accepte celui-ci lors de la saisie.
+`tr!` borrows labels without variables from the cache; a message with
+variables returns a `String`. `Localized<T>` caches an array of labels for
+each language, so that a change also applies to the menus already open.
+Dates are messages with named components. For visible decimals, use
+`number` or `number_text`, and `integer` to group thousands; the egui
+controls use the same separator, and `parse_number` accepts it on input.
 
-Ne traduire que ce qu'Aurora écrit pour l'utilisateur. Les champs du protocole,
-les identifiants de commandes ou de widgets, les UUID, noms de polices et
-identifiants enregistrés restent stables. Les noms, descriptions et messages
-écrits par les résidents ou reçus du serveur restent tels quels.
+Translate only what Aurora writes for the user. Protocol fields, command or
+widget identifiers, UUIDs, font names and saved identifiers stay stable.
+Names, descriptions and messages written by residents or received from the
+server stay as they are.
 
-`cargo test -p aurora-i18n` vérifie la syntaxe, l'unicité des clés et la parité
-des clés et variables avec l'anglais, ainsi que la sélection, le repli et les
-pluriels. `scripts/check.ps1` lance aussi les tests du viewer et du réseau.
+`cargo test -p aurora-i18n` checks the syntax, the uniqueness of the keys and
+the parity of the keys and variables with English, as well as selection,
+fallback and plurals. `scripts/check.ps1` also runs the viewer and network
+tests.
 
-Pour comparer les langues sans modifier les préférences :
+To compare the languages without changing the preferences:
 
 ```powershell
 $env:AURORA_DEMO = '1'
@@ -79,6 +78,6 @@ cargo run -p aurora-viewer -- --language en --title "Test langue-viewer"
 cargo run -p aurora-viewer -- --language fr --title "Test langue-viewer"
 ```
 
-Retirer `--language` pour vérifier le choix enregistré et son changement en
-cours d'utilisation. Les captures utilisent les variables décrites dans
+Remove `--language` to check the saved choice and its change while the
+viewer is running. Screenshots use the variables described in
 [TESTING.md](TESTING.md).
