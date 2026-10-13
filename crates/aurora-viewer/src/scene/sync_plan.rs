@@ -237,7 +237,7 @@ impl SyncCtx<'_> {
             GeomKey::Prim { lod, .. } | GeomKey::Flexible { lod, .. } | GeomKey::Sculpt { lod, .. } | GeomKey::Mesh { lod, .. } => {
                 Some(lod)
             }
-            GeomKey::AvatarPart(_) => None,
+            GeomKey::AvatarPart(_) | GeomKey::AvatarMorph { .. } => None,
         };
         Some(LodInfo {
             at: g.center,
