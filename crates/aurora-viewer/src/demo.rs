@@ -2506,17 +2506,19 @@ pub fn events() -> Vec<NetEvent> {
         sec_per_day: 14400,
         usec_since_start: 0,
     }));
-    // AURORA_DEMO_SKY=<gamma>[,<haze distance>]: a classic EEP sky (no
+    // AURORA_DEMO_SKY=<gamma>[,<haze distance>[,<ambient>]]: a classic EEP sky (no
     // reflection probe ambiance) with the given sky gamma and a sunlight color
     // above 1, as most Second Life skies carry: shows the legacy gamma and
     // the normalized object light (Firestorm mSunDiffuse) without a grid.
     // With a haze distance multiplier (0.8 by default, 37 in a misty sky),
-    // what is a few tens of metres away is hazed
+    // what is a few tens of metres away is hazed. With an ambient level (0.25
+    // by default, above 1 in the brightest skies), what only dims the ambient
+    // light shows: the ambient occlusion
     let sky = std::env::var("AURORA_DEMO_SKY").ok().and_then(|v| {
         let mut values = v.split(',').map(|s| s.trim().parse::<f64>().ok());
-        Some((values.next()??, values.next().flatten()))
+        Some((values.next()??, values.next().flatten(), values.next().flatten()))
     });
-    if let Some((gamma, haze_distance)) = sky {
+    if let Some((gamma, haze_distance, ambient)) = sky {
         // an EEP region: without the ExtEnvironment capability its day is
         // not shown (the simulator sun is)
         ev.push(NetEvent::Capabilities {
@@ -2533,7 +2535,7 @@ pub fn events() -> Vec<NetEvent> {
         ev.push(NetEvent::Environment {
             handle: HANDLE,
             parcel_id: -1,
-            environment: demo_sky(Vec3::new(0.55, 0.35, 0.6).normalize(), gamma, haze_distance),
+            environment: demo_sky(Vec3::new(0.55, 0.35, 0.6).normalize(), gamma, haze_distance, ambient),
         });
     }
     ev.push(NetEvent::FriendsOnline {
@@ -3979,11 +3981,15 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
                 let hole = cx * cx + cy * cy < 100.0;
                 [94, 234, 212, if hole { 0 } else { 255 }]
             } else if *id == TEX_BUMPS {
-                // height h = sin(x) sin(y): normal = normalize(-dh/dx, -dh/dy, 1)
+                // domes on a flat face, never dents, so that a reversed
+                // relief shows: height h = max(sin(x) sin(y), 0)², normal =
+                // normalize(-dh/dx, -dh/dup, 1) with +Y up the image (rows
+                // run down), as SL normal maps
                 let k = tau / 16.0;
-                let dx = k * (fx * k).cos() * (fy * k).sin();
-                let dy = k * (fx * k).sin() * (fy * k).cos();
-                let n = Vec3::new(-dx * 2.0, -dy * 2.0, 1.0).normalize();
+                let s = ((fx * k).sin() * (fy * k).sin()).max(0.0);
+                let dx = 2.0 * s * k * (fx * k).cos() * (fy * k).sin();
+                let dy = 2.0 * s * k * (fx * k).sin() * (fy * k).cos();
+                let n = Vec3::new(-dx * 3.0, dy * 3.0, 1.0).normalize();
                 let e = |v: f32| ((v * 0.5 + 0.5) * 255.0) as u8;
                 [e(n.x), e(n.y), e(n.z), 255]
             } else if *id == TEX_FRAMES {
@@ -4222,7 +4228,7 @@ pub fn seat_animation() -> aurora_assets::Animation {
 }
 
 /// Day cycle with a single classic sky frame (see AURORA_DEMO_SKY).
-fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>) -> Llsd {
+fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>, ambient: Option<f64>) -> Llsd {
     use aurora_llsd::llsd_map;
     let q = Quat::from_rotation_arc(Vec3::X, sun);
     let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
@@ -4232,8 +4238,15 @@ fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>) -> Llsd {
         "sunlight_color" => arr(&[2.2, 2.34, 2.7]),
         "gamma" => gamma,
     };
-    if let (Some(d), Llsd::Map(m)) = (haze_distance, &mut sky) {
-        m.insert("legacy_haze".into(), llsd_map! { "distance_multiplier" => d });
+    let mut haze = aurora_llsd::Map::new();
+    if let Some(d) = haze_distance {
+        haze.insert("distance_multiplier".into(), Llsd::Real(d));
+    }
+    if let Some(a) = ambient {
+        haze.insert("ambient".into(), arr(&[a, a, a]));
+    }
+    if let (false, Llsd::Map(m)) = (haze.is_empty(), &mut sky) {
+        m.insert("legacy_haze".into(), Llsd::Map(haze));
     }
     let mut frames = aurora_llsd::Map::new();
     frames.insert("sky".into(), sky);
