@@ -51,18 +51,16 @@ pub fn session_log() -> Option<std::fs::File> {
 }
 
 fn root() -> PathBuf {
-    if std::env::var_os("AURORA_DEMO").is_some()
-        && let Some(path) = std::env::var_os("AURORA_DEMO_CRASH_DIR")
-    {
+    root_for(std::env::var_os("AURORA_DEMO").is_some(), std::env::var_os("AURORA_DEMO_CRASH_DIR"))
+}
+
+fn root_for(demo: bool, demo_dir: Option<std::ffi::OsString>) -> PathBuf {
+    if demo && let Some(path) = demo_dir {
         return PathBuf::from(path);
     }
     crate::logging::logs_dir()
         .join("crashes")
-        .join(if std::env::var_os("AURORA_DEMO").is_some() {
-            "demo"
-        } else {
-            "sessions"
-        })
+        .join(if demo { "demo" } else { "sessions" })
 }
 
 fn read_limited(path: &Path, limit: u64) -> std::io::Result<String> {
@@ -103,17 +101,8 @@ pub fn helper() -> anyhow::Result<bool> {
     let Some(index) = args.iter().position(|arg| arg == "--crash-watch" || arg == "--crash-show") else {
         return Ok(false);
     };
-    let dir = PathBuf::from(args.get(index + 1).ok_or_else(|| anyhow::anyhow!("missing crash session"))?);
-    // Never accept arbitrary files or paths from a command line / report.
-    let canonical = dir.canonicalize()?;
-    anyhow::ensure!(
-        canonical.parent() == Some(root().canonicalize()?.as_path()),
-        "invalid crash session directory"
-    );
-    anyhow::ensure!(
-        uuid::Uuid::parse_str(&dir.file_name().unwrap_or_default().to_string_lossy()).is_ok(),
-        "invalid session id"
-    );
+    let id = args.get(index + 1).ok_or_else(|| anyhow::anyhow!("missing crash session"))?;
+    let dir = session_dir(&root(), id)?;
     let record = load(&dir)?;
     if args[index] == "--crash-watch" {
         native::watch(&dir, &record)?;
@@ -123,16 +112,45 @@ pub fn helper() -> anyhow::Result<bool> {
     Ok(true)
 }
 
-fn spawn_helper(dir: &Path, mode: &str) -> std::io::Result<std::process::Child> {
+/// Never accept arbitrary files or paths from a command line / report: a
+/// session is named by its id and looked up under the helper's own root.
+/// Do not compare canonical paths instead. A viewer started from a packaged
+/// (MSIX) application has its new folders stored in the package's cache,
+/// while the root they appear in keeps its ordinary location: the canonical
+/// parent of a session is then not the canonical root.
+fn session_dir(root: &Path, id: &std::ffi::OsStr) -> anyhow::Result<PathBuf> {
+    let id = uuid::Uuid::parse_str(&id.to_string_lossy()).map_err(|_| anyhow::anyhow!("invalid session id"))?;
+    let dir = root.join(id.to_string());
+    // A link under that name would lead out of the root.
+    anyhow::ensure!(
+        dir.symlink_metadata().is_ok_and(|entry| entry.is_dir()),
+        "invalid crash session directory"
+    );
+    // Where the folder is really stored: the file manager opened from the
+    // window is not redirected like this process and needs that location.
+    Ok(dir.canonicalize()?)
+}
+
+fn helper_command(dir: &Path, mode: &str, demo: bool) -> std::io::Result<std::process::Command> {
     let mut command = std::process::Command::new(std::env::current_exe()?);
-    let session_root = root().canonicalize()?;
-    command.arg(mode).arg(dir.canonicalize()?);
+    let (Some(session_root), Some(id)) = (dir.parent(), dir.file_name()) else {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    };
+    let session_root = std::path::absolute(session_root)?;
+    command.arg(mode).arg(id);
     // An inherited installation working directory would block the updater's
     // directory swap on Windows, even after the viewer itself has exited.
     command.current_dir(&session_root);
-    if std::env::var_os("AURORA_DEMO").is_some() {
+    if demo {
+        // The helper's working directory differs from the viewer's: a
+        // relative AURORA_DEMO_CRASH_DIR would name another folder there.
         command.env("AURORA_DEMO_CRASH_DIR", &session_root);
     }
+    Ok(command)
+}
+
+fn spawn_helper(dir: &Path, mode: &str) -> std::io::Result<std::process::Child> {
+    let mut command = helper_command(dir, mode, std::env::var_os("AURORA_DEMO").is_some())?;
     if let Some(title) = &crate::cli::get().title {
         command.arg("--title").arg(title);
     }
@@ -261,17 +279,26 @@ fn preserve(dir: &Path, exit_code: u32) -> anyhow::Result<()> {
 }
 
 fn recover() {
-    let Ok(entries) = std::fs::read_dir(root()) else { return };
+    recover_in(&root(), |dir| {
+        let _ = spawn_helper(dir, "--crash-show");
+    });
+}
+
+fn recover_in(root: &Path, mut show: impl FnMut(&Path)) {
+    let Ok(entries) = std::fs::read_dir(root) else { return };
     for entry in entries.flatten() {
         let dir = entry.path();
-        if (dir.join("normal").exists() && !dir.join("failed").exists())
-            || dir.join("acknowledged").exists()
-            || dir.join("recovery-attempted").exists()
-        {
+        if dir.join("acknowledged").exists() || dir.join("recovery-attempted").exists() {
             continue;
         }
         let Ok(record) = load(&dir) else { continue };
         if native::is_alive(record.pid, record.process_started) {
+            continue;
+        }
+        if !should_report(&dir, 0) {
+            // Closed normally, but its watcher could not start and remove
+            // it: nothing to report, and nobody else will ever clean it.
+            let _ = std::fs::remove_dir_all(&dir);
             continue;
         }
         // At most one recovery attempt per session, even if the dialog itself
@@ -282,7 +309,7 @@ fn recover() {
             .open(dir.join("recovery-attempted"))
             .is_ok()
         {
-            let _ = spawn_helper(&dir, "--crash-show");
+            show(&dir);
         }
     }
 }
@@ -376,6 +403,140 @@ mod tests {
         save(&dir, &record).unwrap();
         assert!(load(&dir).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn scratch_root() -> PathBuf {
+        let root = std::env::temp_dir().join(format!("aurora-crash-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        root
+    }
+
+    /// What the viewer hands to its helper process (session argument, demo
+    /// root, working directory) must lead that process back to the folder
+    /// the viewer created.
+    #[test]
+    fn the_helper_finds_the_session_its_viewer_created() {
+        let root = scratch_root();
+        let dir = root.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir(&dir).unwrap();
+        let exported = |command: &std::process::Command| {
+            command
+                .get_envs()
+                .find(|(name, _)| *name == "AURORA_DEMO_CRASH_DIR")
+                .and_then(|(_, value)| value.map(std::ffi::OsStr::to_owned))
+        };
+        for mode in ["--crash-watch", "--crash-show"] {
+            let command = helper_command(&dir, mode, true).unwrap();
+            let args: Vec<_> = command.get_args().collect();
+            assert_eq!(args[0], mode);
+            let helper_root = root_for(true, exported(&command));
+            assert_eq!(command.get_current_dir(), Some(helper_root.as_path()));
+            assert_eq!(session_dir(&helper_root, args[1]).unwrap(), dir.canonicalize().unwrap());
+        }
+        // A relative AURORA_DEMO_CRASH_DIR is resolved by the viewer: the
+        // helper does not start in the same working directory.
+        let relative = Path::new("crash-reports").join(uuid::Uuid::new_v4().to_string());
+        let command = helper_command(&relative, "--crash-watch", true).unwrap();
+        assert_eq!(
+            root_for(true, exported(&command)),
+            std::env::current_dir().unwrap().join("crash-reports")
+        );
+        // Outside the demo both processes derive the root from the logs.
+        let command = helper_command(&dir, "--crash-watch", false).unwrap();
+        assert_eq!(exported(&command), None);
+        assert!(root_for(false, Some("ignored".into())).ends_with("crashes/sessions"));
+        assert!(root_for(true, None).ends_with("crashes/demo"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_helper_only_opens_session_folders_of_its_root() {
+        let root = scratch_root();
+        let elsewhere = scratch_root();
+        let session = uuid::Uuid::new_v4().to_string();
+        let outside = uuid::Uuid::new_v4().to_string();
+        let file = uuid::Uuid::new_v4().to_string();
+        std::fs::create_dir(root.join(&session)).unwrap();
+        std::fs::create_dir(elsewhere.join(&outside)).unwrap();
+        std::fs::write(root.join(&file), []).unwrap();
+        let open = |id: &str| session_dir(&root, std::ffi::OsStr::new(id));
+        assert_eq!(open(&session).unwrap(), root.join(&session).canonicalize().unwrap());
+        let escape = format!("../{}/{outside}", elsewhere.file_name().unwrap().to_string_lossy());
+        let absolute = elsewhere.join(&outside).to_string_lossy().into_owned();
+        let missing = uuid::Uuid::new_v4().to_string();
+        for refused in ["", ".", "..", "session", &escape, &absolute, &outside, &missing, &file] {
+            assert!(open(refused).is_err(), "{refused}");
+        }
+        #[cfg(windows)]
+        {
+            // A junction needs no privilege, unlike a symbolic link.
+            let link = uuid::Uuid::new_v4().to_string();
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(root.join(&link))
+                .arg(elsewhere.join(&outside))
+                .output()
+                .unwrap();
+            assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+            assert!(root.join(&link).is_dir());
+            assert!(open(&link).is_err());
+            std::fs::remove_dir(root.join(&link)).unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(elsewhere).unwrap();
+    }
+
+    /// A session whose watcher never started stays behind: the next launch
+    /// removes it after a normal close and reports it once after a crash.
+    #[cfg(windows)]
+    #[test]
+    fn the_next_launch_clears_closed_sessions_and_reports_crashed_ones_once() {
+        let root = scratch_root();
+        let session = |pid: u32, process_started: u64, markers: &[&str]| {
+            let dir = root.join(uuid::Uuid::new_v4().to_string());
+            std::fs::create_dir(&dir).unwrap();
+            let record = Record {
+                schema: 1,
+                pid,
+                process_started,
+                started_unix: 456,
+                version: "0.4.0".into(),
+                commit: "abcdef".into(),
+                profile: "debug".into(),
+                language: "en".into(),
+                font: "Inter".into(),
+                font_scale: 1.0,
+                theme: Default::default(),
+                log_path: dir.join("viewer.log"),
+                demo: true,
+            };
+            save(&dir, &record).unwrap();
+            for marker in markers {
+                std::fs::write(dir.join(marker), []).unwrap();
+            }
+            dir
+        };
+        // No process started at instant 1: these viewers have stopped.
+        let closed = session(std::process::id(), 1, &["normal"]);
+        let failed = session(std::process::id(), 1, &["normal", "failed"]);
+        let killed = session(std::process::id(), 1, &[]);
+        let seen = session(std::process::id(), 1, &["failed", "acknowledged"]);
+        let running = session(std::process::id(), native::current_process_started(), &["normal"]);
+        std::fs::create_dir(root.join("not-a-session")).unwrap();
+        let mut shown = Vec::new();
+        recover_in(&root, |dir| shown.push(dir.to_owned()));
+        shown.sort();
+        let mut crashed = vec![failed.clone(), killed.clone()];
+        crashed.sort();
+        assert_eq!(shown, crashed);
+        assert!(!closed.exists());
+        for kept in [&failed, &killed, &seen, &running, &root.join("not-a-session")] {
+            assert!(kept.exists(), "{}", kept.display());
+        }
+        shown.clear();
+        recover_in(&root, |dir| shown.push(dir.to_owned()));
+        assert!(shown.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
