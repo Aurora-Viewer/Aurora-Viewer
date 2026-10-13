@@ -119,9 +119,17 @@ pub fn extent(p: &ProbeGpu) -> (Vec3, f32) {
         let side = |bit: usize| if i & bit == 0 { -1.0 } else { 1.0 };
         let corner = to_world.transform_point3(Vec3::new(side(1), side(2), side(4)));
         // (NaN, the corner of a box that cannot be turned back: everywhere)
-        radius = if corner.is_finite() { radius.max(corner.distance(centre)) } else { f32::INFINITY };
+        radius = if corner.is_finite() {
+            radius.max(corner.distance(centre))
+        } else {
+            f32::INFINITY
+        };
     }
-    if centre.is_finite() { (centre, radius) } else { (Vec3::ZERO, f32::INFINITY) }
+    if centre.is_finite() {
+        (centre, radius)
+    } else {
+        (Vec3::ZERO, f32::INFINITY)
+    }
 }
 
 /// The probes of the main view's fragments by screen tile and depth, as
@@ -647,7 +655,10 @@ mod tests {
                         for (i, probe) in probes.iter().enumerate() {
                             if covers(i, probe, p) {
                                 covered += 1;
-                                assert!(found & (1 << i) != 0, "probe {i} ({probe:?}) missing at pixel {x},{y}, depth {depth}");
+                                assert!(
+                                    found & (1 << i) != 0,
+                                    "probe {i} ({probe:?}) missing at pixel {x},{y}, depth {depth}"
+                                );
                             }
                         }
                         depth *= 1.07;
@@ -656,7 +667,10 @@ mod tests {
             }
             // and the sets do narrow the list of 64
             let (mean, mean_covered) = (walked as f32 / fragments as f32, covered as f32 / fragments as f32);
-            assert!(covered > 100_000 && mean < 16.0, "{mean_covered} probes cover a fragment, {mean} walked");
+            assert!(
+                covered > 100_000 && mean < 16.0,
+                "{mean_covered} probes cover a fragment, {mean} walked"
+            );
         }
     }
 
@@ -667,9 +681,16 @@ mod tests {
         assert_eq!(extent(&sphere), (Vec3::new(3.0, 4.0, 5.0), 9.0));
         // a box of half sizes 3, 4, 12 around (10, 20, 30), whatever the
         // origin of its probe: the sphere through its corners
-        let to_world = Mat4::from_scale_rotation_translation(Vec3::new(3.0, 4.0, 12.0), glam::Quat::from_rotation_z(0.7), Vec3::new(10.0, 20.0, 30.0));
+        let to_world = Mat4::from_scale_rotation_translation(
+            Vec3::new(3.0, 4.0, 12.0),
+            glam::Quat::from_rotation_z(0.7),
+            Vec3::new(10.0, 20.0, 30.0),
+        );
         let (c, r) = extent(&probe(Vec3::new(11.0, 20.0, 33.0), 1.0, -1.0, to_world.inverse()));
-        assert!(c.distance(Vec3::new(10.0, 20.0, 30.0)) < 1e-3 && (r - 13.0).abs() < 1e-3, "{c:?} {r}");
+        assert!(
+            c.distance(Vec3::new(10.0, 20.0, 30.0)) < 1e-3 && (r - 13.0).abs() < 1e-3,
+            "{c:?} {r}"
+        );
         // a box that cannot be turned back to the world covers everything
         let (_, r) = extent(&probe(Vec3::ZERO, 1.0, -1.0, Mat4::ZERO));
         assert_eq!(r, f32::INFINITY);

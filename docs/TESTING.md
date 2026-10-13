@@ -913,6 +913,7 @@ To check with these scenarios:
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>]` | Streaming stutter test |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
+| `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
 
 ### Details
@@ -987,6 +988,13 @@ To check with these scenarios:
   `AURORA_DEMO_POS="129,134"` they are in front of the camera, 9 m away and
   more; with `"140,134"`, the camera is in the middle of them. Used to measure
   `AURORA_LIGHT_TILES`.
+- **`AURORA_DEMO_PROBES=1`**: two manual reflection probes, as invisible
+  prims on the plaza: a box of 10 × 8 × 6 m turned on itself, which the
+  camera of `AURORA_DEMO_POS="135,134"` stands in, and a sphere of 12 m east
+  of it. The automatic probes are kept out of the box, and mixed with the
+  sphere's by its weight. Used to check `AURORA_PROBE_WALK` on the probes
+  the plaza does not have otherwise (its only box probe is the mirror's,
+  8 cm thick).
 - **`AURORA_DEMO_OVERDRAW=<n>`**: n rows of opaque walls (12 if the
   value is not a number, 40 at most) east of the plaza, one
   behind the other and each taller than the one in front, sent from the
@@ -1800,7 +1808,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
-| `AURORA_PROBE_WALK=0` or `alt` | Reflection probes walked once per lookup, as before, or both alternately |
+| `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 
 ### Details
@@ -1837,20 +1845,31 @@ What the inventory must show with these scenarios:
     those of the grid (camera moved closer after a reduction). A huge value
     (1000000) removes all pressure, to compare.
 
-- **`AURORA_PROBE_WALK=0|alt`**: by default a fragment walks the list of
-  reflection probes once for its two lookups (ambient and reflection of a
-  PBR face, glossy and environment reflection of a legacy one), and finds
-  the box probes through their mask (`sample_probes_pair` in
-  `common.wgsl`). Same image: which probes cover a point, and their weight,
-  depend on the point alone.
+- **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
+  main view only walks the reflection probes that cover at once its screen
+  column, its row and its depth slice (the sets of the lights,
+  `AURORA_LIGHT_TILES`, filled for the probes: `probes::tiles` in
+  `aurora-render/src/probes.rs`), once for its two lookups (ambient and
+  reflection of a PBR face, glossy and environment reflection of a legacy
+  one; `sample_probes_pair` in `common.wgsl`). Same image: a probe left out
+  covers none of the fragments drawn there, and those that stay are added
+  up in the order of the list. Water finds its probes the same way.
+  - `list`: one walk of the whole list (32 probes by default) for the two
+    lookups, as before the sort, to compare. Reflections, probe faces and
+    impostor photos do not sample the probes.
   - `0`: one walk per lookup, each going through the whole list twice, as
-    before, to compare.
-  - `alt` (with `AURORA_PROFILE=1`): the old walk during one `perf summary`
-    line out of three (`xmode=old`), the new one during the other two
-    (`xmode=new`). Compare `g_objects`, `g_transparent` and `gpu`. In demo
-    (`AURORA_DEMO_CROWD=40`, `AURORA_DEMO_POS="135,134"`,
-    `AURORA_WINDOW_SIZE="2560,1369"`, 16 probes): `g_objects` 0.94 → 0.81
-    ms.
+    at first.
+  - `alt` (with `AURORA_PROFILE=1`): the whole list during one
+    `perf summary` line out of three (`xmode=old`), the sort during the
+    other two (`xmode=new`). Compare `g_objects`, `g_transparent` and
+    `gpu`. In demo (`AURORA_DEMO_CROWD=40`, `AURORA_DEMO_POS="135,134"`,
+    `AURORA_WINDOW_SIZE="2560,1369"`, `AURORA_FPS_LIMIT=120`, 16 probes):
+    `g_objects` 0.68 → 0.58 ms, as much as without any probe but the
+    default one (0.60 ms): the walk was the cost, not the samples.
+  - `check`: the sort, and any fragment that a probe covers without being
+    in its sets is painted magenta (on the faces that read the probes: PBR
+    ones, shiny legacy ones). There must be none, whatever the camera does;
+    try it with `AURORA_DEMO_PROBES=1` and `AURORA_DEMO_PBR_OVERRIDE=1`.
 - **`AURORA_LIGHT_TILES=0|alt|check`**: by default, a lit fragment only
   walks the local lights that cover at once its screen column, its row and
   its depth slice (32 of each; sets computed each frame on the render

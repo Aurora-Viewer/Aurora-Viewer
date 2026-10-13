@@ -2477,7 +2477,13 @@ pub fn events() -> Vec<NetEvent> {
     // (AURORA_DEMO_POS="135,134") stands in, and a sphere east of it
     if std::env::var_os("AURORA_DEMO_PROBES").is_some() {
         for (offset, rot, scale, flags, ambiance) in [
-            (Vec3::new(-2.0, 4.0, 3.0), Quat::from_rotation_z(0.4), Vec3::new(10.0, 8.0, 6.0), 0x1, 1.0),
+            (
+                Vec3::new(-2.0, 4.0, 3.0),
+                Quat::from_rotation_z(0.4),
+                Vec3::new(10.0, 8.0, 6.0),
+                0x1,
+                1.0,
+            ),
             (Vec3::new(6.0, 2.0, 2.0), Quat::IDENTITY, Vec3::splat(12.0), 0x0, 0.5),
         ] {
             let (x, y) = (cx + offset.x, cy + offset.y);
