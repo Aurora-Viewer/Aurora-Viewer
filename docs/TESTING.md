@@ -1800,6 +1800,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
+| `AURORA_PROBE_WALK=0` or `alt` | Reflection probes walked once per lookup, as before, or both alternately |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 
 ### Details
@@ -1836,6 +1837,20 @@ What the inventory must show with these scenarios:
     those of the grid (camera moved closer after a reduction). A huge value
     (1000000) removes all pressure, to compare.
 
+- **`AURORA_PROBE_WALK=0|alt`**: by default a fragment walks the list of
+  reflection probes once for its two lookups (ambient and reflection of a
+  PBR face, glossy and environment reflection of a legacy one), and finds
+  the box probes through their mask (`sample_probes_pair` in
+  `common.wgsl`). Same image: which probes cover a point, and their weight,
+  depend on the point alone.
+  - `0`: one walk per lookup, each going through the whole list twice, as
+    before, to compare.
+  - `alt` (with `AURORA_PROFILE=1`): the old walk during one `perf summary`
+    line out of three (`xmode=old`), the new one during the other two
+    (`xmode=new`). Compare `g_objects`, `g_transparent` and `gpu`. In demo
+    (`AURORA_DEMO_CROWD=40`, `AURORA_DEMO_POS="135,134"`,
+    `AURORA_WINDOW_SIZE="2560,1369"`, 16 probes): `g_objects` 0.94 → 0.81
+    ms.
 - **`AURORA_LIGHT_TILES=0|alt|check`**: by default, a lit fragment only
   walks the local lights that cover at once its screen column, its row and
   its depth slice (32 of each; sets computed each frame on the render
