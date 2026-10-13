@@ -5,7 +5,7 @@
 /// Source code repository (GitHub page).
 pub const GITHUB: &str = "https://github.com/Aurora-Viewer/Aurora-Viewer";
 /// Community Discord invite.
-pub const DISCORD: &str = "https://discord.gg/swn83ftMXS";
+pub const DISCORD: &str = "https://discord.gg/TK4nbMGmKt";
 /// Project website.
 pub const WEBSITE: &str = "https://auroraviewer.com";
 /// News feed: this folder of `main`, hand-edited Markdown files, one
