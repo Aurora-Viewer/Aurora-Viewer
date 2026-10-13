@@ -658,12 +658,9 @@ impl ObjectStore {
         let existing = self.children_of(&key);
         if existing.len() != indices.len()
             || indices.iter().collect::<std::collections::HashSet<_>>().len() != indices.len()
-            || indices.iter().any(|idx| {
-                !existing.contains(idx)
-                    || self
-                        .get(*idx)
-                        .is_none_or(|o| o.parent_key() != Some(key))
-            })
+            || indices
+                .iter()
+                .any(|idx| !existing.contains(idx) || self.get(*idx).is_none_or(|o| o.parent_key() != Some(key)))
         {
             return false;
         }

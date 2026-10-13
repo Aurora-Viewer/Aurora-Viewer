@@ -20,7 +20,9 @@
 //! Our own avatar is remembered while no region has it: Firestorm never
 //! destroys gAgentAvatarp (LLViewerObjectList::killObject moves it to the
 //! agent's region), so arriving from a teleport is not a first appearance
-//! and it shows at once, its worn objects coming back one by one.
+//! and it shows at once. The world keeps it and what it wears across the
+//! region change (`ObjectStore::carry`); this covers what is left: an
+//! avatar removed all the same, then sent again.
 
 use super::{GeomKey, Scene, avatar};
 use crate::world::World;

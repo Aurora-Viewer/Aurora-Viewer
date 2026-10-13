@@ -2944,7 +2944,13 @@ mod motion_tests {
     }
 
     /// Our avatar wearing a prim in the demo region, and a second region.
-    fn worn_fixture() -> (World, aurora_net::objects::ObjectUpdate, aurora_net::objects::ObjectUpdate, RegionHandle, RegionHandle) {
+    fn worn_fixture() -> (
+        World,
+        aurora_net::objects::ObjectUpdate,
+        aurora_net::objects::ObjectUpdate,
+        RegionHandle,
+        RegionHandle,
+    ) {
         let (mut world, avatar, here) = fixture();
         let mut worn = avatar.clone();
         worn.local_id = avatar.local_id + 1;
