@@ -807,6 +807,26 @@ pub struct FrameParams {
     /// Comparison ([`crate::probes::ProbeWalk::Alternate`]): this frame's
     /// fragments walk the whole probe list.
     pub probe_walk_list: bool,
+    /// Debug views and checks asked from the interface.
+    pub debug: DebugRender,
+}
+
+/// Views shown instead of the image, and checks painted over it
+/// (Preferences › Debug). The environment variables that ask for the same
+/// still do, whatever this says.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DebugRender {
+    /// The shadow cascade each pixel reads, darkened by its shadow
+    /// (AURORA_DEBUG_SHADOWS).
+    pub shadows: bool,
+    /// The ambient occlusion of the screen alone.
+    pub ambient_occlusion: bool,
+    /// Magenta where a local light reaches a fragment without being in
+    /// its sets (AURORA_LIGHT_TILES=check).
+    pub check_light_sets: bool,
+    /// Magenta where a reflection probe covers a fragment without being
+    /// in its sets (AURORA_PROBE_WALK=check).
+    pub check_probe_sets: bool,
 }
 
 /// Where the blended faces drop their invisible fragments (`fs_blend` in

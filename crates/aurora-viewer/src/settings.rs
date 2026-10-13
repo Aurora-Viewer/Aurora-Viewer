@@ -32,6 +32,14 @@ pub struct DebugView {
     pub glow_objects: bool,
     /// Glow amount view (red = glow x10).
     pub glow_view: bool,
+    /// The shadow cascade each pixel reads, instead of the image.
+    pub shadow_view: bool,
+    /// The ambient occlusion alone, instead of the image.
+    pub ao_view: bool,
+    /// Magenta where the sort of the local lights by screen tile misses one.
+    pub check_light_sets: bool,
+    /// Magenta where the sort of the reflection probes misses one.
+    pub check_probe_sets: bool,
     pub probes: bool,
     pub skeletons: bool,
     /// Detail level of the objects around the pointer, with the distance
@@ -41,6 +49,32 @@ pub struct DebugView {
 }
 
 impl DebugView {
+    /// One view at a time replaces the image: the one just turned on
+    /// (`before`: the state the interface started from) turns the others
+    /// off.
+    pub fn keep_one_view(&mut self, before: &DebugView) {
+        let turned_on = [
+            self.glow_view && !before.glow_view,
+            self.shadow_view && !before.shadow_view,
+            self.ao_view && !before.ao_view,
+        ];
+        if let Some(kept) = turned_on.iter().position(|&on| on) {
+            self.glow_view = kept == 0;
+            self.shadow_view = kept == 1;
+            self.ao_view = kept == 2;
+        }
+    }
+
+    /// What the renderer is asked for.
+    pub fn render(&self) -> aurora_render::DebugRender {
+        aurora_render::DebugRender {
+            shadows: self.shadow_view,
+            ambient_occlusion: self.ao_view,
+            check_light_sets: self.check_light_sets,
+            check_probe_sets: self.check_probe_sets,
+        }
+    }
+
     /// An overlay drawn over the 3D view is on.
     pub fn any_overlay(&self) -> bool {
         self.bounds || self.culling || self.lights || self.glow_objects || self.probes || self.skeletons || self.lod_info
@@ -1069,6 +1103,35 @@ impl Default for MapSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The views that replace the image: the last one turned on stays.
+    #[test]
+    fn one_debug_view_replaces_the_image_at_a_time() {
+        let mut d = DebugView {
+            glow_view: true,
+            lod_info: true,
+            ..Default::default()
+        };
+        let before = d;
+        // nothing turned on: nothing changes
+        d.keep_one_view(&before);
+        assert_eq!(d, before);
+        d.ao_view = true;
+        d.keep_one_view(&before);
+        assert!(d.ao_view && !d.glow_view && !d.shadow_view);
+        let before = d;
+        d.shadow_view = true;
+        d.keep_one_view(&before);
+        assert!(d.shadow_view && !d.ao_view && !d.glow_view);
+        // turned off: none is left, and the rest is untouched
+        let before = d;
+        d.shadow_view = false;
+        d.check_probe_sets = true;
+        d.keep_one_view(&before);
+        assert!(!d.shadow_view && !d.ao_view && !d.glow_view && d.lod_info && d.check_probe_sets);
+        let asked = d.render();
+        assert!(asked.check_probe_sets && !asked.check_light_sets && !asked.shadows && !asked.ambient_occlusion);
+    }
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;
 
