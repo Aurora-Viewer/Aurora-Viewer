@@ -2351,6 +2351,20 @@ the variable.
   waited for 3 s longer than the one before, close the queue; when it is the
   agent's region the session ends with "connection lost", as in Firestorm.
 
+Three more lines are written without the variable, to read next to
+`loop_max` and `gaps`:
+
+- `udp socket buffers: receive … bytes (system default …), send …`: once per
+  session, the sizes the system granted for the circuits' socket (800,000 and
+  200,000 are asked for, as Firestorm does).
+- `object cache for <region>: … entries, read in … ms`: the cache file of a
+  region, read when its handshake arrives; the reply to the handshake leaves
+  after it.
+- `object cache written: … objects, … KiB in … ms`: a cache that changed,
+  written every two minutes, when its simulator goes and at the end of the
+  session. Neither the read nor the write is done by the session loop: their
+  time must not show in `loop_max`.
+
 ### Object under the cursor
 
 With `AURORA_PROFILE=1`, one `hover summary` line per second as long as the

@@ -12,6 +12,7 @@ mod inventory_preview;
 mod inventory_updates;
 mod inventory_upload;
 mod object_actions;
+mod object_cache;
 mod scripts;
 mod task_notecard;
 
@@ -162,9 +163,9 @@ struct Session<'a> {
     agent_parcel: Option<(i32, i32)>,
     /// Teleport by region name waiting for its MapBlockReply (lowercase name, position).
     pending_named_tp: Option<(String, Vec3)>,
-    obj_cache_dir: Option<std::path::PathBuf>,
-    obj_caches: HashMap<SocketAddr, crate::objcache::RegionObjectCache>,
-    last_cache_save: Instant,
+    /// Object cache of each region, its files read and written off this
+    /// loop (session/object_cache.rs).
+    object_cache: object_cache::ObjectCaches,
     /// Mute list download, groups, chat sessions (session_social.rs).
     social: social_net::SocialNet,
     tasks: object_actions::TaskRequests,
@@ -231,7 +232,10 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     );
 
     let sock = match UdpSocket::bind("0.0.0.0:0").await {
-        Ok(s) => Arc::new(s),
+        Ok(s) => {
+            size_socket_buffers(&s);
+            Arc::new(s)
+        }
         Err(e) => {
             emit(
                 sh,
@@ -253,6 +257,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     let (caps_tx, mut caps_rx) = mpsc::unbounded_channel();
     let (notecard_copy_tx, mut notecard_copy_rx) = mpsc::unbounded_channel();
     let (inventory_move_tx, mut inventory_move_rx) = mpsc::unbounded_channel();
+    let (object_cache, mut object_cache_rx) = object_cache::ObjectCaches::new(sh.object_cache_dir.lock().clone());
     let mut s = Session {
         sh,
         sock: sock.clone(),
@@ -272,9 +277,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         cam_requested_at: None,
         agent_parcel: None,
         pending_named_tp: None,
-        obj_cache_dir: sh.object_cache_dir.lock().clone(),
-        obj_caches: HashMap::new(),
-        last_cache_save: Instant::now(),
+        object_cache,
         social: Default::default(),
         tasks: Default::default(),
         land: Default::default(),
@@ -346,10 +349,14 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                 woke = Instant::now();
                 s.inventory_move(request);
             }
+            Some(file) = object_cache_rx.recv() => {
+                woke = Instant::now();
+                s.on_object_cache_loaded(file);
+            }
         }
         sh.stats.loop_busy(woke);
     }
-    s.save_object_caches();
+    s.object_cache.save();
     // Close every circuit politely.
     for (addr, sim) in s.sims.iter_mut() {
         let m = CloseCircuit::default();
@@ -359,6 +366,40 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     sh.stats.sim_count.store(0, Ordering::Relaxed);
     *sh.stats.simulator_motion.lock() = Default::default();
     sh.stats.simulators.lock().clear();
+    // The next session reads the files this one leaves.
+    s.object_cache.flush().await;
+}
+
+/// Buffers Firestorm asks for its socket (`RECEIVE_BUFFER_SIZE` and
+/// `SEND_BUFFER_SIZE`, llmessage/net.cpp).
+const RECEIVE_BUFFER_SIZE: usize = 800_000;
+const SEND_BUFFER_SIZE: usize = 200_000;
+
+/// Sizes the buffers of the circuits' socket like Firestorm's `start_net`.
+/// The system's default (64 KiB on Windows) holds a few dozen datagrams of
+/// object updates: on arrival the region and its neighbours send theirs at
+/// once, and what does not fit is lost — resent a second later when it was
+/// reliable, gone when it was a position update. Returns (receive, send) as
+/// obtained.
+fn size_socket_buffers(sock: &UdpSocket) -> (usize, usize) {
+    let sock = socket2::SockRef::from(sock);
+    let sizes = |sock: &socket2::SockRef| (sock.recv_buffer_size().unwrap_or(0), sock.send_buffer_size().unwrap_or(0));
+    let before = sizes(&sock);
+    if let Err(e) = sock.set_recv_buffer_size(RECEIVE_BUFFER_SIZE) {
+        log::warn!("udp socket: receive buffer not resized ({e})");
+    }
+    if let Err(e) = sock.set_send_buffer_size(SEND_BUFFER_SIZE) {
+        log::warn!("udp socket: send buffer not resized ({e})");
+    }
+    let after = sizes(&sock);
+    log::info!(
+        "udp socket buffers: receive {} bytes (system default {}), send {} bytes (system default {})",
+        after.0,
+        before.0,
+        after.1,
+        before.1
+    );
+    after
 }
 
 impl Session<'_> {
@@ -683,16 +724,8 @@ impl Session<'_> {
         }
     }
 
-    fn save_object_caches(&mut self) {
-        for c in self.obj_caches.values_mut() {
-            c.save();
-        }
-    }
-
     fn remove_sim(&mut self, addr: SocketAddr) {
-        if let Some(mut c) = self.obj_caches.remove(&addr) {
-            c.save();
-        }
+        self.object_cache.forget(addr);
         if let Some(sim) = self.sims.remove(&addr) {
             emit(self.sh, NetEvent::RegionRemoved { handle: sim.handle });
         }
@@ -767,12 +800,7 @@ impl Session<'_> {
         }
         let now = Instant::now();
         self.publish_motion();
-        if self.last_cache_save.elapsed() > Duration::from_secs(120) {
-            self.last_cache_save = Instant::now();
-            for c in self.obj_caches.values_mut() {
-                c.save();
-            }
-        }
+        self.object_cache.save_when_due(now);
         let stats = self.sh.stats.clone();
         // Deferred CompleteAgentMovement once UseCircuitCode is acked. At
         // login it waits for the ack itself, as llstartup.cpp STATE_WORLD_WAIT
@@ -1855,11 +1883,7 @@ impl Session<'_> {
             }
             NetCommand::OneShotControl(f) => self.one_shot |= f,
             NetCommand::AgentControls(c) => self.on_agent_controls(c),
-            NetCommand::ClearObjectCache => {
-                for c in self.obj_caches.values_mut() {
-                    c.reset();
-                }
-            }
+            NetCommand::ClearObjectCache => self.object_cache.clear(),
             NetCommand::Build(b) => self.on_build(b),
             // handled by on_social_command
             NetCommand::RequestMuteList { .. }
@@ -2559,7 +2583,7 @@ impl Session<'_> {
         } else if id == ObjectUpdateCompressed::ID {
             let m: ObjectUpdateCompressed = pkt.decode()?;
             self.set_time_dilation(from, m.region_data.time_dilation);
-            let mut cache = self.obj_caches.get_mut(&from);
+            let mut cache = self.object_cache.get_mut(from);
             let objects: Vec<_> = m
                 .object_data
                 .iter()
@@ -2602,7 +2626,7 @@ impl Session<'_> {
             // the simulator does not resend the overrides of a cache hit
             let mut overrides = Vec::new();
             for o in &m.object_data {
-                let cache = self.obj_caches.get(&from);
+                let cache = self.object_cache.get(from);
                 let cached = cache
                     .and_then(|c| c.get(o.id, o.crc))
                     .and_then(|e| objects::parse_compressed(&e.data, o.update_flags));
@@ -2644,7 +2668,7 @@ impl Session<'_> {
                 let payload = &m.data_block.data;
                 match objects::parse_gltf_override(payload) {
                     Some((local_id, sides)) => {
-                        if let Some(c) = self.obj_caches.get_mut(&from) {
+                        if let Some(c) = self.object_cache.get_mut(from) {
                             c.set_gltf_override(local_id, (!sides.is_empty()).then_some(payload.as_slice()));
                         }
                         emit(
@@ -3536,24 +3560,10 @@ impl Session<'_> {
                 },
             );
         }
-        let mut reply = RegionHandshakeReply::default();
-        reply.agent_data.agent_id = self.agent_id();
-        reply.agent_data.session_id = self.session_id();
-        // load the region's object cache before the sim starts sending
-        // (LLViewerRegion::loadObjectCache), then tell it whether it is empty
-        let region_id = m.region_info2.region_id;
-        if let Some(dir) = self.obj_cache_dir.clone()
-            && !self.obj_caches.contains_key(&from)
-            && !region_id.is_nil()
-        {
-            let c = crate::objcache::RegionObjectCache::load(&dir, region_id);
-            log::info!("object cache for {}: {} entries", field_str(&m.region_info.sim_name), c.len());
-            self.obj_caches.insert(from, c);
-        }
-        let cache_empty = self.obj_caches.get(&from).is_none_or(|c| c.is_empty());
-        // self appearance support | send all cacheable objects | cache empty (no probes)
-        reply.region_info.flags = 0x4 | 0x1 | if cache_empty { 0x2 } else { 0 };
-        self.send(from, &reply, true);
+        // The region's object cache is loaded before the simulator starts
+        // sending (LLViewerRegion::loadObjectCache): the reply tells it
+        // whether there is one.
+        self.answer_region_handshake(from, m.region_info2.region_id);
     }
 }
 
@@ -3613,6 +3623,25 @@ impl Session<'_> {
                 return self.next_inventory_callback;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod socket_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_socket_gets_the_buffers_asked_for() {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.expect("socket");
+        let system = socket2::SockRef::from(&sock).recv_buffer_size().expect("size");
+        let (receive, send) = size_socket_buffers(&sock);
+        // A system may cap what it grants (Linux: net.core.rmem_max) or
+        // round it up, but never gives less than before.
+        assert!(receive >= system.min(RECEIVE_BUFFER_SIZE), "{receive} < {system}");
+        #[cfg(windows)]
+        assert_eq!((receive, send), (RECEIVE_BUFFER_SIZE, SEND_BUFFER_SIZE));
+        #[cfg(not(windows))]
+        assert!(send > 0);
     }
 }
 
@@ -3690,9 +3719,7 @@ mod event_queue_tests {
             cam_requested_at: None,
             agent_parcel: None,
             pending_named_tp: None,
-            obj_cache_dir: None,
-            obj_caches: HashMap::new(),
-            last_cache_save: Instant::now(),
+            object_cache: object_cache::ObjectCaches::new(None).0,
             social: Default::default(),
             tasks: Default::default(),
             land: Default::default(),
