@@ -756,11 +756,15 @@ fn env_brdf(f0: vec3<f32>, roughness: f32, nv: f32) -> vec3<f32> {
     return f0 * ab.x + ab.y;
 }
 
+// Occlusion the normal map of the fragment being shaded adds to the
+// screen-space one (normal_map_occlusion); none outside the object shader.
+var<private> surface_occlusion: f32 = 0.0;
+
 fn screen_ao(frag: vec2<f32>) -> f32 {
     if (frame.misc.x < 0.5 || in_reflection_pass()) {
         return 1.0;
     }
-    return textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r;
+    return max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
 }
 
 /// How much a surface takes the planar mirror image (SL hero probe).
@@ -850,6 +854,10 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v:
 }
 
 // Normal mapping without precomputed tangents (Mikkelsen 2010 / Schüler).
+// The cotangent frame is the solution divided by det = dot(dp1, dp2perp).
+// Schüler drops it because it is positive in GL, where dFdy runs up the
+// window; here dpdy runs down the framebuffer, det is negative on every face
+// and without its sign both axes come out reversed (bumps lit as dents).
 // `uv` is the sampling coordinate of the top-left-origin texture, so the
 // derived bitangent points down the image; SL normal maps (materialF.glsl
 // getNormal: B = sign * cross(N, T) along +t, GL bottom-left origin) put +Y
@@ -863,11 +871,55 @@ fn perturb_normal(n: vec3<f32>, p: vec3<f32>, uv: vec2<f32>, map: vec3<f32>) -> 
     let dp1perp = cross(n, dp1);
     let t = dp2perp * duv1.x + dp1perp * duv2.x;
     let b = dp2perp * duv1.y + dp1perp * duv2.y;
-    let invmax = inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
+    let invmax = sign(dot(dp1, dp2perp)) * inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
     let tbn = mat3x3<f32>(t * invmax, b * invmax, n);
     let m = (map * 2.0 - vec3<f32>(1.0)) * vec3<f32>(1.0, -1.0, 1.0);
     let res = normalize(tbn * m);
     return select(n, res, dot(res, res) > 0.5);
+}
+
+// What calcAmbientOcclusion (aoUtil.glsl) hides on a normal-mapped surface.
+// Firestorm runs it on the G-buffer normal: where the normal map tilts the
+// normal, the taps on the side it leans to stand above its tangent plane
+// (by more than LL's 5 cm) and occlude the pixel, so the relief of a normal
+// map is darkened wherever it turns away from the surface. Our pass
+// (ssao.wgsl) runs before shading, on the depth alone, and misses it; this
+// is that part, for a locally flat surface around the pixel. `n` is the
+// normal before the normal map, `nm` after it. LL turns its kernel at random
+// (noise map) then blurs: each tap is above the plane over a known share of
+// the turn, so the mean stands for both.
+fn normal_map_occlusion(n: vec3<f32>, nm: vec3<f32>, p: vec3<f32>, view_z: f32) -> f32 {
+    if (frame.misc.x < 0.5 || in_reflection_pass()) {
+        return 0.0;
+    }
+    // surface offset of one pixel right and of one pixel down (in the plane
+    // of `n`: an interpolated normal is not a tilt)
+    let dp1 = dpdx(p);
+    let dp2 = dpdy(p);
+    let jx = dp1 - n * dot(dp1, n);
+    let jy = dp2 - n * dot(dp2, n);
+    // height gained above the tilted plane per pixel, in the direction that
+    // gains most, and the squared length of that pixel
+    let a = dot(jx, nm);
+    let b = dot(jy, nm);
+    let rise = sqrt(a * a + b * b);
+    if (rise < 1e-7) {
+        return 0.0;
+    }
+    let dir = (jx * a + jy * b) / rise;
+    let dist2 = max(dot(dir, dir), 1e-12);
+    // RenderSSAOScale, RenderSSAOMaxScale and RenderSSAOFactor, as the pass
+    // (renderer.rs), and getKern's eight squared distances
+    let scale = min(500.0 / max(view_z, 1e-3), 200.0);
+    let factor = 0.3;
+    var hidden = 0.0;
+    for (var i = 1; i <= 8; i++) {
+        let r = f32(i) * 0.125;
+        let px = scale * r * r;
+        let above = acos(clamp(0.05 / (px * rise), 0.0, 1.0)) / PI;
+        hidden += above * min(1.0 / (px * px * dist2), 1.0 / factor);
+    }
+    return min(factor * hidden / 8.0, 1.0);
 }
 
 // ------------------------------------------------------ screen-space rays

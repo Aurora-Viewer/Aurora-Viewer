@@ -4161,11 +4161,13 @@ impl Scene {
             for id in mats {
                 match self.legacy_mats.peek(&id) {
                     Some(lm) => log::info!(
-                        "  material {id}: normal {} x{:.2?}, specular {} x{:.2?}, color {:?} exp {} env {} alpha mode {}",
+                        "  material {id}: normal {} x{:.2?} rot {:.2}, specular {} x{:.2?} rot {:.2}, color {:?} exp {} env {} alpha mode {}",
                         lm.normal_map,
                         &lm.normal_st[..2],
+                        lm.normal_rot,
                         lm.specular_map,
                         &lm.specular_st[..2],
+                        lm.specular_rot,
                         lm.specular_color,
                         lm.specular_exp,
                         lm.env_intensity,

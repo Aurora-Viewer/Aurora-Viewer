@@ -83,6 +83,8 @@ struct VsOut {
     @location(6) uv_s: vec2<f32>,
     // PBR emissive map coordinates
     @location(7) uv_e: vec2<f32>,
+    // coordinates the tangent frame of the normal map is derived from
+    @location(8) uv_t: vec2<f32>,
 };
 
 fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
@@ -346,6 +348,17 @@ fn vs_main(in: VsIn) -> VsOut {
         out.uv_s = pbr_uv(st, rec.spec_uv, rec.legacy.y);
         out.uv_e = pbr_uv(st, rec.spec_color, rec.legacy.z);
     }
+    // A glTF normal map turns its tangent frame with its own transform
+    // (textureUtilV.glsl tangent_space_transform). A legacy one does not:
+    // LLFace::getGeometryVolume moves the normal map coordinates (xform) but
+    // keeps the tangents of the volume face, built on its own texture
+    // coordinates (LLVolumeFace::createTangents), so a map turned or flipped
+    // by its repeats, by a planar mapping or by a texture animation has its
+    // relief turned with it
+    out.uv_t = out.uv_n;
+    if ((rec.flags.x & FLAG_PBR) == 0u) {
+        out.uv_t = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
+    }
     out.record = in.instance;
     out.view_depth = distance(ep.xyz, frame.camera_pos.xyz - frame.eye.xyz);
     return out;
@@ -409,6 +422,8 @@ struct Material {
     legacy_env: f32,
     // legacy "emissive mask": share of the unlit color (the texture alpha)
     unlit: f32,
+    // ambient occlusion of the normal map's relief (normal_map_occlusion)
+    occlusion: f32,
 };
 
 fn eval_material(in: VsOut, front: bool) -> Material {
@@ -429,10 +444,11 @@ fn eval_material(in: VsOut, front: bool) -> Material {
         // SL multiplies texture and face color in sRGB, then linearizes
         m.color = vec4<f32>(srgb_to_linear(base_s.rgb * rec.base_color.rgb), base_s.a * rec.base_color.a);
     }
-    m.n = perturb_normal(n, in.world_pos, in.uv_n, nrm_s.xyz);
+    m.n = perturb_normal(n, in.world_pos, in.uv_t, nrm_s.xyz);
     if (rec.tex.y == 1u) {
         m.n = n;
     }
+    m.occlusion = normal_map_occlusion(n, m.n, in.world_pos, 1.0 / in.clip.w);
     // glTF: G = roughness, B = metallic
     m.metallic = clamp(rec.params.y * mr_s.b, 0.0, 1.0);
     m.roughness = clamp(rec.params.z * mr_s.g, 0.03, 1.0);
@@ -596,6 +612,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 // may be discarded between `eval_material` and this (fs_blend).
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
+    surface_occlusion = m.occlusion;
     var col: vec3<f32>;
     let classic = is_classic_sky() && !camera_underwater();
     var hazed = false;
