@@ -34,12 +34,16 @@ pub struct DebugView {
     pub glow_view: bool,
     pub probes: bool,
     pub skeletons: bool,
+    /// Detail level of the objects around the pointer, with the distance
+    /// and the radius it comes from (Firestorm: Develop › Render Metadata ›
+    /// LOD Info).
+    pub lod_info: bool,
 }
 
 impl DebugView {
     /// An overlay drawn over the 3D view is on.
     pub fn any_overlay(&self) -> bool {
-        self.bounds || self.culling || self.lights || self.glow_objects || self.probes || self.skeletons
+        self.bounds || self.culling || self.lights || self.glow_objects || self.probes || self.skeletons || self.lod_info
     }
 }
 

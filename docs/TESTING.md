@@ -920,7 +920,12 @@ To check with these scenarios:
   longer be once ambient occlusion is turned off in the settings.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `wire`, `complexity`,
-  `glow`, `glow_view`, `freeze`.
+  `glow`, `glow_view`, `freeze`, `lod`. `lod` (Preferences › Debug › Detail
+  levels) labels the objects around the pointer with the level they are
+  drawn at (0 to 3), the one their distance asks for when it is another,
+  and the distance and radius it comes from, the numbers of Firestorm's
+  Develop › Render Metadata › LOD Info: green at the finest level, orange
+  below it, red while the geometry of the level asked for is not shown.
 - **`AURORA_DEMO_EEP_PARCEL=1|parcel|default|stale`**: EEP replies replayed
   as the grid sends them (`demo_eep.rs`) — a region day at dusk then,
   0.4 s later, the agent's parcel with no day (`1`: dusk
