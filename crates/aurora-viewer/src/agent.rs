@@ -138,6 +138,14 @@ impl AgentState {
         self.has_server && !self.seated
     }
 
+    /// The region positions are relative to changed (LLAgent::setRegion):
+    /// the same place and motion, in the new region's coordinates.
+    pub fn shift(&mut self, delta: Vec3) {
+        self.position += delta;
+        self.server_pos += delta;
+        self.predicted_pos += delta;
+    }
+
     pub fn body_rotation(&self) -> Quat {
         Quat::from_rotation_z(self.yaw)
     }

@@ -637,6 +637,34 @@ impl Camera {
         self.anim = None;
     }
 
+    /// The region positions are relative to changed (LLAgent::setRegion
+    /// moves the camera origin with the agent): everything kept in render
+    /// space moves by `delta`, so that a border crossing shows nothing.
+    pub fn shift(&mut self, delta: Vec3) {
+        for p in [
+            &mut self.position,
+            &mut self.target,
+            &mut self.focus_target,
+            &mut self.virtual_position,
+            &mut self.smoothing_last_global,
+            &mut self.smoothing_last_agent,
+            &mut self.head,
+            &mut self.avatar.root,
+            &mut self.avatar.position,
+        ] {
+            *p += delta;
+        }
+        if let Some(a) = &mut self.anim {
+            a.start_camera += delta;
+            a.start_focus += delta;
+        }
+        if let Some(f) = &mut self.focus_geom {
+            f.position += delta;
+        }
+        // (the new region sends its own plane; meanwhile the old one holds)
+        self.collide_plane.w += self.collide_plane.truncate().dot(delta);
+    }
+
     /// Arrival of a teleport (process_agent_movement_complete): the camera
     /// back on the avatar without animation; FSResetCameraOnTP also drops
     /// the orbit, the pitch and the zoom (resetView of process_teleport_local).
@@ -1546,6 +1574,25 @@ mod tests {
         assert!(cam.scroll(-1.0, false, true, &mut agent, &mut s));
         assert!((s.focus_offset[2] - 0.9).abs() < 1e-5);
         assert_eq!(s.preset, CameraPreset::Custom);
+    }
+
+    #[test]
+    fn border_crossing_moves_the_camera_with_the_agent() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(1.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        cam.set_collide_plane(Vec4::new(1.0, 0.0, 0.0, -20.0), &s);
+        settle(&mut cam, &mut w, &s);
+        let (eye, at) = (cam.position, cam.target);
+        // the region to the west becomes the agent's: + 256 m on x
+        let delta = Vec3::new(256.0, 0.0, 0.0);
+        w.agent.shift(delta);
+        cam.shift(delta);
+        assert_eq!(cam.collide_plane.w, 236.0);
+        // the next frame shows the same view, not a camera on its way there
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!(cam.position.distance(eye + delta) < 0.01, "{:?}", cam.position);
+        assert!(cam.target.distance(at + delta) < 0.01, "{:?}", cam.target);
     }
 
     #[test]

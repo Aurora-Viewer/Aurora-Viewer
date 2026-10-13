@@ -195,6 +195,7 @@ Ce qui passe avant le reste (demandé par l'humain).
 - 🟡 MFA et CGU à la connexion (pas encore rencontrés sur la grille)
 - ✅ Capabilities (seed, 25 sur Young Island), EventQueueGet, téléportation
 - 🟡 Passage de région (en marchant / en volant)
+- 🔧 passage de frontière sans à-coup, comme Firestorm (« téléportation bizarre » signalée sur Agni le 13/10/2026 en volant d'une région à sa voisine) : au changement de région de l'agent, sa position et la caméra sont décalées de l'écart entre les deux régions (LLAgent::setRegion ; avant : gardées telles quelles, donc affichées une région plus loin jusqu'à l'arrivée, environ 0,3 s dans le journal de l'essai), et l'arrivée ne replace plus l'avatar, ne l'arrête plus et ne recale plus la caméra : process_agent_movement_complete ne le fait que pour une téléportation ou la connexion. La prédiction du mouvement continue pendant le passage. Garde-fou : une arrivée sans téléportation à plus de 64 m de l'agent le replace quand même
 - ✅ Mises à jour d'objets (complètes, compressées, terse, cached), terrain, noms
 - 🟡 Amis, solde, IM
 - ✅ Environnement EEP par région (cycle de la région chargé sur Agni)
