@@ -1871,17 +1871,19 @@ What the inventory must show with these scenarios:
     Compare frames 660 and 780 at 60 fps; also use `AURORA_NAME_TAGS=classic`.
     A change of animation can change its height envelope; its individual
     frames never move the tag. Use a human-run grid session to verify real deformer assets.
-  - `voice`: Nova out of the voice channel; Tess in the channel, silent
-    (green outline, microphone badge) and without a profile picture (the
-    icon stays); Orion, a friend, is speaking (halo that follows the level,
-    light violet name, microphone, heart and triangle badges: he is shown
-    as too complex); Lune is typing (three animated dots) and has no
-    display name (two lines); La Brume is blocked (dimmed plate, name in
-    italics, forbidden badge, no status dot). Farther away, Sol is speaking
-    and Iris is typing; beyond, Vega is in the channel (green outline) and
-    Atlas is not.
+  - `voice`: Nova out of the voice channel (red struck-through microphone);
+    Tess in the channel, silent (green microphone badge, no outline) and
+    without a profile picture (the icon stays); Orion, a friend, is speaking
+    (green outline and halo that follows the level, light violet name,
+    microphone, heart and triangle badges: he is shown as too complex); Lune
+    is typing (three animated dots) and has no display name (two lines); La
+    Brume is blocked (dimmed plate, name in italics, forbidden badge, no
+    status dot). Farther away, Sol is speaking (green outline) and Iris is
+    typing; beyond, Vega is in the channel and Atlas is not (the far pill
+    has no badge).
   - `status`: Nova away (amber dot), Tess do not disturb (red dot), Orion
-    out of the channel (heart and triangle only), Lune typing while away.
+    out of the channel (red microphone, heart and triangle), Lune typing
+    while away.
   - `cycle`: switches from one to the other every six seconds.
   - `wall`: the states of `voice`, with the wall in front of Nova and Tess
     instead of behind them, and two violet boxes that carry the same

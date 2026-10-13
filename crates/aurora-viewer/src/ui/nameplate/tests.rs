@@ -234,8 +234,10 @@ fn the_lines_under_the_name_follow_the_options() {
 
 #[test]
 fn badges_and_status_dot_by_state_and_level() {
+    // out of the voice channel: the struck-through microphone, alone
     let plain = content();
-    assert_eq!(badges(Level::Full, &plain).len(), 0);
+    assert_eq!(badges(Level::Full, &plain).iter().collect::<Vec<_>>(), [Badge::NoVoice]);
+    assert_eq!(badges(Level::Far, &plain).len(), 0);
     assert_eq!(status_dot(Level::Full, &plain), Some(Presence::Online));
     let busy = Content {
         presence: Presence::Busy,
@@ -260,8 +262,17 @@ fn badges_and_status_dot_by_state_and_level() {
     assert_eq!(badges(Level::Far, &everything).len(), 0);
     // a blocked resident's status is hidden
     assert_eq!(status_dot(Level::Full, &everything), None);
+    // the green microphone takes the red one's place, never both
     let friend = Content { friend: true, ..content() };
-    assert_eq!(badges(Level::Full, &friend).iter().collect::<Vec<_>>(), [Badge::Friend]);
+    assert_eq!(
+        badges(Level::Full, &friend).iter().collect::<Vec<_>>(),
+        [Badge::NoVoice, Badge::Friend]
+    );
+    let in_voice = Content { in_voice: true, ..friend };
+    assert_eq!(
+        badges(Level::Compact, &in_voice).iter().collect::<Vec<_>>(),
+        [Badge::Voice, Badge::Friend]
+    );
 }
 
 #[test]
@@ -400,12 +411,19 @@ fn a_compact_pill_puts_its_badges_after_the_name() {
 fn the_halo_follows_the_voice_level() {
     let mut e = VoiceEnvelope::default();
     assert_eq!(e.halo(1.0), None, "no halo before anyone speaks");
+    // in the channel but silent, even with some noise on the line: no
+    // halo, so no green outline either
+    for _ in 0..60 {
+        e.update(0.4, false, 1.0 / 60.0);
+    }
+    assert_eq!(e.halo(1.0), None);
     // loud: the widest halo of the mockup's rule
     for _ in 0..60 {
         e.update(1.0, true, 1.0 / 60.0);
     }
     let loud = e.halo(1.0).expect("speaking");
     assert!((loud.blur - 14.0).abs() < 0.1 && (loud.spread - 2.0).abs() < 0.05 && (loud.alpha - 0.85).abs() < 0.01);
+    assert!(loud.gate > 0.99, "the outline is fully green: {}", loud.gate);
     // a whisper: the tightest one, still visible
     let mut quiet = VoiceEnvelope::default();
     for _ in 0..60 {
