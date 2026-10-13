@@ -5,6 +5,7 @@
 
 mod asset_imports;
 mod build_cmds;
+mod currency;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
@@ -1458,6 +1459,8 @@ impl Session<'_> {
                 message.agent_data.session_id = self.session_id();
                 self.send_main(&message, true);
             }
+            NetCommand::CurrencyQuote { helper, amount } => self.currency_quote(helper, amount),
+            NetCommand::BuyCurrency { helper, quote, password } => self.buy_currency(helper, quote, password),
             NetCommand::FetchInventoryThumbnail { request, asset, resize } => {
                 let cap = self.main_cap("ViewerAsset");
                 let http = self.sh.caps_http.clone();

@@ -528,6 +528,15 @@ pub enum NetEvent {
         online: bool,
     },
     Balance(i32),
+    /// Answer of the currency helper to `CurrencyQuote`; `amount` is the one
+    /// asked, so an estimate for a figure typed over can be dropped.
+    CurrencyQuote {
+        amount: i32,
+        result: Result<crate::currency::CurrencyQuote, crate::currency::CurrencyError>,
+    },
+    /// Outcome of `BuyCurrency`. The new balance follows later, pushed by
+    /// the simulator once the purchase is processed.
+    CurrencyBought(Result<(), crate::currency::CurrencyError>),
     /// `result["environment"]` from the ExtEnvironment capability (region
     /// or parcel; `environment["parcel_id"]` tells which). `handle` and
     /// `parcel_id` are what was requested (-1: the region), so the viewer
@@ -1283,6 +1292,19 @@ pub enum NetCommand {
     /// Release a fee offer after its draft changes or is removed.
     DiscardMeshQuote(Uuid),
     RequestBalance,
+    /// Estimate for buying `amount` L$ (XML-RPC getCurrencyQuote on the
+    /// grid's helper page, `currency::helper_uri`).
+    CurrencyQuote {
+        helper: String,
+        amount: i32,
+    },
+    /// Buy the L$ of an estimate (XML-RPC buyCurrency); `password` is empty
+    /// unless the helper asked for a "password" confirmation.
+    BuyCurrency {
+        helper: String,
+        quote: crate::currency::CurrencyQuote,
+        password: crate::currency::Password,
+    },
     RequestInventoryMerchant,
     CreateInventoryWearable {
         parent: Uuid,

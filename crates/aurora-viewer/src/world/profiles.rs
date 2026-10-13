@@ -16,6 +16,8 @@ pub struct Profiles {
     map: HashMap<Uuid, AvatarProfile>,
     pending: HashSet<Uuid>,
     requested: HashSet<Uuid>,
+    /// Requests sent whose reply has not arrived yet.
+    in_flight: HashSet<Uuid>,
     /// Pick details (PickInfoReply), by pick id.
     pub picks: HashMap<Uuid, PickInfo>,
     /// Classifieds of each avatar (AvatarClassifiedReply).
@@ -49,10 +51,18 @@ impl Profiles {
     pub fn take_requests(&mut self) -> Vec<Uuid> {
         let v: Vec<Uuid> = self.pending.drain().collect();
         self.requested.extend(v.iter().copied());
+        self.in_flight.extend(v.iter().copied());
         v
     }
 
+    /// A request for this profile (`want` / `refresh`) is still unanswered:
+    /// what is known of it may be out of date.
+    pub fn awaiting(&self, id: &Uuid) -> bool {
+        self.pending.contains(id) || self.in_flight.contains(id)
+    }
+
     pub fn insert(&mut self, p: AvatarProfile) {
+        self.in_flight.remove(&p.id);
         let old = self.map.get(&p.id);
         // the legacy reply has no notes: keep the ones we know
         let notes = p.notes.clone().or_else(|| old.and_then(|o| o.notes.clone()));
@@ -242,6 +252,12 @@ pub fn account_text(p: &AvatarProfile) -> String {
         aurora_i18n::tr!("world-profiles-no-payment-info-on-file")
     };
     format!("{kind}\n{payment}")
+}
+
+/// LLAvatarPropertiesProcessor::hasPaymentInfoOnFile: special accounts and
+/// Linden employees do not reveal theirs and count as having one.
+pub fn payment_info_on_file(p: &AvatarProfile) -> bool {
+    !p.caption_text.is_empty() || p.caption_index == 3 || p.flags & (flags::TRANSACTED | flags::IDENTIFIED) != 0
 }
 
 /// Account badge next to "Compte" (LLPanelProfileSecondLife::fillAccountStatus):
