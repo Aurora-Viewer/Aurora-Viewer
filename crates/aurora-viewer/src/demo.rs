@@ -1862,6 +1862,48 @@ pub fn events() -> Vec<NetEvent> {
     } else {
         id += alpha_panels().len() as u32;
     }
+    // AURORA_DEMO_GLOW_LAYERS=1: a faintly glowing layer over a faintly
+    // glowing skin, as mesh bodies wear them (fixed ids: the other demo
+    // objects keep theirs). Left panel: skin with glow 0.02; right panel:
+    // skin without glow. Over the lower half of both, 1 cm in front, a pink
+    // layer (alpha 0 to 1 from left to right) with glow 0.02.
+    if let Ok(mode) = std::env::var("AURORA_DEMO_GLOW_LAYERS") {
+        let shell = mode == "shell";
+        let floor = height(cx, cy) + 0.35;
+        let skin = [0.93, 0.84, 0.80, 1.0];
+        for (k, skin_glow) in [0.02f32, 0.0].into_iter().enumerate() {
+            let y = 110.9 + k as f32 * 2.2;
+            add(prim(
+                9701 + k as u32 * 2,
+                Vec3::new(138.0, y, floor + 1.25),
+                Quat::IDENTITY,
+                Vec3::new(0.06, 1.8, 1.8),
+                boxp,
+                te(skin, 0, false, skin_glow),
+                ExtraParams::default(),
+                "",
+            ));
+            let mut layer = TextureEntry::default();
+            // only the face turned to the west shows (the others are
+            // invisible); "shell": all of them, the far side glows too
+            for (i, f) in layer.faces.iter_mut().enumerate() {
+                let shown = shell || i == 4;
+                f.texture = TEX_GRADIENT;
+                f.color = [1.0, 0.0, 0.5, if shown { 1.0 } else { 0.0 }];
+                f.glow = if shown { 0.02 } else { 0.0 };
+            }
+            add(prim(
+                9702 + k as u32 * 2,
+                Vec3::new(137.955, y, floor + 0.8),
+                Quat::IDENTITY,
+                Vec3::new(0.01, 1.8, 0.9),
+                boxp,
+                Arc::new(layer),
+                ExtraParams::default(),
+                "",
+            ));
+        }
+    }
     // a little city of boxes
     for i in 0..6 {
         for j in 0..4 {
