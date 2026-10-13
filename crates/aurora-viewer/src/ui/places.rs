@@ -80,6 +80,8 @@ pub enum PlacesAction {
     ClearHistory,
     /// « Trier par date » (LandmarksSortedByDate).
     SortByDate(bool),
+    /// « Ne plus afficher » ticked in an accepted teleport confirmation.
+    StopConfirmingTeleports,
 }
 
 /// One line of a landmarks tab.
@@ -242,6 +244,8 @@ pub struct PlacesUi {
     /// History sections closed by the user (isAccordionCollapsedByUser).
     collapsed: HashSet<usize>,
     confirm: Option<Confirm>,
+    /// The box « Ne plus afficher » of the teleport confirmation on screen.
+    dont_ask: bool,
     /// Landmark assets to load / resolve (the app calls Landmarks::resolve).
     pub want_landmarks: HashSet<Uuid>,
     /// Inventory folders to fetch.
@@ -267,9 +271,11 @@ impl PlacesUi {
         self.confirm = Some(Confirm::Landmark { asset, name });
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, c: &mut Ctx, open: &mut bool, by_date: bool) -> Vec<PlacesAction> {
+    /// `confirm_teleports`: `Settings::confirm_teleports`, off once the box
+    /// « Ne plus afficher » of a teleport confirmation was ticked.
+    pub fn show(&mut self, ctx: &egui::Context, c: &mut Ctx, open: &mut bool, by_date: bool, confirm_teleports: bool) -> Vec<PlacesAction> {
         let mut actions = Vec::new();
-        self.show_confirm(ctx, c.p, &mut actions);
+        self.show_confirm(ctx, c.p, confirm_teleports, &mut actions);
         if !*open {
             return actions;
         }
@@ -300,48 +306,61 @@ impl PlacesUi {
         actions
     }
 
-    fn show_confirm(&mut self, ctx: &egui::Context, p: &Palette, actions: &mut Vec<PlacesAction>) {
+    fn show_confirm(&mut self, ctx: &egui::Context, p: &Palette, confirm_teleports: bool, actions: &mut Vec<PlacesAction>) {
         let Some(confirm) = &self.confirm else {
             return;
         };
-        let (title, text, yes) = match confirm {
-            Confirm::Landmark { name, .. } => (
-                aurora_i18n::tr!("common-teleport-2"),
-                aurora_i18n::tr!("ui-places-do-you-really-want-to-teleport-to", name = name.to_string()),
-                aurora_i18n::tr!("common-teleport-3"),
-            ),
-            Confirm::History { title, .. } => (
-                aurora_i18n::tr!("common-teleport-2"),
-                aurora_i18n::tr!("ui-places-teleport-to", title = title.to_string()),
-                aurora_i18n::tr!("common-teleport-3"),
-            ),
-            Confirm::Clear => (
-                aurora_i18n::tr!("common-teleport-history"),
-                aurora_i18n::tr!("ui-places-do-you-really-want-to-clear-your-teleport-history").to_owned(),
-                aurora_i18n::tr!("common-ok"),
-            ),
+        // the question of a teleport (with its « Ne plus afficher » box)
+        let teleport = match confirm {
+            Confirm::Landmark { name, .. } => Some(aurora_i18n::tr!(
+                "ui-places-do-you-really-want-to-teleport-to",
+                name = name.to_string()
+            )),
+            Confirm::History { title, .. } => Some(aurora_i18n::tr!("ui-places-teleport-to", title = title.to_string())),
+            Confirm::Clear => None,
         };
-        let mut answer = None;
-        let modal = crate::ui::widgets::Modal::new(egui::Id::new("places_confirm")).show(ctx, |ui| {
-            ui.set_width(340.0);
-            ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
-            ui.add_space(6.0);
-            ui.label(RichText::new(text).size(12.5).color(p.muted));
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                if widgets::flat_button(ui, p, yes).clicked() {
-                    answer = Some(true);
-                }
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+        let answer = match teleport {
+            // turned off: the teleport starts without a question
+            Some(_) if !confirm_teleports => Some(true),
+            Some(text) => super::context::teleport_confirm(ctx, p, "places_confirm", &text, &mut self.dont_ask),
+            None => {
+                let mut answer = None;
+                let modal = crate::ui::widgets::Modal::new(egui::Id::new("places_confirm")).show(ctx, |ui| {
+                    ui.set_width(340.0);
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("common-teleport-history"))
+                            .size(15.0)
+                            .strong()
+                            .color(p.ink),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-places-do-you-really-want-to-clear-your-teleport-history"))
+                            .size(12.5)
+                            .color(p.muted),
+                    );
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        if widgets::flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked() {
+                            answer = Some(true);
+                        }
+                        if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
+                            answer = Some(false);
+                        }
+                    });
+                });
+                if modal.should_close() && answer.is_none() {
                     answer = Some(false);
                 }
-            });
-        });
-        if modal.should_close() && answer.is_none() {
-            answer = Some(false);
-        }
+                answer
+            }
+        };
         if let Some(yes) = answer {
+            let dont_ask = std::mem::take(&mut self.dont_ask);
             if yes && let Some(c) = self.confirm.take() {
+                if dont_ask && !matches!(c, Confirm::Clear) {
+                    actions.push(PlacesAction::StopConfirmingTeleports);
+                }
                 actions.push(match c {
                     Confirm::Landmark { asset, .. } => PlacesAction::TeleportLandmark(asset),
                     Confirm::History { global, .. } => PlacesAction::Teleport(global),
@@ -1107,6 +1126,117 @@ mod tests {
     use aurora_net::inventory::{FolderContents, InvFolder, InvItem};
 
     const DAY: f64 = 86_400.0;
+
+    /// Runs the confirmation of `ui`, clicking in turn the texts of `clicks`,
+    /// and gives the actions it asked for.
+    fn answer_confirm(ui: &mut PlacesUi, confirm_teleports: bool, clicks: &[&str]) -> Vec<PlacesAction> {
+        // The last text drawn: in English the title and the button of the
+        // question are both "Teleport", and the button comes after.
+        fn text_pos(shape: &egui::epaint::Shape, text: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::epaint::Shape::Text(t) if t.galley.text() == text => Some(t.pos + egui::vec2(4.0, 4.0)),
+                egui::epaint::Shape::Vec(v) => v.iter().rev().find_map(|s| text_pos(s, text)),
+                _ => None,
+            }
+        }
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let mut actions = Vec::new();
+        let mut frame = |events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |root| ui.show_confirm(root.ctx(), &theme.palette(), confirm_teleports, &mut actions),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        for _ in 0..3 {
+            frame(Vec::new());
+        }
+        for text in clicks {
+            let output = frame(Vec::new());
+            let pos = output
+                .shapes
+                .iter()
+                .rev()
+                .find_map(|s| text_pos(&s.shape, text))
+                .unwrap_or_else(|| panic!("« {text} » in the confirmation"));
+            for pressed in [true, false] {
+                frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+        }
+        actions
+    }
+
+    #[test]
+    fn teleport_confirmation_has_a_do_not_show_again_box() {
+        let asset = Uuid::from_u128(7);
+        let teleport = aurora_i18n::tr!("common-teleport-3");
+        let dont_ask = aurora_i18n::tr!("ui-context-do-not-show-again");
+        let pending = || {
+            let mut ui = PlacesUi::default();
+            ui.confirm_landmark(asset, "Plage".into());
+            ui
+        };
+
+        // asked, box left alone: the teleport only
+        let mut ui = pending();
+        let actions = answer_confirm(&mut ui, true, &[teleport]);
+        assert!(matches!(&actions[..], [PlacesAction::TeleportLandmark(a)] if *a == asset));
+        assert!(ui.confirm.is_none());
+
+        // box ticked, then « Téléporter »: the setting goes off first
+        let mut ui = pending();
+        let actions = answer_confirm(&mut ui, true, &[dont_ask, teleport]);
+        assert!(matches!(
+            &actions[..],
+            [PlacesAction::StopConfirmingTeleports, PlacesAction::TeleportLandmark(a)] if *a == asset
+        ));
+        assert!(!ui.dont_ask, "the box starts empty for the next question");
+
+        // box ticked, then « Annuler »: nothing happens, the question stays on
+        let mut ui = pending();
+        let actions = answer_confirm(&mut ui, true, &[dont_ask, aurora_i18n::tr!("common-cancel")]);
+        assert!(actions.is_empty());
+        assert!(ui.confirm.is_none() && !ui.dont_ask);
+
+        // turned off: no question, a history entry too
+        let mut ui = pending();
+        let actions = answer_confirm(&mut ui, false, &[]);
+        assert!(matches!(&actions[..], [PlacesAction::TeleportLandmark(a)] if *a == asset));
+        let mut ui = PlacesUi {
+            confirm: Some(Confirm::History {
+                global: DVec3::new(1.0, 2.0, 3.0),
+                title: "Lagune".into(),
+            }),
+            ..Default::default()
+        };
+        let actions = answer_confirm(&mut ui, false, &[]);
+        assert!(matches!(&actions[..], [PlacesAction::Teleport(g)] if *g == DVec3::new(1.0, 2.0, 3.0)));
+
+        // clearing the history is always asked, and has no such box
+        let mut ui = PlacesUi {
+            confirm: Some(Confirm::Clear),
+            ..Default::default()
+        };
+        assert!(answer_confirm(&mut ui, false, &[]).is_empty());
+        assert!(ui.confirm.is_some());
+        let actions = answer_confirm(&mut ui, false, &[aurora_i18n::tr!("common-ok")]);
+        assert!(matches!(&actions[..], [PlacesAction::ClearHistory]));
+    }
 
     fn folder(id: u128, parent: u128, name: &str, t: i32) -> InvFolder {
         InvFolder {

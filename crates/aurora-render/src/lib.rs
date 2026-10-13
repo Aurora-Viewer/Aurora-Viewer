@@ -30,6 +30,7 @@ pub mod types;
 mod ui_blur;
 mod ui_frame;
 mod ui_glass;
+mod ui_world;
 pub mod upload;
 pub mod vram;
 pub mod writes;
@@ -45,6 +46,7 @@ pub use types::*;
 pub use ui_blur::blurred_backdrop;
 pub use ui_frame::{EguiFrame, EguiHandOver};
 pub use ui_glass::{glass_panel, glass_panel_faded, glass_region};
+pub use ui_world::end_world_labels;
 pub use upload::{StagedMesh, StagedTexture, StagingPool, TexelFormat};
 
 pub use egui;

@@ -123,6 +123,11 @@ pub struct Settings {
     pub standalone_place_details: bool,
     /// LandmarksSortedByDate: the Landmarks tab of Places sorted by date.
     pub landmarks_by_date: bool,
+    /// Ask before a teleport to a landmark, a history entry or a place link
+    /// (TeleportFromLandmark, TeleportToHistoryEntry, TeleportViaSLAPP; the
+    /// box « Ne plus afficher » of the confirmation turns it off). Firestorm
+    /// keeps one "ignore" per notification: one setting here for the three.
+    pub confirm_teleports: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// « Rechercher »: last tab, rating boxes and land limits.
@@ -509,6 +514,7 @@ impl Default for Settings {
             show_minimap: true,
             standalone_place_details: false,
             landmarks_by_date: true,
+            confirm_teleports: true,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -1051,6 +1057,19 @@ mod tests {
     use super::*;
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn teleport_confirmation_is_on_for_old_settings_and_survives_reload() {
+        let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
+        assert!(old.confirm_teleports);
+        let original = Settings {
+            confirm_teleports: false,
+            ..Settings::default()
+        };
+        let saved = serde_json::to_vec(&original).expect("serialize synthetic settings");
+        let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic settings");
+        assert!(!loaded.sanitized().confirm_teleports);
+    }
 
     #[test]
     fn context_menu_style_defaults_to_list_and_survives_reload() {

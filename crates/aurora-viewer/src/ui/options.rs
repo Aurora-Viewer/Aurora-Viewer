@@ -177,6 +177,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("ui-options-automatic-rejections") => "thumb-down-filled",
         value if value == aurora_i18n::text("common-command-line") || value == aurora_i18n::text("common-other-commands") => "terminal-2",
         value if value == aurora_i18n::text("common-teleport-commands") => "map-pin-filled",
+        value if value == aurora_i18n::text("common-teleport-2") => "location-filled",
         value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera-filled",
         value if value == aurora_i18n::text("common-windows") => "layout-grid-filled",
         _ => return None,
@@ -1411,6 +1412,18 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-landmarks-and-place-profiles"),
                     aurora_i18n::tr!("ui-options-separate-windows-for-landmarks-teleport-history-details-place-profiles"),
                     |ui| toggle(ui, p, &mut s.standalone_place_details),
+                );
+            });
+            // the "ignore" box of TeleportFromLandmark, TeleportToHistoryEntry
+            // and TeleportViaSLAPP (Firestorm: Préférences › Notifications ›
+            // Alertes, one line each)
+            group(ui, p, aurora_i18n::tr!("common-teleport-2"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-confirm-teleports"),
+                    aurora_i18n::tr!("ui-options-ask-before-teleporting-to-a-landmark-a-history-entry"),
+                    |ui| toggle(ui, p, &mut s.confirm_teleports),
                 );
             });
             group(ui, p, aurora_i18n::tr!("common-inventory"), |ui| {

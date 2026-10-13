@@ -2,6 +2,7 @@
 //! the near plane, shaded triangles sorted back to front, labels.
 
 use super::geom::Cam;
+use crate::theme::Palette;
 use egui::{Color32, FontId, Pos2, Shape, Stroke};
 use glam::{Quat, Vec3, Vec4};
 
@@ -10,6 +11,8 @@ const NEAR_W: f32 = 0.02;
 pub struct Painter3d<'a> {
     pub painter: egui::Painter,
     pub cam: &'a Cam,
+    /// Colors of the theme: handles and guides take them like a window does.
+    pub pal: Palette,
     /// Triangles waiting for the depth sort: (depth, points, color).
     tris: Vec<(f32, [Pos2; 3], Color32)>,
 }
@@ -21,6 +24,12 @@ pub fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color32 {
         (b.clamp(0.0, 1.0) * 255.0) as u8,
         (a.clamp(0.0, 1.0) * 255.0) as u8,
     )
+}
+
+/// Color of a grid axis, shared by the manipulators and the X / Y / Z fields
+/// of the build window: the red, green and blue of the palette.
+pub fn axis_color(p: &Palette, axis: usize) -> Color32 {
+    [p.danger, p.success, p.indigo_light][axis.min(2)]
 }
 
 /// Same color, alpha multiplied.
@@ -36,10 +45,11 @@ fn shade(c: Color32, k: f32) -> Color32 {
 }
 
 impl<'a> Painter3d<'a> {
-    pub fn new(painter: egui::Painter, cam: &'a Cam) -> Self {
+    pub fn new(painter: egui::Painter, cam: &'a Cam, pal: Palette) -> Self {
         Painter3d {
             painter,
             cam,
+            pal,
             tris: Vec::new(),
         }
     }
@@ -85,14 +95,35 @@ impl<'a> Painter3d<'a> {
         }
     }
 
+    /// Corners of a small mark (a stretch handle, the readout): the theme's.
+    pub fn mark_radius(&self) -> egui::CornerRadius {
+        crate::ui::widgets::inner_radius(&self.painter.ctx().global_style().visuals)
+    }
+
+    /// Line over a darker, wider one: a pale handle stays readable in front
+    /// of a bright sky or a white wall.
+    pub fn line_cased(&self, a: Vec3, b: Vec3, color: Color32, width: f32) {
+        if let Some((pa, pb)) = self.clip_segment(a, b) {
+            let casing = fade(self.pal.navy, 0.35 * color.a() as f32 / 255.0);
+            self.painter.line_segment([pa, pb], Stroke::new(width + 2.0, casing));
+            self.painter.line_segment([pa, pb], Stroke::new(width, color));
+        }
+    }
+
     /// One triangle, flat shaded by its facing (`normal` in world space).
     pub fn tri(&mut self, a: Vec3, b: Vec3, c: Vec3, normal: Vec3, color: Color32) {
+        let to_eye = (self.cam.eye - (a + b + c) / 3.0).normalize_or_zero();
+        let light = 0.55 + 0.45 * normal.normalize_or_zero().dot(to_eye).abs();
+        self.tri_plain(a, b, c, shade(color, light));
+    }
+
+    /// One triangle in its own color, without shading: the marks of the
+    /// theme are flat.
+    pub fn tri_plain(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Color32) {
         let (ca, cb, cc) = (self.cam.clip(a), self.cam.clip(b), self.cam.clip(c));
         if ca.w < NEAR_W || cb.w < NEAR_W || cc.w < NEAR_W {
             return;
         }
-        let to_eye = (self.cam.eye - (a + b + c) / 3.0).normalize_or_zero();
-        let light = 0.55 + 0.45 * normal.normalize_or_zero().dot(to_eye).abs();
         let depth = (ca.w + cb.w + cc.w) / 3.0;
         self.tris.push((
             depth,
@@ -101,13 +132,14 @@ impl<'a> Painter3d<'a> {
                 self.cam.clip_to_screen(cb),
                 self.cam.clip_to_screen(cc),
             ],
-            shade(color, light),
+            color,
         ));
     }
 
-    /// A cone along `dir` from its base center (radius `r`, height `h`).
+    /// A cone along `dir` from its base center (radius `r`, height `h`), in
+    /// one plain color: its outline alone shows, whatever the view angle.
     pub fn cone(&mut self, base: Vec3, dir: Vec3, r: f32, h: f32, color: Color32) {
-        const SIDES: usize = 12;
+        const SIDES: usize = 16;
         let d = dir.normalize_or_zero();
         let u = d.any_orthonormal_vector();
         let v = d.cross(u);
@@ -120,10 +152,20 @@ impl<'a> Painter3d<'a> {
             .collect();
         for i in 0..SIDES {
             let (p, q) = (ring[i], ring[(i + 1) % SIDES]);
-            let n = (q - p).cross(apex - p);
-            self.tri(p, q, apex, n, color);
-            self.tri(q, p, base, -d, shade(color, 0.8));
+            self.tri_plain(p, q, apex, color);
+            self.tri_plain(q, p, base, color);
         }
+    }
+
+    /// A square of `size` pixels facing the screen, centered on a world
+    /// point: a stretch handle.
+    pub fn square(&self, center: Vec3, size: f32, fill: Color32, outline: Stroke) {
+        let Some(s) = self.cam.project(center) else {
+            return;
+        };
+        let rect = egui::Rect::from_center_size(s, egui::Vec2::splat(size));
+        self.painter
+            .rect(rect, self.mark_radius(), fill, outline, egui::StrokeKind::Outside);
     }
 
     /// An oriented box.

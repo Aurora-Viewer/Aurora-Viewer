@@ -7,7 +7,7 @@
 //! locally; MultipleObjectUpdate goes out on release (stretching also every
 //! 0.1 s like LLManipScale::sendUpdates).
 
-use super::draw::{Painter3d, fade, rgba};
+use super::draw::{Painter3d, axis_color, fade};
 use super::geom::{Cam, nearest_on_line, ray_plane, round_to, seg_distance, subdivision_level};
 use super::{Bounds, BuildSettings, EditMode, Grid, MAX_PRIM_SCALE, MIN_PRIM_SCALE, Mods, bounds_of, highlighted_of};
 use crate::scene::Scene;
@@ -15,7 +15,7 @@ use crate::world::World;
 use crate::world::objects::ObjKey;
 use aurora_net::RegionHandle;
 use aurora_net::build::{BuildCmd, TransformUpdate};
-use egui::{Color32, Pos2};
+use egui::{Pos2, Stroke};
 use glam::{EulerRot, Quat, Vec3};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -25,8 +25,17 @@ const ARROW_PX: f32 = 50.0;
 const SELECTED_ARROW_SCALE: f32 = 1.3;
 const HOTSPOT_START: f32 = 0.2;
 const HOTSPOT_END: f32 = 1.2;
-const PLANE_OFFSET: f32 = 1.8;
-const PLANE_TICK_SIZE: f32 = 0.4;
+/// Aurora: the plane handles are squares between the two arrows of their
+/// plane, next to the pivot (center and half side, in arrow lengths; the hit
+/// test takes them a little larger). LL puts two triangles at 1.8 arrow
+/// lengths, away from the handles they belong to.
+pub(super) const PLANE_OFFSET: f32 = 0.52;
+const PLANE_HALF: f32 = 0.15;
+const PLANE_PICK_SCALE: f32 = 1.3;
+/// Arrow head: height and radius, in arrow lengths.
+const ARROW_HEAD: (f32, f32) = (0.26, 0.09);
+/// Stroke of the handles in pixels, at rest and under the cursor.
+const STROKE_PX: (f32, f32) = (2.0, 3.0);
 const MIN_PLANE_MANIP_DOT: f32 = 0.25;
 const SNAP_GUIDE_SCREEN_SIZE: f32 = 0.7;
 const SNAP_ARROW_SCALE: f32 = 0.7;
@@ -69,10 +78,25 @@ fn unit(i: usize) -> Vec3 {
     v
 }
 
-fn axis_rgb(i: usize, v: f32, a: f32) -> Color32 {
-    let mut c = [0.0f32; 3];
-    c[i] = v;
-    rgba(c[0], c[1], c[2], a)
+/// Corners of the square handle of the plane whose normal is grid axis `i`,
+/// on the side of the pivot that faces the camera (`signs`), `scale` times
+/// its size at rest.
+fn plane_quad(piv: Vec3, g: Quat, len: f32, signs: Vec3, i: usize, scale: f32) -> [Vec3; 4] {
+    let (u, v) = ((i + 1) % 3, (i + 2) % 3);
+    let at = |a: f32, b: f32| {
+        let mut q = Vec3::ZERO;
+        q[u] = (PLANE_OFFSET + a * PLANE_HALF * scale) * len * signs[u];
+        q[v] = (PLANE_OFFSET + b * PLANE_HALF * scale) * len * signs[v];
+        piv + g * q
+    };
+    [at(-1.0, -1.0), at(1.0, -1.0), at(1.0, 1.0), at(-1.0, 1.0)]
+}
+
+/// Is `m` inside the convex screen quad `q` (either winding)?
+fn in_quad(m: Pos2, q: [Pos2; 4]) -> bool {
+    let side = |a: Pos2, b: Pos2| (b.x - a.x) * (m.y - a.y) - (b.y - a.y) * (m.x - a.x);
+    let s: [f32; 4] = std::array::from_fn(|k| side(q[k], q[(k + 1) % 4]));
+    s.iter().all(|v| *v >= 0.0) || s.iter().all(|v| *v <= 0.0)
 }
 
 /// One object moved by a drag, as it was when the drag began.
@@ -517,16 +541,19 @@ impl Manip {
         }
     }
 
+    /// Aurora look of LLManipTranslate::renderTranslationHandles: pale axes
+    /// with heads in the color of their axis, square plane handles in the
+    /// color of their normal, and the accent of the theme under the cursor.
     fn draw_translate(&self, p: &mut Painter3d, s: &BuildSettings, f: &Frame, drag: Option<&Drag>) {
         let cam = p.cam;
+        let pal = p.pal;
         let piv = f.pivot;
         let g = f.grid.rotation;
         let len = cam.meters_for_pixels(piv, ARROW_PX);
-        let cone = len / 4.0;
         // guidelines through the pivot (LLManip::renderGuidelines)
         for i in 0..3 {
             let a = g * unit(i);
-            p.line(piv - a * 256.0, piv + a * 256.0, axis_rgb(i, 1.0, 0.33), 1.5);
+            p.line(piv - a * 256.0, piv + a * 256.0, fade(axis_color(&pal, i), 0.33), 1.5);
         }
         let active = drag.map(|d| d.part);
         // snap ruler / plane grid while dragging
@@ -541,47 +568,22 @@ impl Manip {
         let at_g = g.inverse() * cam.at;
         let signs = Vec3::new(at_g.x.signum(), at_g.y.signum(), at_g.z.signum());
         let rel = (g.inverse() * cam.direction_to(piv)).abs();
-        let off = PLANE_OFFSET * len;
         for i in 0..3 {
             if !(active.is_none() || active == Some(Part::Plane(i))) || rel[i] <= MIN_PLANE_MANIP_DOT {
                 continue;
             }
             let hl = self.hover == Some(Part::Plane(i)) || active == Some(Part::Plane(i));
-            let (j, k) = ((i + 1) % 3, (i + 2) % 3);
-            // LL draws YZ with (y, z), XZ with (x, z), XY with (x, y)
-            let (u, v) = if i == 1 { (k, j) } else { (j, k) };
-            let sc = self.plane_scale[i].max(1.0);
-            let center = {
-                let mut c = Vec3::ZERO;
-                c[u] = off * signs[u];
-                c[v] = off * signs[v];
-                c
-            };
-            let at = |a: f32, b: f32| {
-                let mut q = Vec3::ZERO;
-                q[u] = a * off * PLANE_TICK_SIZE * sc * signs[u];
-                q[v] = b * off * PLANE_TICK_SIZE * sc * signs[v];
-                piv + g * (center + q)
-            };
-            let alpha = if hl { 1.0 } else { 0.6 };
-            let (c1, c2) = match i {
-                0 => (rgba(0.0, 1.0, 0.0, alpha), rgba(0.0, 0.0, 1.0, alpha)),
-                1 => (rgba(0.0, 0.0, 1.0, alpha), rgba(1.0, 0.0, 0.0, alpha)),
-                _ if hl => (rgba(1.0, 0.0, 0.0, 1.0), rgba(0.0, 1.0, 0.0, 1.0)),
-                _ => (rgba(0.8, 0.0, 0.0, 0.6), rgba(0.0, 0.8, 0.0, 0.6)),
-            };
-            p.tri(at(-0.25, -0.25), at(0.25, -0.75), at(0.25, 0.25), g * unit(i), c1);
-            p.tri(at(0.25, 0.25), at(-0.75, 0.25), at(-0.25, -0.25), g * unit(i), c2);
+            let q = plane_quad(piv, g, len, signs, i, self.plane_scale[i].max(1.0));
+            let color = if hl { pal.violet_light } else { axis_color(&pal, i) };
+            let fill = fade(color, if hl { 0.5 } else { 0.3 });
+            p.tri_plain(q[0], q[1], q[2], fill);
+            p.tri_plain(q[0], q[2], q[3], fill);
             p.flush();
-            let dark = rgba(0.0, 0.0, 0.0, 0.3);
-            p.line(at(-0.25, -0.25), at(0.25, -0.25), dark, 3.0);
-            p.line(at(0.25, -0.25), at(0.1, -0.1), dark, 3.0);
-            p.line(at(0.25, -0.25), at(0.1, -0.4), dark, 3.0);
-            p.line(at(-0.25, -0.25), at(-0.25, 0.25), dark, 3.0);
-            p.line(at(-0.25, 0.25), at(-0.1, 0.1), dark, 3.0);
-            p.line(at(-0.25, 0.25), at(-0.4, 0.1), dark, 3.0);
+            for k in 0..4 {
+                p.line(q[k], q[(k + 1) % 4], color, 1.2);
+            }
         }
-        // arrows, farthest first; cones all point to +axis as in LL
+        // arrows, farthest first; the heads point away from the pivot
         let mut arrows: Vec<(f32, usize, f32)> = Vec::new();
         for i in 0..3 {
             for sgn in [1.0f32, -1.0] {
@@ -590,19 +592,30 @@ impl Manip {
             }
         }
         arrows.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let (head_h, head_r) = (len * ARROW_HEAD.0, len * ARROW_HEAD.1);
         for (_, i, sgn) in arrows {
             let selected = active == Some(Part::Arrow(i)) || self.hover == Some(Part::Arrow(i));
             if active.is_some() && !selected {
                 continue;
             }
-            let color = if selected { axis_rgb(i, 1.0, 1.0) } else { axis_rgb(i, 0.8, 0.6) };
-            let a = g * unit(i);
-            p.line(piv + a * cone * sgn, piv + a * len * sgn, color, 2.0);
+            // the negative side is the same handle, quieter
+            let side = if sgn > 0.0 { 1.0 } else { 0.6 };
+            let (shaft, head, width) = if selected {
+                (pal.violet_light, pal.violet_light, STROKE_PX.1)
+            } else {
+                (fade(pal.ink, 0.85 * side), fade(axis_color(&pal, i), side), STROKE_PX.0)
+            };
+            let a = g * unit(i) * sgn;
             let sc = self.arrow_scale[i].max(1.0);
-            let h = cone * sc * 1.5;
-            let tip_center = piv + a * len * sgn;
-            p.cone(tip_center - a * h * 0.5, a, cone * sc * 0.5, h, color);
+            let base = piv + a * (len - head_h * 0.5 * sc);
+            p.line_cased(piv, base, shaft, width);
+            p.cone(base, a, head_r * sc, head_h * sc, head);
             p.flush();
+        }
+        if active.is_none()
+            && let Some(c) = cam.project(piv)
+        {
+            p.painter.circle(c, 3.5, pal.violet_light, Stroke::new(1.0, fade(pal.navy, 0.5)));
         }
     }
 
@@ -621,7 +634,7 @@ impl Manip {
         let off_unit = dist_axis.rem_euclid(smallest);
         let n = ((0.5 * guide / smallest).floor() as i32).clamp(1, 400);
         let (so, sa) = (d.snap_offset, d.snap_axis);
-        let white = Color32::WHITE;
+        let white = p.pal.ink;
         for side in [1.0f32, -1.0] {
             let base = center + sa * so * side;
             let ext = guide * 0.5 + off_unit;
@@ -656,15 +669,15 @@ impl Manip {
             if ((k + sub_div_offset) as f32).rem_euclid(max_sub / lvl) == 0.0 {
                 let alpha = opacity * (1.0 - 0.5 * (k.abs() as f32 / n as f32));
                 let snapped = d.in_snap && k - (off_unit / smallest).round() as i32 == 0;
-                let hl = if snapped { 1.0 } else { 0.8 };
+                let label = fade(white, alpha * if snapped { 1.0 } else { 0.8 });
                 let text_at = tick_pos + sa * so * up_side * (1.0 + tick_scale);
                 let local = d.grid.rotation.inverse() * (tick_pos - d.grid.origin);
                 let mut value = 0.5 * local[i] / min_scale;
                 if d.grid.world {
                     value *= 2.0 * d.grid.scale[i];
-                    p.tick_value(text_at, value, "m", rgba(hl, hl, hl, alpha));
+                    p.tick_value(text_at, value, "m", label);
                 } else {
-                    p.tick_value(text_at, value, "x", rgba(hl, hl, hl, alpha));
+                    p.tick_value(text_at, value, "x", label);
                 }
             }
         }
@@ -694,6 +707,7 @@ impl Manip {
         if cam.depth(c) <= 0.05 {
             return;
         }
+        let pal = p.pal;
         let r = ring_radius(cam, c);
         let w = 8.0 * r / RING_PX;
         let g = f.grid.rotation;
@@ -704,46 +718,50 @@ impl Manip {
             // free-rotate sphere and roll ring (screen circles)
             if let (Some(sc), Some(edge)) = (cam.project(c), cam.project(c + cam.up * r)) {
                 let rp = sc.distance(edge);
-                p.painter
-                    .circle_filled(sc, rp, rgba(0.7, 0.7, 0.7, if self.hover == Some(Part::Free) { 0.4 } else { 0.3 }));
+                let free = self.hover == Some(Part::Free);
+                p.painter.circle_filled(sc, rp, fade(pal.ink, if free { 0.14 } else { 0.07 }));
+                // on the circle the roll is picked on, clear of the three rings
                 let wpx = (w / r * rp).max(2.0);
-                let (col, k) = if self.hover == Some(Part::Roll) {
-                    (rgba(0.8, 0.8, 0.8, 0.8), self.ring_scale[3])
+                let (col, width, k) = if self.hover == Some(Part::Roll) {
+                    (pal.violet_light, STROKE_PX.1, self.ring_scale[3])
                 } else {
-                    (rgba(0.7, 0.7, 0.7, 0.6), 1.0)
+                    (fade(pal.muted, 0.75), STROKE_PX.0, 1.0)
                 };
-                p.painter.circle_stroke(sc, (rp + wpx * 0.5) * k, egui::Stroke::new(wpx, col));
+                p.painter
+                    .circle_stroke(sc, (rp + wpx) * k, Stroke::new(width + 2.0, fade(pal.navy, 0.3)));
+                p.painter.circle_stroke(sc, (rp + wpx) * k, Stroke::new(width, col));
             }
         }
-        for i in 0..3 {
-            let part = Part::Ring(i);
-            if active.is_some() && active != Some(part) {
-                continue;
-            }
-            let hl = self.hover == Some(part) || active == Some(part);
-            let a = g * unit(i);
-            let (u, v) = (a.any_orthonormal_vector(), a.cross(a.any_orthonormal_vector()));
-            let rr = r * if hl { self.ring_scale[i] } else { 1.0 };
-            const N: usize = 100;
-            let pt = |k: usize| {
-                let t = k as f32 / N as f32 * std::f32::consts::TAU;
-                c + (u * t.cos() + v * t.sin()) * rr
-            };
-            let (front, back) = if hl {
-                (axis_rgb(i, 1.0, 1.0), axis_rgb(i, 1.0, if active.is_some() { 0.3 } else { 0.5 }))
-            } else {
-                (axis_rgb(i, 0.8, 0.8), axis_rgb(i, 0.8, 0.4))
-            };
-            for k in 0..N {
-                let (q0, q1) = (pt(k), pt(k + 1));
-                let facing = ((q0 + q1) * 0.5 - c).dot(to_cam) >= -0.05 * rr;
-                let wpx = cam
-                    .project(q0)
-                    .zip(cam.project(q0 + cam.up * w))
-                    .map(|(x, y)| x.distance(y))
-                    .unwrap_or(2.0)
-                    .clamp(1.5, 10.0);
-                p.line(q0, q1, if facing { front } else { back }, wpx);
+        // casings first, then the rings: a ring never cuts the color of another
+        for casing in [true, false] {
+            for i in 0..3 {
+                let part = Part::Ring(i);
+                if active.is_some() && active != Some(part) {
+                    continue;
+                }
+                let hl = self.hover == Some(part) || active == Some(part);
+                let a = g * unit(i);
+                let (u, v) = (a.any_orthonormal_vector(), a.cross(a.any_orthonormal_vector()));
+                let rr = r * if hl { self.ring_scale[i] } else { 1.0 };
+                const N: usize = 100;
+                let pt = |k: usize| {
+                    let t = k as f32 / N as f32 * std::f32::consts::TAU;
+                    c + (u * t.cos() + v * t.sin()) * rr
+                };
+                let color = if hl { pal.violet_light } else { axis_color(&pal, i) };
+                let width = if hl { STROKE_PX.1 + 0.5 } else { STROKE_PX.0 };
+                let back = if active.is_some() { 0.3 } else { 0.35 };
+                for k in 0..N {
+                    let (q0, q1) = (pt(k), pt(k + 1));
+                    let facing = ((q0 + q1) * 0.5 - c).dot(to_cam) >= -0.05 * rr;
+                    if casing {
+                        if facing {
+                            p.line(q0, q1, fade(pal.navy, 0.3), width + 2.0);
+                        }
+                    } else {
+                        p.line(q0, q1, fade(color, if facing { 1.0 } else { back }), width);
+                    }
+                }
             }
         }
         // snap guides of a constrained drag (LLManipRotate::renderSnapGuides)
@@ -753,7 +771,7 @@ impl Manip {
             let a = d.axis;
             let (ax1, ax2) = snap_axes(a, d.grid.rotation);
             let opacity = s.grid_opacity;
-            let white = Color32::WHITE;
+            let white = pal.ink;
             const N: usize = 96;
             for k in 0..N {
                 let t0 = k as f32 / N as f32 * std::f32::consts::TAU;
@@ -792,12 +810,16 @@ impl Manip {
         }
     }
 
+    /// Aurora look of LLManipScale::render: the box in the accent of the
+    /// theme, flat square handles (pale corners, faces in the color of their
+    /// axis), the accent under the cursor.
     fn draw_scale(&self, p: &mut Painter3d, s: &BuildSettings, f: &Frame, drag: Option<&Drag>) {
         let cam = p.cam;
+        let pal = p.pal;
         let b = &f.bounds;
         let active = drag.map(|d| d.part);
         if active.is_none() {
-            // translucent box faces
+            // translucent box faces, then its edges
             let corner = |sg: Vec3| b.center + b.rotation * (b.half * sg);
             for i in 0..3 {
                 for sgn in [-1.0f32, 1.0] {
@@ -809,19 +831,26 @@ impl Manip {
                         v[k] = bb;
                         corner(v)
                     };
-                    p.quad(
-                        [mk(-1.0, -1.0), mk(1.0, -1.0), mk(1.0, 1.0), mk(-1.0, 1.0)],
-                        rgba(0.7, 0.7, 0.7, 0.15),
-                    );
+                    let q = [mk(-1.0, -1.0), mk(1.0, -1.0), mk(1.0, 1.0), mk(-1.0, 1.0)];
+                    p.tri_plain(q[0], q[1], q[2], fade(pal.ink, 0.06));
+                    p.tri_plain(q[0], q[2], q[3], fade(pal.ink, 0.06));
                 }
             }
             p.flush();
+            for c in 0..8u8 {
+                for bit in [1u8, 2, 4] {
+                    if c & bit == 0 {
+                        let (from, to) = (corner(corner_signs(c)), corner(corner_signs(c | bit)));
+                        p.line(from, to, fade(pal.violet_light, 0.7), 1.2);
+                    }
+                }
+            }
         }
         if let Some(d) = drag {
             // guideline from the fixed point through the handle
             let handle = handle_pos(&d.bounds, d.part);
             let dir = (handle - d.anchor).normalize_or_zero();
-            p.line(d.anchor - dir * 256.0, d.anchor + dir * 256.0, rgba(1.0, 1.0, 1.0, 0.5), 1.0);
+            p.line(d.anchor - dir * 256.0, d.anchor + dir * 256.0, fade(pal.ink, 0.5), 1.0);
             if s.snap
                 && let Some((start, line_dir, unit_m, value_scale)) = d.scale_line
             {
@@ -848,20 +877,15 @@ impl Manip {
                 continue;
             }
             let hl = self.hover == Some(part) || active == Some(part);
-            let color = match part {
-                Part::Corner(_) if hl => Color32::WHITE,
-                Part::Corner(_) => rgba(0.7, 0.7, 0.7, 0.6),
-                Part::Face(i, _) if hl => {
-                    let mut c = [0.2f32; 3];
-                    c[i] = 1.0;
-                    rgba(c[0], c[1], c[2], 1.0)
-                }
-                Part::Face(i, _) => axis_rgb(i, 0.6, 0.4),
+            let (fill, outline) = match part {
+                Part::Corner(_) | Part::Face(..) if hl => (pal.violet_light, Stroke::new(1.5, pal.ink)),
+                Part::Corner(_) => (fade(pal.ink, 0.9), Stroke::new(1.0, fade(pal.navy, 0.5))),
+                Part::Face(i, _) => (axis_color(&pal, i), Stroke::new(1.0, fade(pal.navy, 0.5))),
                 _ => continue,
             };
-            let size = cam.meters_for_pixels(pos, ARROW_PX) * SCALE_BOX_FACTOR * if hl { 1.2 } else { 1.0 };
-            p.cube(pos, b.rotation, Vec3::splat(size * 0.5), color);
-            p.flush();
+            // LL's boxes: 10 px wide on screen whatever the distance
+            let size = ARROW_PX * SCALE_BOX_FACTOR * if hl { 1.2 } else { 1.0 };
+            p.square(pos, size, fill, outline);
         }
     }
 }
@@ -979,36 +1003,38 @@ fn pick_translate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
     let piv = f.pivot;
     let g = f.grid.rotation;
     let len = cam.meters_for_pixels(piv, ARROW_PX);
-    let off = PLANE_OFFSET * len;
     let at_g = g.inverse() * cam.at;
     let signs = Vec3::new(at_g.x.signum(), at_g.y.signum(), at_g.z.signum());
     let rel = (g.inverse() * cam.direction_to(piv)).abs();
-    // (depth of the end, part, start, end, radius)
-    let mut segs: Vec<(f32, Part, Vec3, Vec3, f32)> = Vec::new();
+    // The square of a plane is small and exact: it wins over the wide hot
+    // spot of an arrow that passes behind it.
+    for i in 0..3 {
+        if rel[i] <= MIN_PLANE_MANIP_DOT {
+            continue;
+        }
+        let q = plane_quad(piv, g, len, signs, i, PLANE_PICK_SCALE);
+        if let [Some(a), Some(b), Some(c), Some(d)] = q.map(|v| cam.project(v))
+            && in_quad(m, [a, b, c, d])
+        {
+            return Some(Part::Plane(i));
+        }
+    }
+    // (depth of the end, part, start, end)
+    let mut segs: Vec<(f32, Part, Vec3, Vec3)> = Vec::new();
     for i in 0..3 {
         let a = g * unit(i);
         for sgn in [1.0f32, -1.0] {
             let (s0, s1) = (piv + a * len * HOTSPOT_START * sgn, piv + a * len * HOTSPOT_END * sgn);
-            segs.push((cam.depth(s1), Part::Arrow(i), s0, s1, 10.0));
-        }
-        if rel[i] > MIN_PLANE_MANIP_DOT {
-            let mut v = Vec3::ZERO;
-            for j in 0..3 {
-                if j != i {
-                    v[j] = signs[j];
-                }
-            }
-            let (s0, s1) = (piv + g * (v * off * 0.8), piv + g * (v * off * 1.2));
-            segs.push((cam.depth(s1), Part::Plane(i), s0, s1, 20.0));
+            segs.push((cam.depth(s1), Part::Arrow(i), s0, s1));
         }
     }
     segs.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for (_, part, s0, s1, r) in segs {
+    for (_, part, s0, s1) in segs {
         let (Some(a), Some(b)) = (cam.project(s0), cam.project(s1)) else {
             continue;
         };
         let (dist, t) = seg_distance(m, a, b);
-        if dist < r && t > 0.0 && t < 1.0 {
+        if dist < 10.0 && t > 0.0 && t < 1.0 {
             return Some(part);
         }
     }
@@ -1535,25 +1561,25 @@ fn send_updates(world: &World, d: &Drag, linked: bool, out: &mut Vec<BuildCmd>) 
 
 // ---- guides
 
-/// LLManip::renderXYZ: the values at the top of the screen.
+/// LLManip::renderXYZ: the values at the top of the screen, each in the
+/// color of its axis on a plate of the theme.
 fn readout(p: &Painter3d, v: [f32; 3]) {
     let cam = p.cam;
+    let pal = p.pal;
     let cx = cam.width / cam.ppp * 0.5;
     let rect = egui::Rect::from_min_size(Pos2::new(cx - 117.5, 56.0), egui::vec2(235.0, 30.0));
-    p.painter.rect_filled(rect, 6.0, rgba(0.0, 0.0, 0.0, 0.7));
-    let colors = [rgba(1.0, 0.5, 0.5, 1.0), rgba(0.5, 1.0, 0.5, 1.0), rgba(0.5, 0.5, 1.0, 1.0)];
+    p.painter.rect(
+        rect,
+        p.mark_radius(),
+        pal.bar.gamma_multiply_u8(pal.panel_alpha),
+        Stroke::new(1.0, pal.raised),
+        egui::StrokeKind::Inside,
+    );
     for (k, x) in [-102.0f32, -27.0, 48.0].into_iter().enumerate() {
         let pos = Pos2::new(cx + x, rect.center().y);
         let text = format!("{:.3}", v[k]);
         let font = egui::FontId::proportional(13.0);
-        p.painter.text(
-            pos + egui::vec2(1.0, 1.0),
-            egui::Align2::LEFT_CENTER,
-            &text,
-            font.clone(),
-            Color32::BLACK,
-        );
-        p.painter.text(pos, egui::Align2::LEFT_CENTER, &text, font, colors[k]);
+        p.painter.text(pos, egui::Align2::LEFT_CENTER, &text, font, axis_color(&pal, k));
     }
 }
 
@@ -1589,7 +1615,7 @@ fn draw_plane_grid(p: &mut Painter3d, s: &BuildSettings, f: &Frame, d: &Drag, i:
                 if alpha > 0.01 {
                     let p0 = piv + b * off_b + a * t;
                     let p1 = piv + b * off_b + a * t1;
-                    p.line(p0, p1, rgba(1.0, 1.0, 1.0, alpha * 0.6), 1.0);
+                    p.line(p0, p1, fade(p.pal.ink, alpha * 0.6), 1.0);
                 }
                 t = t1;
             }
@@ -1603,7 +1629,7 @@ fn draw_plane_grid(p: &mut Painter3d, s: &BuildSettings, f: &Frame, d: &Drag, i:
 fn draw_scale_ruler(p: &mut Painter3d, s: &BuildSettings, start: Vec3, dir: Vec3, unit_m: f32, value_scale: f32, in_snap: bool) {
     let cam = p.cam;
     let opacity = s.grid_opacity;
-    let white = Color32::WHITE;
+    let white = p.pal.ink;
     let side = dir.cross(cam.at).try_normalize().unwrap_or(cam.up);
     let side = if side.dot(cam.up) < 0.0 { -side } else { side };
     let off = cam.meters_for_pixels(start, SNAP_GUIDE_SCREEN_OFFSET * cam.width);
@@ -1653,6 +1679,67 @@ mod tests {
         let (a1, a2) = snap_axes(Vec3::Z, Quat::IDENTITY);
         assert!((a1 - Vec3::X).length() < 1e-5);
         assert!((a2 - Vec3::Y).length() < 1e-5);
+    }
+
+    #[test]
+    fn point_in_quad_takes_either_winding() {
+        let q = [
+            Pos2::new(0.0, 0.0),
+            Pos2::new(10.0, 0.0),
+            Pos2::new(10.0, 10.0),
+            Pos2::new(0.0, 10.0),
+        ];
+        let reversed = [q[3], q[2], q[1], q[0]];
+        for quad in [q, reversed] {
+            assert!(in_quad(Pos2::new(5.0, 5.0), quad));
+            assert!(!in_quad(Pos2::new(12.0, 5.0), quad));
+            assert!(!in_quad(Pos2::new(5.0, -1.0), quad));
+        }
+    }
+
+    #[test]
+    fn plane_handles_are_picked_on_their_square_and_leave_the_arrows() {
+        let piv = Vec3::new(10.0, 20.0, 30.0);
+        let eye = piv + Vec3::new(6.0, -8.0, 5.0);
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.01);
+        let cam = Cam::new(
+            eye,
+            piv,
+            proj * glam::camera::rh::view::look_at_mat4(eye, piv, Vec3::Z),
+            1.0,
+            1280.0,
+            720.0,
+            1.0,
+        );
+        let f = Frame {
+            bounds: Bounds {
+                center: piv,
+                rotation: Quat::IDENTITY,
+                half: Vec3::splat(0.5),
+            },
+            pivot: piv,
+            grid: Grid {
+                origin: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::splat(0.5),
+                world: true,
+            },
+            prims: 1,
+        };
+        let len = cam.meters_for_pixels(piv, ARROW_PX);
+        let at = cam.at;
+        let signs = Vec3::new(at.x.signum(), at.y.signum(), at.z.signum());
+        for i in 0..3 {
+            // the middle of each square, between the two arrows of its plane
+            let q = plane_quad(piv, Quat::IDENTITY, len, signs, i, 1.0);
+            let middle = cam.project((q[0] + q[2]) * 0.5).unwrap();
+            assert_eq!(pick_translate(&cam, &f, middle), Some(Part::Plane(i)));
+            // an arrow keeps its whole hot spot, on both sides of the pivot
+            for sgn in [1.0, -1.0] {
+                let on_arrow = cam.project(piv + unit(i) * len * 0.9 * sgn).unwrap();
+                assert_eq!(pick_translate(&cam, &f, on_arrow), Some(Part::Arrow(i)));
+            }
+        }
     }
 
     fn hud_world() -> World {

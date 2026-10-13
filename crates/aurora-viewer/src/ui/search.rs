@@ -45,6 +45,12 @@ pub(crate) fn default_rect(work: Rect) -> Rect {
     Rect::from_min_size((work.center() - size * 0.5).round(), size)
 }
 
+/// The group pane of the details in a window of its own (the group profile
+/// window): `standalone` leaves out the button that opens that window.
+pub(crate) fn group_details(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, name: &str, standalone: bool, actions: &mut Vec<SearchAction>) {
+    details::group(ui, c, id, name, standalone, actions);
+}
+
 /// What the window asks the app to do.
 pub enum SearchAction {
     /// onBtnFind of a tab.

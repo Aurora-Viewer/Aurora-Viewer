@@ -10,11 +10,10 @@
 //! its same-side edge when the two are already neighbors on the other axis,
 //! and the edges of the parent count too. What Aurora does its own way: a
 //! window only attracts another when they would share a stretch of edge (a
-//! floater far above attracts in Firestorm), the windows keep a gap
-//! (`layout::GAP`, the one of the default layout) instead of touching, the
-//! snap of a moved window is shown by a guide and applied when the mouse is
-//! released rather than under the pointer, and any two windows snapped side
-//! by side move as one block (Firestorm keeps that for declared dependents).
+//! floater far above attracts in Firestorm), the snap of a moved window is
+//! shown by a guide and applied when the mouse is released rather than under
+//! the pointer, and any two windows snapped side by side move as one block
+//! (Firestorm keeps that for declared dependents).
 //!
 //! This module is the geometry: which snap a set of moving edges is offered
 //! (`find`), what to draw for it (`guide`), which windows are side by side
@@ -497,14 +496,17 @@ mod tests {
 
     #[test]
     fn the_work_area_holds_windows_at_the_gap() {
-        let snap = move_one(rect(3.0, AREA.top() + 15.0, 200.0, 100.0), &[]);
+        let snap = move_one(rect(GAP - 5.0, AREA.top() + GAP + 7.0, 200.0, 100.0), &[]);
         assert_eq!(snap.shift(), Vec2::new(5.0, -7.0));
         assert_eq!(snap.x.map(|s| (s.kind, s.other)), Some((Kind::Area, None)));
         // the bottom bar and the right edge
-        let snap = move_one(rect(AREA.right() - 200.0 - 2.0, AREA.bottom() - 100.0 - 17.0, 200.0, 100.0), &[]);
+        let snap = move_one(
+            rect(AREA.right() - GAP - 200.0 + 6.0, AREA.bottom() - GAP - 100.0 - 9.0, 200.0, 100.0),
+            &[],
+        );
         assert_eq!(snap.shift(), Vec2::new(-6.0, 9.0));
         // a window over the bar comes back above it
-        let snap = move_one(rect(700.0, AREA.bottom() - 100.0 + 1.0, 200.0, 100.0), &[]);
+        let snap = move_one(rect(700.0, AREA.bottom() - GAP - 100.0 + 9.0, 200.0, 100.0), &[]);
         assert_eq!(snap.shift(), Vec2::new(0.0, -9.0));
         // nothing glues a window to the work area
         assert_eq!(snap.adjacent().count(), 0);
@@ -687,9 +689,9 @@ mod tests {
         assert!(touching(rect(700.0, o.top() - GAP - 100.0, 200.0, 100.0), o));
         // rounded positions
         assert!(touching(rect(o.right() + GAP + 0.6, 350.0, 200.0, 100.0), o));
-        // too far, over each other, corner to corner
+        // too far, too near (over each other), corner to corner
         assert!(!touching(rect(o.right() + GAP + 2.0, 350.0, 200.0, 100.0), o));
-        assert!(!touching(rect(o.right(), 350.0, 200.0, 100.0), o));
+        assert!(!touching(rect(o.right() + GAP - 2.0, 350.0, 200.0, 100.0), o));
         assert!(!touching(rect(o.right() + GAP, o.bottom() + GAP, 200.0, 100.0), o));
         assert!(!touching(rect(o.left(), o.top(), 200.0, 100.0), o));
     }

@@ -1956,7 +1956,6 @@ world-inventory-actions-the-clipboard-is-empty-or-the-folder-is-protected = Le p
 build-ui-object-the-clipboard-does-not-contain-a-vector-x-y = Le presse-papiers ne contient pas de vecteur <x, y, z>.
 build-ui-general-next-owner = Le prochain propriétaire :
 build-ui-floaters-next-owner-can = Le prochain propriétaire peut :
-app-group-profiles-are-not-available-in-aurora-yet = Le profil des groupes n'est pas encore disponible dans Aurora.
 world-mod-could-not-save-the-profile = Le profil n'a pas pu être enregistré ({ $reason }).
 ui-land-general-owner-contributes-when-deeding-land = Le propriétaire contribue en cédant du terrain
 world-status-the-resident-you-messaged-has-enabled-aurora-viewer-s = Le résident auquel vous avez envoyé un message a activé le mode rejet de toutes les demandes d'amitié du client Aurora Viewer, ce qui signifie qu'il a demandé à ne pas être dérangé par les demandes d'amitié. Vous pouvez quand même lui envoyer un message privé.
@@ -4428,3 +4427,14 @@ search-event-duration = Durée :
 search-event-organizer = Organisateur :
 search-event-fee = Prix d'entrée :
 search-event-place-info = Afficher les détails de l'emplacement
+ui-context-do-not-show-again = Ne plus afficher
+ui-options-confirm-teleports = Confirmer les téléportations
+ui-options-ask-before-teleporting-to-a-landmark-a-history-entry = Demander avant de se téléporter vers un repère, un lieu de l'historique ou un lien de téléportation
+ui-land-mod-objects-available = Disponibles
+ui-land-mod-objects-capacity-used = { $percent } de la capacité utilisée par les objets de tout le terrain de ce propriétaire dans la région
+ui-land-mod-objects-over-capacity = { $count ->
+    [one] Capacité dépassée de { $count } objet, qui sera renvoyé
+   *[other] Capacité dépassée de { $count } objets, qui seront renvoyés
+    }
+ui-group-profile-title = Profil du groupe
+ui-group-profile-view = Voir le profil du groupe

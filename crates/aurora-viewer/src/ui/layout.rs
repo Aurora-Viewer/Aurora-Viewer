@@ -78,9 +78,11 @@ pub fn forget(ctx: &egui::Context) {
 }
 
 /// Room left between a window and the bars or the edges of the screen, and
-/// between two windows that stand side by side: the windows of a first
-/// launch are placed with it.
-pub(crate) const GAP: f32 = 8.0;
+/// between two windows that stand side by side, for the windows of a first
+/// launch as for the ones the user snaps (`snap`): none, their borders
+/// touch, as Firestorm's snapped floaters do (findSnapRect is called
+/// without padding).
+pub(crate) const GAP: f32 = 0.0;
 
 /// The part of `screen` the windows are laid out in: between the navigation
 /// bar and the bottom bar of the default skin. For what must be known before

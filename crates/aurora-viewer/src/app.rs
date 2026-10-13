@@ -218,8 +218,9 @@ pub struct App {
     context_menu_was: bool,
     /// « Supprimer » waiting for a yes: (object, why it asks).
     delete_confirm: Option<(uuid::Uuid, String)>,
-    /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP).
-    place_confirm: Option<(String, Vec3)>,
+    /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
+    /// with the state of its « Ne plus afficher » box.
+    place_confirm: Option<(String, Vec3, bool)>,
     /// External web link waiting for the warning's answer, with the state of
     /// its « Ne plus me prévenir » box and, for a dangerous link, the reason.
     url_confirm: Option<(String, bool, Option<&'static str>)>,
@@ -341,6 +342,7 @@ pub struct App {
     place_groups: std::collections::HashSet<uuid::Uuid>,
     /// "À propos du terrain".
     land_ui: ui::land::LandUi,
+    group_profile_ui: ui::group_profile::GroupProfileUi,
     /// Environment selector and « Éclairage personnel ».
     env_ui: ui::environment::EnvironmentUi,
     /// The selector's folder fetches started (the selector was opened).
@@ -638,6 +640,7 @@ impl App {
             stream_demo: None,
             place_groups: Default::default(),
             land_ui: Default::default(),
+            group_profile_ui: Default::default(),
             env_ui: Default::default(),
             env_scan: false,
             lighting_was_open: false,
@@ -2672,6 +2675,14 @@ impl App {
         self.teleport_to_location(l.region, l.pos);
     }
 
+    /// The box « Ne plus afficher » of a teleport confirmation was ticked and
+    /// the teleport accepted: later ones start at once (Préférences ›
+    /// Interface › Téléportation brings the question back).
+    fn stop_confirming_teleports(&mut self) {
+        self.settings.confirm_teleports = false;
+        self.settings.save();
+    }
+
     /// Teleport to a position of a region given by name: the current region
     /// directly, others through a map lookup by name.
     fn teleport_to_location(&mut self, region: String, pos: Vec3) {
@@ -2842,9 +2853,7 @@ impl App {
                 .world
                 .system_message(aurora_i18n::tr!("app-land-purchase-is-not-available-in-aurora-yet")),
             Request::Profile(id) => self.profile_ui.open(&mut self.world, id),
-            Request::GroupProfile(_) => self
-                .world
-                .system_message(aurora_i18n::tr!("app-group-profiles-are-not-available-in-aurora-yet")),
+            Request::GroupProfile(id) => self.group_profile_ui.open(&mut self.world, id),
             Request::PasteVector(which) => {
                 let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
                 self.build.paste_vector(&mut self.world, &self.settings.build, which, &text);
@@ -3711,7 +3720,8 @@ impl App {
         if self.world.movement_complete && !self.world.teleporting {
             self.world.map.check_arrival(me.0, me.1, self.world.agent.position.z);
         }
-        // About Land requests (selection, lists, covenant...)
+        // About Land requests (selection and its refresh, lists, covenant...)
+        self.world.land.tick(Instant::now());
         for c in self.world.land.take_commands() {
             self.send(c);
         }
@@ -6084,6 +6094,63 @@ impl App {
                 );
             }
             Screen::World => {
+                // what belongs to the world first: the HUD attachments, the bars and
+                // every window cover the name tags, the floating texts and the beacon
+                let voice_levels = if self.demo {
+                    static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+                    let mut levels = crate::demo::voice_levels(
+                        ctx.input(|i| i.time),
+                        self.world.agent_id,
+                        self.settings.audio.voice_enabled,
+                        self.talking(),
+                        self.voice.mic_level,
+                        VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
+                    );
+                    crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
+                    levels
+                } else {
+                    self.voice.levels(self.world.agent_id)
+                };
+                let classic_tags = self.classic_name_tags();
+                self.name_tags = ui::hud::draw(
+                    &ctx,
+                    &p,
+                    &self.skin.icons,
+                    &self.world,
+                    projector,
+                    self.camera.position,
+                    !self.camera.mouselook(),
+                    self.settings.name_tag_distance,
+                    &voice_levels,
+                    &mut self.voice_tags,
+                    {
+                        let s = &self.settings;
+                        // debug: on every tag
+                        let all = s.debug.complexity_tags;
+                        (all || s.tag_complexity).then_some(ui::hud::TagComplexity {
+                            values: &self.scene.avatar_complexity,
+                            areas: &self.scene.avatar_area,
+                            too_complex: &self.scene.too_complex,
+                            max: s.max_complexity,
+                            max_area: s.max_attachment_area,
+                            only_too_complex: !all && s.tag_complexity_too_complex_only,
+                            own: all || s.tag_complexity_own,
+                        })
+                    },
+                    self.scene.loading_bars.then(|| self.scene.loading_avatars()),
+                    (!classic_tags).then_some(ui::hud::PlateFrame {
+                        plates: &mut self.plates,
+                        pictures: &self.avatar_pics,
+                        too_complex: &self.scene.too_complex,
+                        demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
+                    }),
+                );
+                if !self.camera.mouselook() {
+                    ui::minimap::draw_beacon(&ctx, &self.world, projector);
+                }
+                aurora_render::end_world_labels(&ctx);
+                ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
+                t = self.ui_parts.lap(Part::UiTags, t);
                 let icons = &self.skin.icons;
                 let layout = &self.skin.layout;
                 let maturity = self
@@ -6210,60 +6277,6 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiBars, t);
                 // overlays
-                let voice_levels = if self.demo {
-                    static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-                    let mut levels = crate::demo::voice_levels(
-                        ctx.input(|i| i.time),
-                        self.world.agent_id,
-                        self.settings.audio.voice_enabled,
-                        self.talking(),
-                        self.voice.mic_level,
-                        VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
-                    );
-                    crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
-                    levels
-                } else {
-                    self.voice.levels(self.world.agent_id)
-                };
-                let classic_tags = self.classic_name_tags();
-                self.name_tags = ui::hud::draw(
-                    &ctx,
-                    &p,
-                    &self.skin.icons,
-                    &self.world,
-                    projector,
-                    self.camera.position,
-                    !self.camera.mouselook(),
-                    self.settings.name_tag_distance,
-                    &voice_levels,
-                    &mut self.voice_tags,
-                    {
-                        let s = &self.settings;
-                        // debug: on every tag
-                        let all = s.debug.complexity_tags;
-                        (all || s.tag_complexity).then_some(ui::hud::TagComplexity {
-                            values: &self.scene.avatar_complexity,
-                            areas: &self.scene.avatar_area,
-                            too_complex: &self.scene.too_complex,
-                            max: s.max_complexity,
-                            max_area: s.max_attachment_area,
-                            only_too_complex: !all && s.tag_complexity_too_complex_only,
-                            own: all || s.tag_complexity_own,
-                        })
-                    },
-                    self.scene.loading_bars.then(|| self.scene.loading_avatars()),
-                    (!classic_tags).then_some(ui::hud::PlateFrame {
-                        plates: &mut self.plates,
-                        pictures: &self.avatar_pics,
-                        too_complex: &self.scene.too_complex,
-                        demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
-                    }),
-                );
-                t = self.ui_parts.lap(Part::UiTags, t);
-                if !self.camera.mouselook() {
-                    ui::minimap::draw_beacon(&ctx, &self.world, projector);
-                }
-                ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 self.draw_hud_scale(&ctx);
                 {
                     let mods = crate::build::Mods {
@@ -6272,7 +6285,8 @@ impl App {
                         alt: self.alt,
                     };
                     crate::build::ui::shortcuts(&ctx, &mut self.build, &mut self.world, &mut self.settings.build);
-                    self.build.draw_overlay(&ctx, &self.world, &self.scene, &self.settings.build, mods);
+                    self.build
+                        .draw_overlay(&ctx, &self.palette, &self.world, &self.scene, &self.settings.build, mods);
                     let mut env = crate::build::ui::Env {
                         images: &self.ui_images,
                         media: &mut self.media,
@@ -6566,13 +6580,21 @@ impl App {
                         ui::context::request(&ctx, ui::context::CtxAction::DeleteConfirmed(id));
                     }
                 }
-                if let Some((region, pos)) = self.place_confirm.clone()
-                    && let Some(yes) = ui::context::place_teleport_confirm(&ctx, &p, &region)
+                if let Some((region, _, dont_ask)) = self.place_confirm.as_mut()
+                    && let Some(yes) = ui::context::teleport_confirm(
+                        &ctx,
+                        &p,
+                        "place_teleport_confirm",
+                        &ui::context::place_teleport_question(region),
+                        dont_ask,
+                    )
+                    && let Some((region, pos, dont_ask)) = self.place_confirm.take()
+                    && yes
                 {
-                    self.place_confirm = None;
-                    if yes {
-                        ui::context::request(&ctx, ui::context::CtxAction::TeleportToPlaceConfirmed(region, pos));
+                    if dont_ask {
+                        self.stop_confirming_teleports();
                     }
+                    ui::context::request(&ctx, ui::context::CtxAction::TeleportToPlaceConfirmed(region, pos));
                 }
                 if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
@@ -6627,11 +6649,17 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiMenus, t);
                 let mut open = self.panels.about_land;
+                // the mini-map's image of the selection's region, for the header
+                let land_map = open
+                    .then(|| self.world.land.sel.as_ref().map(|s| s.handle).or(self.world.main_region))
+                    .flatten()
+                    .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
                 if self.land_ui.show(
                     &ctx,
                     &p,
                     &mut self.world,
                     &self.ui_images,
+                    land_map.as_ref(),
                     &mut self.settings.audio.saved_streams,
                     self.demo,
                     &mut open,
@@ -6713,7 +6741,13 @@ impl App {
                 };
                 let window_acts = self.place_ui.show(&ctx, &mut c);
                 let mut open = self.panels.places;
-                let places_acts = self.places_ui.show(&ctx, &mut c, &mut open, self.settings.landmarks_by_date);
+                let places_acts = self.places_ui.show(
+                    &ctx,
+                    &mut c,
+                    &mut open,
+                    self.settings.landmarks_by_date,
+                    self.settings.confirm_teleports,
+                );
                 self.panels.places = open;
                 for pa in window_acts {
                     match pa {
@@ -6754,6 +6788,7 @@ impl App {
                             self.settings.landmarks_by_date = on;
                             self.settings.save();
                         }
+                        PlacesAction::StopConfirmingTeleports => self.stop_confirming_teleports(),
                     }
                 }
                 // « Rechercher »
@@ -6784,8 +6819,15 @@ impl App {
                 let search_acts = self
                     .search_ui
                     .show(&ctx, &mut c, &self.avatar_pics, &mut self.settings.search, &search_web, &mut open);
+                // the profile of a group, whose name was clicked anywhere
+                // (LLGroupActions::show)
+                let group_acts = self.group_profile_ui.show(&ctx, &mut c);
                 self.panels.search = open;
                 self.apply_search_actions(&ctx, search_acts);
+                self.apply_search_actions(&ctx, group_acts);
+                if let Some(id) = ui::group_profile::take_open_request(&ctx) {
+                    self.group_profile_ui.open(&mut self.world, id);
+                }
                 t = self.ui_parts.lap(Part::UiPlaces, t);
                 let mut open = self.panels.minimap;
                 mini.extend(self.minimap_ui.window(
@@ -7303,6 +7345,17 @@ impl ApplicationHandler for App {
                 self.panels.places = true;
                 self.panels.perf = false;
             }
+            // AURORA_DEMO_TP_CONFIRM=lien|repere: a teleport confirmation on
+            // screen, asked whatever the saved setting says (not saved)
+            if let Some(confirm) = crate::demo::place::teleport_confirm_scenario() {
+                use crate::demo::place::TeleportConfirm;
+                self.settings.confirm_teleports = true;
+                match confirm {
+                    TeleportConfirm::Link(region, pos) => self.place_confirm = Some((region.to_owned(), pos, false)),
+                    TeleportConfirm::Landmark(asset, name) => self.places_ui.confirm_landmark(asset, name.to_owned()),
+                }
+                self.panels.perf = false;
+            }
             // AURORA_DEMO_SEARCH=<tab>[:text]: « Rechercher » on a tab, its
             // search done ("page" in the text: a full page, "xyz": nothing;
             // for land the text is the price limit, 0 by default)
@@ -7344,6 +7397,12 @@ impl ApplicationHandler for App {
             if let Some((tab, _)) = crate::demo::land::scenario() {
                 self.land_ui.set_tab(&tab);
                 self.panels.about_land = true;
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_GROUP_PROFILE=1: the profile of the demo parcel's
+            // group, as after a click on its name
+            if std::env::var_os("AURORA_DEMO_GROUP_PROFILE").is_some() {
+                self.group_profile_ui.open(&mut self.world, crate::demo::DEMO_GROUP1);
                 self.panels.perf = false;
             }
             // AURORA_DEMO_CONTACTS=amis|groupes|cercles|detache|ajout: the

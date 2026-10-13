@@ -487,7 +487,7 @@ mod tests {
         let mut s = Session::new();
         s.idle(3);
         let work = default_work_area(Rect::from_min_size(Pos2::ZERO, s.screen));
-        s.drop_at(A, Pos2::new(3.0, work.top() + 14.0));
+        s.drop_at(A, Pos2::new(work.left() + GAP + 5.0, work.top() + GAP + 6.0));
         assert_eq!(s.rect(A).min, work.left_top() + Vec2::splat(GAP));
         assert!(windows(&s.ctx, |w| w.links.is_empty()));
     }
