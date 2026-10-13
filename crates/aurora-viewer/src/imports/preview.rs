@@ -232,10 +232,10 @@ fn classic_morphs(vertices: &mut [Vertex], part: &str, hand: u32, emote: &str) {
         "lower" => "avatar_lower_body.llm",
         _ => return,
     };
-    let Ok(data) = std::fs::read(crate::scene::avatar::AvatarLibrary::data_dir().join(file)) else {
+    let Some(data) = crate::scene::avatar::AvatarLibrary::file(file) else {
         return;
     };
-    let Ok(mesh) = aurora_assets::parse_llm(&data) else { return };
+    let Ok(mesh) = aurora_assets::parse_llm(data) else { return };
     let mut remaps: HashMap<u32, Vec<usize>> = HashMap::new();
     for (from, to) in &mesh.vertex_remaps {
         if *from >= 0 && *to >= 0 {
@@ -586,8 +586,8 @@ fn build(
                         "lower" => "avatar_lower_body.llm",
                         _ => "",
                     };
-                    if let Ok(bytes) = std::fs::read(crate::scene::avatar::AvatarLibrary::data_dir().join(file))
-                        && let Ok(mesh) = aurora_assets::parse_llm(&bytes)
+                    if let Some(bytes) = crate::scene::avatar::AvatarLibrary::file(file)
+                        && let Ok(mesh) = aurora_assets::parse_llm(bytes)
                     {
                         let name = match target_name {
                             "head" => "Male_Head",

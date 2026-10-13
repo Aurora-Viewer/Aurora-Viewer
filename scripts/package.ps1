@@ -16,7 +16,6 @@ param(
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Out 'assets\emoji') -ErrorAction Stop | Out-Null
 Copy-Item -LiteralPath $Exe -Destination $Out -ErrorAction Stop
-Copy-Item -Recurse -LiteralPath (Join-Path $Source 'crates\aurora-viewer\assets\character') -Destination (Join-Path $Out 'assets\character') -ErrorAction Stop
 $emoji = 'Noto-3D-128.ttf', 'LICENSE-OFL.txt' | ForEach-Object { Join-Path $Source "assets\emoji\$_" }
 Copy-Item -LiteralPath $emoji -Destination (Join-Path $Out 'assets\emoji') -ErrorAction Stop
 $docs = 'LICENSE', 'NOTICE.md', 'README.md' | ForEach-Object { Join-Path $Source $_ }

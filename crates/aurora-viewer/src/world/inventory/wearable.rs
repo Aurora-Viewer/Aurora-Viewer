@@ -28,9 +28,9 @@ pub fn create(kind: u8, name: &str, owner: Uuid) -> Result<Vec<u8>, String> {
     let Some(kind_name) = TYPES.get(kind as usize) else {
         return Err(aurora_i18n::tr!("world-inventory-wearable-unknown-clothing-type").into());
     };
-    let data = std::fs::read(crate::scene::avatar::AvatarLibrary::data_dir().join("avatar_lad.xml"))
-        .map_err(|_| aurora_i18n::tr!("world-inventory-wearable-avatar-definitions-are-unavailable").to_owned())?;
-    let xml = aurora_llsd::xml::parse(&data)
+    let data = crate::scene::avatar::AvatarLibrary::file("avatar_lad.xml")
+        .ok_or_else(|| aurora_i18n::tr!("world-inventory-wearable-avatar-definitions-are-unavailable").to_owned())?;
+    let xml = aurora_llsd::xml::parse(data)
         .map_err(|_| aurora_i18n::tr!("world-inventory-wearable-avatar-definitions-are-unreadable").to_owned())?;
     let mut params = BTreeMap::<i32, f32>::new();
     let mut stack = vec![&xml];

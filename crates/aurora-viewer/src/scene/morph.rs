@@ -180,9 +180,8 @@ mod tests {
         }
         // the eyes follow their joints only
         assert!(part(&lib, "eye_left").morphs.is_empty());
-        let dir = AvatarLibrary::data_dir();
-        let lad = std::fs::read(dir.join("avatar_lad.xml")).expect("avatar_lad.xml");
-        let params = mesh_params(&lad);
+        let lad = AvatarLibrary::file("avatar_lad.xml").expect("avatar_lad.xml");
+        let params = mesh_params(lad);
         let names = |file: &str| params[file].iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>();
         assert!(names("avatar_upper_body.llm").contains(&"Male_Torso"));
         assert!(!names("avatar_upper_body.llm").contains(&"Shirtsleeve_flair"));

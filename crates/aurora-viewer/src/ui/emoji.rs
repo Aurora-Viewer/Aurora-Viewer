@@ -120,9 +120,19 @@ fn font_candidates() -> Vec<PathBuf> {
 impl Emoji {
     pub fn load() -> Emoji {
         let mut face = None;
-        for path in font_candidates() {
-            let Ok(file) = std::fs::File::open(&path) else {
-                continue;
+        let candidates = font_candidates();
+        for path in &candidates {
+            let file = match std::fs::File::open(path) {
+                Ok(file) => file,
+                Err(e) => {
+                    // A candidate that does not exist is normal; a file that is
+                    // there and cannot be opened (rights, security software)
+                    // is what a report needs to show.
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        log::warn!("emoji font {}: {e}", path.display());
+                    }
+                    continue;
+                }
             };
             // SAFETY: the font file is opened read-only and never modified
             // while mapped; the mapping is leaked so the face can be 'static.
@@ -141,7 +151,11 @@ impl Emoji {
             }
         }
         if face.is_none() {
-            log::warn!("no emoji font found (Noto-3D); emoji use the monochrome fallback");
+            let looked: Vec<String> = candidates.iter().map(|p| p.display().to_string()).collect();
+            log::warn!(
+                "no emoji font found (Noto-3D, looked for {}); emoji use the monochrome fallback",
+                looked.join(", ")
+            );
         }
         let lists = categories()
             .iter()
