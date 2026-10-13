@@ -69,7 +69,7 @@ pub(crate) fn bounds(primitives: &[egui::ClippedPrimitive], scale: f32, size: [u
     let pixels = |from: f32, to: f32, limit: u32| {
         let from = ((from * scale).floor().max(0.0) as u32).min(limit);
         let to = ((to * scale).ceil().max(0.0) as u32).min(limit);
-        (from < to).then_some((from, to - from))
+        (from < to).then(|| (from, to - from))
     };
     let (x, width) = pixels(all.left(), all.right(), size[0])?;
     let (y, height) = pixels(all.top(), all.bottom(), size[1])?;
