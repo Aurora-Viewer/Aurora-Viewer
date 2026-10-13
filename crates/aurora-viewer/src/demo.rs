@@ -1962,9 +1962,11 @@ pub fn events() -> Vec<NetEvent> {
                     cutoff: 0.0,
                     falloff: 0.0,
                 }),
-                light_image: image.map(|i| aurora_prim::extra::LightImageParams {
+                // a plain white image, as a projector left with the blank
+                // texture: a single level here, and still soft edges
+                light_image: image.map(|_| aurora_prim::extra::LightImageParams {
+                    texture: BLANK_TEXTURE,
                     params: Vec3::new(1.4, 1.0, 0.3),
-                    ..i
                 }),
                 ..Default::default()
             },

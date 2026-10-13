@@ -1032,24 +1032,31 @@ fn projector_sample(slot: u32, tc: vec2<f32>, lod: f32) -> vec4<f32> {
     return vec4<f32>(srgb_to_linear(c.rgb), c.a);
 }
 
-// getTexture2DLodDiffuse: the blurred levels fade out at the image's edges.
-fn projector_diffuse(slot: u32, tc: vec2<f32>, lod: f32, levels: f32) -> vec4<f32> {
-    var ret = projector_sample(slot, tc, lod);
+// getTexture2DLodDiffuse: the image at `blur` of its mip chain (LL's lod /
+// proj_lod), fading out at its edges as it blurs. The fade is LL's
+// lod / (proj_lod x 0.5), that is twice `blur`: it does not depend on the
+// levels the texture has here (a plain white one has a single level and
+// still gets the soft edges of its beam).
+fn projector_diffuse(slot: u32, tc: vec2<f32>, blur: f32) -> vec4<f32> {
+    var ret = projector_sample(slot, tc, blur * projector_levels(slot));
     let dist = vec2<f32>(0.5) - abs(tc - vec2<f32>(0.5));
-    let edge = 0.25 * min(lod / max(levels * 0.5, 1e-4), 1.0);
+    let edge = 0.25 * min(2.0 * blur, 1.0);
     if (edge > 0.0) {
         ret *= clamp(min(dist.x, dist.y) / edge, 0.0, 1.0);
     }
     return ret;
 }
 
-// texture2DLodSpecular: the projector's image seen in a shiny face.
-fn projector_specular(slot: u32, tc: vec2<f32>, lod: f32, levels: f32) -> vec4<f32> {
-    var ret = projector_sample(slot, tc, lod);
+// texture2DLodSpecular: the projector's image seen in a shiny face. LL's
+// extra factor counts the levels left under the one read; ours are counted
+// as those of an image at least 32 pixels wide.
+fn projector_specular(slot: u32, tc: vec2<f32>, blur: f32) -> vec4<f32> {
+    let levels = projector_levels(slot);
+    var ret = projector_sample(slot, tc, blur * levels);
     let dist = vec2<f32>(0.5) - abs(tc - vec2<f32>(0.5));
     var d = min(dist.x, dist.y);
-    d *= min(1.0, d * (levels - lod));
-    let edge = 0.25 * min(lod / max(levels * 0.5, 1e-4), 1.0);
+    d *= min(1.0, d * max(levels, 5.0) * (1.0 - blur));
+    let edge = 0.25 * min(2.0 * blur, 1.0);
     if (edge > 0.0) {
         ret *= clamp(d / edge, 0.0, 1.0);
     }
@@ -1148,10 +1155,8 @@ fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> LightAt {
     }
     // the texture blurs with the distance from the light, past the focus
     let slot = pj.tex.x;
-    let levels = projector_levels(slot);
     let l_dist = -dot(to_l, pj.dir.xyz);
-    let lod = clamp((l_dist - pj.origin.w) / pj.dir.w, 0.0, 1.0) * levels;
-    let c = projector_diffuse(slot, uv, lod, levels);
+    let c = projector_diffuse(slot, uv, clamp((l_dist - pj.origin.w) / pj.dir.w, 0.0, 1.0));
     // the beam is shadowed, the ambiance is not (spotLightF)
     at.shadow = projector_shadow(i, world_pos, n);
     at.color = lt.color_falloff.rgb * c.rgb * c.a * at.shadow;
@@ -1159,7 +1164,7 @@ fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> LightAt {
     if (at.ambiance > 0.0) {
         // getTexture2DLodAmbient: the image's mean color (its last level),
         // fading from the middle of the frustum to its corners
-        var amb = projector_sample(slot, vec2<f32>(0.5), levels);
+        var amb = projector_sample(slot, vec2<f32>(0.5), projector_levels(slot));
         let off = uv - vec2<f32>(0.5);
         amb *= clamp((0.25 - dot(off, off)) / 0.25, 0.0, 1.0);
         at.amb_color = lt.color_falloff.rgb * amb.rgb * amb.a;

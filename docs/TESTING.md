@@ -797,19 +797,22 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   panneaux alpha — défilement lisse, grille de 4 × 4 images, ping-pong,
   rotation, échelle (masque alpha : prépasse et ombres), un cube animé sur
   une seule face, un matériau legacy (la normal map suit) et une face PBR.
-- **`AURORA_DEMO_PROJECTOR=1|point`** : quatre lumières, les trois premières
-  avec l'image de démo (quatre quarts de couleur autour d'un disque blanc) :
-  un projecteur blanc tourné vers un mur à 4,5 m, avec un poteau dans son
-  faisceau ; un projecteur cyan à 2,5 m du sol tourné vers le bas (flou à
-  partir de 1 m, ambiance 0,3) ; une lumière de piscine, projecteur cyan
-  très large (champ 3,0 rad, rayon 20 m, sans atténuation) tourné vers le
-  bas, 2 m sous le sol et à 4 m du milieu d'une dalle à normal map ; une
-  lumière ponctuelle ordinaire, orange, au bout du mur. À regarder avec
-  `AURORA_DEMO_POS="131,112"`, en `AURORA_AA=6` et `AURORA_AA=3` : l'image
-  est projetée sur le mur (vert en haut à gauche, jaune en haut à droite,
-  rouge et bleu en dessous : le haut de l'image suit l'axe Y du prim), le
-  sol n'est éclairé que dans les cônes, et la lumière de piscine n'éclaire
-  rien au-dessus d'elle : ni la dalle, ni notre avatar. Le poteau projette
+- **`AURORA_DEMO_PROJECTOR=1|point`** : quatre lumières, dont trois
+  projecteurs : un projecteur blanc tourné vers un mur à 4,5 m, qui projette
+  l'image de démo (quatre quarts de couleur autour d'un disque blanc), avec
+  un poteau dans son faisceau ; un projecteur cyan à 2,5 m du sol tourné
+  vers le bas, à l'image blanche unie (flou à partir de 1 m, ambiance 0,3) ;
+  une lumière de piscine, projecteur cyan très large (champ 3,0 rad, rayon
+  20 m, sans atténuation) tourné vers le bas, 2 m sous le sol et à 4 m du
+  milieu d'une dalle à normal map ; une lumière ponctuelle ordinaire,
+  orange, au bout du mur. À regarder avec `AURORA_DEMO_POS="131,112"`, en
+  `AURORA_AA=6` et `AURORA_AA=3` : l'image est projetée sur le mur (vert en
+  haut à gauche, jaune en haut à droite, rouge et bleu en dessous : le haut
+  de l'image suit l'axe Y du prim), le sol n'est éclairé que dans les cônes,
+  et la lumière de piscine n'éclaire rien au-dessus d'elle : ni la dalle, ni
+  notre avatar. Le carré de lumière du projecteur à l'image blanche a des
+  bords fondus (visible avec `AURORA_DEMO_TOD=3`) : le fondu vient de la
+  distance au point focal, pas des niveaux de la texture. Le poteau projette
   son ombre sur le mur : les deux projecteurs les plus présents à l'écran
   ont une carte d'ombre (`AURORA_PROJECTOR_SHADOWS=0` : aucune, le mur est
   éclairé derrière le poteau), et leurs ombres apparaissent en fondu

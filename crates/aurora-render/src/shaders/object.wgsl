@@ -600,8 +600,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
                 let stc = pj.matrix * vec4<f32>(hit, 1.0);
                 let uv = stc.xy / stc.w;
                 if (stc.z > 0.0 && uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
-                    let levels = projector_levels(pj.tex.x);
-                    let image = projector_specular(pj.tex.x, uv, (1.0 - spec.a) * levels * 0.6, levels);
+                    let image = projector_specular(pj.tex.x, uv, (1.0 - spec.a) * 0.6);
                     col += frame.lights[i].color_falloff.rgb / 3.25 * image.rgb * at.shadow * env;
                 }
             }
