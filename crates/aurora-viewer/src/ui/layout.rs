@@ -328,7 +328,7 @@ pub(crate) fn frame(ctx: &egui::Context, p: &Palette, snap_enabled: bool) {
         time: ctx.input(|i| i.time),
     };
     let (area, pixels_per_point) = (work_area(ctx), ctx.pixels_per_point());
-    let overlay = windows(ctx, |w| w.drive(screen, area, pixels_per_point, pointer, snap_enabled));
+    let overlay = windows(ctx, |w| w.drive(area, pixels_per_point, pointer, snap_enabled));
     if let Some(overlay) = overlay {
         snap::overlay::paint(ctx, p, &overlay);
     }

@@ -243,3 +243,118 @@ fn placed_floater_takes_the_asked_position_and_size_expanded() {
     assert!((placed.size() - size).length() < 1.0, "{before:?} -> {placed:?}");
     assert!(f.bodies > bodies, "the contents are shown again");
 }
+
+/// The room the floaters of the fixture live in: its screen without the bars.
+fn room() -> egui::Rect {
+    crate::ui::layout::default_work_area(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0)))
+}
+
+#[test]
+fn title_bar_positions_are_kept_in_the_room() {
+    let area = egui::Rect::from_min_max(egui::pos2(0.0, 30.0), egui::pos2(1280.0, 860.0));
+    let keep = |x, y, width| keep_title_in(area, egui::pos2(x, y), width);
+    // well inside: untouched
+    assert_eq!(keep(300.0, 200.0, 440.0), egui::pos2(300.0, 200.0));
+    // above the room, below it: the whole title bar comes back in
+    assert_eq!(keep(300.0, -700.0, 440.0).y, 30.0);
+    assert_eq!(keep(300.0, 5000.0, 440.0).y, 860.0 - TITLE_BAR_H);
+    // out by a side: a width to grab stays in
+    assert_eq!(keep(5000.0, 200.0, 440.0).x, 1280.0 - TITLE_GRIP);
+    assert_eq!(keep(-5000.0, 200.0, 440.0).x, -(440.0 - TITLE_GRIP));
+    // a default place is brought back whole when the window fits
+    assert_eq!(
+        fit_in(area, egui::pos2(1100.0, 700.0), egui::vec2(440.0, 300.0)),
+        egui::pos2(840.0, 560.0)
+    );
+    assert_eq!(
+        fit_in(area, egui::pos2(100.0, 0.0), egui::vec2(440.0, 2000.0)),
+        egui::pos2(100.0, 30.0)
+    );
+}
+
+/// A window as tall as its content, with more content than the room is
+/// high: it stops at the bars and its body scrolls.
+#[test]
+fn a_content_sized_floater_taller_than_the_room_stays_between_the_bars() {
+    let mut f = Fixture::new(true);
+    let short = f.show(vec![]);
+    assert!(room().contains_rect(short), "{short:?}");
+    f.body_height = 1400.0;
+    for _ in 0..8 {
+        f.show(vec![]);
+    }
+    let tall = f.show(vec![]);
+    assert!(tall.height() <= room().height() + 0.5, "{tall:?}");
+    assert!(
+        tall.top() >= room().top() - 0.5 && tall.bottom() <= room().bottom() + 0.5,
+        "{tall:?}"
+    );
+    assert!(room().contains(f.title()));
+    // and it takes its own height again when its content fits
+    f.body_height = 180.0;
+    for _ in 0..8 {
+        f.show(vec![]);
+    }
+    assert!((f.show(vec![]).height() - short.height()).abs() < 1.0);
+}
+
+/// Wherever a window is sent, and even larger than the room, its title bar
+/// can be reached.
+#[test]
+fn a_floater_cannot_be_put_with_its_title_out_of_reach() {
+    for (pos, size) in [
+        (egui::pos2(300.0, -700.0), egui::vec2(440.0, 300.0)),
+        (egui::pos2(300.0, 5000.0), egui::vec2(440.0, 300.0)),
+        (egui::pos2(5000.0, 200.0), egui::vec2(440.0, 300.0)),
+        (egui::pos2(-5000.0, 200.0), egui::vec2(440.0, 300.0)),
+        (egui::pos2(300.0, -900.0), egui::vec2(440.0, 2000.0)),
+        (egui::pos2(-900.0, -900.0), egui::vec2(3000.0, 2000.0)),
+    ] {
+        let mut f = Fixture::new(false);
+        place_floater(&f.ctx, "collapse_fixture", pos, size);
+        for _ in 0..6 {
+            f.show(vec![]);
+        }
+        let rect = f.show(vec![]);
+        let title = f.title();
+        assert!(
+            room().contains(title),
+            "sent to {pos:?} at {size:?}: title at {title:?}, window {rect:?}"
+        );
+        assert!(rect.top() >= room().top() - 0.5, "sent to {pos:?} at {size:?}: {rect:?}");
+        // one larger than the room is brought down to it: nothing of it is
+        // left under a bar
+        assert!(
+            rect.width() <= room().width() + 0.5 && rect.height() <= room().height() + 0.5,
+            "sent to {pos:?} at {size:?}: {rect:?}"
+        );
+    }
+}
+
+/// What a window paints, and where it takes the pointer, stops at the bars:
+/// a window never covers them, it passes behind.
+#[test]
+fn a_floater_paints_between_the_bars_only() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let (mut clip, mut open) = (egui::Rect::NOTHING, true);
+    for _ in 0..4 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                ..Default::default()
+            },
+            |ui| {
+                Floater::new("clip_fixture", "Window title", egui::pos2(300.0, 200.0), egui::vec2(440.0, 300.0))
+                    .silent()
+                    .show(ui.ctx(), &p, &mut open, |ui| clip = ui.clip_rect());
+            },
+        );
+        output.textures_delta.clear();
+    }
+    assert!(clip.is_positive(), "{clip:?}");
+    assert!(
+        clip.top() >= room().top() - 0.5 && clip.bottom() <= room().bottom() + 0.5,
+        "{clip:?}"
+    );
+}
