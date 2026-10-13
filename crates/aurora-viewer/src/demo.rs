@@ -1962,9 +1962,11 @@ pub fn events() -> Vec<NetEvent> {
                     cutoff: 0.0,
                     falloff: 0.0,
                 }),
-                light_image: image.map(|i| aurora_prim::extra::LightImageParams {
+                // a plain white image, as a projector left with the blank
+                // texture: a single level here, and still soft edges
+                light_image: image.map(|_| aurora_prim::extra::LightImageParams {
+                    texture: BLANK_TEXTURE,
                     params: Vec3::new(1.4, 1.0, 0.3),
-                    ..i
                 }),
                 ..Default::default()
             },
@@ -2010,6 +2012,17 @@ pub fn events() -> Vec<NetEvent> {
                 }),
                 ..Default::default()
             },
+            "",
+        ));
+        // a post in the first projector's beam: its shadow falls on the wall
+        add(prim(
+            9717,
+            Vec3::new(137.2, 114.2, floor + 2.0),
+            Quat::IDENTITY,
+            Vec3::new(0.3, 0.3, 1.6),
+            boxp,
+            te([0.7, 0.7, 0.75, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
             "",
         ));
         // an ordinary point light beside them, the same in both modes

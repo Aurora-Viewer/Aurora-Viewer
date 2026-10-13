@@ -982,6 +982,16 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-projector-shadows"),
+                    aurora_i18n::tr!("ui-options-projector-shadows-help"),
+                    |ui| {
+                        ui.add_enabled_ui(s.shadow_quality > 0, |ui| toggle(ui, p, &mut s.projector_shadows))
+                            .inner
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("ui-options-ambient-occlusion"),
                     aurora_i18n::tr!("ui-options-darkens-corners-and-contact-areas-ssao"),
                     |ui| {

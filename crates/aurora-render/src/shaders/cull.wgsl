@@ -8,6 +8,7 @@
 //   4..6    shadow cascades, casters drawn depth only (opaque faces)
 //   7..9    water reflection, mirror, reflection probe face
 //   10..12  shadow cascades, casters drawn with the alpha test
+//   13..14  shadow maps of the two projectors that cast shadows
 // Bins keep the record order (no atomics on the slots): coplanar faces drawn
 // in the same pass keep the same winner from one frame to the next.
 //   cs_classify: bin mask of each face, face count of each bin per workgroup;
@@ -21,27 +22,28 @@
 // The tests mirror Scene::build_lists (CPU path) and `gpu_cull::face_bins`.
 // The Hi-Z sphere test (hiz_test.wgsl) is prepended to this module.
 
-const BINS: u32 = 13u;
+const BINS: u32 = 15u;
 const MAIN_BINS: u32 = 4u;
 const BIN_SHADOW: u32 = 4u;
 const BIN_REFL_WATER: u32 = 7u;
 const BIN_REFL_MIRROR: u32 = 8u;
 const BIN_PROBE: u32 = 9u;
 const BIN_SHADOW_ALPHA: u32 = 10u;
+const BIN_SPOT: u32 = 13u;
 // argument regions after the bins: occlusion phase 1 and phase 2 prepass
 // lists of each main bin (own counts)
-const REGION_PRE1: u32 = 13u;
-const REGION_PRE2: u32 = 17u;
+const REGION_PRE1: u32 = 15u;
+const REGION_PRE2: u32 = 19u;
 
 // counts: bin sizes, then statistics
-const COUNT_VISIBLE: u32 = 13u;
-const COUNT_TRIANGLES: u32 = 14u;
-const COUNT_HIDDEN: u32 = 15u;
-const COUNT_PRE1: u32 = 16u;
-const COUNT_PRE2: u32 = 20u;
+const COUNT_VISIBLE: u32 = 15u;
+const COUNT_TRIANGLES: u32 = 16u;
+const COUNT_HIDDEN: u32 = 17u;
+const COUNT_PRE1: u32 = 18u;
+const COUNT_PRE2: u32 = 22u;
 // profile (F_SHADOW_STATS), per cascade: triangles of its casters, then its
 // rigged casters (avatars and rigged meshes), then their triangles
-const COUNT_SHADOW: u32 = 24u;
+const COUNT_SHADOW: u32 = 26u;
 const SHADOW_STATS: u32 = 9u;
 
 // planes of a cascade's caster volume (CullFrame.shadow_planes)
@@ -85,6 +87,8 @@ const F_OCCLUSION: u32 = 32u;
 const F_SHADOW_STATS: u32 = 64u;
 // every caster drawn with the alpha test (AURORA_SHADOW_LEGACY)
 const F_SHADOW_ALPHA_ALL: u32 = 128u;
+// projector shadow map k is drawn
+const F_SPOT: u32 = 256u;
 
 struct CullFace {
     index_count: u32,
@@ -134,6 +138,8 @@ struct CullFrame {
     water: array<vec4<f32>, 6>,
     mirror: array<vec4<f32>, 6>,
     probe: array<vec4<f32>, 6>,
+    // frustums of the two projector shadow maps
+    spots: array<vec4<f32>, 12>,
     cascades: array<mat4x4<f32>, 3>,
     // per cascade, SHADOW_PLANES planes (inside: positive) around what can
     // cast a shadow the main view samples in that cascade
@@ -250,6 +256,17 @@ fn sphere_in(planes: array<vec4<f32>, 6>, c: vec3<f32>, r: f32) -> bool {
     return true;
 }
 
+// Sphere against the frustum of projector shadow map `k`.
+fn spot_in(k: u32, c: vec3<f32>, r: f32) -> bool {
+    for (var j = 0u; j < 6u; j++) {
+        let p = frame.spots[k * 6u + j];
+        if (dot(p.xyz, c) + p.w < -r) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Renderer cascade test: orthographic, radius in clip units.
 fn in_cascade(m: mat4x4<f32>, c: vec3<f32>, r: f32) -> bool {
     let p = m * vec4<f32>(c, 1.0);
@@ -337,6 +354,14 @@ fn face_mask(i: u32) -> u32 {
                         atomicAdd(&wg_shadow[6u + k], f.index_count / 3u);
                     }
                 }
+            }
+        }
+    }
+    // casters of the projectors' shadow maps, all drawn with the alpha test
+    if (casts && (fp != PASS_BLEND || rigged)) {
+        for (var k = 0u; k < 2u; k++) {
+            if ((fl & (F_SPOT << k)) != 0u && spot_in(k, c, r)) {
+                m |= 1u << (BIN_SPOT + k);
             }
         }
     }

@@ -481,6 +481,21 @@ pub struct Projector {
     pub ambiance: f32,
     /// Texture table slot of the projected texture.
     pub texture: u32,
+    /// World to the clip space of the projector's shadow map (depth 0 at
+    /// its near plane, 1 at its reach), as LLPipeline::generateSunShadow
+    /// draws the shadow of a projector.
+    pub shadow_matrix: Mat4,
+}
+
+/// A projector of the frame's light list that casts shadows: Firestorm draws
+/// the shadows of two projectors at a time (LLPipeline::mShadowSpotLight).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpotShadow {
+    /// Index of the projector in `FrameParams::lights`.
+    pub light: u32,
+    /// 0 to 1: its shadows fade in when the projector takes one of the two
+    /// shadow maps, and out when another one takes it.
+    pub fade: f32,
 }
 
 impl Projector {
@@ -511,7 +526,16 @@ impl Projector {
         );
         // clip space (-1..1) to texture space (0..1)
         let bias = Mat4::from_translation(Vec3::splat(0.5)) * Mat4::from_scale(Vec3::splat(0.5));
+        // the shadow map: from just past the face to the light's reach
+        let (sn, sf) = (near + 0.01, near + reach.max(0.02));
+        let shadow_perspective = Mat4::from_cols(
+            Vec4::new(f / aspect, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, f, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, sf / (sn - sf), -1.0),
+            Vec4::new(0.0, 0.0, sn * sf / (sn - sf), 0.0),
+        );
         Projector {
+            shadow_matrix: shadow_perspective * light_to_world.inverse(),
             matrix: bias * perspective * light_to_world.inverse(),
             origin,
             direction,
@@ -763,6 +787,8 @@ pub struct FrameParams {
     /// Distance covered by the shadow cascades.
     pub shadow_distance: f32,
     pub lights: Vec<PointLight>,
+    /// The projectors of `lights` that cast shadows (drawn with `shadows`).
+    pub spot_shadows: [Option<SpotShadow>; 2],
     pub clear_color: Vec4,
     pub sky: SkyParams,
     pub water: WaterParams,
@@ -1089,6 +1115,17 @@ mod tests {
         // a null field of view stays finite
         let thin = Projector::new(Vec3::ZERO, turn, Vec3::ONE, 10.0, Vec3::ZERO, 0);
         assert!(thin.matrix.is_finite() && thin.near.is_finite());
+        // the shadow map: depth 0 just past the face, 1 at the reach, and
+        // the same axis as the projected texture
+        let depth = |at: Vec3| {
+            let c = p.shadow_matrix * at.extend(1.0);
+            c.truncate() / c.w
+        };
+        let face = p.origin.x + p.near;
+        assert!(depth(Vec3::new(face + 0.01, 0.0, 0.0)).z.abs() < 1e-3);
+        assert!((depth(Vec3::new(face + 10.0, 0.0, 0.0)).z - 1.0).abs() < 1e-3);
+        let mid = depth(Vec3::new(5.0, 0.0, 0.0));
+        assert!(mid.x.abs() < 1e-4 && mid.y.abs() < 1e-4 && mid.z > 0.0 && mid.z < 1.0, "{mid:?}");
     }
 
     fn cmd(record: u32) -> DrawCmd {
