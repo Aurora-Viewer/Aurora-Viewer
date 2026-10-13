@@ -396,7 +396,7 @@ impl App {
                     to: id,
                     message: aurora_i18n::tr!("common-join-me").into(),
                 });
-                self.world.system_message(aurora_i18n::tr!("common-teleport-offer-sent"));
+                self.world.teleport_offer_sent(id);
             }
             CtxAction::OpenPeople(tab) => {
                 self.panels.people = true;

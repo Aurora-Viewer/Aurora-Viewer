@@ -512,6 +512,29 @@ pub fn many_conversation_events(agent: Uuid) -> Vec<NetEvent> {
         .collect()
 }
 
+/// AURORA_DEMO_CONV=tp: a conversation with a resident (DEMO_NOVA, whom
+/// the demo's names call "Tess Touch"), then a teleport offer to them and
+/// one to DEMO_TESS, who has none (issue #280).
+pub fn teleport_offer_scenario() -> bool {
+    std::env::var("AURORA_DEMO_CONV").is_ok_and(|v| v == "tp")
+}
+
+/// The message that opens the conversation of `teleport_offer_scenario`.
+pub fn teleport_offer_events(agent: Uuid) -> Vec<NetEvent> {
+    vec![NetEvent::InstantMessage(aurora_net::InstantMessage {
+        from_agent_id: DEMO_NOVA,
+        from_name: "Tess Touch".into(),
+        to_agent_id: agent,
+        dialog: 0,
+        session_id: Uuid::nil(),
+        message: aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset").into(),
+        offline: false,
+        from_group: false,
+        binary_bucket: Vec::new(),
+        timestamp: 0,
+    })]
+}
+
 /// Instant messages, a conference invitation, a local chat line and two
 /// nearby avatars, all with names longer than their lists.
 fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
@@ -2854,6 +2877,9 @@ pub fn events() -> Vec<NetEvent> {
     }
     if many_conversations_scenario() {
         ev.extend(many_conversation_events(agent));
+    }
+    if teleport_offer_scenario() {
+        ev.extend(teleport_offer_events(agent));
     }
     ev
 }

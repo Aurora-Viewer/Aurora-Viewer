@@ -245,6 +245,21 @@ impl World {
         trim(&mut s.lines, &mut s.clock);
     }
 
+    /// A line for the conversation with an avatar that has none open: only
+    /// written to its transcript, as LLHandlerUtil::logToIM does without a
+    /// session (llnotificationhandlerutil.cpp). Lost while the avatar's name,
+    /// which names the file, is unknown.
+    pub(super) fn transcript_only(&mut self, other: Uuid, line: &ChatLine) {
+        if !self.chat_log.cfg.log_im || self.chat_log.identity().is_none() {
+            return;
+        }
+        let Some(stem) = self.transcript_stem(&other) else {
+            return;
+        };
+        let (from, text) = self.transcript_text(line);
+        self.chat_log.append(&stem, line.time, &from, &text);
+    }
+
     /// A line enters the nearby chat (same bound).
     pub(super) fn nearby_push(&mut self, line: ChatLine) {
         self.log_nearby(&line);
@@ -842,6 +857,36 @@ mod tests {
         let s = &w.social.ims[0];
         assert_eq!(s.lines.len(), MAX_CHAT);
         assert_eq!(s.lines[0].text, "line 50");
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn a_teleport_offer_is_noted_with_the_avatar_not_in_the_nearby_chat() {
+        let root = temp();
+        let jane = Uuid::from_u128(2);
+        let bob = Uuid::from_u128(3);
+        let mut w = world(&root, Uuid::from_u128(1));
+        let link = |id: Uuid| format!("secondlife:///app/agent/{id}/completename");
+        // a conversation with Jane is open: the notice goes in it, not unread
+        w.on_im(im(jane, "Jane Doe", "hello"));
+        let unread = w.social.ims[0].unread;
+        w.teleport_offer_sent(jane);
+        let s = &w.social.ims[0];
+        let notice = s.lines.back().unwrap();
+        assert!(notice.kind == ChatKind::System);
+        assert!(notice.text.ends_with(&link(jane)), "{}", notice.text);
+        assert_eq!(s.unread, unread);
+        // none with Bob: none opens, the notice is only in his transcript
+        w.social.names.insert(bob, "Bob Builder".into());
+        w.teleport_offer_sent(bob);
+        assert_eq!(w.social.ims.len(), 1);
+        assert!(w.chat.is_empty());
+        settle(&mut w);
+        let bob_file = file_texts(&w, "Bob Builder");
+        assert_eq!(bob_file.len(), 1);
+        assert_eq!(bob_file[0].0, format::SYSTEM_FROM);
+        assert!(bob_file[0].1.ends_with(&link(bob)), "{}", bob_file[0].1);
+        assert_eq!(file_texts(&w, "Jane Doe").len(), 2);
         clean(&w, &root);
     }
 }

@@ -6061,7 +6061,7 @@ impl App {
                 to,
                 message: aurora_i18n::tr!("common-join-me").into(),
             });
-            self.world.system_message(aurora_i18n::tr!("common-teleport-offer-sent"));
+            self.world.teleport_offer_sent(to);
         }
         if let Some(asset) = a.landmark {
             self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
@@ -8022,6 +8022,11 @@ impl ApplicationHandler for App {
                 self.chat_ui
                     .open(crate::demo::many_conversation(crate::demo::MANY_CONVERSATIONS - 1));
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
+            } else if crate::demo::teleport_offer_scenario() {
+                self.panels.chat = true;
+                self.panels.perf = false;
+                self.chat_ui.open(crate::demo::DEMO_NOVA);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
             } else if std::env::var_os("AURORA_DEMO_CONV").is_some() {
                 self.panels.chat = true;
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
@@ -8058,6 +8063,12 @@ impl ApplicationHandler for App {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
+            }
+            // AURORA_DEMO_CONV=tp: teleport offers by the avatar menu, to the
+            // resident whose conversation is open and to one without any
+            if crate::demo::teleport_offer_scenario() {
+                self.on_ctx_action(ui::context::CtxAction::OfferTeleport(crate::demo::DEMO_NOVA));
+                self.on_ctx_action(ui::context::CtxAction::OfferTeleport(crate::demo::DEMO_TESS));
             }
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces")) {
                 let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
