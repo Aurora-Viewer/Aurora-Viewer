@@ -1998,30 +1998,30 @@ What the inventory must show with these scenarios:
   view. To be seen with `AURORA_DEMO_ALTITUDE=2085` and
   `AURORA_DEMO_CAMERA=drift,690,420,84` on consecutive screenshots (frames
   800 to 899): the edge of the panel drifts steadily, or jitters with `0`.
-- **`AURORA_SHADOW_LEGACY=1|splits|distance|ab|cover`**: to compare the
+- **`AURORA_SHADOW_LEGACY=1|splits|separate|ab|merge`**: to compare the
   image and the measurements of the shadows. By default, each cascade only
   draws the objects whose shadow can fall on what the view reads in it
   (`aurora-render/src/shadow_cull.rs`), the opaque faces are drawn without
-  a fragment shader, and a pixel reads the finest cascade that covers it,
-  whatever its distance: an object a finer cascade covers is left out of
-  the coarser ones, so most objects are drawn in one cascade only.
-  - `distance`: the cascade of a pixel chosen from its own distance to the
-    camera, as before. An object near the limit between two cascades, or
-    with a long shadow, is drawn in two or three of them: in a crowd, each
-    avatar.
-  - `cover`: with `AURORA_PROFILE=1`, `distance` and the default path in
-    turn, one second each (`shadow_path=distance|new`). In the demo crowd
-    (`AURORA_DEMO_CROWD=40`, `AURORA_DEMO_ANIMESH=1`,
+  a fragment shader, the cascade of a pixel is chosen from its own distance
+  to the camera, and an opaque object that the cascade before already holds
+  is not drawn again: that part of the cascade is filled from the finer
+  map (`aurora-render/src/shadow_merge.rs`), so most objects are drawn in
+  one cascade only.
+  - `separate`: each cascade draws all its objects, as before. An object
+    whose shadow reaches two or three cascades is drawn in each: in a
+    crowd, every avatar.
+  - `merge`: with `AURORA_PROFILE=1`, `separate` one second in three and
+    the default path the other two (`shadow_path=separate|new`). In the
+    demo crowd (`AURORA_DEMO_CROWD=40`, `AURORA_DEMO_ANIMESH=1`,
     `AURORA_DEMO_ANIMESH_TRIS=200000`, `AURORA_FPS_LIMIT=500`): about half
     the shadow triangles (`st_k0` + `st_k1` + `st_k2`), at noon as at
-    sunset (`AURORA_DEMO_TOD=3`).
-  - Expected image difference with `distance`: none in what is lit and what
-    is in shadow; a pixel may read a finer cascade than before (never a
-    coarser one), so some shadow edges are sharper, and the limits between
-    cascades follow the squares of the shadow maps instead of circles
-    around the camera. `AURORA_DEBUG_SHADOWS=1` shows them.
-  - Beyond a shadow distance of 300 m the cascade is chosen from the
-    distance again (`shadow_path=distance` in the profile).
+    sunset (`AURORA_DEMO_TOD=3`). Nothing must be seen changing from one
+    second to the next.
+  - Expected image difference with `separate`: none but the place of a
+    shadow edge within a texel of its cascade (the finer map is read at the
+    centre of each texel of the coarser one, where a draw would have
+    sampled the object). The alpha-tested faces are drawn in every cascade
+    as before, since a finer map cuts their texture out differently.
   - `1`: the old path. All the objects of each cascade's square, all the
     faces with the alpha test, and the cascade chosen from the distance
     interpolated between the vertices of the triangle.
