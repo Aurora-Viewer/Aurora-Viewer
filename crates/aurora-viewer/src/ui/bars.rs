@@ -51,6 +51,8 @@ pub enum BarAction {
     SharedEnvironment,
     /// Monde › Historique de téléportation (ToggleTeleportHistory, Alt+H).
     TeleportHistory,
+    /// The balance, or Moi › Acheter des L$ (LLStatusBar::onClickBuyCurrency).
+    BuyCurrency,
 }
 
 pub struct StatusInfo<'a> {
@@ -330,6 +332,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         );
         if menu::item(ui, p, "user-filled", aurora_i18n::tr!("ui-bars-profile")) {
             *action = BarAction::MyProfile;
+        }
+        if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("currency-menu")) {
+            *action = BarAction::BuyCurrency;
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "home-filled", aurora_i18n::tr!("common-go-home")) {
@@ -860,8 +865,14 @@ pub fn top_bars(
                     ui.label(small(slt_time(), p.muted))
                         .on_hover_text(aurora_i18n::tr!("ui-bars-second-life-time-pacific"));
                     if let Some(b) = st.balance {
-                        ui.label(small(format!("{b} L$"), p.ink))
-                            .on_hover_text(aurora_i18n::tr!("ui-bars-balance"));
+                        // a click opens the L$ purchase
+                        let balance = ui
+                            .add(egui::Label::new(small(format!("{b} L$"), p.ink)).sense(egui::Sense::click()))
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(aurora_i18n::tr!("ui-bars-balance-click-to-buy-l"));
+                        if balance.clicked() {
+                            action = BarAction::BuyCurrency;
+                        }
                     }
                     for (on, text) in [
                         (st.flying, aurora_i18n::tr!("ui-bars-flying")),

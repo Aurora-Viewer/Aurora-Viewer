@@ -8,6 +8,7 @@ pub mod avatar_picker;
 pub mod backdrop;
 pub mod bars;
 pub mod bug_report;
+pub mod buy_currency;
 pub mod chat;
 pub mod color_picker;
 pub mod colors;
