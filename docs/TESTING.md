@@ -1841,7 +1841,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_SOUND=1` | World and interface sounds audible |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
-| `AURORA_DEMO_TAGS=voice`, `status`, `cycle` or `wall` | Name plates in all their states, at the three distances; behind a wall |
+| `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 
 ### Details
 
@@ -1862,6 +1862,12 @@ What the inventory must show with these scenarios:
   two around 50 m (name only). A white wall stands behind the two on the
   left, to judge the glass on a light background next to the same plates on
   the dark scene. The People window is closed.
+  - `height`: Nova and Lune have a torso translation deformer (+0.8 m),
+    animated head pitch and pelvis bobbing. Their tags stay above the taller
+    bodies, centred on their roots at a constant height through the cycle.
+    Compare frames 660 and 780 at 60 fps; also use `AURORA_NAME_TAGS=classic`.
+    A change of animation can change its height envelope; its individual
+    frames never move the tag. Real deformer assets still need a grid test.
   - `voice`: Nova out of the voice channel; Tess in the channel, silent
     (green outline, microphone badge) and without a profile picture (the
     icon stays); Orion, a friend, is speaking (halo that follows the level,
