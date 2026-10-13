@@ -49,7 +49,6 @@ impl Default for Layout {
     fn default() -> Self {
         Layout {
             toolbar: vec![
-                tb("Command_HowTo_Icon", "help", aurora_i18n::tr!("common-help")),
                 tb("Command_Chat_Icon", "conversations", aurora_i18n::tr!("common-conversations")),
                 tb("Command_Speak_Icon", "speak", aurora_i18n::tr!("ui-skin-speak")),
                 tb("Command_Move_Icon", "fly", aurora_i18n::tr!("extra-fly-land-f")),
@@ -57,13 +56,13 @@ impl Default for Layout {
                 tb("Command_People_Icon", "people", aurora_i18n::tr!("common-people")),
                 tb("Command_Inventory_Icon", "inventory", aurora_i18n::tr!("common-inventory")),
                 tb("Command_Appearance_Icon", "appearance", aurora_i18n::tr!("common-appearance")),
-                tb("AO", "ao", aurora_i18n::tr!("ao-title")),
                 tb("Command_Search_Icon", "search", aurora_i18n::tr!("search-title")),
+                tb("Command_Places_Icon", "places", aurora_i18n::tr!("common-places")),
                 tb("Command_Map_Icon", "worldmap", aurora_i18n::tr!("common-world-map")),
                 tb("Command_MiniMap_Icon", "minimap", aurora_i18n::tr!("common-mini-map")),
                 tb("Command_Performance_Icon", "performance", aurora_i18n::tr!("common-performance")),
                 tb("groundsit", "sit", aurora_i18n::tr!("extra-sit-on-ground-stand-up")),
-                tb("Home_Off", "home", aurora_i18n::tr!("common-go-home")),
+                tb("AO", "ao", aurora_i18n::tr!("ao-title")),
                 tb("Command_Preferences_Icon", "preferences", aurora_i18n::tr!("common-preferences")),
             ],
             chat_bar_fraction: 0.22,
