@@ -3793,7 +3793,7 @@ impl Scene {
                         && now.duration_since(s.at).as_secs_f32() < skeleton_max_age(&owner)
                 });
             let (base, dz) = match self.skeletons.get(&owner).filter(|_| cached) {
-                Some(s) => (s.base.clone(), s.root_dz),
+                Some(s) => (s.base.clone(), s.root_dz - s.hover_height + world.appearance_hover(&owner)),
                 None => self.skeleton_of(world, owner, idx, now),
             };
             root_dz.push((owner, dz));
@@ -3952,7 +3952,7 @@ impl Scene {
             if s.members != members {
                 s.members = members;
             }
-            return (s.base.clone(), s.root_dz);
+            return (s.base.clone(), s.root_dz - s.hover_height + world.appearance_hover(&owner));
         }
         let rig = self.avatar_lib.rig.clone();
         // joint offsets of the worn meshes
@@ -4024,6 +4024,7 @@ impl Scene {
                 signature,
                 base: base.clone(),
                 root_dz,
+                hover_height: if avatar { world.appearance_hover(&owner) } else { 0.0 },
                 members,
             },
         );
@@ -4447,6 +4448,8 @@ struct AvatarSkeleton {
     appearance_gen: u64,
     base: Arc<anim::SkeletonBase>,
     root_dz: f32,
+    /// Changing hover adjusts the root without rebuilding the shape/mesh skeleton.
+    hover_height: f32,
     /// Objects whose shape or meshes went into it (see `skeleton_member_of`).
     members: Vec<usize>,
 }
@@ -4567,12 +4570,22 @@ mod tests {
             }
         }
         let owner = world.agent_id;
+        world.apply(NetEvent::Capabilities {
+            handle: world.main_region.unwrap(),
+            caps: Arc::new(HashMap::new()),
+        });
+        let region = world.regions.get_mut(&world.main_region.unwrap()).unwrap();
+        region.avatar_hover_height = true;
+        Arc::make_mut(&mut region.caps).insert("AgentPreferences".into(), String::new());
+        world.hover_height.preview(0.25);
+        world.hover_height.commit();
         world.apply(NetEvent::Appearance(aurora_net::AvatarAppearance {
             avatar_id: owner,
             texture_entry: None,
             visual_params: Vec::new(),
             cof_version: 1,
-            hover_height: 0.25,
+            // Our preference must survive a stale simulator appearance.
+            hover_height: -0.5,
             attachments: 0,
         }));
         let idx = world.objects.index_of_uuid(&owner).expect("demo avatar");
@@ -4588,6 +4601,14 @@ mod tests {
         let (posed, _, _) = Scene::object_transform(&world, idx, now, 0).expect("posed transform");
         assert!(posed.abs_diff_eq(raw + rotation * (Vec3::Z * 0.25), 1e-5));
         assert!(!posed.abs_diff_eq(raw + Vec3::Z * 0.25, 1e-3));
+        let (base, _) = scene.skeleton_of(&world, owner, idx, now);
+        world.hover_height.preview(0.75);
+        let (same_base, adjusted) = scene.skeleton_of(&world, owner, idx, now);
+        assert!(Arc::ptr_eq(&base, &same_base), "hover must not rebuild the skeleton");
+        assert!((adjusted - dz - 0.5).abs() < 1e-5);
+        world.regions.get_mut(&world.main_region.unwrap()).unwrap().avatar_hover_height = false;
+        let (_, disabled) = scene.skeleton_of(&world, owner, idx, now);
+        assert!((disabled - dz + 0.25).abs() < 1e-5);
     }
 
     #[test]

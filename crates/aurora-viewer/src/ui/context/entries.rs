@@ -271,7 +271,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     save_as_submenu(ui);
     ui.separator();
     sit_stand(ui, f);
-    appearance_submenu(ui);
+    appearance_submenu(ui, f);
     take_off_submenu(ui);
     ui.separator();
     // Self.ToggleSitStand
@@ -465,7 +465,7 @@ fn save_as_submenu(ui: &mut Builder) {
 fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
     sit_stand(ui, f);
     take_off_submenu(ui);
-    appearance_submenu(ui);
+    appearance_submenu(ui, f);
     community_submenu(ui, id);
     // not in Firestorm's menu: kept from Aurora's (fly is in menu_attachment_self.xml)
     ui.item(
@@ -502,7 +502,7 @@ fn take_off_submenu(ui: &mut Builder) {
     });
 }
 
-fn appearance_submenu(ui: &mut Builder) {
+fn appearance_submenu(ui: &mut Builder, f: &Facts) {
     ui.submenu("man-filled", aurora_i18n::tr!("common-appearance"), true, |ui| {
         ui.item(
             "shirt-filled",
@@ -520,7 +520,12 @@ fn appearance_submenu(ui: &mut Builder) {
             aurora_i18n::tr!("ui-context-edit-outfit"),
             CtxAction::OpenAppearance { tab: 2, editing: true },
         );
-        ui.todo("arrows-vertical", aurora_i18n::tr!("ui-context-hover-height"));
+        ui.item_if(
+            "arrows-vertical",
+            aurora_i18n::tr!("ui-context-hover-height"),
+            f.hover_height,
+            CtxAction::HoverHeight,
+        );
         ui.separator();
         ui.todo("bone-filled", aurora_i18n::tr!("ui-context-reset-skeleton"));
         ui.todo("run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));

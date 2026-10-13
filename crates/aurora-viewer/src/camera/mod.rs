@@ -1495,9 +1495,10 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
         .and_then(|o| world.objects.parent_of(o))
         .and_then(|parent| Scene::object_transform(world, parent, now, 0))
         .map(|(_, r, _)| r);
-    // the scene's root offset includes the hover height (standing only)
+    // LLAgentCamera::getAvatarRootPosition subtracts the hover vector even
+    // when seated; an explicit seat camera still overrides this root later.
     let dz = world.avatar_root_dz.get(&id).copied().unwrap_or(0.0);
-    let hover = if seat.is_none() && !s.hover_affects_camera {
+    let hover = if !s.hover_affects_camera {
         world.appearance_hover(&id)
     } else {
         0.0
@@ -1559,6 +1560,58 @@ pub fn pick_focus_object(world: &World, idx: usize, now: Instant) -> Option<(Uui
 mod tests {
     use super::*;
     use crate::scene::avatar::AvatarLibrary;
+
+    #[test]
+    fn hover_camera_toggle_changes_the_camera_root_without_changing_agent_position() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for event in crate::demo::sit_events(700) {
+            if let aurora_net::NetEvent::ObjectUpdates { handle, .. } = &event {
+                world.main_region = Some(*handle);
+            }
+            world.apply(event);
+        }
+        world.apply(aurora_net::NetEvent::Capabilities {
+            handle: world.main_region.unwrap(),
+            caps: std::sync::Arc::new(Default::default()),
+        });
+        let region = world.regions.get_mut(&world.main_region.unwrap()).unwrap();
+        region.avatar_hover_height = true;
+        std::sync::Arc::make_mut(&mut region.caps).insert("AgentPreferences".into(), String::new());
+        let id = world.agent_id;
+        let now = Instant::now();
+        let mut settings = CameraSettings {
+            hover_affects_camera: false,
+            ..CameraSettings::default()
+        };
+        let baseline = avatar_frame(&world, &settings, now);
+        let agent = world.agent.position;
+        for height in [-3.0, -0.25, 0.4, 3.0, 0.0] {
+            world.hover_height.preview(height);
+            world.avatar_root_dz.insert(id, height);
+            let fixed = avatar_frame(&world, &settings, now);
+            assert!(fixed.root.abs_diff_eq(baseline.root, 1e-5));
+            settings.hover_affects_camera = true;
+            let following = avatar_frame(&world, &settings, now);
+            assert!(following.root.abs_diff_eq(baseline.root + Vec3::Z * height, 1e-5));
+            assert!(following.position.abs_diff_eq(baseline.position, 1e-5));
+            assert_eq!(world.agent.position, agent);
+            settings.hover_affects_camera = false;
+        }
+        for frame in [250, 300] {
+            for event in crate::demo::sit_events(frame) {
+                world.apply(event);
+            }
+        }
+        world.hover_height.preview(0.4);
+        world.avatar_root_dz.insert(id, 0.4);
+        let fixed = avatar_frame(&world, &settings, now);
+        assert!(fixed.seat.is_some());
+        settings.hover_affects_camera = true;
+        let following = avatar_frame(&world, &settings, now);
+        assert!(following.root.abs_diff_eq(fixed.root + Vec3::Z * 0.4, 1e-5));
+        assert_eq!(following.position, fixed.position);
+    }
 
     fn world_at(pos: Vec3) -> World {
         let mut w = World::new(std::sync::Arc::new(AvatarLibrary::load()));
