@@ -599,6 +599,7 @@ dependencies = [
  "md5",
  "parking_lot",
  "reqwest",
+ "socket2",
  "thiserror 2.0.21",
  "tokio",
  "uuid",
