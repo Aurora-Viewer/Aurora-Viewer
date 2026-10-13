@@ -520,7 +520,7 @@ fn appearance_submenu(ui: &mut Builder) {
             aurora_i18n::tr!("ui-context-edit-outfit"),
             CtxAction::OpenAppearance { tab: 2, editing: true },
         );
-        ui.todo("arrows-vertical", aurora_i18n::tr!("ui-context-flutter"));
+        ui.todo("arrows-vertical", aurora_i18n::tr!("ui-context-hover-height"));
         ui.separator();
         ui.todo("bone-filled", aurora_i18n::tr!("ui-context-reset-skeleton"));
         ui.todo("run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));
