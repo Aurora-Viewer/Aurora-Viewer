@@ -1051,7 +1051,7 @@ grille.
   violet (les deux bords qui vont se toucher, la ligne des hauts, le contour
   de l'endroit où elle va se poser) et le rappel « Alt : ne pas coller »
   apparaissent, la fenêtre reste sous le pointeur ; image 900 : relâchée,
-  elle se colle à 8 px de Personnes, hauts alignés. `groupe` déplace ensuite
+  elle se colle contre Personnes, sans écart, hauts alignés. `groupe` déplace ensuite
   Personnes de 70 × 50 entre les images 1000 et 1100 : Conversations suit, le
   rappel dit « Alt : détacher cette fenêtre ». `taille` tire à la place le
   bord bas de Conversations jusqu'à 4 px de la ligne du bas de Personnes : le

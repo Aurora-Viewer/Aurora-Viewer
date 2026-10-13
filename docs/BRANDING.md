@@ -226,9 +226,10 @@ Dans le code, on utilise toujours la `Palette` résolue (`p.violet`, `p.ink`…)
   est montré par un guide : un trait de 2 px en `violet_light` le long des
   bords qui vont se toucher (sur la longueur qu'ils partagent) ou s'aligner,
   et le contour très léger de l'endroit où la fenêtre va se poser, au rayon
-  des fenêtres. Pas de guide, pas de collage. Les fenêtres collées gardent
-  entre elles, et avec les barres et les bords, le même écart de 8 px que la
-  disposition du premier lancement (`layout::GAP`). Pendant le geste, une
+  des fenêtres. Pas de guide, pas de collage. Les fenêtres collées se
+  touchent, bord contre bord, entre elles comme avec les barres et les bords,
+  sans écart, comme celles de la disposition du premier lancement
+  (`layout::GAP`, à 0). Pendant le geste, une
   petite pastille sur le verre des fenêtres rappelle la touche qui libère :
   la touche Alt en keycap (`widgets::keycap`) suivie de « ne pas coller » ou
   « détacher cette fenêtre », en texte `muted`, posée près de la fenêtre, hors

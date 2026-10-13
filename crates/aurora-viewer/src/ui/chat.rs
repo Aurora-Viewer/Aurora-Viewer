@@ -1012,7 +1012,7 @@ const DEFAULT_MIN_H: f32 = 240.0;
 /// of the work area (`layout::work_area`), above the bottom bar and on the
 /// right edge of the mini-map and Performance windows of a first launch. In
 /// a viewer window too low for its whole height under Performance
-/// (`perf::default_pos`), it opens lower rather than over it (252 px in a
+/// (`perf::default_pos`), it opens lower rather than over it (284 px in a
 /// 1280 x 720 window; FSFloaterIMContainer opens at 396 x 390).
 pub(crate) fn default_rect(work: egui::Rect) -> egui::Rect {
     let gap = super::layout::GAP;
