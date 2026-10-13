@@ -1187,7 +1187,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
-| `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send` | Gesture manager, editor, playback and chat completion |
+| `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -1706,7 +1706,7 @@ and that Esc creates nothing. Online, validate real objects, forbidden land,
 the Trash / Library, neighbouring regions, the group of the land and
 objects already worn; the human logs in and carries out these tests.
 
-**`AURORA_DEMO_GESTURES=manager|editor|play|completion|completion-send`** — three synthetic gestures:
+**`AURORA_DEMO_GESTURES=manager|editor|play|completion|completion-send|communicate|communicate-open`** — three synthetic gestures:
 chat with a replacement and F8 shortcut, an animated pose on F9, and an
 inactive chime on F10. `manager` opens the list; `editor` also opens the
 chat gesture's editor; `play` starts the chat and animation at frame 650.
@@ -1721,6 +1721,11 @@ it without immediately completing it again. Only active, enabled gestures
 participate; ambiguous prefixes extend only to their common suffix. The
 same completion is available in the conversations window's local chat,
 with instant messages and numeric channel prefixes keeping their input.
+`communicate` starts with the gesture manager closed, clicks the wolf menu
+at frame 540 and hovers Communicate at frame 560: capture frame 620 to see
+the Gestures (Ctrl+G) entry below Conversations. `communicate-open` also
+clicks that entry at frame 650: capture frame 800 to check that the manager
+opens through the actual menu control.
 Check Ctrl+G, filtering and active-only/enabled switches, sorting and
 multiple selection, inventory Open/Play/Activate/Deactivate, all four step
 types, stock/inventory animation choices, Shift/Ctrl and key choices,

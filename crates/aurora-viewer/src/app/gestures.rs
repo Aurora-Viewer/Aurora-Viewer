@@ -753,6 +753,29 @@ impl App {
 
     pub(super) fn gesture_demo_input(&mut self, raw: &mut egui::RawInput) {
         let mode = std::env::var("AURORA_DEMO_GESTURES").unwrap_or_default();
+        if matches!(mode.as_str(), "communicate" | "communicate-open") {
+            raw.focused = true;
+            let mouse = match self.frame_count {
+                540 => Some((egui::pos2(14.0, 11.0), Some(true))),
+                541 => Some((egui::pos2(14.0, 11.0), Some(false))),
+                560 => Some((egui::pos2(100.0, 62.0), None)),
+                650 if mode == "communicate-open" => Some((egui::pos2(245.0, 84.0), Some(true))),
+                651 if mode == "communicate-open" => Some((egui::pos2(245.0, 84.0), Some(false))),
+                _ => None,
+            };
+            if let Some((pos, pressed)) = mouse {
+                raw.events.push(egui::Event::PointerMoved(pos));
+                if let Some(pressed) = pressed {
+                    raw.events.push(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+            }
+            return;
+        }
         if !matches!(mode.as_str(), "completion" | "completion-send") {
             return;
         }
@@ -879,7 +902,7 @@ impl App {
                 self.gesture_request(item, false, false, active.then_some(true), false);
             }
         }
-        self.panels.gestures = true;
+        self.panels.gestures = !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate"));
         if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "editor") {
             self.gesture_action(Action::Open(item));
         }
