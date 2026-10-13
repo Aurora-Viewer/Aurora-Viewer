@@ -48,10 +48,9 @@ const SHADOW_STATS: u32 = 9u;
 
 // planes of a cascade's caster volume (CullFrame.shadow_planes)
 const SHADOW_PLANES: u32 = 12u;
-// cascades chosen by coverage (shadow_cull.rs): share of a cascade's half
-// extent blended into the next one, texels a lookup reads around its point
-const COVER_BAND: f32 = 0.1;
-const FILTER_TEXELS: f32 = 6.0;
+// texels of a cascade kept between a caster it leaves to the cascade before
+// and the edge of that cascade's square (shadow_cull::MERGE_TEXELS)
+const MERGE_TEXELS: f32 = 2.0;
 
 // CullFace.bits
 const PASS_BITS: u32 = 7u;
@@ -153,8 +152,8 @@ struct CullFrame {
     eye: vec4<f32>,
     // x shadow distance, y reflection distance,
     // z pixel scale (screen height / tan(fov / 2)),
-    // w side of a cascade in texels when the cascades are chosen by
-    // coverage (0: by distance)
+    // w side of a cascade in texels when a cascade takes its opaque casters
+    // from the map of the cascade before (0: each draws its own)
     dist: vec4<f32>,
     // x faces, y objects, z slots per bin, w flags
     sizes: vec4<u32>,
@@ -298,24 +297,21 @@ fn cascade_scale(m: mat4x4<f32>) -> f32 {
     return length(vec3<f32>(m[0].x, m[1].x, m[2].x));
 }
 
-// With the cascades chosen by coverage: no lookup of cascade `k` can meet
-// the caster, everything it can shadow reads a finer cascade
-// (shadow_cull::covered_by_finer, kept line for line).
-fn covered_by_finer(k: u32, c: vec3<f32>, r: f32) -> bool {
-    if (frame.dist.w <= 0.0) {
+// Cascade `k` need not draw the opaque caster: the cascade before holds it,
+// inside its square, and its map fills that part of `k`
+// (shadow_cull::merged_from_finer, kept line for line).
+fn merged_from_finer(k: u32, c: vec3<f32>, r: f32) -> bool {
+    if (frame.dist.w <= 0.0 || k == 0u) {
         return false;
     }
-    let texel = 2.0 / (cascade_scale(frame.cascades[k]) * frame.dist.w);
-    let reach = r + (FILTER_TEXELS * texel + 0.02 + 0.04 * f32(k) + 0.05);
-    for (var j = 0u; j < k; j++) {
-        let m = frame.cascades[j];
-        let q = m * vec4<f32>(c, 1.0);
-        let rho = reach * cascade_scale(m);
-        if (abs(q.x) + rho <= 1.0 - COVER_BAND && abs(q.y) + rho <= 1.0 - COVER_BAND) {
-            return true;
-        }
+    let fine = frame.cascades[k - 1u];
+    if (!in_cascade(fine, c, r) || !casts_into(k - 1u, c, r)) {
+        return false;
     }
-    return false;
+    let reach = r + MERGE_TEXELS * (2.0 / (cascade_scale(frame.cascades[k]) * frame.dist.w));
+    let q = fine * vec4<f32>(c, 1.0);
+    let rho = reach * cascade_scale(fine);
+    return abs(q.x) + rho <= 1.0 && abs(q.y) + rho <= 1.0;
 }
 
 var<workgroup> wg_bins: array<atomic<u32>, BINS>;
@@ -377,7 +373,7 @@ fn face_mask(i: u32) -> u32 {
         let depth_only = (fp == PASS_OPAQUE || fp == PASS_OPAQUE_2S) && (fl & F_SHADOW_ALPHA_ALL) == 0u;
         let bin = select(BIN_SHADOW_ALPHA, BIN_SHADOW, depth_only);
         for (var k = 0u; k < 3u; k++) {
-            if (in_cascade(frame.cascades[k], c, r) && casts_into(k, c, r) && !covered_by_finer(k, c, r)) {
+            if (in_cascade(frame.cascades[k], c, r) && casts_into(k, c, r) && !(depth_only && merged_from_finer(k, c, r))) {
                 m |= 1u << (bin + k);
                 if ((fl & F_SHADOW_STATS) != 0u) {
                     atomicAdd(&wg_shadow[k], f.index_count / 3u);

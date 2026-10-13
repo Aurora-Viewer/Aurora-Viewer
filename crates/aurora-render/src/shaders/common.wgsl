@@ -697,58 +697,6 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     return sum / 16.0;
 }
 
-// Cascades chosen by coverage (shadow_cull.rs): share of a cascade's half
-// extent, at its edge, blended into the next cascade that covers the point.
-const COVER_BAND: f32 = 0.1;
-
-// How far a point is from the centre of a cascade's square, 1 at its edge;
-// 2 when the cascade does not cover it (shadow_cull::cover_edge).
-fn cascade_cover(world_pos: vec3<f32>, cascade: u32) -> f32 {
-    let q = frame.cascade_vp[cascade] * vec4<f32>(world_pos, 1.0);
-    let edge = max(abs(q.x), abs(q.y));
-    return select(2.0, edge, edge <= 1.0 && q.z >= 0.0 && q.z <= 1.0);
-}
-
-// Shadow from the finest cascade that covers the point, whatever its
-// distance (shadow_cull::covering): the cascades look along the same light,
-// so what a caster shadows is behind its own disc in each of them, and a
-// caster a finer cascade covers need not be drawn in the coarser ones
-// (shadow_cull::covered_by_finer). Most casters are then drawn once, where
-// the choice by distance had the avatars of a crowd in two or three
-// cascades. A point reads a cascade at least as fine as its distance gave.
-fn covered_shadow(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
-    var cascade = 3u;
-    var edge = 2.0;
-    for (var k = 0u; k < 3u; k++) {
-        edge = cascade_cover(world_pos, k);
-        if (edge <= 1.0) {
-            cascade = k;
-            break;
-        }
-    }
-    if (cascade == 3u) {
-        return -1.0;
-    }
-    var s = cascade_shadow(world_pos, n, cascade);
-    // blend into the next cascade that covers the point over the band at
-    // the edge of this one: no visible border between cascades
-    let t = clamp((edge - (1.0 - COVER_BAND)) / COVER_BAND, 0.0, 1.0);
-    if (t > 0.0) {
-        for (var k = cascade + 1u; k < 3u; k++) {
-            if (cascade_cover(world_pos, k) <= 1.0) {
-                let next = cascade_shadow(world_pos, n, k);
-                if (s < 0.0) {
-                    s = next;
-                } else if (next >= 0.0) {
-                    s = mix(s, next, t);
-                }
-                break;
-            }
-        }
-    }
-    return s;
-}
-
 // AURORA_DEBUG_SHADOWS (frame.light_mode.z): instead of the image, the
 // cascade each pixel reads — red, green, blue from the finest, mixed where
 // two are blended, black beyond the shadow distance — darkened where the
@@ -763,24 +711,7 @@ fn shadow_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth:
         own_depth = distance(world_pos, frame.camera_pos.xyz);
     }
     var w = vec3<f32>(0.0);
-    if (own_depth <= splits.z && splits.w > 1.5) {
-        for (var k = 0u; k < 3u; k++) {
-            let edge = cascade_cover(world_pos, k);
-            if (edge > 1.0) {
-                continue;
-            }
-            w[k] = 1.0;
-            let t = clamp((edge - (1.0 - COVER_BAND)) / COVER_BAND, 0.0, 1.0);
-            for (var j = k + 1u; j < 3u && t > 0.0; j++) {
-                if (cascade_cover(world_pos, j) <= 1.0) {
-                    w[k] = 1.0 - t;
-                    w[j] = t;
-                    break;
-                }
-            }
-            break;
-        }
-    } else if (own_depth <= splits.z) {
+    if (own_depth <= splits.z) {
         var k = 0u;
         if (own_depth > splits.x) { k = 1u; }
         if (own_depth > splits.y) { k = 2u; }
@@ -802,19 +733,6 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
         return 1.0;
     }
     let splits = frame.cascade_splits;
-    if (splits.w > 1.5) {
-        let own_depth = distance(world_pos, frame.camera_pos.xyz);
-        if (own_depth > splits.z) {
-            return 1.0;
-        }
-        let covered = covered_shadow(world_pos, n);
-        if (covered < 0.0) {
-            return 1.0;
-        }
-        // fade out at the far end of the shadow distance
-        let far_fade = clamp((splits.z - own_depth) / (splits.z * 0.1), 0.0, 1.0);
-        return mix(1.0, covered, far_fade);
-    }
     // The cascade comes from the pixel's own distance to the camera, as for
     // the terrain and the water (and as Firestorm, which reads each pixel's
     // position: sampleDirectionalShadow, deferred/shadowUtil.glsl). The

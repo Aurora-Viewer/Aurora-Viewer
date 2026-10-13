@@ -23,6 +23,7 @@ mod render_thread;
 mod renderer;
 mod selection;
 pub mod shadow_cull;
+mod shadow_merge;
 pub mod tex_anim;
 pub mod textures;
 pub mod thread_cpu;

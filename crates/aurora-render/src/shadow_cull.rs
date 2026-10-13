@@ -30,36 +30,37 @@ pub mod path {
     /// instead of the one interpolated from its triangle's vertices, which
     /// lets `TIGHT` leave the near casters out of the far cascades.
     pub const PIXEL_SPLITS: u32 = 4;
-    /// The cascade of a pixel chosen from where it falls in the shadow
-    /// maps — the finest one that covers it — instead of its distance,
-    /// which lets a caster covered by a finer cascade out of the coarser
-    /// ones (`covered_by_finer`): most casters are drawn in one cascade.
-    pub const COVERAGE: u32 = 8;
+    /// An opaque caster that the cascade before holds is left out of a
+    /// cascade (`merged_from_finer`), which takes its depth from that finer
+    /// map instead (shadow_merge.rs): most casters are drawn in one cascade.
+    pub const MERGE: u32 = 8;
     pub const LEGACY: u32 = 0;
-    pub const NEW: u32 = TIGHT | DEPTH_ONLY | PIXEL_SPLITS | COVERAGE;
+    pub const NEW: u32 = TIGHT | DEPTH_ONLY | PIXEL_SPLITS | MERGE;
     /// The new path with the cascades chosen as before: the image of
     /// `LEGACY` to the pixel.
     pub const VERTEX_SPLITS: u32 = TIGHT | DEPTH_ONLY;
-    /// The path before `COVERAGE`: the cascade from the pixel's distance.
-    pub const DISTANCE: u32 = TIGHT | DEPTH_ONLY | PIXEL_SPLITS;
+    /// The path before `MERGE`: each cascade draws all its casters.
+    pub const SEPARATE: u32 = TIGHT | DEPTH_ONLY | PIXEL_SPLITS;
 }
 
 /// Paths the session goes through, one per profile period.
 /// AURORA_SHADOW_LEGACY: `1` the path before this module; `splits` only
-/// its choice of the cascades; `distance` the cascade of a pixel from its
-/// distance, as before `path::COVERAGE`; `ab` (with AURORA_PROFILE, whose
-/// periods drive the cycle) the old path, the new one and `splits` in
-/// turn, a second each, to compare them in the same session and under the
-/// same outside load; `cover` likewise `distance` and the new one.
+/// its choice of the cascades; `separate` every caster drawn in each
+/// cascade it shadows, as before `path::MERGE`; `ab` (with AURORA_PROFILE,
+/// whose periods drive the cycle) the old path, the new one and `splits`
+/// in turn, a second each, to compare them in the same session and under
+/// the same outside load; `merge` likewise `separate` one second in three
+/// (not two: work that comes back every other second would always fall on
+/// the same path).
 fn cycle() -> &'static [u32] {
     static CYCLE: OnceLock<Vec<u32>> = OnceLock::new();
     let profile = std::env::var_os("AURORA_PROFILE").is_some();
     CYCLE.get_or_init(|| match std::env::var("AURORA_SHADOW_LEGACY").as_deref() {
         Ok("ab") if profile => vec![path::LEGACY, path::NEW, path::VERTEX_SPLITS],
-        Ok("cover") if profile => vec![path::DISTANCE, path::NEW],
+        Ok("merge") if profile => vec![path::SEPARATE, path::NEW, path::NEW],
         Ok("splits") => vec![path::VERTEX_SPLITS],
-        Ok("distance") => vec![path::DISTANCE],
-        Ok("" | "0" | "ab" | "cover") | Err(_) => vec![path::NEW],
+        Ok("separate") => vec![path::SEPARATE],
+        Ok("" | "0" | "ab" | "merge") | Err(_) => vec![path::NEW],
         Ok(_) => vec![path::LEGACY],
     })
 }
@@ -85,7 +86,7 @@ pub fn path_name(bits: u32) -> &'static str {
     match bits {
         path::NEW => "new",
         path::LEGACY => "legacy",
-        path::DISTANCE => "distance",
+        path::SEPARATE => "separate",
         _ => "splits",
     }
 }
@@ -278,17 +279,15 @@ pub fn lookup_margin(k: usize, texel: f32) -> f32 {
 /// (`Backend::cascade_matrices`).
 pub const CASCADE_DEPTH_PAD: f32 = 400.0;
 
-/// With `path::COVERAGE`: share of a cascade's half extent, at its edge,
-/// blended into the next cascade that covers the point (`shadow_factor`).
-pub const COVER_BAND: f32 = 0.1;
-
-/// Longest shadow distance `path::COVERAGE` serves. `covered_by_finer`
-/// counts on every receiver under a finer cascade's square being in its
-/// depth range: a receiver is within the shadow distance of the camera,
-/// the centre of the two finer cascades within 0.3 times it, and the range
-/// reaches `CASCADE_DEPTH_PAD` beyond the square.
-pub const COVER_MAX_FAR: f32 = 300.0;
-const _: () = assert!(COVER_MAX_FAR * 1.3 <= CASCADE_DEPTH_PAD);
+/// Texels of a cascade kept between a caster it leaves to the cascade
+/// before and the edge of that cascade's square (`merged_from_finer`).
+pub const MERGE_TEXELS: f32 = 2.0;
+/// Slope-scaled depth bias of the shadow pipelines (renderer.rs), which the
+/// merge makes up for the size of the coarser texels.
+pub const SLOPE_BIAS: f32 = 2.0;
+/// Most the merge adds to a depth for the slope, in metres: at a
+/// silhouette the slope read from the map is not that of a surface.
+const MERGE_BIAS_MAX: f32 = 0.3;
 
 /// Scale of a cascade, in clip units per metre across the light:
 /// orthographic, so the first row of its matrix is the light's right axis
@@ -297,43 +296,109 @@ pub fn cascade_scale(m: &Mat4) -> f32 {
     m.row(0).truncate().length()
 }
 
-/// How far `p` is from the centre of cascade `m`'s square, 1 at its edge,
-/// when the cascade covers it (`cascade_cover` in common.wgsl).
-fn cover_edge(m: &Mat4, p: Vec3) -> Option<f32> {
-    let q = *m * p.extend(1.0);
-    let edge = q.x.abs().max(q.y.abs());
-    (edge <= 1.0 && (0.0..=1.0).contains(&q.z)).then_some(edge)
-}
-
-/// With `path::COVERAGE`: the cascade a point reads — the finest that
-/// covers it — and, in the band at that cascade's edge, the next one that
-/// covers it, which it blends into (`shadow_factor` in common.wgsl).
-pub fn covering(cascades: &[Mat4; 3], p: Vec3) -> Option<(usize, Option<usize>)> {
-    let (k, edge) = (0..3).find_map(|k| cover_edge(&cascades[k], p).map(|e| (k, e)))?;
-    let next = (edge > 1.0 - COVER_BAND)
-        .then(|| (k + 1..3).find(|j| cover_edge(&cascades[*j], p).is_some()))
-        .flatten();
-    Some((k, next))
-}
-
-/// With `path::COVERAGE`: no lookup of cascade `k` can meet the caster
-/// (`c`, `r`), because everything it can shadow reads a finer cascade
-/// (`covered_by_finer` in cull.wgsl). The cascades look along the same
-/// light: in each of them a caster shadows what is behind its own disc,
-/// however long the shadow, so when that disc — widened by what a lookup
-/// of `k` reads around its point — is inside the square of a finer cascade,
-/// short of the band where that cascade blends into the next, every point
-/// it shadows reads a cascade before `k`. `shadow_size`: side of a
-/// cascade in texels (0: the cascades are not chosen by coverage).
-pub fn covered_by_finer(cascades: &[Mat4; 3], shadow_size: f32, k: usize, c: Vec3, r: f32) -> bool {
-    if shadow_size <= 0.0 {
+/// With `path::MERGE`: cascade `k` need not draw the opaque caster
+/// (`c`, `r`), its depth comes from the map of the cascade before
+/// (`merged_from_finer` in cull.wgsl, kept line for line). The cascades
+/// look along the same light, so a caster covers the same place in each of
+/// them: when the cascade before holds it — it draws it, or leaves it in
+/// turn to the one before — and the caster is inside that cascade's square
+/// with `MERGE_TEXELS` to spare, every texel of `k` it would have covered
+/// is filled from the finer map (shadow_merge.rs). `shadow_size`: side of a
+/// cascade in texels (0: no merge).
+pub fn merged_from_finer(
+    cascades: &[Mat4; 3],
+    planes: &[[[f32; 4]; SHADOW_PLANES]; 3],
+    shadow_size: f32,
+    k: usize,
+    c: Vec3,
+    r: f32,
+) -> bool {
+    if shadow_size <= 0.0 || k == 0 {
         return false;
     }
-    let reach = r + lookup_margin(k, 2.0 / (cascade_scale(&cascades[k]) * shadow_size));
-    cascades[..k].iter().any(|m| {
-        let q = *m * c.extend(1.0);
-        let rho = reach * cascade_scale(m);
-        q.x.abs() + rho <= 1.0 - COVER_BAND && q.y.abs() + rho <= 1.0 - COVER_BAND
+    let fine = &cascades[k - 1];
+    if !crate::gpu_cull::in_cascade(fine, c, r) || !casts_into(&planes[k - 1], c, r) {
+        return false;
+    }
+    let reach = r + MERGE_TEXELS * (2.0 / (cascade_scale(&cascades[k]) * shadow_size));
+    let q = *fine * c.extend(1.0);
+    let rho = reach * cascade_scale(fine);
+    q.x.abs() + rho <= 1.0 && q.y.abs() + rho <= 1.0
+}
+
+/// How the map of cascade `k - 1` fills its part of cascade `k`
+/// (`MergeParams` in shadow_merge.wgsl).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Merge {
+    /// First texel of cascade `k` that is filled, and how many each way:
+    /// the texels whose centre is inside the square of the cascade before.
+    pub origin: [u32; 2],
+    pub size: [u32; 2],
+    /// Clip position in the cascade before from the one in `k`: scale x,
+    /// y, offset x, y.
+    pub to_fine: [f32; 4],
+    /// Depth in `k` from the depth in the cascade before: scale, offset;
+    /// what the slope of the finer map adds per unit of depth between two
+    /// of its texels; the most it adds.
+    pub depth: [f32; 4],
+}
+
+/// The merge of cascade `k - 1` into cascade `k` (1 or 2), or `None` when
+/// the two do not look along the same axes or the part to fill does not
+/// fit `scratch` texels a side. `shadow_size`: side of a cascade in texels.
+pub fn merge_of(cascades: &[Mat4; 3], k: usize, shadow_size: u32, scratch: u32) -> Option<Merge> {
+    let coarse = cascades[k].as_dmat4();
+    let fine = cascades[k - 1].as_dmat4();
+    if coarse.determinant().abs() < 1e-30 || fine.determinant().abs() < 1e-30 {
+        return None;
+    }
+    // (clip of `k` to clip of `k - 1`, and back)
+    let down = fine * coarse.inverse();
+    let up = coarse * fine.inverse();
+    // the same axes: x to x, y to y, depth to depth, nothing else
+    let straight = |m: &glam::DMat4| {
+        let off = [m.x_axis.y, m.x_axis.z, m.y_axis.x, m.y_axis.z, m.z_axis.x, m.z_axis.y];
+        off.iter().all(|v| v.abs() < 1e-4) && m.x_axis.x > 0.0 && m.y_axis.y > 0.0 && m.z_axis.z > 0.0
+    };
+    if !straight(&down) || !straight(&up) {
+        return None;
+    }
+    let size = shadow_size as f64;
+    // the finer square in the texels of `k`: those whose centre is inside
+    let (x0, x1) = (up.w_axis.x - up.x_axis.x, up.w_axis.x + up.x_axis.x);
+    let (y0, y1) = (up.w_axis.y - up.y_axis.y, up.w_axis.y + up.y_axis.y);
+    let first = |edge: f64| (edge * size - 0.5).ceil().max(0.0);
+    let last = |edge: f64| (edge * size - 0.5).floor().min(size - 1.0);
+    let (tx0, tx1) = (first(x0 * 0.5 + 0.5), last(x1 * 0.5 + 0.5));
+    // (texel rows go down while clip y goes up)
+    let (ty0, ty1) = (first(0.5 - y1 * 0.5), last(0.5 - y0 * 0.5));
+    if tx1 < tx0 || ty1 < ty0 {
+        return None;
+    }
+    let (w, h) = ((tx1 - tx0 + 1.0) as u32, (ty1 - ty0 + 1.0) as u32);
+    if w > scratch || h > scratch {
+        return None;
+    }
+    // a texel of `k` is `ratio` texels of the cascade before
+    let ratio = down.x_axis.x;
+    let depth_scale = up.z_axis.z;
+    // (orthographic: a unit of depth is the same length everywhere)
+    let metres_per_depth = 1.0 / coarse.row(2).truncate().length().max(1e-12);
+    Some(Merge {
+        origin: [tx0 as u32, ty0 as u32],
+        size: [w, h],
+        to_fine: [
+            down.x_axis.x as f32,
+            down.y_axis.y as f32,
+            down.w_axis.x as f32,
+            down.w_axis.y as f32,
+        ],
+        depth: [
+            depth_scale as f32,
+            up.w_axis.z as f32,
+            (SLOPE_BIAS as f64 * depth_scale * (ratio - 1.0).max(0.0)) as f32,
+            (MERGE_BIAS_MAX as f64 / metres_per_depth) as f32,
+        ],
     })
 }
 
@@ -464,16 +529,14 @@ mod tests {
         })
     }
 
-    /// A caster left out of a cascade because a finer one covers it shadows
-    /// no point that reads that cascade, alone or in a blend, wherever the
-    /// point is along the light; casters at the edge of the finer squares
-    /// stay in the coarser cascades.
+    /// The part of a cascade filled from the one before is the finer
+    /// square, texel for texel; a point keeps its place and its depth from
+    /// one map to the other; and a caster left to the finer cascade only
+    /// covers texels of that part.
     #[test]
-    fn covered_casters_shadow_nothing_that_reads_the_cascade() {
-        for src in [include_str!("shaders/common.wgsl"), include_str!("shaders/cull.wgsl")] {
-            assert!(src.contains(&format!("const COVER_BAND: f32 = {COVER_BAND:?};")));
-        }
-        assert!(include_str!("shaders/cull.wgsl").contains(&format!("const FILTER_TEXELS: f32 = {FILTER_TEXELS:?};")));
+    fn merge_fills_what_the_left_out_casters_cover() {
+        let src = include_str!("shaders/cull.wgsl");
+        assert!(src.contains(&format!("const MERGE_TEXELS: f32 = {MERGE_TEXELS:?};")));
         let mut seed = 0x9e37_79b9_7f4a_7c15u64;
         let mut rand = move || {
             seed ^= seed << 13;
@@ -481,68 +544,114 @@ mod tests {
             seed ^= seed << 17;
             (seed >> 11) as f32 / (1u64 << 53) as f32
         };
-        let size = 2048.0;
-        let (mut left_out, mut kept) = ([0usize; 3], [0usize; 3]);
-        for round in 0..400 {
+        let size = 2048u32;
+        let planes = [CASTER_PLANES_ALL; 3];
+        let (mut left_out, mut kept) = (0usize, 0usize);
+        for round in 0..300 {
             let light = match round % 5 {
                 0 => -Vec3::Z,
                 1 => Vec3::new(1.0, 0.0, -0.08).normalize(),
                 _ => Vec3::new(rand() - 0.5, rand() - 0.5, -0.02 - rand()).normalize(),
             };
-            // the squares of a view: each further along it and larger
             let eye = Vec3::new(rand() * 200.0, rand() * 200.0, 20.0 + rand() * 30.0);
             let dir = Vec3::new(rand() - 0.5, rand() - 0.5, (rand() - 0.5) * 0.6).normalize();
-            let far = 48.0 + rand() * (COVER_MAX_FAR - 48.0);
+            let far = 48.0 + rand() * 208.0;
             let cascades = cascades_along(
                 light,
                 [
-                    (eye + dir * far * 0.04, far * (0.06 + rand() * 0.05)),
-                    (eye + dir * far * 0.19, far * (0.2 + rand() * 0.2)),
-                    (eye + dir * far * 0.65, far * (0.7 + rand() * 0.5)),
+                    (eye + dir * far * 0.04, far * (0.08 + rand() * 0.03)),
+                    (eye + dir * far * 0.19, far * (0.3 + rand() * 0.1)),
+                    (eye + dir * far * 0.65, far * (1.0 + rand() * 0.3)),
                 ],
             );
-            // two axes across the light
-            let u = light.cross(if light.z.abs() > 0.99 { Vec3::Y } else { Vec3::Z }).normalize();
-            let v = light.cross(u);
-            for _ in 0..60 {
-                let c = eye + dir * far * rand() + (u * (rand() - 0.5) + v * (rand() - 0.5)) * far * rand();
-                let r = 0.05 + rand() * rand() * 6.0;
-                for k in 1..3 {
-                    if !covered_by_finer(&cascades, size, k, c, r) {
-                        kept[k] += 1;
-                        continue;
-                    }
-                    left_out[k] += 1;
-                    let reach = r + lookup_margin(k, 2.0 / (cascade_scale(&cascades[k]) * size));
-                    for _ in 0..24 {
-                        // a point the caster can shadow, or whose lookup
-                        // can meet it: behind its widened disc, within the
-                        // shadow distance of the camera
-                        let a = rand() * std::f32::consts::TAU;
-                        let across = (u * a.cos() + v * a.sin()) * reach * rand().sqrt();
-                        let p = c + across + light * (rand() - 0.3) * far;
-                        if p.distance(eye) > far {
-                            continue;
-                        }
-                        let (read, blend) = covering(&cascades, p).expect("a finer cascade covers the point");
-                        assert!(read < k && blend.is_none_or(|b| b < k), "round {round}: cascade {k} read at {p}");
+            for k in 1..3 {
+                let m = merge_of(&cascades, k, size, size / 2).expect("the finer square fits");
+                let (coarse, fine) = (cascades[k], cascades[k - 1]);
+                // the corners of the part filled are inside the finer
+                // square, and the texels just outside it are not
+                for (step, inside) in [(0.0, true), (1.0, false)] {
+                    for corner in [0.0, 1.0] {
+                        let out = step * (2.0 * corner - 1.0);
+                        let tx = m.origin[0] as f32 + corner * (m.size[0] - 1) as f32 + out;
+                        let ty = m.origin[1] as f32 + corner * (m.size[1] - 1) as f32 + out;
+                        let (x, y) = ((tx + 0.5) / size as f32 * 2.0 - 1.0, 1.0 - (ty + 0.5) / size as f32 * 2.0);
+                        let (fx, fy) = (x * m.to_fine[0] + m.to_fine[2], y * m.to_fine[1] + m.to_fine[3]);
+                        // (to a quarter of a texel of `k`)
+                        let ok = if inside {
+                            fx.abs() <= 1.001 && fy.abs() <= 1.001
+                        } else {
+                            fx.abs() > 0.999 || fy.abs() > 0.999
+                        };
+                        assert!(ok, "round {round}, cascade {k}: texel {tx} {ty} at {fx} {fy}");
                     }
                 }
+                // a point: the same place and the same depth through the merge
+                for _ in 0..20 {
+                    let p = fine
+                        .inverse()
+                        .project_point3(Vec3::new(rand() * 1.8 - 0.9, rand() * 1.8 - 0.9, rand()));
+                    let (qc, qf) = (coarse * p.extend(1.0), fine * p.extend(1.0));
+                    assert!((qc.x * m.to_fine[0] + m.to_fine[2] - qf.x).abs() < 2e-3, "round {round}");
+                    assert!((qc.y * m.to_fine[1] + m.to_fine[3] - qf.y).abs() < 2e-3);
+                    assert!((qf.z * m.depth[0] + m.depth[1] - qc.z).abs() < 1e-4);
+                }
+                assert!(m.depth[2] > 0.0 && m.depth[3] > 0.0);
+                // casters: left out only when every texel they cover is filled
+                for _ in 0..60 {
+                    let across = Vec3::new(rand() - 0.5, rand() - 0.5, rand() - 0.5) * far * 0.8;
+                    let c = eye + dir * far * 0.3 * rand() + across * rand();
+                    let r = 0.05 + rand() * rand() * 4.0;
+                    if !merged_from_finer(&cascades, &planes, size as f32, k, c, r) {
+                        kept += 1;
+                        continue;
+                    }
+                    left_out += 1;
+                    let q = coarse * c.extend(1.0);
+                    let (tx, ty) = ((q.x * 0.5 + 0.5) * size as f32 - 0.5, (0.5 - q.y * 0.5) * size as f32 - 0.5);
+                    let reach = r * cascade_scale(&coarse) * size as f32 * 0.5 + 1.0;
+                    let (x0, y0) = (m.origin[0] as f32, m.origin[1] as f32);
+                    let (x1, y1) = (x0 + m.size[0] as f32 - 1.0, y0 + m.size[1] as f32 - 1.0);
+                    // (a caster partly off the map covers no texel there)
+                    let max = size as f32 - 1.0;
+                    assert!(
+                        (tx - reach).max(0.0) >= x0
+                            && (tx + reach).min(max) <= x1
+                            && (ty - reach).max(0.0) >= y0
+                            && (ty + reach).min(max) <= y1,
+                        "round {round}, cascade {k}: caster {c} r {r} beyond the part filled"
+                    );
+                }
             }
-            assert!(!covered_by_finer(&cascades, 0.0, 2, eye, 0.1), "no coverage: nothing is left out");
+            assert!(
+                !merged_from_finer(&cascades, &planes, 0.0, 2, eye, 0.1),
+                "no merge: nothing is left out"
+            );
+            assert!(
+                !merged_from_finer(&cascades, &planes, size as f32, 0, eye, 0.1),
+                "the first cascade draws its casters"
+            );
         }
-        assert!(left_out[1] > 500 && left_out[2] > 2_000, "{left_out:?} left out, {kept:?} kept");
-        assert!(kept[1] > 2_000 && kept[2] > 500, "{left_out:?} left out, {kept:?} kept");
-        // a caster in the blend band of the first square stays in the second
+        assert!(left_out > 2_000 && kept > 2_000, "{left_out} left out, {kept} kept");
+        // a caster the cascade before does not hold stays
         let cascades = cascades_along(-Vec3::Z, [(Vec3::ZERO, 10.0), (Vec3::ZERO, 40.0), (Vec3::ZERO, 120.0)]);
-        assert!(covered_by_finer(&cascades, size, 1, Vec3::new(7.0, 0.0, 1.0), 1.0));
-        assert!(!covered_by_finer(&cascades, size, 1, Vec3::new(8.5, 0.0, 1.0), 1.0));
-        assert!(covered_by_finer(&cascades, size, 2, Vec3::new(8.5, 0.0, 1.0), 1.0));
-        assert_eq!(covering(&cascades, Vec3::new(8.5, 0.0, 0.0)), Some((0, None)));
-        assert_eq!(covering(&cascades, Vec3::new(9.5, 0.0, 0.0)), Some((0, Some(1))));
-        assert_eq!(covering(&cascades, Vec3::new(10.5, 0.0, 0.0)), Some((1, None)));
-        assert_eq!(covering(&cascades, Vec3::new(119.0, 0.0, 0.0)), Some((2, None)));
-        assert_eq!(covering(&cascades, Vec3::new(121.0, 0.0, 0.0)), None);
+        assert!(merged_from_finer(&cascades, &planes, 2048.0, 1, Vec3::new(7.0, 0.0, 1.0), 1.0));
+        assert!(
+            !merged_from_finer(&cascades, &planes, 2048.0, 1, Vec3::new(9.5, 0.0, 1.0), 1.0),
+            "at the edge of the square"
+        );
+        let mut out = planes;
+        out[0][0] = [1.0, 0.0, 0.0, -100.0];
+        assert!(
+            !merged_from_finer(&cascades, &out, 2048.0, 1, Vec3::new(7.0, 0.0, 1.0), 1.0),
+            "not a caster of the cascade before"
+        );
+        assert!(merged_from_finer(&cascades, &out, 2048.0, 2, Vec3::new(7.0, 0.0, 1.0), 1.0));
+        // squares turned differently cannot be merged, nor one too large for the scratch
+        let mut turned = cascades;
+        turned[1] *= Mat4::from_rotation_z(0.3);
+        assert_eq!(merge_of(&turned, 1, 2048, 1024), None);
+        assert_eq!(merge_of(&cascades, 1, 2048, 256), None);
+        assert_eq!(merge_of(&cascades, 1, 2048, 1024).map(|m| m.size), Some([512, 512]));
     }
 
     /// The margin moves the planes outwards; without a light, or with flat
