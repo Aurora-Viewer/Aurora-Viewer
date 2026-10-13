@@ -12,7 +12,9 @@
 //! - the probe list the scene shaders read (binding 9 of the frame group).
 
 use bytemuck::{Pod, Zeroable};
+use glam::{Mat4, Vec3};
 
+use crate::light_tiles::{self, LightSets};
 use crate::renderer::make_view;
 use crate::types::ProbeGpu;
 
@@ -41,20 +43,28 @@ struct ProbeHeader {
     _pad: u32,
     /// The box probes of the list: bit `i` of word `i / 32` (`box_mask`).
     boxes: [u32; 4],
+    /// The probes of the main view's fragments ([`tiles`]).
+    sets: LightSets,
 }
 
 /// How a fragment walks the probes (AURORA_PROBE_WALK; the image is the
 /// same).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProbeWalk {
-    /// Once for both its lookups, the box probes found through their mask
-    /// (the default; `sample_probes_pair` in common.wgsl).
-    Shared,
-    /// Twice per lookup, as before (`0`).
+    /// The probes of its screen tile and depth ([`tiles`]), once for both
+    /// its lookups (the default; `sample_probes_pair` in common.wgsl).
+    Tiles,
+    /// The whole list, once for both its lookups (`list`).
+    List,
+    /// The whole list twice per lookup, as at first (`0`).
     PerLookup,
-    /// Either, each frame choosing with
-    /// [`crate::FrameParams::probe_walk_per_lookup`] (`alt`).
+    /// [`ProbeWalk::Tiles`] or [`ProbeWalk::List`], each frame choosing
+    /// with [`crate::FrameParams::probe_walk_list`] (`alt`).
     Alternate,
+    /// [`ProbeWalk::Tiles`], and the shaders paint magenta any fragment
+    /// that a probe of the list covers without being in its sets
+    /// (`check`): none, ever.
+    Check,
 }
 
 impl ProbeWalk {
@@ -62,10 +72,81 @@ impl ProbeWalk {
         static MODE: std::sync::OnceLock<ProbeWalk> = std::sync::OnceLock::new();
         *MODE.get_or_init(|| match std::env::var("AURORA_PROBE_WALK").as_deref().map(str::trim) {
             Ok("0") => ProbeWalk::PerLookup,
+            Ok("list") => ProbeWalk::List,
             Ok("alt") => ProbeWalk::Alternate,
-            _ => ProbeWalk::Shared,
+            Ok("check") => ProbeWalk::Check,
+            _ => ProbeWalk::Tiles,
         })
     }
+
+    /// Whether the fragments of a frame find their probes by screen tile
+    /// and depth; `list`: what [`crate::FrameParams::probe_walk_list`] asks
+    /// of this frame.
+    pub fn tiles(self, list: bool) -> bool {
+        match self {
+            ProbeWalk::Tiles | ProbeWalk::Check => true,
+            ProbeWalk::List | ProbeWalk::PerLookup => false,
+            ProbeWalk::Alternate => !list,
+        }
+    }
+
+    /// The walk as the shaders read it (`frame.light_mode.w`,
+    /// `PROBE_WALK_*` in common.wgsl). The views other than the main one
+    /// keep 0, the whole list.
+    pub fn shader_mode(self, list: bool) -> u32 {
+        match self {
+            ProbeWalk::PerLookup => 1,
+            ProbeWalk::Check => 3,
+            _ if self.tiles(list) => 2,
+            _ => 0,
+        }
+    }
+}
+
+// (the sets of the lights hold as many members as there are probes)
+const _: () = assert!(MAX_PROBES == light_tiles::LIGHTS);
+
+/// A sphere around what a probe covers: its influence sphere or, for a box
+/// probe, the sphere through the corners of its box.
+pub fn extent(p: &ProbeGpu) -> (Vec3, f32) {
+    if p.params[3] >= 0.0 {
+        return (Vec3::from_slice(&p.center_radius[..3]), p.center_radius[3]);
+    }
+    let to_world = Mat4::from_cols_array_2d(&p.box_inv).inverse();
+    let centre = to_world.transform_point3(Vec3::ZERO);
+    let mut radius = 0.0f32;
+    for i in 0..8 {
+        let side = |bit: usize| if i & bit == 0 { -1.0 } else { 1.0 };
+        let corner = to_world.transform_point3(Vec3::new(side(1), side(2), side(4)));
+        // (NaN, the corner of a box that cannot be turned back: everywhere)
+        radius = if corner.is_finite() {
+            radius.max(corner.distance(centre))
+        } else {
+            f32::INFINITY
+        };
+    }
+    if centre.is_finite() {
+        (centre, radius)
+    } else {
+        (Vec3::ZERO, f32::INFINITY)
+    }
+}
+
+/// The probes of the main view's fragments by screen tile and depth, as
+/// the lights' (light_tiles.rs): `probes` in the order of the frame's list,
+/// the screen `size` in pixels, the camera at `eye` (the position the
+/// shaders measure depths from).
+///
+/// A fragment used to walk the whole list (32 probes by default, up to 64)
+/// to find the few that cover it; the walk, not the samples of those few,
+/// was what the probes cost. Same image: a probe left out covers none of
+/// the fragments drawn there, and those that stay are added in the same
+/// order. The default probe, first of the list, is sampled whatever its
+/// sphere says: it is in every set.
+pub fn tiles(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], probes: &[ProbeGpu]) -> LightSets {
+    let mut sets = light_tiles::bin_spheres(view, proj, eye, size, probes.iter().map(extent));
+    sets.hold_everywhere(0);
+    sets
 }
 
 /// The box probes of a list (kind below zero), which keep the automatic
@@ -330,8 +411,10 @@ impl Probes {
         &self.capture_targets[(face % 6) as usize]
     }
 
-    /// Upload the probe list (index 0 = default probe).
-    pub fn upload(&self, queue: &wgpu::Queue, enabled: bool, probes: &[ProbeGpu]) {
+    /// Upload the probe list (index 0 = default probe) and the sets the
+    /// main view's fragments find their probes in ([`tiles`]; only read
+    /// when the frame says so, `ProbeWalk::shader_mode`).
+    pub fn upload(&self, queue: &wgpu::Queue, enabled: bool, probes: &[ProbeGpu], sets: &LightSets) {
         let n = probes.len().min(MAX_PROBES);
         let header = ProbeHeader {
             count: n as u32,
@@ -339,6 +422,7 @@ impl Probes {
             enabled: u32::from(enabled && n > 0),
             _pad: 0,
             boxes: box_mask(&probes[..n]),
+            sets: *sets,
         };
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&header));
         if n > 0 {
@@ -463,19 +547,165 @@ mod tests {
         assert_eq!(mask[1] & 0xff, 0b1000_0000, "probe 39, in the second word");
         assert_eq!(mask[1] >> 8, 0x00ff_ffff, "then every probe up to the last the shaders see");
         assert_eq!([mask[2], mask[3]], [0, 0]);
-        assert_eq!(std::mem::size_of::<ProbeHeader>(), 32);
+        assert_eq!(std::mem::size_of::<ProbeHeader>(), 32 + std::mem::size_of::<LightSets>());
         let src = include_str!("shaders/common.wgsl");
         let set = &src[src.find("struct ProbeSet {").expect("ProbeSet")..];
-        let (pad, boxes, list) = (
-            set.find("_pad: u32,"),
-            set.find("boxes: vec4<u32>,"),
-            set.find("probes: array<Probe, 64>,"),
+        // the header, the mask, the sets (laid out as LightSets), the probes
+        let fields = [
+            "_pad: u32,",
+            "boxes: vec4<u32>,",
+            "tile_grid: vec4<f32>,",
+            "tile_forward: vec4<f32>,",
+            "tile_mode: vec4<u32>,",
+            "tile_columns: array<vec4<u32>, 16>,",
+            "tile_rows: array<vec4<u32>, 16>,",
+            "tile_slices: array<vec4<u32>, 16>,",
+            "probes: array<Probe, 64>,",
+        ];
+        let at: Vec<usize> = fields.iter().map(|f| set.find(f).unwrap_or_else(|| panic!("{f}"))).collect();
+        assert!(at.is_sorted(), "{at:?}");
+        assert_eq!(light_tiles::TILES, 32);
+        assert!(src.contains("probe_set.boxes.xy & held"));
+        // nearer than this the shaders walk the whole list: the sets hold
+        // what is further than the plane the extents are cut by
+        assert!(src.contains("const PROBE_TILES_NEAREST: f32 = 0.01;"));
+        const { assert!(light_tiles::NEAREST < 0.01) };
+    }
+
+    /// The walks as the shaders name them.
+    #[test]
+    fn walks_match_the_shaders() {
+        let src = include_str!("shaders/common.wgsl");
+        for (walk, list, name) in [
+            (ProbeWalk::List, false, "LIST"),
+            (ProbeWalk::Alternate, true, "LIST"),
+            (ProbeWalk::PerLookup, false, "PER_LOOKUP"),
+            (ProbeWalk::Tiles, false, "TILES"),
+            (ProbeWalk::Alternate, false, "TILES"),
+            (ProbeWalk::Check, false, "CHECK"),
+        ] {
+            let line = format!("const PROBE_WALK_{name}: u32 = {}u;", walk.shader_mode(list));
+            assert!(src.contains(&line), "{line}");
+            assert_eq!(walk.tiles(list), walk.shader_mode(list) >= 2);
+        }
+    }
+
+    fn probe(center: Vec3, radius: f32, kind: f32, box_inv: Mat4) -> ProbeGpu {
+        ProbeGpu {
+            center_radius: center.extend(radius).to_array(),
+            params: [1.0, 1.0, 1.0, kind],
+            slot: [0; 4],
+            box_inv: box_inv.to_cols_array_2d(),
+        }
+    }
+
+    /// Whether a probe covers `p`, as `sample_probes_pair` decides it.
+    fn covers(i: usize, probe: &ProbeGpu, p: Vec3) -> bool {
+        if i == 0 {
+            return true;
+        }
+        if probe.params[3] < 0.0 {
+            let lp = Mat4::from_cols_array_2d(&probe.box_inv) * p.extend(1.0);
+            return lp.truncate().abs().max_element() <= 1.0;
+        }
+        let delta = p - Vec3::from_slice(&probe.center_radius[..3]);
+        delta.dot(delta) <= probe.center_radius[3] * probe.center_radius[3]
+    }
+
+    /// What the sets must never lose: a fragment a probe covers finds the
+    /// probe. Checked along the view rays through the centre of every
+    /// eighth pixel, at depths from the near plane to beyond the probes,
+    /// for sphere and box probes all around the camera, from a camera high
+    /// above a region too.
+    #[test]
+    fn a_fragment_finds_every_probe_that_covers_it() {
+        const SIZE: [u32; 2] = [1280, 720];
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, SIZE[0] as f32 / SIZE[1] as f32, 0.1);
+        for (mut seed, eye) in [(4242u32, Vec3::ZERO), (99, Vec3::new(200.0, 131.0, 3050.0))] {
+            let mut rnd = move || {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                (seed >> 8) as f32 / (1 << 24) as f32
+            };
+            // the default probe, whose sphere is far from the view here
+            let mut probes = vec![probe(eye + Vec3::new(-9000.0, 0.0, 0.0), 10.0, 0.0, Mat4::ZERO)];
+            for i in 1..MAX_PROBES {
+                let c = eye + Vec3::new(rnd() * 90.0 - 20.0, rnd() * 80.0 - 40.0, rnd() * 30.0 - 15.0);
+                if i % 3 == 0 {
+                    // a box of any size, turned any way
+                    let turn = glam::Quat::from_euler(glam::EulerRot::ZYX, rnd() * 6.0, rnd() * 6.0, rnd() * 6.0);
+                    let half = Vec3::new(1.0 + rnd() * 14.0, 1.0 + rnd() * 9.0, 0.5 + rnd() * 6.0);
+                    let to_world = Mat4::from_scale_rotation_translation(half, turn, c);
+                    probes.push(probe(c + Vec3::splat(0.3), 0.0, -1.0, to_world.inverse()));
+                } else {
+                    probes.push(probe(c, 2.0 + rnd() * 14.0, (i % 2) as f32, Mat4::ZERO));
+                }
+            }
+            let view = glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::X, Vec3::Z);
+            let sets = tiles(view, proj, eye, SIZE, &probes);
+            let forward = Vec3::from_slice(&sets.forward[..3]);
+            let inv = (proj * view).inverse();
+            let (mut covered, mut walked, mut fragments) = (0u32, 0u32, 0u32);
+            for y in (0..SIZE[1]).step_by(8) {
+                for x in (0..SIZE[0]).step_by(8) {
+                    let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+                    let ndc = Vec3::new(fx / SIZE[0] as f32 * 2.0 - 1.0, 1.0 - fy / SIZE[1] as f32 * 2.0, 0.5);
+                    let dir = (inv.project_point3(ndc) - eye).normalize();
+                    let mut depth = 0.1;
+                    while depth < 130.0 {
+                        let p = eye + dir * (depth / dir.dot(forward));
+                        let found = sets.at(fx, fy, forward.dot(p - eye));
+                        fragments += 1;
+                        walked += found.count_ones();
+                        for (i, probe) in probes.iter().enumerate() {
+                            if covers(i, probe, p) {
+                                covered += 1;
+                                assert!(
+                                    found & (1 << i) != 0,
+                                    "probe {i} ({probe:?}) missing at pixel {x},{y}, depth {depth}"
+                                );
+                            }
+                        }
+                        depth *= 1.07;
+                    }
+                }
+            }
+            // and the sets do narrow the list of 64
+            let (mean, mean_covered) = (walked as f32 / fragments as f32, covered as f32 / fragments as f32);
+            assert!(
+                covered > 100_000 && mean < 16.0,
+                "{mean_covered} probes cover a fragment, {mean} walked"
+            );
+        }
+    }
+
+    #[test]
+    fn a_probe_extent_holds_its_box() {
+        // a sphere probe: its own sphere
+        let sphere = probe(Vec3::new(3.0, 4.0, 5.0), 9.0, 1.0, Mat4::ZERO);
+        assert_eq!(extent(&sphere), (Vec3::new(3.0, 4.0, 5.0), 9.0));
+        // a box of half sizes 3, 4, 12 around (10, 20, 30), whatever the
+        // origin of its probe: the sphere through its corners
+        let to_world = Mat4::from_scale_rotation_translation(
+            Vec3::new(3.0, 4.0, 12.0),
+            glam::Quat::from_rotation_z(0.7),
+            Vec3::new(10.0, 20.0, 30.0),
         );
+        let (c, r) = extent(&probe(Vec3::new(11.0, 20.0, 33.0), 1.0, -1.0, to_world.inverse()));
         assert!(
-            pad < boxes && boxes < list && pad.is_some(),
-            "the mask sits between the header and the probes"
+            c.distance(Vec3::new(10.0, 20.0, 30.0)) < 1e-3 && (r - 13.0).abs() < 1e-3,
+            "{c:?} {r}"
         );
-        assert!(src.contains("probe_set.boxes[word]"));
+        // a box that cannot be turned back to the world covers everything
+        let (_, r) = extent(&probe(Vec3::ZERO, 1.0, -1.0, Mat4::ZERO));
+        assert_eq!(r, f32::INFINITY);
+        let eye = Vec3::new(100.0, 100.0, 25.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::X, Vec3::Z);
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.5, 0.1);
+        let far = probe(eye + Vec3::new(-9000.0, 0.0, 0.0), 10.0, 0.0, Mat4::ZERO);
+        let sets = tiles(view, proj, eye, [1200, 800], &[far, far, probe(Vec3::ZERO, 1.0, -1.0, Mat4::ZERO)]);
+        for (x, y, depth) in [(0.5, 0.5, 0.2), (600.0, 400.0, 30.0), (1199.5, 799.5, 4000.0)] {
+            assert_eq!(sets.at(x, y, depth), 0b101, "pixel {x},{y}, depth {depth}");
+        }
     }
 
     /// What the filter shader repeats of the sizes above.
