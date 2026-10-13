@@ -1018,6 +1018,10 @@ pub enum NetCommand {
     },
     /// Change the draw distance used in AgentUpdate (`Far`).
     SetDrawDistance(f32),
+    /// Controls that changed enough to be sent now (`NetClient::set_controls`).
+    /// Every change of the control flags comes through here, in order: a
+    /// key tapped between two ticks of the session is not lost.
+    AgentControls(AgentControls),
     /// Walk / run toggle (SetAlwaysRun), used for double-tap running.
     SetAlwaysRun(bool),
     /// Our look-at target (ViewerEffect, LLHUDEffectLookAt::packData).
@@ -1397,7 +1401,8 @@ pub mod control {
     pub const AWAY: u32 = 0x0800_0000;
 }
 
-/// Agent state the viewer writes and the network layer sends at ~10 Hz.
+/// Agent state the viewer writes each frame and the network layer sends by
+/// the rule of `agent_update.rs`.
 #[derive(Debug, Clone, Copy)]
 pub struct AgentControls {
     pub control_flags: u32,
@@ -1426,20 +1431,5 @@ impl Default for AgentControls {
             state: 0,
             flags: 0,
         }
-    }
-}
-
-impl AgentControls {
-    /// Whether the change since `prev` warrants an immediate update
-    /// (mirrors the thresholds of `LLAgent::sendAgentUpdate`).
-    pub fn significantly_differs(&self, prev: &AgentControls) -> bool {
-        self.control_flags != prev.control_flags
-            || self.state != prev.state
-            || self.flags != prev.flags
-            || self.body_rotation.dot(prev.body_rotation).abs() < 0.9999
-            || self.head_rotation.dot(prev.head_rotation).abs() < 0.9999
-            || self.camera_center.distance(prev.camera_center) > 0.1
-            || self.camera_at.dot(prev.camera_at) < 0.999
-            || (self.far - prev.far).abs() > 1.0
     }
 }
