@@ -3258,6 +3258,24 @@ pub fn texture_stress_events(n: u32) -> Vec<NetEvent> {
     stress_cubes(n, |_| true, 0)
 }
 
+/// AURORA_DEMO_TP_AWAY=1: the arrival in a region out of reach at frame 760,
+/// then back in the demo region at frame 960, before its simulator would
+/// have closed it: the objects of the demo region are parked, then come
+/// back as they were (world/parked.rs). The events of `frame`, if any.
+pub fn away_teleport(frame: u64, position: Vec3, look_at: Vec3) -> Option<Vec<NetEvent>> {
+    let handle = match frame {
+        760 => HANDLE + ((100 * 256u64) << 32),
+        960 => HANDLE,
+        _ => return None,
+    };
+    std::env::var_os("AURORA_DEMO_TP_AWAY")?;
+    Some(vec![
+        NetEvent::TeleportFinished { handle },
+        NetEvent::MainRegionChanged { handle },
+        NetEvent::AgentMovementComplete { handle, position, look_at },
+    ])
+}
+
 /// AURORA_DEMO_TEXTURES_CHURN=1: streaming churn on top of the stress test,
 /// as in a busy region where objects come and go. The cubes of
 /// `stress_churned` are removed at frame 300 (their textures are evicted a
