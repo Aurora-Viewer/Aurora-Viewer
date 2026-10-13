@@ -1,4 +1,238 @@
 use super::*;
+use std::time::{Duration, Instant};
+
+#[test]
+fn per_type_permissions_preserve_old_settings_and_transfer_without_copy() {
+    use aurora_net::build::perm;
+    use permissions::NextOwner;
+    let mut prefs: Preferences =
+        serde_json::from_str(r#"{"next_modify":true,"next_copy":true,"next_transfer":false}"#).expect("old settings");
+    let old = prefs.permissions();
+    for kind in [Kind::Texture, Kind::Sound, Kind::Animation, Kind::Mesh, Kind::Material] {
+        assert_eq!(
+            prefs.permissions_for(kind),
+            old,
+            "old common rights migrate without changing any type"
+        );
+    }
+    prefs.permissions_by_type.set(
+        Kind::Texture,
+        NextOwner {
+            modify: false,
+            copy: true,
+            transfer: false,
+        },
+    );
+    prefs.permissions_by_type.set(
+        Kind::Mesh,
+        NextOwner {
+            modify: true,
+            copy: false,
+            transfer: false,
+        },
+    );
+    assert_eq!(prefs.permissions_for(Kind::Texture).next_owner, perm::MOVE | perm::COPY);
+    assert_eq!(
+        prefs.permissions_for(Kind::Mesh).next_owner,
+        perm::MOVE | perm::MODIFY | perm::TRANSFER
+    );
+    assert_eq!(prefs.permissions_for(Kind::Material), old);
+    let saved = serde_json::to_vec(&prefs).expect("settings");
+    let restored: Preferences = serde_json::from_slice(&saved).expect("saved settings");
+    assert_eq!(restored, prefs);
+}
+
+#[test]
+fn mixed_uploads_freeze_each_type_and_material_textures_use_texture_permissions() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::{
+        build::perm,
+        inventory::{InvFolder, mesh_upload::Quote},
+    };
+    let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.balance = Some(1000);
+    let folder = Uuid::from_u128(700);
+    world.inventory.root = folder;
+    world.inventory.folders.insert(
+        folder,
+        Folder {
+            info: InvFolder {
+                id: folder,
+                type_default: 8,
+                name: "Inventory".into(),
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    let map = files::local_image((*image(4, 4)).clone(), "material map".into());
+    let mut mesh = mesh_fixture();
+    mesh.quote = Some(Quote {
+        token: Uuid::new_v4(),
+        cost: 20,
+        data: aurora_llsd::Llsd::Undef,
+    });
+    let mut imports = Imports {
+        choice: Choice::Bulk,
+        ..Default::default()
+    };
+    for (name, source) in [
+        ("Texture", Source::Texture(image(4, 4))),
+        (
+            "Material",
+            Source::Material {
+                value: Default::default(),
+                images: Box::new([Some(map), None, None, None]),
+            },
+        ),
+        ("Mesh", Source::Mesh(Box::new(mesh))),
+    ] {
+        let mut entry = Entry::new(name.into(), Ok(source), Default::default());
+        entry.folder = folder;
+        imports.entries.push(entry);
+    }
+    let mut prefs = Preferences::default();
+    prefs.permissions_by_type.set(
+        Kind::Texture,
+        permissions::NextOwner {
+            modify: false,
+            copy: true,
+            transfer: false,
+        },
+    );
+    prefs.permissions_by_type.set(
+        Kind::Material,
+        permissions::NextOwner {
+            modify: true,
+            copy: true,
+            transfer: false,
+        },
+    );
+    imports.start(&world, &Default::default(), &prefs, &prices());
+    assert_eq!(
+        imports.queue.len(),
+        4,
+        "three assets and their material's texture: {}",
+        imports.message
+    );
+    prefs.permissions_by_type.set(
+        Kind::Texture,
+        permissions::NextOwner {
+            modify: false,
+            copy: false,
+            transfer: true,
+        },
+    );
+    for step in &imports.queue {
+        let expected = match step.kind {
+            Kind::Texture => perm::MOVE | perm::COPY,
+            Kind::Material => perm::MOVE | perm::COPY | perm::MODIFY,
+            Kind::Mesh => perm::MOVE | perm::TRANSFER,
+            _ => panic!("unexpected fixture"),
+        };
+        assert_eq!(
+            step.permissions.next_owner, expected,
+            "the confirmed queue retains the rights for its type"
+        );
+    }
+}
+
+#[test]
+fn enlarged_maps_keep_resolution_and_reject_replaced_or_closed_previews() {
+    let ctx = egui::Context::default();
+    let (jobs, _) = crate::scene::jobs::Jobs::new();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let map = files::local_image((*image(400, 200)).clone(), "rectangular map".into());
+    let entry = Entry::new(
+        "material.gltf".into(),
+        Ok(Source::Material {
+            value: Default::default(),
+            images: Box::new([Some(map.clone()), None, None, None]),
+        }),
+        Default::default(),
+    );
+    let id = entry.id;
+    let mut imports = Imports {
+        entries: vec![entry],
+        preview_zoom: Some((id, Some(0))),
+        ..Default::default()
+    };
+    imports.request_large_map(id, 0, &jobs, &ctx);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while imports.entries[0].material_large_pending[0] {
+        assert!(Instant::now() < deadline, "large-map worker completed");
+        imports.poll(&ctx, &jobs, &world, &Default::default());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let cached = imports.entries[0].material_large_previews[0].take().expect("large map prepared");
+    assert_eq!(
+        cached.2.size(),
+        [400, 200],
+        "the loupe uses original pixels rather than the 96-pixel thumbnail"
+    );
+    imports.entries[0].preview_generation = 1;
+    let reply = || {
+        Worker::MaterialLargePreview(
+            id,
+            0,
+            0,
+            map.key,
+            Some(egui::ColorImage::filled([2, 1], egui::Color32::TRANSPARENT)),
+        )
+    };
+    imports.tx.send(reply()).expect("worker response");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(
+        imports.entries[0].material_large_previews[0].is_none(),
+        "an obsolete response cannot replace the current map"
+    );
+    imports.entries[0].preview_generation = 0;
+    imports.preview_zoom = None;
+    imports.tx.send(reply()).expect("worker response");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(
+        imports.entries[0].material_large_previews[0].is_none(),
+        "closed previews do not retain a large GPU texture"
+    );
+}
+
+#[test]
+fn batch_mesh_quotes_are_required_and_added_to_the_total() {
+    let mut imports = Imports {
+        choice: Choice::Bulk,
+        ..Default::default()
+    };
+    imports.entries.push(Entry::new(
+        "texture.png".into(),
+        Ok(Source::Texture(image(16, 16))),
+        Default::default(),
+    ));
+    for name in ["first.dae", "second.glb"] {
+        let entry = Entry::new(name.into(), Ok(Source::Mesh(Box::new(mesh_fixture()))), Default::default());
+        assert!(Choice::Bulk.accepts(&entry));
+        imports.entries.push(entry);
+    }
+    assert_eq!(imports.total(&prices()), None);
+    for (index, entry) in imports.entries[1..].iter_mut().enumerate() {
+        let Some(Source::Mesh(draft)) = &mut entry.source else {
+            panic!("mesh")
+        };
+        draft.quote = Some(aurora_net::inventory::mesh_upload::Quote {
+            token: Uuid::new_v4(),
+            cost: 20 + index as i32,
+            data: aurora_llsd::Llsd::Undef,
+        });
+    }
+    assert_eq!(imports.total(&prices()), Some(51));
+    imports.entries[2].selected = false;
+    assert_eq!(imports.total(&prices()), Some(30));
+    imports.entries[1].local = true;
+    assert!(!Choice::Bulk.accepts(&imports.entries[1]));
+    assert_eq!(imports.total(&prices()), Some(10));
+}
 
 pub(super) fn mesh_fixture() -> mesh::Draft {
     let skeleton = aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml")).expect("skeleton");
@@ -357,4 +591,188 @@ fn cancelling_future_uploads_retains_the_in_flight_receipt() {
     );
     assert!(matches!(imports.entries[0].status, Status::Done(_)));
     assert_eq!(imports.spent, 10);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    imports.poll(&egui::Context::default(), &jobs, &world, &Default::default());
+    imports.open(Choice::Bulk);
+    assert!(imports.entries.is_empty());
+    assert!(imports.active.is_none());
+}
+
+#[test]
+fn acknowledged_uploads_leave_local_previews_and_unfinished_drafts_untouched() {
+    let ctx = egui::Context::default();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let mut imports = Imports {
+        choice: Choice::Bulk,
+        ..Default::default()
+    };
+    let mut local = Entry::new("local.png".into(), Ok(Source::Texture(image(4, 4))), Default::default());
+    local.local = true;
+    local.local_published = true;
+    local.preview = Some(ctx.load_texture(
+        "local_preview",
+        egui::ColorImage::filled([4, 4], egui::Color32::TRANSPARENT),
+        Default::default(),
+    ));
+    let local_id = local.id;
+    let local_texture = local.preview.as_ref().expect("local preview").id();
+    let slot = Uuid::new_v4();
+    local.local_slots.insert(slot, 42);
+    imports.entries.push(local);
+    let mut unselected = Entry::new("later.png".into(), Ok(Source::Texture(image(4, 4))), Default::default());
+    unselected.selected = false;
+    let unselected_id = unselected.id;
+    imports.entries.push(unselected);
+    let mut cancelled = Entry::new("cancelled.png".into(), Ok(Source::Texture(image(4, 4))), Default::default());
+    cancelled.status = Status::Cancelled;
+    let cancelled_id = cancelled.id;
+    imports.entries.push(cancelled);
+    let mut failed = Entry::new("failed.png".into(), Ok(Source::Texture(image(4, 4))), Default::default());
+    failed.status = Status::Uploading;
+    let failed_id = failed.id;
+    imports.entries.push(failed);
+    let mut done = Entry::new("done.png".into(), Ok(Source::Texture(image(4, 4))), Default::default());
+    done.status = Status::Uploading;
+    let done_id = done.id;
+    imports.entries.push(done);
+    imports.active = Some(done_id);
+    let begin = |imports: &mut Imports, id| {
+        let entry = imports.entries.iter().find(|entry| entry.id == id).expect("draft");
+        let request = Uuid::new_v4();
+        imports.current = Some((
+            request,
+            Step {
+                key: id,
+                entry: Some(id),
+                kind: Kind::Texture,
+                folder: entry.folder,
+                name: entry.name.clone(),
+                description: entry.description.clone(),
+                source: entry.source.clone().expect("source"),
+                options: entry.options,
+                cost: 10,
+                permissions: Default::default(),
+            },
+        ));
+        request
+    };
+    let request = begin(&mut imports, done_id);
+    imports.uploaded(
+        request,
+        Ok(Receipt {
+            item: aurora_net::inventory::InvItem::default(),
+            cost: 10,
+        }),
+    );
+    let request = begin(&mut imports, failed_id);
+    imports.uploaded(request, Err(Error::Verification));
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert_eq!(
+        imports.entries.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        [local_id, unselected_id, cancelled_id, failed_id]
+    );
+    assert_eq!(imports.active, Some(unselected_id));
+    assert!(matches!(imports.entries[2].status, Status::Cancelled));
+    assert!(matches!(imports.entries[3].status, Status::Error(_)));
+    assert!(!imports.message.is_empty());
+    assert_eq!(imports.spent, 10);
+    imports.open(Choice::Local);
+    assert_eq!(imports.active, Some(local_id));
+    let local = &imports.entries[0];
+    assert!(local.local_published);
+    assert_eq!(local.preview.as_ref().expect("retained local preview").id(), local_texture);
+    assert_eq!(local.local_slots[&slot], 42);
+    assert!(imports.retired_local_slots.is_empty());
+}
+
+#[test]
+fn retiring_material_rows_keeps_texture_receipts_for_the_rest_of_the_batch() {
+    let ctx = egui::Context::default();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let map = files::local_image((*image(4, 4)).clone(), "shared.png".into());
+    let key = map.upload_key(Default::default());
+    let source = Source::Material {
+        value: PbrMaterial::default(),
+        images: Box::new([Some(map.clone()), None, None, None]),
+    };
+    let mut imports = Imports {
+        choice: Choice::Bulk,
+        ..Default::default()
+    };
+    for name in ["first.gltf", "second.gltf"] {
+        let mut entry = Entry::new(name.into(), Ok(source.clone()), Default::default());
+        entry.status = Status::Preparing;
+        imports.queue.push_back(Step {
+            key: entry.id,
+            entry: Some(entry.id),
+            kind: Kind::Material,
+            folder: Uuid::new_v4(),
+            name: entry.name.clone(),
+            description: String::new(),
+            source: source.clone(),
+            options: entry.options,
+            cost: 0,
+            permissions: Default::default(),
+        });
+        imports.entries.push(entry);
+    }
+    imports.active = Some(imports.entries[0].id);
+    let texture_request = Uuid::new_v4();
+    imports.current = Some((
+        texture_request,
+        Step {
+            key,
+            entry: None,
+            kind: Kind::Texture,
+            folder: Uuid::new_v4(),
+            name: map.name.clone(),
+            description: String::new(),
+            source: Source::Texture(map.pixels.clone()),
+            options: Default::default(),
+            cost: 10,
+            permissions: Default::default(),
+        },
+    ));
+    let asset = Uuid::new_v4();
+    imports.uploaded(
+        texture_request,
+        Ok(Receipt {
+            item: aurora_net::inventory::InvItem {
+                id: Uuid::new_v4(),
+                asset_id: asset,
+                ..Default::default()
+            },
+            cost: 10,
+        }),
+    );
+    for remaining in [2, 1] {
+        imports.poll(&ctx, &jobs, &world, &Default::default());
+        assert_eq!(imports.entries.len(), remaining);
+        assert_eq!(imports.active, Some(imports.entries[0].id));
+        let (request, step) = imports.current.as_ref().expect("next material");
+        let Source::Material { value, .. } = &step.source else {
+            panic!("material upload")
+        };
+        assert_eq!(value.base_color_texture, Some(asset));
+        imports.uploaded(
+            *request,
+            Ok(Receipt {
+                item: aurora_net::inventory::InvItem {
+                    id: Uuid::new_v4(),
+                    ..Default::default()
+                },
+                cost: 0,
+            }),
+        );
+    }
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    imports.open(Choice::Bulk);
+    assert!(imports.entries.is_empty());
+    assert!(imports.active.is_none());
+    assert_eq!(imports.spent, 10);
+    assert_eq!(imports.total(&prices()), Some(0));
+    assert_eq!(imports.uploaded[&key].item.asset_id, asset);
 }

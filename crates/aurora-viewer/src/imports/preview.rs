@@ -5,6 +5,118 @@ use super::*;
 use aurora_render::preview::{Image, Material, Model, Part, Vertex};
 use glam::Vec3;
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum MaterialShape {
+    #[default]
+    Sphere,
+    Cube,
+    Aurora,
+}
+impl MaterialShape {
+    pub const ALL: [Self; 3] = [Self::Sphere, Self::Cube, Self::Aurora];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Sphere => aurora_i18n::tr!("import-preview-sphere"),
+            Self::Cube => aurora_i18n::tr!("import-preview-cube"),
+            Self::Aurora => aurora_i18n::tr!("import-preview-aurora"),
+        }
+    }
+}
+
+fn material_geometry(shape: MaterialShape) -> Result<Vec<(Arc<[Vertex]>, Arc<[u32]>)>, aurora_assets::AssetError> {
+    match shape {
+        MaterialShape::Sphere => {
+            let (vertices, indices) = sphere();
+            Ok(vec![(vertices.into(), indices.into())])
+        }
+        MaterialShape::Cube => {
+            let volume = aurora_prim::generate_volume(&aurora_prim::VolumeParams::default(), 2.0);
+            Ok(volume
+                .faces
+                .into_iter()
+                .map(|face| {
+                    let vertices = face
+                        .positions
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| Vertex::new(*p, face.normals[i], face.uvs[i]))
+                        .collect::<Vec<_>>();
+                    (
+                        vertices.into(),
+                        face.indices.iter().map(|i| u32::from(*i)).collect::<Vec<_>>().into(),
+                    )
+                })
+                .collect())
+        }
+        MaterialShape::Aurora => {
+            // Cache the bundled geometry once on a worker. Its embedded branding
+            // material is replaced by the material being inspected on every face.
+            static GEOMETRY: std::sync::OnceLock<Result<Vec<(Arc<[Vertex]>, Arc<[u32]>)>, String>> = std::sync::OnceLock::new();
+            GEOMETRY
+                .get_or_init(|| {
+                    let result = (|| {
+                        let doc =
+                            aurora_assets::import_gltf::Document::parse(include_bytes!("../../../../assets/models/aurora-3d.glb"), |_| {
+                                Err(aurora_assets::AssetError::invalid("bundled model must be self-contained"))
+                            })?;
+                        let skeleton = aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml"))?;
+                        let scene = aurora_assets::import_mesh::gltf::parse(&doc, &skeleton)?;
+                        let mut parts = Vec::new();
+                        // The GLB's front faces -Y. Present the emblem near face-on
+                        // with the shared reset camera, keeping a visible bevel.
+                        let orientation =
+                            glam::Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2 + aurora_render::preview::View::default().yaw - 0.25);
+                        for instance in &scene.instances {
+                            let model = &scene.models[instance.model];
+                            let transform = orientation * instance.transform;
+                            let normal = transform.inverse().transpose();
+                            for face in &model.faces {
+                                let vertices = face
+                                    .vertices
+                                    .iter()
+                                    .map(|v| {
+                                        Vertex::new(
+                                            transform.transform_point3(Vec3::from_array(v.position)).to_array(),
+                                            normal.transform_vector3(Vec3::from_array(v.normal)).normalize_or_zero().to_array(),
+                                            [v.uv[0], 1.0 - v.uv[1]],
+                                        )
+                                    })
+                                    .collect::<Vec<_>>();
+                                parts.push((vertices.into(), face.indices.clone().into()));
+                            }
+                        }
+                        Ok(parts)
+                    })();
+                    result.map_err(|error: aurora_assets::AssetError| error.to_string())
+                })
+                .clone()
+                .map_err(aurora_assets::AssetError::invalid)
+        }
+    }
+}
+
+fn material_thumbnails(source: &Source) -> [Option<(Uuid, egui::ColorImage)>; 4] {
+    let Source::Material { images, .. } = source else {
+        return std::array::from_fn(|_| None);
+    };
+    images.each_ref().map(|image| {
+        image.as_ref().and_then(|image| {
+            let pixels = &image.pixels;
+            let rgba = crate::scene::jobs::to_rgba(pixels.components, &pixels.data, pixels.width as usize * pixels.height as usize);
+            let rgba = image::RgbaImage::from_raw(pixels.width, pixels.height, rgba)?;
+            let pixels = if pixels.width <= 96 && pixels.height <= 96 {
+                rgba
+            } else {
+                image::DynamicImage::ImageRgba8(rgba).thumbnail(96, 96).into_rgba8()
+            };
+            Some((
+                image.key,
+                egui::ColorImage::from_rgba_unmultiplied([pixels.width() as usize, pixels.height() as usize], pixels.as_raw()),
+            ))
+        })
+    })
+}
+
 pub fn material(value: &PbrMaterial) -> Material {
     Material {
         color: value.base_color_factor,
@@ -178,6 +290,7 @@ fn mesh_joint_world(
 fn build(
     source: &Source,
     target: usize,
+    shape: MaterialShape,
     options: import_texture::Options,
     avatars: &crate::scene::avatar::AvatarLibrary,
 ) -> Result<Model, aurora_assets::AssetError> {
@@ -378,15 +491,16 @@ fn build(
                     maps[slot] = Some(map);
                 }
             }
-            let (vertices, indices) = sphere();
-            parts.push(Part {
-                diagnostic: false,
-                vertices: vertices.into(),
-                indices: indices.into(),
-                textures: maps,
-                material: material(value),
-                skin: None,
-            });
+            for (vertices, indices) in material_geometry(shape)? {
+                parts.push(Part {
+                    diagnostic: false,
+                    vertices,
+                    indices,
+                    textures: maps.clone(),
+                    material: material(value),
+                    skin: None,
+                });
+            }
         }
         Source::Texture(pixels) if target == 9 => {
             let params = aurora_prim::VolumeParams {
@@ -545,6 +659,37 @@ fn build(
 }
 
 impl Imports {
+    pub fn request_large_map(&mut self, id: Uuid, slot: usize, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
+        let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) else {
+            return;
+        };
+        let Some(Source::Material { images, .. }) = &entry.source else {
+            return;
+        };
+        let Some(image) = images.get(slot).and_then(Option::as_ref) else {
+            return;
+        };
+        if entry.material_large_pending[slot] {
+            return;
+        }
+        entry.material_large_pending[slot] = true;
+        let image = image.clone();
+        let generation = entry.preview_generation;
+        let tx = self.tx.clone();
+        let wake = ctx.clone();
+        jobs.execute(move || {
+            let pixels = &image.pixels;
+            let rgba = crate::scene::jobs::to_rgba(pixels.components, &pixels.data, pixels.width as usize * pixels.height as usize);
+            let pixels = image::RgbaImage::from_raw(pixels.width, pixels.height, rgba).map(|rgba| {
+                let scaled = image::DynamicImage::ImageRgba8(rgba)
+                    .thumbnail(pixels.width.min(2048), pixels.height.min(2048))
+                    .to_rgba8();
+                egui::ColorImage::from_rgba_unmultiplied([scaled.width() as usize, scaled.height() as usize], scaled.as_raw())
+            });
+            let _ = tx.send(Worker::MaterialLargePreview(id, generation, slot, image.key, pixels));
+            wake.request_repaint();
+        });
+    }
     pub fn request_model(
         &mut self,
         id: Uuid,
@@ -566,6 +711,7 @@ impl Imports {
         };
         let options = self.options(entry);
         let target = entry.texture_target;
+        let shape = entry.material_shape;
         let generation = entry.preview_generation;
         let tx = self.tx.clone();
         let wake = ctx.clone();
@@ -583,10 +729,13 @@ impl Imports {
                 } else {
                     None
                 };
-                build(&source, target, options, &avatars).map(|model| (model, prepared))
+                build(&source, target, shape, options, &avatars).map(|model| (model, prepared))
             })();
             match result {
                 Ok((model, prepared)) => {
+                    if matches!(source, Source::Material { .. }) {
+                        let _ = tx.send(Worker::MaterialPreviews(id, generation, material_thumbnails(&source)));
+                    }
                     let _ = tx.send(Worker::Model(id, generation, Arc::new(model), prepared));
                 }
                 Err(error) => {
@@ -603,6 +752,84 @@ mod tests {
     use super::*;
 
     #[test]
+    fn each_material_shape_uses_the_inspected_material_and_its_maps_on_all_faces() {
+        let avatars = crate::scene::avatar::AvatarLibrary::load();
+        let pixels = DecodedImage {
+            width: 1,
+            height: 1,
+            components: 4,
+            data: vec![30, 60, 90, 120],
+            discard: 0,
+        };
+        let map = files::local_image(pixels, "test map".into());
+        let value = PbrMaterial {
+            metallic_factor: 0.7,
+            roughness_factor: 0.23,
+            ..Default::default()
+        };
+        let source = Source::Material {
+            value: value.clone(),
+            images: Box::new(std::array::from_fn(|_| Some(map.clone()))),
+        };
+        let mut triangles = Vec::new();
+        for shape in MaterialShape::ALL {
+            let model = build(&source, 0, shape, Default::default(), &avatars).expect("material preview");
+            assert!(model.center.is_finite() && model.radius.is_finite() && model.radius > 0.0);
+            for part in &model.parts {
+                assert!(part.material == material(&value));
+                assert!(part.textures.iter().all(Option::is_some));
+                assert!(Arc::ptr_eq(
+                    part.textures[0].as_ref().expect("map"),
+                    part.textures[1].as_ref().expect("map")
+                ));
+                assert!(part.indices.iter().all(|i| (*i as usize) < part.vertices.len()));
+                if shape == MaterialShape::Cube {
+                    for triangle in part.indices.as_chunks::<3>().0 {
+                        let vertices = triangle.map(|i| part.vertices[i as usize]);
+                        let [a, b, c] = vertices.map(|v| Vec3::from_array(v.position));
+                        let normal = vertices.iter().map(|v| Vec3::from_array(v.normal)).sum::<Vec3>();
+                        assert!((b - a).cross(c - a).dot(normal) >= -0.00001, "cube triangles face outwards");
+                    }
+                }
+            }
+            triangles.push(model.parts.iter().map(|part| part.indices.len() / 3).sum::<usize>());
+        }
+        assert!(triangles[1] >= 12 && triangles[1] < triangles[0]);
+        assert_eq!(triangles[2], 2342);
+        let thumbs = material_thumbnails(&source);
+        assert!(
+            thumbs
+                .iter()
+                .all(|thumb| thumb.as_ref().is_some_and(|(key, image)| *key == map.key && image.size == [1, 1]))
+        );
+    }
+
+    #[test]
+    fn bundled_aurora_model_resource_names_are_consistent_and_self_contained() {
+        let doc = aurora_assets::import_gltf::Document::parse(include_bytes!("../../../../assets/models/aurora-3d.glb"), |_| {
+            panic!("bundled model must not load external resources")
+        })
+        .expect("bundled GLB");
+        for key in [
+            "scenes",
+            "nodes",
+            "meshes",
+            "materials",
+            "images",
+            "textures",
+            "buffers",
+            "bufferViews",
+            "accessors",
+            "samplers",
+        ] {
+            for resource in doc.json[key].as_array().expect("resource array") {
+                assert!(resource["name"].as_str().expect("name").starts_with("Aurora 3D"));
+                assert!(resource.get("uri").is_none());
+            }
+        }
+    }
+
+    #[test]
     fn preview_uses_the_selected_prepared_lod_geometry() {
         let mut draft = crate::imports::tests::mesh_fixture();
         draft.prepared = Some(Arc::new(super::super::mesh::prepare(&draft).expect("LODs")));
@@ -614,7 +841,14 @@ mod tests {
                 .as_ref()
                 .expect("LOD")
                 .triangles();
-            let model = build(&Source::Mesh(Box::new(draft.clone())), 0, Default::default(), &avatars).expect("preview");
+            let model = build(
+                &Source::Mesh(Box::new(draft.clone())),
+                0,
+                MaterialShape::default(),
+                Default::default(),
+                &avatars,
+            )
+            .expect("preview");
             let count = model.parts.iter().map(|part| part.indices.len() / 3).sum::<usize>();
             assert_eq!(count, expected);
             counts.push(count);

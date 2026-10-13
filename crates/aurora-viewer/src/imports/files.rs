@@ -188,7 +188,10 @@ pub(super) fn load(
         Choice::Animation => matches!(extension.as_str(), "bvh" | "anim"),
         Choice::Material => matches!(extension.as_str(), "gltf" | "glb"),
         Choice::Mesh => matches!(extension.as_str(), "dae" | "gltf" | "glb"),
-        Choice::Bulk => !matches!(extension.as_str(), "dae" | "bvh"),
+        Choice::Bulk => matches!(
+            extension.as_str(),
+            "png" | "jpg" | "jpeg" | "bmp" | "tga" | "j2c" | "j2k" | "jp2" | "wav" | "anim" | "dae" | "gltf" | "glb"
+        ),
         Choice::Local => matches!(
             extension.as_str(),
             "png" | "jpg" | "jpeg" | "bmp" | "tga" | "j2c" | "j2k" | "jp2" | "dae" | "gltf" | "glb"
@@ -197,8 +200,9 @@ pub(super) fn load(
     if !matches_choice {
         return Err(AssetError::Unsupported("file type for this import window".into()));
     }
-    // Local glTF files are classified from their contents, not a picker mode.
-    let mut document = if choice == Choice::Local && matches!(extension.as_str(), "gltf" | "glb") {
+    // Local and batch glTF files are classified by content. The dedicated
+    // material tab can still extract materials from a document with meshes.
+    let mut document = if matches!(choice, Choice::Local | Choice::Bulk) && matches!(extension.as_str(), "gltf" | "glb") {
         let root = path
             .parent()
             .ok_or_else(|| AssetError::invalid("asset directory"))?
@@ -208,7 +212,7 @@ pub(super) fn load(
     } else {
         None
     };
-    let local_mesh = choice == Choice::Local
+    let detected_mesh = matches!(choice, Choice::Local | Choice::Bulk)
         && (extension == "dae"
             || document.as_ref().is_some_and(|doc| {
                 doc.json
@@ -217,7 +221,7 @@ pub(super) fn load(
                     .is_some_and(|meshes| !meshes.is_empty())
             }));
     let source = match extension.as_str() {
-        "dae" | "gltf" | "glb" if choice == Choice::Mesh || local_mesh => {
+        "dae" | "gltf" | "glb" if choice == Choice::Mesh || detected_mesh => {
             let (scene, images) = mesh_scene(path, &data, local && prefs.local_assume_meters, document.take())?;
             let mut draft = mesh::Draft::new(scene, images);
             draft.lods[3].path = Some(path.to_owned());
@@ -623,7 +627,9 @@ impl Imports {
                 Choice::Animation => &["bvh", "anim"],
                 Choice::Material => &["gltf", "glb"],
                 Choice::Mesh => &["dae", "gltf", "glb"],
-                Choice::Bulk => &["tga", "bmp", "jpg", "jpeg", "png", "wav", "anim", "gltf", "glb"],
+                Choice::Bulk => &[
+                    "tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "wav", "anim", "dae", "gltf", "glb",
+                ],
                 Choice::Local => &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2", "dae", "gltf", "glb"],
             };
             let paths = rfd::FileDialog::new()
@@ -668,6 +674,30 @@ impl Imports {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_loads_collada_and_detects_glb_meshes_without_changing_material_extraction() {
+        let root = std::env::temp_dir().join(format!("aurora-batch-{}", Uuid::new_v4()));
+        super::super::demo::fixtures(&root).expect("fixtures");
+        let model = root.join("aurora-3d.glb");
+        std::fs::write(&model, include_bytes!("../../../../assets/models/aurora-3d.glb")).expect("GLB fixture");
+        let prefs = Preferences::default();
+        for (path, kind) in [
+            (root.join("mesh-demo.dae"), Kind::Mesh),
+            (model.clone(), Kind::Mesh),
+            (root.join("material-demo.gltf"), Kind::Material),
+            (root.join("texture-demo.png"), Kind::Texture),
+        ] {
+            let entries = load(&path, Choice::Bulk, prefs.texture(), 30, &prefs, false).expect("batch file");
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].source.as_ref().expect("source").kind(), kind);
+            assert!(Choice::Bulk.accepts(&entries[0]));
+        }
+        let entries = load(&model, Choice::Material, prefs.texture(), 30, &prefs, false).expect("extract material");
+        assert!(matches!(entries[0].source, Some(Source::Material { .. })));
+        assert!(load(&root.join("animation-demo.bvh"), Choice::Bulk, prefs.texture(), 30, &prefs, false).is_err());
+        std::fs::remove_dir_all(root).expect("remove own fixtures");
+    }
 
     #[test]
     #[ignore = "requires AURORA_IMPORT_TEST_DIR local asset fixtures"]
@@ -888,7 +918,7 @@ mod tests {
                 &Preferences::default(),
                 false
             )
-            .is_err()
+            .is_ok()
         );
         let mut mesh = files.load("mesh-demo.dae", Choice::Mesh);
         localize(&mut mesh, &Preferences::default());

@@ -14,6 +14,9 @@ impl App {
             self.world.balance = Some(1000);
             self.imports.demo_started = true;
             crate::imports::demo::start(&mut self.imports, &self.scene.jobs, ctx);
+            if self.imports.demo_mode == "bulk-mesh-denied" {
+                self.imports.mesh_permission_account = self.world.agent_id;
+            }
         }
         if !self.imports.persistence.started() {
             let persistence_path = if self.demo && !self.imports.demo_mode.is_empty() {
@@ -64,18 +67,43 @@ impl App {
             && self.imports.pending_files.is_none()
             && !self.imports.entries.is_empty()
         {
-            self.imports.demo_upload_started = true;
-            self.imports.start(
-                &self.world,
-                &self.settings.inventory,
-                self.settings.imports.permissions(),
-                &Prices {
-                    texture: Some(10),
-                    large_texture: Some(40),
-                    sound: Some(10),
-                    animation: Some(10),
-                },
-            );
+            let missing_quotes: Vec<_> = self
+                .imports
+                .entries
+                .iter()
+                .filter_map(|entry| {
+                    if let Some(Source::Mesh(draft)) = &entry.source
+                        && draft.quote.is_none()
+                        && draft.pending.is_none()
+                        && matches!(entry.status, crate::imports::Status::Ready)
+                    {
+                        Some(entry.id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for id in missing_quotes {
+                self.imports.quote_mesh(
+                    id,
+                    ctx,
+                    &self.scene.jobs,
+                    &self.world,
+                    &self.settings.inventory,
+                    self.settings.imports.permissions_for(aurora_net::inventory::upload::Kind::Mesh),
+                );
+            }
+            let prices = Prices {
+                texture: Some(10),
+                large_texture: Some(40),
+                sound: Some(10),
+                animation: Some(10),
+            };
+            if self.imports.total(&prices).is_some() {
+                self.imports.demo_upload_started = true;
+                self.imports
+                    .start(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
+            }
         }
         let local_demo = self.demo
             && self.imports.demo_mode.starts_with("local-")
@@ -212,6 +240,11 @@ impl App {
         for action in actions {
             match action {
                 Action::Files => self.imports.choose_files(&self.scene.jobs, ctx, self.settings.imports.texture()),
+                Action::Zoom(id, slot) => {
+                    self.imports.preview_zoom = Some((id, slot));
+                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("import_large_preview")));
+                }
+                Action::LargeMap(id, slot) => self.imports.request_large_map(id, slot, &self.scene.jobs, ctx),
                 Action::Start => {
                     let prices = if self.demo {
                         Prices {
@@ -225,7 +258,7 @@ impl App {
                     };
                     let prices = prices.with_fallback(self.world.upload_cost);
                     self.imports
-                        .start(&self.world, &self.settings.inventory, self.settings.imports.permissions(), &prices);
+                        .start(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
                 }
                 Action::Cancel => self.imports.cancel_remaining(),
                 Action::Preview(id) => {
@@ -266,7 +299,7 @@ impl App {
                     &self.scene.jobs,
                     &self.world,
                     &self.settings.inventory,
-                    self.settings.imports.permissions(),
+                    self.settings.imports.permissions_for(aurora_net::inventory::upload::Kind::Mesh),
                 ),
                 Action::MeshFile(id, level) => self.imports.mesh_file(id, level, &self.scene.jobs, ctx),
                 Action::PhysicsPreset(id, save) => {

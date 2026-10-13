@@ -83,6 +83,11 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
 
+The demo shows no sample offer or dialog by default. The fountain menu,
+gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
+`AURORA_DEMO_DIALOG` adds only the requested dialog;
+`AURORA_DEMO_INVENTORY=offer|offer-reject` adds only the received item.
+
 The frames-per-second limiter is enabled at **120 fps by default**. It can
 be disabled or adjusted in Preferences › Graphics › Smoothness; preferences
 already saved are kept.
@@ -1081,18 +1086,48 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `grid`: grid with no known purchase service. After Buy then OK: the
   window closes, the balance goes up and the bell receives the
   notification.
-- **`AURORA_DEMO_IMPORTS=texture|destination|material|mesh|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
   previews, the camera, the permissions, the selection and the confirmation.
+  `material-cube` / `material-aurora` select the additional preview shapes.
+  `material-maps` shows four distinct cards in a 2 × 2 grid without scrolling,
+  square thumbnails preserving original proportions, left-aligned titles
+  and texture names, right-aligned commands and common parameter rows.
+  Metallic / Roughness use only numeric fields; Normal appears only in
+  its card title. `material-loading` keeps the same 230 × 230 canvas
+  and gesture hints while the model is pending.
+  The preview model selector offers Sphere, Cube and Aurora 3D. Drag to
+  orbit, Shift + drag or the middle button to pan in screen coordinates,
+  wheel to zoom; Reset view and double-click reset the full camera.
+  `material-zoom`, `mesh-zoom` and `material-texture-zoom` open the loupes.
+  Texture pixels are prepared on a worker at native resolution, capped
+  to 2,048 per side, without upscaling; closing or switching frees the cache.
+  `permissions` opens the shared main tab: Modify / Copy / Transfer for
+  Texture, Sound, Animation, Mesh and PBR Material, with the file list
+  still present. Each row is saved independently; disabling Copy
+  requires Transfer. The batch includes a mesh and needs its quote
+  before confirmation. Ctrl+U opens Batch and the file picker together;
+  rebind it in Preferences › Shortcuts.
   The quote and the uploads stay entirely inside the demo server.
   `destination` opens the folder choice with the "Textures" filter;
   typing another name must filter without changing the destination or
   closing the list. Choosing a result closes the list and applies that folder.
-  For the mesh, the preview is to the right of the name, the description and
-  the destination; the LOD, Collisions and Upload sections are below.
-  The High level is shown by default; clicking a LOD name changes the preview.
+  The import window defaults to 900 × 760 points, keeping the 180-point
+  file list and closer checkbox / name spacing. Name, Description and
+  Destination use the same three rows above every asset panel, including
+  meshes; Upload no longer repeats them. Preview and LOD cards are side
+  by side, with gesture hints directly under the preview and compact tools.
+  High is shown by default; clicking anywhere within a LOD card selects
+  its preview, including its fields and counters. File / Browse share
+  a row, generated criteria / targets are below; results and retained
+  percentage are right-aligned, and triangles are spelled out.
+  `mesh-normals` shows 105° without a stray character or clipping.
+  `bulk-mesh-denied` simulates a connected account without mesh upload
+  rights, with a mesh and a texture selected. The footer reports the
+  mesh refusal; deselecting the mesh allows the texture upload.
+  Recalculating fees simulates the same refusal.
   `mesh-low` shows Lowest to really compare the geometries and
   their counters. Choosing "File" for a generated LOD must open the
   file picker; cancelling keeps the LOD, choosing a valid file restarts
@@ -1111,8 +1146,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   In the list of animations, clicking a file
   starts its playback, even if that animation had already been played.
   `bulk-upload` runs the batch automatically on this offline server:
-  four successful rows, creation of the material's dependencies and an
-  expected total receipt of 40 fictitious L$; no real transfer or payment.
+  five successful files, material dependencies and an expected receipt
+  of 51 fictitious L$. Uploaded files leave the list after acknowledgement;
+  reopening stays empty. Local previews and unselected / failed /
+  cancelled drafts remain; no real transfer or payment.
   `mesh-physics` shows the physics shape and its edges; `mesh-degenerate`
   injects a triangle defect, which must appear in the preview and block
   the quote with a diagnostic. The convex analysis must allow it to be solved.

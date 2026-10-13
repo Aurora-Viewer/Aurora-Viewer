@@ -68,13 +68,23 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     imports.demo_mode = mode.clone();
     imports.choice = match mode.as_str() {
         "texture" | "destination" => Choice::Texture,
-        "material" => Choice::Material,
-        "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" => Choice::Mesh,
+        "material"
+        | "material-cube"
+        | "material-aurora"
+        | "material-maps"
+        | "material-zoom"
+        | "material-texture-zoom"
+        | "material-loading" => Choice::Material,
+        "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" | "mesh-normals" => {
+            Choice::Mesh
+        }
         "animation" | "animation-own" => Choice::Animation,
         "sound" => Choice::Sound,
         mode if mode.starts_with("local") => Choice::Local,
         _ => Choice::Bulk,
     };
+    imports.permissions_open = mode == "permissions";
+    imports.mesh_permission_denied = mode == "bulk-mesh-denied";
     let choice = imports.choice;
     if mode == "local-restored" {
         return;
@@ -107,6 +117,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                         ("animation-demo.anim", Choice::Animation),
                     ],
                     Choice::Sound => &[("sound-demo.wav", Choice::Sound)],
+                    Choice::Bulk if mode == "bulk-mesh-denied" => &[("mesh-demo.dae", Choice::Bulk), ("texture-demo.png", Choice::Bulk)],
                     Choice::Local if local_mesh => &[("mesh-demo.dae", Choice::Local)],
                     Choice::Local if mode.starts_with("local-material") => &[("material-demo.gltf", Choice::Local)],
                     Choice::Local if mode.starts_with("local-texture") => &[("texture-demo.png", Choice::Local)],
@@ -120,6 +131,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                         ("material-demo.gltf", Choice::Bulk),
                         ("animation-demo.anim", Choice::Bulk),
                         ("sound-demo.wav", Choice::Bulk),
+                        ("mesh-demo.dae", Choice::Bulk),
                     ],
                 };
                 let paths: Vec<_> = if let Some(path) = external {
@@ -131,10 +143,50 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                 for (path, loader) in paths {
                     match files::load(&path, loader, prefs.texture(), 30, &prefs, choice == Choice::Local) {
                         Ok(mut loaded) => {
+                            if matches!(mode.as_str(), "material-cube" | "material-aurora") {
+                                for entry in &mut loaded {
+                                    entry.material_shape = if mode == "material-cube" {
+                                        preview::MaterialShape::Cube
+                                    } else {
+                                        preview::MaterialShape::Aurora
+                                    };
+                                }
+                            }
+                            if matches!(
+                                mode.as_str(),
+                                "material-maps" | "material-zoom" | "material-texture-zoom" | "material-loading"
+                            ) {
+                                for entry in &mut loaded {
+                                    if let Some(Source::Material { images, .. }) = &mut entry.source {
+                                        for slot in 1..4 {
+                                            images[slot] = images[0].clone();
+                                        }
+                                    }
+                                }
+                            }
+                            if matches!(mode.as_str(), "mesh-zoom" | "material-zoom" | "material-texture-zoom") {
+                                // The ordinary UI reads this one-shot request after Loaded arrives.
+                                if let Some(entry) = loaded.first() {
+                                    wake.data_mut(|data| {
+                                        data.insert_temp(
+                                            egui::Id::new("import_demo_zoom"),
+                                            (entry.id, (mode == "material-texture-zoom").then_some(0usize)),
+                                        );
+                                    });
+                                }
+                            }
                             if mode == "mesh-low" {
                                 for entry in &mut loaded {
                                     if let Some(Source::Mesh(draft)) = &mut entry.source {
                                         draft.preview_lod = 0;
+                                    }
+                                }
+                            }
+                            if mode == "mesh-normals" {
+                                for entry in &mut loaded {
+                                    if let Some(Source::Mesh(draft)) = &mut entry.source {
+                                        draft.options.normals = true;
+                                        draft.options.crease = 105.0;
                                     }
                                 }
                             }

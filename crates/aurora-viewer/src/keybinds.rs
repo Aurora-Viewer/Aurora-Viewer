@@ -310,6 +310,8 @@ pub enum Action {
     Search,
     Performance,
     Preferences,
+    /// Open Aurora's batch importer and its native file picker.
+    Import,
     /// Aurora's held shortcut for dragging a visible HUD with the left button.
     HudDrag,
     /// "Show transparency" (Firestorm Ctrl+Alt+T).
@@ -400,6 +402,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Search, aurora_i18n::tr!("search-title")),
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
                     (Action::Preferences, aurora_i18n::tr!("common-preferences")),
+                    (Action::Import, aurora_i18n::tr!("keybinds-import-files")),
                 ],
             ),
             (
@@ -522,6 +525,7 @@ impl KeyBindings {
             (Action::Search, [kmod(K::KeyF, true, false), None]),
             (Action::Performance, [kmod(K::Digit1, true, true), None]),
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
+            (Action::Import, [kmod(K::KeyU, true, false), None]),
             (Action::HudDrag, [k(K::AltLeft), None]),
             (
                 Action::ShowTransparency,
@@ -733,6 +737,28 @@ impl KeyBindings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_shortcut_migrates_rebinds_and_keeps_explicitly_cleared_slots() {
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let input = Input::key(KeyCode::KeyU);
+        let mut bindings = KeyBindings::default();
+        assert_eq!(bindings.triggered(&input, ctrl), Some(Action::Import));
+        assert_eq!(bindings.triggered(&input, Mods::default()), None);
+        bindings.map.retain(|(action, _)| *action != Action::Import);
+        let mut bindings = bindings.sanitized();
+        assert_eq!(bindings.triggered(&input, ctrl), Some(Action::Import));
+        bindings.set(Action::Import, 0, kmod(KeyCode::KeyJ, true, false));
+        let saved = serde_json::to_string(&bindings).expect("save bindings");
+        let mut restored = serde_json::from_str::<KeyBindings>(&saved).expect("restore bindings").sanitized();
+        assert_eq!(restored.triggered(&input, ctrl), None);
+        assert_eq!(restored.triggered(&Input::key(KeyCode::KeyJ), ctrl), Some(Action::Import));
+        restored.set(Action::Import, 0, None);
+        assert_eq!(restored.sanitized().get(Action::Import), [None, None]);
+    }
 
     #[test]
     fn keycap_icons_exist_only_for_letters_digits_and_f1_to_f9() {

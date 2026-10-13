@@ -9,6 +9,7 @@ pub mod files;
 pub mod local;
 pub mod maps;
 pub mod mesh;
+pub mod permissions;
 pub mod persistence;
 pub mod preview;
 #[cfg(test)]
@@ -46,7 +47,7 @@ impl Choice {
         }
         match entry.source.as_ref().map(Source::kind) {
             Some(kind) => {
-                (self == Choice::Bulk && kind != Kind::Mesh && !matches!(entry.source, Some(Source::Animation { bvh: Some(_), .. })))
+                (self == Choice::Bulk && !matches!(entry.source, Some(Source::Animation { bvh: Some(_), .. })))
                     || matches!(
                         (self, kind),
                         (Choice::Texture, Kind::Texture)
@@ -83,6 +84,7 @@ pub struct Preferences {
     pub next_transfer: bool,
     pub share_group: bool,
     pub everyone_copy: bool,
+    pub permissions_by_type: permissions::ByType,
     pub show_payment: bool,
     pub preview_on_avatar: bool,
     pub mesh_auto_weights: bool,
@@ -111,6 +113,7 @@ impl Default for Preferences {
             next_transfer: true,
             share_group: false,
             everyone_copy: false,
+            permissions_by_type: Default::default(),
             show_payment: true,
             preview_on_avatar: false,
             mesh_auto_weights: true,
@@ -277,6 +280,10 @@ pub struct Entry {
     pub preview_error: Option<String>,
     pub model: Option<Arc<aurora_render::preview::Model>>,
     pub view: aurora_render::preview::View,
+    pub material_shape: preview::MaterialShape,
+    pub material_previews: [Option<(Uuid, egui::TextureHandle)>; 4],
+    pub material_large_previews: [Option<(Uuid, u64, egui::TextureHandle)>; 4],
+    pub material_large_pending: [bool; 4],
     pub texture_target: usize,
     pub player: animation::Player,
     pub local: bool,
@@ -339,6 +346,10 @@ impl Entry {
             preview_error: None,
             model: None,
             view: Default::default(),
+            material_shape: Default::default(),
+            material_previews: std::array::from_fn(|_| None),
+            material_large_previews: std::array::from_fn(|_| None),
+            material_large_pending: [false; 4],
             texture_target: 0,
             player: Default::default(),
             local: false,
@@ -367,6 +378,8 @@ pub(super) enum Worker {
     Encoded(Uuid, Result<Vec<u8>, String>),
     Preview(Uuid, u64, egui::ColorImage),
     Model(Uuid, u64, Arc<aurora_render::preview::Model>, Option<Arc<mesh::Prepared>>),
+    MaterialPreviews(Uuid, u64, [Option<(Uuid, egui::ColorImage)>; 4]),
+    MaterialLargePreview(Uuid, u64, usize, Uuid, Option<egui::ColorImage>),
     PreviewFailed(Uuid, u64, String),
     MeshPrepared(
         Uuid,
@@ -405,6 +418,10 @@ struct Step {
 
 pub struct Imports {
     pub open: bool,
+    pub permissions_open: bool,
+    pub preview_zoom: Option<(Uuid, Option<usize>)>,
+    pub mesh_permission_account: Uuid,
+    pub mesh_permission_denied: bool,
     pub choice: Choice,
     pub entries: Vec<Entry>,
     pub active: Option<Uuid>,
@@ -448,6 +465,10 @@ impl Default for Imports {
         let (tx, rx) = crossbeam_channel::unbounded();
         Self {
             open: false,
+            permissions_open: false,
+            preview_zoom: None,
+            mesh_permission_account: Uuid::nil(),
+            mesh_permission_denied: false,
             choice: Choice::Texture,
             entries: Vec::new(),
             active: None,
@@ -488,6 +509,11 @@ impl Default for Imports {
     }
 }
 impl Imports {
+    pub fn open_file_picker(&mut self, choice: Choice) {
+        self.open(choice);
+        self.choose_files_on_open = true;
+    }
+
     pub fn demo_mesh_request(&self) -> Option<Request> {
         let step = &self.current.as_ref()?.1;
         (step.kind == Kind::Mesh).then(|| Request {
@@ -505,6 +531,7 @@ impl Imports {
     }
     pub fn open(&mut self, choice: Choice) {
         self.open = true;
+        self.permissions_open = false;
         self.choice = choice;
         if self
             .active
@@ -569,7 +596,7 @@ impl Imports {
         &mut self,
         world: &crate::world::World,
         prefs: &crate::ui::inventory::InventoryPreferences,
-        permissions: Permissions,
+        permission_prefs: &Preferences,
         prices: &Prices,
     ) {
         if self.busy() {
@@ -629,7 +656,7 @@ impl Imports {
                                     import_texture::dimensions(image.pixels.width, image.pixels.height, options),
                                 )
                                 .unwrap_or(0),
-                            permissions,
+                            permissions: permission_prefs.permissions_for(Kind::Texture),
                         });
                     }
                 }
@@ -647,7 +674,7 @@ impl Imports {
                     Source::Mesh(draft) => draft.quote.as_ref().map(|q| q.cost).unwrap_or(0),
                     _ => self.price(prices, source.kind(), source.dimensions(options)).unwrap_or(0),
                 },
-                permissions,
+                permissions: permission_prefs.permissions_for(source.kind()),
             });
         }
         for entry in &mut self.entries {
@@ -736,6 +763,16 @@ impl Imports {
         prefs: &crate::ui::inventory::InventoryPreferences,
     ) -> Vec<aurora_net::NetCommand> {
         let mut commands = Vec::new();
+        // Retire only acknowledged uploads. Local previews and drafts that
+        // failed, were cancelled or were not selected remain available.
+        for index in (0..self.entries.len()).rev() {
+            if !self.entries[index].local && matches!(self.entries[index].status, Status::Done(_)) {
+                jobs.discard(self.entries.remove(index));
+            }
+        }
+        if self.active.is_some_and(|id| self.entries.iter().all(|entry| entry.id != id)) {
+            self.active = self.entries.iter().find(|entry| self.choice.accepts(entry)).map(|entry| entry.id);
+        }
         while let Ok(worker) = self.rx.try_recv() {
             match worker {
                 Worker::Loaded(request, mut entries) if self.pending_files == Some(request) => {
@@ -810,6 +847,46 @@ impl Imports {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {
                         entry.preview_pending = false;
                         entry.preview = Some(ctx.load_texture(format!("import_{id}"), pixels, egui::TextureOptions::LINEAR));
+                    }
+                }
+                Worker::MaterialPreviews(id, generation, previews) => {
+                    if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {
+                        for (slot, preview) in previews.into_iter().enumerate() {
+                            entry.material_previews[slot] = preview.map(|(key, pixels)| {
+                                if let Some((old_key, handle)) = &entry.material_previews[slot]
+                                    && *old_key == key
+                                {
+                                    let mut handle = handle.clone();
+                                    handle.set(pixels, egui::TextureOptions::LINEAR);
+                                    (key, handle)
+                                } else {
+                                    (
+                                        key,
+                                        ctx.load_texture(format!("import_{id}_map_{slot}"), pixels, egui::TextureOptions::LINEAR),
+                                    )
+                                }
+                            });
+                        }
+                    }
+                }
+                Worker::MaterialLargePreview(id, generation, slot, key, pixels) => {
+                    if let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) {
+                        entry.material_large_pending[slot] = false;
+                        if self.preview_zoom == Some((id, Some(slot)))
+                            && entry.preview_generation == generation
+                            && matches!(&entry.source, Some(Source::Material { images, .. }) if images[slot].as_ref().is_some_and(|image| image.key == key))
+                            && let Some(pixels) = pixels
+                        {
+                            entry.material_large_previews[slot] = Some((
+                                key,
+                                generation,
+                                ctx.load_texture(format!("import_{id}_large_map_{slot}"), pixels, egui::TextureOptions::LINEAR),
+                            ));
+                        } else {
+                            jobs.discard(pixels);
+                        }
+                    } else {
+                        jobs.discard(pixels);
                     }
                 }
                 Worker::Model(id, generation, model, prepared) => {
