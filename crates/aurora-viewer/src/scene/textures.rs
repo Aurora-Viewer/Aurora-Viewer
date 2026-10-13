@@ -65,7 +65,7 @@ const TYPICAL: J2kInfo = J2kInfo {
 /// Firestorm always starts with `FIRST_PACKET_SIZE` (600 bytes) and asks
 /// for the level in a second request (LLTextureFetchWorker::doWork).
 fn first_bytes(px: f32) -> usize {
-    if px <= 0.0 || first_pixels_as_before() {
+    if px <= 0.0 {
         return INITIAL_BYTES;
     }
     let discard = discard_for(TYPICAL.width as f32, px, None).max(1);
@@ -81,13 +81,6 @@ fn level_held(info: &J2kInfo, len: usize, want: u8) -> u8 {
         discard += 1;
     }
     discard
-}
-
-/// TEMPORARY (A/B measure, removed before the PR): AURORA_TEX_FIRST=old
-/// keeps the first range, the level and the decodes as they were.
-pub(super) fn first_pixels_as_before() -> bool {
-    static OLD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *OLD.get_or_init(|| std::env::var("AURORA_TEX_FIRST").is_ok_and(|v| v == "old"))
 }
 const UNUSED_EVICT: Duration = Duration::from_secs(45);
 /// Unused textures evicted per frame at most, and queue entries looked at
@@ -314,7 +307,7 @@ impl Entry {
     /// instead of the level of a new entry.
     fn want_before_the_first_pass(&mut self) {
         let px = self.need_px.max(self.fixed_px);
-        if self.seen_px <= 0.0 && px > 0.0 && !self.keep_pixels && !first_pixels_as_before() {
+        if self.seen_px <= 0.0 && px > 0.0 && !self.keep_pixels {
             self.want = discard_for(
                 full_size(self).map_or(512, |(w, h)| w.max(h)) as f32,
                 px,
@@ -331,7 +324,7 @@ impl Entry {
     /// the pixels, four times the bytes.
     fn want_for_its_size(&mut self) {
         let px = self.px_now();
-        if self.keep_pixels || px <= 0.0 || first_pixels_as_before() {
+        if self.keep_pixels || px <= 0.0 {
             return;
         }
         if let Some(info) = self.info {
@@ -1558,7 +1551,7 @@ impl TextureStreamer {
                 // is decoded while the range of the wanted level is asked
                 // for, instead of showing nothing until that second reply
                 // (as Firestorm does). One more decode, of a small level.
-                let first_pixels = !have_enough && !after_failure && !first_pixels_as_before() && e.holds_first_pixels(needed);
+                let first_pixels = !have_enough && !after_failure && e.holds_first_pixels(needed);
                 if have_enough || after_failure || first_pixels {
                     'decode: {
                         if *decodes >= *max_decodes {
@@ -2629,6 +2622,125 @@ mod tests {
         assert_eq!(bytes_at(&e, 2), (1024 * 1024 * 16 / 3) >> 4);
         // nothing known yet
         assert_eq!(bytes_at(&entry(None, 0.0), 0), 0);
+    }
+
+    /// The file of a square texture of `side` pixels.
+    fn file(side: u32) -> J2kInfo {
+        J2kInfo {
+            width: side,
+            height: side,
+            components: 3,
+            levels: 5,
+        }
+    }
+
+    #[test]
+    fn the_first_request_follows_the_size_on_screen() {
+        let level = |discard| aurora_assets::bytes_for_discard(&TYPICAL, discard);
+        // not seen yet, or small on screen: the least
+        assert_eq!(first_bytes(0.0), INITIAL_BYTES);
+        assert_eq!(first_bytes(40.0), INITIAL_BYTES);
+        assert_eq!(first_bytes(128.0), INITIAL_BYTES);
+        // larger: what a 1024 texture needs to show that many pixels
+        assert_eq!(first_bytes(200.0), level(2));
+        assert_eq!(first_bytes(256.0), level(2));
+        assert_eq!(first_bytes(300.0), level(1));
+        assert_eq!((level(2), level(1)), (45_656, 176_728));
+        // never the whole file before its size is known
+        assert_eq!(first_bytes(600.0), level(1));
+        assert_eq!(first_bytes(4096.0), level(1));
+    }
+
+    #[test]
+    fn the_level_decoded_is_the_finest_the_bytes_hold() {
+        let info = file(1024);
+        let needs = |discard| aurora_assets::bytes_for_discard(&info, discard);
+        // the first reply of a texture wanted at a quarter of its size
+        assert_eq!(level_held(&info, INITIAL_BYTES, 2), 3);
+        assert_eq!(level_held(&info, needs(2), 2), 2);
+        assert_eq!(level_held(&info, needs(2) - 1, 2), 3);
+        // never finer than wanted
+        assert_eq!(level_held(&info, needs(1), 4), 4);
+        // full resolution only from the complete file
+        assert_eq!(level_held(&info, needs(1), 0), 1);
+        // too little for anything: the coarsest is tried
+        assert_eq!(level_held(&info, 100, 2), 5);
+    }
+
+    #[test]
+    fn first_pixels_are_decoded_while_the_wanted_level_downloads() {
+        let info = file(1024);
+        let needed = aurora_assets::bytes_for_discard(&info, 2);
+        let mut e = entry(None, 200.0);
+        e.info = Some(info);
+        e.data = Arc::new(vec![0; INITIAL_BYTES]);
+        assert!(e.holds_first_pixels(needed));
+        // enough for the level wanted: that one is decoded, nothing first
+        assert!(!e.holds_first_pixels(INITIAL_BYTES));
+        // already showing something: the wanted level alone follows
+        e.decoded = Some(5);
+        assert!(!e.holds_first_pixels(needed));
+        e.decoded = None;
+        // the whole file is there
+        e.complete = true;
+        assert!(!e.holds_first_pixels(needed));
+        e.complete = false;
+        // not even the coarsest level, or a file whose size is unknown
+        e.data = Arc::new(vec![0; 100]);
+        assert!(!e.holds_first_pixels(needed));
+        e.data = Arc::new(vec![0; INITIAL_BYTES]);
+        e.info = None;
+        assert!(!e.holds_first_pixels(needed));
+    }
+
+    #[test]
+    fn the_level_wanted_follows_the_size_of_the_file_once_known() {
+        // 200 pixels on screen, wanted as for a file of 512 until it is read
+        let level = |side: u32| {
+            let mut e = entry(None, 200.0);
+            e.want_before_the_first_pass();
+            assert_eq!(e.want, 1);
+            e.info = Some(file(side));
+            e.want_for_its_size();
+            e.want
+        };
+        assert_eq!([256, 512, 1024, 2048].map(level), [0, 1, 2, 3]);
+        // what `recompute_wants` saw counts, although `need_px` has decayed
+        let mut e = entry(None, 100.0);
+        e.seen_px = 200.0;
+        assert_eq!(e.px_now(), 200.0);
+        e.info = Some(file(1024));
+        e.want_for_its_size();
+        assert_eq!(e.want, 2);
+        // not seen: left as it is, as is a texture whose pixels are kept
+        let mut unseen = entry(None, 0.0);
+        unseen.want = 2;
+        unseen.info = Some(file(1024));
+        unseen.want_before_the_first_pass();
+        unseen.want_for_its_size();
+        assert_eq!(unseen.want, 2);
+        let mut kept = entry(None, 50.0);
+        kept.keep_pixels = true;
+        kept.info = Some(file(1024));
+        kept.want_before_the_first_pass();
+        kept.want_for_its_size();
+        assert_eq!(kept.want, 0);
+        // a level already computed by the pass is not computed again from
+        // what was noted since
+        let mut passed = entry(None, 20.0);
+        passed.seen_px = 300.0;
+        passed.want = 0;
+        passed.want_before_the_first_pass();
+        assert_eq!(passed.want, 0);
+    }
+
+    #[test]
+    fn the_pass_keeps_the_size_it_saw() {
+        let mut s = pressed(0, vec![(1, entry(None, 300.0))]);
+        s.recompute_wants();
+        let e = &s.entries[&Uuid::from_u128(1)];
+        assert_eq!((e.seen_px, e.need_px), (300.0, 150.0));
+        assert_eq!(e.px_now(), 300.0);
     }
 
     /// The streamer under memory pressure step `step`, holding `entries`.

@@ -3109,9 +3109,6 @@ impl Scene {
         // up to 30 frames away: a new texture is then asked for at the rank
         // and for the range that size calls for, not blindly.
         let mut fresh = std::mem::take(&mut self.fresh_usage);
-        if textures::first_pixels_as_before() {
-            fresh.clear();
-        }
         let usage_due = |i: usize| i % 30 == usage_phase || fresh.contains(&i);
         let mut visit = std::mem::take(&mut self.visit_tmp);
         visit.clear();

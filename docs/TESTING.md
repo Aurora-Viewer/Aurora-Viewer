@@ -910,7 +910,7 @@ To check with these scenarios:
 | `AURORA_DEMO_TEXTURES_CHURN=1` | With `AURORA_DEMO_TEXTURES`: textures renewed |
 | `AURORA_DEMO_CROWD=<n>[,busy]` or `<n>,<worn>[,<triangles>]` | Sync load test: n avatars; with `busy` what the sync still places itself, with `<worn>` avatars dressed in rigged meshes |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
-| `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>]` | Streaming stutter test |
+| `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
@@ -996,7 +996,7 @@ To check with these scenarios:
   it. This is the worst case of overdraw, to measure
   what a prepass saves (`AURORA_MSAA_PREPASS`); a real region has
   less.
-- **`AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>]`**: n textured
+- **`AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]`**: n textured
   objects (2000 if the value is not a number) that arrive in waves after the
   loading fade, `wave` objects every 250 ms (100 by default, that is ~400 per
   second as on the grid; `wave` = n sends everything at once, like an
@@ -1030,6 +1030,24 @@ To check with these scenarios:
     by the first run in the demo's cache (`cache\demo\tex`, to
     delete to start again from a first visit) and their J2C file
     is requested only if a finer level is needed.
+  - With `,net=<ms>` after `j2k=`, the files are downloaded instead of
+    being handed over: a local asset server (`demo_asset_server.rs`)
+    answers each request after `ms` milliseconds, the round trip to a
+    distant grid (200 for Europe to Agni), and the textures follow the
+    whole path of a region seen for the first time: the fetcher with its
+    queue and its connections, the first range, the ranges that follow,
+    the decodes. Their ids change at each run, so the disk cache never
+    holds them (their files are left in `cache\demo\tex`, like any
+    downloaded texture). The log tells when half, nine tenths and all of the
+    textures showed their first pixels (`demo stream: … of … textures
+    shown after … s`), then `demo stream: loaded in … s` when nothing is
+    left to download or decode; the `texture load:` line gives the
+    requests, the bytes and the wait before the first pixels. Use `wave` =
+    n: the measure is that of an arrival.
+  - With `,size=<m>`, the objects are that large (0.5 m by default) and
+    spaced accordingly: their textures cover more of the screen and ask
+    for finer levels, as the walls and floors of a region do. 400 objects
+    of 3 m give levels close to those of a grid arrival.
 
 ## Interface
 
@@ -2465,7 +2483,16 @@ line gives:
 - the bytes downloaded and the number of responses, the successful and
   missed reads of the disk cache (JPEG2000 data), and the textures read
   back from the transcoded cache (`read as BC7 without a decode`): sent to
-  the GPU without decoding or encoding.
+  the GPU without decoding or encoding;
+- `first pixels of … downloaded textures … s after their request on
+  average, … s weighted by their size on screen`: for the textures that
+  had to be downloaded, the time between their first request and their
+  first pixels on screen. The second figure weights each texture by the
+  area it covers: how long a pixel of a new texture stays without its
+  picture, which is what an arrival looks like. `… asked before that size
+  was known` counts the first requests sent for a texture not seen on
+  screen yet (out of view, or just arrived): they leave at the lowest
+  rank and for the smallest range.
 
 The cost of decoding alone is measured outside the viewer on a folder of
 cached textures (read-only), per size class, on one thread then on as many
