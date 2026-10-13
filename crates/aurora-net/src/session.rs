@@ -73,6 +73,8 @@ struct Sim {
     caps_requested: bool,
     caps: Arc<HashMap<String, String>>,
     eq_task: Option<JoinHandle<()>>,
+    /// The request of the seed capability, while it is asked for.
+    caps_task: Option<JoinHandle<()>>,
     last_ping: Instant,
     time_dilation: f32,
     /// UseCircuitCode sequence; CompleteAgentMovement waits for its ack.
@@ -103,6 +105,7 @@ impl Sim {
             caps_requested: false,
             caps: Arc::new(HashMap::new()),
             eq_task: None,
+            caps_task: None,
             last_ping: Instant::now(),
             time_dilation: 1.0,
             ucc_seq: None,
@@ -121,6 +124,9 @@ impl Sim {
 impl Drop for Sim {
     fn drop(&mut self) {
         if let Some(t) = self.eq_task.take() {
+            t.abort();
+        }
+        if let Some(t) = self.caps_task.take() {
             t.abort();
         }
     }
@@ -146,7 +152,8 @@ struct Session<'a> {
     sims: HashMap<SocketAddr, Sim>,
     main: Option<SocketAddr>,
     eq_tx: mpsc::UnboundedSender<EqMessage>,
-    caps_tx: mpsc::UnboundedSender<(SocketAddr, Result<HashMap<String, String>, String>)>,
+    /// (simulator, seed asked, its capabilities or why they did not come)
+    caps_tx: mpsc::UnboundedSender<(SocketAddr, String, Result<HashMap<String, String>, String>)>,
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
     inventory_move_tx: mpsc::UnboundedSender<inventory_moves::Request>,
     notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
@@ -358,9 +365,9 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     EqMessage::Lost(sim) => s.on_eq_lost(sim),
                 }
             }
-            Some((addr, caps)) = caps_rx.recv() => {
+            Some((addr, seed, caps)) = caps_rx.recv() => {
                 woke = Instant::now();
-                s.on_caps(addr, caps);
+                s.on_caps(addr, &seed, caps);
             }
             Some((callback, result)) = notecard_copy_rx.recv() => {
                 woke = Instant::now();
@@ -567,17 +574,35 @@ impl Session<'_> {
         sim.caps_requested = true;
         let http = self.sh.caps_http.clone();
         let tx = self.caps_tx.clone();
-        tokio::spawn(async move {
-            let r = caps::resolve_seed(&http, &seed).await.map_err(|e| e.to_string());
-            let _ = tx.send((addr, r));
-        });
+        // (one request per simulator: a new seed takes the place of the old)
+        if let Some(old) = sim.caps_task.take() {
+            old.abort();
+        }
+        sim.caps_task = Some(tokio::spawn(async move {
+            let alive = tx.clone();
+            let r = caps::resolve_seed(&http, &seed, caps::SeedRetry::FIRESTORM, move || !alive.is_closed())
+                .await
+                .map_err(|e| e.to_string());
+            let _ = tx.send((addr, seed, r));
+        }));
     }
 
-    fn on_caps(&mut self, addr: SocketAddr, r: Result<HashMap<String, String>, String>) {
+    fn on_caps(&mut self, addr: SocketAddr, seed: &str, r: Result<HashMap<String, String>, String>) {
+        // the region has another seed since: the answer of a stale request
+        // (mHttpResponderID in LLViewerRegionImpl::requestBaseCapabilitiesCoro)
+        if self.sims.get(&addr).is_some_and(|sim| sim.seed.as_deref() != Some(seed)) {
+            log::info!("capabilities for {addr}: answer to a previous seed ignored");
+            return;
+        }
         let caps = match r {
             Ok(c) => c,
             Err(e) => {
-                log::warn!("capabilities for {addr} failed: {e}");
+                log::warn!("capabilities for {addr} failed for good: {e}");
+                // asked again when the region is entered again
+                // (set_main), not before: every attempt was made
+                if let Some(sim) = self.sims.get_mut(&addr) {
+                    sim.caps_requested = false;
+                }
                 if self.main == Some(addr) {
                     emit(
                         self.sh,
@@ -3805,6 +3830,26 @@ mod event_queue_tests {
         session.on_eq_lost(main_addr);
         assert!(!session.finished);
         assert!(received.is_empty());
+
+        // the seed capability: the answer to a seed the region no longer
+        // has is ignored; a seed given up is asked again when the region is
+        // entered again, and only the agent's region tells the user
+        for addr in [main_addr, neighbour_addr] {
+            let sim = session.sims.get_mut(&addr).expect("simulator");
+            sim.seed = Some("https://sim.example/new".into());
+            sim.caps_requested = true;
+        }
+        let caps = HashMap::from([("ViewerAsset".to_owned(), "https://sim.example/asset".to_owned())]);
+        session.on_caps(main_addr, "https://sim.example/old", Ok(caps));
+        assert!(session.sims[&main_addr].caps.is_empty());
+        assert!(received.is_empty());
+        session.on_caps(neighbour_addr, "https://sim.example/new", Err("status 503".into()));
+        assert!(!session.sims[&neighbour_addr].caps_requested);
+        assert!(received.is_empty());
+        session.on_caps(main_addr, "https://sim.example/new", Err("status 503".into()));
+        assert!(!session.sims[&main_addr].caps_requested);
+        let (_, event) = received.try_recv().expect("alert");
+        assert!(matches!(event, NetEvent::Alert { .. }), "{event:?}");
 
         // its queue really stopped: the session ends, as in Firestorm
         set_queue(&mut session, main_addr, finished_task().await);
