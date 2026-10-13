@@ -1799,6 +1799,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MEDIA_DEBUG=1` | Media diagnostics |
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
+| `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=0` or `alt` | Reflection probes walked once per lookup, as before, or both alternately |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
@@ -1836,6 +1837,27 @@ What the inventory must show with these scenarios:
     run. The textures of this scenario are then reloaded on demand, like
     those of the grid (camera moved closer after a reduction). A huge value
     (1000000) removes all pressure, to compare.
+- **`AURORA_TEXTURE_SLOTS=<n>`**: the texture table holds n textures
+  instead of 65,536 (`aurora-render/src/textures.rs`; the `renderer ready:`
+  line of the log gives its size). Each texture known to the streamer holds
+  a slot of it, from the first face that uses it until 45 s after the last
+  one stopped. Used to fill the table in demo.
+  - `AURORA_DEMO_TEXTURES=20000` and `AURORA_DEMO_POS="234,126"` (in front
+    of the last cubes): without the variable every cube has its texture and
+    the log has neither `texture table full` nor `upload refused by the
+    renderer`. With `16384`, the size the table had before, the last 3,600
+    cubes stay white (and the panels of the plaza lose their textures) and
+    the log says so in one line or two for all of them, not one per
+    texture: `texture table full (16384 slots, all holding a texture in
+    use): … more textures have none, 3627 in all`.
+  - Textures nothing uses any more give their slots back to a full table at
+    once, before the others go without: `AURORA_DEMO_TEXTURES=6000`,
+    `AURORA_DEMO_TEXTURES_CHURN=1`, `AURORA_FPS_LIMIT=500` and `6100`. The
+    2,000 cubes that come back at frame 700 find the table full of the
+    textures released at frame 300, due for eviction a second later: they
+    all get their texture (capture after frame 1500 with
+    `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
+    exceeds 6095 and the log has no `texture table full` line.
 
 - **`AURORA_PROBE_WALK=0|alt`**: by default a fragment walks the list of
   reflection probes once for its two lookups (ambient and reflection of a

@@ -7371,9 +7371,10 @@ impl ApplicationHandler for App {
             }
         };
         log::info!(
-            "renderer ready: {} via {} ({} texture slots, GPU timers: {})",
+            "renderer ready: {} via {} ({} texture slots in {} pages at most, GPU timers: {})",
             renderer.info.name,
             renderer.info.backend,
+            renderer.textures.capacity(),
             renderer.info.max_textures,
             renderer.info.timestamps
         );

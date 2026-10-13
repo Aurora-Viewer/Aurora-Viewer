@@ -53,6 +53,8 @@ pub struct GpuInfo {
     pub driver: String,
     pub bindless: bool,
     pub timestamps: bool,
+    /// Elements a shader can bind in the array of texture pages: the pages
+    /// the texture table can hold (its textures: `TextureTable::capacity`).
     pub max_textures: u32,
     /// Dedicated video memory (MB) when it can be detected.
     pub vram_mb: Option<u64>,
@@ -276,7 +278,10 @@ impl Renderer {
         // ---- the scene's stores; what they write at creation is replayed
         // with the first frame
         let mut writes = GpuWrites::default();
-        let textures = TextureTable::new(&device, &mut writes, max_textures, 8);
+        // (as many textures as the table has slots; `max_textures` bounds
+        // the pages they are grouped in)
+        let slots = crate::textures::slot_capacity(std::env::var("AURORA_TEXTURE_SLOTS").ok().as_deref());
+        let textures = TextureTable::new(&device, &mut writes, slots, max_textures, 8);
         let geometry = GeometryArena::new(&device, alim.max_buffer_size.min(1 << 31));
         let records = RecordStore::new(&device);
         let cull = CullTables::new(&device);

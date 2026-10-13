@@ -61,6 +61,30 @@ const PAGE_MAX_BYTES: u64 = 32 << 20;
 const LAYER_BITS: u32 = 16;
 const MAX_LAYERS: u32 = 2048;
 const MAX_PAGES: u32 = 1 << (32 - LAYER_BITS);
+/// Slots of the table. A slot is an entry of the location buffer (4 bytes),
+/// not an element of the bound array: only the pages count against what the
+/// device lets a shader bind. While each texture was an element of its own
+/// the two were one number, at most 16,384, and the table kept that size
+/// once textures went to pages: arriving in a busy region (9,000 textures)
+/// 45 s or less after leaving another, the last 1,500 textures found no
+/// slot and were drawn white for as long as they were used. Four times
+/// that: more than the video memory holds textures for.
+pub const SLOTS: u32 = 1 << 16;
+const MAX_SLOTS: u32 = 1 << 20;
+
+/// Slots of the table: [`SLOTS`], or what AURORA_TEXTURE_SLOTS asks for (to
+/// test a full table).
+pub fn slot_capacity(forced: Option<&str>) -> u32 {
+    forced
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .map_or(SLOTS, |n| n.clamp(RESERVED + 1, MAX_SLOTS))
+}
+
+/// Pages the table can hold, from the elements the device lets a shader
+/// bind in one array.
+fn page_capacity(bindable: u32, partial: bool) -> u32 {
+    if partial { bindable } else { bindable.min(UNPARTIAL_PAGES) }.clamp(1, MAX_PAGES)
+}
 /// Without partially bound arrays every element of the page array is bound
 /// in every pass (holes repeat page 0), so the array is kept shorter.
 const UNPARTIAL_PAGES: u32 = 2048;
@@ -1083,11 +1107,13 @@ pub struct TextureTable {
 }
 
 impl TextureTable {
-    pub fn new(device: &wgpu::Device, writes: &mut GpuWrites, capacity: u32, anisotropy: u16) -> Self {
+    /// `capacity`: slots (textures) of the table; `bindable`: elements the
+    /// device lets a shader bind in one array, which bounds the pages.
+    pub fn new(device: &wgpu::Device, writes: &mut GpuWrites, capacity: u32, bindable: u32, anisotropy: u16) -> Self {
         let partial = device.features().contains(wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY);
         let limits = device.limits();
         let capacity = capacity.max(RESERVED + 1);
-        let page_capacity = if partial { capacity } else { capacity.min(UNPARTIAL_PAGES) }.min(MAX_PAGES);
+        let page_capacity = page_capacity(bindable, partial);
         let max_layers = limits.max_texture_array_layers.clamp(1, MAX_LAYERS);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("textures"),
@@ -1703,6 +1729,59 @@ mod tests {
         }
         assert_eq!(pack(3, 5), (3 << 16) | 5);
         assert_eq!(pack(0, 0), WHITE_LOC);
+    }
+
+    #[test]
+    fn the_table_has_more_slots_than_the_device_binds_pages() {
+        // the slots do not follow what the device binds
+        assert_eq!(slot_capacity(None), SLOTS);
+        const { assert!(SLOTS > 16384) };
+        // (the pages do: every element at most, fewer when all are bound)
+        assert_eq!(page_capacity(16384, true), 16384);
+        assert_eq!(page_capacity(16384, false), UNPARTIAL_PAGES);
+        assert_eq!(page_capacity(64, false), 64);
+        assert_eq!(page_capacity(1 << 20, true), MAX_PAGES);
+        assert_eq!(page_capacity(0, true), 1);
+        // AURORA_TEXTURE_SLOTS: a smaller or larger table, within bounds
+        assert_eq!(slot_capacity(Some("16384")), 16384);
+        assert_eq!(slot_capacity(Some(" 200 ")), 200);
+        assert_eq!(slot_capacity(Some("0")), RESERVED + 1);
+        assert_eq!(slot_capacity(Some("4000000000")), MAX_SLOTS);
+        assert_eq!(slot_capacity(Some("many")), SLOTS);
+    }
+
+    /// A store with its reserved slots and no page behind them (no device):
+    /// enough for what only hands slots out.
+    fn bare_store(capacity: u32, page_capacity: u32) -> PageStore {
+        let mut store = PageStore::new(capacity, page_capacity, MAX_LAYERS, 4096);
+        for _ in 0..RESERVED {
+            store.slots.push(Some(Slot {
+                key: PageKey::of_chain(TexelFormat::Rgba8, 1, 1, 1),
+                page: 0,
+                layer: 0,
+                shared: false,
+            }));
+        }
+        store
+    }
+
+    #[test]
+    fn textures_waiting_for_their_texels_take_a_slot_and_no_page() {
+        // a device that binds 64 pages, and more textures in use than the
+        // 16,384 the table once stopped at
+        let mut store = bare_store(slot_capacity(None), page_capacity(64, true));
+        let waiting: Vec<u32> = (0..20_000).map(|_| store.create_placeholder().expect("slot")).collect();
+        assert_eq!(waiting.last(), Some(&(RESERVED + 19_999)));
+        assert_eq!((store.live, store.pages.len(), store.bytes), (20_000, 0, 0));
+        // up to its last slot; then none, until one is freed
+        while store.create_placeholder().is_some() {}
+        assert_eq!(store.live, SLOTS - RESERVED);
+        store.free(waiting[7]);
+        assert_eq!(store.create_placeholder(), Some(waiting[7]));
+        assert_eq!(store.create_placeholder(), None);
+        // the reserved slots are never handed out nor freed
+        store.free(WHITE);
+        assert_eq!(store.create_placeholder(), None);
     }
 
     /// Layers of successive pages of one size, each sized from the
@@ -2598,7 +2677,7 @@ mod tests {
         }))
         .expect("GPU device");
         let mut writes = GpuWrites::default();
-        let mut table = TextureTable::new(&device, &mut writes, 512, 8);
+        let mut table = TextureTable::new(&device, &mut writes, SLOTS, 512, 8);
         let mut uploads = UploadQueue::new(&device, true);
         // (the page of the reserved slots was created here)
         let inline = table.pages_made().inline;
@@ -2688,7 +2767,7 @@ mod tests {
         .expect("GPU device");
         const SLOTS: u32 = 512;
         let writes = RefCell::new(GpuWrites::default());
-        let mut table = TextureTable::new(&device, &mut writes.borrow_mut(), SLOTS, 8);
+        let mut table = TextureTable::new(&device, &mut writes.borrow_mut(), SLOTS, SLOTS, 8);
         let mut uploads = UploadQueue::new(&device, true);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
