@@ -16,6 +16,11 @@ pub const CHAT_RANGE: f32 = 20.0;
 pub const SHOUT_RANGE: f32 = 100.0;
 /// FS_RADAR_LIST_UPDATE_INTERVAL.
 const SWEEP_INTERVAL: f64 = 1.0;
+/// Seconds the avatars of a region left behind by a teleport stay in the
+/// list, faded, before they leave it (asked by the human: like Firestorm,
+/// we hear of them until the old simulator disables itself or its circuit
+/// times out, a minute later, and they looked as if they were still around).
+pub const LEFT_BEHIND_SECS: f64 = 10.0;
 /// Profiles asked per sweep: a crowded region does not send a hundred
 /// requests at once (Firestorm asks for all of them as the entries appear).
 const PROFILES_PER_SWEEP: usize = 4;
@@ -54,6 +59,9 @@ pub struct Entry {
     /// Time of the first sweep that saw it; it starts again when the avatar
     /// leaves and comes back.
     pub first_seen: f64,
+    /// Its region was left behind by a teleport: it leaves the list within
+    /// `LEFT_BEHIND_SECS`.
+    pub left_behind: bool,
     profile_asked: bool,
     age_checked: bool,
 }
@@ -89,6 +97,11 @@ impl Event {
 pub struct Radar {
     entries: HashMap<Uuid, Entry>,
     last_sweep: Option<f64>,
+    /// Our region at the last sweep.
+    region: Option<RegionHandle>,
+    /// Regions we were hearing from when we changed region and that the new
+    /// place leaves out of reach, with the time of the change.
+    left: HashMap<RegionHandle, f64>,
     /// Avatars of the last sweep, hidden ones included (the "total" of the
     /// list's title).
     pub total: usize,
@@ -113,15 +126,46 @@ impl Radar {
         self.entries.get(id)
     }
 
+    /// The regions a change of region leaves behind. `gaps` gives how far
+    /// each region we hear from is (`region_gaps`): one within the draw
+    /// distance, or touching ours, is a neighbor the simulator keeps us in,
+    /// so a border crossing leaves nothing behind; neither does a region we
+    /// come back to, or get near again.
+    fn leave_regions(&mut self, my_region: Option<RegionHandle>, gaps: &HashMap<RegionHandle, f32>, draw_distance: f32, now: f64) {
+        if my_region != self.region {
+            if self.region.is_some() {
+                for e in self.entries.values() {
+                    self.left.entry(e.region).or_insert(now);
+                }
+            }
+            self.region = my_region;
+        }
+        self.left
+            .retain(|region, _| Some(*region) != my_region && gaps.get(region).is_some_and(|gap| *gap > draw_distance));
+    }
+
     /// Take the avatars seen now and report who crossed the chat range, the
     /// draw distance and the border of our region since the last sweep
-    /// (FSRadar::updateRadarList).
-    pub fn sweep(&mut self, seen: Vec<Sighting>, me: Vec3, my_region: Option<RegionHandle>, draw_distance: f32, now: f64) -> Vec<Event> {
+    /// (FSRadar::updateRadarList). The avatars of a region a teleport left
+    /// behind are marked, then dropped after `LEFT_BEHIND_SECS`.
+    pub fn sweep(
+        &mut self,
+        seen: Vec<Sighting>,
+        me: Vec3,
+        my_region: Option<RegionHandle>,
+        gaps: &HashMap<RegionHandle, f32>,
+        draw_distance: f32,
+        now: f64,
+    ) -> Vec<Event> {
         self.last_sweep = Some(now);
-        self.total = seen.len();
+        self.leave_regions(my_region, gaps, draw_distance, now);
         let mut events = Vec::new();
         let mut present = HashSet::with_capacity(seen.len());
         for s in seen {
+            let left_behind = match self.left.get(&s.region) {
+                Some(since) if now - since >= LEFT_BEHIND_SECS => continue,
+                since => since.is_some(),
+            };
             present.insert(s.id);
             let range = s.altitude_known.then(|| s.position.distance(me));
             let same_region = Some(s.region) == my_region;
@@ -171,11 +215,13 @@ impl Radar {
                     sitting: s.sitting,
                     typing: s.typing,
                     first_seen,
+                    left_behind,
                     profile_asked,
                     age_checked,
                 },
             );
         }
+        self.total = present.len();
         // the ones that went away leave what they were in
         self.entries.retain(|id, e| {
             if present.contains(id) {
@@ -225,6 +271,43 @@ impl Radar {
         }
         events
     }
+}
+
+/// Distance from our avatar to each region we hear from, in meters on the
+/// ground: 0 inside ours and for the regions touching it, corners included
+/// (they stay our neighbors whatever the draw distance), else to the nearest
+/// point of the region.
+pub fn region_gaps(world: &World) -> HashMap<RegionHandle, f32> {
+    let Some(main) = world.main_region else {
+        return HashMap::new();
+    };
+    let size = |h: &RegionHandle| {
+        world.regions.get(h).map_or(glam::Vec2::splat(256.0), |r| {
+            glam::Vec2::new(r.heightmap.size_x as f32, r.heightmap.size_y as f32)
+        })
+    };
+    let me = world.agent.position.truncate();
+    let main_size = size(&main);
+    world
+        .regions
+        .keys()
+        .chain(world.coarse.keys())
+        .filter_map(|h| Some((*h, region_gap(me, main_size, world.region_offset(*h)?.truncate(), size(h)))))
+        .collect()
+}
+
+/// `region_gaps` for one region `size` wide at `offset` from ours, itself
+/// `main` wide, both in the frame `me` is in.
+fn region_gap(me: glam::Vec2, main: glam::Vec2, offset: glam::Vec2, size: glam::Vec2) -> f32 {
+    // how far apart two spans are along one axis
+    let apart = |a: (f32, f32), b: (f32, f32)| (b.0 - a.1).max(a.0 - b.1).max(0.0);
+    let far = offset + size;
+    let between = glam::Vec2::new(apart((0.0, main.x), (offset.x, far.x)), apart((0.0, main.y), (offset.y, far.y)));
+    // half a meter of slack: region origins are whole meters
+    if between.max_element() < 0.5 {
+        return 0.0;
+    }
+    glam::Vec2::new(apart((me.x, me.x), (offset.x, far.x)), apart((me.y, me.y), (offset.y, far.y))).length()
 }
 
 /// The avatars around us: the loaded ones first (exact position), then the
@@ -308,7 +391,7 @@ mod tests {
     }
 
     fn sweep(radar: &mut Radar, seen: Vec<Sighting>, now: f64) -> Vec<Event> {
-        radar.sweep(seen, Vec3::ZERO, Some(HERE), 96.0, now)
+        radar.sweep(seen, Vec3::ZERO, Some(HERE), &HashMap::new(), 96.0, now)
     }
 
     #[test]
@@ -388,6 +471,71 @@ mod tests {
         sweep(&mut radar, vec![], 26.0);
         sweep(&mut radar, vec![at(1, HERE, 200.0)], 40.0);
         assert_eq!(radar.get(&id(1)).map(|e| e.first_seen), Some(40.0));
+    }
+
+    #[test]
+    fn a_teleport_fades_then_drops_the_avatars_left_behind() {
+        const FAR: RegionHandle = 3;
+        let mut radar = Radar::default();
+        let near = HashMap::from([(HERE, 0.0), (THERE, 0.0)]);
+        let seen = || vec![at(1, HERE, 30.0), at(2, THERE, 300.0)];
+        radar.sweep(seen(), Vec3::ZERO, Some(HERE), &near, 96.0, 0.0);
+        // a border crossing: the region we come from still touches ours
+        radar.sweep(seen(), Vec3::ZERO, Some(THERE), &near, 96.0, 1.0);
+        assert!(radar.entries().all(|e| !e.left_behind));
+        // a teleport far away: both regions are out of reach, and still heard
+        let gone = HashMap::from([(FAR, 0.0), (HERE, 50_000.0), (THERE, 50_000.0)]);
+        let seen = || vec![at(1, HERE, 50_030.0), at(2, THERE, 50_300.0), at(3, FAR, 10.0)];
+        radar.sweep(seen(), Vec3::ZERO, Some(FAR), &gone, 96.0, 2.0);
+        let left = |radar: &Radar| -> Vec<bool> { (1..=3).map(|n| radar.get(&id(n)).is_some_and(|e| e.left_behind)).collect() };
+        assert_eq!(left(&radar), vec![true, true, false]);
+        assert_eq!(radar.total, 3);
+        radar.sweep(seen(), Vec3::ZERO, Some(FAR), &gone, 96.0, 2.0 + LEFT_BEHIND_SECS - 0.5);
+        assert_eq!(left(&radar), vec![true, true, false]);
+        // ten seconds after the arrival they leave the list, whatever the
+        // old simulators still send
+        radar.sweep(seen(), Vec3::ZERO, Some(FAR), &gone, 96.0, 2.0 + LEFT_BEHIND_SECS);
+        assert_eq!(radar.entries().map(|e| e.id).collect::<Vec<_>>(), vec![id(3)]);
+        assert_eq!(radar.total, 1);
+        // a region that comes within reach again is heard again
+        let back = HashMap::from([(FAR, 0.0), (HERE, 60.0), (THERE, 50_000.0)]);
+        radar.sweep(seen(), Vec3::ZERO, Some(FAR), &back, 96.0, 20.0);
+        assert_eq!(radar.get(&id(1)).map(|e| e.left_behind), Some(false));
+        assert!(radar.get(&id(2)).is_none());
+    }
+
+    #[test]
+    fn a_region_arriving_after_the_teleport_is_never_left_behind() {
+        let mut radar = Radar::default();
+        let gaps = HashMap::from([(HERE, 0.0), (THERE, 700.0)]);
+        // the first sweep of the session, then a region out of the draw
+        // distance that we start hearing from: nothing was left
+        radar.sweep(vec![at(1, HERE, 10.0)], Vec3::ZERO, Some(HERE), &gaps, 96.0, 0.0);
+        radar.sweep(
+            vec![at(1, HERE, 10.0), at(2, THERE, 700.0)],
+            Vec3::ZERO,
+            Some(HERE),
+            &gaps,
+            96.0,
+            30.0,
+        );
+        assert!(radar.entries().all(|e| !e.left_behind));
+    }
+
+    #[test]
+    fn gap_to_a_region() {
+        let v = glam::Vec2::new;
+        let (me, size) = (v(200.0, 100.0), v(256.0, 256.0));
+        // ours, the ones touching it by a side or a corner
+        assert_eq!(region_gap(me, size, v(0.0, 0.0), size), 0.0);
+        assert_eq!(region_gap(me, size, v(256.0, 0.0), size), 0.0);
+        assert_eq!(region_gap(me, size, v(-256.0, 256.0), size), 0.0);
+        // one region between us: from our avatar to its nearest edge
+        assert_eq!(region_gap(me, size, v(512.0, 0.0), size), 312.0);
+        assert_eq!(region_gap(me, size, v(0.0, -512.0), size), 356.0);
+        assert!((region_gap(me, size, v(512.0, 512.0), size) - 312.0_f32.hypot(412.0)).abs() < 0.01);
+        // a large region (OpenSim) touches what its far side reaches
+        assert_eq!(region_gap(me, v(1024.0, 1024.0), v(1024.0, 768.0), size), 0.0);
     }
 
     #[test]

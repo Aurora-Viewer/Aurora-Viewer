@@ -967,6 +967,14 @@ pub enum NetCommand {
     ActivateGroup(Uuid),
     /// Leave a group (LeaveGroupRequest; AgentDropGroup follows).
     LeaveGroup(Uuid),
+    /// Receive the notices of a group or not, and list it in our profile or
+    /// not (SetGroupAcceptNotices, LLAgent::setUserGroupFlags): both flags
+    /// travel together.
+    SetGroupFlags {
+        group: Uuid,
+        accept_notices: bool,
+        list_in_profile: bool,
+    },
     /// End a friendship (TerminateFriendship).
     TerminateFriendship(Uuid),
     /// Start / stop an animation on our avatar (AgentAnimation: away, busy...).

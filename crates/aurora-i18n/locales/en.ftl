@@ -1700,7 +1700,6 @@ ui-login-grid = Grid
 demo-4-4-grid-loop = 4 × 4 grid (LOOP)
 common-group = Group
 common-group-2 = Group:
-ui-people-group = Group [{ $value0 }]
 demo-land-demo-group = Demo group
 common-groups = Groups
 ui-profile-groups = Groups:
@@ -2436,7 +2435,6 @@ ui-options-diagnostic-tools-drawn-over-the-view-disabled-next-time = Diagnostic 
 common-open = Open
 ui-inventory-context-open-in-a-new-window = Open in a new window
 ui-minimap-open-world-map = Open world map
-ui-people-open-group-chat = Open group chat
 ui-options-open-folder = Open folder
 ui-notifications-open-link = Open link
 build-ui-general-open-profile = Open profile
@@ -2690,7 +2688,6 @@ keybinds-zoom-camera-in = Zoom camera in
 ui-contacts-attach-to-conversations = Attach to Conversations
 build-ui-object-radius = Radius
 ui-minimap-center-map = Center map
-ui-people-receive-this-group-s-chat-again = Receive this group's chat again
 ui-media-reload = Reload
 ui-inventory-context-reload-folder = Reload folder
 ui-avatar-picker-search = Search
@@ -4245,6 +4242,28 @@ radar-age-alert = { $days ->
    *[other] triggered the age alert. Age: { $days } days
     }
 radar-too-far-to-zoom = This avatar is too far for the camera to reach it.
+people-view-sort-options = View/sort options
+people-friends-add = Offer friendship to a resident
+people-friends-sort-name = Sort by name
+people-friends-sort-username = Sort by username
+people-friends-sort-status = Sort by status
+people-friends-view-pictures = View profile pictures
+people-friends-view-permissions = View permissions granted
+people-group-profile = Group profile
+people-group-notices-on = Group notices received (click to stop receiving them)
+people-group-notices-off = Group notices turned off (click to receive them)
+ui-bars-invisible = Invisible
+ui-bars-invisible-tip = Your friends do not see that you are online.
+world-status-invisible-on = { $count ->
+    [0] Invisible: no friend could see your online status.
+    [one] Invisible: your online status is hidden from { $count } friend. The servers can take a while to apply it.
+   *[other] Invisible: your online status is hidden from your { $count } friends. The servers can take a while to apply it.
+    }
+world-status-invisible-off = { $count ->
+    [0] You are no longer invisible.
+    [one] You are no longer invisible: { $count } friend sees your online status again. The servers can take a while to apply it.
+   *[other] You are no longer invisible: { $count } friends see your online status again. The servers can take a while to apply it.
+    }
 radar-col-seen-short = Seen
 radar-col-range-short = Dist.
 ui-options-camera-reset-all = Reset the camera

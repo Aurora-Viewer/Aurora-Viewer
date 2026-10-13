@@ -4,13 +4,24 @@
 //! friendship requests) and Preferences > Privacy > Autoresponse
 //! (llimprocessing.cpp, LLIMProcessing::getAutoresponseTextForAvatar,
 //! send_rejecting_tp_offers_message, LLAgent::setAFK / setDoNotDisturb).
+//! « Invisible » is Firestorm's button of the friends list that hides our
+//! online status from every friend (GlobalOnlineStatusToggle,
+//! applyGlobalOnlineStatusChange in llviewercontrol.cpp), moved to the
+//! status choices at the human's request.
 
 use super::notifications::im as d;
+use super::social::{Friend, Social, rights};
 use super::{ChatKind, ChatLine, Origin, World};
+use aurora_llsd::{Llsd, llsd_map};
 use aurora_net::{InstantMessage, NetCommand};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::time::SystemTime;
 use uuid::Uuid;
+
+/// The « Invisible » status of the account, kept between sessions like
+/// Firestorm's per-account GlobalOnlineStatusToggle.
+pub const INVISIBLE_FILE: &str = "invisible.xml";
 
 /// IM_DO_NOT_DISTURB_AUTO_RESPONSE.
 pub const AUTO_RESPONSE: u8 = 20;
@@ -26,6 +37,8 @@ pub const ANIM_DO_NOT_DISTURB: Uuid = Uuid::from_u128(0xefcf670c_2d18_8128_973a_
 pub struct StatusModes {
     pub away: bool,
     pub dnd: bool,
+    /// Our online status is hidden from every friend.
+    pub invisible: bool,
     pub autorespond: bool,
     pub autorespond_nonfriends: bool,
     pub reject_teleports: bool,
@@ -94,11 +107,89 @@ impl Default for AutoResponse {
     }
 }
 
+/// « Invisible »: no friend sees us online. The right lives on the server,
+/// one friend at a time (GrantUserRights); unlike Firestorm, which gives it
+/// back to every friend, the friends who had it are remembered, so that
+/// leaving the status restores exactly what it took.
+#[derive(Debug, Default)]
+pub struct Invisible {
+    pub on: bool,
+    /// Friends who saw us online when the status was set.
+    restore: Vec<Uuid>,
+    path: Option<PathBuf>,
+}
+
+impl Invisible {
+    /// The status the account was left in. One of the remembered friends
+    /// sees us online again: the rights were changed elsewhere (another
+    /// viewer) and the status no longer holds.
+    pub fn load(path: PathBuf, friends: &[Friend]) -> Invisible {
+        let saved = std::fs::read(&path).ok().and_then(|b| aurora_llsd::from_xml(&b).ok());
+        let restore: Vec<Uuid> = saved
+            .as_ref()
+            .map(|v| {
+                v["restore"]
+                    .as_array()
+                    .iter()
+                    .map(Llsd::as_uuid)
+                    .filter(|id| !id.is_nil())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let on = saved.is_some_and(|v| v["invisible"].as_bool()) && !friends.iter().any(|f| restore.contains(&f.id) && sees_us(f));
+        Invisible {
+            on,
+            restore: if on { restore } else { Vec::new() },
+            path: Some(path),
+        }
+    }
+
+    fn save(&self) {
+        let Some(path) = &self.path else {
+            return;
+        };
+        let restore: Vec<Llsd> = self.restore.iter().copied().map(Llsd::from).collect();
+        let state = llsd_map! {"invisible" => self.on, "restore" => restore};
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(path, aurora_llsd::to_xml(&state)) {
+            log::warn!("invisible status not saved ({e}): {}", path.display());
+        }
+    }
+}
+
+/// The friend may see us online.
+fn sees_us(f: &Friend) -> bool {
+    f.rights_given & rights::ONLINE_STATUS != 0
+}
+
+/// The right to see us online, taken from or given back to one friend
+/// (LLAvatarPropertiesProcessor::sendFriendRights): the other rights stay
+/// as they are, as in applyGlobalOnlineStatusChange. True when it changed.
+fn show_online_to(social: &mut Social, out: &mut Vec<NetCommand>, friend: Uuid, visible: bool) -> bool {
+    let Some(f) = social.friends.iter_mut().find(|f| f.id == friend) else {
+        return false;
+    };
+    let given = if visible {
+        f.rights_given | rights::ONLINE_STATUS
+    } else {
+        f.rights_given & !rights::ONLINE_STATUS
+    };
+    let changed = given != f.rights_given;
+    if changed {
+        f.rights_given = given;
+        out.push(NetCommand::GrantUserRights { friend, rights: given });
+    }
+    changed
+}
+
 /// Runtime status.
 #[derive(Debug, Default)]
 pub struct Status {
     pub away: bool,
     pub dnd: bool,
+    pub invisible: Invisible,
     /// Copy of the settings (refreshed by the app).
     pub cfg: AutoResponse,
 }
@@ -108,6 +199,7 @@ impl Status {
         StatusModes {
             away: self.away,
             dnd: self.dnd,
+            invisible: self.invisible.on,
             autorespond: self.cfg.autorespond,
             autorespond_nonfriends: self.cfg.autorespond_nonfriends,
             reject_teleports: self.cfg.reject_teleports,
@@ -117,6 +209,17 @@ impl Status {
             report_ignored_adhoc: self.cfg.report_ignored_adhoc,
             adhoc_from_friends: self.cfg.adhoc_from_friends,
         }
+    }
+
+    /// A friendship made while invisible: the server lets a new friend see
+    /// us online, so the right is taken back at once and remembered.
+    pub(super) fn hide_from_new_friend(&mut self, social: &mut Social, out: &mut Vec<NetCommand>, friend: Uuid) {
+        if !self.invisible.on || self.invisible.restore.contains(&friend) {
+            return;
+        }
+        show_online_to(social, out, friend, false);
+        self.invisible.restore.push(friend);
+        self.invisible.save();
     }
 
     /// Some automatic response mode is on (getAutoresponseTextForAvatar).
@@ -172,6 +275,38 @@ impl World {
                 start: on,
             });
         }
+    }
+
+    /// « Invisible » (applyGlobalOnlineStatusChange): one GrantUserRights
+    /// per friend, which the servers take a while to apply. Firestorm asks
+    /// for a confirmation because it cannot undo it; here leaving the
+    /// status gives the right back to the friends who had it, and to them
+    /// only.
+    pub fn set_invisible(&mut self, on: bool) {
+        if self.status.invisible.on == on {
+            return;
+        }
+        let friends: Vec<Uuid> = if on {
+            self.social.friends.iter().filter(|f| sees_us(f)).map(|f| f.id).collect()
+        } else {
+            std::mem::take(&mut self.status.invisible.restore)
+        };
+        // (a remembered friend may be gone, or see us again already)
+        let count = friends
+            .iter()
+            .filter(|id| show_online_to(&mut self.social, &mut self.groups.out, **id, !on))
+            .count();
+        let text = if on {
+            aurora_i18n::tr!("world-status-invisible-on", count = count)
+        } else {
+            aurora_i18n::tr!("world-status-invisible-off", count = count)
+        };
+        if on {
+            self.status.invisible.restore = friends;
+        }
+        self.status.invisible.on = on;
+        self.status.invisible.save();
+        self.system_message(text);
     }
 
     /// Answer an IM from a blocked resident (FSSendMutedAvatarResponse),
@@ -279,6 +414,61 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn friend(n: u128, given: i32) -> Friend {
+        Friend {
+            id: Uuid::from_u128(n),
+            online: false,
+            rights_given: given,
+            rights_has: 0,
+        }
+    }
+
+    fn rights_sent(world: &mut World) -> Vec<(Uuid, i32)> {
+        world
+            .groups
+            .take_commands()
+            .into_iter()
+            .filter_map(|c| match c {
+                NetCommand::GrantUserRights { friend, rights } => Some((friend, rights)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn invisible_takes_the_online_right_and_gives_it_back_to_who_had_it() {
+        let dir = std::env::temp_dir().join(format!("aurora-invisible-{}", Uuid::new_v4()));
+        let path = dir.join(INVISIBLE_FILE);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        // online + map + modify, online only, map without online, nothing
+        world.social.friends = vec![friend(1, 7), friend(2, 1), friend(3, 2), friend(4, 0)];
+        world.status.invisible = Invisible::load(path.clone(), &world.social.friends);
+        assert!(!world.status.invisible.on);
+        let id = Uuid::from_u128;
+        world.set_invisible(true);
+        // the other rights are kept; who did not see us is left alone
+        assert_eq!(rights_sent(&mut world), vec![(id(1), 6), (id(2), 0)]);
+        assert!(world.status.modes().invisible);
+        // a friendship made meanwhile is hidden too
+        world.social.form_friendship(id(5));
+        world.status.hide_from_new_friend(&mut world.social, &mut world.groups.out, id(5));
+        assert_eq!(rights_sent(&mut world), vec![(id(5), 0)]);
+        // the next session finds the status and who to give the right back to
+        let again = Invisible::load(path.clone(), &world.social.friends);
+        assert!(again.on);
+        assert_eq!(again.restore, vec![id(1), id(2), id(5)]);
+        world.set_invisible(false);
+        assert_eq!(rights_sent(&mut world), vec![(id(1), 7), (id(2), 1), (id(5), 1)]);
+        assert!(!Invisible::load(path.clone(), &world.social.friends).on);
+        // rights given back from another viewer: the saved status is void
+        world.set_invisible(true);
+        rights_sent(&mut world);
+        world.social.friends[0].rights_given = 7;
+        let stale = Invisible::load(path, &world.social.friends);
+        assert!(!stale.on && stale.restore.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn response_priority() {
