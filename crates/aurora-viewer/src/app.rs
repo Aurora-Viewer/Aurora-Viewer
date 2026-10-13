@@ -7631,6 +7631,14 @@ impl ApplicationHandler for App {
                 self.chat_ui.selected = Some(crate::demo::DEMO_LONG_NAME);
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 480.0), conversations);
                 ui::widgets::place_floater(&self.egui_ctx, "people", egui::pos2(8.0, 40.0), people);
+            } else if crate::demo::many_conversations_scenario() {
+                // =many: more conversations than the list shows, the last
+                // one opened as from a notification (the list scrolls to it)
+                self.panels.chat = true;
+                self.panels.perf = false;
+                self.chat_ui
+                    .open(crate::demo::many_conversation(crate::demo::MANY_CONVERSATIONS - 1));
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
             } else if std::env::var_os("AURORA_DEMO_CONV").is_some() {
                 self.panels.chat = true;
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
