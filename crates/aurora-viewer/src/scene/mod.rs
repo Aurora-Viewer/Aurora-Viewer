@@ -20,6 +20,7 @@ mod list_index;
 pub mod loading;
 mod lod_watch;
 pub mod meshes;
+pub mod morph;
 pub mod particles;
 mod pick_accel;
 pub mod picking;
@@ -62,11 +63,57 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GeomKey {
-    Prim { hash: u64, lod: u8 },
-    Flexible { id: Uuid, hash: u64, lod: u8 },
-    Sculpt { hash: u64, lod: u8 },
-    Mesh { id: Uuid, lod: u8 },
+    Prim {
+        hash: u64,
+        lod: u8,
+    },
+    Flexible {
+        id: Uuid,
+        hash: u64,
+        lod: u8,
+    },
+    Sculpt {
+        hash: u64,
+        lod: u8,
+    },
+    Mesh {
+        id: Uuid,
+        lod: u8,
+    },
     AvatarPart(u8),
+    /// A system body part morphed by a set of visual parameter weights
+    /// (morph.rs), shared by the avatars that have them.
+    AvatarMorph {
+        part: u8,
+        weights: u64,
+    },
+}
+
+/// How a system body part is drawn, whatever the alpha class of its baked
+/// texture (LLVOAvatar::renderSkinned and renderTransparent, drawn by
+/// LLDrawPoolAvatar with its minimum alpha).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemPart {
+    /// Head, upper and lower body, eyes: in the opaque passes, alpha-tested.
+    Body,
+    /// Hair, eyelashes, skirt: blended, with the same alpha test.
+    /// (Firestorm also writes their depth; the blended faces here do not,
+    /// they are sorted with the others.)
+    Transparent,
+}
+
+/// LLDrawPoolAvatar::sMinimumAlpha, and the alpha rejection of the skirt in
+/// LLVOAvatar::renderTransparent.
+const AVATAR_MINIMUM_ALPHA: f32 = 0.2;
+const AVATAR_SKIRT_MINIMUM_ALPHA: f32 = 0.25;
+
+impl SystemPart {
+    fn of(part: &str) -> SystemPart {
+        match part {
+            "hair" | "eyelashes" | "skirt" => SystemPart::Transparent,
+            _ => SystemPart::Body,
+        }
+    }
 }
 
 pub struct GpuGeom {
@@ -196,6 +243,17 @@ pub struct FaceDraw {
     pub pass: Pass,
     /// Glowing face drawn in LL's alpha pool (`glow_alpha`).
     pub glow_pool: bool,
+    /// Part of a system avatar body: its pass follows the avatar pool.
+    pub system: Option<SystemPart>,
+}
+
+impl FaceDraw {
+    /// Alpha mode bits of the face's draw record (shaders, shadows). A
+    /// blended system body part is also alpha-tested.
+    fn record_flags(&self) -> u32 {
+        let test = self.pass == Pass::Blend && self.system.is_some();
+        self.pass.record_flags() | if test { flags::ALPHA_MASK } else { 0 }
+    }
 }
 
 /// Per-object GPU data kept by the scene (indexed like the object slab).
@@ -215,6 +273,11 @@ pub struct ObjGpu {
     pub bom_mask: u64,
     /// Drawn as a too-complex silhouette (system body in flat grey).
     pub jelly: bool,
+    /// Avatars: the morphed geometries of its body parts it holds
+    /// (`GeomKey::AvatarMorph`), and whether one of them is still being
+    /// built (the part is drawn unmorphed meanwhile).
+    pub morph_geoms: Vec<GeomKey>,
+    pub morph_pending: bool,
     /// Rigged mesh (skinned to an avatar skeleton).
     pub rigged: bool,
     /// Skeleton bound to the face records (changes on attachment / flag updates).
@@ -1097,10 +1160,33 @@ impl Scene {
             GeomKey::Mesh { id, lod } => {
                 self.meshes.want(id, lod);
             }
-            GeomKey::AvatarPart(_) => {}
+            // (uploaded by `ensure_avatar_parts`, built by `avatar_morph`)
+            GeomKey::AvatarPart(_) | GeomKey::AvatarMorph { .. } => {}
         }
         self.geom_insert(key, GeomState::Pending);
         false
+    }
+
+    /// The geometry of a system body part morphed by an avatar's shape
+    /// (`weights`: the effective weight of every visual parameter), built by
+    /// a job when no avatar had these weights yet. None when no morph
+    /// applies to the part.
+    fn avatar_morph(&mut self, part: u8, weights: &HashMap<i32, f32>) -> Option<GeomKey> {
+        let lib = self.avatar_lib.clone();
+        let (w, hash) = morph::part_weights(lib.parts.get(part as usize)?, weights)?;
+        let key = GeomKey::AvatarMorph { part, weights: hash };
+        if !self.geoms.contains_key(&key) {
+            let pool = self.staging.clone();
+            self.jobs.spawn(move || match lib.parts.get(part as usize) {
+                Some(p) => {
+                    let (face, min, max) = morph::morphed(p, &w);
+                    JobResult::geometry(key, (vec![Some(face)], min, max), 1.0, pool.as_deref())
+                }
+                None => JobResult::GeometryFailed { key },
+            });
+            self.geom_insert(key, GeomState::Pending);
+        }
+        Some(key)
     }
 
     /// Put a prepared geometry in the arena: staged faces are copied by the
@@ -1307,6 +1393,10 @@ impl Scene {
         if let Some(k) = g.geom.take() {
             self.geom_unref(k);
         }
+        for k in g.morph_geoms.drain(..) {
+            self.geom_unref(k);
+        }
+        g.morph_pending = false;
         g.wanted_geom = None;
         g.material_ids.clear();
     }
@@ -1931,12 +2021,14 @@ impl Scene {
                         continue;
                     }
                     any = true;
-                    let mode_changed = f.pass.record_flags() != pass.record_flags();
+                    let before = f.record_flags();
                     f.pass = pass;
                     f.glow_pool = pool;
+                    let mode = f.record_flags();
+                    let mode_changed = before != mode;
                     let (record, face) = (f.record, cull_face(f, idx, fi == 0));
                     if mode_changed && let Some(mut r) = renderer.records.get(record).copied() {
-                        r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | pass.record_flags();
+                        r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
                         renderer.records.set(record, r);
                     }
                     renderer.records.set_face(record, face);
@@ -1969,7 +2061,7 @@ impl Scene {
             let (pass, pool) = face_mode(f, alpha, channel);
             f.pass = pass;
             f.glow_pool = pool;
-            let mode = pass.record_flags();
+            let mode = f.record_flags();
             if mode != 0
                 && let Some(mut r) = renderer.records.get(f.record).copied()
             {
@@ -2663,6 +2755,7 @@ impl Scene {
                 glow: rec.emissive[3] > 0.0,
                 pass: Pass::Hidden,
                 glow_pool: false,
+                system: None,
             });
         }
         for t in old_tex {
@@ -2747,22 +2840,23 @@ impl Scene {
         // off, filled with the muted color LLColor4::grey4)
         let jelly = self.too_complex.contains(&idx);
         let g = &self.gpu[idx];
+        // (a morphed part that was being built is there, or never will be)
+        let morphs_arrived = g.morph_pending && g.morph_geoms.iter().all(|k| self.geom_ready(k).is_some() || self.geom_failed(k));
         let needs_full = !g.is_avatar
             || g.faces.len() != lib.parts.len()
             || g.tex_generation != appearance_gen
             || g.bom_mask != bom_mask
-            || g.jelly != jelly;
+            || g.jelly != jelly
+            || morphs_arrived;
         if needs_full {
             let mut g = std::mem::take(&mut self.gpu[idx]);
             self.drop_faces(renderer, idx, &mut g);
             let old_tex: Vec<Uuid> = std::mem::take(&mut g.tex_ids);
+            // the body parts as the avatar's shape morphs them (morph.rs)
+            let mut weights: Option<HashMap<i32, f32>> = None;
+            let held = std::mem::take(&mut g.morph_geoms);
+            g.morph_pending = false;
             for (pi, part) in lib.parts.iter().enumerate() {
-                let Some(geom) = self.geom_ready(&GeomKey::AvatarPart(pi as u8)) else {
-                    continue;
-                };
-                let Some(Some(alloc)) = geom.faces.first().copied() else {
-                    continue;
-                };
                 let tex = world.bake_texture(idx, part.bake_te);
                 // Skirt only when a skirt bake exists; invisible bakes hide parts.
                 let hidden = match tex {
@@ -2776,9 +2870,38 @@ impl Scene {
                 } else {
                     hidden || bom_mask & (1u64 << part.bake_te.min(63)) != 0
                 };
+                // (a hidden part is not morphed: most avatars hide the whole
+                // system body under a mesh one)
+                let mut key = GeomKey::AvatarPart(pi as u8);
+                let morphed = (!hidden).then(|| {
+                    let w =
+                        weights.get_or_insert_with(|| lib.shape_params.effective_weights(world.visual_params(&o.full_id).unwrap_or(&[])));
+                    self.avatar_morph(pi as u8, w)
+                });
+                if let Some(morphed) = morphed.flatten() {
+                    self.geom_ref(morphed);
+                    g.morph_geoms.push(morphed);
+                    if self.geom_ready(&morphed).is_some() {
+                        key = morphed;
+                    } else {
+                        // drawn as its file has it until the morph is built
+                        g.morph_pending |= !self.geom_failed(&morphed);
+                    }
+                }
+                let Some(geom) = self.geom_ready(&key) else {
+                    continue;
+                };
+                let Some(Some(alloc)) = geom.faces.first().copied() else {
+                    continue;
+                };
+                let minimum_alpha = if part.name == "skirt" {
+                    AVATAR_SKIRT_MINIMUM_ALPHA
+                } else {
+                    AVATAR_MINIMUM_ALPHA
+                };
                 let mut rec = DrawRecord {
                     model: record_model,
-                    params: [0.0, 0.0, 0.8, 0.5],
+                    params: [0.0, 0.0, 0.8, minimum_alpha],
                     flags: [flags::SKINNED, palette, system_binds, 0],
                     ..Default::default()
                 };
@@ -2820,10 +2943,15 @@ impl Scene {
                     glow: false,
                     pass: Pass::Hidden,
                     glow_pool: false,
+                    system: Some(SystemPart::of(part.name)),
                 });
             }
             for t in old_tex {
                 self.textures.release(&t);
+            }
+            // (after the new ones are held: a geometry kept is not let go)
+            for k in held {
+                self.geom_unref(k);
             }
             g.is_avatar = true;
             g.tex_generation = appearance_gen;
@@ -4295,6 +4423,21 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
     if f.te_alpha < 0.004 || (f.base_slot == aurora_render::textures::TRANSPARENT && f.pbr_alpha.is_none()) {
         return Pass::Hidden;
     }
+    // A system body part: the avatar pool decides, not the texture alone.
+    // The body is never blended, whatever the alpha of its bake; hair,
+    // eyelashes and skirt are blended where their bake is, and alpha-tested
+    // like the body.
+    match f.system {
+        Some(SystemPart::Body) => return if tex_alpha == AlphaKind::Opaque { Pass::Opaque } else { Pass::Mask },
+        Some(SystemPart::Transparent) => {
+            return match tex_alpha {
+                AlphaKind::Opaque => Pass::Opaque,
+                AlphaKind::Mask => Pass::Mask,
+                AlphaKind::Blend => Pass::Blend,
+            };
+        }
+        None => {}
+    }
     let two = f.two_sided;
     match f.pbr_alpha {
         Some(0) => return if two { Pass::OpaqueTwoSided } else { Pass::Opaque },
@@ -4634,7 +4777,50 @@ mod tests {
             glow,
             pass: p,
             glow_pool: false,
+            system: None,
         }
+    }
+
+    /// LLVOAvatar::renderSkinned / renderTransparent: the system body is
+    /// alpha-tested and never blended, whatever the alpha of its bake; hair,
+    /// eyelashes and skirt are blended, and alpha-tested as well.
+    #[test]
+    fn system_body_parts_follow_the_avatar_pool_not_their_bake_alone() {
+        let part = |name: &str, tex: AlphaKind| {
+            let mut f = FaceDraw {
+                system: Some(SystemPart::of(name)),
+                ..test_face(Pass::Hidden, false)
+            };
+            f.pass = classify(&f, tex);
+            (f.pass, f.record_flags())
+        };
+        for body in ["head", "upper", "lower", "eye_left", "eye_right"] {
+            assert_eq!(part(body, AlphaKind::Opaque), (Pass::Opaque, 0), "{body}");
+            assert_eq!(part(body, AlphaKind::Mask), (Pass::Mask, flags::ALPHA_MASK), "{body}");
+            assert_eq!(part(body, AlphaKind::Blend), (Pass::Mask, flags::ALPHA_MASK), "{body}");
+        }
+        for soft in ["hair", "eyelashes", "skirt"] {
+            assert_eq!(part(soft, AlphaKind::Opaque), (Pass::Opaque, 0), "{soft}");
+            assert_eq!(part(soft, AlphaKind::Mask), (Pass::Mask, flags::ALPHA_MASK), "{soft}");
+            assert_eq!(
+                part(soft, AlphaKind::Blend),
+                (Pass::Blend, flags::ALPHA_BLEND | flags::ALPHA_MASK),
+                "{soft}"
+            );
+        }
+        // a part hidden by an invisible bake or a worn mesh stays hidden
+        let hidden = FaceDraw {
+            system: Some(SystemPart::Body),
+            te_alpha: 0.0,
+            ..test_face(Pass::Hidden, false)
+        };
+        assert_eq!(classify(&hidden, AlphaKind::Blend), Pass::Hidden);
+        // the other blended faces are not alpha-tested
+        let prim = FaceDraw {
+            pass: Pass::Blend,
+            ..test_face(Pass::Blend, false)
+        };
+        assert_eq!(prim.record_flags(), flags::ALPHA_BLEND);
     }
 
     #[test]
