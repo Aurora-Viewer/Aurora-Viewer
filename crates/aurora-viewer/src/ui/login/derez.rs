@@ -314,7 +314,7 @@ mod tests {
         let mut requests = 0;
         let mut output = None;
         for time in [0.05, 0.12, 0.3, 0.7, 1.2, 5.0] {
-            output = Some(ctx.run_ui(
+            output = Some(super::super::test_output(ctx.run_ui(
                 egui::RawInput {
                     time: Some(time),
                     screen_rect: Some(screen),
@@ -325,7 +325,7 @@ mod tests {
                         requests += 1;
                     }
                 },
-            ));
+            )));
             if time == 0.05 {
                 assert_eq!(requests, 0);
             } else {

@@ -427,7 +427,7 @@ mod tests {
             let p = theme.palette();
             let mut output = None;
             for frame in 0..8 {
-                output = Some(ctx.run_ui(
+                output = Some(crate::ui::login::test_output(ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 720.0))),
                         time: Some(frame as f64 / 30.0),
@@ -441,7 +441,7 @@ mod tests {
                                 ui.label("Synthetic dialog");
                             });
                     },
-                ));
+                )));
             }
             let output = output.unwrap();
             let markers = output

@@ -549,7 +549,7 @@ mod tests {
     fn draw(ctx: &Context, settings: &mut Settings, form: &mut LoginForm, frame: usize, events: Vec<egui::Event>) -> egui::FullOutput {
         let theme = crate::theme::Theme::default();
         theme.apply(ctx, 1.0);
-        ctx.run_ui(
+        super::super::test_output(ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 720.0))),
                 time: Some(frame as f64 / 30.0),
@@ -559,7 +559,7 @@ mod tests {
             |_ui| {
                 show_impl(ctx, &theme.palette(), &Icons::default(), settings, form, true);
             },
-        )
+        ))
     }
 
     fn button(pos: egui::Pos2, pressed: bool) -> egui::Event {

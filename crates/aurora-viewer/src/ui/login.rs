@@ -731,6 +731,13 @@ pub fn show(
 }
 
 #[cfg(test)]
+pub(crate) fn test_output(mut output: egui::FullOutput) -> egui::FullOutput {
+    // Headless interaction tests inspect shapes and actions without a GPU uploader.
+    output.textures_delta.clear();
+    output
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

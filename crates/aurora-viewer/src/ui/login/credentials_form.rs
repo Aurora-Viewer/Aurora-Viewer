@@ -255,13 +255,13 @@ mod tests {
             password: "synthetic-input".into(),
             ..Default::default()
         };
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let _ = super::super::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
             content(ui, &theme.palette(), &Icons::default(), &mut settings, &mut form, true, None);
-        });
+        }));
         settings.username = "synthetic-alpha".into();
         form.busy = true;
         let mut submitted = false;
-        let output = ctx.run_ui(
+        let output = super::super::test_output(ctx.run_ui(
             egui::RawInput {
                 events: vec![
                     egui::Event::Text("ignored-input".into()),
@@ -286,7 +286,7 @@ mod tests {
                     Some((aurora_i18n::tr!("session-connecting-to-login-server"), 0.35)),
                 );
             },
-        );
+        ));
         assert!(!submitted);
         assert_eq!(settings.username, "synthetic-alpha");
         assert_eq!(form.password, "synthetic-input");
@@ -309,23 +309,25 @@ mod tests {
         let mut submitted = false;
         let mut draw = |new_account: bool, mfa: bool, enter: bool| {
             form.show_mfa = mfa;
-            let output = ctx.run_ui(
-                egui::RawInput {
-                    events: enter
-                        .then(|| egui::Event::Key {
-                            key: egui::Key::Enter,
-                            physical_key: None,
-                            pressed: true,
-                            repeat: false,
-                            modifiers: egui::Modifiers::NONE,
-                        })
-                        .into_iter()
-                        .collect(),
-                    ..Default::default()
-                },
-                |ui| {
-                    submitted = content(ui, &theme.palette(), &Icons::default(), &mut settings, &mut form, new_account, None);
-                },
+            let output = super::super::test_output(
+                ctx.run_ui(
+                    egui::RawInput {
+                        events: enter
+                            .then(|| egui::Event::Key {
+                                key: egui::Key::Enter,
+                                physical_key: None,
+                                pressed: true,
+                                repeat: false,
+                                modifiers: egui::Modifiers::NONE,
+                            })
+                            .into_iter()
+                            .collect(),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        submitted = content(ui, &theme.palette(), &Icons::default(), &mut settings, &mut form, new_account, None);
+                    },
+                ),
             );
             output
                 .shapes

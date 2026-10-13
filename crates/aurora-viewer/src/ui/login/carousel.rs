@@ -860,7 +860,7 @@ mod tests {
     ) -> egui::FullOutput {
         let theme = crate::theme::Theme::default();
         theme.apply(ctx, 1.0);
-        ctx.run_ui(
+        super::super::test_output(ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 720.0))),
                 time: Some(frame as f64 / 30.0),
@@ -879,7 +879,7 @@ mod tests {
                     None,
                 );
             },
-        )
+        ))
     }
 
     fn text_rect(output: &egui::FullOutput, label: &str) -> Option<Rect> {
@@ -928,7 +928,7 @@ mod tests {
         let mut account = Account::from_settings(&Settings::default(), false, None);
         for frame in 0..4 {
             let mut width = 0.0;
-            let _ = ctx.run_ui(
+            let _ = super::super::test_output(ctx.run_ui(
                 egui::RawInput {
                     time: Some(frame as f64 / 30.0),
                     ..Default::default()
@@ -943,7 +943,7 @@ mod tests {
                         width = ui.min_rect().width();
                     });
                 },
-            );
+            ));
             assert!(width <= 185.1, "selector widened the card to {width}");
         }
     }
@@ -1567,25 +1567,27 @@ mod tests {
             ..Default::default()
         };
         let draw = |key: Option<egui::Key>, form: &mut LoginForm, settings: &mut Settings| {
-            let _ = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 720.0))),
-                    time: Some(0.1),
-                    events: key
-                        .map(|key| egui::Event::Key {
-                            key,
-                            physical_key: None,
-                            pressed: true,
-                            repeat: false,
-                            modifiers: egui::Modifiers::NONE,
-                        })
-                        .into_iter()
-                        .collect(),
-                    ..Default::default()
-                },
-                |ui| {
-                    show(ui, &p, &icons, None, settings, form, &info, None);
-                },
+            let _ = super::super::test_output(
+                ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 720.0))),
+                        time: Some(0.1),
+                        events: key
+                            .map(|key| egui::Event::Key {
+                                key,
+                                physical_key: None,
+                                pressed: true,
+                                repeat: false,
+                                modifiers: egui::Modifiers::NONE,
+                            })
+                            .into_iter()
+                            .collect(),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(ui, &p, &icons, None, settings, form, &info, None);
+                    },
+                ),
             );
         };
         draw(None, &mut form, &mut settings);
@@ -1622,7 +1624,7 @@ mod tests {
             };
             let mut output = None;
             for frame in 0..8 {
-                output = Some(ctx.run_ui(
+                output = Some(super::super::test_output(ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
                         time: Some(frame as f64 / 10.0),
@@ -1640,7 +1642,7 @@ mod tests {
                             None,
                         );
                     },
-                ));
+                )));
             }
             let output = output.expect("synthetic frame");
             for label in [
@@ -1695,7 +1697,7 @@ mod tests {
         };
         let mut last = None;
         for frame in 0..8 {
-            last = Some(ctx.run_ui(
+            last = Some(super::super::test_output(ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 733.0))),
                     time: Some(frame as f64 / 10.0),
@@ -1704,7 +1706,7 @@ mod tests {
                 |ui| {
                     show(ui, &p, &icons, Some(&logo), &mut settings, &mut form, &info, None);
                 },
-            ));
+            )));
         }
         let output = last.expect("synthetic frame");
         for label in [
@@ -1757,7 +1759,7 @@ mod tests {
         };
         let mut output = None;
         for frame in 0..8 {
-            output = Some(ctx.run_ui(
+            output = Some(super::super::test_output(ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 733.0))),
                     time: Some(frame as f64 / 10.0),
@@ -1766,7 +1768,7 @@ mod tests {
                 |ui| {
                     show(ui, &p, &icons, Some(&logo), &mut settings, &mut form, &info, None);
                 },
-            ));
+            )));
         }
         let output = output.expect("synthetic frame");
         let submit = text_rect(&output, aurora_i18n::tr!("ui-login-log-in")).expect("submit button");
