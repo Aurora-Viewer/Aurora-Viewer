@@ -458,7 +458,10 @@ mod tests {
         let found = PluginPaths::discover(Some(&empty), Some(&pack)).expect("pack");
         assert_eq!(found.launcher, pack.join("llplugin").join("SLPlugin.exe"));
         assert_eq!(found.plugin_dir, pack.join("llplugin"));
-        assert_eq!(found.plugin_file("media_plugin_cef"), pack.join("llplugin").join("media_plugin_cef.dll"));
+        assert_eq!(
+            found.plugin_file("media_plugin_cef"),
+            pack.join("llplugin").join("media_plugin_cef.dll")
+        );
         // no pack: nothing, even on a PC where another viewer is installed
         assert!(PluginPaths::discover(Some(&empty), None).is_none());
         assert!(PluginPaths::discover(None, None).is_none());

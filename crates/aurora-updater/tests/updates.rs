@@ -373,7 +373,14 @@ fn media_pack_installs_once_and_replaces_what_older_viewers_left() {
     let rebuilt_pack = self::pack(&rebuilt, digest(&rebuilt));
     assert!(media_pack::installed(&root, &rebuilt_pack).is_none());
     let server = Server::new(HashMap::from([(PACK_ROUTE.into(), rebuilt)]));
-    run(media_pack::install(&server.source(), &rebuilt_pack, &root, &Cancel::default(), |_| {})).expect("rebuilt pack");
+    run(media_pack::install(
+        &server.source(),
+        &rebuilt_pack,
+        &root,
+        &Cancel::default(),
+        |_| {},
+    ))
+    .expect("rebuilt pack");
     assert_eq!(media_pack::installed(&root, &rebuilt_pack), Some(root.join("2")));
     assert!(media_pack::installed(&root, &pack).is_none());
     assert_eq!(
@@ -404,7 +411,10 @@ fn media_pack_is_refused_when_altered_incomplete_or_being_installed() {
         let root = temp.0.join("media-plugins");
         let outcome = run(media_pack::install(&server.source(), &pack, &root, &Cancel::default(), |_| {}));
         assert!(
-            matches!((&outcome, expected), (Err(Failure::Integrity), Failure::Integrity) | (Err(Failure::Package), Failure::Package)),
+            matches!(
+                (&outcome, expected),
+                (Err(Failure::Integrity), Failure::Integrity) | (Err(Failure::Package), Failure::Package)
+            ),
             "install outcome: {outcome:?}"
         );
         assert!(media_pack::installed(&root, &pack).is_none());
