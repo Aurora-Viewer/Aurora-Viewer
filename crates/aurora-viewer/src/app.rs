@@ -139,6 +139,9 @@ pub struct App {
     perf: PerfData,
     /// AURORA_PROFILE: frame laps and the summary line in the log.
     frame_profile: FrameProfile,
+    /// What the network did each second: Performance window, and the
+    /// "net summary" line in the log with AURORA_PROFILE.
+    net_profile: crate::net_profile::NetProfile,
     /// `AURORA_SYNC_SLICE=alt`: seconds of the frame profile so far.
     sync_alt: u64,
     /// AURORA_NAME_TAGS=alt: this second draws the classic tags.
@@ -520,6 +523,7 @@ impl App {
             history_ui: Default::default(),
             perf: PerfData::default(),
             frame_profile: FrameProfile::default(),
+            net_profile: crate::net_profile::NetProfile::default(),
             sync_alt: 0,
             name_tags_alt_classic: false,
             demo_tag_states: None,
@@ -1483,6 +1487,7 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.net_profile.reset();
                 // the demo's teleport history: several days, never saved
                 if self.demo {
                     self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
@@ -3821,14 +3826,18 @@ impl App {
         self.world.events_this_frame = 0;
         self.world.script_debug.owner_say = self.settings.script_editor.owner_say_debug;
         self.sync_chat_log();
-        while let Ok(ev) = self.net.events.try_recv() {
+        while let Ok((sent, ev)) = self.net.events.try_recv() {
             if let Some(app_ev) = self.world.apply(ev) {
                 self.on_app_event(app_ev);
             }
-            if t_ev.elapsed() > Duration::from_millis(8) {
+            let now = Instant::now();
+            self.net_profile.event_applied(sent, now);
+            if now.duration_since(t_ev) > Duration::from_millis(8) {
                 break;
             }
         }
+        self.net_profile.events_left(self.net.events.len());
+        self.net_profile.corrections(self.world.agent.take_corrections());
         // a border crossing changed what positions are relative to: the
         // camera moves with the agent, in the same frame
         let shift = self.world.take_origin_shift();
@@ -4003,7 +4012,7 @@ impl App {
                 );
                 self.last_vertical_flags = vertical;
             }
-            *self.net.controls.lock() = c;
+            self.net.set_controls(c);
         }
         self.update_voice();
         self.update_radar();
@@ -5775,6 +5784,7 @@ impl App {
         let mut parts = std::mem::take(&mut self.scene.parts);
         parts.merge(&std::mem::take(&mut self.ui_parts));
         let logged = self.frame_profile.end_frame(&self.last_render, &counts, &parts);
+        self.net_profile.end_frame(&self.net.stats);
         // AURORA_SYNC_SLICE=alt: the sync of each second by one way or the
         // other, named at the end of its line
         if logged || self.sync_alt == 0 {
@@ -6995,6 +7005,7 @@ impl App {
                     render: &self.last_render,
                     gpu: &renderer.info,
                     net: &net,
+                    link: (&self.net_profile.last, &self.net_profile.totals),
                     scene: &self.scene.stats,
                     tex: &self.scene.textures.stats,
                     meshes_fetching: self.scene.meshes.fetching,
@@ -7398,10 +7409,15 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.options_ui.tab = std::env::var("AURORA_DEMO_OPTIONS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
             }
-            // AURORA_DEMO_PERF=compact|full: the performance window in that view
+            // AURORA_DEMO_PERF=compact|full|network: the performance window in
+            // that view (network: full, with its Network section open)
             if let Ok(v) = std::env::var("AURORA_DEMO_PERF") {
                 self.panels.perf = true;
-                ui::perf::set_full(&self.egui_ctx, v.trim() == "full");
+                let network = v.trim() == "network";
+                ui::perf::set_full(&self.egui_ctx, network || v.trim() == "full");
+                if network {
+                    ui::perf::open_network(&self.egui_ctx);
+                }
             }
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {
                 self.panels.time_of_day = t.min(4);

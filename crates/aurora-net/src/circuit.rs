@@ -59,7 +59,13 @@ pub struct Circuit {
     buf: Vec<u8>,
     /// Reliable packets given up on since the last `take_dropped`.
     dropped: Vec<u32>,
+    /// Highest sequence number received, for the loss counters.
+    highest_seq: Option<u32>,
 }
+
+/// A sequence number this far below the highest one is the simulator
+/// starting over, not a late packet.
+const SEQUENCE_RESET: u32 = 100_000;
 
 impl Circuit {
     pub fn new(addr: SocketAddr) -> Self {
@@ -77,6 +83,25 @@ impl Circuit {
             ping_sent: None,
             buf: Vec::with_capacity(1500),
             dropped: Vec::new(),
+            highest_seq: None,
+        }
+    }
+
+    /// Count what the sequence number of a new packet tells about losses:
+    /// the numbers it skips (`seq_gaps`), or that it comes after a later
+    /// one (`seq_late`: a resend or a reordered packet filling a gap).
+    pub fn note_sequence(&mut self, seq: u32, stats: &NetStats) {
+        match self.highest_seq {
+            Some(high) if seq > high => {
+                stats.seq_gaps.fetch_add(u64::from(seq - high - 1), Ordering::Relaxed);
+                self.highest_seq = Some(seq);
+            }
+            Some(high) if high - seq > SEQUENCE_RESET => self.highest_seq = Some(seq),
+            Some(high) if seq < high => {
+                stats.seq_late.fetch_add(1, Ordering::Relaxed);
+            }
+            Some(_) => {}
+            None => self.highest_seq = Some(seq),
         }
     }
 
@@ -306,6 +331,30 @@ mod tests {
         assert_eq!(c.pending_acks, vec![3, 3]);
         // without RESENT a reused sequence number is a new packet
         assert!(c.on_receive(RELIABLE, 3, &[]));
+    }
+
+    #[test]
+    fn sequence_numbers_count_gaps_and_late_packets() {
+        let stats = NetStats::default();
+        let mut c = circuit();
+        let seen = |stats: &NetStats| (stats.seq_gaps.load(Ordering::Relaxed), stats.seq_late.load(Ordering::Relaxed));
+        // the first packet is where the count starts, whatever its number
+        c.note_sequence(10, &stats);
+        c.note_sequence(11, &stats);
+        assert_eq!(seen(&stats), (0, 0));
+        // 12 and 13 are missing, then 12 arrives (resent): one still missing
+        c.note_sequence(14, &stats);
+        c.note_sequence(12, &stats);
+        assert_eq!(seen(&stats), (2, 1));
+        // the same number twice is neither
+        c.note_sequence(14, &stats);
+        assert_eq!(seen(&stats), (2, 1));
+        // the simulator starts its numbers over: not a late packet
+        c.note_sequence(500_000, &stats);
+        let gaps = stats.seq_gaps.load(Ordering::Relaxed);
+        c.note_sequence(1, &stats);
+        c.note_sequence(2, &stats);
+        assert_eq!(seen(&stats), (gaps, 1));
     }
 
     #[test]

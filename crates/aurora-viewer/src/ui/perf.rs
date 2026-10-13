@@ -284,6 +284,8 @@ pub struct PerfView<'a> {
     pub render: &'a RenderStats,
     pub gpu: &'a GpuInfo,
     pub net: &'a NetStatsSnapshot,
+    /// The link over the last second, and the totals of the session.
+    pub link: (&'a crate::net_profile::NetPeriod, &'a crate::net_profile::NetTotals),
     pub scene: &'a SceneStats,
     pub tex: &'a crate::scene::textures::TextureStats,
     pub meshes_fetching: usize,
@@ -783,10 +785,24 @@ fn row(ui: &mut egui::Ui, p: &Palette, k: &str, v: String) {
 }
 
 fn group(ui: &mut egui::Ui, p: &Palette, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
-    super::widgets::collapsing(ui, p, ("perf", title), title, open, |ui| {
+    group_forced(ui, p, title, open, None, body);
+}
+
+/// [`group`] that `forced` can hold open whatever the user's choice.
+fn group_forced(ui: &mut egui::Ui, p: &Palette, title: &str, open: bool, forced: Option<bool>, body: impl FnOnce(&mut egui::Ui)) {
+    super::widgets::collapsing_forced(ui, p, ("perf", title), title, open, forced, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         body(ui);
     });
+}
+
+fn network_open_id() -> egui::Id {
+    egui::Id::new(("perf", "network-open"))
+}
+
+/// Demo captures (AURORA_DEMO_PERF=network): the Network section stays open.
+pub fn open_network(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(network_open_id(), true));
 }
 
 fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
@@ -986,7 +1002,8 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
         row(ui, p, aurora_i18n::tr!("ui-perf-network-meshes"), format!("{}", v.meshes_fetching));
         row(ui, p, aurora_i18n::tr!("ui-perf-gpu-records"), format!("{}", v.render.records));
     });
-    group(ui, p, aurora_i18n::tr!("ui-perf-network"), false, |ui| {
+    let network_open = ui.ctx().data(|d| d.get_temp::<bool>(network_open_id())).filter(|open| *open);
+    group_forced(ui, p, aurora_i18n::tr!("ui-perf-network"), false, network_open, |ui| {
         let last = d.net_hist.back().copied().unwrap_or_default();
         let parts = vec![
             Part {
@@ -1009,6 +1026,41 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
         net_graph(ui, p, d);
         ui.add_space(6.0);
         row(ui, p, aurora_i18n::tr!("ui-perf-ping"), format!("{} ms", v.net.ping_ms));
+        let (link, totals) = v.link;
+        // what the user feels beyond the ping: how late a key leaves, how
+        // often the simulator moves the avatar back, how long an update
+        // waits on our side
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-input-delay"),
+            totals.input_delay_ms.map_or_else(
+                || "–".to_string(),
+                |ms| format!("{} ms", aurora_i18n::number_text(&format!("{ms:.0}"))),
+            ),
+        );
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-avatar-corrections"),
+            aurora_i18n::tr!(
+                "ui-perf-corrections-largest",
+                value0 = format!("{}", totals.corrections.count),
+                value1 = aurora_i18n::number_text(&format!("{:.1}", totals.corrections.largest))
+            ),
+        );
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-network-loop-pause"),
+            format!("{} ms", aurora_i18n::number_text(&format!("{:.1}", link.loop_busy_ms))),
+        );
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-event-wait"),
+            format!("{} ms", aurora_i18n::number_text(&format!("{:.1}", link.event_wait_ms))),
+        );
         row(
             ui,
             p,

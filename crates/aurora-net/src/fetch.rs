@@ -239,6 +239,17 @@ fn host_of(url: &str) -> String {
         .unwrap_or_else(|| "?".into())
 }
 
+/// Log the HTTP version an asset host answers with, once per host and
+/// version: how many requests a connection carries at a time depends on it.
+fn note_protocol(host: &str, version: reqwest::Version) {
+    static SEEN: parking_lot::Mutex<Vec<(String, reqwest::Version)>> = parking_lot::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock();
+    if !seen.iter().any(|(h, v)| h == host && *v == version) {
+        seen.push((host.to_string(), version));
+        log::info!("asset host {host} answers in {version:?}");
+    }
+}
+
 enum Msg {
     Request(FetchRequest),
     Cancel(u64),
@@ -377,7 +388,7 @@ async fn dispatcher(
         let sem = sem.clone();
         tokio::spawn(async move {
             stats.http_in_flight.fetch_add(1, Ordering::Relaxed);
-            let result = do_fetch(&http, &req, policy, &sem, permit).await;
+            let result = do_fetch(&http, &req, policy, &sem, permit, &stats).await;
             stats.http_in_flight.fetch_sub(1, Ordering::Relaxed);
             match &result.data {
                 Ok(d) => {
@@ -438,6 +449,7 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32) -> A
     let status = resp.status().as_u16();
     // after redirects: tells whether a CDN answered
     let host = resp.url().host_str().unwrap_or("?").to_string();
+    note_protocol(&host, resp.version());
     let reason = resp.status().canonical_reason().unwrap_or("");
     match classify_status(status) {
         StatusClass::Success => {}
@@ -527,6 +539,7 @@ async fn do_fetch(
     policy: RetryPolicy,
     sem: &Arc<Semaphore>,
     permit: tokio::sync::OwnedSemaphorePermit,
+    stats: &NetStats,
 ) -> FetchResult {
     let mut first = Some(permit);
     let mut retry = 0u32;
@@ -548,6 +561,7 @@ async fn do_fetch(
                     };
                 }
                 log::debug!("asset fetch {}: {why}, retry {}", req.key, retry + 1);
+                stats.http_retries.fetch_add(1, Ordering::Relaxed);
                 drop(slot);
                 tokio::time::sleep(policy.delay(retry, retry_after)).await;
                 retry += 1;
@@ -710,7 +724,7 @@ mod tests {
             priority: 1.0,
             accept: "image/x-j2c",
         };
-        do_fetch(&client(), &req, policy, &sem, permit).await
+        do_fetch(&client(), &req, policy, &sem, permit, &NetStats::default()).await
     }
 
     #[tokio::test]

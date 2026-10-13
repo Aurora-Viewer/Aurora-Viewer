@@ -1026,7 +1026,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
-| `AURORA_DEMO_PERF=compact` or `full` | Opens the Performance window, compact or full |
+| `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
@@ -2204,6 +2204,49 @@ thread.
     new objects waiting for their first sync included);
   - `xmode=old|new` at the end of the line with `AURORA_SYNC_SLICE=alt`:
     the path of the sync during that second.
+
+### Network
+
+With `AURORA_PROFILE=1`, one `net summary` line per second during a grid
+session (none at the login screen or in demo mode, which has no circuit).
+Times are in milliseconds, distances in metres; counts are those of the
+second, `-` means "not measured in this second". The Performance window shows
+the input delay, the corrections, the loop pause and the event wait without
+the variable.
+
+- `ping`, `avg`: last round trip to the agent's simulator (measured every
+  5 s) and the smoothed value the resend delay is computed from.
+- `udp in= out= pkt/s`, then `in / out kb/s`: packets and throughput of all
+  the circuits.
+- `resent`, `given_up`: reliable packets we sent again, and those abandoned
+  after their last resend. `dup`: packets the simulator resent although we
+  had them (our acknowledgement was late or lost). `unacked`: reliable
+  packets still waiting for their acknowledgement.
+- `gaps`, `late`: sequence numbers the simulators skipped, and packets that
+  arrived after a later one (a resend, or out of order). `gaps` minus `late`
+  over a stretch of the log is what never arrived: a loss on the link, or a
+  receive buffer that overflowed while the loop was busy.
+- `loop_max`: the longest time the session loop spent on one wake-up (a
+  packet, a tick, a command). During that time no circuit is read,
+  acknowledged or answered: a value of tens of milliseconds is a pause of
+  the whole network side.
+- `events`, `left_max`, `wait_max`: events applied by the main thread, the
+  most left in the channel at the end of a frame (its 8 ms box was full) and
+  the longest time an applied event had waited since the network sent it.
+  A position update that waited is drawn that much later.
+- `agent_updates`, `input_delay_max`: AgentUpdates sent, and the longest
+  wait between a change of the control flags (a key pressed or released)
+  and the AgentUpdate that carried it. This is what the viewer adds to the
+  ping before the simulator knows about a key.
+- `corrections`, `largest`: reports of the simulator that put our avatar
+  more than 0.5 m from where it was extrapolated (Firestorm's
+  `AGENT_POSITION_SNAP`), and the largest distance of the second, moves of
+  more than 10 m left out. A lagging simulator shows here as rubber-banding.
+- `http active= queued= done= failed= retries=`, then its throughput: asset
+  requests in flight and waiting at the end of the second, finished, failed
+  for good and sent again during it. The line `asset host <name> answers in
+  HTTP/…` appears once per host: the protocol decides how many requests one
+  connection carries.
 
 ### Object under the cursor
 

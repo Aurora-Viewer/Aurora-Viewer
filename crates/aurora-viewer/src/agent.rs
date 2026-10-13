@@ -60,7 +60,25 @@ pub struct AgentState {
     last_prediction: Instant,
     has_server: bool,
     last_jump_input: Option<Instant>,
+    corrections: Corrections,
 }
+
+/// Simulator reports that put our avatar away from where it was
+/// extrapolated: what a lagging simulator shows as rubber-banding.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Corrections {
+    /// Reports farther than `CORRECTION_MIN` from the extrapolated position.
+    pub count: u32,
+    /// Largest distance of a report from the extrapolated position (m).
+    pub largest: f32,
+}
+
+/// Distance counted as a correction: Firestorm's own-avatar snap statistic
+/// (AGENT_POSITION_SNAP in LLViewerObject::processUpdateMessage, 0.5 m).
+const CORRECTION_MIN: f32 = 0.5;
+/// Farther than the drawable's snap distance the report is a move
+/// (teleport within the region, sit target), not a correction.
+const CORRECTION_MAX: f32 = 10.0;
 
 impl Default for AgentState {
     fn default() -> Self {
@@ -82,6 +100,7 @@ impl Default for AgentState {
             last_prediction: now,
             has_server: false,
             last_jump_input: None,
+            corrections: Corrections::default(),
         }
     }
 }
@@ -198,6 +217,12 @@ impl AgentState {
         }
         if !self.has_server || was_seated {
             self.position = pos;
+        } else {
+            let gap = pos.distance(self.predicted_pos);
+            if gap <= CORRECTION_MAX {
+                self.corrections.count += u32::from(gap > CORRECTION_MIN);
+                self.corrections.largest = self.corrections.largest.max(gap);
+            }
         }
         if self.has_server && (pos.z - self.server_pos.z).abs() > 0.5 {
             log::info!(
@@ -220,6 +245,11 @@ impl AgentState {
 
     pub fn predicted_position(&self) -> Vec3 {
         self.predicted_pos
+    }
+
+    /// Corrections since the previous call.
+    pub fn take_corrections(&mut self) -> Corrections {
+        std::mem::take(&mut self.corrections)
     }
 
     /// Move from server velocity/acceleration, never from the keyboard. The
@@ -589,6 +619,30 @@ mod tests {
             agent.update(&MoveInput::default(), false, 0.06, 5.0);
         }
         near(agent.position, Vec3::X);
+    }
+
+    #[test]
+    fn corrections_count_reports_away_from_the_extrapolation() {
+        let (mut agent, now) = moving(Vec3::X * 3.0, Vec3::ZERO);
+        // where it was expected: no correction, a small largest distance
+        agent.predict_at(at(now, 0.2), 1.0, 0.0);
+        agent.on_server_update_at(Vec3::X * 0.7, Vec3::X * 3.0, Vec3::ZERO, false, true, at(now, 0.2));
+        let c = agent.take_corrections();
+        assert_eq!(c.count, 0);
+        assert!((c.largest - 0.1).abs() < 1e-4, "{c:?}");
+        // pulled back 2 m by a lagging simulator: one correction
+        agent.predict_at(at(now, 1.2), 1.0, 0.0);
+        agent.on_server_update_at(Vec3::X * 1.7, Vec3::ZERO, Vec3::ZERO, false, true, at(now, 1.2));
+        let c = agent.take_corrections();
+        assert_eq!(c.count, 1);
+        assert!((c.largest - 2.0).abs() < 1e-3, "{c:?}");
+        // a move across the region is not one, and taking empties the count
+        agent.on_server_update_at(Vec3::X * 100.0, Vec3::ZERO, Vec3::ZERO, false, true, at(now, 1.3));
+        assert_eq!(agent.take_corrections(), Corrections::default());
+        // standing up from a seat places the avatar: not a correction either
+        agent.on_server_update_at(Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, true, true, at(now, 1.4));
+        agent.on_server_update_at(Vec3::Y * 3.0, Vec3::ZERO, Vec3::ZERO, false, true, at(now, 1.5));
+        assert_eq!(agent.take_corrections(), Corrections::default());
     }
 
     #[test]

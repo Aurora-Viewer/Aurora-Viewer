@@ -292,7 +292,7 @@ mod tests {
         let sh = Shared {
             http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
-            events,
+            events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
             object_cache_dir: Arc::new(Mutex::new(None)),
@@ -414,7 +414,7 @@ mod tests {
                 request: reply,
                 target: loaded_target,
                 result,
-            } = received.try_recv().expect("loaded source")
+            } = received.try_recv().expect("loaded source").1
             else {
                 panic!("script reply")
             };
