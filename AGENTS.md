@@ -581,7 +581,7 @@ gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n>/comments --paginate
 
 | Dimension | Rule |
 |---|---|
-| Nature | One main label: `bug` for a reported problem, `feature`, `performance`, `maintenance`, `docs` or `question`. A `bug` issue can also carry `performance` if the problem is about smoothness. `fix` designates the PR that fixes the bug. |
+| Nature | One main label: `bug` for a reported problem, `feature-request` for a feature or an improvement asked for by a user (the label of the "Feature request" issue template), `feature`, `performance`, `maintenance`, `docs` or `question`. A `bug` issue can also carry `performance` if the problem is about smoothness. `fix` designates the PR that fixes the bug, `feature` the PR that brings what a `feature-request` asked for. |
 | Area | One or more established areas: `render`, `avatar`, `world`, `network`, `audio-voice`, `ui`, `build-tools`, `tooling` (section 9). Do not guess an area that is still unknown. |
 | Tracking | Only one for an open issue: `needs-triage`, `needs-info`, `needs-repro`, `confirmed`, `in-progress` or `needs-validation`. `confirmed` requires a reproduction or a demonstrated cause; `in-progress` requires real, announced ownership. Remove the previous state when it changes, and the tracking states on closing. |
 | Priority | Only one: `priority:high` (major blocker, frequent crash, data loss), `priority:normal` (common impact) or `priority:low` (cosmetic / comfort). Explain a high priority; if the impact is missing, ask for details before setting it. |
