@@ -408,6 +408,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "conversations",
             &mut panels.chat,
         );
+        flip(
+            ui,
+            p,
+            "hand-move",
+            aurora_i18n::tr!("gesture-title-shortcut"),
+            &mut panels.gestures,
+            true,
+        );
         for (tab, icon, label) in [
             (1, "users", aurora_i18n::tr!("common-friends")),
             (0, "radar-filled", aurora_i18n::tr!("common-nearby-people")),
