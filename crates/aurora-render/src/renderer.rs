@@ -3661,6 +3661,9 @@ impl Backend {
         prof.mark("tessellate");
         let (f, lists) = (&params, &draw_lists);
         let present_view = surface_tex.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // what the interface painted for the world comes first: it is drawn
+        // before the HUD attachments, the rest after them
+        let labels_end = ui.as_mut().map_or(0, |ui| crate::ui_world::take_end(&mut ui.primitives));
         let blur_boundary = ui.as_mut().and_then(|ui| crate::ui_blur::take_boundary(&mut ui.primitives));
         if let Some(ui) = ui.as_ref().filter(|_| blur_boundary.is_some()) {
             let size = [self.config.width, self.config.height];
@@ -5043,6 +5046,88 @@ impl Backend {
         }
 
         prof.mark("post");
+        // ---- egui: its meshes, and what it painted for the world (name
+        // tags, floating texts), which the HUD attachments cover
+        let mut extra_cmds = Vec::new();
+        let mut window_glass = false;
+        let sd = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [self.config.width, self.config.height],
+            pixels_per_point: ui.as_ref().map_or(1.0, |ui| ui.pixels_per_point),
+        };
+        if let Some(ui) = &mut ui {
+            let size = sd.size_in_pixels;
+            let scale = ui.pixels_per_point;
+            let glass_supported = self.ui_blur.is_some() || self.config.usage.contains(wgpu::TextureUsages::COPY_SRC);
+            let (labels, rest) = ui.primitives.split_at_mut(labels_end);
+            // the labels show the scene alone, blurred where they are; the
+            // windows show it with its labels and the HUD attachments
+            let label_glass = crate::ui_glass::bounds(labels, scale, size).filter(|_| glass_supported);
+            window_glass = glass_supported && crate::ui_glass::requested(rest);
+            if label_glass.is_some() || window_glass {
+                if !self.ui_glass.as_ref().is_some_and(|glass| glass.matches(size, scale)) {
+                    if let Some(old) = self.ui_glass.take() {
+                        old.free(&mut self.egui);
+                    }
+                    self.ui_glass = Some(crate::ui_glass::Glass::new(
+                        &self.device,
+                        &mut self.egui,
+                        self.config.format,
+                        size,
+                        scale,
+                    ));
+                }
+            } else if let Some(old) = self.ui_glass.take() {
+                old.free(&mut self.egui);
+            }
+            match (label_glass, &mut self.ui_glass) {
+                (Some(area), Some(glass)) => {
+                    let scene = self.ui_blur.as_ref().map_or(&surface_tex.texture, |blur| &blur.source);
+                    let texture = glass.encode_under(&self.device, &mut self.egui, &mut encoder, scene, area);
+                    glass.resolve(labels, scale, texture);
+                }
+                _ => crate::ui_glass::skip(labels),
+            }
+            match &self.ui_glass {
+                Some(glass) if window_glass => glass.resolve(rest, scale, glass.texture),
+                _ => crate::ui_glass::skip(rest),
+            }
+            self.previews
+                .render(&self.device, &self.queue, &mut encoder, &mut self.egui, &mut ui.primitives, scale);
+            extra_cmds = self
+                .egui
+                .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);
+        }
+        let draw_ui = |encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, primitives: &[egui::ClippedPrimitive]| {
+            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            let mut pass = pass.forget_lifetime();
+            self.egui.render(&mut pass, primitives, &sd);
+        };
+        if labels_end > 0
+            && let Some(ui) = &mut ui
+        {
+            draw_ui(&mut encoder, &surface_view, &ui.primitives[..labels_end]);
+            // egui starts its mesh-buffer iterators at zero on each render.
+            // Empty clips advance them without drawing the labels a second
+            // time with the rest of the interface.
+            for primitive in &mut ui.primitives[..labels_end] {
+                primitive.clip_rect = egui::Rect::NOTHING;
+            }
+        }
         // HUDs retain their original texture colors and never inherit world
         // depth, fog, shadows, exposure or post effects (render_hud_attachments).
         if draw_huds && let Some((_, _, depth)) = &self.hud_depth {
@@ -5102,70 +5187,12 @@ impl Backend {
             encoder.resolve_query_set(&t.query_set, 0..GPU_TIMESTAMPS, &t.resolve, 0);
             encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.readback[slot].0, 0, GPU_TIMESTAMPS as u64 * 8);
         }
-        // ---- egui
-        let mut extra_cmds = Vec::new();
+        // ---- egui: the rest of the interface, over the HUD attachments
         if let Some(ui) = &mut ui {
-            let size = [self.config.width, self.config.height];
-            let glass_supported = self.ui_blur.is_some() || self.config.usage.contains(wgpu::TextureUsages::COPY_SRC);
-            if glass_supported && crate::ui_glass::requested(&ui.primitives) {
-                if !self.ui_glass.as_ref().is_some_and(|glass| glass.matches(size, ui.pixels_per_point)) {
-                    if let Some(old) = self.ui_glass.take() {
-                        self.egui.free_texture(&old.texture);
-                    }
-                    self.ui_glass = Some(crate::ui_glass::Glass::new(
-                        &self.device,
-                        &mut self.egui,
-                        self.config.format,
-                        size,
-                        ui.pixels_per_point,
-                    ));
-                }
-                if let Some(glass) = &self.ui_glass {
-                    let scene = self.ui_blur.as_ref().map_or(&surface_tex.texture, |blur| &blur.source);
-                    glass.encode(&mut encoder, scene);
-                    glass.resolve(&mut ui.primitives, ui.pixels_per_point);
-                }
-            } else {
-                crate::ui_glass::skip(&mut ui.primitives);
-                if let Some(old) = self.ui_glass.take() {
-                    self.egui.free_texture(&old.texture);
-                }
+            if window_glass && let Some(glass) = &self.ui_glass {
+                let scene = self.ui_blur.as_ref().map_or(&surface_tex.texture, |blur| &blur.source);
+                glass.encode(&mut encoder, scene);
             }
-            self.previews.render(
-                &self.device,
-                &self.queue,
-                &mut encoder,
-                &mut self.egui,
-                &mut ui.primitives,
-                ui.pixels_per_point,
-            );
-            let sd = egui_wgpu::ScreenDescriptor {
-                size_in_pixels: [self.config.width, self.config.height],
-                pixels_per_point: ui.pixels_per_point,
-            };
-            extra_cmds = self
-                .egui
-                .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);
-            let draw_ui = |encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, primitives: &[egui::ClippedPrimitive]| {
-                let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("egui"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                let mut pass = pass.forget_lifetime();
-                self.egui.render(&mut pass, primitives, &sd);
-            };
             if let (Some(boundary), Some(blur)) = (blur_boundary, &self.ui_blur) {
                 draw_ui(&mut encoder, &surface_view, &ui.primitives[..boundary]);
                 blur.encode(&mut encoder, &present_view);
