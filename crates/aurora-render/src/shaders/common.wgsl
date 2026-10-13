@@ -837,6 +837,10 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v:
 }
 
 // Normal mapping without precomputed tangents (Mikkelsen 2010 / Schüler).
+// The cotangent frame is the solution divided by det = dot(dp1, dp2perp).
+// Schüler drops it because it is positive in GL, where dFdy runs up the
+// window; here dpdy runs down the framebuffer, det is negative on every face
+// and without its sign both axes come out reversed (bumps lit as dents).
 // `uv` is the sampling coordinate of the top-left-origin texture, so the
 // derived bitangent points down the image; SL normal maps (materialF.glsl
 // getNormal: B = sign * cross(N, T) along +t, GL bottom-left origin) put +Y
@@ -850,7 +854,7 @@ fn perturb_normal(n: vec3<f32>, p: vec3<f32>, uv: vec2<f32>, map: vec3<f32>) -> 
     let dp1perp = cross(n, dp1);
     let t = dp2perp * duv1.x + dp1perp * duv2.x;
     let b = dp2perp * duv1.y + dp1perp * duv2.y;
-    let invmax = inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
+    let invmax = sign(dot(dp1, dp2perp)) * inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
     let tbn = mat3x3<f32>(t * invmax, b * invmax, n);
     let m = (map * 2.0 - vec3<f32>(1.0)) * vec3<f32>(1.0, -1.0, 1.0);
     let res = normalize(tbn * m);

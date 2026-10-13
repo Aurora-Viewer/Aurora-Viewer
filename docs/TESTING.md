@@ -777,7 +777,11 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
 - **`AURORA_DEMO_PLANAR=1`** : les carreaux doivent se raccorder d'une dalle
   à l'autre.
 - **`AURORA_DEMO_PBR_OVERRIDE=1`** : deux dalles PBR, dont une avec un
-  override de matériau GLTF (4 × 4 répétitions, teinte).
+  override de matériau GLTF (4 × 4 répétitions, teinte). Leur normal map,
+  aussi portée par le panneau « Normales + spéculaire » de la démo
+  ordinaire, ne contient que des bosses : chacune doit être claire du côté
+  du soleil (en haut du panneau avec `AURORA_DEMO_TOD=2`). Sombres en haut
+  et claires en bas, le relief est retourné.
 - **`AURORA_DEMO_TEXANIM=1`** : deux rangées de panneaux à la place des
   panneaux alpha — défilement lisse, grille de 4 × 4 images, ping-pong,
   rotation, échelle (masque alpha : prépasse et ombres), un cube animé sur

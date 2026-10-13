@@ -3979,11 +3979,15 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
                 let hole = cx * cx + cy * cy < 100.0;
                 [94, 234, 212, if hole { 0 } else { 255 }]
             } else if *id == TEX_BUMPS {
-                // height h = sin(x) sin(y): normal = normalize(-dh/dx, -dh/dy, 1)
+                // domes on a flat face, never dents, so that a reversed
+                // relief shows: height h = max(sin(x) sin(y), 0)², normal =
+                // normalize(-dh/dx, -dh/dup, 1) with +Y up the image (rows
+                // run down), as SL normal maps
                 let k = tau / 16.0;
-                let dx = k * (fx * k).cos() * (fy * k).sin();
-                let dy = k * (fx * k).sin() * (fy * k).cos();
-                let n = Vec3::new(-dx * 2.0, -dy * 2.0, 1.0).normalize();
+                let s = ((fx * k).sin() * (fy * k).sin()).max(0.0);
+                let dx = 2.0 * s * k * (fx * k).cos() * (fy * k).sin();
+                let dy = 2.0 * s * k * (fx * k).sin() * (fy * k).cos();
+                let n = Vec3::new(-dx * 3.0, dy * 3.0, 1.0).normalize();
                 let e = |v: f32| ((v * 0.5 + 0.5) * 255.0) as u8;
                 [e(n.x), e(n.y), e(n.z), 255]
             } else if *id == TEX_FRAMES {
