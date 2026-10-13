@@ -3910,7 +3910,8 @@ impl Backend {
                 inv_view_proj: unjittered_vp.inverse().to_cols_array_2d(),
                 camera_pos: f.camera_pos.extend(0.0).to_array(),
                 // Firestorm defaults: RenderSSAOScale 500, RenderSSAOMaxScale
-                // 200, RenderSSAOFactor 0.3 (LLPipeline::bindDeferredShader)
+                // 200, RenderSSAOFactor 0.3 (LLPipeline::bindDeferredShader);
+                // normal_map_occlusion (common.wgsl) carries the same three
                 params: [500.0, samples, 200.0, 0.3],
             };
             self.queue.write_buffer(&self.ssao.buffer, 0, bytemuck::bytes_of(&u));

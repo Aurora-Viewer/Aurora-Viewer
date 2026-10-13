@@ -422,6 +422,8 @@ struct Material {
     legacy_env: f32,
     // legacy "emissive mask": share of the unlit color (the texture alpha)
     unlit: f32,
+    // ambient occlusion of the normal map's relief (normal_map_occlusion)
+    occlusion: f32,
 };
 
 fn eval_material(in: VsOut, front: bool) -> Material {
@@ -446,6 +448,7 @@ fn eval_material(in: VsOut, front: bool) -> Material {
     if (rec.tex.y == 1u) {
         m.n = n;
     }
+    m.occlusion = normal_map_occlusion(n, m.n, in.world_pos, 1.0 / in.clip.w);
     // glTF: G = roughness, B = metallic
     m.metallic = clamp(rec.params.y * mr_s.b, 0.0, 1.0);
     m.roughness = clamp(rec.params.z * mr_s.g, 0.03, 1.0);
@@ -591,6 +594,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 // may be discarded between `eval_material` and this (fs_blend).
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
+    surface_occlusion = m.occlusion;
     var col: vec3<f32>;
     let classic = is_classic_sky() && !camera_underwater();
     var hazed = false;
