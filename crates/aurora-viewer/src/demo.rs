@@ -1379,7 +1379,7 @@ pub fn action_overlay(id: u32, pos: Vec3, rotation: Quat) -> NetEvent {
 /// A non-actionable face placed before Buy. Blend blocks every texel;
 /// Mask's zero-alpha texture lets the click reach Buy.
 pub fn alpha_click_overlay(mode: &str, pos: Vec3, rotation: Quat) -> NetEvent {
-    let texture = match mode {
+    let texture = match mode.trim_end_matches("-ready") {
         "blend-faint" => TEX_PICK_FAINT,
         "blend-half" => TEX_PICK_HALF,
         "blend-solid" => BLANK_TEXTURE,

@@ -2948,7 +2948,10 @@ impl App {
             m.status = aurora_media::MediaStatus::Playing;
         }
         if id != 0
-            && (click_frame - 4..=click_frame).contains(&self.frame_count)
+            // Hold the late hover sample on target as well: native focus
+            // events may have moved the cursor since the initial projection.
+            && ((click_frame - 4..=click_frame).contains(&self.frame_count)
+                || (mode.ends_with("-ready") && (640..=650).contains(&self.frame_count)))
             && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(id))
             && let Some(pos) = Scene::object_transform(&self.world, idx, Instant::now(), 0).map(|(pos, _, _)| match id {
                 985 => pos + Vec3::new(-1.05, 0.0, 0.7),
@@ -4235,13 +4238,15 @@ impl App {
                         shift: self.shift,
                     };
                     self.media.build_mode = self.build.open;
-                    let point = self.scene.interaction_point(
-                        &self.world,
-                        Some(ray),
-                        gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
-                        self.build.open,
-                        self.settings.draw_distance,
-                    );
+                    let displayed = gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1);
+                    let point = if self.build.open {
+                        self.scene
+                            .interaction_point(&self.world, Some(ray), displayed, true, self.settings.draw_distance)
+                    } else {
+                        self.scene
+                            .hover_pick(&self.world, Some(ray), displayed, self.settings.draw_distance)
+                            .0
+                    };
                     let depth = point.map(|p| (p - ray.0).dot(ray.1));
                     let (ray, depth, hud) = self
                         .scene
@@ -4875,7 +4880,8 @@ impl App {
             && self.media_cursor.is_none()
             && !ctx.is_pointer_over_egui()
             && !ctx.egui_wants_pointer_input()
-            && let Some(idx) = self.scene.hover_hud(&self.world, self.cursor_pos).or_else(|| {
+        {
+            let hovered = self.scene.hover_hud(&self.world, self.cursor_pos).or_else(|| {
                 // Preserve the world hover cache (scene/hover.rs).
                 self.scene.hover_object(
                     &self.world,
@@ -4883,20 +4889,29 @@ impl App {
                     gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
                     self.settings.draw_distance,
                 )
-            })
-            && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
-        {
-            if let Some(cmd) = self.interactions.hover_request(target) {
-                self.send(cmd);
+            });
+            if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+                log::info!(
+                    "demo cursor hover: prim={:?}, action={:?}",
+                    hovered.and_then(|idx| self.world.objects.get(idx)).map(|o| o.key.local_id),
+                    hovered.and_then(|idx| crate::interaction::cursor_action(&self.world, idx, &self.interactions.props)),
+                );
             }
-            if let Some(action) = crate::interaction::cursor_action(&self.world, idx, &self.interactions.props) {
-                if self.demo && self.frame_count == 722 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
-                    log::info!("demo action hover: {action:?}, prim={}", target.clicked.local_id);
+            if let Some(idx) = hovered
+                && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
+            {
+                if let Some(cmd) = self.interactions.hover_request(target) {
+                    self.send(cmd);
                 }
-                if action == crate::interaction::Action::Touch {
-                    full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
+                if let Some(action) = crate::interaction::cursor_action(&self.world, idx, &self.interactions.props) {
+                    if self.demo && self.frame_count == 722 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+                        log::info!("demo action hover: {action:?}, prim={}", target.clicked.local_id);
+                    }
+                    if action == crate::interaction::Action::Touch {
+                        full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
+                    }
+                    full.platform_output.cursor_image = self.cursors.image(action, self.media.parcel_status_playing());
                 }
-                full.platform_output.cursor_image = self.cursors.image(action, self.media.parcel_status_playing());
             }
         }
         if let Some(h) = &self.interactions.held {
@@ -4944,6 +4959,13 @@ impl App {
             // would show it again in the middle of the drag
             full.platform_output.cursor_icon = egui::CursorIcon::None;
             full.platform_output.cursor_image = None;
+        }
+        if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+            log::info!(
+                "demo cursor output: icon={:?}, bitmap={}",
+                full.platform_output.cursor_icon,
+                full.platform_output.cursor_image.is_some(),
+            );
         }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);

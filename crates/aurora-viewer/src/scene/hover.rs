@@ -36,8 +36,8 @@
 //! - the triangle hierarchies of the large faces (pick_accel.rs), for the
 //!   objects the ray does meet.
 //!
-//! Clicks never read the cache: they search again over every object and
-//! every triangle, with their own depth read (`app/click_pick.rs`).
+//! Clicks never read the cache: they search their geometry again, with
+//! their own depth read (`app/click_pick.rs`).
 //!
 //! `AURORA_HOVER_CHECK=1` compares every answer with the full search and
 //! logs the differences (`hover check`), with a count of searches and
@@ -574,9 +574,11 @@ impl ExactTests {
 }
 
 /// The object under the cursor, kept between frames.
+type HoverHit = (Option<Vec3>, Option<usize>);
+
 #[derive(Default)]
 pub struct HoverCache {
-    kept: Option<(Asked, Option<usize>, Instant)>,
+    kept: Option<(Asked, HoverHit, Instant)>,
     /// Candidate lists, reused.
     candidates: Candidates,
     /// Searches done and answers reused.
@@ -604,7 +606,7 @@ impl HoverCache {
     }
 
     /// The kept answer when it still holds for this question at `now`.
-    fn get(&self, index: &PickIndex, asked: &Asked, now: Instant) -> Option<Option<usize>> {
+    fn get(&self, index: &PickIndex, asked: &Asked, now: Instant) -> Option<HoverHit> {
         let (kept, answer, at) = self.kept.as_ref()?;
         (!index.disturbed && kept.same(asked) && now.saturating_duration_since(*at) < REFRESH).then_some(*answer)
     }
@@ -659,21 +661,22 @@ impl super::Scene {
         picked
     }
 
-    /// The object the hover cursor is over: what
-    /// `interaction_point(…, false, far)` then `interaction_at_ray(…, false)`
-    /// give for the cursor `ray` and the depth pick `depth`, searched again
+    /// The object the hover cursor is over, including a non-actionable
+    /// Blend surface in front of the displayed depth. Searched again
     /// only when the question or the scene around it changed, or every
     /// [`REFRESH`]. Not for clicks.
     pub fn hover_object(&mut self, world: &crate::world::World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, far: f32) -> Option<usize> {
-        let ray = ray?;
+        self.hover_pick(world, ray, depth, far).1
+    }
+
+    /// The cached surface point as well, to bound a focused media's hover
+    /// by the same foreground object as the world cursor.
+    pub fn hover_pick(&mut self, world: &crate::world::World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, far: f32) -> HoverHit {
+        let Some(ray) = ray else { return (depth, None) };
         let probe = Probe { ray, depth };
         let asked = Asked { probe, far };
         let now = Instant::now();
-        let full = |scene: &Self| {
-            scene
-                .interaction_point(world, Some(ray), depth, false, far)
-                .and_then(|point| scene.interaction_at_ray(world, point, ray, false))
-        };
+        let full = |scene: &Self| scene.full_hover_pick(world, ray, depth, far).1;
         let profile = profile_enabled();
         if profile || class_mode() == ClassMode::Alternate {
             self.roll_hover_stats(now, profile);
@@ -683,7 +686,7 @@ impl super::Scene {
             self.hover.reused += 1;
             if check_enabled() {
                 let expected = full(self);
-                if expected != answer {
+                if expected != answer.1 {
                     // allowed for up to REFRESH: what the index cannot see
                     self.hover.stale += 1;
                     let age = self
@@ -716,8 +719,13 @@ impl super::Scene {
         } else {
             self.transparent_action_point(world, ray, depth, false, far, Some(&candidates.see_through))
         };
+        let blend = self.blend_hit(world, ray, point, far, Some(&candidates.see_through));
+        let point = blend.map(|(t, _)| ray.0 + ray.1 * t).or(point);
         let t_point = profile.then(Instant::now);
-        let answer = point.and_then(|point| self.interaction_at_ray_among(world, point, ray, false, Some(&candidates.point)));
+        let object = blend
+            .map(|(_, idx)| idx)
+            .or_else(|| point.and_then(|point| self.interaction_at_ray_among(world, point, ray, false, Some(&candidates.point))));
+        let answer = (point, object);
         if let (Some(t_index), Some(t_point)) = (t_index, t_point) {
             let done = Instant::now();
             let ms = |a: Instant, b: Instant| (b - a).as_secs_f32() * 1000.0;
@@ -738,7 +746,7 @@ impl super::Scene {
         }
         if check_enabled() {
             let expected = full(self);
-            if expected != answer {
+            if expected != object {
                 self.hover.wrong += 1;
                 log::warn!(
                     "hover check: the search among {} / {} / {} candidates gives {answer:?}, the full search {expected:?}",
@@ -757,6 +765,16 @@ impl super::Scene {
         answer
     }
 
+    /// Reference search for AURORA_HOVER_CHECK, without the spatial index,
+    /// classes or triangle hierarchies.
+    fn full_hover_pick(&self, world: &crate::world::World, ray: (Vec3, Vec3), depth: Option<Vec3>, far: f32) -> HoverHit {
+        let point = self.interaction_point(world, Some(ray), depth, false, far);
+        if let Some((t, idx)) = self.blend_hit(world, ray, point, far, None) {
+            return (Some(ray.0 + ray.1 * t), Some(idx));
+        }
+        (point, point.and_then(|point| self.interaction_at_ray(world, point, ray, false)))
+    }
+
     /// The class of an object for the hover search ([`class`]), from what
     /// the steps of the search read: `ignored_before` looks at the objects
     /// set to IGNORE only, `transparent_action_point` at those with a
@@ -771,7 +789,7 @@ impl super::Scene {
         if o.click_action == crate::interaction::code::IGNORE {
             c |= class::IGNORE;
         }
-        if !g.is_avatar && self.see_through_face(g, false) {
+        if !g.is_avatar && (self.see_through_face(g, false) || self.has_blend_face(world, idx)) {
             c |= class::SEE_THROUGH;
         }
         // (what `interaction_at_ray` leaves out whatever the point)
@@ -1170,18 +1188,19 @@ mod tests {
         let t = Instant::now();
         let mut cache = HoverCache::default();
         assert_eq!(cache.get(&index, &asked, t), None);
-        cache.kept = Some((asked, Some(1), t));
+        let hit = (probe.depth, Some(1));
+        cache.kept = Some((asked, hit, t));
         index.watch(probe, false);
         let ms = Duration::from_millis;
-        assert_eq!(cache.get(&index, &asked, t + ms(5)), Some(Some(1)));
+        assert_eq!(cache.get(&index, &asked, t + ms(5)), Some(hit));
         // camera settling: a hair's width
         let settling = with(
             (Vec3::splat(1e-4), (Vec3::X + Vec3::Y * 1e-5).normalize()),
             Some(Vec3::new(4.5005, 0.0, 0.0)),
         );
-        assert_eq!(cache.get(&index, &settling, t + ms(5)), Some(Some(1)));
+        assert_eq!(cache.get(&index, &settling, t + ms(5)), Some(hit));
         // searched again after 100 ms whatever happens
-        assert_eq!(cache.get(&index, &asked, t + ms(99)), Some(Some(1)));
+        assert_eq!(cache.get(&index, &asked, t + ms(99)), Some(hit));
         assert_eq!(cache.get(&index, &asked, t + REFRESH), None);
         // the cursor or the camera moved
         let moved = with((Vec3::ZERO, (Vec3::X + Vec3::Y * 1e-3).normalize()), probe.depth);
@@ -1197,9 +1216,9 @@ mod tests {
         index.changed(1);
         assert_eq!(cache.get(&index, &asked, t + ms(5)), None);
         // a kept "nothing" is an answer too
-        cache.kept = Some((asked, None, t));
+        cache.kept = Some((asked, (None, None), t));
         index.watch(probe, false);
-        assert_eq!(cache.get(&index, &asked, t + ms(5)), Some(None));
+        assert_eq!(cache.get(&index, &asked, t + ms(5)), Some((None, None)));
     }
 
     fn lists(index: &PickIndex, classes: bool) -> (Vec<usize>, Vec<usize>, Vec<usize>) {

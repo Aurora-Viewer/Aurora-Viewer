@@ -409,7 +409,7 @@ impl Scene {
     }
 
     /// The material mode, independent of texel opacity. In particular, a
-    /// hidden Blend face still blocks presses, while a Mask face keeps its
+    /// hidden Blend face still blocks presses and hover, while a Mask face keeps its
     /// displayed cutout. Draw records already hold the resolved modes;
     /// omitted TE faces need the material and its override read directly.
     fn blend_face(&self, world: &World, o: &Object, g: &ObjGpu, face: usize) -> bool {
@@ -446,6 +446,22 @@ impl Scene {
         tf.color[3] < 0.999
     }
 
+    /// Includes faces omitted from the draw records because their TE alpha
+    /// is zero, so the hover index can keep their material class as well.
+    pub(super) fn has_blend_face(&self, world: &World, idx: usize) -> bool {
+        let (Some(o), Some(g)) = (world.objects.get(idx), self.gpu.get(idx)) else {
+            return false;
+        };
+        if let Some(geom) = g.geom.and_then(|key| self.geom_ready(&key)) {
+            return geom
+                .pick_faces
+                .iter()
+                .enumerate()
+                .any(|(face, geometry)| geometry.is_some() && self.blend_face(world, o, g, face));
+        }
+        g.faces.iter().any(|draw| self.blend_face(world, o, g, usize::from(draw.te_index)))
+    }
+
     /// The distance at which the ray meets the triangles of an object
     /// (`face_hit(…).t`). For the candidates of the hover search (`among`),
     /// through the hierarchies of its large faces when they are built.
@@ -459,7 +475,7 @@ impl Scene {
         among: Option<&[usize]>,
     ) -> Option<f32> {
         if among.is_some() && !self.hover.legacy() && self.gpu.get(idx).is_some_and(|g| !g.hud) {
-            self.face_distance(world, idx, ray, now, include_hidden)
+            self.face_distance(world, idx, ray, now, include_hidden, FacePick::Surface)
         } else {
             self.face_hit(world, idx, ray, now, include_hidden).map(|h| h.t)
         }
@@ -471,9 +487,18 @@ impl Scene {
     /// face of a mesh or a sculpt without its hierarchy asks for it and is
     /// tested triangle by triangle meanwhile. (Not the prims: a flexible
     /// one replaces its triangles at each frame.)
-    fn face_distance(&self, world: &World, idx: usize, ray: (Vec3, Vec3), now: Instant, include_hidden: bool) -> Option<f32> {
+    fn face_distance(
+        &self,
+        world: &World,
+        idx: usize,
+        ray: (Vec3, Vec3),
+        now: Instant,
+        include_hidden: bool,
+        mode: FacePick,
+    ) -> Option<f32> {
         let o = world.objects.get(idx)?;
-        let key = self.gpu.get(idx)?.geom?;
+        let g = self.gpu.get(idx)?;
+        let key = g.geom?;
         let geom = self.geom_ready(&key)?;
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
         let model = Mat4::from_scale_rotation_translation(world.visual_scale(idx), rot, pos);
@@ -487,6 +512,9 @@ impl Scene {
         let large = !matches!(key, GeomKey::Prim { .. });
         let mut best = f32::INFINITY;
         for (face, f) in geom.pick_faces.iter().enumerate() {
+            if mode == FacePick::Blend && !self.blend_face(world, o, g, face) {
+                continue;
+            }
             if !include_hidden && o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004) {
                 continue;
             }
@@ -824,28 +852,54 @@ impl Scene {
         // Mask surfaces continue to use the existing depth/action search.
         let mut candidates = Vec::new();
         self.pick.ray_candidates(ray, &mut candidates);
-        let limit = point.map_or(far, |p| (p - ray.0).dot(ray.1)).min(far);
-        let now = Instant::now();
-        candidates
-            .par_iter()
-            .filter_map(|&idx| {
-                let g = self.gpu.get(idx)?;
-                let o = world.objects.get(idx)?;
-                if g.hud
-                    || g.is_avatar
-                    || g.rigged
-                    || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
-                    || o.click_action == crate::interaction::code::IGNORE
-                    || !ray_may_hit(g, ray)
-                {
-                    return None;
-                }
-                let hit = self.face_hit_mode(world, idx, ray, now, true, FacePick::Blend)?;
-                (hit.t.is_finite() && hit.t < limit).then_some((hit.t, idx))
-            })
-            .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)))
+        self.blend_hit(world, ray, point, far, Some(&candidates))
             .map(|(t, _)| ray.0 + ray.1 * t)
             .or(point)
+    }
+
+    /// Nearest Blend surface in front of the displayed/action point. The
+    /// hover search reuses its candidate list and large-face hierarchies;
+    /// a full search remains available to check the index independently.
+    pub(super) fn blend_hit(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        point: Option<Vec3>,
+        far: f32,
+        among: Option<&[usize]>,
+    ) -> Option<(f32, usize)> {
+        let limit = point.map_or(far, |p| (p - ray.0).dot(ray.1)).min(far);
+        let now = Instant::now();
+        let hit = |idx: usize| {
+            let g = self.gpu.get(idx)?;
+            let o = world.objects.get(idx)?;
+            if g.hud
+                || g.is_avatar
+                || g.rigged
+                || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
+                || o.click_action == crate::interaction::code::IGNORE
+                || !ray_may_hit(g, ray)
+            {
+                return None;
+            }
+            // Skip the transform and box test for entirely non-Blend
+            // objects, including the many opaque hover candidates.
+            if !self.has_blend_face(world, idx) {
+                return None;
+            }
+            let t = if among.is_some() && !self.hover.legacy() {
+                self.face_distance(world, idx, ray, now, true, FacePick::Blend)?
+            } else {
+                self.face_hit_mode(world, idx, ray, now, true, FacePick::Blend)?.t
+            };
+            (t.is_finite() && t < limit).then_some((t, idx))
+        };
+        let order = |a: &(f32, usize), b: &(f32, usize)| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1));
+        if let Some(indices) = among {
+            indices.par_iter().filter_map(|&idx| hit(idx)).min_by(order)
+        } else {
+            self.gpu.par_iter().enumerate().filter_map(|(idx, _)| hit(idx)).min_by(order)
+        }
     }
 
     pub fn interaction_at(&self, world: &World, point: Vec3, now: Instant, build: bool) -> Option<usize> {
@@ -1532,7 +1586,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn blend_press_blocks_an_actionable_object_for_every_opacity() {
+    fn blend_press_and_hover_block_an_actionable_object_for_every_opacity() {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
         world.objects.get_mut(front).unwrap().update_flags = 0;
@@ -1561,13 +1615,22 @@ pub(super) mod tests {
                 for f in &mut Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces {
                     f.color[3] = alpha;
                 }
+                scene.pick.changed(front);
                 assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(front_point));
                 assert_eq!(scene.action_point(&world, Some(ray), None, false, 100.0), Some(front_point));
                 assert_eq!(scene.interaction_at_ray(&world, front_point, ray, true), Some(front));
                 assert!(crate::interaction::target(&world, front, &HashMap::new()).is_none());
+                let hovered = scene.hover_pick(&world, Some(ray), Some(depth), 100.0);
+                assert_eq!(hovered, (Some(front_point), Some(front)));
+                assert_eq!(crate::interaction::cursor_action(&world, hovered.1.unwrap(), &HashMap::new()), None);
+                let reused = scene.hover.reused;
+                assert_eq!(scene.hover_pick(&world, Some(ray), Some(depth), 100.0), hovered);
+                assert_eq!(scene.hover.reused, reused + 1);
+                assert_eq!(scene.hover_pick(&world, Some(ray), None, 100.0), hovered);
                 // A genuinely nearer opaque surface still occludes Blend.
                 let nearer = Vec3::new(1.0, 0.0, 50.0);
                 assert_eq!(scene.action_point(&world, Some(ray), Some(nearer), false, 100.0), Some(nearer));
+                assert_eq!(scene.hover_pick(&world, Some(ray), Some(nearer), 100.0), (Some(nearer), None));
             }
         }
         // Mask's transparent pixels retain their existing pass-through.
@@ -1578,8 +1641,20 @@ pub(super) mod tests {
         for (pbr, legacy) in [(Some(2), None), (None, Some(legacy_mat::alpha_mode::MASK))] {
             scene.gpu[front].faces[0].pbr_alpha = pbr;
             scene.gpu[front].faces[0].legacy_alpha = legacy;
+            scene.pick.changed(front);
             assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(depth));
+            let hovered = scene.hover_pick(&world, Some(ray), Some(depth), 100.0);
+            assert_eq!(hovered, (Some(depth), Some(back)));
+            assert_eq!(
+                crate::interaction::cursor_action(&world, hovered.1.unwrap(), &HashMap::new()),
+                Some(crate::interaction::Action::Buy)
+            );
         }
+        scene.gpu[front].faces[0].pbr_alpha = Some(1);
+        scene.gpu[front].faces[0].legacy_alpha = None;
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
+        scene.pick.changed(front);
+        assert_eq!(scene.hover_object(&world, Some(ray), Some(depth), 100.0), Some(back));
     }
 
     #[test]
@@ -1640,6 +1715,11 @@ pub(super) mod tests {
             let depth = Vec3::new(6.5, y, 50.0);
             let expected = if y == 0.0 { depth } else { Vec3::new(2.5, y, 50.0) };
             assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(expected));
+            let object = if y == 0.0 { back } else { front };
+            assert_eq!(
+                scene.hover_pick(&world, Some(ray), Some(depth), 100.0),
+                (Some(expected), Some(object))
+            );
         }
     }
 
@@ -1682,7 +1762,13 @@ pub(super) mod tests {
             } else {
                 depth
             };
+            scene.pick.changed(front);
             assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(expected));
+            let object = if mode == aurora_assets::AlphaMode::Blend { front } else { back };
+            assert_eq!(
+                scene.hover_pick(&world, Some(ray), Some(depth), 100.0),
+                (Some(expected), Some(object))
+            );
         }
         assert_eq!(scene.interaction_at_ray(&world, front_point, ray, true), Some(front));
     }
