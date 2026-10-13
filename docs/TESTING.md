@@ -1087,8 +1087,11 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   Dans la liste des animations, cliquer un fichier
   lance sa lecture, même si on avait déjà joué cette animation.
   `bulk-upload` exécute automatiquement le lot sur ce serveur hors ligne :
-  quatre lignes réussies, création des dépendances du matériau et reçu total
-  de 40 L$ fictifs attendus ; aucun transfert ni paiement réel.
+  cinq fichiers importés, création des dépendances du matériau et reçu total
+  de 51 L$ fictifs attendus ; la liste des fichiers est ensuite vide, y compris
+  après fermeture / réouverture. Les brouillons non importés (échec, annulation
+  ou absence de sélection) et les aperçus locaux sont conservés ; aucun
+  transfert ni paiement réel.
   `mesh-physics` affiche la forme physique et ses arêtes ; `mesh-degenerate`
   injecte un défaut de triangles, qui doit apparaître dans l’aperçu et bloquer
   le devis avec un diagnostic. L’analyse convexe doit permettre de le résoudre.

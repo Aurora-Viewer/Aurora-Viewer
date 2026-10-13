@@ -746,6 +746,16 @@ impl Imports {
         prefs: &crate::ui::inventory::InventoryPreferences,
     ) -> Vec<aurora_net::NetCommand> {
         let mut commands = Vec::new();
+        // Retire only acknowledged uploads. Local previews and drafts that
+        // failed, were cancelled or were not selected remain available.
+        for index in (0..self.entries.len()).rev() {
+            if !self.entries[index].local && matches!(self.entries[index].status, Status::Done(_)) {
+                jobs.discard(self.entries.remove(index));
+            }
+        }
+        if self.active.is_some_and(|id| self.entries.iter().all(|entry| entry.id != id)) {
+            self.active = self.entries.iter().find(|entry| self.choice.accepts(entry)).map(|entry| entry.id);
+        }
         while let Ok(worker) = self.rx.try_recv() {
             match worker {
                 Worker::Loaded(request, mut entries) if self.pending_files == Some(request) => {

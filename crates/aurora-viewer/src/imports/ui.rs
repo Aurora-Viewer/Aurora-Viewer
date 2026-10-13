@@ -695,7 +695,10 @@ pub fn show(
                 })
                 .strong(),
             );
-            let selected = imports.entries.iter().any(|e| e.selected && matches!(e.status, Status::Ready));
+            let selected = imports
+                .entries
+                .iter()
+                .any(|e| imports.choice.accepts(e) && e.selected && matches!(e.status, Status::Ready));
             let can_upload = !busy && selected && total.is_some_and(|cost| cost == 0 || world.balance.is_some_and(|b| b >= cost));
             // a wrapping row: the buttons stay in its layout
             let size = Vec2::new(0.0, ui.spacing().interact_size.y);

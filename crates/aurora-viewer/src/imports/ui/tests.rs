@@ -1,6 +1,85 @@
 use super::*;
 
 #[test]
+fn an_empty_batch_cannot_be_confirmed_when_local_previews_are_selected() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.balance = Some(1000);
+    let source = Source::Texture(Arc::new(aurora_assets::DecodedImage {
+        width: 4,
+        height: 4,
+        components: 4,
+        discard: 0,
+        data: vec![255; 64],
+    }));
+    let mut local = Entry::new("local.png".into(), Ok(source.clone()), Default::default());
+    local.local = true;
+    let mut imports = Imports {
+        open: true,
+        choice: Choice::Bulk,
+        demo_started: true,
+        entries: vec![local],
+        ..Default::default()
+    };
+    let mut prefs = Preferences::default();
+    let mut frame = |events, imports: &mut Imports| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                show(ui.ctx(), &theme.palette(), imports, &mut prefs, &world, &Default::default());
+            },
+        );
+        output.textures_delta.clear();
+        output
+    };
+    for has_upload in [false, true] {
+        if has_upload {
+            imports
+                .entries
+                .push(Entry::new("upload.png".into(), Ok(source.clone()), Default::default()));
+        }
+        for _ in 0..4 {
+            drop(frame(Vec::new(), &mut imports));
+        }
+        let output = frame(Vec::new(), &mut imports);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::epaint::Shape::Text(text) = &shape.shape
+                    && text.galley.text() == aurora_i18n::tr!("import-upload")
+                {
+                    Some(text.pos + text.galley.size() * 0.5)
+                } else {
+                    None
+                }
+            })
+            .expect("upload button");
+        for pressed in [true, false] {
+            drop(frame(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                &mut imports,
+            ));
+        }
+        assert_eq!(imports.confirm, has_upload);
+    }
+}
+
+#[test]
 fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
