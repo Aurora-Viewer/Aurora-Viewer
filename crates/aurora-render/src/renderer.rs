@@ -3820,7 +3820,7 @@ impl Backend {
             // (the eye the shaders measure depths from: the uniform's camera)
             let eye = Vec3::from_slice(&main.camera_pos[..3]);
             main.light_sets = light_tiles::bin(fu.view, fu.proj, eye, size, lights);
-            main.light_sets.mode[1] = u32::from(light_culling == LightCulling::Check);
+            main.light_sets.mode[1] = u32::from(light_culling == LightCulling::Check || f.debug.check_light_sets);
         }
         stats.light_tiles = light_tiles_on;
         // reflection probes by screen tile and depth, for the main view
@@ -3833,11 +3833,17 @@ impl Backend {
         } else {
             LightSets::whole()
         };
-        main.light_sets.mode[3] = probe_walk.shader_mode(f.probe_walk_list);
-        // AURORA_DEBUG_SHADOWS: the cascade each pixel reads and its shadow,
-        // instead of the image (shadow_view in common.wgsl)
+        main.light_sets.mode[3] = probe_walk.shader_mode(f.probe_walk_list, f.debug.check_probe_sets);
+        // the view shown instead of the image (debug_view in common.wgsl):
+        // the cascade each pixel reads and its shadow (AURORA_DEBUG_SHADOWS
+        // too), or the ambient occlusion
         static SHADOW_VIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        main.light_sets.mode[2] = u32::from(*SHADOW_VIEW.get_or_init(|| std::env::var_os("AURORA_DEBUG_SHADOWS").is_some()));
+        let cascades_asked = *SHADOW_VIEW.get_or_init(|| std::env::var_os("AURORA_DEBUG_SHADOWS").is_some());
+        main.light_sets.mode[2] = match (cascades_asked || f.debug.shadows, f.debug.ambient_occlusion) {
+            (true, _) => 1,
+            (false, true) => 2,
+            (false, false) => 0,
+        };
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);

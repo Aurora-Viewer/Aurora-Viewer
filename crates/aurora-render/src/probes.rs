@@ -92,12 +92,13 @@ impl ProbeWalk {
 
     /// The walk as the shaders read it (`frame.light_mode.w`,
     /// `PROBE_WALK_*` in common.wgsl). The views other than the main one
-    /// keep 0, the whole list.
-    pub fn shader_mode(self, list: bool) -> u32 {
+    /// keep 0, the whole list. `check`: the sets are checked wherever they
+    /// are used (Preferences › Debug).
+    pub fn shader_mode(self, list: bool, check: bool) -> u32 {
         match self {
             ProbeWalk::PerLookup => 1,
             ProbeWalk::Check => 3,
-            _ if self.tiles(list) => 2,
+            _ if self.tiles(list) => 2 + u32::from(check),
             _ => 0,
         }
     }
@@ -584,10 +585,23 @@ mod tests {
             (ProbeWalk::Alternate, false, "TILES"),
             (ProbeWalk::Check, false, "CHECK"),
         ] {
-            let line = format!("const PROBE_WALK_{name}: u32 = {}u;", walk.shader_mode(list));
+            let line = format!("const PROBE_WALK_{name}: u32 = {}u;", walk.shader_mode(list, false));
             assert!(src.contains(&line), "{line}");
-            assert_eq!(walk.tiles(list), walk.shader_mode(list) >= 2);
+            assert_eq!(walk.tiles(list), walk.shader_mode(list, false) >= 2);
         }
+        // the check asked from the interface: where the sets are used, and
+        // only there (the whole list has nothing to check)
+        let check = |walk: ProbeWalk, list| walk.shader_mode(list, true);
+        assert_eq!(check(ProbeWalk::Tiles, false), ProbeWalk::Check.shader_mode(false, false));
+        assert_eq!(check(ProbeWalk::Alternate, false), 3);
+        assert_eq!(
+            (
+                check(ProbeWalk::List, false),
+                check(ProbeWalk::Alternate, true),
+                check(ProbeWalk::PerLookup, false)
+            ),
+            (0, 0, 1)
+        );
     }
 
     fn probe(center: Vec3, radius: f32, kind: f32, box_inv: Mat4) -> ProbeGpu {

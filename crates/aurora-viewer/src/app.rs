@@ -4737,6 +4737,7 @@ impl App {
             blend_late_discard: self.frame_profile.blend_late_discard(),
             all_lights: self.frame_profile.all_lights(),
             probe_walk_list: self.frame_profile.probe_walk_list(),
+            debug: self.settings.debug.render(),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -7808,6 +7809,10 @@ impl ApplicationHandler for App {
                         "probes" => d.probes = true,
                         "skeletons" => d.skeletons = true,
                         "lod" => d.lod_info = true,
+                        "shadows" => d.shadow_view = true,
+                        "ao" => d.ao_view = true,
+                        "check_lights" => d.check_light_sets = true,
+                        "check_probes" => d.check_probe_sets = true,
                         _ => {}
                     }
                 }

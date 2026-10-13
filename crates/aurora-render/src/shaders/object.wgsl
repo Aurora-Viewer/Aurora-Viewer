@@ -679,7 +679,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         col = apply_fog(col, in.world_pos);
     }
     var s: Shaded;
-    col = shadow_view(col, in.world_pos, m.n, in.view_depth);
+    col = debug_view(col, in.world_pos, m.n, in.view_depth, in.clip.xy);
     s.color = vec4<f32>(light_tiles_checked(col, in.world_pos, in.clip.xy), m.color.a);
     s.n = m.n;
     s.roughness = m.roughness;

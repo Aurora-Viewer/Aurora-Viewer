@@ -73,7 +73,7 @@ struct Frame {
     // which of `lights` a fragment walks (light_tiles.rs, LightSets)
     light_grid: vec4<f32>,      // x, y: columns and rows per pixel
     light_forward: vec4<f32>,   // camera forward axis (fragment depth)
-    light_mode: vec4<u32>,      // x: 1 = the list narrowed by the sets below, y: 1 = checked, z: 1 = shadow view (AURORA_DEBUG_SHADOWS), w: how the probes are walked (PROBE_WALK_*)
+    light_mode: vec4<u32>,      // x: 1 = the list narrowed by the sets below, y: 1 = checked, z: the view shown instead of the image (debug_view: 1 shadows, 2 ambient occlusion), w: how the probes are walked (PROBE_WALK_*)
     // lights that cover each screen column, each screen row and each slice
     // of depth: two sets per element, each its low then its high 32 lights
     light_columns: array<vec4<u32>, 16>,
@@ -980,13 +980,23 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     return sum / 16.0;
 }
 
-// AURORA_DEBUG_SHADOWS (frame.light_mode.z): instead of the image, the
-// cascade each pixel reads — red, green, blue from the finest, mixed where
-// two are blended, black beyond the shadow distance — darkened where the
-// pixel is in shadow. The choice mirrors shadow_factor.
-fn shadow_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> vec3<f32> {
-    if (frame.light_mode.z == 0u) {
+// The view shown instead of the image (frame.light_mode.z, Preferences ›
+// Debug), or `col`.
+// 1 (also AURORA_DEBUG_SHADOWS): the cascade each pixel reads — red, green,
+// blue from the finest, mixed where two are blended, black beyond the
+// shadow distance — darkened where the pixel is in shadow. The choice
+// mirrors shadow_factor.
+// 2: the ambient occlusion of the screen alone, light grey where nothing is
+// occluded (and everywhere when the effect is off), whatever the exposure
+// of the sky; cubed, the occlusion being too faint to read as it is.
+fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> vec3<f32> {
+    let view = frame.light_mode.z;
+    if (view == 0u) {
         return col;
+    }
+    if (view == 2u) {
+        let ao = screen_ao(frag);
+        return vec3<f32>(ao * ao * ao * 0.8 / max(frame.params.x, 1e-3));
     }
     let splits = frame.cascade_splits;
     var own_depth = vertex_depth;

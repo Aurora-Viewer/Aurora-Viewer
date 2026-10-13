@@ -348,6 +348,7 @@ fn format_bytes(b: u64) -> String {
 /// Debug overlays (not saved: off again at the next launch).
 fn debug_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
     let mut c = false;
+    let before = s.debug;
     let d = &mut s.debug;
     ui.label(
         RichText::new(aurora_i18n::tr!(
@@ -405,6 +406,20 @@ fn debug_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
         c |= row(
             ui,
             p,
+            aurora_i18n::tr!("ui-options-show-shadow-cascades"),
+            aurora_i18n::tr!("ui-options-shadow-cascade-each-pixel-reads-instead-of-the-image"),
+            |ui| toggle(ui, p, &mut d.shadow_view),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-show-ambient-occlusion"),
+            aurora_i18n::tr!("ui-options-ambient-occlusion-alone-instead-of-the-image"),
+            |ui| toggle(ui, p, &mut d.ao_view),
+        );
+        c |= row(
+            ui,
+            p,
             aurora_i18n::tr!("ui-options-objects-with-glow"),
             aurora_i18n::tr!("ui-options-outlines-objects-with-glowing-faces-in-orange"),
             |ui| toggle(ui, p, &mut d.glow_objects),
@@ -454,6 +469,23 @@ fn debug_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
             |ui| toggle(ui, p, &mut d.freeze_culling),
         );
     });
+    group(ui, p, aurora_i18n::tr!("ui-options-checks"), |ui| {
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-sort-of-the-local-lights"),
+            aurora_i18n::tr!("ui-options-magenta-where-a-light-reaches-a-pixel-the-sort-missed"),
+            |ui| toggle(ui, p, &mut d.check_light_sets),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-sort-of-the-reflection-probes"),
+            aurora_i18n::tr!("ui-options-magenta-where-a-probe-covers-a-pixel-the-sort-missed"),
+            |ui| toggle(ui, p, &mut d.check_probe_sets),
+        );
+    });
+    d.keep_one_view(&before);
     c
 }
 

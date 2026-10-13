@@ -920,7 +920,14 @@ To check with these scenarios:
   longer be once ambient occlusion is turned off in the settings.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `wire`, `complexity`,
-  `glow`, `glow_view`, `freeze`, `lod`. `lod` (Preferences › Debug › Detail
+  `glow`, `glow_view`, `freeze`, `lod`, `shadows`, `ao`, `check_lights`,
+  `check_probes`: the entries of Preferences › Debug. `shadows` is the view
+  of `AURORA_DEBUG_SHADOWS`; `ao` shows the ambient occlusion of the screen
+  alone, light grey where nothing is occluded (everywhere when the effect is
+  off); `check_lights` and `check_probes` are the checks of
+  `AURORA_LIGHT_TILES=check` and `AURORA_PROBE_WALK=check`, asked while the
+  viewer runs. One view at a time replaces the image (glow, shadows or
+  ambient occlusion). `lod` (Preferences › Debug › Detail
   levels) labels the objects around the pointer with the level they are
   drawn at (0 to 3), the one their distance asks for when it is another,
   and the distance and radius it comes from, the numbers of Firestorm's
@@ -2266,7 +2273,8 @@ What the inventory must show with these scenarios:
 - **`AURORA_DEBUG_SHADOWS=1`**: instead of the image, objects and terrain
   show the cascade each pixel reads — red, green then blue from the finest,
   mixed where two cascades are blended, black beyond the shadow distance —
-  darkened where the pixel is in shadow (`shadow_view` in `common.wgsl`).
+  darkened where the pixel is in shadow (`debug_view` in `common.wgsl`).
+  Also Preferences › Debug › Show shadow cascades.
   Used to compare two shadow paths whatever the lighting: capture the same
   frame with `AURORA_SHADOW_LEGACY=distance` and without, the dark areas
   must be the same in both, apart from their edges.
