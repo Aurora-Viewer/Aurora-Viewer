@@ -51,6 +51,9 @@ pub const MAX_SELECT_DISTANCE: f32 = 128.0;
 /// SL prim size limits (llmath/xform.h: DEFAULT_MIN_PRIM_SCALE / MAX).
 pub const MIN_PRIM_SCALE: f32 = 0.01;
 pub const MAX_PRIM_SCALE: f32 = 64.0;
+/// How far from its point of the body an attachment may be typed
+/// (llviewerjointattachment.h).
+pub const MAX_ATTACHMENT_DIST: f32 = 3.5;
 
 /// Build preferences (Firestorm settings.xml names in comments).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -122,6 +125,9 @@ pub struct BuildSettings {
     /// FSCopyObjKeySeparator for « Copier l'UUID ».
     pub copy_key_separator: String,
 }
+
+#[cfg(test)]
+mod worn_tests;
 
 #[cfg(test)]
 mod hud_tests {
@@ -502,7 +508,36 @@ pub fn root_of(world: &World, mut idx: usize) -> usize {
     idx
 }
 
-/// World objects and our own HUDs; other attachments remain unsupported.
+/// The three spaces a selection lives in (ESelectType of llselectmgr.h):
+/// objects of one are never selected with those of another
+/// (LLSelectMgr::canSelectObject).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectType {
+    World,
+    /// Worn on our avatar's body: edited relative to its attachment point.
+    Attachment,
+    Hud,
+}
+
+/// LLSelectMgr::getSelectTypeForObject: what `idx` hangs from.
+pub fn select_type(world: &World, mut idx: usize) -> SelectType {
+    for _ in 0..64 {
+        let Some(o) = world.objects.get(idx) else { break };
+        let Some(parent) = world.objects.parent_of(o) else { break };
+        if world.objects.get(parent).is_some_and(|p| p.is_avatar()) {
+            return if (31..=38).contains(&o.attachment_point()) {
+                SelectType::Hud
+            } else {
+                SelectType::Attachment
+            };
+        }
+        idx = parent;
+    }
+    SelectType::World
+}
+
+/// World objects and what our avatar wears, HUDs included; the attachments
+/// of other avatars cannot be edited.
 pub fn selectable(world: &World, idx: usize) -> bool {
     let mut i = idx;
     for _ in 0..64 {
@@ -520,7 +555,7 @@ pub fn selectable(world: &World, idx: usize) -> bool {
                 if let Some(parent) = world.objects.get(p)
                     && parent.is_avatar()
                 {
-                    return parent.full_id == world.agent_id && (31..=38).contains(&o.attachment_point());
+                    return parent.full_id == world.agent_id;
                 }
                 i = p;
             }
@@ -535,8 +570,9 @@ pub fn selectable(world: &World, idx: usize) -> bool {
 pub fn edit_parent(world: &World, idx: usize, now: Instant) -> Option<(Vec3, Quat)> {
     let o = world.objects.get(idx)?;
     let parent_idx = world.objects.parent_of(o)?;
-    let (p, r, hud) = crate::scene::Scene::object_transform(world, idx, now, 0)?;
-    if hud && world.objects.get(parent_idx)?.is_avatar() {
+    let (p, r, _) = crate::scene::Scene::object_transform(world, idx, now, 0)?;
+    if world.objects.get(parent_idx)?.is_avatar() {
+        // the attachment point as posed now, on the body or in the HUD
         let rotation = (r * o.rotation.inverse()).normalize();
         Some((p - rotation * o.position, rotation))
     } else {
@@ -764,11 +800,10 @@ impl BuildTool {
             }
             return;
         };
-        // LLSelectMgr keeps HUD and world selections in separate spaces.
+        // LLSelectMgr keeps world, worn and HUD selections in separate spaces.
         if let Some(i) = idx
-            && let Some((_, _, hud)) = crate::scene::Scene::object_transform(world, i, Instant::now(), 0)
             && !self.selection.is_empty()
-            && hud != self.hud_selected(world)
+            && select_type(world, i) != self.select_type(world)
         {
             self.deselect_all(world);
         }
@@ -884,12 +919,27 @@ impl BuildTool {
             .is_some_and(|(_, _, hud)| hud)
     }
 
+    /// The space of the selection (LLObjectSelection::getSelectType).
+    pub fn select_type(&self, world: &World) -> SelectType {
+        self.selection
+            .first()
+            .and_then(|key| world.objects.index_of(key))
+            .map_or(SelectType::World, |idx| select_type(world, idx))
+    }
+
+    /// Something we wear is selected, on the body or in the HUD
+    /// (LLObjectSelection::isAttachment): it cannot be deleted, taken,
+    /// copied, linked or sold, and has no land impact.
+    pub fn attachment_selected(&self, world: &World) -> bool {
+        self.select_type(world) != SelectType::World
+    }
+
     /// Forget objects that are gone; drop a selection left far behind
     /// (LLSelectMgr::deselectAllIfTooFar).
     fn prune(&mut self, world: &World, now: Instant) {
         self.selection.retain(|k| world.objects.index_of(k).is_some());
         if !self.selection.is_empty()
-            && !self.hud_selected(world)
+            && !self.attachment_selected(world)
             && !self.manip.dragging()
             && let Some(b) = self.bounds(world, now)
             && b.center.distance(world.agent.position) > MAX_SELECT_DISTANCE
@@ -923,7 +973,7 @@ impl BuildTool {
 
     /// Delete (to the trash): roots only (LLSelectMgr::selectDelete).
     pub fn delete(&mut self, world: &mut World) {
-        if self.hud_selected(world) {
+        if self.attachment_selected(world) {
             return;
         }
         let roots = self.roots(world);
@@ -965,7 +1015,7 @@ impl BuildTool {
 
     /// Take / take a copy into the Objects folder (derez_objects).
     pub fn take(&mut self, world: &mut World, copy: bool) {
-        if self.hud_selected(world) {
+        if self.attachment_selected(world) {
             return;
         }
         let roots = self.roots(world);
@@ -1002,7 +1052,7 @@ impl BuildTool {
 
     /// Ctrl+D: copies 0.5 m away, selected (LLSelectMgr::duplicate).
     pub fn duplicate(&mut self, world: &mut World, offset: Vec3, select_copy: bool) {
-        if self.hud_selected(world) {
+        if self.attachment_selected(world) {
             return;
         }
         let roots = self.roots(world);
@@ -1027,7 +1077,7 @@ impl BuildTool {
 
     /// Ctrl+L: link the selected linksets; the last selected becomes the root.
     pub fn link(&mut self, world: &mut World) {
-        if self.hud_selected(world) {
+        if self.attachment_selected(world) {
             return;
         }
         let roots = self.roots(world);
@@ -1057,7 +1107,7 @@ impl BuildTool {
 
     /// Ctrl+Shift+L: every selected prim (SEND_INDIVIDUALS).
     pub fn unlink(&mut self, world: &mut World) {
-        if self.hud_selected(world) {
+        if self.attachment_selected(world) {
             return;
         }
         let prims: Vec<usize> = self.highlighted(world).into_iter().map(|(i, _)| i).collect();
@@ -1160,6 +1210,11 @@ impl BuildTool {
                 continue;
             };
             if hud != self.cam.hud.is_some() || (!hud && p.distance(world.agent.position) > MAX_SELECT_DISTANCE) {
+                continue;
+            }
+            // what avatars wear is left out of a rectangle drawn in the
+            // world (LLToolSelectRect::handleRectangleSelection skips isAttachment)
+            if !hud && select_type(world, idx) != SelectType::World {
                 continue;
             }
             let Some((x, y)) = self.cam.project_px(p) else { continue };
@@ -1376,9 +1431,8 @@ impl BuildTool {
         if face as usize >= self.num_faces(world, idx) {
             return;
         }
-        // LLSelectMgr keeps HUD and world selections in separate spaces.
-        let hud = world.hud_root(idx).is_some();
-        if shift && !self.selection.is_empty() && self.hud_selected(world) != hud {
+        // LLSelectMgr keeps world, worn and HUD selections in separate spaces.
+        if shift && !self.selection.is_empty() && self.select_type(world) != select_type(world, idx) {
             self.deselect_all(world);
             self.faces.clear();
         }
@@ -1691,11 +1745,23 @@ impl BuildTool {
         let Some(key) = self.selection.first().copied() else { return };
         let Some(idx) = world.objects.index_of(&key) else { return };
         let now = Instant::now();
-        let Some((wp, wr, hud)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
+        let Some((wp, wr, _)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
             return;
         };
         let Some(o) = world.objects.get(idx) else { return };
-        if hud {
+        // what we wear is typed relative to its attachment point, as the
+        // simulator stores it (LLPanelObject::sendPosition, isAttachment)
+        let space = select_type(world, idx);
+        let local = space != SelectType::World;
+        // no further than MAX_ATTACHMENT_DIST from a point of the body
+        let pos = pos.map(|p| {
+            if space == SelectType::Attachment && root_of(world, idx) == idx {
+                p.clamp_length_max(MAX_ATTACHMENT_DIST)
+            } else {
+                p
+            }
+        });
+        if local {
             let flags = world.objects.get(root_of(world, idx)).map_or(0, |o| o.update_flags);
             if flags & crate::ui::context::flags::OBJECT_MOVE == 0
                 || ((s.edit_linked || size.is_some()) && o.update_flags & crate::ui::context::flags::OBJECT_MODIFY == 0)
@@ -1708,14 +1774,16 @@ impl BuildTool {
         let position_scale = world.hud_position_scale(idx);
         let new_world_pos = pos
             .map(|p| {
-                if hud {
+                if local {
                     parent.map_or(p, |(pp, pr)| pp + pr * (p * position_scale))
                 } else {
                     p + off
                 }
             })
             .unwrap_or(wp);
-        let new_world_rot = rot.map(|r| if hud { parent.map_or(r, |(_, pr)| pr * r) } else { r }).unwrap_or(wr);
+        let new_world_rot = rot
+            .map(|r| if local { parent.map_or(r, |(_, pr)| pr * r) } else { r })
+            .unwrap_or(wr);
         let (local_pos, local_rot) = match parent {
             Some((pp, pr)) => (
                 pr.inverse() * (new_world_pos - pp) / position_scale,

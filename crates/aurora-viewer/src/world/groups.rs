@@ -128,6 +128,22 @@ impl GroupChats {
         std::mem::take(&mut self.out)
     }
 
+    /// Receive the notices of a group or not (LLAgent::setUserGroupFlags,
+    /// which Firestorm reaches from the group profile): our copy follows at
+    /// once, the simulator does not answer. The listing in our profile
+    /// travels in the same message and is sent as it is.
+    pub fn set_accept_notices(&mut self, group: Uuid, on: bool) {
+        let Some(g) = self.groups.iter_mut().find(|g| g.id == group) else {
+            return;
+        };
+        g.accept_notices = on;
+        self.out.push(NetCommand::SetGroupFlags {
+            group,
+            accept_notices: on,
+            list_in_profile: g.list_in_profile,
+        });
+    }
+
     fn im(&mut self, to: Uuid, dialog: u8, session: Uuid, message: String) {
         self.out.push(NetCommand::SendImDialog {
             to,
@@ -643,6 +659,35 @@ fn saved_prefix(offline: bool, timestamp: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bell_changes_the_notices_and_sends_the_profile_listing_as_it_is() {
+        let group = |n: u128, list_in_profile: bool| aurora_net::GroupMembership {
+            id: Uuid::from_u128(n),
+            name: format!("Group {n}"),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile,
+            contribution: 0,
+        };
+        let mut chats = GroupChats {
+            groups: vec![group(1, true), group(2, false)],
+            ..Default::default()
+        };
+        chats.set_accept_notices(Uuid::from_u128(2), false);
+        // not one of ours: nothing
+        chats.set_accept_notices(Uuid::from_u128(9), false);
+        assert!(chats.groups[0].accept_notices && !chats.groups[1].accept_notices);
+        assert!(matches!(
+            chats.take_commands()[..],
+            [NetCommand::SetGroupFlags {
+                group,
+                accept_notices: false,
+                list_in_profile: false,
+            }] if group == Uuid::from_u128(2)
+        ));
+    }
 
     #[test]
     fn splitting() {

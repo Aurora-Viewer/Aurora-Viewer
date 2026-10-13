@@ -861,6 +861,36 @@ impl World {
             .collect()
     }
 
+    /// The root prim of the object our avatar wears from inventory item
+    /// `item` (LLVOAvatar::getWornAttachment).
+    pub fn worn_attachment(&self, item: &Uuid) -> Option<usize> {
+        if item.is_nil() {
+            return None;
+        }
+        let me = self.objects.get(self.objects.index_of_uuid(&self.agent_id)?)?;
+        self.objects
+            .children_of(&me.key)
+            .iter()
+            .copied()
+            .find(|i| self.objects.get(*i).and_then(|o| o.attachment_item_id()) == Some(*item))
+    }
+
+    /// Worn items whose object handles touches (enable_attachment_touch:
+    /// flagHandleTouch of the attachment's root).
+    pub fn touchable_attachment_items(&self) -> HashSet<Uuid> {
+        let Some(me) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
+            return HashSet::new();
+        };
+        self.objects
+            .children_of(&me.key)
+            .iter()
+            .filter_map(|i| self.objects.get(*i))
+            .filter(|o| o.update_flags & crate::ui::context::flags::HANDLE_TOUCH != 0)
+            .filter_map(|o| o.attachment_item_id())
+            .filter(|id| !id.is_nil())
+            .collect()
+    }
+
     pub fn worn_attachment_points(&self) -> HashMap<Uuid, u8> {
         self.objects
             .index_of_uuid(&self.agent_id)
@@ -947,6 +977,7 @@ impl World {
                 let account = crate::settings::account_dir(&l.agent_id);
                 self.contact_sets = contact_sets::ContactSets::load(account.join(contact_sets::CONTACT_SETS_FILE));
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
+                self.status.invisible = status::Invisible::load(account.join(status::INVISIBLE_FILE), &self.social.friends);
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
                 self.aliases_synced = u64::MAX;
@@ -2026,6 +2057,8 @@ impl World {
             }
             d::FRIENDSHIP_ACCEPTED => {
                 self.social.form_friendship(im.from_agent_id);
+                self.status
+                    .hide_from_new_friend(&mut self.social, &mut self.groups.out, im.from_agent_id);
                 n.push(
                     Kind::Friendship,
                     aurora_i18n::tr!("world-mod-accepted-your-friendship", from = from.to_string()),
@@ -2090,6 +2123,7 @@ impl World {
                 self.notifications.list.iter().find(|n| n.id == id).map(|n| n.data.clone())
         {
             self.social.form_friendship(from);
+            self.status.hide_from_new_friend(&mut self.social, &mut self.groups.out, from);
         }
         let inv = &self.inventory;
         let folder_of = |t: i32| {

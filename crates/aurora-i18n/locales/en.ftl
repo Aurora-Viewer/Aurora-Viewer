@@ -1579,7 +1579,6 @@ build-ui-object-try-pasting-from-clipboard = { "Try pasting " }{ $n }{ " from cl
 world-inventory-demo-right-click-tests = Right-click tests
 build-manip-east = East
 ui-appearance-items-stomach = Stomach
-ui-context-inspect = Inspect
 demo-example = Example
 ui-land-experiences-allowed-experiences = Allowed experiences:
 ui-land-experiences-blocked-experiences = Blocked experiences:
@@ -1700,7 +1699,6 @@ ui-login-grid = Grid
 demo-4-4-grid-loop = 4 × 4 grid (LOOP)
 common-group = Group
 common-group-2 = Group:
-ui-people-group = Group [{ $value0 }]
 demo-land-demo-group = Demo group
 common-groups = Groups
 ui-profile-groups = Groups:
@@ -1713,6 +1711,7 @@ ui-perf-geometries = Geometries
 world-notifications-manage-estate-silently = Manage estate silently
 common-demo-hud = Demo HUD
 demo-hud-demo-hud = { "Demo HUD " }{ $point }
+demo-worn-item = Demo backpack
 demo-clothes = Clothes
 demo-place-nordheim-hall = Nordheim Hall
 demo-place-nordheim-hall-nordheim = Nordheim Hall, Nordheim
@@ -1803,6 +1802,36 @@ ui-land-general-script-info = Script info
 world-profiles-joined-today = Joined today
 keybinds-insert = Insert
 ui-context-inspect-2 = Inspect
+inspect-title = Inspect Objects
+inspect-col-name = Object Name
+inspect-col-description = Description
+inspect-col-owner = Owner
+inspect-col-creator = Creator
+inspect-col-faces = Faces
+inspect-col-vertices = Vertices
+inspect-col-triangles = Triangles
+inspect-col-tmem = TMem (KB)
+inspect-col-vram = VRAM (KB)
+inspect-col-created = Creation Date
+inspect-date = { $year }-{ $month }-{ $day } { $hour }:{ $minute }
+inspect-empty = Nothing to inspect.
+inspect-group-owner = [{ $name }] (group)
+inspect-owner-profile = See Owner Profile…
+inspect-owner-profile-tip = Profile of the highlighted object's owner
+inspect-creator-profile = See Creator Profile…
+inspect-creator-profile-tip = Profile of the highlighted object's original creator
+inspect-options = Columns shown
+inspect-totals = Total stats
+inspect-totals-objects = { $objects ->
+    [one] { $objects } object
+   *[other] { $objects } objects
+    }, { $prims ->
+    [one] { $prims } prim
+   *[other] { $prims } prims
+    }
+inspect-totals-visible = Visible faces
+inspect-totals-complexity = Complexity
+inspect-totals-textures = Textures
 ui-login-installed = Installed
 world-inventory-demo-instructions = Instructions
 build-ui-features-intensity = Intensity
@@ -2436,7 +2465,6 @@ ui-options-diagnostic-tools-drawn-over-the-view-disabled-next-time = Diagnostic 
 common-open = Open
 ui-inventory-context-open-in-a-new-window = Open in a new window
 ui-minimap-open-world-map = Open world map
-ui-people-open-group-chat = Open group chat
 ui-options-open-folder = Open folder
 ui-notifications-open-link = Open link
 build-ui-general-open-profile = Open profile
@@ -2690,7 +2718,6 @@ keybinds-zoom-camera-in = Zoom camera in
 ui-contacts-attach-to-conversations = Attach to Conversations
 build-ui-object-radius = Radius
 ui-minimap-center-map = Center map
-ui-people-receive-this-group-s-chat-again = Receive this group's chat again
 ui-media-reload = Reload
 ui-inventory-context-reload-folder = Reload folder
 ui-avatar-picker-search = Search
@@ -4244,6 +4271,28 @@ radar-age-alert = { $days ->
    *[other] triggered the age alert. Age: { $days } days
     }
 radar-too-far-to-zoom = This avatar is too far for the camera to reach it.
+people-view-sort-options = View/sort options
+people-friends-add = Offer friendship to a resident
+people-friends-sort-name = Sort by name
+people-friends-sort-username = Sort by username
+people-friends-sort-status = Sort by status
+people-friends-view-pictures = View profile pictures
+people-friends-view-permissions = View permissions granted
+people-group-profile = Group profile
+people-group-notices-on = Group notices received (click to stop receiving them)
+people-group-notices-off = Group notices turned off (click to receive them)
+ui-bars-invisible = Invisible
+ui-bars-invisible-tip = Your friends do not see that you are online.
+world-status-invisible-on = { $count ->
+    [0] Invisible: no friend could see your online status.
+    [one] Invisible: your online status is hidden from { $count } friend. The servers can take a while to apply it.
+   *[other] Invisible: your online status is hidden from your { $count } friends. The servers can take a while to apply it.
+    }
+world-status-invisible-off = { $count ->
+    [0] You are no longer invisible.
+    [one] You are no longer invisible: { $count } friend sees your online status again. The servers can take a while to apply it.
+   *[other] You are no longer invisible: { $count } friends see your online status again. The servers can take a while to apply it.
+    }
 radar-col-seen-short = Seen
 radar-col-range-short = Dist.
 ui-options-camera-reset-all = Reset the camera

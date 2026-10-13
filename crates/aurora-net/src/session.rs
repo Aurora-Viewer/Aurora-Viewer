@@ -1806,6 +1806,7 @@ impl Session<'_> {
             | NetCommand::RequestGroups
             | NetCommand::ActivateGroup(_)
             | NetCommand::LeaveGroup(_)
+            | NetCommand::SetGroupFlags { .. }
             | NetCommand::TerminateFriendship(_)
             | NetCommand::AgentAnimation { .. }
             | NetCommand::ObjectGrab { .. }

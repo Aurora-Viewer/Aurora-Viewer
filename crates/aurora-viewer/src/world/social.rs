@@ -185,15 +185,4 @@ impl Social {
     pub fn total_unread(&self) -> usize {
         self.ims.iter().map(|s| s.unread).sum()
     }
-
-    /// Friends sorted: online first, then by name.
-    pub fn sorted_friends(&self) -> Vec<Friend> {
-        let mut v = self.friends.clone();
-        v.sort_by(|a, b| {
-            b.online
-                .cmp(&a.online)
-                .then_with(|| self.name_of(&a.id).to_lowercase().cmp(&self.name_of(&b.id).to_lowercase()))
-        });
-        v
-    }
 }

@@ -91,6 +91,20 @@ impl Session<'_> {
                 m.group_data.group_id = *group;
                 self.send_main(&m, true);
             }
+            NetCommand::SetGroupFlags {
+                group,
+                accept_notices,
+                list_in_profile,
+            } => {
+                // LLAgent::setUserGroupFlags
+                let mut m = SetGroupAcceptNotices::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.data.group_id = *group;
+                m.data.accept_notices = *accept_notices;
+                m.new_data.list_in_profile = *list_in_profile;
+                self.send_main(&m, true);
+            }
             NetCommand::TerminateFriendship(other) => {
                 // LLAvatarTracker::terminateBuddy
                 let mut m = TerminateFriendship::default();

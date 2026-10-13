@@ -156,11 +156,15 @@ const NO_TELEPORT: &str = "plane-departure-filled";
 const NO_INVITE: &str = "users-plus";
 const NO_FRIENDSHIP: &str = "user-plus";
 const AD_HOC: &str = "messages-filled";
+/// « Invisible »: the eye of the right to see someone online, barred.
+const INVISIBLE: &str = "eye-off";
 
-/// Color of the online status: violet away, red do not disturb, orange
-/// automatic response, green available.
+/// Color of the online status: grey invisible, red do not disturb, violet
+/// away, orange automatic response, green available.
 fn status_color(p: &Palette, m: &crate::world::status::StatusModes) -> Color32 {
-    if m.dnd {
+    if m.invisible {
+        p.muted
+    } else if m.dnd {
         p.danger
     } else if m.away {
         p.violet
@@ -172,7 +176,9 @@ fn status_color(p: &Palette, m: &crate::world::status::StatusModes) -> Color32 {
 }
 
 fn status_name(m: &crate::world::status::StatusModes) -> &'static str {
-    if m.dnd {
+    if m.invisible {
+        aurora_i18n::tr!("ui-bars-invisible")
+    } else if m.dnd {
         aurora_i18n::tr!("common-do-not-disturb")
     } else if m.away {
         aurora_i18n::tr!("common-away")
@@ -201,6 +207,7 @@ fn status_menu(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Sta
     let mut c = false;
     c |= flip(ui, p, "hourglass-filled", aurora_i18n::tr!("common-away"), &mut m.away, true);
     c |= flip(ui, p, "bell-off", aurora_i18n::tr!("common-do-not-disturb"), &mut m.dnd, true);
+    c |= flip(ui, p, INVISIBLE, aurora_i18n::tr!("ui-bars-invisible"), &mut m.invisible, true);
     c |= flip(ui, p, AUTO_REPLY, aurora_i18n::tr!("ui-bars-auto-reply"), &mut m.autorespond, true);
     let non_friends = aurora_i18n::tr!("ui-bars-auto-reply-to-non-friends");
     c |= flip(ui, p, AUTO_REPLY, non_friends, &mut m.autorespond_nonfriends, true);
@@ -239,14 +246,22 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     let col = status_color(p, &status);
-    ui.painter().circle_filled(rect.center(), 5.0, col);
-    ui.painter()
-        .circle_stroke(rect.center(), 5.0, egui::Stroke::new(1.0, col.gamma_multiply(0.55)));
+    if status.invisible {
+        // hollow: nobody sees the light
+        ui.painter().circle_stroke(rect.center(), 4.25, egui::Stroke::new(1.5, col));
+    } else {
+        ui.painter().circle_filled(rect.center(), 5.0, col);
+        ui.painter()
+            .circle_stroke(rect.center(), 5.0, egui::Stroke::new(1.0, col.gamma_multiply(0.55)));
+    }
     // refusals on: a thin ring around the dot
     if status.reject_teleports || status.reject_group_invites || status.reject_friendship || status.ignore_adhoc {
         ui.painter().circle_stroke(rect.center(), 7.5, egui::Stroke::new(1.0, p.muted));
     }
     let mut tip = aurora_i18n::tr!("ui-bars-status", value0 = status_name(&status).to_string());
+    if status.invisible {
+        tip.push_str(&format!("\n{}", aurora_i18n::tr!("ui-bars-invisible-tip")));
+    }
     for (on, what) in [
         (status.reject_teleports, aurora_i18n::tr!("ui-bars-teleports-rejected")),
         (status.reject_group_invites, aurora_i18n::tr!("ui-bars-group-invitations-rejected")),
@@ -258,16 +273,21 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
         }
     }
     let resp = resp.on_hover_text(tip);
-    // demo captures: AURORA_DEMO_STATUSMENU=1 opens it
+    // demo captures: AURORA_DEMO_STATUSMENU=1 opens it (=invisible: with
+    // that status, set by the viewer)
     static DEMO_OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_STATUSMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300 {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
     }
     menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
         ui.set_min_width(250.0);
-        // availability: one of three, like a presence menu
+        // availability: one of four, like a presence menu. « Invisible »
+        // is Firestorm's button of the friends list that hides our online
+        // status from every friend (GlobalOnlineStatusToggle)
         let mut m = status;
-        let current = if m.dnd {
+        let current = if m.invisible {
+            3
+        } else if m.dnd {
             2
         } else if m.away {
             1
@@ -278,10 +298,12 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
             (0, aurora_i18n::tr!("ui-bars-available"), p.success),
             (1, aurora_i18n::tr!("common-away"), p.violet),
             (2, aurora_i18n::tr!("common-do-not-disturb"), p.danger),
+            (3, aurora_i18n::tr!("ui-bars-invisible"), p.muted),
         ] {
             if menu::swatch_toggle(ui, p, col, label, current == i) && current != i {
                 m.away = i == 1;
                 m.dnd = i == 2;
+                m.invisible = i == 3;
                 *action = BarAction::SetStatus(m);
             }
         }
@@ -291,6 +313,7 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
         let mut rest = status;
         rest.away = m.away;
         rest.dnd = m.dnd;
+        rest.invisible = m.invisible;
         let mut c = false;
         c |= menu::toggle(ui, p, AUTO_REPLY, aurora_i18n::tr!("ui-bars-auto-reply"), &mut rest.autorespond);
         let non_friends = aurora_i18n::tr!("ui-bars-auto-reply-to-non-friends");

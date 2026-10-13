@@ -73,8 +73,12 @@ pub struct ContextMenu {
 pub struct ObjectFacts {
     pub local_hud_scale: Option<f32>,
     pub saved_hud_scale: bool,
-    pub edit_hud: bool,
+    /// enable_object_edit on one of our attachments, body or HUD: the
+    /// build tools can select it.
+    pub edit: bool,
     pub attachment_item: Option<Uuid>,
+    /// The prim the menu is about (nil in the menus of avatars and land).
+    pub id: Uuid,
     /// enable_object_touch: the prim or its parent handles touches.
     pub touch: bool,
     /// enable_object_sit: not already sitting on it.
@@ -151,6 +155,11 @@ pub enum CtxAction {
     Detach(ObjKey),
     AttachmentInventory(Uuid),
     EditAttachment(ObjKey),
+    /// « Toucher » / « Modifier » of a worn item in the inventory or the
+    /// outfit lists, by inventory item (handle_attachment_touch /
+    /// handle_attachment_edit).
+    TouchWorn(Uuid),
+    EditWorn(Uuid),
     Touch(u32),
     Sit {
         target: Uuid,
@@ -180,6 +189,8 @@ pub enum CtxAction {
     },
     /// Edit the object in the build tools (handle_object_edit).
     Edit(Uuid),
+    /// « Inspecter »: the window of the object's prims (Floater.Show "inspect").
+    Inspect(Uuid),
     /// Take / take a copy into the inventory (derez_objects).
     Take(Uuid),
     TakeCopy(Uuid),
@@ -497,7 +508,9 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     ) {
         act(CtxAction::ActivateGroup(id));
     }
-    menu::todo(ui, p, "info-circle-filled", aurora_i18n::tr!("common-view-info"));
+    if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-view-info")) {
+        super::group_profile::request_open(ui.ctx(), id);
+    }
     if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl-2")) {
         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
     }
@@ -736,7 +749,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn modifier_click_opens_hud_editing_but_other_attachments_stay_disabled() {
+    fn modifier_click_opens_the_editing_of_an_attachment_the_tools_can_select() {
         fn label_pos(shape: &egui::epaint::Shape) -> Option<egui::Pos2> {
             match shape {
                 egui::epaint::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("common-edit") => Some(t.pos + egui::vec2(4.0, 4.0)),
@@ -744,14 +757,14 @@ mod tests {
                 _ => None,
             }
         }
-        for edit_hud in [true, false] {
+        for edit in [true, false] {
             let ctx = egui::Context::default();
             let theme = crate::theme::Theme::default();
             theme.apply(&ctx, 1.0);
             let key = ObjKey { region: 1, local_id: 42 };
             let facts = Facts {
                 object: ObjectFacts {
-                    edit_hud,
+                    edit,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -792,7 +805,7 @@ mod tests {
                 ]);
             }
             let requests = take_requests(&ctx);
-            if edit_hud {
+            if edit {
                 assert!(matches!(&requests[..], [CtxAction::EditAttachment(k)] if *k == key));
             } else {
                 assert!(requests.is_empty());

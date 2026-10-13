@@ -1582,7 +1582,6 @@ build-ui-object-try-pasting-from-clipboard = { "Essaie de coller " }{ $n }{ " de
 world-inventory-demo-right-click-tests = Essais du clic droit
 build-manip-east = Est
 ui-appearance-items-stomach = Estomac
-ui-context-inspect = Examiner
 demo-example = Exemple
 ui-land-experiences-allowed-experiences = Exp. autorisées :
 ui-land-experiences-blocked-experiences = Exp. bloquées :
@@ -1703,7 +1702,6 @@ ui-login-grid = Grille
 demo-4-4-grid-loop = Grille 4 × 4 (LOOP)
 common-group = Groupe
 common-group-2 = Groupe :
-ui-people-group = Groupe [{ $value0 }]
 demo-land-demo-group = Groupe de démonstration
 common-groups = Groupes
 ui-profile-groups = Groupes :
@@ -1716,6 +1714,7 @@ ui-perf-geometries = Géométries
 world-notifications-manage-estate-silently = Gérer le domaine en silence
 common-demo-hud = HUD de démo
 demo-hud-demo-hud = { "HUD de démo " }{ $point }
+demo-worn-item = Sac à dos de démo
 demo-clothes = Habits
 demo-place-nordheim-hall = Halle de Nordheim
 demo-place-nordheim-hall-nordheim = Halle de Nordheim, Nordheim
@@ -1806,6 +1805,36 @@ ui-land-general-script-info = Infos sur les scripts
 world-profiles-joined-today = Inscrit aujourd'hui
 keybinds-insert = Inser
 ui-context-inspect-2 = Inspecter
+inspect-title = Inspecter les objets
+inspect-col-name = Nom de l'objet
+inspect-col-description = Description
+inspect-col-owner = Propriétaire
+inspect-col-creator = Créateur
+inspect-col-faces = Faces
+inspect-col-vertices = Sommets
+inspect-col-triangles = Triangles
+inspect-col-tmem = TMem (Ko)
+inspect-col-vram = VRAM (Ko)
+inspect-col-created = Date de création
+inspect-date = { $day }/{ $month }/{ $year } { $hour }:{ $minute }
+inspect-empty = Aucun objet à inspecter.
+inspect-group-owner = [{ $name }] (groupe)
+inspect-owner-profile = Voir le profil du propriétaire…
+inspect-owner-profile-tip = Profil du propriétaire de l'objet en surbrillance
+inspect-creator-profile = Voir le profil du créateur…
+inspect-creator-profile-tip = Profil du créateur d'origine de l'objet en surbrillance
+inspect-options = Colonnes affichées
+inspect-totals = Totaux
+inspect-totals-objects = { $objects ->
+    [one] { $objects } objet
+   *[other] { $objects } objets
+    }, { $prims ->
+    [one] { $prims } prim
+   *[other] { $prims } prims
+    }
+inspect-totals-visible = Faces visibles
+inspect-totals-complexity = Complexité
+inspect-totals-textures = Textures
 ui-login-installed = Installée
 world-inventory-demo-instructions = Instructions
 build-ui-features-intensity = Intensité
@@ -2439,7 +2468,6 @@ ui-options-diagnostic-tools-drawn-over-the-view-disabled-next-time = Outils de d
 common-open = Ouvrir
 ui-inventory-context-open-in-a-new-window = Ouvrir dans une nouvelle fenêtre
 ui-minimap-open-world-map = Ouvrir la carte du monde
-ui-people-open-group-chat = Ouvrir le chat du groupe
 ui-options-open-folder = Ouvrir le dossier
 ui-notifications-open-link = Ouvrir le lien
 build-ui-general-open-profile = Ouvrir le profil
@@ -2693,7 +2721,6 @@ keybinds-zoom-camera-in = Rapprocher la caméra
 ui-contacts-attach-to-conversations = Rattacher à Conversations
 build-ui-object-radius = Rayon
 ui-minimap-center-map = Recentrer la carte
-ui-people-receive-this-group-s-chat-again = Recevoir de nouveau le chat de ce groupe
 ui-media-reload = Recharger
 ui-inventory-context-reload-folder = Recharger le dossier
 ui-avatar-picker-search = Recherche
@@ -4244,6 +4271,28 @@ radar-age-alert = { $days ->
    *[other] a déclenché l'alerte d'âge. Âge : { $days } jours
     }
 radar-too-far-to-zoom = Cet avatar est trop loin pour que la caméra aille jusqu'à lui.
+people-view-sort-options = Options d'affichage et de tri
+people-friends-add = Proposer l'amitié à un résident
+people-friends-sort-name = Trier par nom
+people-friends-sort-username = Trier par nom d'utilisateur
+people-friends-sort-status = Trier par statut
+people-friends-view-pictures = Afficher les photos de profil
+people-friends-view-permissions = Afficher les droits accordés
+people-group-profile = Profil du groupe
+people-group-notices-on = Notices du groupe reçues (cliquer pour ne plus les recevoir)
+people-group-notices-off = Notices du groupe désactivées (cliquer pour les recevoir)
+ui-bars-invisible = Invisible
+ui-bars-invisible-tip = Vos amis ne voient pas que vous êtes en ligne.
+world-status-invisible-on = { $count ->
+    [0] Statut invisible : aucun ami ne voyait votre statut en ligne.
+    [one] Statut invisible : votre statut en ligne est masqué pour { $count } ami. Les serveurs peuvent mettre un moment à l'appliquer.
+   *[other] Statut invisible : votre statut en ligne est masqué pour vos { $count } amis. Les serveurs peuvent mettre un moment à l'appliquer.
+    }
+world-status-invisible-off = { $count ->
+    [0] Vous n'êtes plus invisible.
+    [one] Vous n'êtes plus invisible : { $count } ami voit de nouveau votre statut en ligne. Les serveurs peuvent mettre un moment à l'appliquer.
+   *[other] Vous n'êtes plus invisible : { $count } amis voient de nouveau votre statut en ligne. Les serveurs peuvent mettre un moment à l'appliquer.
+    }
 radar-col-seen-short = Vu
 radar-col-range-short = Dist.
 ui-options-camera-reset-all = Réinitialiser la caméra

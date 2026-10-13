@@ -420,6 +420,10 @@ pub fn show_transform(
     let Some((wp, wr, hud)) = Scene::object_transform(world, idx, now, 0) else {
         return;
     };
+    // what we wear is shown relative to its attachment point, body or HUD
+    // (LLPanelObject::getState, isAttachment)
+    let local = crate::build::select_type(world, idx) != crate::build::SelectType::World;
+    let reach = if hud { 64.0 } else { crate::build::MAX_ATTACHMENT_DIST };
     let Some(off) = world.region_offset(key.region) else { return };
     let Some(o) = world.objects.get(idx) else { return };
     let (local_pos, local_rot) = (o.position, o.rotation);
@@ -429,7 +433,7 @@ pub fn show_transform(
     let decimals = s.decimal_precision.min(7) as usize;
 
     let mixed = mixed_vectors(tool, world, s);
-    let can_move = props.as_ref().is_none_or(|pr| pr.owner_mask & perm::MOVE != 0) && ((hud && !s.edit_linked) || editable);
+    let can_move = props.as_ref().is_none_or(|pr| pr.owner_mask & perm::MOVE != 0) && ((local && !s.edit_linked) || editable);
     let which = match tool.effective_mode(mods) {
         crate::build::EditMode::Rotate => 2,
         crate::build::EditMode::Stretch => 1,
@@ -441,7 +445,7 @@ pub fn show_transform(
         aurora_i18n::tr!("build-ui-object-size"),
         aurora_i18n::tr!("build-ui-object-rotation"),
     ][which];
-    let (z, y, x) = if hud { local_rot } else { wr }.to_euler(EulerRot::ZYX);
+    let (z, y, x) = if local { local_rot } else { wr }.to_euler(EulerRot::ZYX);
     let wrap = |a: f32| {
         let d = (a.to_degrees() / 0.05).round() * 0.05;
         if d == 0.0 {
@@ -453,7 +457,7 @@ pub fn show_transform(
         }
     };
     let mut rot = [wrap(x), wrap(y), wrap(z)];
-    let current = [if hud { local_pos } else { wp - off }, scale, Vec3::from_array(rot)][which];
+    let current = [if local { local_pos } else { wp - off }, scale, Vec3::from_array(rot)][which];
     super::compact::heading(ui, p, "arrows-move", aurora_i18n::tr!("build-compact-transform"), |ui| {
         let paste = super::compact::icon_button(
             ui,
@@ -487,7 +491,7 @@ pub fn show_transform(
     });
     super::compact::manipulation(ui, p, tool, world, s, mods);
     ui.add_space(4.0);
-    let mut pos = if hud { local_pos } else { wp - off }.to_array();
+    let mut pos = if local { local_pos } else { wp - off }.to_array();
     let region = world
         .regions
         .get(&key.region)
@@ -501,8 +505,8 @@ pub fn show_transform(
         aurora_i18n::tr!("build-compact-position"),
         &mut pos,
         0.01,
-        if hud {
-            [-64.0..=64.0, -64.0..=64.0, -64.0..=64.0]
+        if local {
+            [-reach..=reach, -reach..=reach, -reach..=reach]
         } else {
             [0.0..=region.0, 0.0..=region.1, 0.0..=4096.0]
         },
@@ -514,8 +518,8 @@ pub fn show_transform(
         copy_vector(ui, tool, 0, Vec3::from_array(pos), decimals);
     }
     if let Some(v) = paste {
-        let v = if hud {
-            v.clamp(Vec3::splat(-64.0), Vec3::splat(64.0))
+        let v = if local {
+            v.clamp(Vec3::splat(-reach), Vec3::splat(reach))
         } else {
             Vec3::new(v.x.clamp(0.0, region.0), v.y.clamp(0.0, region.1), v.z)
         };
@@ -677,12 +681,13 @@ fn mixed_vectors(tool: &BuildTool, world: &World, s: &BuildSettings) -> [[bool; 
     let now = Instant::now();
     for idx in indices {
         let Some(o) = world.objects.get(idx) else { continue };
-        let Some((pos, rot, hud)) = Scene::object_transform(world, idx, now, 0) else {
+        let Some((pos, rot, _)) = Scene::object_transform(world, idx, now, 0) else {
             continue;
         };
+        let local = crate::build::select_type(world, idx) != crate::build::SelectType::World;
         let Some(off) = world.region_offset(o.key.region) else { continue };
-        let (z, y, x) = if hud { o.rotation } else { rot }.to_euler(EulerRot::ZYX);
-        let values = [if hud { o.position } else { pos - off }.to_array(), o.scale.to_array(), [x, y, z]];
+        let (z, y, x) = if local { o.rotation } else { rot }.to_euler(EulerRot::ZYX);
+        let values = [if local { o.position } else { pos - off }.to_array(), o.scale.to_array(), [x, y, z]];
         let reference = first.get_or_insert(values);
         for (row, flags) in mixed.iter_mut().enumerate() {
             for (axis, flag) in flags.iter_mut().enumerate() {

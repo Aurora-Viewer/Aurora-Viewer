@@ -202,6 +202,8 @@ pub struct RadarData<'a> {
     pub draw_distance: f32,
     /// Clock of the radar's sweeps.
     pub now: f64,
+    /// Profile pictures the viewer holds.
+    pub pics: &'a HashMap<Uuid, egui::TextureHandle>,
 }
 
 /// Name of an avatar in the radar and its alerts (FSRadarEntry::getRadarName):
@@ -255,6 +257,8 @@ struct Row {
     range: Option<f32>,
     loaded: bool,
     position: glam::Vec3,
+    /// In a region a teleport left behind: faded until it leaves the list.
+    left_behind: bool,
 }
 
 /// Age in days of a profile, when it tells it (also for the age alert).
@@ -318,6 +322,7 @@ fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
                 range: e.range,
                 loaded: e.loaded,
                 position: e.position,
+                left_behind: e.left_behind,
             })
         })
         .collect();
@@ -475,6 +480,11 @@ fn paint_row(ui: &egui::Ui, p: &Palette, data: &RadarData, row: &Row, rect: Rect
                 } else {
                     p.ink
                 };
+                // the profile picture first (not in Firestorm's radar, asked
+                // by the human), then the name
+                let picture = Rect::from_min_size(egui::pos2(cell.left() + 4.0, cell.center().y - PICTURE / 2.0), Vec2::splat(PICTURE));
+                widgets::avatar_picture(ui, p, picture, data.pics.get(&row.id), &row.name, row.muted);
+                let cell = cell.with_min_x(picture.right());
                 // friends in bold, blocked residents in italics
                 let mut job = egui::text::LayoutJob::single_section(
                     row.name.clone(),
@@ -586,10 +596,14 @@ fn paint_row(ui: &egui::Ui, p: &Palette, data: &RadarData, row: &Row, rect: Rect
 }
 
 /// Side of the buttons beside the filter.
-const TOOL: f32 = 24.0;
+pub(super) const TOOL: f32 = 24.0;
+/// How much of a row shows while its avatar is in a region left behind.
+const LEFT_BEHIND_OPACITY: f32 = 0.35;
+/// Side of the profile picture of a row.
+pub(super) const PICTURE: f32 = 18.0;
 
 /// Face of a button of the list's toolbar: the theme's button around an icon.
-fn tool_button<'a>(p: &Palette, icon: &str, enabled: bool) -> egui::Button<'a> {
+pub(super) fn tool_button<'a>(p: &Palette, icon: &str, enabled: bool) -> egui::Button<'a> {
     let tint = if enabled { p.ink } else { p.muted_dim };
     let button = match crate::ui::icons::global(icon) {
         Some(texture) => {
@@ -601,7 +615,7 @@ fn tool_button<'a>(p: &Palette, icon: &str, enabled: bool) -> egui::Button<'a> {
 }
 
 /// A toolbar button opening a menu.
-fn tool_menu(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, content: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn tool_menu(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enabled: bool, content: impl FnOnce(&mut egui::Ui)) {
     if !enabled {
         ui.add_enabled(false, tool_button(p, icon, false)).on_disabled_hover_text(tip);
         return;
@@ -758,8 +772,17 @@ pub fn tab(
             } else if resp.hovered() {
                 ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.6));
             }
+            if !data.pics.contains_key(&row.id) {
+                st.want_pic(row.id, ui.input(|i| i.time));
+            }
             let pointer = resp.hover_pos();
+            // who stayed in the region we teleported from is on the way out
+            let opacity = ui.opacity();
+            if row.left_behind {
+                ui.set_opacity(opacity * LEFT_BEHIND_OPACITY);
+            }
             let tip = paint_row(ui, p, data, row, rect, pointer);
+            ui.set_opacity(opacity);
             if resp.clicked() {
                 // Ctrl adds to the selection or takes away from it
                 if ui.input(|i| i.modifiers.command) {

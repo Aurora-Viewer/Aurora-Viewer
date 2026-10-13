@@ -105,12 +105,12 @@ impl App {
         });
     }
 
-    /// The prims of the worn object the open menu is about: Firestorm
-    /// selects it while the menu is open (LLToolSelect::handleObjectSelection)
-    /// and shows its outline. HUDs keep their own selection.
+    /// The prims of the object another avatar wears that the open menu is
+    /// about: Firestorm selects it while the menu is open
+    /// (LLToolSelect::handleObjectSelection) and shows its outline. What we
+    /// wear ourselves is selected by the build tools, like an object.
     pub(super) fn menu_outline(&self) -> Vec<usize> {
         let idx = match self.context_menu.as_ref().map(|m| &m.target) {
-            Some(Target::Attachment { key }) => self.world.objects.index_of(key),
             Some(Target::Avatar { attachment: Some(id), .. }) => self.world.objects.index_of_uuid(id),
             _ => None,
         };
@@ -182,7 +182,8 @@ impl App {
             for_sale,
         );
         f.open = interaction::allow_open(w, idx);
-        f.edit_hud = crate::build::selectable(w, idx) && Scene::object_transform(w, idx, Instant::now(), 0).is_some_and(|(_, _, hud)| hud);
+        f.edit = crate::build::selectable(w, idx);
+        f.id = o.full_id;
         f.attachment_item = w.objects.get(root).and_then(|o| o.attachment_item_id());
         f.blocked = w.mutes.is_muted_id(&root_id);
         f.name = props.map(|p| p.name.clone()).unwrap_or_default();
@@ -220,6 +221,25 @@ impl App {
                 {
                     self.release_object_hold();
                     self.on_ctx_action(CtxAction::Edit(id));
+                }
+            }
+            CtxAction::EditWorn(item) => {
+                if let Some(key) = self
+                    .world
+                    .worn_attachment(&item)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map(|o| o.key)
+                {
+                    self.on_ctx_action(CtxAction::EditAttachment(key));
+                }
+            }
+            CtxAction::TouchWorn(item) => {
+                // the root prim, when it handles touches (enable_attachment_touch)
+                if let Some(o) = self.world.worn_attachment(&item).and_then(|i| self.world.objects.get(i))
+                    && o.update_flags & ui::context::flags::HANDLE_TOUCH != 0
+                {
+                    let local_id = o.key.local_id;
+                    self.send(NetCommand::Touch { local_id });
                 }
             }
             CtxAction::AttachmentInventory(item) => self.apply_appearance_action(crate::world::appearance::Action::ShowOriginal(item)),
@@ -305,6 +325,7 @@ impl App {
                     self.flush_build();
                 }
             }
+            CtxAction::Inspect(id) => self.inspect_object(id),
             CtxAction::Take(id) | CtxAction::TakeCopy(id) => {
                 let copy = matches!(act, CtxAction::TakeCopy(_));
                 if let Some(idx) = self.world.objects.index_of_uuid(&id) {

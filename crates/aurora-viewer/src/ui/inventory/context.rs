@@ -443,13 +443,14 @@ pub(super) fn show(
                 ) {
                     ui.ctx().copy_text(it.asset_id.to_string());
                 }
-                if kind == 6 {
+                // listed for an object that is not worn (LLObjectBridge::buildContextMenu)
+                if kind == 6 && !worn {
                     entry(
                         ui,
                         p,
                         "restore",
                         aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
-                        single && writable && !worn,
+                        single && writable,
                         InvAction::Restore(target.unwrap_or(id)),
                         actions,
                     );
@@ -648,33 +649,55 @@ pub(super) fn show(
                     && selected_items
                         .iter()
                         .all(|id| inv.items.get(id).is_some_and(|it| it.asset_type != 13));
-                entry(
-                    ui,
-                    p,
-                    "shirt-filled",
-                    aurora_i18n::tr!("common-wear"),
-                    wear && single,
-                    InvAction::Appearance(Wear::WearItem {
-                        item: target.unwrap_or(id),
-                        replace: true,
-                        point: 0,
-                    }),
-                    actions,
-                );
-                entry(
-                    ui,
-                    p,
-                    "plus",
-                    aurora_i18n::tr!("common-add"),
-                    add,
-                    InvAction::Appearance(Wear::WearItems {
-                        items: selected_items.clone(),
-                        replace: false,
-                        point: 0,
-                    }),
-                    actions,
-                );
-                for hud in [false, true] {
+                // LLObjectBridge::buildContextMenu: a worn object lists
+                // « Toucher », « Modifier » and « Détacher de vous » in place
+                // of the entries that wear it
+                let worn_objects = objects && !selected_items.is_empty() && selected_items.iter().all(|id| facts.worn.contains(id));
+                if worn_objects {
+                    let item = target.unwrap_or(id);
+                    if menu::item_if(
+                        ui,
+                        p,
+                        "click-filled",
+                        aurora_i18n::tr!("ui-context-touch"),
+                        single && facts.touchable.contains(&item),
+                    ) {
+                        crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::TouchWorn(item));
+                    }
+                    // get_is_item_editable: any worn object
+                    if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit"), single) {
+                        crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(item));
+                    }
+                } else {
+                    entry(
+                        ui,
+                        p,
+                        "shirt-filled",
+                        aurora_i18n::tr!("common-wear"),
+                        wear && single,
+                        InvAction::Appearance(Wear::WearItem {
+                            item: target.unwrap_or(id),
+                            replace: true,
+                            point: 0,
+                        }),
+                        actions,
+                    );
+                    entry(
+                        ui,
+                        p,
+                        "plus",
+                        aurora_i18n::tr!("common-add"),
+                        add,
+                        InvAction::Appearance(Wear::WearItems {
+                            items: selected_items.clone(),
+                            replace: false,
+                            point: 0,
+                        }),
+                        actions,
+                    );
+                }
+                let attach_menus: &[bool] = if worn_objects { &[] } else { &[false, true] };
+                for &hud in attach_menus {
                     menu::submenu(
                         ui,
                         p,
@@ -808,6 +831,7 @@ mod tests {
                                 worn_labels: Default::default(),
                                 points: Vec::new(),
                                 appearance_busy: false,
+                                touchable: Default::default(),
                                 names: Default::default(),
                             },
                             &mut Vec::new(),
@@ -946,6 +970,90 @@ mod tests {
     }
 
     #[test]
+    fn worn_object_menu_touches_edits_and_detaches_instead_of_wearing() {
+        use crate::ui::context::CtxAction;
+        let item = Uuid::from_u128(8100);
+        // the menu of the worn item, then a click on `label`: what it asked for
+        let click = |touchable: bool, label: &str| {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let p = crate::theme::Theme::default().palette();
+            let mut inv = Inventory::default();
+            crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+            let mut state = InventoryUi::default();
+            let facts = Facts {
+                agent: Uuid::nil(),
+                worn: HashSet::from([item]),
+                worn_labels: Default::default(),
+                points: Vec::new(),
+                appearance_busy: false,
+                touchable: if touchable { HashSet::from([item]) } else { HashSet::new() },
+                names: Default::default(),
+            };
+            let mut actions = Vec::new();
+            let mut open = true;
+            let mut frame = |events| {
+                headless_output(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        menu::popup_at(ui.ctx(), egui::Id::new("worn_menu"), egui::pos2(500.0, 80.0), &mut open, &p, |ui| {
+                            show(
+                                ui,
+                                &p,
+                                &inv,
+                                item,
+                                &mut state,
+                                &mut InventoryPreferences::default(),
+                                &facts,
+                                &mut actions,
+                            );
+                        });
+                    },
+                ))
+            };
+            for _ in 0..4 {
+                let _ = frame(Vec::new());
+            }
+            let output = frame(Vec::new());
+            let find = |label: &str| output.shapes.iter().find_map(|s| text_position(&s.shape, label));
+            // LLObjectBridge::buildContextMenu, worn: no entry that wears it
+            for hidden in [
+                aurora_i18n::tr!("common-wear"),
+                aurora_i18n::tr!("common-add"),
+                aurora_i18n::tr!("common-attach-to"),
+                aurora_i18n::tr!("common-attach-to-hud"),
+                aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
+            ] {
+                assert!(find(hidden).is_none(), "unexpected {hidden}");
+            }
+            assert!(find(aurora_i18n::tr!("ui-inventory-context-detach-from-yourself")).is_some());
+            let pos = find(label).unwrap_or_else(|| panic!("missing {label}")) + egui::vec2(4.0, 4.0);
+            for pressed in [true, false] {
+                let _ = frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            crate::ui::context::take_requests(&ctx)
+        };
+        let touch = aurora_i18n::tr!("ui-context-touch");
+        let edit = aurora_i18n::tr!("common-edit");
+        // « Toucher » only when the object handles touches
+        assert!(matches!(&click(true, touch)[..], [CtxAction::TouchWorn(id)] if *id == item));
+        assert!(click(false, touch).is_empty());
+        assert!(matches!(&click(false, edit)[..], [CtxAction::EditWorn(id)] if *id == item));
+    }
+
+    #[test]
     fn add_and_detach_menu_actions_include_every_selected_object() {
         for detach in [false, true] {
             let ctx = egui::Context::default();
@@ -964,6 +1072,7 @@ mod tests {
                 worn_labels: Default::default(),
                 points: Vec::new(),
                 appearance_busy: false,
+                touchable: Default::default(),
                 names: Default::default(),
             };
             let mut actions = Vec::new();

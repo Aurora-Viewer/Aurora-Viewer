@@ -43,6 +43,9 @@ pub mod stream;
 /// Name plates in every state and at each distance (AURORA_DEMO_TAGS).
 #[path = "demo_tags.rs"]
 pub mod tags;
+/// A worn object of ours (AURORA_DEMO_WORN).
+#[path = "demo_worn.rs"]
+pub mod worn;
 
 /// Walkable floor of the demo (plaza top, else the terrain), for the
 /// offline movement stand-in.
@@ -520,10 +523,15 @@ fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
     ]
 }
 
-/// AURORA_DEMO_RADAR=1: residents around us for the radar of the People
-/// window, at every kind of range (chat, shout, farther, unknown altitude).
-pub fn radar_events() -> Vec<NetEvent> {
-    vec![NetEvent::CoarseLocations {
+/// AURORA_DEMO_RADAR=tp: the region we are supposed to have teleported
+/// from, forty regions east, whose simulator still tells us who is there.
+pub const RADAR_LEFT_REGION: u64 = ((256000u64 + 40 * 256) << 32) | 256000;
+
+/// AURORA_DEMO_RADAR: residents around us for the radar of the People
+/// window, at every kind of range (chat, shout, farther, unknown altitude);
+/// with `left_behind`, three more in `RADAR_LEFT_REGION`.
+pub fn radar_events(left_behind: bool) -> Vec<NetEvent> {
+    let mut events = vec![NetEvent::CoarseLocations {
         handle: HANDLE,
         positions: vec![
             (DEMO_LOUP, Vec3::new(134.0, 132.0, 24.0)),
@@ -535,7 +543,18 @@ pub fn radar_events() -> Vec<NetEvent> {
             // no altitude: its range is unknown
             (u(101), Vec3::new(200.0, 60.0, 0.0)),
         ],
-    }]
+    }];
+    if left_behind {
+        events.push(NetEvent::CoarseLocations {
+            handle: RADAR_LEFT_REGION,
+            positions: vec![
+                (u(102), Vec3::new(120.0, 130.0, 24.0)),
+                (u(103), Vec3::new(60.0, 200.0, 32.0)),
+                (u(104), Vec3::new(210.0, 40.0, 24.0)),
+            ],
+        });
+    }
+    events
 }
 
 /// AgentProfile reply of the demo residents (AURORA_DEMO_PROFILE).

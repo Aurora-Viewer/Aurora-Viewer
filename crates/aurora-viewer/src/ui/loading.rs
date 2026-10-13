@@ -425,6 +425,31 @@ fn banner(
     Pos2::new(screen.right() - margin, screen.top() + margin * 0.85)
 }
 
+/// The stage line of the loading screen: the stage alone until the region
+/// is known, then with what has arrived of it.
+pub fn stage_line(stage: &str, region: &str, terrain: f32, objects: usize, textures: (usize, usize)) -> String {
+    if region.is_empty() {
+        return stage.to_owned();
+    }
+    aurora_i18n::tr!(
+        "status-terrain-objects-textures",
+        value0 = stage.to_string(),
+        value1 = aurora_i18n::number_text(&format!("{:.0}", terrain * 100.0)),
+        value2 = format!("{objects}"),
+        value3 = format!("{}", textures.0),
+        value4 = format!("{}", textures.1)
+    )
+}
+
+/// What a banner says under its title. The app keeps it while the screen
+/// fades out, so that the screen leaves as it was: a line or a fact that
+/// came or went during the fade made the others jump.
+pub struct BannerText {
+    pub name: String,
+    pub stage: String,
+    pub facts: PlaceFacts,
+}
+
 /// Loading screen between login and the first rendered frames.
 pub fn show(
     ui: &mut egui::Ui,
@@ -439,18 +464,7 @@ pub fn show(
     let screen = ctx.content_rect();
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("loading_splash")));
     let t = ctx.input(|i| i.time) as f32;
-    let detail = if info.region.is_empty() {
-        info.stage.to_owned()
-    } else {
-        aurora_i18n::tr!(
-            "status-terrain-objects-textures",
-            value0 = info.stage.to_string(),
-            value1 = aurora_i18n::number_text(&format!("{:.0}", info.terrain * 100.0)),
-            value2 = format!("{}", info.objects),
-            value3 = format!("{}", info.textures.0),
-            value4 = format!("{}", info.textures.1)
-        )
-    };
+    let detail = stage_line(info.stage, info.region, info.terrain, info.objects, info.textures);
     let corner = banner(
         &ctx,
         &painter,
@@ -500,20 +514,24 @@ pub fn teleport_overlay(
     let a = alpha.clamp(0.0, 1.0);
     let rect = ctx.content_rect();
     let t = ctx.input(|i| i.time) as f32;
-    egui::Area::new(egui::Id::new("teleport_overlay"))
-        .order(egui::Order::Foreground)
+    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("teleport_overlay"));
+    egui::Area::new(layer.id)
+        .order(layer.order)
         .fixed_pos(rect.min)
         .fade_in(false)
         .interactable(a > 0.5)
         .show(ctx, |ui| {
             // swallow clicks while it covers the screen
-            let (r, _) = ui.allocate_exact_size(rect.size(), egui::Sense::click_and_drag());
-            let painter = ui.painter_at(r);
-            if !backdrop.is_some_and(|b| b.paint(&painter, p, r, a)) {
-                super::aurora_bg::paint(&painter, p, r, t, a);
-            }
-            banner(ctx, &painter, p, r, logo, title, dest, detail, fraction, place, t, a);
+            ui.allocate_exact_size(rect.size(), egui::Sense::click_and_drag());
         });
+    // Painted on the layer of the area, not through its `Ui`: egui hides a
+    // new area for its first frame (sizing pass), and the world showed for
+    // that frame between the loading screen and its fade out.
+    let painter = ctx.layer_painter(layer).with_clip_rect(rect);
+    if !backdrop.is_some_and(|b| b.paint(&painter, p, rect, a)) {
+        super::aurora_bg::paint(&painter, p, rect, t, a);
+    }
+    banner(ctx, &painter, p, rect, logo, title, dest, detail, fraction, place, t, a);
     ctx.request_repaint();
 }
 
@@ -532,5 +550,39 @@ mod tests {
         assert_eq!(split_destination("Port (nord)"), ("Port (nord)", None));
         assert_eq!(split_destination("Domicile"), ("Domicile", None));
         assert_eq!(split_destination(""), ("", None));
+    }
+
+    #[test]
+    fn the_teleport_screen_paints_in_its_first_frame() {
+        // the loading screen hands over to it at full opacity: a frame
+        // without it shows the world between the two
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                ..Default::default()
+            },
+            |ui| {
+                teleport_overlay(
+                    ui.ctx(),
+                    &p,
+                    None,
+                    None,
+                    "Loading",
+                    "Lagune",
+                    "Scene",
+                    Some(1.0),
+                    1.0,
+                    &Place::default(),
+                )
+            },
+        );
+        output.textures_delta.clear();
+        let painted = output.shapes.iter().any(|clipped| match &clipped.shape {
+            Shape::Text(text) => text.galley.text() == "Lagune",
+            _ => false,
+        });
+        assert!(painted, "the region name is not painted in the first frame");
     }
 }
