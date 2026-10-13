@@ -166,7 +166,7 @@ when unfocused") is ignored during a screenshot.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|wheel|fly|sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|wheel|fly|sit|scripted`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
@@ -186,6 +186,11 @@ when unfocused") is ignored during a screenshot.
   threshold and no menu opens on release. Capture at frames 590 and 700;
   `demo camera` logs the orbit and menu states. Combine with
   `AURORA_DEMO_PIE=1` to check the pie menu.
+  `scripted`: activate a following script camera at frame 300, walk at
+  380–460, activate a second source with locked eye and focus at 500 and
+  walk at 580–660. Clear that source at 700 (the first resumes), then clear
+  the first at 850 (normal rear view). Capture at 480, 640, 800 and 920 to
+  compare the follow, lock, priority restoration and final clear stages.
 - **`AURORA_DEMO_TP`**: teleport after the fade of the initial loading
   (frame 240 at the earliest). `1` or `"x,y,z"`: immediate local arrival,
   without a loading screen; `remote` simulates the progress between regions.

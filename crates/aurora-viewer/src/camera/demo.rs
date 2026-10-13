@@ -24,6 +24,8 @@
 //!   back-and-forth motion: the camera stays still and the menu opens on release
 //! - `right-drag,x,y` / `right-slow,x,y`: held right button with fast / slow motion:
 //!   the camera orbits and no menu opens on release
+//! - `scripted`: follow from 300, locked second source at 500, clear it at
+//!   700 (first source resumes), clear the first at 850 (normal view).
 
 /// What the app does this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -49,6 +51,7 @@ pub enum Step {
     Fly,
     /// The seat scenario's simulator messages for this frame.
     SitEvents,
+    FollowEvents,
     Log,
 }
 
@@ -230,6 +233,13 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                 out.push(Step::Log);
             }
         }
+        "scripted" => match frame {
+            300 | 500 | 700 | 850 => out.extend([Step::FollowEvents, Step::Log]),
+            380 | 580 => out.push(Step::Walk(true)),
+            460 | 660 => out.push(Step::Walk(false)),
+            480 | 640 | 800 | 920 => out.push(Step::Log),
+            _ => {}
+        },
         "fly" => match frame {
             300 => out.extend([Step::Fly, Step::Walk(true), Step::Log]),
             f if f > 300 && f.is_multiple_of(30) => out.push(Step::Log),
@@ -238,6 +248,41 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
         _ => {}
     }
     out
+}
+
+pub fn follow_events(frame: u64, handle: aurora_net::RegionHandle, subject: glam::Vec3) -> Vec<aurora_net::NetEvent> {
+    use aurora_net::NetEvent;
+    let first = uuid::Uuid::from_u128(0xca0001);
+    let second = uuid::Uuid::from_u128(0xca0002);
+    match frame {
+        300 => vec![NetEvent::SetFollowCam {
+            handle,
+            object: first,
+            properties: vec![(12, 1.0), (7, 6.0), (0, 20.0), (4, 1.0), (10, 0.0), (11, 0.0)],
+        }],
+        500 => {
+            let eye = subject + glam::Vec3::new(-8.0, -6.0, 5.0);
+            let at = subject + glam::Vec3::Z;
+            vec![NetEvent::SetFollowCam {
+                handle,
+                object: second,
+                properties: vec![
+                    (12, 1.0),
+                    (14, eye.x),
+                    (15, eye.y),
+                    (16, eye.z),
+                    (18, at.x),
+                    (19, at.y),
+                    (20, at.z),
+                    (21, 1.0),
+                    (22, 1.0),
+                ],
+            }]
+        }
+        700 => vec![NetEvent::ClearFollowCam { object: second }],
+        850 => vec![NetEvent::ClearFollowCam { object: first }],
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]

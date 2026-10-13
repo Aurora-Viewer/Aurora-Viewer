@@ -134,6 +134,7 @@ pub struct World {
     pub regions: HashMap<RegionHandle, Region>,
     pub main_region: Option<RegionHandle>,
     pub objects: ObjectStore,
+    pub(crate) scripted_camera: crate::camera::follow::Sources,
     /// When the clocks of the regions were last advanced (`advance_motion`).
     motion_tick: Instant,
     /// GLTF material overrides by object, (face, override) pairs. Kept apart
@@ -317,6 +318,7 @@ impl World {
             regions: HashMap::new(),
             main_region: None,
             objects: ObjectStore::default(),
+            scripted_camera: Default::default(),
             motion_tick: Instant::now(),
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
@@ -448,6 +450,11 @@ impl World {
             }
             _ => Vec::new(),
         };
+        self.scripted_camera.clear_region(handle, |id| {
+            self.objects
+                .index_of_uuid(&id)
+                .is_some_and(|i| kept.contains(&i) || self.objects.get(i).is_some_and(|o| o.key.region != handle))
+        });
         self.objects.remove_region(handle, &kept);
         self.move_rekeyed();
         self.gltf_overrides.retain(|k, _| k.region != handle);
@@ -537,6 +544,12 @@ impl World {
         self.ensure_region(handle, (256, 256));
         if old == Some(handle) {
             return false;
+        }
+        if let Some(old) = old {
+            let (ox, oy) = aurora_net::handle_to_origin(old);
+            let (nx, ny) = aurora_net::handle_to_origin(handle);
+            self.scripted_camera
+                .shift(Vec3::new((ox as f64 - nx as f64) as f32, (oy as f64 - ny as f64) as f32, 0.0));
         }
         if let Some(old) = old
             && self.arrived_once
@@ -1208,6 +1221,20 @@ impl World {
                 }
                 None
             }
+            NetEvent::SetFollowCam {
+                handle,
+                object,
+                properties,
+            } => {
+                if let Some(origin) = self.region_offset(handle) {
+                    self.scripted_camera.set(object, handle, &properties, origin);
+                }
+                None
+            }
+            NetEvent::ClearFollowCam { object } => {
+                self.scripted_camera.clear(object);
+                None
+            }
             NetEvent::ObjectsKilled { handle, local_ids } => {
                 let land_watches = self.land.watches(handle);
                 let mut land_changed = false;
@@ -1225,6 +1252,13 @@ impl World {
                             .index_of(&key)
                             .and_then(|i| self.objects.get(i))
                             .is_some_and(|o| !o.is_avatar());
+                    if let Some(i) = self.objects.index_of(&key) {
+                        for child in self.objects.subtree(i) {
+                            if let Some(o) = self.objects.get(child) {
+                                self.scripted_camera.clear(o.full_id);
+                            }
+                        }
+                    }
                     self.objects.remove(&key);
                     // a cache hit replays the cached ones, a full update comes with them
                     self.gltf_overrides.remove(&key);

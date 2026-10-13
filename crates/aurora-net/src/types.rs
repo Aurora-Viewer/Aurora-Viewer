@@ -577,6 +577,17 @@ pub enum NetEvent {
     /// CameraConstraint: plane (normal, distance) between our head and
     /// the camera, region coordinates.
     CameraConstraint(glam::Vec4),
+    /// llSetCameraParams: wire property IDs (llfollowcamparams.h) and values.
+    /// Position / focus components are relative to the sending region.
+    SetFollowCam {
+        handle: RegionHandle,
+        object: Uuid,
+        properties: Vec<(i32, f32)>,
+    },
+    /// llClearCameraParams: remove this source, exposing the previous one.
+    ClearFollowCam {
+        object: Uuid,
+    },
     /// llLoadURL.
     LoadUrl {
         object_name: String,

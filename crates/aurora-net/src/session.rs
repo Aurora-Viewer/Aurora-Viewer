@@ -2867,6 +2867,10 @@ impl Session<'_> {
                 s.agent_data.session_id = self.session_id();
                 self.send(from, &s, true);
             }
+        } else if id == SetFollowCamProperties::ID || id == ClearFollowCamProperties::ID {
+            if let Some(event) = follow_cam_event(pkt, self.handle_of(from))? {
+                emit(self.sh, event);
+            }
         } else if id == CameraConstraint::ID {
             // the plane the simulator keeps our camera in front of (process_camera_constraint)
             if self.main == Some(from) {
@@ -3672,6 +3676,84 @@ fn lookat_effect(
         // LLHUDEffect::packData: RGBA (the look-at color is unused)
         color: vec![255, 255, 255, 255],
         type_data: d,
+    }
+}
+
+/// Object-sourced messages from established circuits, as in
+/// process_set/clear_follow_cam_properties. An old region can still clear
+/// its source after the agent crosses into a neighbour.
+fn follow_cam_event(pkt: &IncomingPacket, handle: RegionHandle) -> Result<Option<NetEvent>, aurora_msg::DecodeError> {
+    if pkt.id == SetFollowCamProperties::ID {
+        let m: SetFollowCamProperties = pkt.decode()?;
+        Ok(Some(NetEvent::SetFollowCam {
+            handle,
+            object: m.object_data.object_id,
+            properties: m.camera_property.into_iter().map(|p| (p.type_, p.value)).collect(),
+        }))
+    } else if pkt.id == ClearFollowCamProperties::ID {
+        let m: ClearFollowCamProperties = pkt.decode()?;
+        Ok(Some(NetEvent::ClearFollowCam {
+            object: m.object_data.object_id,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod follow_cam_tests {
+    use super::*;
+
+    fn packet(message: &impl Msg) -> IncomingPacket {
+        let mut bytes = Vec::new();
+        aurora_msg::build_packet(message, 1, true, false, &[], &mut bytes);
+        parse_packet(&bytes).expect("packet")
+    }
+
+    #[test]
+    fn simulator_camera_packets_decode_with_source_region_and_order() {
+        let object = uuid::Uuid::from_u128(123);
+        let mut message = SetFollowCamProperties::default();
+        message.object_data.object_id = object;
+        message.camera_property = vec![
+            msgs::set_follow_cam_properties::CameraProperty { type_: 12, value: 1.0 },
+            msgs::set_follow_cam_properties::CameraProperty { type_: 7, value: 6.0 },
+            msgs::set_follow_cam_properties::CameraProperty { type_: 14, value: 128.0 },
+        ];
+        let set = packet(&message);
+        assert!(matches!(
+            follow_cam_event(&set, 20),
+            Ok(Some(NetEvent::SetFollowCam { handle: 20, .. }))
+        ));
+        match follow_cam_event(&set, 10).expect("decode").expect("event") {
+            NetEvent::SetFollowCam {
+                handle,
+                object: source,
+                properties,
+            } => {
+                assert_eq!((handle, source), (10, object));
+                assert_eq!(properties, vec![(12, 1.0), (7, 6.0), (14, 128.0)]);
+            }
+            event => panic!("unexpected {event:?}"),
+        }
+        let mut clear = ClearFollowCamProperties::default();
+        clear.object_data.object_id = object;
+        let clear = packet(&clear);
+        assert!(matches!(follow_cam_event(&clear, 20), Ok(Some(NetEvent::ClearFollowCam { object: source })) if source == object));
+    }
+
+    #[test]
+    fn truncated_camera_packets_fail_without_emitting_an_event() {
+        for id in [SetFollowCamProperties::ID, ClearFollowCamProperties::ID] {
+            let packet = IncomingPacket {
+                flags: 0,
+                sequence: 1,
+                id,
+                body: vec![0; 8],
+                acks: vec![],
+            };
+            assert!(follow_cam_event(&packet, 10).is_err());
+        }
     }
 }
 

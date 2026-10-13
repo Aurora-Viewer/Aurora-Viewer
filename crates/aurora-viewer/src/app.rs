@@ -1887,6 +1887,13 @@ impl App {
                     }
                 }
                 Step::Fly => self.world.agent.flying = true,
+                Step::FollowEvents => {
+                    if let Some(handle) = self.world.main_region {
+                        for ev in crate::camera::demo::follow_events(self.frame_count, handle, self.world.agent.position) {
+                            self.world.apply(ev);
+                        }
+                    }
+                }
                 Step::SitEvents => {
                     for ev in crate::demo::sit_events(self.frame_count) {
                         if let Some(e) = self.world.apply(ev) {
