@@ -4,12 +4,21 @@
 //!
 //! The simulator never sends faster than this, so it decides how long an
 //! arrival takes: the objects of a region, and what the avatars wear, come
-//! on the Task channel. The setting is a total (`ThrottleBandwidthKBPS`,
-//! 3,000 by default) shared between the channels along four presets, and
-//! the total really asked follows the link: it starts at one and a half
-//! times the setting and is lowered by a tenth of it every five seconds
-//! while packets are lost or the viewer falls behind, raised again when all
-//! is well.
+//! on the Task channel. The setting is a total (`ThrottleBandwidthKBPS`)
+//! shared between the channels along four presets, and the total really
+//! asked follows the link: it starts at one and a half times the setting
+//! and is lowered by a tenth of it every five seconds while packets are
+//! lost or the viewer falls behind, raised again when all is well.
+//!
+//! One deliberate difference from Firestorm, the default setting: 4,000
+//! instead of 3,000, that is 6,000 kb/s asked at first instead of 4,500,
+//! the most its own code ever asks (`MAX_BANDWIDTH` of `getThrottleGroup`,
+//! reached there through the debug setting). Measured on Agni on
+//! 2026-10-13, arrivals in busy regions that were not in the cache, same
+//! link: with the 800 kb/s for the objects asked until then a simulator
+//! sent about 600 kb/s and the avatars stayed clouds for 35 to 43 s at the
+//! median; with Firestorm's default, 1,531 kb/s and 22 s; with this one,
+//! 2,475 kb/s and 10 s, with 0.07 % of the packets lost.
 
 use std::time::{Duration, Instant};
 
@@ -18,9 +27,11 @@ pub const CHANNELS: usize = 7;
 /// What a simulator may send per second on each channel, in kb/s.
 pub type Group = [f32; CHANNELS];
 
-/// `ThrottleBandwidthKBPS` (settings.xml) and the range the setting takes
-/// (`LLViewerThrottle::getMaxBandwidthKbps`).
-pub const DEFAULT_KBPS: f32 = 3000.0;
+/// The setting by default (`ThrottleBandwidthKBPS` is 3,000 in Firestorm's
+/// settings.xml: see the head of this file), and the most the Preferences
+/// and the `bw` command give it: beyond, nothing more is asked.
+pub const DEFAULT_KBPS: f32 = 4000.0;
+/// The range the setting takes (`LLViewerThrottle::getMaxBandwidthKbps`).
 pub const SETTING_KBPS: std::ops::RangeInclusive<f32> = 100.0..=10000.0;
 
 /// `BW_PRESET_50`, `_300`, `_500` and `_1000`: the share of each channel at
@@ -214,10 +225,16 @@ mod tests {
 
     #[test]
     fn a_session_starts_at_one_and_a_half_times_the_setting() {
-        let t = Throttle::new(DEFAULT_KBPS, Instant::now());
+        // Firestorm's default
+        let t = Throttle::new(3000.0, Instant::now());
         assert_eq!(t.asked(), 4500.0);
         // the objects, in bits per second
         assert!((t.bits_per_second()[4] - 1528.0 * 1024.0).abs() < 1.0);
+        // ours: the most a group is built for, nothing more beyond it
+        let t = Throttle::new(DEFAULT_KBPS, Instant::now());
+        assert_eq!(t.asked(), *GROUP_KBPS.end());
+        assert!((t.bits_per_second()[4] - 2050.0 * 1024.0).abs() < 1.0);
+        assert_eq!(Throttle::new(10000.0, Instant::now()).bits_per_second(), t.bits_per_second());
         // the setting stays within Firestorm's range
         assert_eq!(Throttle::new(20.0, Instant::now()).setting(), 100.0);
         assert_eq!(Throttle::new(1e9, Instant::now()).setting(), 10000.0);

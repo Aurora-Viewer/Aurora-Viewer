@@ -1826,7 +1826,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
-| `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, beyond the range of the Preferences |
+| `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, without changing the Preferences |
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
@@ -1835,13 +1835,15 @@ What the inventory must show with these scenarios:
 
 - **`AURORA_BANDWIDTH_KBPS=<n>`**: the "Maximum bandwidth" of Preferences ›
   Network and cache for this launch, without changing the saved setting,
-  from 100 to 10,000 (the slider stops at 3,000, like Firestorm's). A
-  session first asks its simulator for one and a half times the setting,
-  6,000 kb/s at most in all (`aurora-net/src/throttle.rs`): 4,000 already
-  asks for that most. To measure what a simulator really sends when asked
-  for more: on an arrival, read `udp in … pkt/s … kb/s` in the `net
-  summary` lines and the `simulator bandwidth:` lines, which tell each
-  change of what is asked (losses, or the viewer falling behind).
+  from 100 to 10,000. A session first asks its simulator for one and a
+  half times the setting, 6,000 kb/s at most in all
+  (`aurora-net/src/throttle.rs`): the default, 4,000, already asks for
+  that most, and 3,000 is Firestorm's default. To compare what a simulator
+  sends under two settings: on an arrival in a region that is not in the
+  cache, read `udp in … pkt/s … kb/s` in the `net summary` lines, the
+  `objects=` of `perf summary`, the `avatar … shown after` lines, and the
+  `simulator bandwidth:` lines, which tell what is asked at first and at
+  each change (losses, or the viewer falling behind).
 - **`AURORA_NAME_TAGS`**: `classic` or `plate` imposes the style of the
   avatar name tags (classic or name plates) without touching the "Name tag
   style" setting. `alt` alternates within the same session, at each
