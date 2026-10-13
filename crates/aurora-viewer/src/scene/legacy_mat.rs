@@ -291,6 +291,10 @@ pub struct LegacyMaterials {
     in_flight: usize,
     /// Request errors written to the log (the first ones).
     errors_logged: u32,
+    /// When the first failed entry expires (None: no failed entry). `plan`
+    /// runs at every frame and only looks at the entries then: a region
+    /// leaves thousands of materials behind, all ready.
+    next_expiry: Option<Instant>,
 }
 
 impl Default for LegacyMaterials {
@@ -303,6 +307,7 @@ impl Default for LegacyMaterials {
             rx,
             in_flight: 0,
             errors_logged: 0,
+            next_expiry: None,
         }
     }
 }
@@ -399,12 +404,7 @@ impl LegacyMaterials {
                 // asked but not in the answer: unknown to this region
                 for id in asked {
                     if matches!(self.entries.get(&id), Some(State::Fetching)) {
-                        self.entries.insert(
-                            id,
-                            State::Failed {
-                                retry_at: now + UNKNOWN_RETRY,
-                            },
-                        );
+                        Self::fail(&mut self.entries, &mut self.next_expiry, id, now + UNKNOWN_RETRY);
                     }
                 }
                 if let Some(q) = q
@@ -427,12 +427,7 @@ impl LegacyMaterials {
                 }
                 for id in asked {
                     if matches!(self.entries.get(&id), Some(State::Fetching)) {
-                        self.entries.insert(
-                            id,
-                            State::Failed {
-                                retry_at: now + FAILED_RETRY,
-                            },
-                        );
+                        Self::fail(&mut self.entries, &mut self.next_expiry, id, now + FAILED_RETRY);
                     }
                 }
                 if let Some(q) = q {
@@ -446,13 +441,30 @@ impl LegacyMaterials {
         arrived
     }
 
+    /// A material the region did not give: asked again once `retry_at` has
+    /// come.
+    fn fail(entries: &mut HashMap<Uuid, State>, next_expiry: &mut Option<Instant>, id: Uuid, retry_at: Instant) {
+        entries.insert(id, State::Failed { retry_at });
+        *next_expiry = Some(next_expiry.map_or(retry_at, |t| t.min(retry_at)));
+    }
+
     /// LLMaterialMgr::processGetQueue: at most one request per region whose
     /// throttle expired, the GET-all first, then batches of the queued ids;
     /// MAX_IN_FLIGHT requests at once for all regions.
     fn plan(&mut self, now: Instant) -> Vec<Request> {
         // failed entries expire: the next `get` queues them again
-        self.entries
-            .retain(|_, s| !matches!(s, State::Failed { retry_at } if now >= *retry_at));
+        if self.next_expiry.is_some_and(|t| now >= t) {
+            let mut next = None;
+            self.entries.retain(|_, s| match s {
+                State::Failed { retry_at } if now >= *retry_at => false,
+                State::Failed { retry_at } => {
+                    next = Some(next.map_or(*retry_at, |t: Instant| t.min(*retry_at)));
+                    true
+                }
+                _ => true,
+            });
+            self.next_expiry = next;
+        }
         let mut out = Vec::new();
         for (cap, q) in self.regions.iter_mut() {
             if self.in_flight >= MAX_IN_FLIGHT {
@@ -649,5 +661,35 @@ mod tests {
                 ids: Some(vec![id_of(failed)])
             }]
         );
+    }
+
+    #[test]
+    fn unknown_materials_are_forgotten_at_their_retry_time_only() {
+        let mut mats = LegacyMaterials::default();
+        let (known, unknown) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        mats.get(&known, Some(region("a")));
+        mats.get(&unknown, Some(region("a")));
+        let t0 = Instant::now();
+        // the GET-all, then the batch of what it did not hold
+        let all = mats.plan(t0);
+        assert_eq!(all.len(), 1);
+        mats.receive((all[0].clone(), Ok(Vec::new())), t0);
+        assert!(mats.next_expiry.is_none());
+        let t1 = t0 + Duration::from_secs(60);
+        let batch = mats.plan(t1);
+        assert_eq!(batch.len(), 1);
+        // the region only knows one of the two
+        let found = vec![(known, LegacyMaterial::from_llsd(&Llsd::Undef))];
+        mats.receive((batch[0].clone(), Ok(found)), t1);
+        assert_eq!(mats.counts(), (1, 0, 1));
+        assert_eq!(mats.next_expiry, Some(t1 + UNKNOWN_RETRY));
+        // nothing is looked at before the first expiry
+        assert!(mats.plan(t1 + UNKNOWN_RETRY - Duration::from_secs(1)).is_empty());
+        assert_eq!(mats.counts(), (1, 0, 1));
+        // then the unknown one is forgotten (the next `get` asks again),
+        // and the ready one stays
+        assert!(mats.plan(t1 + UNKNOWN_RETRY).is_empty());
+        assert_eq!(mats.counts(), (1, 0, 0));
+        assert!(mats.next_expiry.is_none());
     }
 }
