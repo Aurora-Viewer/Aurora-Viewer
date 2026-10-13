@@ -5266,6 +5266,19 @@ impl App {
                 pending,
             );
         }
+        // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back
+        if self.demo
+            && let Some(events) = crate::demo::away_teleport(self.frame_count, self.world.agent.position, self.world.agent.forward())
+        {
+            for ev in events {
+                self.world.apply(ev);
+            }
+            log::info!(
+                "demo teleport away: frame {}, {} objects in the store",
+                self.frame_count,
+                self.world.objects.len()
+            );
+        }
         // AURORA_DEMO_TEXTURES_CHURN=1: stress cubes removed at frame 300
         // (textures released, evicted after 2 s), back with new textures at 700
         if self.demo

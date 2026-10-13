@@ -136,6 +136,10 @@ pub struct Object {
     pub material_dirty: bool,
     /// Particle system change not yet seen by the scene (Set or Clear).
     pub particle_update: Option<ParticleUpdate>,
+    /// `PSBlock` bytes of its particle system, as last set: the simulator
+    /// only sends them once, and an object back from a parked region
+    /// (`ObjectStore::restore`) hands them to the scene again.
+    pub particles: Option<Vec<u8>>,
     /// Attached sound of the last update, and whether the sound manager has
     /// not seen it yet (every update re-applies it, as LL does).
     pub sound: aurora_net::objects::AttachedSound,
@@ -232,6 +236,10 @@ impl Object {
             },
             shape_dirty: true,
             material_dirty: true,
+            particles: match &u.particles {
+                ParticleUpdate::Set(bytes) => Some(bytes.clone()),
+                _ => None,
+            },
             particle_update: match u.particles {
                 ParticleUpdate::Keep => None,
                 p => Some(p),
@@ -260,7 +268,13 @@ impl Object {
         self.full_update_serial = self.full_update_serial.wrapping_add(1);
         match &u.particles {
             ParticleUpdate::Keep => {}
-            p => self.particle_update = Some(p.clone()),
+            p => {
+                self.particles = match p {
+                    ParticleUpdate::Set(bytes) => Some(bytes.clone()),
+                    _ => None,
+                };
+                self.particle_update = Some(p.clone());
+            }
         }
         self.sound = u.sound;
         self.sound_update = true;
@@ -836,7 +850,12 @@ impl ObjectStore {
             self.touch(old);
             return old;
         }
-        let obj = Object::from_update(region, u);
+        self.insert(Object::from_update(region, u))
+    }
+
+    /// Put a new object in a slot, under its key and its UUID.
+    fn insert(&mut self, obj: Object) -> usize {
+        let key = obj.key;
         let idx = match self.free.pop() {
             Some(i) => i,
             None => {
@@ -857,11 +876,11 @@ impl ObjectStore {
         idx
     }
 
-    pub fn remove_idx(&mut self, idx: usize) {
+    /// Empty a slot: the object leaves the maps and the scene and the feeds
+    /// hear of it. What hung from it is returned for the caller to deal with.
+    fn take_idx(&mut self, idx: usize) -> Option<(Object, Vec<usize>)> {
         self.unlink(idx);
-        let Some(obj) = self.slots.get_mut(idx).and_then(|s| s.take()) else {
-            return;
-        };
+        let obj = self.slots.get_mut(idx).and_then(|s| s.take())?;
         self.by_key.remove(&obj.key);
         if self.by_uuid.get(&obj.full_id) == Some(&idx) {
             self.by_uuid.remove(&obj.full_id);
@@ -872,12 +891,105 @@ impl ObjectStore {
         self.media_changes.note(idx);
         self.label_changes.note(idx);
         self.count -= 1;
-        // Children of a removed object are removed too (linkset / attachments).
         let kids = self.children.remove(&obj.key).unwrap_or_default();
+        Some((obj, kids))
+    }
+
+    pub fn remove_idx(&mut self, idx: usize) {
+        let Some((obj, kids)) = self.take_idx(idx) else {
+            return;
+        };
+        // Children of a removed object are removed too (linkset / attachments).
         self.graveyard.push(obj);
         for k in kids {
             self.remove_idx(k);
         }
+    }
+
+    /// Take every object of a region out of the store, except `kept`, and
+    /// hand them back for [`Self::restore`]: a parent before what hangs
+    /// from it, children in their link order. For the scene and the feeds
+    /// they are removed, as by `remove_region`.
+    pub fn park_region(&mut self, region: RegionHandle, kept: &[usize]) -> Vec<Object> {
+        let mut parked = vec![false; self.slots.len()];
+        let mut all: Vec<usize> = self.by_key.iter().filter(|(k, _)| k.region == region).map(|(_, &i)| i).collect();
+        all.sort_unstable();
+        for &i in kept {
+            if let Some(k) = parked.get_mut(i) {
+                *k = true;
+            }
+        }
+        all.retain(|&i| !parked[i]);
+        parked.fill(false);
+        for &i in &all {
+            parked[i] = true;
+        }
+        // each tree from its top, in link order
+        let mut order = Vec::with_capacity(all.len());
+        let mut listed = vec![false; self.slots.len()];
+        let mut stack = Vec::new();
+        for &top in &all {
+            let under_parked = self.get(top).and_then(|o| self.parent_of(o)).is_some_and(|p| parked[p]);
+            if under_parked {
+                continue;
+            }
+            stack.push(top);
+            while let Some(i) = stack.pop() {
+                if std::mem::replace(&mut listed[i], true) {
+                    continue;
+                }
+                order.push(i);
+                if let Some(o) = self.get(i) {
+                    // (reversed: the first child is the next one popped)
+                    stack.extend(self.children_of(&o.key).iter().rev().filter(|&&k| parked[k]));
+                }
+            }
+        }
+        // (a parent chain that loops has no top)
+        order.extend(all.iter().filter(|&&i| !listed[i]));
+        let mut out = Vec::with_capacity(order.len());
+        for i in order {
+            // a kept object hanging from a parked one stays, as a root
+            for k in self.get(i).map(|o| self.children_of(&o.key).to_vec()).unwrap_or_default() {
+                if !parked[k] && kept.contains(&k) {
+                    self.detach(k);
+                }
+            }
+            let Some((obj, kids)) = self.take_idx(i) else {
+                continue;
+            };
+            // what hung from it without being parked (an object of another
+            // region) goes for good, as when its parent is removed
+            for k in kids {
+                if !parked[k] {
+                    self.remove_idx(k);
+                }
+            }
+            out.push(obj);
+        }
+        out
+    }
+
+    /// Put back an object taken by [`Self::park_region`], as a new arrival
+    /// for the scene and every feed. None when an object came under its key
+    /// or its UUID in the meantime: that one is newer.
+    pub fn restore(&mut self, mut obj: Object) -> Option<usize> {
+        if self.by_key.contains_key(&obj.key) || self.by_uuid.contains_key(&obj.full_id) {
+            return None;
+        }
+        // nothing of it is on the GPU any more; local previews are kept
+        obj.render = RenderState {
+            local_volume: obj.render.local_volume.take(),
+            local_scale: obj.render.local_scale,
+            local_appearance: std::mem::take(&mut obj.render.local_appearance),
+            needs_records: true,
+            ..Default::default()
+        };
+        obj.shape_dirty = true;
+        obj.material_dirty = true;
+        obj.particle_update = obj.particles.clone().map(ParticleUpdate::Set);
+        obj.sound_update = true;
+        Some(self.insert(obj))
     }
 
     pub fn remove(&mut self, key: &ObjKey) {

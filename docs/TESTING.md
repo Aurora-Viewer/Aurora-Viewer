@@ -144,6 +144,7 @@ capture.
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Place la caméra autour de l'avatar |
 | `AURORA_DEMO_CAMERA=<scénario>` | Scénario de caméra (voir Détails) |
 | `AURORA_DEMO_TP=1` ou `"x,y,z"` ou `remote` | Téléportation après le chargement |
+| `AURORA_DEMO_TP_AWAY=1` | Départ hors de portée de la région de démo, puis retour |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Petites corrections de position de notre avatar |
 | `AURORA_DEMO_KEY=<flèche>` | Tient une flèche du clavier |
 | `AURORA_DEMO_SIT=<n>` | Clique n fois sur le bouton S'asseoir |
@@ -176,6 +177,16 @@ capture.
 - **`AURORA_DEMO_TP`** : téléportation après le fondu du chargement initial
   (image 240 au plus tôt). `1` ou `"x,y,z"` : arrivée locale immédiate, sans
   écran de chargement ; `remote` simule la progression entre régions.
+- **`AURORA_DEMO_TP_AWAY=1`** : à l'image 760, notre avatar arrive dans une
+  région à 25 km de celle de démo, comme après une téléportation ; à
+  l'image 960, il y revient, avant que son simulateur l'ait fermée. Les
+  objets de la région de démo sont mis de côté au départ (`world/parked.rs`)
+  et remis tels quels au retour ; le journal donne `objects parked`, puis
+  `objects back`. Avec `AURORA_FPS_LIMIT=60` et
+  `AURORA_CAPTURE_FRAMES=700,900,1500` : la place, puis notre avatar seul
+  au-dessus de l'eau, puis la même place (objets, textes flottants, autre
+  avatar, fontaine de particules). Dans `perf summary`, `objects=` passe de
+  57 à 1 puis revient à 57, avec les mêmes `visible=` et `draws=` qu'avant.
 - **`AURORA_DEMO_AGENT_JITTER=<mm>`** : notre avatar reçoit cinq fois par
   seconde (à 60 images/s) une correction de position d'au plus cette taille,
   comme en envoie un simulateur à un avatar debout en altitude. Avec

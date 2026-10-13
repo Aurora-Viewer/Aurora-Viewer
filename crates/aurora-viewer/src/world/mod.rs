@@ -21,6 +21,7 @@ pub mod names;
 pub mod notifications;
 pub mod objects;
 pub mod outfit;
+pub mod parked;
 pub mod place_details;
 pub mod profiles;
 pub mod radar;
@@ -148,6 +149,9 @@ pub struct World {
     pub sun: Option<(SunInfo, Instant)>,
     pub agent: AgentState,
     pub coarse: HashMap<RegionHandle, Vec<(Uuid, Vec3)>>,
+    /// Objects of the regions out of reach, until their simulator closes
+    /// them or they are in reach again (parked.rs).
+    parked: HashMap<RegionHandle, parked::Parked>,
     appearances: HashMap<Uuid, (AvatarAppearance, u64)>,
     appearance_counter: u64,
     pub alerts: VecDeque<String>,
@@ -320,6 +324,7 @@ impl World {
             sun: None,
             agent: AgentState::default(),
             coarse: HashMap::new(),
+            parked: HashMap::new(),
             appearances: HashMap::new(),
             avatar_poses: HashMap::new(),
             avatar_root_dz: HashMap::new(),
@@ -425,6 +430,23 @@ impl World {
             self.record_arrival();
         }
         self.drop_left_behind(now);
+    }
+
+    /// Remove every object of a region and what is stored by their key.
+    /// LLViewerObjectList::killObject never destroys gAgentAvatarp: our
+    /// avatar moves to the agent's region with what it wears, which the
+    /// destination then sends under its own ids.
+    fn remove_region_objects(&mut self, handle: RegionHandle) {
+        let kept = match (self.objects.index_of_uuid(&self.agent_id), self.main_region) {
+            (Some(own), Some(main)) if main != handle => {
+                self.objects.carry(own, handle, main);
+                self.objects.subtree(own)
+            }
+            _ => Vec::new(),
+        };
+        self.objects.remove_region(handle, &kept);
+        self.move_rekeyed();
+        self.gltf_overrides.retain(|k, _| k.region != handle);
     }
 
     /// What is stored by object key follows the objects that changed key
@@ -963,6 +985,7 @@ impl World {
     /// Apply one network event. Returns events the app layer must handle.
     pub fn apply(&mut self, ev: NetEvent) -> Option<NetEvent> {
         self.events_this_frame += 1;
+        let ev = self.hold_for_parked(ev)?;
         match ev {
             NetEvent::LoggedIn(l) => {
                 self.agent_id = l.agent_id;
@@ -1000,6 +1023,9 @@ impl World {
                     // no agent update before the new region completes the move
                     self.movement_complete = false;
                 }
+                // back in a region left moments ago: its objects first, its
+                // simulator only sends what changed since
+                self.unpark_region(handle);
                 None
             }
             NetEvent::RegionHandshake(info) => {
@@ -1070,6 +1096,7 @@ impl World {
                 }
                 self.arrived_once = true;
                 self.teleporting = false;
+                self.park_far_regions();
                 Some(NetEvent::AgentMovementComplete { handle, position, look_at })
             }
             NetEvent::ObjectUpdates { handle, objects } => {
@@ -1279,19 +1306,8 @@ impl World {
                 None
             }
             NetEvent::RegionRemoved { handle } => {
-                // LLViewerObjectList::killObject never destroys gAgentAvatarp:
-                // it moves to the agent's region with what it wears, which
-                // the destination then sends under its own ids
-                let kept = match (self.objects.index_of_uuid(&self.agent_id), self.main_region) {
-                    (Some(own), Some(main)) if main != handle => {
-                        self.objects.carry(own, handle, main);
-                        self.objects.subtree(own)
-                    }
-                    _ => Vec::new(),
-                };
-                self.objects.remove_region(handle, &kept);
-                self.move_rekeyed();
-                self.gltf_overrides.retain(|k, _| k.region != handle);
+                self.parked.remove(&handle);
+                self.remove_region_objects(handle);
                 self.regions.remove(&handle);
                 self.coarse.remove(&handle);
                 None
@@ -3139,6 +3155,191 @@ mod motion_tests {
         world.flush_arrival(t + std::time::Duration::from_secs(46));
         assert!(world.objects.index_of_uuid(&worn.full_id).is_none());
         assert!(world.objects.index_of_uuid(&world.agent_id).is_some());
+    }
+
+    /// A region a teleport away from `here`.
+    fn far_from(here: RegionHandle) -> RegionHandle {
+        here + ((100 * 256u64) << 32)
+    }
+
+    /// A teleport to `handle`, from TeleportFinish to the arrival.
+    fn teleport_to(world: &mut World, handle: RegionHandle) {
+        world.apply(NetEvent::TeleportFinished { handle });
+        world.apply(NetEvent::MainRegionChanged { handle });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(128.0, 128.0, 30.0),
+            look_at: Vec3::X,
+        });
+    }
+
+    /// A prim of `template`'s kind, alone or linked under `parent`.
+    fn prim(template: &aurora_net::objects::ObjectUpdate, local_id: u32, parent: u32) -> aurora_net::objects::ObjectUpdate {
+        let mut p = template.clone();
+        p.local_id = local_id;
+        p.full_id = Uuid::from_u128(0xCAFE_0000 + u128::from(local_id));
+        p.parent_id = parent;
+        p.state = 0;
+        p
+    }
+
+    #[test]
+    fn objects_of_a_region_out_of_reach_are_parked_and_come_back_as_they_were() {
+        use aurora_net::objects::ParticleUpdate;
+        let (mut world, _, worn, here, _) = worn_fixture();
+        let mut root = prim(&worn, 900, 0);
+        root.particles = ParticleUpdate::Set(vec![1, 2, 3]);
+        let kids = [prim(&worn, 901, 900), prim(&worn, 902, 900), prim(&worn, 903, 900)];
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: std::iter::once(root.clone()).chain(kids.iter().cloned()).collect(),
+        });
+        // the scene has seen them all
+        let root_idx = world.objects.index_of_uuid(&root.full_id).expect("root");
+        world.objects.get_mut_untracked(root_idx).expect("root").particle_update = None;
+        world.objects.settle(root_idx);
+        world.objects.take_touched(&mut Vec::new());
+        let me = world.agent_id;
+        let own = world.objects.index_of_uuid(&me).expect("avatar");
+        let count = world.objects.len();
+
+        let far = far_from(here);
+        teleport_to(&mut world, far);
+        // nothing of the region left is in the store; our avatar and what
+        // it wears came along; the region is still known
+        for u in std::iter::once(&root).chain(&kids) {
+            assert!(world.objects.index_of_uuid(&u.full_id).is_none());
+        }
+        assert_eq!(world.objects.len(), count - 4);
+        assert_eq!(world.objects.index_of_uuid(&me), Some(own));
+        assert!(world.objects.index_of_uuid(&worn.full_id).is_some());
+        assert_eq!(world.objects.get(own).expect("avatar").key.region, far);
+        assert!(world.regions.contains_key(&here));
+        assert!(world.parked.contains_key(&here));
+
+        // what its simulator still sends waits: the root moves, a child goes
+        let mut moved = root.clone();
+        moved.particles = ParticleUpdate::Keep;
+        moved.position = Vec3::new(10.0, 20.0, 30.0);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![moved],
+        });
+        world.apply(NetEvent::ObjectsKilled {
+            handle: here,
+            local_ids: vec![902],
+        });
+        assert!(world.objects.index_of_uuid(&root.full_id).is_none());
+
+        // back before the simulator closed the region: it sends nothing
+        // again, the objects come from here
+        world.objects.take_touched(&mut Vec::new());
+        teleport_to(&mut world, here);
+        assert!(!world.parked.contains_key(&here));
+        let root_idx = world.objects.index_of_uuid(&root.full_id).expect("root is back");
+        let r = world.objects.get(root_idx).expect("root");
+        assert_eq!(r.key.local_id, 900);
+        assert_eq!(r.position, Vec3::new(10.0, 20.0, 30.0));
+        // new for the scene, with the particle system it was sent once
+        assert!(world.objects.is_arrival(root_idx));
+        assert!(world.objects.touched().contains(&root_idx));
+        assert_eq!(r.particle_update, Some(ParticleUpdate::Set(vec![1, 2, 3])));
+        assert!(r.shape_dirty && r.material_dirty && r.sound_update);
+        // its children hang from it again, in their order, without the one removed
+        let linked: Vec<Uuid> = world
+            .objects
+            .children_of(&r.key)
+            .iter()
+            .filter_map(|&k| world.objects.get(k).map(|o| o.full_id))
+            .collect();
+        assert_eq!(linked, [kids[0].full_id, kids[2].full_id]);
+        assert!(world.objects.index_of_uuid(&kids[1].full_id).is_none());
+        assert_eq!(world.objects.index_of_uuid(&me), Some(own));
+        assert_eq!(world.objects.len(), count - 1);
+        // the region just left is the one parked now
+        assert!(world.parked.contains_key(&far));
+    }
+
+    #[test]
+    fn a_neighbour_keeps_its_objects_when_the_border_is_crossed() {
+        let (mut world, _, worn, here, there) = worn_fixture();
+        let p = prim(&worn, 900, 0);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![p.clone()],
+        });
+        world.apply(NetEvent::MainRegionChanged { handle: there });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: there,
+            position: Vec3::new(1.0, 128.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert!(world.objects.index_of_uuid(&p.full_id).is_some());
+        assert!(world.parked.is_empty());
+        // and a teleport next door, or two regions further, parks nothing
+        teleport_to(&mut world, there + (2 * (256u64 << 32)));
+        assert!(world.objects.index_of_uuid(&p.full_id).is_some());
+        assert!(world.parked.is_empty());
+    }
+
+    #[test]
+    fn a_parked_region_goes_for_good_when_its_simulator_closes_it() {
+        let (mut world, _, worn, here, _) = worn_fixture();
+        let p = prim(&worn, 900, 0);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![p.clone()],
+        });
+        teleport_to(&mut world, far_from(here));
+        assert!(world.parked.contains_key(&here));
+        world.apply(NetEvent::RegionRemoved { handle: here });
+        assert!(!world.parked.contains_key(&here));
+        assert!(!world.regions.contains_key(&here));
+        // a later visit starts from what the simulator sends
+        teleport_to(&mut world, here);
+        assert!(world.objects.index_of_uuid(&p.full_id).is_none());
+        assert!(world.objects.index_of_uuid(&world.agent_id).is_some());
+    }
+
+    #[test]
+    fn an_avatar_met_elsewhere_in_the_meantime_is_not_restored_over_itself() {
+        let (mut world, avatar, worn, here, _) = worn_fixture();
+        let mut other = avatar.clone();
+        other.local_id = 950;
+        other.full_id = Uuid::from_u128(0xD00D);
+        let mut hat = prim(&worn, 951, 950);
+        hat.state = worn.state;
+        let stays = prim(&worn, 900, 0);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![other.clone(), hat.clone(), stays.clone()],
+        });
+        let far = far_from(here);
+        teleport_to(&mut world, far);
+        // the other avatar followed us: the far region sends it
+        let mut followed = other.clone();
+        followed.local_id = 7100;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: far,
+            objects: vec![followed],
+        });
+        let live = world.objects.index_of_uuid(&other.full_id).expect("avatar in the far region");
+        // back: the newer one stays where it is, its parked self and what
+        // hung from it are dropped
+        world.apply(NetEvent::TeleportFinished { handle: here });
+        world.apply(NetEvent::MainRegionChanged { handle: here });
+        assert_eq!(world.objects.index_of_uuid(&other.full_id), Some(live));
+        assert_eq!(world.objects.get(live).expect("avatar").key.region, far);
+        assert!(world.objects.index_of_uuid(&hat.full_id).is_none());
+        assert!(world.objects.index_of_uuid(&stays.full_id).is_some());
+        // once arrived, it is parked with the far region it is in
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: here,
+            position: Vec3::new(128.0, 128.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert!(world.objects.index_of_uuid(&other.full_id).is_none());
+        assert!(world.objects.index_of_uuid(&stays.full_id).is_some());
     }
 
     #[test]
