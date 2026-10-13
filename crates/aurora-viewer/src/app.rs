@@ -218,8 +218,9 @@ pub struct App {
     context_menu_was: bool,
     /// « Supprimer » waiting for a yes: (object, why it asks).
     delete_confirm: Option<(uuid::Uuid, String)>,
-    /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP).
-    place_confirm: Option<(String, Vec3)>,
+    /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
+    /// with the state of its « Ne plus afficher » box.
+    place_confirm: Option<(String, Vec3, bool)>,
     /// External web link waiting for the warning's answer, with the state of
     /// its « Ne plus me prévenir » box and, for a dangerous link, the reason.
     url_confirm: Option<(String, bool, Option<&'static str>)>,
@@ -2670,6 +2671,14 @@ impl App {
             value3 = format!("{:.0}", l.pos.z)
         ));
         self.teleport_to_location(l.region, l.pos);
+    }
+
+    /// The box « Ne plus afficher » of a teleport confirmation was ticked and
+    /// the teleport accepted: later ones start at once (Préférences ›
+    /// Interface › Téléportation brings the question back).
+    fn stop_confirming_teleports(&mut self) {
+        self.settings.confirm_teleports = false;
+        self.settings.save();
     }
 
     /// Teleport to a position of a region given by name: the current region
@@ -6566,13 +6575,21 @@ impl App {
                         ui::context::request(&ctx, ui::context::CtxAction::DeleteConfirmed(id));
                     }
                 }
-                if let Some((region, pos)) = self.place_confirm.clone()
-                    && let Some(yes) = ui::context::place_teleport_confirm(&ctx, &p, &region)
+                if let Some((region, _, dont_ask)) = self.place_confirm.as_mut()
+                    && let Some(yes) = ui::context::teleport_confirm(
+                        &ctx,
+                        &p,
+                        "place_teleport_confirm",
+                        &ui::context::place_teleport_question(region),
+                        dont_ask,
+                    )
+                    && let Some((region, pos, dont_ask)) = self.place_confirm.take()
+                    && yes
                 {
-                    self.place_confirm = None;
-                    if yes {
-                        ui::context::request(&ctx, ui::context::CtxAction::TeleportToPlaceConfirmed(region, pos));
+                    if dont_ask {
+                        self.stop_confirming_teleports();
                     }
+                    ui::context::request(&ctx, ui::context::CtxAction::TeleportToPlaceConfirmed(region, pos));
                 }
                 if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
@@ -6713,7 +6730,13 @@ impl App {
                 };
                 let window_acts = self.place_ui.show(&ctx, &mut c);
                 let mut open = self.panels.places;
-                let places_acts = self.places_ui.show(&ctx, &mut c, &mut open, self.settings.landmarks_by_date);
+                let places_acts = self.places_ui.show(
+                    &ctx,
+                    &mut c,
+                    &mut open,
+                    self.settings.landmarks_by_date,
+                    self.settings.confirm_teleports,
+                );
                 self.panels.places = open;
                 for pa in window_acts {
                     match pa {
@@ -6754,6 +6777,7 @@ impl App {
                             self.settings.landmarks_by_date = on;
                             self.settings.save();
                         }
+                        PlacesAction::StopConfirmingTeleports => self.stop_confirming_teleports(),
                     }
                 }
                 // « Rechercher »
@@ -7301,6 +7325,17 @@ impl ApplicationHandler for App {
             if let Some(tab) = std::env::var("AURORA_DEMO_PLACES").ok().and_then(|v| ui::places::tab_from_name(&v)) {
                 self.places_ui.open_tab(tab);
                 self.panels.places = true;
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_TP_CONFIRM=lien|repere: a teleport confirmation on
+            // screen, asked whatever the saved setting says (not saved)
+            if let Some(confirm) = crate::demo::place::teleport_confirm_scenario() {
+                use crate::demo::place::TeleportConfirm;
+                self.settings.confirm_teleports = true;
+                match confirm {
+                    TeleportConfirm::Link(region, pos) => self.place_confirm = Some((region.to_owned(), pos, false)),
+                    TeleportConfirm::Landmark(asset, name) => self.places_ui.confirm_landmark(asset, name.to_owned()),
+                }
                 self.panels.perf = false;
             }
             // AURORA_DEMO_SEARCH=<tab>[:text]: « Rechercher » on a tab, its

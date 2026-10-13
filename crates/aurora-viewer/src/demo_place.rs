@@ -123,6 +123,27 @@ pub fn profile_scenario() -> Option<crate::world::place_details::Source> {
     }
 }
 
+/// A teleport confirmation the demo puts on screen.
+pub enum TeleportConfirm {
+    /// A place link (TeleportViaSLAPP): region name and position.
+    Link(&'static str, Vec3),
+    /// A landmark (TeleportFromLandmark): asset and name.
+    Landmark(Uuid, &'static str),
+}
+
+/// AURORA_DEMO_TP_CONFIRM=lien|repere: the confirmation of a teleport asked
+/// by a place link (the default) or by a landmark of « Lieux ».
+pub fn teleport_confirm_scenario() -> Option<TeleportConfirm> {
+    let v = std::env::var("AURORA_DEMO_TP_CONFIRM").ok()?;
+    Some(match v.to_lowercase().as_str() {
+        "repere" => {
+            let (_, name, ..) = landmarks().get(1)?;
+            TeleportConfirm::Landmark(landmark_ids(1).1, name)
+        }
+        _ => TeleportConfirm::Link(aurora_i18n::tr!("common-boreal-lagoon"), Vec3::new(60.0, 200.0, 22.0)),
+    })
+}
+
 /// RemoteParcelRequest: the parcel of the region holding the slot.
 pub fn remote_parcel(handle: RegionHandle, position: Vec3) -> Vec<NetEvent> {
     let (x, y) = aurora_net::handle_to_origin(handle);

@@ -944,6 +944,7 @@ grille.
 | `AURORA_DEMO_PLACE=<lieu>` | « Lieux » sur un profil de lieu |
 | `AURORA_DEMO_PLACES=<onglet>` | « Lieux » sur un onglet |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Profils de lieu en fenêtres séparées |
+| `AURORA_DEMO_TP_CONFIRM=<origine>` | Confirmation de téléportation à l'écran |
 | `AURORA_DEMO_SEARCH=<onglet>[:texte]` | « Rechercher » sur un onglet, recherche faite |
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page chargée par l'onglet Web de « Rechercher » en démo |
 | `AURORA_DEMO_BAN=1` | Lignes d'interdiction |
@@ -1283,6 +1284,13 @@ grille.
 - **`AURORA_DEMO_PLACE_WINDOW=1`** : avec `AURORA_DEMO_PLACE`, les fenêtres
   de lieu séparées au lieu de « Lieux » (option « Repères et profils de
   lieux », non enregistrée).
+- **`AURORA_DEMO_TP_CONFIRM=lien|repere`** : la confirmation d'une
+  téléportation demandée par un lien de téléportation (`lien`, par défaut)
+  ou par un repère de « Lieux » (`repere`), avec sa case « Ne plus
+  afficher ». La question est posée même si le réglage enregistré
+  (Préférences › Interface › Téléportation « Confirmer les téléportations »)
+  est désactivé ; cocher la case puis « Téléporter » le désactive pour de
+  bon, comme hors démo.
 - **`AURORA_DEMO_RESTRICTED=1`** : icônes de parcelle rouges, dégâts
   activés, santé à 72 %.
 
