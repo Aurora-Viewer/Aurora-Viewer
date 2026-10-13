@@ -1905,11 +1905,11 @@ pub fn events() -> Vec<NetEvent> {
         }
     }
     // AURORA_DEMO_PROJECTOR=1|point: a projector (a light with a light
-    // texture) 4.5 m from a wall, turned to it, and another one above the
-    // ground turned down, with ambiance (fixed ids). The first lights the
-    // wall through its image, sharp in the middle of the beam; the ground
-    // under it stays dark outside the frustum. `point`: the same lights
-    // without their texture, as plain point lights, to compare.
+    // texture) 4.5 m from a wall, turned to it, another one above the
+    // ground turned down, with ambiance, a pool light under a slab and an
+    // ordinary point light (fixed ids). The first lights the wall through
+    // its image; the ground stays dark outside the frustums. `point`: the
+    // projectors without their texture, as plain point lights, to compare.
     if let Ok(mode) = std::env::var("AURORA_DEMO_PROJECTOR") {
         let floor = height(cx, cy) + 0.35;
         let wall = [0.82, 0.82, 0.82, 1.0];
@@ -1950,7 +1950,7 @@ pub fn events() -> Vec<NetEvent> {
         // above the ground, turned down, blurred from 1 m on, with ambiance
         add(prim(
             9713,
-            Vec3::new(133.5, 112.6, floor + 2.5),
+            Vec3::new(133.0, 114.6, floor + 2.5),
             Quat::IDENTITY,
             Vec3::new(0.3, 0.3, 0.1),
             boxp,
@@ -1965,6 +1965,67 @@ pub fn events() -> Vec<NetEvent> {
                 light_image: image.map(|i| aurora_prim::extra::LightImageParams {
                     params: Vec3::new(1.4, 1.0, 0.3),
                     ..i
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+        // a pool light: a very wide projector turned down, 2 m under a
+        // slab with a normal map and 4 m beside its middle. It lights
+        // nothing above itself; as a point light, it lights the sides of
+        // the slab's relief that lean towards it.
+        let mut slab = TextureEntry::default();
+        for f in slab.faces.iter_mut() {
+            f.color = [0.85, 0.82, 0.8, 1.0];
+            f.material_id = MAT_BUMPY;
+        }
+        let ground = g(136.4, 111.0);
+        add(prim(
+            9714,
+            Vec3::new(136.4, 111.0, ground + 0.12),
+            Quat::IDENTITY,
+            Vec3::new(3.4, 3.4, 0.2),
+            boxp,
+            Arc::new(slab),
+            ExtraParams::default(),
+            "",
+        ));
+        add(prim(
+            9715,
+            Vec3::new(132.4, 110.6, ground - 2.0),
+            Quat::IDENTITY,
+            Vec3::new(0.3, 0.39, 0.18),
+            boxp,
+            te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
+            ExtraParams {
+                light: Some(LightParams {
+                    color: [0.5, 1.0, 1.0, 0.7],
+                    radius: 20.0,
+                    cutoff: 0.0,
+                    falloff: 0.0,
+                }),
+                light_image: image.map(|i| aurora_prim::extra::LightImageParams {
+                    params: Vec3::new(3.0, 20.0, 0.0),
+                    ..i
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+        // an ordinary point light beside them, the same in both modes
+        add(prim(
+            9716,
+            Vec3::new(137.8, 117.2, floor + 1.0),
+            Quat::IDENTITY,
+            Vec3::splat(0.2),
+            boxp,
+            te([1.0, 0.7, 0.3, 1.0], 0, true, 0.0),
+            ExtraParams {
+                light: Some(LightParams {
+                    color: [1.0, 0.7, 0.3, 1.0],
+                    radius: 3.0,
+                    cutoff: 0.0,
+                    falloff: 0.5,
                 }),
                 ..Default::default()
             },
