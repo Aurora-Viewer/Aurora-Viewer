@@ -1,156 +1,161 @@
-# Rapports de bugs de l’alpha
+# Alpha bug reports
 
-Le formulaire commun est accessible depuis la barre du haut, Aide et la
-connexion. « Envoyer depuis Aurora » est le premier choix et le mode par défaut
-des nouveaux rapports. Les options d’envoi sont indépendantes du modèle du rapport.
-Le mode navigateur est disponible sans configuration d’application ; les
-deux modes demandent un compte GitHub au testeur. Sans compte, une copie
-locale reste possible.
+The shared form can be reached from the top bar, Help and the login screen.
+"Send from Aurora" is the first choice and the default mode of new reports.
+The sending options are independent of the report template.
+The browser mode is available without any application setup; both modes
+require the tester to have a GitHub account. Without an account, a local
+copy remains possible.
 
-Après un plantage, la fenêtre indépendante propose « Envoyer un rapport de
-plantage ». Ce bouton ouvre le même formulaire avec un titre et les données
-conservées de la session arrêtée. Le testeur précise ce qu'il faisait,
-choisit les informations à publier, puis autorise l'envoi. La langue, la
-version et le journal viennent de la session qui a planté, même lorsque la
-fenêtre est récupérée au lancement suivant. Les diagnostics publics et le
-ZIP privé sont décochés au départ ; les traces complètes peuvent rejoindre
-le ZIP privé si le testeur le choisit. Une image peut être jointe depuis un
-fichier. L'autorisation GitHub du viewer étant conservée uniquement en
-mémoire, l'envoi direct depuis la fenêtre de crash demande une nouvelle
-autorisation du testeur.
+After a crash, the standalone window offers "Send a crash report". This
+button opens the same form with a title and the data kept from the stopped
+session. The tester states what they were doing, chooses the information to
+publish, then authorises the sending. The language, the version and the log
+come from the session that crashed, even when the window is recovered at the
+next launch. The public diagnostics and the private ZIP are unticked at
+first; the full traces can join the private ZIP if the tester chooses so.
+An image can be attached from a file. As the viewer's GitHub authorisation
+is kept in memory only, sending directly from the crash window requires a
+new authorisation from the tester.
 
-## Configuration de l’envoi direct
+## Setting up direct sending
 
-Créer une **GitHub App**, dans les réglages développeur de l’organisation
-Aurora-Viewer, puis :
+Create a **GitHub App**, in the developer settings of the Aurora-Viewer
+organisation, then:
 
-- activer **Enable Device Flow**, garder l’expiration des autorisations ;
-- pour le Device Flow seul, laisser les URL de retour et de configuration
-  vides ; pour les ZIP privés, ajouter le retour décrit plus bas. Désactiver
-  le webhook ;
-- permissions du dépôt : **Issues — Read and write**, métadonnées en lecture
-  seule, aucune autre permission ;
-- application publique (**Any account**) pour les testeurs ; l’installer
-  sur l’organisation avec uniquement le dépôt Aurora-Viewer sélectionné ;
-- reporter le **Client ID public** dans `bug_report/github.rs::CLIENT_ID`.
-  L’App ID numérique ne convient pas. Aucun Client secret ni clé privée
-  ne doit être ajouté au viewer.
+- turn on **Enable Device Flow**, keep the expiry of the authorisations;
+- for the Device Flow alone, leave the callback and setup URLs empty; for
+  the private ZIPs, add the callback described further down. Disable the
+  webhook;
+- repository permissions: **Issues — Read and write**, read-only metadata,
+  no other permission;
+- public application (**Any account**) for the testers; install it on the
+  organisation with only the Aurora-Viewer repository selected;
+- copy the **public Client ID** into `bug_report/github.rs::CLIENT_ID`.
+  The numeric App ID is not suitable. No Client secret and no private key
+  may be added to the viewer.
 
-[Création d’une GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)
-et [Device Flow](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app#using-the-device-flow-to-generate-a-user-access-token).
+[Creating a GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)
+and [Device Flow](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app#using-the-device-flow-to-generate-a-user-access-token).
 
-Le testeur clique sur Se connecter, copie le code et l’autorise lui-même
-sur GitHub dans son navigateur. Le viewer ne demande jamais son mot de passe.
-L’autorisation reste en mémoire pour cette session, au plus huit heures ;
-elle n’est écrite ni dans les réglages, ni dans les journaux. Une autorisation
-ne déclenche pas l’envoi : le testeur clique ensuite sur Envoyer le rapport
-public. Annulation, refus, expiration et ralentissement demandé par GitHub
-sont traités. Une création d’issue n’est jamais relancée automatiquement après
-une réponse perdue, pour éviter les doublons.
+The tester clicks Connect to GitHub, copies the code and authorises it
+themselves on GitHub in their browser. The viewer never asks for their
+password. The authorisation stays in memory for this session, eight hours at
+most; it is written neither to the settings nor to the logs. An
+authorisation does not trigger the sending: the tester then clicks Send
+public report. Cancellation, refusal, expiry and a slow-down requested by
+GitHub are handled. The creation of an issue is never retried automatically
+after a lost response, to avoid duplicates.
 
-Créer les étiquettes `bug` et `alpha` avec `scripts/setup-labels.ps1` lors de
-la configuration du dépôt. Le modèle d’issue est dans `.github/ISSUE_TEMPLATE/`.
+Create the `bug` and `alpha` labels with `scripts/setup-labels.ps1` when
+setting up the repository. The issue template is in `.github/ISSUE_TEMPLATE/`.
 
-## Données et fichiers
+## Data and files
 
-Le formulaire présente deux étapes : préparer le rapport, puis choisir l’envoi.
-La fenêtre propose trois onglets : Description, Image et Données. Elle est
-plus grande pour laisser de la place aux champs de saisie ; ses dimensions
-restent limitées à l’espace disponible à l’écran.
-Les quatre champs de Description restent visibles ensemble sans défilement
-du formulaire à la taille normale. Les textes longs défilent dans leur propre
-zone de saisie. Dans Image, les commandes sont à gauche et l’aperçu à droite.
-Les onglets restent visibles pendant le défilement. L’onglet Données permet
-de lire et de décocher chaque information automatique. Les libellés et les
-diagnostics suivent la langue de l’interface à chaque affichage. Le texte
-saisi est conservé tel quel. Les titres et valeurs techniques du fichier
-exporté restent en anglais pour les outils qui lisent les rapports. Les actions
-de copie et d’enregistrement sont dans « Autres actions ».
-Un nouveau rapport commence sur Description. Fermer la fenêtre conserve en
-mémoire le texte, l’onglet, le défilement, les cases, l’image et le mode d’envoi,
-y compris l’autorisation GitHub en cours, jusqu’à la fin de la session du viewer.
-Une erreur d’envoi conserve également le brouillon. Après publication complète
-de l’issue et de ses fichiers, le lien du rapport et son dossier restent disponibles ; rouvrir la
-fenêtre ou choisir « Nouveau rapport » prépare ensuite un formulaire neuf.
-Le navigateur ne confirme pas la publication au viewer : le testeur clique
-sur « J’ai publié le rapport » après l’envoi sur GitHub pour vider le brouillon.
-Ouvrir GitHub ou enregistrer une copie locale ne le vide pas.
-Le nom de l’avatar et les diagnostics sont
-décochés au départ. Aucun état de connexion SL ou réglage complet n’est
-sérialisé. Les diagnostics publics ne gardent que les catégories reconnues
-d’avertissement / erreur : une simple suppression des URL ou UUID ne suffirait
-pas à retirer les noms et les textes libres venant du réseau.
+The form has two steps: prepare the report, then choose how to send it.
+The window offers three tabs: Description, Picture and Data. It is larger
+to leave room for the input fields; its dimensions stay limited to the
+space available on the screen.
+The four fields of Description stay visible together without scrolling the
+form at the normal size. Long texts scroll in their own input area. In
+Picture, the controls are on the left and the preview on the right.
+The tabs stay visible while scrolling. The Data tab lets the tester read
+and untick each piece of automatic information. The labels and the
+diagnostics follow the interface language each time they are displayed. The
+typed text is kept as it is. The headings and technical values of the
+exported file stay in English for the tools that read the reports. The copy
+and save actions are in "More actions".
+A new report starts on Description. Closing the window keeps in memory the
+text, the tab, the scroll position, the checkboxes, the image and the
+sending mode, including the GitHub authorisation in progress, until the end
+of the viewer session.
+A sending error also keeps the draft. After the issue and its files have
+been fully published, the link of the report and its folder stay available;
+reopening the window or choosing "New report" then prepares a fresh form.
+The browser does not confirm the publication to the viewer: the tester
+clicks "I have published the report" after sending on GitHub to clear the
+draft. Opening GitHub or saving a local copy does not clear it.
+The avatar name and the diagnostics are unticked at first. No SL login
+state and no full settings are serialised. The public diagnostics keep only
+the recognised warning / error categories: simply removing the URLs or
+UUIDs would not be enough to remove the names and the free texts coming
+from the network.
 
-Les captures sont limitées au monde, avec ou sans interface ; l’écran de
-connexion ne peut pas être capturé par ce bouton. Les fichiers choisis sont
-limités à 16 Mio, décodés avec des limites de dimensions/mémoire et réencodés
-en PNG de 1920 pixels de côté au plus. Métadonnées, chemin et nom du fichier
-d’origine ne sont jamais joints. Une capture peut encore contenir des noms
-et du chat visibles : le testeur doit la relire.
-Après une première capture, changer « Inclure l’interface » refait la capture
-automatiquement, sans recocher son inclusion si le testeur l’avait exclue.
-Cette option ne remplace jamais une image importée depuis un fichier.
+Screenshots are limited to the world, with or without the interface; the
+login screen cannot be captured with this button. The chosen files are
+limited to 16 MiB, decoded with dimension/memory limits and re-encoded as a
+PNG of at most 1920 pixels a side. Metadata, path and name of the original
+file are never attached. A screenshot can still contain visible names and
+chat: the tester must review it.
+After a first screenshot, changing "Include the interface in the picture"
+takes the screenshot again automatically, without re-ticking its inclusion
+if the tester had excluded it.
+This option never replaces an image imported from a file.
 
-Chaque enregistrement crée un dossier sous `data/bug-reports/`, à côté de
-`data/logs/`. Le sous-dossier `public` contient le texte choisi et, si incluse,
-`screenshot.png`. Le dossier `private-do-not-upload` contient les diagnostics
-locaux privés et ne doit jamais être joint à une issue publique. Les images
-de l’envoi direct sont téléversées sur `api.auroraviewer.com`, puis affichées
-dans l’issue. L’autorisation GitHub du testeur n’est jamais envoyée à ce service.
-Le mode navigateur conserve l’ajout manuel de la capture depuis `public`.
+Each save creates a folder under `data/bug-reports/`, next to `data/logs/`.
+The `public` subfolder contains the chosen text and, if included,
+`screenshot.png`. The `private-do-not-upload` folder contains the private
+local diagnostics and must never be attached to a public issue. The images
+of the direct sending are uploaded to `api.auroraviewer.com`, then displayed
+in the issue. The tester's GitHub authorisation is never sent to this
+service. The browser mode keeps the manual addition of the screenshot from
+`public`.
 
-## Images publiques et journaux privés
+## Public images and private logs
 
-Le service PHP est dans le dépôt privé
-[aurora-api](https://github.com/Aurora-Viewer/aurora-api), relié à Clever Cloud.
-Le bucket Cellar reste privé : l’API expose les captures et protège les ZIP.
-Le viewer vérifie la disponibilité du service avant de créer une issue avec
-des fichiers, déclare leurs empreintes SHA-256 dans le rapport, puis les envoie
-une fois le numéro de l’issue reçu. Le service accepte uniquement le fichier
-annoncé dans une issue récente du dépôt Aurora-Viewer. Images : 16 Mio,
-1920 pixels de côté au maximum, réencodage PNG côté serveur.
+The PHP service is in the private repository
+[aurora-api](https://github.com/Aurora-Viewer/aurora-api), linked to Clever Cloud.
+The Cellar bucket stays private: the API exposes the screenshots and
+protects the ZIPs. The viewer checks that the service is available before
+creating an issue with files, declares their SHA-256 hashes in the report,
+then sends them once the issue number has been received. The service
+accepts only the file announced in a recent issue of the Aurora-Viewer
+repository. Images: 16 MiB, 1920 pixels a side at most, PNG re-encoding on
+the server side.
 
-« Joindre les journaux complets aux développeurs uniquement », dans Données,
-est décoché par défaut et proposé pour l’envoi depuis Aurora. Le ZIP contient
-le journal de cette session et les diagnostics complets ; il peut donc inclure
-des champs décochés pour le rapport public et des informations personnelles.
-Il reste dans `private-do-not-upload`, séparé de la copie publique. Limites :
-64 Mio avant compression et 16 Mio compressés ; un journal absent ou trop gros
-arrête la préparation et conserve le brouillon. Aucun ZIP réel n’est envoyé en démo.
+"Share complete logs with developers only", in Data, is unticked by default
+and offered for sending from Aurora. The ZIP contains the log of this
+session and the full diagnostics; it can therefore include fields unticked
+for the public report and personal information. It stays in
+`private-do-not-upload`, separate from the public copy. Limits: 64 MiB
+before compression and 16 MiB compressed; a missing or oversized log stops
+the preparation and keeps the draft. No real ZIP is sent in demo mode.
 
-Le lien du ZIP figure dans l’issue publique, mais son téléchargement exige
-l’autorisation GitHub d’un compte qui accède au dépôt privé `aurora-api`.
-La GitHub App doit inclure ce dépôt dans son installation et avoir l’URL de
-retour `https://api.auroraviewer.com/auth/callback`. Son Client secret est
-configuré uniquement dans la variable Clever Cloud `GITHUB_CLIENT_SECRET`.
-Les sessions développeur durent quinze minutes et le droit d’accès est
-revérifié à chaque téléchargement. Aucun cache public ne reçoit les ZIP.
+The link of the ZIP appears in the public issue, but downloading it requires
+the GitHub authorisation of an account that has access to the private
+`aurora-api` repository. The GitHub App must include this repository in its
+installation and have the callback URL
+`https://api.auroraviewer.com/auth/callback`. Its Client secret is
+configured only in the Clever Cloud variable `GITHUB_CLIENT_SECRET`.
+The developer sessions last fifteen minutes and the access right is checked
+again at each download. No public cache receives the ZIPs.
 
-Après une erreur partielle, le numéro de l’issue, les fichiers et le brouillon
-restent en mémoire, y compris après fermeture du formulaire. « Terminer l’envoi
-des fichiers » reprend le même rapport et conserve les modifications faites
-dans GitHub ; il ne crée pas de seconde issue. Un nouveau formulaire n’est
-préparé qu’après la réussite de l’ensemble de l’envoi.
+After a partial error, the issue number, the files and the draft stay in
+memory, including after the form is closed. "Finish uploading files"
+resumes the same report and keeps the changes made in GitHub; it does not
+create a second issue. A new form is prepared only after the whole sending
+has succeeded.
 
 ## Validation
 
-`AURORA_DEMO_BUG_REPORT=1` avec le mode démo ouvre un rapport exemple. Les deux
-envois restent locaux, sans autorisation GitHub ni ouverture du navigateur.
-Les modes `details`, `image`, `image-ui` et `direct` montrent respectivement
-les informations avec le lieu décoché, une capture de la scène, une capture
-avec l’interface et le choix d’envoi direct. Le formulaire s’ouvre après le
-chargement de la scène (image 550).
-`refresh` prend une capture sans interface puis active l’option à l’image 700
-et la désactive à l’image 900. `language` passe la fenêtre déjà ouverte en
-anglais à l’image 700, puis en français à l’image 900, sans changer les
-préférences enregistrées. Pour tester manuellement la langue dans Préférences,
-lancer sans argument `--language`, qui forcerait la langue du processus.
-Tester les champs décochés, la copie, l’export, une image avec retrait puis
-réajout, une capture avec et sans interface, le redimensionnement et les deux
-langues. Modifier le texte, choisir Image ou Données, fermer puis rouvrir depuis
-Signaler un bug : vérifier le texte, les cases, l’image et l’onglet conservés.
-Tester également l’entrée depuis la connexion et le menu Aide.
+`AURORA_DEMO_BUG_REPORT=1` with demo mode opens a sample report. Both
+sending modes stay local, without GitHub authorisation and without opening
+the browser. The `details`, `image`, `image-ui` and `direct` modes show
+respectively the information with the location unticked, a screenshot of
+the scene, a screenshot with the interface and the direct sending choice.
+The form opens after the scene has loaded (frame 550).
+`refresh` takes a screenshot without the interface then enables the option
+at frame 700 and disables it at frame 900. `language` switches the already
+open window to English at frame 700, then to French at frame 900, without
+changing the saved preferences. To test the language manually in
+Preferences, launch without the `--language` argument, which would force
+the language of the process.
+Test the unticked fields, the copy, the export, an image with removal then
+re-adding, a screenshot with and without the interface, the resizing and
+both languages. Change the text, choose Picture or Data, close then reopen
+from Report a bug: check that the text, the checkboxes, the image and the
+tab are kept. Also test the entry from the login screen and the Help menu.
 
-L’autorisation réelle et la publication d’un rapport de test sur GitHub sont
-validées par l’humain, avec son compte. Vérifier aussi l’annulation et le refus
-d’autorisation. Les tests automatiques n’ouvrent aucune issue réelle.
+The real authorisation and the publication of a test report on GitHub are
+validated by the human, with their account. Also check the cancellation and
+the refusal of the authorisation. The automated tests open no real issue.
