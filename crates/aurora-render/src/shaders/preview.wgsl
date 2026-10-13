@@ -35,15 +35,29 @@ struct Vertex {
 }
 @fragment fn fs(v: Vertex, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let base_color = textureSample(base, samp, v.uv) * u.color;
-    var n = normalize(v.normal) * select(-1.0, 1.0, front);
+    let facing = select(-1.0, 1.0, front);
+    var n = normalize(v.normal) * facing;
+    // Cotangent frame from screen derivatives, the construction of
+    // perturb_normal (common.wgsl), so that a map looks here as it will in
+    // the world. The solution is divided by its determinant, whose sign
+    // counts: negative here, where dpdy runs down the target, and without it
+    // both axes come out reversed. `v.uv` samples top-left-origin images, so
+    // the bitangent points down the image while SL and glTF normal maps put
+    // +Y up it (materialF.glsl getNormal: B along +t): green is negated.
+    // Back faces negate the whole mapped normal (pbropaqueF.glsl: tnorm *=
+    // gl_FrontFacing ? 1.0 : -1.0); n is flipped above, the frame follows.
+    // The floor only guards a face without UVs: a larger one would flatten
+    // the relief of small models, whose derivatives are tiny.
     let dp1 = dpdx(v.position); let dp2 = dpdy(v.position);
     let duv1 = dpdx(v.uv); let duv2 = dpdy(v.uv);
-    let tangent = dp1 * duv2.y - dp2 * duv1.y;
-    let bitangent = -dp1 * duv2.x + dp2 * duv1.x;
-    let norm = max(max(dot(tangent, tangent), dot(bitangent, bitangent)), 0.00000001);
+    let dp2perp = cross(dp2, n); let dp1perp = cross(n, dp1);
+    let tangent = dp2perp * duv1.x + dp1perp * duv2.x;
+    let bitangent = dp2perp * duv1.y + dp1perp * duv2.y;
+    let norm = max(max(dot(tangent, tangent), dot(bitangent, bitangent)), 1e-30);
+    let frame = facing * sign(dot(dp1, dp2perp)) * inverseSqrt(norm);
     var nm = textureSample(normal_map, samp, v.uv).xyz * 2.0 - 1.0;
-    nm = vec3(nm.xy*u.surface.x,nm.z);
-    n = normalize(mat3x3(tangent * inverseSqrt(norm), bitangent * inverseSqrt(norm), n) * nm);
+    nm = vec3(nm.x*u.surface.x,-nm.y*u.surface.x,nm.z);
+    n = normalize(mat3x3(tangent * frame, bitangent * frame, n) * nm);
     let view = normalize(u.eye.xyz - v.position);
     let light = normalize(vec3<f32>(0.4, -0.6, 0.8));
     let half_vector = normalize(light + view);
