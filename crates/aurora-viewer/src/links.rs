@@ -1,5 +1,6 @@
 //! Project links shown on the login screen. Empty = not configured yet: the
-//! button is shown disabled and nothing is fetched.
+//! button is shown disabled and nothing is fetched. The README header carries
+//! the same Discord and website links: change them there too.
 
 /// Source code repository (GitHub page).
 pub const GITHUB: &str = "https://github.com/Aurora-Viewer/Aurora-Viewer";

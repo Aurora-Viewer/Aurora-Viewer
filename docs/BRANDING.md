@@ -250,6 +250,24 @@ The logo is a wolf's head in profile, facing right, in 4 colours:
 violet `#8B5CF6`, indigo `#4F46E5`, turquoise `#5EEAD4` and midnight blue
 `#070B1F`. Do not distort it, recolour it or add an effect to it.
 
+## README buttons
+
+The buttons of the README header and its "Soon" pill are small SVG files in
+[`docs/readme/`](readme/), drawn like the viewer's own: flat face, radius of
+4, a Tabler icon and Inter SemiBold.
+
+| File | Use |
+|---|---|
+| `button-download.svg` | main action (violet face, `on_accent` text): latest release |
+| `button-discord.svg` / `button-website.svg` | flat buttons (`raised` face, `ink` text): the Discord and website links of the login screen (`links.rs`) |
+| `pill-soon.svg` | marks a planned feature in a list (teal face, navy text), 18 px high |
+
+The text is live text, not outlines. Its `textLength` is the width of the
+label in Inter SemiBold at the file's font size, so that the layout holds
+with the fallback fonts of a machine without Inter. For another button, copy
+a file, change the icon paths, the label and that width, then the width of
+the `svg` and of its `rect` (18 + 20 + 9 + text + 18).
+
 ## Icons: Tabler
 
 All the icons of the interface are [Tabler Icons](https://tabler.io/icons)

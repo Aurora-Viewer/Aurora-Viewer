@@ -47,7 +47,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 │  ├─ tabler-icons/             full Tabler library (SVG: outline, filled)
 │  └─ emoji/                    emoji font (downloaded, outside git)
 ├─ crates/                      the code (see below)
-├─ docs/                        BRANDING.md, TESTING.md (`AURORA_*` test options, profiling), README screenshots
+├─ docs/                        BRANDING.md, TESTING.md (`AURORA_*` test options, profiling), README screenshots (`screenshots/`), README buttons and "Soon" pill (`readme/`)
 ├─ news/                        news of the login screen, written by hand: fr.md, en.md (read on `main` by the viewer, and compiled into it)
 ├─ scripts/                     tools for agents and humans (PowerShell)
 │  ├─ automation-window-border.ps1 dashed yellow outline of the automated-test windows (Windows)
