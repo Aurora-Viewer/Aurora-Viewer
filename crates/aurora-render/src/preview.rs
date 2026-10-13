@@ -667,3 +667,220 @@ impl Cache {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SIZE: u32 = 64;
+
+    /// Draws a quad that faces the camera (screen right is +Y, up is +Z)
+    /// and carries one dome, then returns where the dome is lit: the offset
+    /// of its brightness from the centre, x to the right and y up the image.
+    fn lit_side(device: &wgpu::Device, queue: &wgpu::Queue, pipeline: &Pipelines, mirrored: bool, back: bool) -> [f32; 2] {
+        let facing = if back { -1.0 } else { 1.0 };
+        let corner = |y: f32, z: f32| {
+            // seen from its own front side, the face has u to the right
+            // unless mirrored; v runs down the top-left-origin image
+            let u = (y * facing + 1.0) * 0.5;
+            Vertex::new(
+                [0.0, y, z],
+                [facing, 0.0, 0.0],
+                [if mirrored { 1.0 - u } else { u }, (1.0 - z) * 0.5],
+            )
+        };
+        let vertices = [corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0)];
+        let indices: [u32; 6] = if back { [0, 2, 1, 0, 3, 2] } else { [0, 1, 2, 0, 2, 3] };
+        // SL / glTF convention: +X right, +Y up the image, rows running down
+        let mut dome = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let half = SIZE as f32 * 0.5;
+                let (dx, dy) = ((x as f32 + 0.5 - half) / (half * 0.8), (y as f32 + 0.5 - half) / (half * 0.8));
+                let slope = (1.0 - dx * dx - dy * dy).max(0.0) * 3.0;
+                let n = Vec3::new(slope * dx, -slope * dy, 1.0).normalize();
+                dome.extend([n.x, n.y, n.z, 1.0].map(|c| ((c * 0.5 + 0.5) * 255.0) as u8));
+            }
+        }
+        let texture = |format, usage, size: u32, data: Option<&[u8]>| {
+            let descriptor = wgpu::TextureDescriptor {
+                label: Some("Preview test"),
+                size: wgpu::Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage,
+                view_formats: &[],
+            };
+            match data {
+                Some(data) => device.create_texture_with_data(queue, &descriptor, wgpu::util::TextureDataOrder::LayerMajor, data),
+                None => device.create_texture(&descriptor),
+            }
+        };
+        let sampled = wgpu::TextureUsages::TEXTURE_BINDING;
+        let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
+        let maps = [
+            texture(wgpu::TextureFormat::Rgba8UnormSrgb, sampled, 1, Some(&[255; 4])),
+            texture(wgpu::TextureFormat::Rgba8Unorm, sampled, SIZE, Some(&dome)),
+            texture(wgpu::TextureFormat::Rgba8Unorm, sampled, 1, Some(&[255; 4])),
+            texture(wgpu::TextureFormat::Rgba8UnormSrgb, sampled, 1, Some(&[255; 4])),
+        ]
+        .map(|map| map.create_view(&Default::default()));
+        let eye = Vec3::new(4.0, 0.0, 0.0);
+        let projection = glam::camera::rh::proj::directx::perspective(0.55, 1.0, 0.1, 10.0)
+            * glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Z);
+        let buffer = |bytes: &[u8], usage| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Preview test"),
+                contents: bytes,
+                usage,
+            })
+        };
+        let uniform = buffer(
+            bytemuck::bytes_of(&Uniform {
+                projection: projection.to_cols_array_2d(),
+                eye: [eye.x, eye.y, eye.z, 1.0],
+                color: [1.0; 4],
+                emissive_metallic: [0.0; 4],
+                params: [0.9, 0.5, 0.0, 0.0],
+                edge_color: [0.0; 4],
+                ambient: [0.2, 0.2, 0.2, 1.0],
+                surface: [1.0, 1.0, 0.0, 0.0],
+            }),
+            wgpu::BufferUsages::UNIFORM,
+        );
+        let bones = buffer(
+            bytemuck::cast_slice(&[Mat4::IDENTITY.to_cols_array_2d()]),
+            wgpu::BufferUsages::STORAGE,
+        );
+        let mut entries = vec![wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform.as_entire_binding(),
+        }];
+        for (index, view) in maps.iter().enumerate() {
+            entries.push(wgpu::BindGroupEntry {
+                binding: index as u32 + 1,
+                resource: wgpu::BindingResource::TextureView(view),
+            });
+        }
+        entries.push(wgpu::BindGroupEntry {
+            binding: 5,
+            resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
+        });
+        entries.push(wgpu::BindGroupEntry {
+            binding: 6,
+            resource: bones.as_entire_binding(),
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Preview test"),
+            layout: &pipeline.layout,
+            entries: &entries,
+        });
+        let vertex_buffer = buffer(bytemuck::cast_slice(&vertices), wgpu::BufferUsages::VERTEX);
+        let index_buffer = buffer(bytemuck::cast_slice(&indices), wgpu::BufferUsages::INDEX);
+        let color = texture(wgpu::TextureFormat::Rgba8Unorm, attachment, SIZE, None);
+        let depth = texture(wgpu::TextureFormat::Depth32Float, attachment, SIZE, None).create_view(&Default::default());
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Preview test readback"),
+            size: u64::from(SIZE * SIZE * 4),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Preview test"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &color.create_view(&Default::default()),
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&pipeline.triangles);
+            pass.set_bind_group(0, &group, &[]);
+            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..6, 0, 0..1);
+        }
+        encoder.copy_texture_to_buffer(
+            color.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(SIZE * 4),
+                    rows_per_image: Some(SIZE),
+                },
+            },
+            wgpu::Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        readback.map_async(wgpu::MapMode::Read, .., |result| result.expect("readback"));
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
+        let bytes = readback.get_mapped_range(..).expect("mapped pixels");
+        let brightness = |x: u32, y: u32| f32::from(bytes[((y * SIZE + x) * 4) as usize]);
+        // the quad covers the middle of the target; (7, 7) is on it, outside the dome
+        let flat = brightness(7, 7);
+        assert!(flat > 0.0, "the flat part of the quad is lit and drawn");
+        let mut side = [0.0f32; 2];
+        for y in 8..SIZE - 8 {
+            for x in 8..SIZE - 8 {
+                let weight = brightness(x, y) - flat;
+                side[0] += weight * (x as f32 + 0.5 - SIZE as f32 * 0.5);
+                side[1] -= weight * (y as f32 + 0.5 - SIZE as f32 * 0.5);
+            }
+        }
+        side
+    }
+
+    /// The fixed light of preview.wgsl, (0.4, -0.6, 0.8), is up and to the
+    /// left of this camera. A bump is lit on that side whatever the UV
+    /// handedness; from behind a double-sided face it is a dent, lit on the
+    /// far side (pbropaqueF.glsl negates the whole mapped normal there).
+    #[test]
+    fn normal_map_bumps_face_the_light() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
+        let pipeline = Pipelines::new(&device);
+        for (mirrored, back, name) in [
+            (false, false, "regular UV"),
+            (true, false, "mirrored UV"),
+            (false, true, "back side"),
+        ] {
+            let [x, y] = lit_side(&device, &queue, &pipeline, mirrored, back);
+            let toward_light = if back { -1.0 } else { 1.0 };
+            assert!(
+                x * toward_light < -10_000.0 && y * toward_light > 10_000.0,
+                "{name}: lit side ({x}, {y})"
+            );
+        }
+    }
+}
