@@ -45,7 +45,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 │  ├─ branding/                 logos (colour, silhouette), SVG + PNG 4096, aurora.ico
 │  ├─ models/                   self-contained Aurora 3D GLB for material previews
 │  ├─ tabler-icons/             full Tabler library (SVG: outline, filled)
-│  └─ emoji/                    emoji font (downloaded, outside git)
+│  └─ emoji/                    emoji font (downloaded, outside git; inside the exe of a published build)
 ├─ crates/                      the code (see below)
 ├─ docs/                        BRANDING.md, TESTING.md (`AURORA_*` test options, profiling), README screenshots (`screenshots/`), README buttons and "Soon" pill (`readme/`)
 ├─ news/                        news of the login screen, written by hand: fr.md, en.md (read on `main` by the viewer, and compiled into it)

@@ -5,7 +5,7 @@
 
 use crate::theme::Palette;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Picker tabs: (label, Tabler icon, Unicode group).
 fn categories() -> &'static Vec<(&'static str, &'static str, emojis::Group)> {
@@ -101,11 +101,17 @@ pub struct Emoji {
     pub query: String,
 }
 
-fn font_candidates() -> Vec<PathBuf> {
+/// The font of a published viewer, part of its executable (build.rs,
+/// `AURORA_EMBED_EMOJI`): no folder of the installation to lose or to be
+/// refused. The other builds read the file of the source tree.
+#[cfg(aurora_embedded_emoji)]
+static BUILT_IN: Option<&[u8]> = Some(include_bytes!("../../../../assets/emoji/Noto-3D-128.ttf"));
+#[cfg(not(aurora_embedded_emoji))]
+static BUILT_IN: Option<&[u8]> = None;
+
+/// Font files tried when `AURORA_EMOJI_FONT` names none and none is built in.
+fn font_files() -> Vec<PathBuf> {
     let mut v = Vec::new();
-    if let Some(p) = std::env::var_os("AURORA_EMOJI_FONT") {
-        v.push(PathBuf::from(p));
-    }
     if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
         v.push(dir.join("assets").join("emoji").join("Noto-3D-128.ttf"));
         v.push(dir.join("assets").join("emoji").join("Noto-3D-watch.ttf"));
@@ -117,31 +123,56 @@ fn font_candidates() -> Vec<PathBuf> {
     v
 }
 
+/// A font file mapped for the rest of the session.
+fn map_font(path: &Path) -> Option<&'static [u8]> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) => {
+            // A candidate that does not exist is normal; a file that is
+            // there and cannot be opened (rights, security software) is
+            // what a report needs to show.
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("emoji font {}: {e}", path.display());
+            }
+            return None;
+        }
+    };
+    // SAFETY: the font file is opened read-only and never modified
+    // while mapped; the mapping is leaked so the face can be 'static.
+    let map = unsafe { memmap2::Mmap::map(&file) }
+        .map_err(|e| log::warn!("emoji font {}: {e}", path.display()))
+        .ok()?;
+    let map: &'static memmap2::Mmap = Box::leak(Box::new(map));
+    Some(&map[..])
+}
+
 impl Emoji {
     pub fn load() -> Emoji {
-        let mut face = None;
-        for path in font_candidates() {
-            let Ok(file) = std::fs::File::open(&path) else {
-                continue;
-            };
-            // SAFETY: the font file is opened read-only and never modified
-            // while mapped; the mapping is leaked so the face can be 'static.
-            let Ok(map) = (unsafe { memmap2::Mmap::map(&file) }) else {
-                continue;
-            };
-            let map: &'static memmap2::Mmap = Box::leak(Box::new(map));
-            let bytes: &'static [u8] = &map[..];
-            match ttf_parser::Face::parse(bytes, 0) {
-                Ok(f) => {
-                    log::info!("emoji font: {}", path.display());
-                    face = Some(f);
-                    break;
-                }
-                Err(e) => log::warn!("emoji font {}: {e}", path.display()),
+        // In order: the font asked for, the one of the executable, the files.
+        let asked = std::env::var_os("AURORA_EMOJI_FONT").map(PathBuf::from);
+        let files = font_files();
+        let parse = |bytes: &'static [u8], name: &str| match ttf_parser::Face::parse(bytes, 0) {
+            Ok(f) => {
+                log::info!("emoji font: {name}");
+                Some(f)
             }
-        }
+            Err(e) => {
+                log::warn!("emoji font {name}: {e}");
+                None
+            }
+        };
+        let from_file = |path: &PathBuf| map_font(path).and_then(|bytes| parse(bytes, &path.display().to_string()));
+        let face = asked
+            .as_ref()
+            .and_then(from_file)
+            .or_else(|| BUILT_IN.and_then(|bytes| parse(bytes, "built into the executable")))
+            .or_else(|| files.iter().find_map(from_file));
         if face.is_none() {
-            log::warn!("no emoji font found (Noto-3D); emoji use the monochrome fallback");
+            let looked: Vec<String> = asked.iter().chain(&files).map(|p| p.display().to_string()).collect();
+            log::warn!(
+                "no emoji font found (Noto-3D, looked for {}); emoji use the monochrome fallback",
+                looked.join(", ")
+            );
         }
         let lists = categories()
             .iter()
