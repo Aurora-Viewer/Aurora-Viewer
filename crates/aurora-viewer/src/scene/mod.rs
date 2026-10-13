@@ -536,6 +536,9 @@ pub struct Scene {
     system_bounds: Vec<animesh::JointBounds>,
     /// Objects visited by the CPU lists this frame (reused).
     visit_tmp: Vec<(usize, bool)>,
+    /// Objects whose faces were built since the lists were last made: the
+    /// size of their textures on screen is noted at once.
+    fresh_usage: std::collections::HashSet<usize>,
     /// What the lists look for in each object slot (list_index.rs).
     list_index: list_index::ListIndex,
     /// Objects with light parameters (kept by `sync_object`, which sees every
@@ -898,6 +901,7 @@ impl Scene {
             removal_pending: Vec::new(),
             system_bounds: Vec::new(),
             visit_tmp: Vec::new(),
+            fresh_usage: Default::default(),
             list_index: Default::default(),
             light_objects: Default::default(),
             light_textures: HashMap::new(),
@@ -1957,6 +1961,7 @@ impl Scene {
     fn finish_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
         // (new faces: what the cursor is over may have changed)
         self.pick.changed(idx);
+        self.fresh_usage.insert(idx);
         let alpha = &self.textures.alpha_by_slot;
         let channel = &self.textures.alpha_channel_by_slot;
         let mut last_slot = None;
@@ -3099,6 +3104,15 @@ impl Scene {
         // lists the special ones, the usage slice, the selection, the
         // pictured impostors and, in debug, all
         let usage_phase = (self.frame % 30) as usize;
+        // Objects whose faces were built since the last frame have the size
+        // of their textures on screen noted now rather than at their turn,
+        // up to 30 frames away: a new texture is then asked for at the rank
+        // and for the range that size calls for, not blindly.
+        let mut fresh = std::mem::take(&mut self.fresh_usage);
+        if textures::first_pixels_as_before() {
+            fresh.clear();
+        }
+        let usage_due = |i: usize| i % 30 == usage_phase || fresh.contains(&i);
         let mut visit = std::mem::take(&mut self.visit_tmp);
         visit.clear();
         if gpu_mode {
@@ -3110,7 +3124,7 @@ impl Scene {
                 // objects, on the frames a picture is taken)
                 let capturing = !plan.capture.is_empty();
                 for (i, bits) in self.list_index.with(list_index::DRAWN) {
-                    let usage = i % 30 == usage_phase;
+                    let usage = usage_due(i);
                     if usage
                         || bits & list_index::SPECIAL != 0
                         || debug
@@ -3126,7 +3140,7 @@ impl Scene {
                     if g.faces.is_empty() || g.hud {
                         continue;
                     }
-                    let usage = i % 30 == usage_phase;
+                    let usage = usage_due(i);
                     if usage || g.special || debug || selection.contains_key(&i) || self.selection_faces.contains_key(&i) || captured(g, i)
                     {
                         visit.push((i, usage));
@@ -3134,8 +3148,10 @@ impl Scene {
                 }
             }
         } else {
-            visit.extend((0..self.gpu.len()).map(|i| (i, i % 30 == usage_phase)));
+            visit.extend((0..self.gpu.len()).map(|i| (i, usage_due(i))));
         }
+        fresh.clear();
+        self.fresh_usage = fresh;
         let full = !gpu_mode;
         let ctx = CullCtx {
             view,

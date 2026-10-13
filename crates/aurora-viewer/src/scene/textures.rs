@@ -41,7 +41,54 @@ pub fn asset_url(base: &str, kind: &str, id: &Uuid) -> String {
         format!("{base}/?{kind}={id}")
     }
 }
+/// First request of a texture whose size on screen is not known yet, and
+/// the least asked for one that is.
 const INITIAL_BYTES: usize = 16 * 1024;
+/// The size the first request assumes for a file it has not seen: that of
+/// most textures large enough on screen to need more than `INITIAL_BYTES`.
+const TYPICAL: J2kInfo = J2kInfo {
+    width: 1024,
+    height: 1024,
+    components: 3,
+    levels: 5,
+};
+
+/// Bytes of the first request of a texture that covers `px` pixels on
+/// screen (0: not known). The size of the file is not known before its
+/// first bytes, and what a level needs depends on it: this asks what a
+/// `TYPICAL` texture needs to show `px` pixels, so that the first reply is
+/// enough for most textures and one round trip shows them at the level they
+/// are wanted. Never its full resolution: that is the whole file, megabytes
+/// for a large one, and is asked once the size is known. A smaller file
+/// comes whole; a texture that needs more gets its first pixels from this
+/// reply while the rest is asked (`holds_first_pixels`).
+/// Firestorm always starts with `FIRST_PACKET_SIZE` (600 bytes) and asks
+/// for the level in a second request (LLTextureFetchWorker::doWork).
+fn first_bytes(px: f32) -> usize {
+    if px <= 0.0 || first_pixels_as_before() {
+        return INITIAL_BYTES;
+    }
+    let discard = discard_for(TYPICAL.width as f32, px, None).max(1);
+    aurora_assets::bytes_for_discard(&TYPICAL, discard).max(INITIAL_BYTES)
+}
+
+/// Finest level, from `want` towards the coarsest, that `len` bytes of a
+/// file hold. Level 0 only from the complete file (a partial one is
+/// blurry).
+fn level_held(info: &J2kInfo, len: usize, want: u8) -> u8 {
+    let mut discard = want;
+    while discard < 5 && (discard == 0 || aurora_assets::bytes_for_discard(info, discard) > len) {
+        discard += 1;
+    }
+    discard
+}
+
+/// TEMPORARY (A/B measure, removed before the PR): AURORA_TEX_FIRST=old
+/// keeps the first range, the level and the decodes as they were.
+pub(super) fn first_pixels_as_before() -> bool {
+    static OLD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OLD.get_or_init(|| std::env::var("AURORA_TEX_FIRST").is_ok_and(|v| v == "old"))
+}
 const UNUSED_EVICT: Duration = Duration::from_secs(45);
 /// Unused textures evicted per frame at most, and queue entries looked at
 /// (those used again since are only skipped): the textures of a region
@@ -179,6 +226,12 @@ struct Entry {
     need_px: f32,
     away_px: f32,
     fixed_px: f32,
+    /// Pixels in view `want` was last computed from (0 before the first
+    /// time): unlike `need_px`, it does not decay between two computations.
+    seen_px: f32,
+    /// Its first request, until its first pixels are shown (the wait the
+    /// `texture load:` line tells).
+    asked_at: Option<Instant>,
     /// Size of its level 0 on the GPU (0 until the first upload).
     gpu_size: (u32, u32),
     fetching: bool,
@@ -247,6 +300,57 @@ impl Counts {
 }
 
 impl Entry {
+    /// Pixels it covers on screen as far as known now: what `want` was
+    /// computed from, or what was noted since if that is more (a texture
+    /// just arrived has only that). 0: not seen yet.
+    fn px_now(&self) -> f32 {
+        self.seen_px.max(self.need_px).max(self.fixed_px)
+    }
+
+    /// A texture used for the first time has its size on screen noted in
+    /// the frame its object is built (`Scene::fresh_usage`), before
+    /// `recompute_wants` next comes by: its level follows from that size at
+    /// once, for a file of unknown size as that pass would compute it,
+    /// instead of the level of a new entry.
+    fn want_before_the_first_pass(&mut self) {
+        let px = self.need_px.max(self.fixed_px);
+        if self.seen_px <= 0.0 && px > 0.0 && !self.keep_pixels && !first_pixels_as_before() {
+            self.want = discard_for(
+                full_size(self).map_or(512, |(w, h)| w.max(h)) as f32,
+                px,
+                self.info.map(|i| i.levels),
+            );
+        }
+    }
+
+    /// The file just told its size (first bytes downloaded, or read from
+    /// the disk): `want` was computed for a texture of unknown size, taken
+    /// as 512 pixels, and is computed again for this one. Without it a
+    /// 1024 texture is decoded and downloaded one level finer than its size
+    /// on screen asks, until `recompute_wants` next comes by: four times
+    /// the pixels, four times the bytes.
+    fn want_for_its_size(&mut self) {
+        let px = self.px_now();
+        if self.keep_pixels || px <= 0.0 || first_pixels_as_before() {
+            return;
+        }
+        if let Some(info) = self.info {
+            self.want = discard_for(info.width.max(info.height) as f32, px, Some(info.levels));
+        }
+    }
+
+    /// Nothing of it is shown, the bytes held do not reach the level
+    /// wanted, but they hold a coarser one: its first pixels, to decode now
+    /// while the rest is downloaded.
+    fn holds_first_pixels(&self, needed: usize) -> bool {
+        self.decoded.is_none()
+            && !self.complete
+            && self.data.len() < needed
+            && self
+                .info
+                .is_some_and(|info| aurora_assets::bytes_for_discard(&info, aurora_assets::j2k::MAX_DISCARD_LEVEL) <= self.data.len())
+    }
+
     /// `TextureStreamer::update` has something to do for it, now or once a
     /// delay, a decode slot or an upload has passed: its first disk read,
     /// or a finer level than the one on the GPU to read, decode or
@@ -984,6 +1088,8 @@ impl TextureStreamer {
             need_px: 0.0,
             away_px: 0.0,
             fixed_px: 0.0,
+            seen_px: 0.0,
+            asked_at: None,
             gpu_size: (0, 0),
             fetching: false,
             decoding: false,
@@ -1180,6 +1286,7 @@ impl TextureStreamer {
             let levels = e.info.map(|i| i.levels);
             let (want, keep) = wanted(full, levels, e, dropped);
             e.want = want;
+            e.seen_px = e.fixed_px.max(e.need_px / dropped.0);
             if step > 0 {
                 let (want_below, keep_below) = wanted(full, levels, e, below);
                 // (there it would be lowered to `keep`, or loaded up to `want`)
@@ -1216,7 +1323,7 @@ impl TextureStreamer {
             // the size estimate would miss the last quality layers
             Some(_) if e.want == 0 => usize::MAX,
             Some(info) => aurora_assets::bytes_for_discard(info, e.want),
-            None => INITIAL_BYTES,
+            None => first_bytes(e.px_now()),
         }
     }
 
@@ -1283,6 +1390,7 @@ impl TextureStreamer {
                 let blocks_do = bc7_cache && !e.keep_pixels && !ui_wanted.contains(&id);
                 if e.cache_state == 0 {
                     e.cache_state = 1;
+                    e.want_before_the_first_pass();
                     // its size on screen is not known yet: the coarsest level of
                     // a transcoded chain shows it at once, and the level it
                     // needs is read when known (the default level would load
@@ -1340,51 +1448,56 @@ impl TextureStreamer {
                 }
                 let needed = Self::bytes_needed(e);
                 let have_enough = !e.data.is_empty() && (e.complete || e.data.len() >= needed);
-                if have_enough || (e.info.is_some() && e.decoded.is_none() && !e.data.is_empty() && e.failures > 0) {
-                    if *decodes >= *max_decodes {
-                        return;
-                    }
-                    // Decode at the best level the data allows.
-                    let mut discard = e.want;
-                    if let Some(info) = &e.info
-                        && !e.complete
-                    {
-                        // level 0 only from the complete file (a partial one is blurry)
-                        while discard < 5 && (discard == 0 || aurora_assets::bytes_for_discard(info, discard) > e.data.len()) {
-                            discard += 1;
+                let after_failure = e.info.is_some() && e.decoded.is_none() && !e.data.is_empty() && e.failures > 0;
+                // First pixels in one round trip: what the first reply holds
+                // is decoded while the range of the wanted level is asked
+                // for, instead of showing nothing until that second reply
+                // (as Firestorm does). One more decode, of a small level.
+                let first_pixels = !have_enough && !after_failure && !first_pixels_as_before() && e.holds_first_pixels(needed);
+                if have_enough || after_failure || first_pixels {
+                    'decode: {
+                        if *decodes >= *max_decodes {
+                            break 'decode;
                         }
+                        // Decode at the best level the data allows.
+                        let discard = match &e.info {
+                            Some(info) if !e.complete => level_held(info, e.data.len(), e.want),
+                            _ => e.want,
+                        };
+                        if e.decoded.is_some_and(|d| discard >= d) {
+                            break 'decode;
+                        }
+                        // That level, or a finer one, is already decoded and waits
+                        // for its turn to the GPU (`decoded` only follows once it is
+                        // sent): decoding it again each time a decode slot frees up
+                        // was half of the decodes of an arrival (AURORA_DEMO_STREAM
+                        // with j2k=, 9000 textures: 9126 of 18129).
+                        if uploads.covers(&id, discard) {
+                            break 'decode;
+                        }
+                        e.decoding = true;
+                        *decodes += 1;
+                        load.again += u64::from(e.decoded.is_some());
+                        let data = e.data.clone();
+                        let job = DecodeJob {
+                            id,
+                            discard,
+                            keep_pixels: e.keep_pixels,
+                            bc7: bc7 && !e.keep_rgba,
+                            // (not over a file that already holds this level)
+                            cache: e
+                                .info
+                                .filter(|_| bc7_cache && !e.keep_rgba && !e.transcoded.is_some_and(|finest| finest <= discard))
+                                .zip(cache_writer.clone())
+                                .map(|(info, writer)| (Self::transcoded_path(cache_dir, &id), info, writer)),
+                        };
+                        let pool = staging.clone();
+                        let meter = meter.clone();
+                        jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
                     }
-                    if e.decoded.is_some_and(|d| discard >= d) {
+                    if !first_pixels {
                         return;
                     }
-                    // That level, or a finer one, is already decoded and waits
-                    // for its turn to the GPU (`decoded` only follows once it is
-                    // sent): decoding it again each time a decode slot frees up
-                    // was half of the decodes of an arrival (AURORA_DEMO_STREAM
-                    // with j2k=, 9000 textures: 9126 of 18129).
-                    if uploads.covers(&id, discard) {
-                        return;
-                    }
-                    e.decoding = true;
-                    *decodes += 1;
-                    load.again += u64::from(e.decoded.is_some());
-                    let data = e.data.clone();
-                    let job = DecodeJob {
-                        id,
-                        discard,
-                        keep_pixels: e.keep_pixels,
-                        bc7: bc7 && !e.keep_rgba,
-                        // (not over a file that already holds this level)
-                        cache: e
-                            .info
-                            .filter(|_| bc7_cache && !e.keep_rgba && !e.transcoded.is_some_and(|finest| finest <= discard))
-                            .zip(cache_writer.clone())
-                            .map(|(info, writer)| (Self::transcoded_path(cache_dir, &id), info, writer)),
-                    };
-                    let pool = staging.clone();
-                    let meter = meter.clone();
-                    jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
-                    return;
                 }
                 // 2. fetch more
                 let Some(url) = (match &e.source {
@@ -1398,6 +1511,10 @@ impl TextureStreamer {
                 *next_key += 1;
                 e.fetch_key = key;
                 e.fetching = true;
+                if e.decoded.is_none() && e.data.is_empty() && e.asked_at.is_none() {
+                    e.asked_at = Some(now);
+                    load.first_blind += u64::from(e.px_now() <= 0.0);
+                }
                 let priority = e.need_px.max(e.fixed_px).max(1.0) + if e.decoded.is_none() { 1e5 } else { 0.0 };
                 by_fetch_key.insert(key, id);
                 fetcher.request(FetchRequest {
@@ -1541,6 +1658,7 @@ impl TextureStreamer {
             Ok(()) => {
                 if e.info.is_none() {
                     e.info = aurora_assets::j2k_info(&e.data);
+                    e.want_for_its_size();
                 }
                 e.failures = 0;
                 if !e.dirty_cache {
@@ -1610,6 +1728,7 @@ impl TextureStreamer {
                         e.info = aurora_assets::j2k_info(&d);
                         e.data = Arc::new(d);
                         e.complete = complete;
+                        e.want_for_its_size();
                     }
                     Self::settle(&mut self.todo, &mut self.counts, id, e);
                 }
@@ -1812,6 +1931,11 @@ impl TextureStreamer {
                 {
                     self.ui_ready.insert(u.id, (*w, *h, std::mem::take(d)));
                 }
+            }
+            if let Some(asked) = e.asked_at.take()
+                && e.decoded.is_none()
+            {
+                self.load.first_pixels(asked.elapsed(), e.px_now());
             }
             e.decoded = Some(u.discard);
             e.alpha = u.alpha;
@@ -2313,6 +2437,8 @@ mod tests {
             need_px,
             away_px: 0.0,
             fixed_px: 0.0,
+            seen_px: 0.0,
+            asked_at: None,
             gpu_size: decoded.map_or((0, 0), |d| (1024 >> d, 1024 >> d)),
             fetching: false,
             decoding: false,

@@ -14,6 +14,9 @@ use uuid::Uuid;
 
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
+/// The local asset server of its `net=` option.
+#[path = "demo_asset_server.rs"]
+pub mod asset_server;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_chatlog.rs"]
 pub mod chatlog;
