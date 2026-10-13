@@ -40,6 +40,10 @@ pub mod search;
 /// (AURORA_DEMO_STREAM).
 #[path = "demo_stream.rs"]
 pub mod stream;
+/// Meshes filling the geometry arena until it outgrows its buffers
+/// (AURORA_DEMO_GEOMETRY).
+#[path = "demo_geometry.rs"]
+pub mod geometry;
 /// Name plates in every state and at each distance (AURORA_DEMO_TAGS).
 #[path = "demo_tags.rs"]
 pub mod tags;
