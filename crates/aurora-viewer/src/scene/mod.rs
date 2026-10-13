@@ -4804,6 +4804,7 @@ mod tests {
             &gview,
             &[all; 3],
             &[aurora_render::shadow_cull::CASTER_PLANES_ALL; 3],
+            0.0,
             [Mat4::IDENTITY; 3],
             [None; 2],
             flags,
