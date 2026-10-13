@@ -16,6 +16,8 @@ pub struct Cursors {
     media_open: Option<egui::CustomCursorImage>,
     zoom: Option<egui::CustomCursorImage>,
     hud_drag: Option<egui::CustomCursorImage>,
+    inventory_copy: Option<egui::CustomCursorImage>,
+    inventory_move: Option<egui::CustomCursorImage>,
     pipette: Option<egui::CustomCursorImage>,
     /// Zoom, orbit, pan (`ToolMode` order).
     camera: [Option<egui::CustomCursorImage>; 3],
@@ -44,6 +46,8 @@ impl Cursors {
             media_open: badge_image(icon!("device-tv"), palette),
             zoom: badge_image(icon!("zoom-in"), palette),
             hud_drag: tabler_image(icon!("hand-grab"), palette, [16, 16]),
+            inventory_copy: badge_image(include_bytes!("../assets/icons/tabler/filled/copy.svg"), palette),
+            inventory_move: badge_image(icon!("arrows-move"), palette),
             pipette: tabler_image(icon!("color-picker"), palette, [5, 27]),
             camera: [
                 tabler_image(icon!("focus-centered"), palette, [16, 16]),
@@ -60,6 +64,16 @@ impl Cursors {
     /// grasping hand with a contrasting native-cursor outline.
     pub fn hud_drag(&self) -> Option<egui::CustomCursorImage> {
         self.hud_drag.clone()
+    }
+    /// Windows falls back to its ordinary arrow for Copy. Keep the copy / move
+    /// badges visible like LLToolDragAndDrop::acceptanceToCursor (Firestorm).
+    pub fn inventory_drag(&self, cursor: egui::CursorIcon) -> Option<egui::CustomCursorImage> {
+        match cursor {
+            egui::CursorIcon::Copy => self.inventory_copy.clone(),
+            egui::CursorIcon::Move => self.inventory_move.clone(),
+            egui::CursorIcon::Grabbing => self.hud_drag.clone(),
+            _ => None,
+        }
     }
     /// LLToolPipette uses UI_CURSOR_PIPETTE; the tip of the Tabler pipette is the hotspot.
     pub fn pipette(&self) -> Option<egui::CustomCursorImage> {
@@ -100,16 +114,27 @@ fn hex(color: egui::Color32) -> String {
     format!("#{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
 }
 
-/// Draw a Tabler outline icon (24 px grid, 2 px stroke): a wide dark stroke
-/// under the ink one gives the contrasting outline.
-fn draw_outline(pixmap: &mut resvg::tiny_skia::Pixmap, svg: &[u8], palette: &crate::theme::Palette, scale: f32, offset: f32) -> Option<()> {
+/// Draw a Tabler icon (24 px grid): a dark stroke under the ink drawing gives
+/// the contrasting outline, including around filled icons.
+fn draw_icon(pixmap: &mut resvg::tiny_skia::Pixmap, svg: &[u8], palette: &crate::theme::Palette, scale: f32, offset: f32) -> Option<()> {
     let svg = std::str::from_utf8(svg).ok()?;
     let options = resvg::usvg::Options::default();
     let transform = resvg::tiny_skia::Transform::from_scale(scale, scale).post_translate(offset, offset);
-    for (color, width) in [(palette.bar, "4"), (palette.ink, "2")] {
-        let source = svg
-            .replace("currentColor", &hex(color))
-            .replace("stroke-width=\"2\"", &format!("stroke-width=\"{width}\""));
+    for (color, width) in [(palette.bar, 4), (palette.ink, 2)] {
+        let source = if svg.contains("icons-tabler-filled") {
+            svg.replace(
+                "fill=\"currentColor\"",
+                &format!(
+                    "fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\" stroke-linejoin=\"round\"",
+                    hex(color),
+                    hex(color),
+                    width - 2
+                ),
+            )
+        } else {
+            svg.replace("currentColor", &hex(color))
+                .replace("stroke-width=\"2\"", &format!("stroke-width=\"{width}\""))
+        };
         let tree = resvg::usvg::Tree::from_data(source.as_bytes(), &options).ok()?;
         resvg::render(&tree, transform, &mut pixmap.as_mut());
     }
@@ -161,7 +186,7 @@ fn finish(pixmap: &resvg::tiny_skia::Pixmap, hotspot: [u16; 2]) -> egui::CustomC
 /// A Tabler outline icon alone as a 32 px cursor.
 fn tabler_image(svg: &[u8], palette: &crate::theme::Palette, hotspot: [u16; 2]) -> Option<egui::CustomCursorImage> {
     let mut pixmap = resvg::tiny_skia::Pixmap::new(32, 32)?;
-    draw_outline(&mut pixmap, svg, palette, 32.0 / 24.0, 0.0)?;
+    draw_icon(&mut pixmap, svg, palette, 32.0 / 24.0, 0.0)?;
     Some(finish(&pixmap, hotspot))
 }
 
@@ -169,7 +194,7 @@ fn tabler_image(svg: &[u8], palette: &crate::theme::Palette, hotspot: [u16; 2]) 
 /// badge at its lower right (the layout of Firestorm's action cursors).
 fn badge_image(svg: &[u8], palette: &crate::theme::Palette) -> Option<egui::CustomCursorImage> {
     let mut pixmap = resvg::tiny_skia::Pixmap::new(32, 32)?;
-    draw_outline(&mut pixmap, svg, palette, 0.86, 11.0)?;
+    draw_icon(&mut pixmap, svg, palette, 0.86, 11.0)?;
     draw_arrow(&mut pixmap, palette)?;
     Some(finish(&pixmap, [1, 1]))
 }
@@ -241,5 +266,35 @@ mod tests {
             &c.hud_drag().unwrap().rgba
         ));
         assert!(c.image(Action::Disabled, false).is_none());
+    }
+
+    #[test]
+    fn inventory_cursors_keep_distinct_cached_badges_and_leave_rejection_to_the_system() {
+        let c = Cursors::default();
+        let copy = c.inventory_drag(egui::CursorIcon::Copy).unwrap();
+        let moved = c.inventory_drag(egui::CursorIcon::Move).unwrap();
+        for image in [&copy, &moved] {
+            assert_eq!((image.size, image.hotspot), ([32, 32], [1, 1]));
+            assert!(opaque(image, 1, 1));
+            assert!(
+                image.rgba.as_chunks::<4>().0.iter().skip(16 * 32).any(|p| p[3] > 0),
+                "visible badge below the arrow"
+            );
+        }
+        assert_ne!(copy.rgba, moved.rgba);
+        assert!(std::sync::Arc::ptr_eq(
+            &copy.rgba,
+            &c.inventory_drag(egui::CursorIcon::Copy).unwrap().rgba
+        ));
+        assert!(std::sync::Arc::ptr_eq(
+            &moved.rgba,
+            &c.inventory_drag(egui::CursorIcon::Move).unwrap().rgba
+        ));
+        assert!(std::sync::Arc::ptr_eq(
+            &c.hud_drag().unwrap().rgba,
+            &c.inventory_drag(egui::CursorIcon::Grabbing).unwrap().rgba
+        ));
+        assert!(c.inventory_drag(egui::CursorIcon::NotAllowed).is_none());
+        assert!(c.inventory_drag(egui::CursorIcon::Default).is_none());
     }
 }

@@ -5072,7 +5072,7 @@ impl App {
         }
         if let Some(cursor) = self.inventory_drag.cursor {
             full.platform_output.cursor_icon = cursor;
-            full.platform_output.cursor_image = None;
+            full.platform_output.cursor_image = self.cursors.inventory_drag(cursor);
         }
         if self.color_pipette() && !ctx.is_pointer_over_egui() {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;

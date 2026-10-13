@@ -15,6 +15,34 @@ pub struct PendingTransfer {
     pub scripted: bool,
 }
 
+/// Read after all windows, before egui clears released cargo. Rows precede
+/// enclosing surfaces, so the first hovered target owns the feedback this pass.
+/// Firestorm: LLToolDragAndDrop::acceptanceToCursor / handleHover.
+pub fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
+    if !egui::DragAndDrop::has_payload_of_type::<TaskDrag>(ctx) || !ctx.input(|i| i.pointer.primary_down()) {
+        return None;
+    }
+    let pass = ctx.cumulative_pass_nr();
+    Some(ctx.data_mut(|data| {
+        data.get_temp::<(u64, egui::CursorIcon)>(egui::Id::new("task_inventory_drag_cursor"))
+            .filter(|(at, _)| *at == pass)
+            .map_or(egui::CursorIcon::NotAllowed, |(_, cursor)| cursor)
+    }))
+}
+
+fn target_cursor(ctx: &egui::Context, cursor: egui::CursorIcon) -> bool {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|data| {
+        let id = egui::Id::new("task_inventory_drag_cursor");
+        if data.get_temp::<(u64, egui::CursorIcon)>(id).is_none_or(|(at, _)| at != pass) {
+            data.insert_temp(id, (pass, cursor));
+            true
+        } else {
+            false
+        }
+    })
+}
+
 pub fn source(ui: &mut egui::Ui, r: &egui::Response, world: &World, object: Uuid, item: &TaskItem, owned: bool) {
     let access = task_inventory::kind(world, object, item, owned);
     if let Err(error) = access {
@@ -51,15 +79,20 @@ pub fn target(
 ) {
     let Some(cargo) = r.dnd_hover_payload::<TaskDrag>() else { return };
     let allowed = task_inventory::destination(inv, folder, &cargo.request.item, &prefs.protected);
-    ui.ctx().set_cursor_icon(if allowed {
-        if cargo.kind == TransferKind::Copy {
-            egui::CursorIcon::Copy
+    if !target_cursor(
+        ui.ctx(),
+        if allowed {
+            if cargo.kind == TransferKind::Copy {
+                egui::CursorIcon::Copy
+            } else {
+                egui::CursorIcon::Move
+            }
         } else {
-            egui::CursorIcon::Move
-        }
-    } else {
-        egui::CursorIcon::NotAllowed
-    });
+            egui::CursorIcon::NotAllowed
+        },
+    ) {
+        return;
+    }
     if allowed {
         let radius = ui.visuals().window_corner_radius;
         ui.painter()
@@ -167,8 +200,11 @@ mod tests {
 
     #[test]
     fn real_drag_sets_task_cargo_and_drops_once_into_the_chosen_folder_or_rejects_it() {
-        for rejected in [false, true] {
-            let (world, request) = fixture();
+        for (copyable, rejected) in [(true, false), (true, true), (false, false), (false, true)] {
+            let (world, mut request) = fixture();
+            if !copyable {
+                request.item.owner_mask = 0;
+            }
             let folder = world
                 .inventory
                 .folders
@@ -202,8 +238,14 @@ mod tests {
                         target(ui, &p, &r, &world.inventory, folder, &prefs, &mut actions);
                     });
                     target(ui, &p, &zone.response, &world.inventory, world.inventory.root, &prefs, &mut actions);
+                    // A later window/widget must not override the drag cursor.
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+                    if let Some(cursor) = cursor(ui.ctx()) {
+                        ui.ctx().set_cursor_icon(cursor);
+                    }
                 });
                 output.textures_delta.clear();
+                output.platform_output.cursor_icon
             };
             let start = egui::pos2(40.0, 32.0);
             let end = egui::pos2(40.0, 192.0);
@@ -212,14 +254,76 @@ mod tests {
             frame(vec![egui::Event::PointerMoved(egui::pos2(100.0, 32.0))]);
             assert!(egui::DragAndDrop::has_payload_of_type::<TaskDrag>(&ctx));
             assert!(!egui::DragAndDrop::has_payload_of_type::<super::super::InvDrag>(&ctx));
-            frame(vec![egui::Event::PointerMoved(end)]);
-            frame(vec![button(end, false)]);
+            let accepted_cursor = if copyable { egui::CursorIcon::Copy } else { egui::CursorIcon::Move };
+            let expected = if rejected { egui::CursorIcon::NotAllowed } else { accepted_cursor };
+            assert_eq!(frame(vec![egui::Event::PointerMoved(end)]), expected);
+            assert_eq!(frame(Vec::new()), expected, "feedback persists while held still");
+            assert_eq!(
+                frame(vec![egui::Event::PointerMoved(egui::pos2(760.0, 460.0))]),
+                egui::CursorIcon::NotAllowed
+            );
+            assert_eq!(
+                frame(vec![egui::Event::PointerMoved(egui::pos2(320.0, 300.0))]),
+                accepted_cursor,
+                "empty inventory surface"
+            );
+            assert_eq!(frame(vec![egui::Event::PointerMoved(end)]), expected);
+            assert_eq!(
+                frame(vec![button(end, false)]),
+                egui::CursorIcon::Text,
+                "release restores the underlying cursor"
+            );
+            assert!(cursor(&ctx).is_none());
             if rejected {
                 assert!(actions.is_empty());
             } else {
                 assert!(matches!(&actions[..], [InvAction::TakeTask(req)] if req.folder == folder && req.approved.is_none()));
             }
         }
+    }
+
+    #[test]
+    fn escape_clears_drag_feedback_before_the_next_pass() {
+        let (_, request) = fixture();
+        let ctx = egui::Context::default();
+        let start = egui::pos2(40.0, 32.0);
+        let mut output = ctx.run_ui(input(0.0, vec![egui::Event::PointerMoved(start), button(start, true)]), |ui| {
+            egui::DragAndDrop::set_payload(
+                ui.ctx(),
+                TaskDrag {
+                    request: request.clone(),
+                    kind: TransferKind::Copy,
+                },
+            );
+            target_cursor(ui.ctx(), egui::CursorIcon::Copy);
+            assert_eq!(cursor(ui.ctx()), Some(egui::CursorIcon::Copy));
+        });
+        output.textures_delta.clear();
+        let mut output = ctx.run_ui(input(0.04, Vec::new()), |ui| {
+            assert_eq!(
+                cursor(ui.ctx()),
+                Some(egui::CursorIcon::NotAllowed),
+                "previous target cannot leak into a new pass"
+            );
+        });
+        output.textures_delta.clear();
+        let mut output = ctx.run_ui(
+            input(
+                0.08,
+                vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            ),
+            |ui| {
+                assert!(cursor(ui.ctx()).is_none());
+            },
+        );
+        output.textures_delta.clear();
+        assert!(!egui::DragAndDrop::has_payload_of_type::<TaskDrag>(&ctx));
     }
 
     #[test]

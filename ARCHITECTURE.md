@@ -450,6 +450,13 @@ the existing chain instead of resetting it straight.
 
 Rezzing from the inventory goes through `ui/inventory.rs` (payload and release before the end of the egui pass), `app/inventory_drag.rs` (rules, group, preparation of the commands and local consumption of the non-copyable items), `Scene::inventory_surface` (triangles among the candidates of the index, terrain, without a GPU wait) and `aurora-net/src/inventory/rez.rs` (reliable `RezObject` message in the targeted region). Transparent pixels are tested with a mask of one bit per 2×2 block, prepared by the decoding tasks; invisible and rigged surfaces are discarded. The cursor keeps the result for 100 ms at most when the ray does not move; the release always recomputes the surface. Ctrl on an object sends `UpdateTaskInventory`. The demo uses a synthetic cube as the reply to the rez.
 
+For transfers out of object contents, `ui/inventory/task_drop.rs` keeps the
+hovered row's acceptance ahead of its enclosing inventory surface for the
+current egui pass. `app/inventory_drag.rs` reads that feedback after all
+windows, before released cargo is cleared. `cursors.rs` caches native Tabler
+copy / move badges, since Windows substitutes its ordinary arrow for the
+system Copy cursor; release and Escape restore ordinary widget feedback.
+
 1. **Network → world.** `aurora-net` decodes the messages on its runtime and
    sends them as `NetEvent`; `World::apply` updates the state (objects,
    avatars, animations, chat…).

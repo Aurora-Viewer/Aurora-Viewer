@@ -350,6 +350,10 @@ confirmation of the removal of the non-copyable texture (with a warning for
 scripts); `contents-move-plain` shows the case without scripts. Screenshot
 at 670. The user's warning choices still apply. `contents-ready` opens both
 windows to test the drag by hand: copyable script and non-copyable texture.
+While holding the mouse button, the native cursor keeps a copy or move
+badge over an accepted inventory target (including while motionless), and
+shows refusal over a rejected target. Release or Escape restores the usual
+cursor; Escape must transfer nothing.
 Check copy, cancellation and acceptance of the removal, drop on a folder, an
 item and an empty area, and refusal on the outfit / library / Favorites
 folders for the texture. On the grid, the human also checks the group
