@@ -757,6 +757,7 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
 | `AURORA_DEMO_PLANAR=1` | Dalles en mapping de texture planaire |
 | `AURORA_DEMO_PBR_OVERRIDE=1` | Override de matériau GLTF |
 | `AURORA_DEMO_TEXANIM=1` | Animations de texture (llSetTextureAnim) |
+| `AURORA_DEMO_GLOW_LAYERS=1` ou `shell` | Calque lumineux transparent sur une peau lumineuse |
 | `AURORA_DEMO_SKY=<gamma>[,<brume>]` | Ciel EEP classique avec ce gamma |
 | `AURORA_DEMO_OCCLUSION=1` | Mur avec des objets cachés (test d'occlusion) |
 | `AURORA_DEMO_DEBUG="<calques>"` | Calques de débogage |
@@ -781,6 +782,14 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   panneaux alpha — défilement lisse, grille de 4 × 4 images, ping-pong,
   rotation, échelle (masque alpha : prépasse et ombres), un cube animé sur
   une seule face, un matériau legacy (la normal map suit) et une face PBR.
+- **`AURORA_DEMO_GLOW_LAYERS=1|shell`** : deux panneaux « peau » (le premier
+  avec un glow de 0,02, le second sans) et, 1 cm devant leur moitié basse, un
+  calque rose transparent (alpha de 0 à 1) au glow de 0,02, comme les calques
+  de tatouage des corps mesh. À regarder avec `AURORA_DEMO_POS="131,112"` et
+  `AURORA_DEBUG_GLOW=1` : sous le calque, le glow suit son alpha (de 0 à 0,02)
+  sur la peau sans glow et reste à 0,02 sur l'autre, sans s'additionner.
+  `shell` : le calque montre aussi ses autres faces ; celle de derrière, vue
+  de dos, ne doit rien ajouter (mêmes valeurs qu'avec `1`).
 - **`AURORA_DEMO_SKY=<gamma>[,<brume>]`** : ciel EEP classique (sans ambiance
   des sondes de reflets) avec ce gamma de ciel et une couleur du soleil
   supérieure à 1 : gamma legacy et lumière des objets normalisée comme

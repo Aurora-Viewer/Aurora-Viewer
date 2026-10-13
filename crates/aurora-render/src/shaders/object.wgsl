@@ -407,6 +407,8 @@ struct Material {
     // environment reflection intensity
     legacy_spec: vec4<f32>,
     legacy_env: f32,
+    // legacy "emissive mask": share of the unlit color (the texture alpha)
+    unlit: f32,
 };
 
 fn eval_material(in: VsOut, front: bool) -> Material {
@@ -449,9 +451,12 @@ fn eval_material(in: VsOut, front: bool) -> Material {
         m.metallic = 0.0;
         m.roughness = 1.0;
     }
+    m.unlit = 0.0;
     if ((rec.flags.x & FLAG_EMISSIVE_MASK) != 0u) {
-        // "emissive mask": the texture alpha says how much of the color glows
-        m.emissive += m.color.rgb * base_s.a;
+        // "emissive mask": the texture alpha says how much of the face
+        // shows its own color instead of the lit one (materialF.glsl
+        // getEmissive, mixed in softenLightF.glsl), not an added light
+        m.unlit = base_s.a;
         m.color.a = rec.base_color.a;
     }
     return m;
@@ -485,9 +490,12 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
 // softenLightF.glsl: sun highlight, applyGlossEnv and applyLegacyEnv. The
 // local light highlights are separate (legacy_local_spec), as LL adds them
 // in another pass (multiPointLightF).
-fn legacy_light(col_in: vec3<f32>, spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>, shadow: f32,
-                sun_lin: vec3<f32>, sky_scale: f32) -> vec3<f32> {
+fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>,
+                world_pos: vec3<f32>, shadow: f32, sun_lin: vec3<f32>, sky_scale: f32) -> vec3<f32> {
     var col = col_in;
+    if (spec.a <= 0.0 && env <= 0.0) {
+        return mix(col, base, unlit);
+    }
     let r = reflect(-v, n);
     let sky = sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))) * sky_scale * (0.35 + 0.65 * shadow);
     // sampleReflectionProbesLegacy: glossy environment at the glossiness mip,
@@ -506,15 +514,22 @@ fn legacy_light(col_in: vec3<f32>, spec: vec4<f32>, env: f32, n: vec3<f32>, v: v
             }
         }
     }
+    // sampleReflectionProbesLegacy clamps both: a very bright sky does not
+    // wash a shiny face out
+    gloss_sky = clamp(gloss_sky, vec3<f32>(0.0), vec3<f32>(10.0));
+    env_sky = clamp(env_sky, vec3<f32>(0.0), vec3<f32>(10.0));
     if (spec.a > 0.0) {
         let l = normalize(frame.sun_dir.xyz);
         col += ll_spec(n, v, l, spec.a) * shadow * sun_lin * spec.rgb;
-        // applyGlossEnv
+        // applyGlossEnv: its "fake energy conservation" is not clamped, a
+        // face lit above 1 loses light there
         var fresnel = clamp(1.0 - dot(v, n), 0.3, 1.0);
         fresnel = fresnel * fresnel * spec.a;
-        let glossenv = gloss_sky * 0.5 * spec.rgb * fresnel * max(vec3<f32>(1.0) - col, vec3<f32>(0.0));
-        col += glossenv * 0.5;
+        let glossenv = gloss_sky * 0.5 * spec.rgb * fresnel * (vec3<f32>(1.0) - col);
+        col = max(col + glossenv * 0.5, vec3<f32>(0.0));
     }
+    // emissive mask, between the highlights and the environment
+    col = mix(col, base, unlit);
     if (env > 0.0) {
         // applyLegacyEnv
         var fresnel = 1.0 - dot(v, n);
@@ -572,7 +587,8 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         hazed = classic;
     } else if (classic) {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
-        let sh = shadow_factor(in.world_pos, m.n, in.view_depth);
+        // softenLightF: scol = max(shadow, emissive)
+        let sh = max(shadow_factor(in.world_pos, m.n, in.view_depth), m.unlit);
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         // softenLightF: (sun + sky + specular + environment + emissive) x
         // final_scale, then the local lights pass, then hazeF
@@ -582,9 +598,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
                 + ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, in.clip.xy);
         } else {
             col = ll_classic_sun_ambient(m.color.rgb, m.n, sh, in.clip.xy, a);
-            if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0) {
-                col = legacy_light(col, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, ll_sun_linear(a), 1.0);
-            }
+            col = legacy_light(col, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, ll_sun_linear(a), 1.0);
             col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
                 + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
         }
@@ -592,10 +606,11 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         hazed = true;
     } else {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
-        let sh = shadow_factor(in.world_pos, m.n, in.view_depth);
+        let sh = max(shadow_factor(in.world_pos, m.n, in.view_depth), m.unlit);
         col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, sh, in.clip.xy) + m.emissive;
-        if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0) {
-            col = legacy_light(col - m.emissive, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh, frame.sun_color.rgb / PI, 1.0 / PI)
+        if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0 || m.unlit > 0.0) {
+            col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, sh,
+                               frame.sun_color.rgb / PI, 1.0 / PI)
                 + legacy_local_spec(m.legacy_spec, m.n, v, in.world_pos, in.clip.xy) + m.emissive;
         }
     }
@@ -717,10 +732,16 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
 // Glow amount into the scene alpha (additive, alpha channel only), drawn
 // for faces with glow after the scene: emissiveF.glsl (texture alpha x TE
 // glow, the face alpha is ignored: invisible faces still glow) and
-// pbrglowF.glsl (max emissive component x glow).
+// pbrglowF.glsl (max emissive component x glow). LL draws them with its
+// usual culling: a face seen from behind adds nothing, or the far side of a
+// translucent shell (hair, fur, an aura) would glow through its near side
+// without being dimmed by it.
 @fragment
-fn fs_glow(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
+        discard;
+    }
     let base = sample_tex(rec.tex.x, in.uv);
     var a: f32;
     if ((rec.flags.x & FLAG_PBR) != 0u) {
@@ -765,8 +786,11 @@ fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
 // Glow suppression of a face LL draws in its alpha pool: the glow under it
 // is scaled by (1 - its alpha) before it adds its own (fs_glow).
 @fragment
-fn fs_glow_suppress(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_glow_suppress(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
+        discard;
+    }
     let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
     if (a <= 0.0) {
         discard;
