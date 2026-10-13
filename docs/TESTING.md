@@ -1836,6 +1836,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2]"` | Clicks on the media |
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Starting frame of these clicks |
 | `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
+| `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_SOUND=1` | World and interface sounds audible |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
@@ -1913,6 +1914,13 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_OPTIONS`, in the Media group of the "Sound and voice" tab,
   and in the "Feed" tab of a profile, which shows the same progress
   instead of the page.
+- **`AURORA_MEDIA_PACK_FEED`**: to try a pack before it is published (the
+  artifact of a "Media plugins" workflow run). The viewer asks
+  `<feed origin>/download/media-plugins-<n>/Aurora-Media-Plugins-<n>-windows-x64.zip`
+  instead of the GitHub release; only a loopback address is accepted, and
+  the archive must still have the size and the SHA-256 written in
+  `crates/aurora-updater/src/media_pack.rs`. A pack installed that way is
+  replaced when these two values change.
 - **`AURORA_DEMO_MUSIC`**: `1` designates an unreachable dummy address; the
   music waits for the radio button.
 - **`AURORA_DEMO_SOUND=1`**: world sounds (looping chime) and interface

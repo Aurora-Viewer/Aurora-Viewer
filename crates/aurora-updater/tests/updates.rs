@@ -360,6 +360,27 @@ fn media_pack_installs_once_and_replaces_what_older_viewers_left() {
         run(media_pack::install(&offline, &pack, &root, &Cancel::default(), |_| {})).expect("already installed"),
         root.join("2")
     );
+    // the same version built again is another archive: it replaces the folder
+    let rebuilt = zip(&[
+        (
+            "Aurora-Media-Plugins-2-windows-x64/aurora-media-plugins.json",
+            br#"{"schema":1,"version":"2"}"#,
+        ),
+        ("Aurora-Media-Plugins-2-windows-x64/llplugin/SLPlugin.exe", b"launcher built again"),
+        ("Aurora-Media-Plugins-2-windows-x64/llplugin/media_plugin_libvlc.dll", b"vlc"),
+        ("Aurora-Media-Plugins-2-windows-x64/llplugin/media_plugin_cef.dll", b"cef"),
+    ]);
+    let rebuilt_pack = self::pack(&rebuilt, digest(&rebuilt));
+    assert!(media_pack::installed(&root, &rebuilt_pack).is_none());
+    let server = Server::new(HashMap::from([(PACK_ROUTE.into(), rebuilt)]));
+    run(media_pack::install(&server.source(), &rebuilt_pack, &root, &Cancel::default(), |_| {})).expect("rebuilt pack");
+    assert_eq!(media_pack::installed(&root, &rebuilt_pack), Some(root.join("2")));
+    assert!(media_pack::installed(&root, &pack).is_none());
+    assert_eq!(
+        fs::read(root.join("2/llplugin/SLPlugin.exe")).expect("launcher"),
+        b"launcher built again"
+    );
+    assert!(!root.join("2/llplugin/locales").exists(), "nothing of the replaced folder is left");
 }
 
 #[test]

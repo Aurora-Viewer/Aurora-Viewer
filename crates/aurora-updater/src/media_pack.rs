@@ -35,6 +35,9 @@ pub const PACK: Pack = Pack {
 };
 
 const MANIFEST: &str = "aurora-media-plugins.json";
+/// Written next to the manifest once the archive is extracted: the SHA-256 of
+/// that archive. A pack rebuilt under the same version is installed again.
+const ORIGIN: &str = "archive.sha256";
 const REQUIRED: [&str; 3] = [
     "llplugin/SLPlugin.exe",
     "llplugin/media_plugin_cef.dll",
@@ -59,6 +62,7 @@ impl Pack {
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).ok())
             .is_some_and(|m| m.schema == 1 && m.version == self.version)
+            && fs::read_to_string(dir.join(ORIGIN)).is_ok_and(|hash| hash.trim().eq_ignore_ascii_case(self.sha256))
             && REQUIRED.iter().all(|file| dir.join(file).is_file())
     }
 }
@@ -175,11 +179,18 @@ pub async fn install(
     tokio::task::spawn_blocking(move || -> Result<PathBuf> {
         let prepared = stage.0.join("prepared");
         unpack(&archive, &prepared, &folder, &cancel)?;
+        fs::write(prepared.join(ORIGIN), pack.sha256)?;
         ensure!(pack.complete(&prepared), "incomplete media plugins pack");
         let dir = root.join(pack.version);
         if dir.exists() {
-            // only an incomplete folder gets here: `installed` was checked
-            remove(&dir)?;
+            // not this pack (`installed` was checked): another build of the
+            // same version, or a damaged folder. Renamed first, so that
+            // plugins still running keep every file or lose none.
+            let trash = root.join(format!(".trash-{}", uuid::Uuid::new_v4()));
+            fs::rename(&dir, &trash).context("the media plugins to replace are in use")?;
+            if let Err(e) = remove(&trash) {
+                log::warn!("media plugins cleanup: {e:#}");
+            }
         }
         fs::rename(&prepared, &dir).context("cannot put the media plugins in place")?;
         prune(&root, &pack, &stage.0);
