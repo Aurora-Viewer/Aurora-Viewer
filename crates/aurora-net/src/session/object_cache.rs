@@ -295,6 +295,7 @@ mod tests {
             stats: Arc::new(NetStats::default()),
             object_cache_dir: Arc::new(Mutex::new(None)),
             agent_language: Arc::new(Mutex::new(("en".into(), false))),
+            bandwidth_kbps: Default::default(),
         };
         let login = Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
@@ -345,6 +346,7 @@ mod tests {
             agent_parcel: None,
             pending_named_tp: None,
             object_cache,
+            throttle: crate::throttle::Throttle::new(crate::throttle::DEFAULT_KBPS, Instant::now()),
             social: Default::default(),
             tasks: Default::default(),
             land: Default::default(),

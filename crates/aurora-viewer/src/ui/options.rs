@@ -1802,6 +1802,27 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             }
         }
         _ => {
+            group(ui, p, aurora_i18n::tr!("ui-options-network"), |ui| {
+                // (the step of Firestorm's slider, panel_preferences_setup.xml,
+                // which stops at 3,000; ours goes up to what asks the most)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-maximum-bandwidth"),
+                    aurora_i18n::tr!("ui-options-maximum-bandwidth-hint"),
+                    |ui| {
+                        ui.spacing_mut().slider_width = SLIDER_W;
+                        ui.add(
+                            egui::Slider::new(&mut s.bandwidth_kbps, 50..=aurora_net::throttle::DEFAULT_KBPS as u32)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .step_by(50.0)
+                                .suffix(aurora_i18n::tr!("bandwidth-kbps-suffix"))
+                                .trailing_fill(true),
+                        )
+                        .changed()
+                    },
+                );
+            });
             group(ui, p, aurora_i18n::tr!("ui-options-disk-cache"), |ui| {
                 c |= row(
                     ui,
