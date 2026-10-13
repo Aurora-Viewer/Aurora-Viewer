@@ -358,6 +358,16 @@ aucune surface n'en a besoin. Le monde autour des fenêtres reste net. Une skin
 avec `panel_alpha = 255` conserve des fenêtres opaques sans ces passes. Une
 surface GPU qui ne permet pas la copie garde le cadre teinté ; les marqueurs
 restent sans dessin pour préserver les indices du flou des modales.
+Ce qui appartient au monde (étiquettes et plaques de nom, textes flottants,
+balise de destination) ne passe devant aucun élément de l'interface : il est
+peint en premier, avec `ui::hud::world_painter`, avant les barres, et se
+termine par le marqueur `aurora_render::end_world_labels`
+(`aurora-render/src/ui_world.rs`). Le rendu dessine ce qui précède le marqueur
+sur la scène, puis les HUD portés, puis le reste de l'interface. Les plaques
+de nom échantillonnent un flou de la scène seule, limité à la zone qu'elles
+couvrent ; les fenêtres et les barres, un flou de la scène avec ses étiquettes
+et les HUD. Une nouvelle étiquette du monde se peint avec `world_painter`,
+jamais sur un calque à elle.
 
 L'affichage des permissions d'éléments est partagé par l'inventaire, la fenêtre
 de contenu d'un objet et l'onglet Contenu de construction dans
