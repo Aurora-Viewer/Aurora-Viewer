@@ -834,6 +834,12 @@ impl Search {
         self.land_types = types.into_iter().collect();
     }
 
+    /// GroupProfileRequest for the group profile window (LLGroupMgr's
+    /// sendGroupPropertiesRequest when the panel opens on a group).
+    pub fn request_group(&mut self, id: Uuid) {
+        self.out.push(NetCommand::GroupProfileRequest(id));
+    }
+
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
         std::mem::take(&mut self.out)
     }

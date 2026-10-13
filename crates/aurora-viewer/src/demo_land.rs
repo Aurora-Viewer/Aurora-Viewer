@@ -3,6 +3,8 @@
 //! parcel (north-east quarter of the demo region). Without `:owner` the
 //! parcel belongs to a group the avatar has no powers in (everything
 //! greyed, like a visitor); with it, the avatar owns it and can change it.
+//! `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` sets the objects on the owner's
+//! land and makes them grow at each answer (the floater's refresh).
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS, TEX_GRADIENT};
 use aurora_llsd::Llsd;
@@ -11,6 +13,7 @@ use aurora_net::{NetEvent, ParcelInfo, ParcelMedia, parcel_flags as pf};
 use glam::Vec3;
 use parking_lot::Mutex;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use uuid::Uuid;
 
 const COVENANT: Uuid = Uuid::from_u128(0xC0E0_0000_0000_0000_0000_0000_0000_0001);
@@ -105,10 +108,28 @@ pub(super) fn parcel() -> ParcelInfo {
     g.get_or_insert_with(|| initial(scenario().is_some_and(|s| s.1))).clone()
 }
 
+/// AURORA_DEMO_LAND_PRIMS=<used>[,<step>]: objects on the owner's land in
+/// the region, and how many more each answer finds.
+fn prims_scenario() -> Option<(i32, i32)> {
+    let v = std::env::var("AURORA_DEMO_LAND_PRIMS").ok()?;
+    let (used, step) = v.split_once(',').unwrap_or((v.as_str(), "0"));
+    Some((used.trim().parse().ok()?, step.trim().parse().unwrap_or(0)))
+}
+
+/// Answers given since the start, for the objects that "arrive" meanwhile.
+static ANSWERS: AtomicI32 = AtomicI32::new(0);
+
 fn selected() -> NetEvent {
+    let mut info = parcel();
+    if let Some((used, step)) = prims_scenario() {
+        let more = step.saturating_mul(ANSWERS.fetch_add(1, Ordering::Relaxed));
+        info.sim_total_prims = used.saturating_add(more);
+        info.total_prims = info.total_prims.saturating_add(more);
+        info.owner_prims = info.owner_prims.saturating_add(more);
+    }
     NetEvent::Land(LandEvent::Selected {
         handle: super::HANDLE,
-        info: Arc::new(parcel()),
+        info: Arc::new(info),
         result: aurora_net::land::PARCEL_RESULT_SUCCESS,
     })
 }

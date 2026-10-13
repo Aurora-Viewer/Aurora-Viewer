@@ -68,7 +68,14 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         if is_public {
             dim(ui, p, aurora_i18n::tr!("status-public"));
         } else if parcel.is_group_owned {
-            text(ui, p, aurora_i18n::tr!("ui-land-general-group-owned"));
+            // the owner is the group of the next row: Firestorm only links
+            // that one, here the owner opens its profile whatever it is
+            let group = if parcel.group_id.is_nil() {
+                parcel.owner_id
+            } else {
+                parcel.group_id
+            };
+            super::group_link(ui, p, group, aurora_i18n::tr!("ui-land-general-group-owned"));
         } else {
             super::agent_link(ui, p, world, parcel.owner_id);
         }
@@ -77,16 +84,17 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         }
     });
     row(ui, p, aurora_i18n::tr!("common-group-2"), |ui| {
-        let name = if is_public || parcel.group_id.is_nil() {
-            aurora_i18n::tr!("status-none").to_owned()
+        if is_public || parcel.group_id.is_nil() {
+            text(ui, p, aurora_i18n::tr!("status-none"));
         } else {
             let groups = world.groups.groups.clone();
-            world
+            let name = world
                 .land
                 .group_name(&parcel.group_id, &groups)
-                .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into())
-        };
-        text(ui, p, name);
+                .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
+            // LLSLURL("group", id, "inspect")
+            super::group_link(ui, p, parcel.group_id, &name);
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // Set...: our own land only, not group owned (GP_NO_POWERS)
             if button(

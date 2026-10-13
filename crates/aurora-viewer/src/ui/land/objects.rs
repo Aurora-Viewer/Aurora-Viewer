@@ -5,7 +5,7 @@ use super::dialogs::Confirm;
 use super::{Dialog, LandUi, View, button, not_yet, row, text};
 use crate::theme::Palette;
 use crate::world::World;
-use crate::world::land::{OwnerList, powers};
+use crate::world::land::{OwnerList, PrimUsage, powers};
 use aurora_net::land::{LandCommand, ObjectOwner};
 use egui::{RichText, Vec2};
 
@@ -14,12 +14,12 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         super::no_selection(ui, p);
         return;
     };
-    let mut sw_max = parcel.sim_max_prims;
-    let sw_total = parcel.sim_total_prims;
+    // the figures of the header's gauge
+    let usage = PrimUsage::of(&parcel, v.region.as_ref().map_or(0, |r| r.max_tasks));
+    let (sw_total, sw_max) = (usage.used, usage.max);
     let mut max = (parcel.max_prims as f32 * parcel.prim_bonus).round() as i32;
     // never more than the region's object capacity, whatever the bonus
     if let Some(r) = v.region.as_ref().filter(|r| r.max_tasks > 0) {
-        sw_max = sw_max.min(r.max_tasks as i32);
         max = max.min(r.max_tasks as i32);
     }
     if parcel.prim_bonus != 1.0 {
