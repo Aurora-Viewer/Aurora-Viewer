@@ -122,7 +122,6 @@ impl<K: PartialEq> Built<K> {
 #[derive(Clone, Copy, PartialEq)]
 struct SurfaceKey {
     size: Vec2,
-    in_voice: bool,
     halo: Option<Halo>,
     glass: f32,
     far: f32,
@@ -242,7 +241,7 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
     let min = Pos2::new(tag.anchor.x - size.x * 0.5, tag.anchor.y - size.y);
     let rect = Rect::from_min_size(Pos2::new((min.x * ppp).round() / ppp, (min.y * ppp).round() / ppp), size);
     let alpha = tag.fade * if c.blocked { BLOCKED_OPACITY } else { 1.0 };
-    background(env, rect, c.in_voice, st, alpha, farness, &mut cache.surface);
+    background(env, rect, st, alpha, farness, &mut cache.surface);
     match from {
         None => contents(env, env.painter, rect, &to, tag, alpha, &mut cache.marks),
         Some((_, from)) => {
@@ -258,7 +257,7 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
 
 /// The blur of the world, then the surface, its border, its shadow and
 /// the voice halo in one mesh.
-fn background(env: &Env<'_>, rect: Rect, in_voice: bool, st: &State, alpha: f32, far: f32, cache: &mut Option<Built<SurfaceKey>>) {
+fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, cache: &mut Option<Built<SurfaceKey>>) {
     let p = env.p;
     let s = SCALE;
     if st.glass > 0.0 {
@@ -269,8 +268,7 @@ fn background(env: &Env<'_>, rect: Rect, in_voice: bool, st: &State, alpha: f32,
     }
     let key = SurfaceKey {
         size: rect.size(),
-        in_voice,
-        halo: st.halo.filter(|_| in_voice),
+        halo: st.halo,
         glass: st.glass,
         far,
         pixels_per_point: env.pixels_per_point,
@@ -295,11 +293,13 @@ fn background(env: &Env<'_>, rect: Rect, in_voice: bool, st: &State, alpha: f32,
             count = 2;
         }
         let opacity = lerp((lerp(TINT_PLAIN, far), lerp(TINT_GLASS, far)), st.glass);
-        let border = if in_voice {
-            // the border and one more pixel around it, in the voice color
-            Border::Around(p.success, s)
-        } else {
-            Border::Inside(p.ink.gamma_multiply(lerp(BORDER, far)), 1.0)
+        let plain = p.ink.gamma_multiply(lerp(BORDER, far));
+        let border = match key.halo {
+            // only while the avatar speaks (the human's choice: no outline
+            // for a silent participant): the border and one more pixel
+            // around it, turning green with the halo's gate
+            Some(halo) => Border::Around(plain.lerp_to_gamma(p.success, halo.gate), s),
+            None => Border::Inside(plain, 1.0),
         };
         let mut plate = Mesh::default();
         let at_origin = Rect::from_min_size(Pos2::ZERO, rect.size());
@@ -327,6 +327,8 @@ pub(super) fn cover(size: [usize; 2]) -> Rect {
 fn badge_icon(p: &Palette, badge: Badge) -> Option<(&'static str, Color32)> {
     Some(match badge {
         Badge::Voice => ("microphone-filled", p.success),
+        // as the classic tag's (`ui::hud`)
+        Badge::NoVoice => ("microphone-off", p.danger),
         Badge::Friend => ("heart-filled", p.violet_light),
         Badge::TooComplex => ("alert-triangle-filled", p.amber),
         Badge::Blocked => ("forbid-filled", p.danger),
