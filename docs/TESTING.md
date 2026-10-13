@@ -1015,13 +1015,16 @@ To check with these scenarios:
 
 ## Interface
 
+The values of these switches are English words. The French words they had
+before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
+
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_WINDOWS=<mode>` | Collapse, move and restore of the inventory title bar |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: guide, snap, grouped move, resize |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
-| `AURORA_DEMO_RADAR=1`, `tp`, `amis`, `groupes` or `profil` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
+| `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
 | `AURORA_DEMO_PERF=compact` or `full` | Opens the Performance window, compact or full |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
@@ -1169,7 +1172,7 @@ To check with these scenarios:
   Take screenshots at `620,740,900,1120` to check content, collapse, move and
   restored dimensions. The "−" button stays usable; the other
   title bar buttons and the content do not trigger the title bar double-click.
-- **`AURORA_DEMO_SNAP=1|groupe|taille`**: drags the real Conversations
+- **`AURORA_DEMO_SNAP=1|group|size`**: drags the real Conversations
   window by its title bar to next to People (both must be
   open: first-launch layout, or `AURORA_DEMO_UI`). Frame
   700: press on the title bar; until frame 900 the window is held 6 px
@@ -1177,9 +1180,9 @@ To check with these scenarios:
   violet guide (the two edges that are going to touch, the line of the tops,
   the outline of the place where it is going to land) and the hint "Alt: do
   not snap" appear, the window stays under the pointer; frame 900: released,
-  it snaps against People, with no gap, tops aligned. `groupe` then moves
+  it snaps against People, with no gap, tops aligned. `group` then moves
   People by 70 × 50 between frames 1000 and 1100: Conversations follows, the
-  hint says "Alt: detach this window". `taille` instead drags the
+  hint says "Alt: detach this window". `size` instead drags the
   bottom edge of Conversations to 4 px from the bottom line of People: the
   edge snaps to it under the pointer, with its guide line. Take screenshots at
   `800,960,1060,1160` with `AURORA_FPS_LIMIT=60`.
@@ -1324,32 +1327,32 @@ To check with these scenarios:
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CONV=1|noms[:etroit|large]`**: `1` opens the conversation of
-  the demo group with its participants. `noms` shows names longer than
+- **`AURORA_DEMO_CONV=1|names[:narrow|wide]`**: `1` opens the conversation of
+  the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user
   name, wide and accented letters) and a conference with a long title
   in the Conversations list, with unread messages, and these residents
   in People › Near you. Both windows are placed at a known
   size, whatever the saved layout: 600 and 330 px wide,
-  400 and 230 with `:etroit`, 900 and 520 with `:large`. What to see: each name
+  400 and 230 with `:narrow`, 900 and 520 with `:wide`. What to see: each name
   cut by "…" before the unread badge, the time of the message or the
   distance, without covering anything; the windows keep the requested width;
   the whole name is shown when hovering a cut name (for a screenshot:
   `AURORA_DEMO_POINTER="85,633,s"` on the conference, `"120,377,s"` on a
   nearby resident, 1600 × 900 window).
-- **`AURORA_DEMO_RADAR=1|tp|amis|groupes|profil`**: the People window.
+- **`AURORA_DEMO_RADAR=1|tp|friends|groups|profile`**: the People window.
   `1`: residents at every range in "Near you" (with
   `AURORA_DEMO_TAGS=1`, those of the name plates, several of whom have a
   profile picture). `tp`: three more residents in a region 10 km away, which
   the demo leaves "by teleport" at frame 600; with
   `AURORA_FPS_LIMIT=60`, they are greyed out at frame 780 and removed from the
-  list at frame 1400. `amis` and `groupes`: these tabs. `profil`: the
+  list at frame 1400. `friends` and `groups`: these tabs. `profile`: the
   Groups tab and the "Group Profile" window of the first group.
 - **`AURORA_DEMO_STATUSMENU=1|invisible`**: the menu of the status
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing
   is saved.
-- **`AURORA_DEMO_CONTACTS=amis|groupes|cercles|detache|ajout`**: Contacts
+- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
   picker of "Add...".
@@ -1385,13 +1388,13 @@ To check with these scenarios:
   ("Isolated real installation" above: exe copied into
   `<root>\install`, `AURORA_UPDATE_TEST_ROOT=<root>`): the histories
   are then under `<root>\profile\accounts\`.
-- **`AURORA_DEMO_PROFILE=loup|nova|friend|self[:tab]`**: a profile window
+- **`AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab]`**: a profile window
   (tab 0 Second Life, 1 Feed, 2 Favorites, 3 Classifieds, 4 Real life, 5 Notes).
 - **`AURORA_DEMO_FEED=<url>`**: the user name and `/?feed_only=true`
   are appended to the address; a `data:` URL can put them in a comment.
-- **`AURORA_DEMO_LAND=<tab>[:owner]`**: tabs `general`, `reglement`,
-  `objets`, `options`, `medias`, `son`, `acces`, `experiences`,
-  `environnement`, or their index; `:owner` makes the avatar the owner of the
+- **`AURORA_DEMO_LAND=<tab>[:owner]`**: tabs `general`, `covenant`,
+  `objects`, `options`, `media`, `sound`, `access`, `experiences`,
+  `environment`, or their index; `:owner` makes the avatar the owner of the
   parcel (controls enabled), otherwise it belongs to a group without
   powers.
 - **`AURORA_DEMO_LAND_PRIMS=<used>[,<step>]`**: with `AURORA_DEMO_LAND`,
@@ -1405,16 +1408,16 @@ To check with these scenarios:
 - **`AURORA_DEMO_GROUP_PROFILE=1`**: the profile of the group "Aurora
   Builders", as after a click on the group or the owner in
   "About Land".
-- **`AURORA_DEMO_PLACE=1|lagune|nordheim|pinede|faille|inconnue|repere|historique`**:
+- **`AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown|landmark|history`**:
   "Places" on a place profile, as after a click on a place link.
   `1`: the home of Violet Wolf on Aurora Demo (the parcel of "About
-  Land"); `lagune`: a Moderate parcel; `nordheim`: an Adult
-  parcel belonging to a group; `pinede`: a parcel with no name,
-  description or picture; `faille`: RemoteParcelRequest answers HTTP 404;
-  `inconnue`: a region for which nobody answers (error after 10 s);
-  `repere`: the profile of a landmark; `historique`: that of an entry of the
+  Land"); `lagoon`: a Moderate parcel; `nordheim`: an Adult
+  parcel belonging to a group; `grove`: a parcel with no name,
+  description or picture; `flaw`: RemoteParcelRequest answers HTTP 404;
+  `unknown`: a region for which nobody answers (error after 10 s);
+  `landmark`: the profile of a landmark; `history`: that of an entry of the
   teleport history.
-- **`AURORA_DEMO_PLACES=favoris|reperes|historique`**: the Favorites
+- **`AURORA_DEMO_PLACES=favorites|landmarks|history`**: the Favorites
   and Landmarks folders of the demo (with a subfolder) and a teleport
   history over several months.
 - **`AURORA_DEMO_SEARCH=web|people|groups|places|land|events|classifieds[:text]`**:
@@ -1435,9 +1438,9 @@ To check with these scenarios:
 - **`AURORA_DEMO_PLACE_WINDOW=1`**: with `AURORA_DEMO_PLACE`, the separate
   place windows instead of "Places" ("Landmarks and place
   profiles" option, not saved).
-- **`AURORA_DEMO_TP_CONFIRM=lien|repere`**: the confirmation of a
-  teleport requested by a teleport link (`lien`, the default)
-  or by a landmark of "Places" (`repere`), with its "Do not show
+- **`AURORA_DEMO_TP_CONFIRM=link|landmark`**: the confirmation of a
+  teleport requested by a teleport link (`link`, the default)
+  or by a landmark of "Places" (`landmark`), with its "Do not show
   again" checkbox. The question is asked even if the demo setting
   (Preferences › Interface › Teleport "Confirm teleports")
   is disabled; checking the box then "Teleport" disables it in the

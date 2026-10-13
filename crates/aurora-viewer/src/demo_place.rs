@@ -89,18 +89,18 @@ fn region_id(grid: (u32, u32)) -> Uuid {
     Uuid::from_u128(0xDE40_5E61_0000_0000_0000_0000_0000_0000 | ((grid.0 as u128) << 16) | grid.1 as u128)
 }
 
-/// AURORA_DEMO_PLACE=1|lagune|nordheim|pinede|faille|inconnue: the region
-/// name and position of the place link the demo opens (repere and
-/// historique are handled by `profile_scenario`).
+/// AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown: the region
+/// name and position of the place link the demo opens (landmark and
+/// history are handled by `profile_scenario`).
 pub fn scenario() -> Option<(&'static str, Vec3)> {
     let v = std::env::var("AURORA_DEMO_PLACE").ok()?;
     Some(match v.to_lowercase().as_str() {
-        "lagune" => (aurora_i18n::tr!("common-boreal-lagoon"), Vec3::new(60.0, 200.0, 22.0)),
+        "lagoon" | "lagune" => (aurora_i18n::tr!("common-boreal-lagoon"), Vec3::new(60.0, 200.0, 22.0)),
         "nordheim" => ("Nordheim", Vec3::new(128.0, 64.0, 40.0)),
-        "pinede" => (aurora_i18n::tr!("common-pine-grove"), Vec3::new(200.0, 30.0, 24.0)),
-        "faille" => (aurora_i18n::tr!("common-flaw"), Vec3::new(128.0, 128.0, 30.0)),
-        "inconnue" => (aurora_i18n::tr!("demo-place-atlantis"), Vec3::new(128.0, 128.0, 20.0)),
-        "repere" | "historique" => return None,
+        "grove" | "pinede" => (aurora_i18n::tr!("common-pine-grove"), Vec3::new(200.0, 30.0, 24.0)),
+        "flaw" | "faille" => (aurora_i18n::tr!("common-flaw"), Vec3::new(128.0, 128.0, 30.0)),
+        "unknown" | "inconnue" => (aurora_i18n::tr!("demo-place-atlantis"), Vec3::new(128.0, 128.0, 20.0)),
+        "landmark" | "repere" | "history" | "historique" => return None,
         // Violet Wolf's home (the link of his profile)
         _ => (aurora_i18n::tr!("common-aurora-demo"), Vec3::new(140.0, 120.0, 25.0)),
     })
@@ -111,11 +111,11 @@ pub fn scenario() -> Option<(&'static str, Vec3)> {
 pub fn profile_scenario() -> Option<crate::world::place_details::Source> {
     use crate::world::place_details::Source;
     match std::env::var("AURORA_DEMO_PLACE").ok()?.to_lowercase().as_str() {
-        "repere" => {
+        "landmark" | "repere" => {
             let (id, asset) = landmark_ids(1);
             Some(Source::Landmark { item: id, asset })
         }
-        "historique" => history().into_iter().rev().nth(1).map(|h| Source::History {
+        "history" | "historique" => history().into_iter().rev().nth(1).map(|h| Source::History {
             title: h.title,
             global: h.global,
         }),
@@ -131,12 +131,12 @@ pub enum TeleportConfirm {
     Landmark(Uuid, &'static str),
 }
 
-/// AURORA_DEMO_TP_CONFIRM=lien|repere: the confirmation of a teleport asked
+/// AURORA_DEMO_TP_CONFIRM=link|landmark: the confirmation of a teleport asked
 /// by a place link (the default) or by a landmark of "Places".
 pub fn teleport_confirm_scenario() -> Option<TeleportConfirm> {
     let v = std::env::var("AURORA_DEMO_TP_CONFIRM").ok()?;
     Some(match v.to_lowercase().as_str() {
-        "repere" => {
+        "landmark" | "repere" => {
             let (_, name, ..) = landmarks().get(1)?;
             TeleportConfirm::Landmark(landmark_ids(1).1, name)
         }
