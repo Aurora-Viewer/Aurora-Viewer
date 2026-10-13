@@ -465,8 +465,11 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-/// Side of the region's map in the header: the height of the texts beside it.
-const HEADER_MAP: f32 = 86.0;
+/// The region's map in the header stands beside the texts from the top of
+/// the name's letters to the bottom of the gauge: its side, and how far
+/// under the top of the name's line its letters start.
+const HEADER_MAP: f32 = 87.0;
+const HEADER_MAP_TOP: f32 = 4.0;
 
 /// The parcel at a glance, over the tabs: the mini-map's image of its
 /// region, its name, its area, and a gauge of the objects on the owner's
@@ -478,11 +481,14 @@ fn header(ui: &mut egui::Ui, p: &Palette, v: &View, parcel: &ParcelInfo, map: Op
     let region = v.region.as_ref().map_or("", |r| r.name.as_str());
     widgets::surface(ui, p, |ui| {
         ui.set_min_width(ui.available_width());
-        ui.horizontal(|ui| {
-            let picture = widgets::picture(ui, p, map, Vec2::splat(HEADER_MAP), "map", "");
-            if !region.is_empty() {
-                picture.on_hover_text(region);
-            }
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.add_space(HEADER_MAP_TOP);
+                let picture = widgets::picture(ui, p, map, Vec2::splat(HEADER_MAP), "map", "");
+                if !region.is_empty() {
+                    picture.on_hover_text(region);
+                }
+            });
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 ui.set_width(ui.available_width());
