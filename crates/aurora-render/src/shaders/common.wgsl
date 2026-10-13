@@ -365,14 +365,27 @@ const PROBE_WALK_PER_LOOKUP: u32 = 1u;
 const PROBE_WALK_TILES: u32 = 2u;
 const PROBE_WALK_CHECK: u32 = 3u;
 
+// Depth under which a position is not one the sets were filled for (they
+// hold what is in front of the camera, light_tiles.rs).
+const PROBE_TILES_NEAREST: f32 = 0.01;
+
 // The probes of the main view's sets for a fragment (bit i for
 // `probe_set.probes[i]`): those that cover its screen column, its screen
 // row and its slice of depth at once.
+//
+// The whole list for a position that is not in front of the camera. There
+// are such fragments: under multisampling, a sample at the edge of a
+// triangle seen edge-on is shaded where the triangle's plane meets the
+// centre of its pixel, which can be behind the camera. The probes that
+// cover that point are those the whole list gives.
 fn probe_tiles(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
-    let cell = tile_cell(world_pos, frag, probe_set.tile_grid.xy, probe_set.tile_forward.xyz);
-    return light_table_set(probe_set.tile_columns[cell.x >> 1u], cell.x)
+    let forward = probe_set.tile_forward.xyz;
+    let cell = tile_cell(world_pos, frag, probe_set.tile_grid.xy, forward);
+    let held = light_table_set(probe_set.tile_columns[cell.x >> 1u], cell.x)
         & light_table_set(probe_set.tile_rows[cell.y >> 1u], cell.y)
         & light_table_set(probe_set.tile_slices[cell.z >> 1u], cell.z);
+    let in_front = dot(world_pos - frame.camera_pos.xyz, forward) >= PROBE_TILES_NEAREST;
+    return select(vec2<u32>(0xffffffffu), held, in_front);
 }
 
 // AURORA_PROBE_WALK=check: whether a probe of the list covers `pos` without

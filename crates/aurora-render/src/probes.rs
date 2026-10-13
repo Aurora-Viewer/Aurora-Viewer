@@ -566,6 +566,10 @@ mod tests {
         assert!(at.is_sorted(), "{at:?}");
         assert_eq!(light_tiles::TILES, 32);
         assert!(src.contains("probe_set.boxes.xy & held"));
+        // nearer than this the shaders walk the whole list: the sets hold
+        // what is further than the plane the extents are cut by
+        assert!(src.contains("const PROBE_TILES_NEAREST: f32 = 0.01;"));
+        const { assert!(light_tiles::NEAREST < 0.01) };
     }
 
     /// The walks as the shaders name them.

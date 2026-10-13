@@ -40,7 +40,7 @@ pub const LIGHTS: usize = 64;
 const MARGIN_PX: f32 = 2.0;
 /// Depth (clip w, metres in front of the camera) under which nothing is
 /// drawn: the box around a light is cut there before it is projected.
-const NEAREST: f32 = 1e-3;
+pub(crate) const NEAREST: f32 = 1e-3;
 
 /// Where the shaders find the lights of a fragment
 /// (AURORA_LIGHT_TILES; the image is the same).

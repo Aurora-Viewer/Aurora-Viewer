@@ -1869,7 +1869,10 @@ What the inventory must show with these scenarios:
   - `check`: the sort, and any fragment that a probe covers without being
     in its sets is painted magenta (on the faces that read the probes: PBR
     ones, shiny legacy ones). There must be none, whatever the camera does;
-    try it with `AURORA_DEMO_PROBES=1` and `AURORA_DEMO_PBR_OVERRIDE=1`.
+    try it with `AURORA_DEMO_PROBES=1` and `AURORA_DEMO_PBR_OVERRIDE=1`,
+    under MSAA too (`AURORA_AA=3`): a sample at the edge of a triangle seen
+    edge-on is shaded at a position that can be behind the camera, which is
+    why such positions walk the whole list.
 - **`AURORA_LIGHT_TILES=0|alt|check`**: by default, a lit fragment only
   walks the local lights that cover at once its screen column, its row and
   its depth slice (32 of each; sets computed each frame on the render
