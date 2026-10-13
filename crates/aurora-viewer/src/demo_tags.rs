@@ -1,5 +1,5 @@
 //! Name plates in every state and at the three distance levels
-//! (AURORA_DEMO_TAGS=voice|status|cycle|wall, docs/TESTING.md): five
+//! (AURORA_DEMO_TAGS=voice|status|cycle|wall|height, docs/TESTING.md): five
 //! residents in a row in front of the start position, two farther (compact
 //! pills) and two beyond (the name alone). A white wall stands behind the
 //! two on the left, to see the glass over a bright background too.
@@ -26,6 +26,7 @@ pub enum Mode {
     Status,
     Cycle,
     Wall,
+    Height,
 }
 
 /// Seconds a set of states lasts with `cycle`.
@@ -37,6 +38,7 @@ pub fn mode() -> Option<Mode> {
         "status" => Some(Mode::Status),
         "cycle" => Some(Mode::Cycle),
         "wall" => Some(Mode::Wall),
+        "height" => Some(Mode::Height),
         _ => Some(Mode::Voice),
     })
 }
@@ -45,7 +47,7 @@ pub fn mode() -> Option<Mode> {
 /// status set.
 fn status_set(mode: Mode, time: f64) -> bool {
     match mode {
-        Mode::Voice | Mode::Wall => false,
+        Mode::Voice | Mode::Wall | Mode::Height => false,
         Mode::Status => true,
         Mode::Cycle => (time / CYCLE) as u64 % 2 == 1,
     }
@@ -65,6 +67,52 @@ const SOL: Uuid = id(6);
 const IRIS: Uuid = id(7);
 const VEGA: Uuid = id(8);
 const ATLAS: Uuid = id(9);
+
+pub const HEIGHT_ANIM: Uuid = id(261);
+
+/// A translation deformer plus visible head sway and pelvis bobbing:
+/// the tag must clear the taller body without moving with either motion.
+pub fn height_animation(rig: &crate::scene::anim::Rig) -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, PosKey, RotKey};
+    let mut anim = super::idle_animation();
+    anim.joints
+        .retain(|j| !["mTorso", "mPelvis", "mHead"].contains(&j.joint_name.as_str()));
+    let torso = rig.local_pos[rig.names["mTorso"]] + Vec3::Z * 0.8;
+    anim.joints.push(JointMotion {
+        joint_name: "mTorso".into(),
+        priority: 4,
+        rot_keys: Vec::new(),
+        pos_keys: vec![PosKey {
+            time: 0.0,
+            position: torso,
+        }],
+    });
+    anim.joints.push(JointMotion {
+        joint_name: "mPelvis".into(),
+        priority: 4,
+        rot_keys: Vec::new(),
+        pos_keys: [(0.0, 0.0), (2.0, 0.12), (4.0, 0.0)]
+            .into_iter()
+            .map(|(time, z)| PosKey {
+                time,
+                position: Vec3::Z * z,
+            })
+            .collect(),
+    });
+    anim.joints.push(JointMotion {
+        joint_name: "mHead".into(),
+        priority: 4,
+        rot_keys: [(0.0, -0.5), (2.0, 0.5), (4.0, -0.5)]
+            .into_iter()
+            .map(|(time, angle)| RotKey {
+                time,
+                rotation: Quat::from_rotation_y(angle),
+            })
+            .collect(),
+        pos_keys: Vec::new(),
+    });
+    anim
+}
 
 struct Resident {
     id: Uuid,
@@ -214,7 +262,14 @@ pub fn events() -> Vec<NetEvent> {
         objects.push(a);
         events.push(NetEvent::AvatarAnimations {
             avatar: r.id,
-            anims: vec![(IDLE_ANIM, 1)],
+            anims: vec![(
+                if mode() == Some(Mode::Height) && [NOVA, LUNE].contains(&r.id) {
+                    HEIGHT_ANIM
+                } else {
+                    IDLE_ANIM
+                },
+                1,
+            )],
             sources: Vec::new(),
         });
     }
@@ -259,6 +314,9 @@ pub fn state_events(time: f64, shown: &mut Option<bool>) -> Vec<NetEvent> {
     use crate::world::radar::ANIM_AGENT_TYPE;
     use crate::world::status::{ANIM_AWAY, ANIM_DO_NOT_DISTURB};
     let Some(mode) = mode() else { return Vec::new() };
+    if mode == Mode::Height {
+        return Vec::new();
+    }
     let status = status_set(mode, time);
     if *shown == Some(status) {
         return Vec::new();

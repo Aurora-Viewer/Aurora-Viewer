@@ -2143,7 +2143,8 @@ impl App {
             let (pos, _, _) = crate::scene::Scene::object_transform(&self.world, idx, now, 0)?;
             // where the tag stands for the scene's depth: what hides it there
             // keeps the click, what shows it gives it
-            let t = (ui::hud::tag_point(pos + Vec3::Z * ui::hud::TAG_HEIGHT, self.camera.position) - o).dot(d);
+            let anchor = self.scene.name_tag_anchor(&tag.id, pos);
+            let t = (ui::hud::tag_point(anchor, self.camera.position) - o).dot(d);
             match world_t {
                 Some(h) if h < t - 0.05 => None,
                 _ => Some((idx, o + d * t)),
@@ -6517,6 +6518,7 @@ impl App {
                     &p,
                     &self.skin.icons,
                     &self.world,
+                    &self.scene,
                     projector,
                     self.camera.position,
                     !self.camera.mouselook(),
@@ -7775,6 +7777,12 @@ impl ApplicationHandler for App {
             }
             log::info!("demo mode: injecting synthetic region");
             let rig = self.scene.avatar_lib.rig.clone();
+            if crate::demo::tags::mode() == Some(crate::demo::tags::Mode::Height) {
+                self.scene.anims.insert(
+                    crate::demo::tags::HEIGHT_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::tags::height_animation(&rig), &rig)),
+                );
+            }
             self.scene.anims.insert(
                 crate::demo::SEAT_ANIM,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::seat_animation(), &rig)),

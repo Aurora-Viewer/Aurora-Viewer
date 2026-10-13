@@ -27,9 +27,6 @@ pub struct TagComplexity<'a> {
     pub own: bool,
 }
 
-/// Height of an avatar name tag's anchor above the avatar's position.
-pub const TAG_HEIGHT: f32 = 1.05;
-
 /// How far an avatar's name tag stands in front of its anchor, toward the
 /// camera, when the scene is asked what it hides of it: the avatar's own
 /// head, hair or hat never cut its name. LLHUDNameTag::updateVisibility
@@ -219,6 +216,7 @@ pub fn draw(
     p: &Palette,
     icons: &super::icons::Icons,
     world: &World,
+    scene: &Scene,
     proj: &Projector,
     eye: Vec3,
     show_own: bool,
@@ -263,7 +261,7 @@ pub fn draw(
             if d > tag_distance {
                 continue;
             }
-            let head = pos + Vec3::new(0.0, 0.0, TAG_HEIGHT);
+            let head = scene.name_tag_anchor(&o.full_id, pos);
             let Some((sp, _)) = proj.project(head) else {
                 continue;
             };
