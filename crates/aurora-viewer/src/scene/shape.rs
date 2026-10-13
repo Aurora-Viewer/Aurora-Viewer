@@ -10,7 +10,7 @@
 //! `position = default + Σ w · Δoffset`. Parameters made for the other sex
 //! keep their default weight. Body morphs move and scale the collision
 //! volumes (volume morphs); their vertex deformations of the system body
-//! mesh are not applied yet.
+//! mesh are in `morph.rs`.
 
 use super::anim::Rig;
 use aurora_assets::Skeleton;
@@ -279,6 +279,51 @@ impl ShapeParams {
         for (id, v) in self.transmitted.iter().zip(values) {
             if let Some(p) = self.params.get(id) {
                 self.set_weight(&mut weights, *id, u8_to_f32(*v, p.min, p.max), 0);
+            }
+        }
+        weights
+    }
+
+    /// The weight each parameter really has for these AvatarAppearance
+    /// values: one made for the other sex keeps its default weight
+    /// (LLPolyMorphTarget::apply, like the skeleton parameters below).
+    pub fn effective_weights(&self, values: &[u8]) -> HashMap<i32, f32> {
+        self.effective(self.weights(values))
+    }
+
+    /// AvatarAppearance values of the default shape with these parameters
+    /// (id, weight) changed, as a simulator would send them (demo shapes).
+    pub fn values_with(&self, changed: &[(i32, f32)]) -> Vec<u8> {
+        self.transmitted
+            .iter()
+            .map(|id| {
+                let Some(p) = self.params.get(id) else {
+                    return 0;
+                };
+                let w = changed.iter().find(|(c, _)| c == id).map_or(p.default, |(_, w)| *w);
+                let range = p.max - p.min;
+                if range > 0.0 {
+                    ((w.clamp(p.min, p.max) - p.min) / range * 255.0).round() as u8
+                } else {
+                    0
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub fn effective_weights_for_sex(&self, male: bool) -> HashMap<i32, f32> {
+        let mut weights = self.weights(&[]);
+        self.set_weight(&mut weights, PARAM_MALE, f32::from(male), 0);
+        self.effective(weights)
+    }
+
+    fn effective(&self, mut weights: HashMap<i32, f32>) -> HashMap<i32, f32> {
+        let male = weights.get(&PARAM_MALE).copied().unwrap_or(0.0) > 0.5;
+        let sex = if male { SEX_MALE } else { SEX_FEMALE };
+        for (id, p) in &self.params {
+            if p.sex & sex == 0 {
+                weights.insert(*id, p.default);
             }
         }
         weights

@@ -3,10 +3,10 @@
 //! side are glued and move as one block.
 //!
 //! egui moves the dragged window itself (`egui::Area`: where it stood when
-//! the drag began plus the travel of the pointer, kept inside the screen).
+//! the drag began plus the travel of the pointer, kept inside the work area).
 //! What is added around it each frame, before the windows are shown: the
 //! position of the windows glued to it, the limits that keep the whole
-//! block inside the screen, the snap offered and, when the mouse is
+//! block inside the work area, the snap offered and, when the mouse is
 //! released, its application.
 
 use super::{Live, Shown, Windows};
@@ -99,14 +99,7 @@ impl Live {
 
 impl Windows {
     /// One frame of the gestures; see `layout::frame`.
-    pub(super) fn drive(
-        &mut self,
-        screen: Rect,
-        area: Rect,
-        pixels_per_point: f32,
-        pointer: Pointer,
-        snap_enabled: bool,
-    ) -> Option<overlay::Overlay> {
+    pub(super) fn drive(&mut self, area: Rect, pixels_per_point: f32, pointer: Pointer, snap_enabled: bool) -> Option<overlay::Overlay> {
         self.live.frame += 1;
         self.live.snap = snap_enabled;
         self.live.places.clear();
@@ -189,14 +182,15 @@ impl Windows {
         }
 
         // where egui has the dragged window this frame; a group stays whole
-        // inside the screen, so the window stops where its block does
+        // inside the work area (a window does not cover the bars:
+        // `widgets::Floater`), so the window stops where its block does
         let block = moved.start.iter().fold(Rect::NOTHING, |all, (_, rect)| all.union(*rect));
         let limits = if moved.start.len() > 1 {
-            let limits = snap::block_limits(screen, start, block);
+            let limits = snap::block_limits(area, start, block);
             self.live.limits = Some((window, limits));
             limits
         } else {
-            screen
+            area
         };
         let travel = constrained(start.translate(pointer.total), limits, pixels_per_point) - start.min;
         for (id, rect) in moved.start.iter().skip(1) {
@@ -533,8 +527,8 @@ mod tests {
         assert_eq!(s.rect(B).min - s.rect(A).min, b.min - a.min);
     }
 
-    /// The block stops at the edge of the screen as a whole: the window
-    /// dragged does not go on alone.
+    /// The block stops at the edge of the work area as a whole (the bars
+    /// are not covered): the window dragged does not go on alone.
     #[test]
     fn a_block_stays_whole_at_the_edge_of_the_screen() {
         let mut s = Session::new();
@@ -553,11 +547,11 @@ mod tests {
         // B dragged far to the left and up: A reaches the corner first
         let start = s.rect(B).min;
         let at = s.hold_at(B, start + Vec2::new(-3000.0, -3000.0));
-        assert_eq!(s.rect(A).min, Pos2::ZERO);
+        assert_eq!(s.rect(A).min, work.min);
         assert_eq!(s.rect(B).min - s.rect(A).min, offset);
-        // the left edge of the work area is near, its top is not
+        // dropped in the corner of the work area, under the top bar
         s.release(at);
-        assert_eq!(s.rect(A).min, Pos2::new(work.left() + GAP, 0.0));
+        assert_eq!(s.rect(A).min, Pos2::new(work.left() + GAP, work.top() + GAP));
         assert_eq!(s.rect(B).min - s.rect(A).min, offset);
         assert!(s.linked(A, B));
     }

@@ -678,10 +678,26 @@ grid.
   HUD without Modify / Move permissions; outline and percentage until frame
   840. `scale-ctrl`, `scale-key`, `scale-secondary` use Ctrl, B or the
   secondary key. `scale-reset` restores 100%; `scale-forget` forgets the
-  profile without changing the current copy. `scale-copy` replaces the HUD
-  with a new UUID with the same name / creator (frame 900) and logs the
-  restored scale. `scale-touch` then clicks the enlarged HUD (frames 880–900).
+  profile without changing the current copy. `scale-touch` then clicks the
+  enlarged HUD (frames 880–900).
   The profiles of these scenarios stay in the demo account folder.
+- `scale-reattach`, `scale-rename`, `scale-copy`, `scale-temp`, `scale-temp-item`,
+  `scale-temp-instance`:
+  start at 100%, enlarge with the HUD key
+  (frame 720), remove the whole linkset and reattach it with new object UUIDs
+  (frame 900). `scale-reattach` keeps the same item without inventory creator
+  metadata; `scale-rename` renames it while detached. `scale-copy` creates a
+  new inventory UUID with a different inventory label but the same object name
+  and creator. `scale-temp` has no inventory item or AttachItemID, like a
+  temporary experience HUD; `scale-temp-item` has a foreign item UUID that
+  changes between appearances and cannot be fetched from our inventory.
+  `scale-temp-instance` uses the rezzed UUID itself as AttachItemID, matching
+  LLViewerObject::isTempAttachment, with no per-instance inventory profile.
+  The real full ObjectProperties request supplies the common name / creator.
+  All six must restore
+  161.1%, including the child and floating text. Profiles are isolated in
+  memory for these scenarios; unit tests cover saving and restarting.
+  Suggested screenshots: 710,760,920.
 - `drag`: grabs the child with ALT (frame 720), moves the whole HUD,
   releases ALT before the click (frame 800), then saves the position on
   left release (frame 840) without touching any script.
@@ -742,9 +758,15 @@ To check with these scenarios:
 - HUD key + wheel: local size from 10% to 800%, Shift for finer steps,
   with no camera zoom nor media scrolling. Right click: "Reset to
   100%" and "Forget saved size". New copies take
-  the profile of the same inventory name / creator on this account; copies
+  the profile of the same object name / creator on this account, including
+  temporary experience HUDs without an inventory item; copies
   already worn keep their independent sizes. Check after a restart,
   detach / reattach, clicking the buttons and moving the HUD.
+  The same inventory item keeps its own size after reattachment or renaming,
+  even before inventory metadata arrives. Separately resized items with the
+  same name / creator must also keep their individual sizes after reattachment.
+  Resize a temporary experience HUD, stand to remove it, then sit again:
+  the new instance must restore the saved size. Verify after restarting too.
 - Demo inventory linked to the current outfit, to test detaching and
   the display in the inventory.
 - World › HUDs menu: show / hide, zoom out / zoom in and normal
@@ -759,6 +781,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
+| `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
@@ -797,6 +820,19 @@ To check with these scenarios:
   must contain "avatar … (own) shown after 3.0 s". Screenshots with
   `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=240,1200`: cloud, then
   avatar.
+- **`AURORA_DEMO_CLASSIC=1`**: the two avatars of the plaza become classic
+  avatars, the system body with a skin bake whose alpha is soft in a band
+  at the waist and cut by a row of holes (an alpha layer), and a hair bake
+  in strands that fade out. Each has a shape far from the default one: ours
+  male with long hair at the back, the wolf heavy (body fat, belly) with
+  big hair and pigtails. The bodies must be solid (the band at
+  the waist shows nothing of what is behind), cut out by the holes, each
+  with its own build; the hair shows its strands and what is behind them
+  where they fade. With `AURORA_DEMO_CAMERA=close,640,500,45` and
+  `AURORA_CAPTURE_FRAMES=700` (1280 × 800): our avatar's back and hair in
+  close-up; with `AURORA_DEMO_POS="133.6,127.9"`, `AURORA_DEMO_CAMERA=ml`
+  and frame 660: the wolf from the front (a grey silhouette, it is over the
+  complexity limit of the demo, but with its build).
 
 ## Rendering and environment
 
@@ -910,9 +946,10 @@ To check with these scenarios:
 | `AURORA_DEMO_TEXTURES_CHURN=1` | With `AURORA_DEMO_TEXTURES`: textures renewed |
 | `AURORA_DEMO_CROWD=<n>[,busy]` or `<n>,<worn>[,<triangles>]` | Sync load test: n avatars; with `busy` what the sync still places itself, with `<worn>` avatars dressed in rigged meshes |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
-| `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>]` | Streaming stutter test |
+| `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
+| `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
 
 ### Details
@@ -987,6 +1024,13 @@ To check with these scenarios:
   `AURORA_DEMO_POS="129,134"` they are in front of the camera, 9 m away and
   more; with `"140,134"`, the camera is in the middle of them. Used to measure
   `AURORA_LIGHT_TILES`.
+- **`AURORA_DEMO_PROBES=1`**: two manual reflection probes, as invisible
+  prims on the plaza: a box of 10 × 8 × 6 m turned on itself, which the
+  camera of `AURORA_DEMO_POS="135,134"` stands in, and a sphere of 12 m east
+  of it. The automatic probes are kept out of the box, and mixed with the
+  sphere's by its weight. Used to check `AURORA_PROBE_WALK` on the probes
+  the plaza does not have otherwise (its only box probe is the mirror's,
+  8 cm thick).
 - **`AURORA_DEMO_OVERDRAW=<n>`**: n rows of opaque walls (12 if the
   value is not a number, 40 at most) east of the plaza, one
   behind the other and each taller than the one in front, sent from the
@@ -996,7 +1040,7 @@ To check with these scenarios:
   it. This is the worst case of overdraw, to measure
   what a prepass saves (`AURORA_MSAA_PREPASS`); a real region has
   less.
-- **`AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>]`**: n textured
+- **`AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]`**: n textured
   objects (2000 if the value is not a number) that arrive in waves after the
   loading fade, `wave` objects every 250 ms (100 by default, that is ~400 per
   second as on the grid; `wave` = n sends everything at once, like an
@@ -1030,6 +1074,24 @@ To check with these scenarios:
     by the first run in the demo's cache (`cache\demo\tex`, to
     delete to start again from a first visit) and their J2C file
     is requested only if a finer level is needed.
+  - With `,net=<ms>` after `j2k=`, the files are downloaded instead of
+    being handed over: a local asset server (`demo_asset_server.rs`)
+    answers each request after `ms` milliseconds, the round trip to a
+    distant grid (200 for Europe to Agni), and the textures follow the
+    whole path of a region seen for the first time: the fetcher with its
+    queue and its connections, the first range, the ranges that follow,
+    the decodes. Their ids change at each run, so the disk cache never
+    holds them (their files are left in `cache\demo\tex`, like any
+    downloaded texture). The log tells when half, nine tenths and all of the
+    textures showed their first pixels (`demo stream: … of … textures
+    shown after … s`), then `demo stream: loaded in … s` when nothing is
+    left to download or decode; the `texture load:` line gives the
+    requests, the bytes and the wait before the first pixels. Use `wave` =
+    n: the measure is that of an arrival.
+  - With `,size=<m>`, the objects are that large (0.5 m by default) and
+    spaced accordingly: their textures cover more of the screen and ask
+    for finer levels, as the walls and floors of a region do. 400 objects
+    of 3 m give levels close to those of a grid arrival.
 
 ## Interface
 
@@ -1377,7 +1439,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CONV=1|names[:narrow|wide]`**: `1` opens the conversation of
+- **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many`**: `1` opens the conversation of
   the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user
   name, wide and accented letters) and a conference with a long title
@@ -1389,7 +1451,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   distance, without covering anything; the windows keep the requested width;
   the whole name is shown when hovering a cut name (for a screenshot:
   `AURORA_DEMO_POINTER="85,633,s"` on the conference, `"120,377,s"` on a
-  nearby resident, 1600 × 900 window).
+  nearby resident, 1600 × 900 window). `many` gives 24 conversations to a
+  Conversations window of 600 × 320 px and opens the last one: the window
+  keeps its size, Contacts and Nearby chat stay at the top of the list, the
+  conversations scroll under them (wheel, or the bar that shows at the
+  right edge of the list under the pointer) and the list is scrolled to the
+  conversation that is open.
 - **`AURORA_DEMO_RADAR=1|tp|friends|groups|profile`**: the People window.
   `1`: residents at every range in "Near you" (with
   `AURORA_DEMO_TAGS=1`, those of the name plates, several of whom have a
@@ -1811,7 +1878,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
-| `AURORA_PROBE_WALK=0` or `alt` | Reflection probes walked once per lookup, as before, or both alternately |
+| `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 
 ### Details
@@ -1876,20 +1943,34 @@ What the inventory must show with these scenarios:
     `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
     exceeds 6095 and the log has no `texture table full` line.
 
-- **`AURORA_PROBE_WALK=0|alt`**: by default a fragment walks the list of
-  reflection probes once for its two lookups (ambient and reflection of a
-  PBR face, glossy and environment reflection of a legacy one), and finds
-  the box probes through their mask (`sample_probes_pair` in
-  `common.wgsl`). Same image: which probes cover a point, and their weight,
-  depend on the point alone.
+- **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
+  main view only walks the reflection probes that cover at once its screen
+  column, its row and its depth slice (the sets of the lights,
+  `AURORA_LIGHT_TILES`, filled for the probes: `probes::tiles` in
+  `aurora-render/src/probes.rs`), once for its two lookups (ambient and
+  reflection of a PBR face, glossy and environment reflection of a legacy
+  one; `sample_probes_pair` in `common.wgsl`). Same image: a probe left out
+  covers none of the fragments drawn there, and those that stay are added
+  up in the order of the list. Water finds its probes the same way.
+  - `list`: one walk of the whole list (32 probes by default) for the two
+    lookups, as before the sort, to compare. Reflections, probe faces and
+    impostor photos do not sample the probes.
   - `0`: one walk per lookup, each going through the whole list twice, as
-    before, to compare.
-  - `alt` (with `AURORA_PROFILE=1`): the old walk during one `perf summary`
-    line out of three (`xmode=old`), the new one during the other two
-    (`xmode=new`). Compare `g_objects`, `g_transparent` and `gpu`. In demo
-    (`AURORA_DEMO_CROWD=40`, `AURORA_DEMO_POS="135,134"`,
-    `AURORA_WINDOW_SIZE="2560,1369"`, 16 probes): `g_objects` 0.94 → 0.81
-    ms.
+    at first.
+  - `alt` (with `AURORA_PROFILE=1`): the whole list during one
+    `perf summary` line out of three (`xmode=old`), the sort during the
+    other two (`xmode=new`). Compare `g_objects`, `g_transparent` and
+    `gpu`. In demo (`AURORA_DEMO_CROWD=40`, `AURORA_DEMO_POS="135,134"`,
+    `AURORA_WINDOW_SIZE="2560,1369"`, `AURORA_FPS_LIMIT=120`, 16 probes):
+    `g_objects` 0.68 → 0.58 ms, as much as without any probe but the
+    default one (0.60 ms): the walk was the cost, not the samples.
+  - `check`: the sort, and any fragment that a probe covers without being
+    in its sets is painted magenta (on the faces that read the probes: PBR
+    ones, shiny legacy ones). There must be none, whatever the camera does;
+    try it with `AURORA_DEMO_PROBES=1` and `AURORA_DEMO_PBR_OVERRIDE=1`,
+    under MSAA too (`AURORA_AA=3`): a sample at the edge of a triangle seen
+    edge-on is shaded at a position that can be behind the camera, which is
+    why such positions walk the whole list.
 - **`AURORA_LIGHT_TILES=0|alt|check`**: by default, a lit fragment only
   walks the local lights that cover at once its screen column, its row and
   its depth slice (32 of each; sets computed each frame on the render
@@ -2482,7 +2563,16 @@ line gives:
 - the bytes downloaded and the number of responses, the successful and
   missed reads of the disk cache (JPEG2000 data), and the textures read
   back from the transcoded cache (`read as BC7 without a decode`): sent to
-  the GPU without decoding or encoding.
+  the GPU without decoding or encoding;
+- `first pixels of … downloaded textures … s after their request on
+  average, … s weighted by their size on screen`: for the textures that
+  had to be downloaded, the time between their first request and their
+  first pixels on screen. The second figure weights each texture by the
+  area it covers: how long a pixel of a new texture stays without its
+  picture, which is what an arrival looks like. `… asked before that size
+  was known` counts the first requests sent for a texture not seen on
+  screen yet (out of view, or just arrived): they leave at the lowest
+  rank and for the smallest range.
 
 The cost of decoding alone is measured outside the viewer on a folder of
 cached textures (read-only), per size class, on one thread then on as many

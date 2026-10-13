@@ -3823,12 +3823,17 @@ impl Backend {
             main.light_sets.mode[1] = u32::from(light_culling == LightCulling::Check);
         }
         stats.light_tiles = light_tiles_on;
-        // how a fragment walks the reflection probes (sample_probes_pair)
-        main.light_sets.mode[3] = u32::from(match crate::probes::ProbeWalk::from_env() {
-            crate::probes::ProbeWalk::Shared => false,
-            crate::probes::ProbeWalk::PerLookup => true,
-            crate::probes::ProbeWalk::Alternate => f.probe_walk_per_lookup,
-        });
+        // reflection probes by screen tile and depth, for the main view
+        // (probes::tiles), and how its fragments walk them (sample_probes_pair)
+        let probe_walk = crate::probes::ProbeWalk::from_env();
+        let probe_sets = if f.probes.enabled && probe_walk.tiles(f.probe_walk_list) {
+            let size = [self.config.width, self.config.height];
+            let eye = Vec3::from_slice(&main.camera_pos[..3]);
+            crate::probes::tiles(fu.view, fu.proj, eye, size, &f.probes.probes)
+        } else {
+            LightSets::whole()
+        };
+        main.light_sets.mode[3] = probe_walk.shader_mode(f.probe_walk_list);
         // AURORA_DEBUG_SHADOWS: the cascade each pixel reads and its shadow,
         // instead of the image (shadow_view in common.wgsl)
         static SHADOW_VIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -3896,7 +3901,7 @@ impl Backend {
             self.queue.write_buffer(&self.refl_buffers[1], 0, bytemuck::bytes_of(&u));
         }
         // ---- reflection probes: list for the shaders, face capture uniforms
-        self.probes.upload(&self.queue, f.probes.enabled, &f.probes.probes);
+        self.probes.upload(&self.queue, f.probes.enabled, &f.probes.probes, &probe_sets);
         let capture = f.probes.capture;
         let mut probe_vp = Mat4::IDENTITY;
         if let Some(c) = &capture {

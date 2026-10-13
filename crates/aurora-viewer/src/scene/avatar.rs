@@ -59,6 +59,11 @@ pub struct AvatarPart {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u16>,
     pub skin: Vec<SkinVertex>,
+    /// Normals of the file, as they are before a vertex packs them: the
+    /// morphs add to them.
+    pub normals: Vec<Vec3>,
+    /// Visual parameters that move this part's vertices (morph.rs).
+    pub morphs: Vec<super::morph::MorphTarget>,
 }
 
 pub struct AvatarLibrary {
@@ -151,12 +156,17 @@ fn llm_to_part(name: &'static str, bake_te: usize, m: &LlmMesh, offset: Vec3, fl
         })
         .collect();
     let indices = m.faces.iter().flat_map(|f| f.iter().copied()).collect();
+    let normals = (0..m.positions.len())
+        .map(|i| m.normals.get(i).map_or(Vec3::Z, |n| Vec3::from_array(*n)))
+        .collect();
     AvatarPart {
         name,
         bake_te,
         vertices,
         indices,
         skin: Vec::new(),
+        normals,
+        morphs: Vec::new(),
     }
 }
 
@@ -195,8 +205,9 @@ impl AvatarLibrary {
         let mut attach_points = HashMap::new();
         let mut attach_names = HashMap::new();
         let mut joint_names: Vec<(u8, String)> = Vec::new();
-        if let Ok(d) = std::fs::read(dir.join("avatar_lad.xml"))
-            && let Ok(root) = xml::parse(&d)
+        let lad = std::fs::read(dir.join("avatar_lad.xml")).ok();
+        if let Some(d) = &lad
+            && let Ok(root) = xml::parse(d)
         {
             let mut stack = vec![&root];
             while let Some(el) = stack.pop() {
@@ -255,6 +266,7 @@ impl AvatarLibrary {
                 .ok()
                 .and_then(|d| aurora_assets::parse_llm(&d).map_err(|e| log::warn!("{f}: {e}")).ok())
         };
+        let morph_params = lad.as_deref().map(super::morph::mesh_params).unwrap_or_default();
         // UVs stay in GL convention: the object shader flips V.
         for (file, name, te) in [
             ("avatar_head.llm", "head", 8usize),
@@ -270,6 +282,9 @@ impl AvatarLibrary {
                     let list = render_list(&rig, sk, &m.joint_names);
                     part.skin = llm_skin(&m, &list, None);
                 }
+                if let Some(params) = morph_params.get(file) {
+                    part.morphs = super::morph::targets(&m, params);
+                }
                 parts.push(part);
             }
         }
@@ -283,13 +298,14 @@ impl AvatarLibrary {
                 }
             }
         }
-        let shape_params = match (&skeleton, std::fs::read(dir.join("avatar_lad.xml"))) {
-            (Some(sk), Ok(d)) => super::shape::ShapeParams::parse(&d, sk, &rig),
+        let shape_params = match (&skeleton, &lad) {
+            (Some(sk), Some(d)) => super::shape::ShapeParams::parse(d, sk, &rig),
             _ => Default::default(),
         };
         log::info!(
-            "avatar library: {} parts, {} attachment points, skeleton {}",
+            "avatar library: {} parts, {} morphs, {} attachment points, skeleton {}",
             parts.len(),
+            parts.iter().map(|p| p.morphs.len()).sum::<usize>(),
             attach_points.len(),
             skeleton.is_some()
         );
