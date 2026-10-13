@@ -35,11 +35,24 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+/// The session's side of the event channel: every event leaves with the
+/// time it was sent, so the viewer can tell how long it waited.
+#[derive(Clone)]
+pub(crate) struct EventSender(crossbeam_channel::Sender<(std::time::Instant, NetEvent)>);
+
+impl EventSender {
+    /// False once the viewer is gone.
+    pub(crate) fn send(&self, ev: NetEvent) -> bool {
+        self.0.send((std::time::Instant::now(), ev)).is_ok()
+    }
+}
+
 /// Handle owned by the viewer: send commands, poll events.
 pub struct NetClient {
     rt: tokio::runtime::Runtime,
     cmd_tx: mpsc::UnboundedSender<NetCommand>,
-    pub events: crossbeam_channel::Receiver<NetEvent>,
+    /// Events of the session, each with the time the network side sent it.
+    pub events: crossbeam_channel::Receiver<(std::time::Instant, NetEvent)>,
     pub controls: Arc<Mutex<AgentControls>>,
     pub stats: Arc<NetStats>,
     pub fetcher: Fetcher,
@@ -116,7 +129,7 @@ impl NetClient {
         let shared = session::Shared {
             http,
             caps_http,
-            events: ev_tx,
+            events: EventSender(ev_tx),
             controls: controls.clone(),
             stats: stats.clone(),
             object_cache_dir: object_cache_dir.clone(),
@@ -162,6 +175,15 @@ impl NetClient {
             drop(saved);
             self.send(NetCommand::UpdateAgentLanguage);
         }
+    }
+
+    /// Controls of this frame, sent by the session with its next AgentUpdate.
+    /// A change of their flags (a key pressed or released) is timed until
+    /// that update leaves (`NetStats::take_peaks`).
+    pub fn set_controls(&self, c: AgentControls) {
+        let mut controls = self.controls.lock();
+        self.stats.note_controls(c.control_flags != controls.control_flags);
+        *controls = c;
     }
 
     pub fn send(&self, cmd: NetCommand) {

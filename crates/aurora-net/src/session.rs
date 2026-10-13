@@ -128,7 +128,7 @@ impl Drop for Sim {
 pub(crate) struct Shared {
     pub http: reqwest::Client,
     pub caps_http: reqwest::Client,
-    pub events: crossbeam_channel::Sender<NetEvent>,
+    pub events: crate::EventSender,
     pub controls: Arc<Mutex<AgentControls>>,
     pub stats: Arc<NetStats>,
     /// Directory of the per-region object caches (None = disabled).
@@ -297,8 +297,13 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     let mut tick = tokio::time::interval(Duration::from_millis(25));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     while !s.finished {
+        // What woke the loop is handled before anything else is read: the
+        // longest of these is how long the circuits went unserved
+        // (`NetStats::loop_busy`, in the "net summary" log line).
+        let woke;
         tokio::select! {
             r = sock.recv_from(&mut buf) => {
+                woke = Instant::now();
                 match r {
                     Ok((n, from)) => s.on_datagram(&buf[..n], from),
                     Err(e) => {
@@ -307,16 +312,35 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     }
                 }
             }
-            _ = tick.tick() => s.tick(),
-            c = cmd_rx.recv() => match c {
-                Some(c) => s.on_command(c),
-                None => break,
-            },
-            Some(e) = eq_rx.recv() => s.on_eq_event(e),
-            Some((addr, caps)) = caps_rx.recv() => s.on_caps(addr, caps),
-            Some((callback, result)) = notecard_copy_rx.recv() => s.notecard_copy_http(callback, result),
-            Some(request) = inventory_move_rx.recv() => s.inventory_move(request),
+            _ = tick.tick() => {
+                woke = Instant::now();
+                s.tick();
+            }
+            c = cmd_rx.recv() => {
+                woke = Instant::now();
+                match c {
+                    Some(c) => s.on_command(c),
+                    None => break,
+                }
+            }
+            Some(e) = eq_rx.recv() => {
+                woke = Instant::now();
+                s.on_eq_event(e);
+            }
+            Some((addr, caps)) = caps_rx.recv() => {
+                woke = Instant::now();
+                s.on_caps(addr, caps);
+            }
+            Some((callback, result)) = notecard_copy_rx.recv() => {
+                woke = Instant::now();
+                s.notecard_copy_http(callback, result);
+            }
+            Some(request) = inventory_move_rx.recv() => {
+                woke = Instant::now();
+                s.inventory_move(request);
+            }
         }
+        sh.stats.loop_busy(woke);
     }
     s.save_object_caches();
     // Close every circuit politely.
@@ -838,6 +862,9 @@ impl Session<'_> {
 
         if self.agent_moved && self.logout_started.is_none() {
             self.maybe_send_agent_update(now);
+        } else {
+            // (a key pressed during a teleport is not an input delay)
+            self.sh.stats.forget_control_change();
         }
     }
 
@@ -867,12 +894,21 @@ impl Session<'_> {
     }
 
     fn maybe_send_agent_update(&mut self, now: Instant) {
-        let mut c = *self.sh.controls.lock();
-        c.far = self.far;
-        c.control_flags |= self.one_shot;
         let since = now.duration_since(self.last_agent_update);
-        let changed = c.significantly_differs(&self.last_controls);
-        if (changed && since >= AGENT_UPDATE_INTERVAL) || since >= AGENT_UPDATE_KEEPALIVE || self.one_shot != 0 {
+        let (c, send) = {
+            let controls = self.sh.controls.lock();
+            let mut c = *controls;
+            c.far = self.far;
+            c.control_flags |= self.one_shot;
+            let changed = c.significantly_differs(&self.last_controls);
+            let send = (changed && since >= AGENT_UPDATE_INTERVAL) || since >= AGENT_UPDATE_KEEPALIVE || self.one_shot != 0;
+            if send {
+                // (under the lock: the change it times is the one in `c`)
+                self.sh.stats.agent_update_sent();
+            }
+            (c, send)
+        };
+        if send {
             let mut m = AgentUpdate::default();
             let a = &mut m.agent_data;
             a.agent_id = self.agent_id();
@@ -2374,6 +2410,7 @@ impl Session<'_> {
             stats.duplicates.fetch_add(1, Ordering::Relaxed);
             return;
         }
+        sim.circuit.note_sequence(pkt.sequence, stats);
         match self.dispatch(from, &pkt) {
             // ack only now (the handler may also have removed the circuit)
             Ok(()) => {
@@ -2447,6 +2484,10 @@ impl Session<'_> {
                 && is_main
             {
                 self.sh.stats.ping_ms.store(rtt.as_millis() as u32, Ordering::Relaxed);
+                self.sh
+                    .stats
+                    .ping_avg_ms
+                    .store(sim.circuit.rtt.as_millis() as u32, Ordering::Relaxed);
             }
         } else if id == ObjectUpdate::ID {
             let m: ObjectUpdate = pkt.decode()?;

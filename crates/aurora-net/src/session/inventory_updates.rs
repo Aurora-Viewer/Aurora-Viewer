@@ -298,7 +298,7 @@ mod tests {
         let sh = Shared {
             http: http.clone(),
             caps_http: http,
-            events,
+            events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
             object_cache_dir: Arc::new(Mutex::new(None)),
@@ -408,7 +408,7 @@ mod tests {
             let result = tokio::time::timeout(Duration::from_secs(5), async {
                 let mut updated = false;
                 loop {
-                    while let Ok(event) = received.try_recv() {
+                    while let Ok((_, event)) = received.try_recv() {
                         if let NetEvent::InventoryUpdated { ref items, .. } = event {
                             updated |= items.iter().any(|item| item.id == Uuid::from_u128(103));
                         }
@@ -448,6 +448,6 @@ mod tests {
         let (size, _) = simulator.recv_from(&mut bytes).await.expect("move packet");
         let movement: MoveInventoryItem = parse_packet(&bytes[..size]).expect("packet").decode().expect("move");
         assert_eq!(movement.inventory_data[0].folder_id, Uuid::from_u128(200));
-        assert!(received.try_iter().any(|event| matches!(event, NetEvent::InventoryEdited { request: done, result: Ok(reply) } if done == request && reply.moves_queued && reply.contents.is_empty())), "moves are queued without an HTTP capability or a readback gate");
+        assert!(received.try_iter().any(|(_, event)| matches!(event, NetEvent::InventoryEdited { request: done, result: Ok(reply) } if done == request && reply.moves_queued && reply.contents.is_empty())), "moves are queued without an HTTP capability or a readback gate");
     }
 }

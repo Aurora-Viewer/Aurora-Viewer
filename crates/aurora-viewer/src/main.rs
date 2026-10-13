@@ -24,6 +24,7 @@ mod link_trust;
 mod links;
 mod logging;
 mod media;
+mod net_profile;
 mod scene;
 mod screen_rate;
 mod settings;
