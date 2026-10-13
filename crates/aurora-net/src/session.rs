@@ -3593,3 +3593,122 @@ impl Session<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod event_queue_tests {
+    use super::*;
+
+    async fn finished_task() -> JoinHandle<()> {
+        let task = tokio::spawn(async {});
+        while !task.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        task
+    }
+
+    #[tokio::test]
+    async fn a_lost_event_queue_ends_the_session_only_for_the_agents_region() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main_addr: SocketAddr = "127.0.0.1:13001".parse().expect("address");
+        let neighbour_addr: SocketAddr = "127.0.0.1:13002".parse().expect("address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = Shared {
+            http: reqwest::Client::new(),
+            caps_http: reqwest::Client::new(),
+            events: crate::EventSender(events),
+            controls: Arc::new(Mutex::new(AgentControls::default())),
+            stats: Arc::new(NetStats::default()),
+            object_cache_dir: Arc::new(Mutex::new(None)),
+            agent_language: Arc::new(Mutex::new(("en".into(), false))),
+        };
+        let login = Arc::new(LoginResponse {
+            agent_id: Uuid::from_u128(1),
+            session_id: Uuid::from_u128(2),
+            secure_session_id: Uuid::nil(),
+            first_name: String::new(),
+            last_name: String::new(),
+            sim_ip: Ipv4Addr::LOCALHOST,
+            sim_port: main_addr.port(),
+            circuit_code: 0,
+            region_x: 0,
+            region_y: 0,
+            region_size_x: 256,
+            region_size_y: 256,
+            seed_capability: String::new(),
+            look_at: Vec3::ZERO,
+            message: String::new(),
+            agent_appearance_service: String::new(),
+            inventory_root: Uuid::nil(),
+            mfa_hash: None,
+            raw: Llsd::Undef,
+        });
+        let (eq_tx, _) = mpsc::unbounded_channel();
+        let (caps_tx, _) = mpsc::unbounded_channel();
+        let (notecard_copy_tx, _) = mpsc::unbounded_channel();
+        let (inventory_move_tx, _) = mpsc::unbounded_channel();
+        let mut session = Session {
+            sh: &sh,
+            sock,
+            login,
+            sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
+            main: Some(main_addr),
+            eq_tx,
+            caps_tx,
+            notecard_copy_tx,
+            inventory_move_tx,
+            notecard_copies: HashMap::new(),
+            last_controls: AgentControls::default(),
+            last_agent_update: Instant::now(),
+            one_shot: 0,
+            cam_warned: false,
+            far: 128.0,
+            logout_started: None,
+            finished: false,
+            agent_moved: false,
+            cam_requested_at: None,
+            agent_parcel: None,
+            pending_named_tp: None,
+            obj_cache_dir: None,
+            obj_caches: HashMap::new(),
+            last_cache_save: Instant::now(),
+            social: Default::default(),
+            tasks: Default::default(),
+            land: Default::default(),
+            decode_failures: HashMap::new(),
+            inventory_uploads: Default::default(),
+            asset_imports: Default::default(),
+            inventory_previews: Default::default(),
+            script_transfers: Default::default(),
+            inventory_callbacks: HashMap::new(),
+            inventory_copies: inventory_copies::Pending::default(),
+            inventory_merchant_pending: false,
+            next_inventory_callback: 0,
+        };
+        let set_queue = |session: &mut Session, addr: SocketAddr, task: JoinHandle<()>| {
+            let sim = session.sims.get_mut(&addr).expect("simulator");
+            if let Some(old) = sim.eq_task.replace(task) {
+                old.abort();
+            }
+        };
+
+        // a neighbour that lost its queue only loses its own events
+        set_queue(&mut session, neighbour_addr, finished_task().await);
+        session.on_eq_lost(neighbour_addr);
+        assert!(!session.finished);
+        assert!(received.is_empty());
+
+        // the agent's region asked for a new queue since (new seed
+        // capability): the old one giving up is not a loss
+        set_queue(&mut session, main_addr, tokio::spawn(std::future::pending()));
+        session.on_eq_lost(main_addr);
+        assert!(!session.finished);
+        assert!(received.is_empty());
+
+        // its queue really stopped: the session ends, as in Firestorm
+        set_queue(&mut session, main_addr, finished_task().await);
+        session.on_eq_lost(main_addr);
+        assert!(session.finished);
+        let (_, event) = received.try_recv().expect("disconnection");
+        assert!(matches!(event, NetEvent::Disconnected { .. }), "{event:?}");
+    }
+}
