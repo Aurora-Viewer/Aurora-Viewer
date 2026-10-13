@@ -4529,3 +4529,14 @@ currency-confirm-question = Êtes-vous certain de vouloir effectuer cette transa
 currency-confirm-password = Veuillez saisir à nouveau votre mot de passe et cliquer sur OK.
 currency-bought = { "Nous vous remercions de votre paiement.\u000A\u000AVotre solde en L$ sera mis à jour une fois le traitement terminé. Si le traitement prend plus de 20 minutes, il est possible que votre transaction soit annulée. Dans ce cas, le montant de l'achat sera crédité sur votre solde en US$.\u000A\u000AVous pouvez consulter le statut de votre paiement à la page Historique de mes transactions de votre compte." }
 demo-currency-refused = Refus simulé du service d'achat de L$ (démo).
+
+import-permissions-tab = Permissions
+import-permissions-help = Ces réglages s’appliquent aux textures, sons, animations, matériaux et meshes importés.
+import-permissions-sharing = Partage
+import-permissions-payment = Paiement
+import-preview-enlarge = Agrandir l’aperçu
+import-preview-enlarged = Aperçu agrandi — { $name }
+import-preview-gestures = Glisser : tourner · Maj + glisser : déplacer · Molette : zoomer
+import-permissions-basic-help = Choisissez les droits du prochain propriétaire pour chaque type d’import. Ces préférences sont enregistrées automatiquement.
+import-permissions-type = Type d’import
+import-permissions-fair-use = Lorsque la copie est désactivée, le transfert reste obligatoire.

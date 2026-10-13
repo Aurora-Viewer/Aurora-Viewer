@@ -87,7 +87,7 @@ impl App {
                     &self.scene.jobs,
                     &self.world,
                     &self.settings.inventory,
-                    self.settings.imports.permissions(),
+                    self.settings.imports.permissions_for(aurora_net::inventory::upload::Kind::Mesh),
                 );
             }
             let prices = Prices {
@@ -99,7 +99,7 @@ impl App {
             if self.imports.total(&prices).is_some() {
                 self.imports.demo_upload_started = true;
                 self.imports
-                    .start(&self.world, &self.settings.inventory, self.settings.imports.permissions(), &prices);
+                    .start(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
             }
         }
         let local_demo = self.demo
@@ -237,6 +237,11 @@ impl App {
         for action in actions {
             match action {
                 Action::Files => self.imports.choose_files(&self.scene.jobs, ctx, self.settings.imports.texture()),
+                Action::Zoom(id, slot) => {
+                    self.imports.preview_zoom = Some((id, slot));
+                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("import_large_preview")));
+                }
+                Action::LargeMap(id, slot) => self.imports.request_large_map(id, slot, &self.scene.jobs, ctx),
                 Action::Start => {
                     let prices = if self.demo {
                         Prices {
@@ -250,7 +255,7 @@ impl App {
                     };
                     let prices = prices.with_fallback(self.world.upload_cost);
                     self.imports
-                        .start(&self.world, &self.settings.inventory, self.settings.imports.permissions(), &prices);
+                        .start(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
                 }
                 Action::Cancel => self.imports.cancel_remaining(),
                 Action::Preview(id) => {
@@ -291,7 +296,7 @@ impl App {
                     &self.scene.jobs,
                     &self.world,
                     &self.settings.inventory,
-                    self.settings.imports.permissions(),
+                    self.settings.imports.permissions_for(aurora_net::inventory::upload::Kind::Mesh),
                 ),
                 Action::MeshFile(id, level) => self.imports.mesh_file(id, level, &self.scene.jobs, ctx),
                 Action::PhysicsPreset(id, save) => {

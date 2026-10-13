@@ -1049,12 +1049,21 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   paiement. `grid` : grille sans service d'achat connu. Après Acheter puis
   OK : la fenêtre se ferme, le solde augmente et la cloche reçoit la
   notification.
-- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|mesh|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`** :
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-zoom|material-texture-zoom|mesh|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|permissions|animation|animation-own|sound|bulk|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`** :
   écrit des fichiers propres à ce lancement dans `.scratch/import-demo/<uuid>/`
   puis ouvre le parcours choisi : image RGBA, matériau PBR, cube Collada,
   animations BVH / `.anim` et son WAV synthétique. Vérifier les paramètres, les
   aperçus, la caméra, les permissions, la sélection et la confirmation.
   `material-cube` / `material-aurora` montrent les deux formes supplémentaires ;
+  `material-zoom` / `mesh-zoom` ouvrent la loupe 3D interactive ;
+  `material-texture-zoom` ouvre une texture rectangulaire dans un cadre carré,
+  avec ses pixels préparés sur worker (limite 2 048 par côté, sans agrandissement).
+  `permissions` ouvre l’onglet principal commun, avec les cinq types de fichiers
+  toujours sélectionnables à gauche et un tableau Modifier / Copier / Transférer
+  par type importable. Les choix sont enregistrés et s’appliquent au lot ;
+  désactiver Copier impose Transférer, sans modifier les autres lignes.
+  Les cartes LOD sélectionnent l’aperçu par
+  un clic dans toute leur surface ; les champs restent éditables normalement.
   `material-maps` affiche les quatre vignettes de cartes. Le menu « Modèle
   d’aperçu » permet de passer entre Sphère, Cube et Aurora 3D. Glisser tourne,
   Maj + glisser ou le bouton du milieu déplacent dans les axes de l’écran,
@@ -1066,9 +1075,11 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   `destination` ouvre le choix de dossier avec le filtre « Textures » ;
   saisir un autre nom doit filtrer sans changer la destination ni fermer
   la liste. Choisir un résultat ferme la liste et applique ce dossier.
-  Pour le mesh, l’aperçu se trouve à droite du nom, de la description et de
-  la destination ; les sections LOD, Collisions et Import se trouvent dessous.
-  Le niveau Haut est affiché par défaut ; cliquer un nom de LOD change l’aperçu.
+  Pour le mesh, la liste reste à gauche ; l’aperçu et les quatre cartes LOD
+  sont côte à côte dans une fenêtre de 900 × 610 points par défaut. Nom,
+  description et destination se trouvent dans la section Import ; Permissions
+  reste un onglet principal commun. Haut est affiché par défaut ; cliquer
+  une carte LOD change l’aperçu, y compris dans un champ ou sur un résultat.
   `mesh-low` affiche Très bas pour comparer réellement les géométries et
   leurs compteurs. Choisir « Fichier » pour un LOD généré doit ouvrir le
   sélecteur ; annuler conserve le LOD, choisir un fichier valide relance

@@ -11,9 +11,44 @@ pub(super) fn show(
     entry: &mut Entry,
     prefs: &mut Preferences,
     actions: &mut Vec<Action>,
+    height: f32,
     metadata: impl FnOnce(&mut egui::Ui, &mut Entry),
 ) {
-    let Some(Source::Mesh(draft)) = &entry.source else { return };
+    let preview_width = 230.0;
+    let controls_width = (ui.available_width() - preview_width - ui.spacing().item_spacing.x).max(360.0);
+    ui.horizontal_top(|ui| {
+        ui.allocate_ui_with_layout(Vec2::new(preview_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(preview_width);
+            preview(ui, p, entry, prefs, preview_width, (height - 190.0).clamp(180.0, 260.0), actions);
+            preview_controls(ui, p, entry);
+        });
+        ui.allocate_ui_with_layout(Vec2::new(controls_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(controls_width);
+            egui::ScrollArea::vertical()
+                .id_salt(("mesh_data", entry.id))
+                .max_height(height)
+                .show(ui, |ui| {
+                    let section = if let Some(Source::Mesh(draft)) = &entry.source {
+                        mesh_section(ui, p, entry.id, draft)
+                    } else {
+                        return;
+                    };
+                    if section == 2 {
+                        metadata(ui, entry);
+                        ui.add_space(8.0);
+                    }
+                    let Some(Source::Mesh(draft)) = &mut entry.source else { return };
+                    let before_lod = draft.preview_lod;
+                    if mesh_controls(ui, p, entry.id, draft, prefs, actions, section) || before_lod != draft.preview_lod {
+                        entry.invalidate_preview();
+                    }
+                });
+        });
+    });
+}
+
+fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry) {
+    let Some(Source::Mesh(draft)) = &mut entry.source else { return };
     let old_preview = (
         draft.preview_lod,
         draft.preview_physics,
@@ -23,42 +58,6 @@ pub(super) fn show(
         draft.show_overrides,
         draft.explode,
     );
-    let metadata_width = 464.0;
-    let preview_width = (ui.available_width() - metadata_width - ui.spacing().item_spacing.x - 8.0).max(180.0);
-    ui.horizontal_top(|ui| {
-        ui.allocate_ui_with_layout(Vec2::new(metadata_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(metadata_width);
-            metadata(ui, entry);
-            ui.add_space(12.0);
-            preview_controls(ui, p, entry, prefs);
-        });
-        ui.add_space(8.0);
-        ui.vertical(|ui| {
-            ui.set_width(preview_width);
-            preview(ui, p, entry, prefs, preview_width);
-        });
-    });
-    ui.add_space(8.0);
-    let Some(Source::Mesh(draft)) = &mut entry.source else { return };
-    let changed = mesh_controls(ui, p, entry.id, draft, prefs, actions);
-    if changed
-        || old_preview
-            != (
-                draft.preview_lod,
-                draft.preview_physics,
-                draft.show_textures,
-                draft.preview_weights,
-                draft.show_joints,
-                draft.show_overrides,
-                draft.explode,
-            )
-    {
-        entry.invalidate_preview();
-    }
-}
-
-fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &mut Preferences) {
-    let Some(Source::Mesh(draft)) = &mut entry.source else { return };
     if entry.local {
         ui.label(aurora_i18n::tr!("import-local-mesh-instance"));
         egui::ComboBox::from_id_salt("local_mesh_instance")
@@ -79,32 +78,99 @@ fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &m
         checkbox(ui, p, &mut entry.local_use_scale, aurora_i18n::tr!("import-local-mesh-scale"));
     }
     ui.horizontal_wrapped(|ui| {
-        checkbox(ui, p, &mut entry.view.edges, aurora_i18n::tr!("import-edges"));
-        checkbox(ui, p, &mut draft.show_textures, aurora_i18n::tr!("import-textures"));
-        checkbox(ui, p, &mut draft.preview_physics, aurora_i18n::tr!("import-physics-preview"))
-            .on_hover_text(aurora_i18n::tr!("import-physics-preview-help"));
+        checkbox(
+            ui,
+            p,
+            &mut entry.view.edges,
+            RichText::new(aurora_i18n::tr!("import-edges")).small(),
+        );
+        checkbox(
+            ui,
+            p,
+            &mut draft.show_textures,
+            RichText::new(aurora_i18n::tr!("import-textures")).small(),
+        );
+        checkbox(
+            ui,
+            p,
+            &mut draft.preview_physics,
+            RichText::new(aurora_i18n::tr!("import-physics-preview")).small(),
+        )
+        .on_hover_text(aurora_i18n::tr!("import-physics-preview-help"));
     });
-    fold(ui, p, aurora_i18n::tr!("import-preview-tools"), false, |ui| {
-        checkbox(ui, p, &mut entry.view.uv, aurora_i18n::tr!("import-uv-guide"));
-        let skinned = draft.scene.models.iter().any(|model| model.skin.is_some());
-        ui.add_enabled_ui(skinned, |ui| {
-            checkbox(ui, p, &mut draft.preview_weights, aurora_i18n::tr!("import-preview-weights"));
-            checkbox(ui, p, &mut draft.show_joints, aurora_i18n::tr!("import-preview-joints"));
-            checkbox(ui, p, &mut draft.show_overrides, aurora_i18n::tr!("import-preview-overrides"));
+    let skinned = draft.scene.models.iter().any(|model| model.skin.is_some());
+    egui::Grid::new(("mesh_preview_tools", entry.id))
+        .num_columns(2)
+        .max_col_width((ui.available_width() - 8.0) * 0.5)
+        .spacing(Vec2::new(8.0, 6.0))
+        .show(ui, |ui| {
+            checkbox(
+                ui,
+                p,
+                &mut entry.view.uv,
+                RichText::new(aurora_i18n::tr!("import-uv-guide")).small(),
+            );
+            ui.add_enabled_ui(skinned, |ui| {
+                checkbox(
+                    ui,
+                    p,
+                    &mut draft.preview_weights,
+                    RichText::new(aurora_i18n::tr!("import-preview-weights")).small(),
+                );
+            });
+            ui.end_row();
+            ui.add_enabled_ui(skinned, |ui| {
+                checkbox(
+                    ui,
+                    p,
+                    &mut draft.show_joints,
+                    RichText::new(aurora_i18n::tr!("import-preview-joints")).small(),
+                );
+            });
+            ui.add_enabled_ui(skinned, |ui| {
+                checkbox(
+                    ui,
+                    p,
+                    &mut draft.show_overrides,
+                    RichText::new(aurora_i18n::tr!("import-preview-overrides")).small(),
+                );
+            });
+            ui.end_row();
         });
-        if draft.preview_physics {
-            ui.add(egui::Slider::new(&mut draft.explode, 0.0..=3.0).text(aurora_i18n::tr!("import-explode-hulls")));
-        }
-    });
-    preview_colors(ui, p, prefs);
+    if draft.preview_physics {
+        ui.add(egui::Slider::new(&mut draft.explode, 0.0..=3.0).text(aurora_i18n::tr!("import-explode-hulls")));
+    }
+    if old_preview
+        != (
+            draft.preview_lod,
+            draft.preview_physics,
+            draft.show_textures,
+            draft.preview_weights,
+            draft.show_joints,
+            draft.show_overrides,
+            draft.explode,
+        )
+    {
+        entry.invalidate_preview();
+    }
 }
 
-fn preview(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &Preferences, width: f32) {
+fn preview(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &mut Preferences, width: f32, height: f32, actions: &mut Vec<Action>) {
     let Some(Source::Mesh(draft)) = &entry.source else { return };
-    ui.horizontal(|ui| {
-        widgets::section_header(ui, p, "eye-filled", aurora_i18n::tr!("import-preview"));
+    ui.horizontal_wrapped(|ui| {
+        if widgets::icon_button(ui, p, "zoom-in-filled", aurora_i18n::tr!("import-preview-enlarge"), true) {
+            actions.push(Action::Zoom(entry.id, None));
+        }
+        if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("import-preview-reset-view"), true) {
+            entry.view.reset_camera();
+        }
+        widgets::icon_menu(ui, p, "palette-filled", aurora_i18n::tr!("import-preview-colors"), |ui| {
+            preview_colors_fields(ui, p, prefs)
+        });
+        ui.label(RichText::new(aurora_i18n::tr!("import-preview")).strong().color(p.ink));
+        let (spinner, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
         if entry.preview_pending || entry.preview_not_before.is_some() {
-            ui.add(egui::Spinner::new().size(12.0));
+            ui.put(spinner, egui::Spinner::new().size(12.0));
         }
     });
     entry.view.material = draft.preview_physics.then(|| aurora_render::preview::Material {
@@ -121,18 +187,25 @@ fn preview(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &Preference
             egui::Id::new(("mesh_preview", entry.id)),
             model.clone(),
             &mut entry.view,
-            Vec2::new(width, 180.0),
+            Vec2::new(width, height),
         )
     } else {
-        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 180.0), egui::Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
         ui.painter().rect_filled(rect, 0.0, p.field);
         if entry.preview_pending {
             ui.put(rect, egui::Spinner::new());
         }
         response
     };
+    ui.painter().text(
+        response.rect.left_top() + Vec2::splat(8.0),
+        egui::Align2::LEFT_TOP,
+        aurora_i18n::tr!("import-lod-level", level = lod_label(draft.preview_lod)),
+        egui::TextStyle::Small.resolve(ui.style()),
+        p.muted,
+    );
     response.on_hover_text(aurora_i18n::tr!("import-preview-camera-help"));
-    preview_camera_controls(ui, p, &mut entry.view);
+    camera_hint(ui, p);
 }
 fn lod_source(source: mesh::LodSource) -> &'static str {
     match source {
@@ -144,16 +217,7 @@ fn lod_source(source: mesh::LodSource) -> &'static str {
         mesh::LodSource::Above => aurora_i18n::tr!("import-lod-above"),
     }
 }
-fn mesh_controls(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    id: Uuid,
-    draft: &mut mesh::Draft,
-    prefs: &mut Preferences,
-    actions: &mut Vec<Action>,
-) -> bool {
-    let old = draft.options.clone();
-    let mut changed = false;
+fn mesh_section(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mesh::Draft) -> usize {
     let triangles = draft.scene.models.iter().map(|m| m.triangles()).sum::<usize>();
     ui.horizontal(|ui| {
         widgets::section_header(ui, p, "cube-3d-sphere", aurora_i18n::tr!("import-mesh"));
@@ -164,6 +228,7 @@ fn mesh_controls(
                 instances = draft.scene.instances.len(),
                 triangles = triangles
             ))
+            .small()
             .color(p.muted),
         );
     });
@@ -196,6 +261,20 @@ fn mesh_controls(
         ],
     );
     ui.ctx().data_mut(|d| d.insert_temp(section_id, section));
+    section
+}
+fn mesh_controls(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id: Uuid,
+    draft: &mut mesh::Draft,
+    prefs: &mut Preferences,
+    actions: &mut Vec<Action>,
+    section: usize,
+) -> bool {
+    let old = draft.options.clone();
+    let mut changed = false;
+    let triangles = draft.scene.models.iter().map(|model| model.triangles()).sum::<usize>();
     if draft.pending.is_some() {
         ui.horizontal(|ui| {
             ui.spinner();
@@ -210,14 +289,30 @@ fn mesh_controls(
     }
     ui.add_space(2.0);
     if section == 0 {
-        ui.label(RichText::new(aurora_i18n::tr!("import-lods-help")).color(p.muted));
         ui.scope(|ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            ui.spacing_mut().interact_size.y = 24.0;
+            ui.spacing_mut().item_spacing.y = 7.0;
             for level in (0..4).rev() {
                 ui.push_id(level, |ui| {
                     let selected = draft.preview_lod == level;
-                    egui::Frame::new()
+                    let actual = draft
+                        .prepared
+                        .as_ref()
+                        .map(|prepared| {
+                            prepared
+                                .lods
+                                .iter()
+                                .filter_map(|models| models[level].as_ref())
+                                .map(|model| model.triangles())
+                                .sum::<usize>()
+                        })
+                        .or_else(|| {
+                            draft.lods[level]
+                                .file
+                                .as_ref()
+                                .map(|scene| scene.models.iter().map(|model| model.triangles()).sum())
+                        })
+                        .or_else(|| (level == 3).then_some(triangles));
+                    let frame = egui::Frame::new()
                         .fill(p.field)
                         .stroke(egui::Stroke::new(
                             1.0,
@@ -228,118 +323,133 @@ fn mesh_controls(
                             },
                         ))
                         .corner_radius(ui.visuals().window_corner_radius)
-                        .inner_margin(3)
-                        .show(ui, |ui| {
-                            ui.set_min_width(ui.available_width());
-                            ui.spacing_mut().item_spacing.y = 3.0;
+                        .inner_margin(6);
+                    let response = frame.show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.horizontal_top(|ui| {
+                            let icon = ui
+                                .add_sized(Vec2::splat(38.0), egui::Button::new("").selected(selected))
+                                .on_hover_text(aurora_i18n::tr!("import-lod-level", level = lod_label(level)));
+                            lod_icon(ui, icon.rect, level, if selected { p.on_accent } else { p.muted });
                             let lod = &mut draft.lods[level];
-                            let mut lod_changed = false;
-                            let actual = draft
-                                .prepared
-                                .as_ref()
-                                .map(|p| {
-                                    p.lods
-                                        .iter()
-                                        .filter_map(|m| m[level].as_ref())
-                                        .map(|m| m.triangles())
-                                        .sum::<usize>()
-                                })
-                                .or_else(|| lod.file.as_ref().map(|s| s.models.iter().map(|m| m.triangles()).sum()))
-                                .or_else(|| (level == 3).then_some(triangles));
-                            ui.horizontal_wrapped(|ui| {
-                                if ui
-                                    .add_sized(
-                                        Vec2::new(100.0, ui.spacing().interact_size.y),
-                                        egui::Button::new(
-                                            RichText::new(aurora_i18n::tr!("import-lod-level", level = lod_label(level))).strong(),
-                                        )
-                                        .selected(selected),
-                                    )
-                                    .on_hover_text(aurora_i18n::tr!("import-lod-preview-help"))
-                                    .clicked()
-                                {
-                                    draft.preview_lod = level;
-                                }
-                                let mut source = lod.source;
-                                egui::ComboBox::from_id_salt("source")
-                                    .width(180.0)
-                                    .selected_text(lod_source(lod.source))
-                                    .show_ui(ui, |ui| {
-                                        for choice in [
-                                            mesh::LodSource::File,
-                                            mesh::LodSource::Auto,
-                                            mesh::LodSource::Combine,
-                                            mesh::LodSource::Fast,
-                                            mesh::LodSource::Reliable,
-                                            mesh::LodSource::Above,
-                                        ] {
-                                            if level < 3 || choice != mesh::LodSource::Above {
-                                                selection(ui, &mut source, choice, lod_source(choice));
+                            let mut edited = false;
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    let mut source = lod.source;
+                                    egui::ComboBox::from_id_salt("source")
+                                        .width(if source == mesh::LodSource::File { 116.0 } else { 184.0 })
+                                        .selected_text(RichText::new(lod_source(source)).small())
+                                        .show_ui(ui, |ui| {
+                                            for choice in [
+                                                mesh::LodSource::File,
+                                                mesh::LodSource::Auto,
+                                                mesh::LodSource::Combine,
+                                                mesh::LodSource::Fast,
+                                                mesh::LodSource::Reliable,
+                                                mesh::LodSource::Above,
+                                            ] {
+                                                if level < 3 || choice != mesh::LodSource::Above {
+                                                    selection(ui, &mut source, choice, lod_source(choice));
+                                                }
                                             }
+                                        });
+                                    if source != lod.source {
+                                        if source == mesh::LodSource::File && level < 3 && lod.file.is_none() {
+                                            actions.push(Action::MeshFile(id, level));
+                                        } else {
+                                            lod.source = source;
+                                            edited = true;
                                         }
-                                    })
-                                    .response
-                                    .on_hover_text(aurora_i18n::tr!("import-source"));
-                                if source != lod.source {
-                                    if source == mesh::LodSource::File && level < 3 && lod.file.is_none() {
-                                        // Commit file mode only after the picker returns a decoded model.
-                                        actions.push(Action::MeshFile(id, level));
-                                    } else {
-                                        lod.source = source;
-                                        lod_changed = true;
                                     }
-                                }
-                                if lod.source == mesh::LodSource::File {
-                                    if flat_button(ui, p, aurora_i18n::tr!("import-browse")).clicked() {
+                                    if lod.source == mesh::LodSource::File
+                                        && flat_button(ui, p, aurora_i18n::tr!("import-browse")).clicked()
+                                    {
                                         actions.push(Action::MeshFile(id, level));
                                     }
-                                    ui.allocate_ui_with_layout(
-                                        Vec2::new(160.0, 26.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| source_path(ui, p, lod.path.as_deref()),
-                                    );
-                                } else if lod.source != mesh::LodSource::Above {
-                                    lod_changed |= checkbox(ui, p, &mut lod.error_mode, aurora_i18n::tr!("import-error-threshold"))
-                                        .on_hover_text(aurora_i18n::tr!("import-error-threshold-help"))
-                                        .changed();
-                                    if !lod.error_mode {
-                                        ui.label(aurora_i18n::tr!("import-triangle-target"));
-                                    }
-                                    lod_changed |= if lod.error_mode {
-                                        let mut percent = lod.error * 100.0;
-                                        let response = ui
-                                            .add(egui::DragValue::new(&mut percent).range(0.0..=100.0).speed(0.01).suffix(" %"))
-                                            .on_hover_text(aurora_i18n::tr!("import-error-threshold-help"));
-                                        if response.changed() {
-                                            lod.error = percent * 0.01;
-                                        }
-                                        response.changed()
-                                    } else {
-                                        ui.add(egui::DragValue::new(&mut lod.triangles).range(0..=triangles)).changed()
-                                    };
-                                }
-                                if let Some(count) = actual {
-                                    ui.label(RichText::new(aurora_i18n::tr!("import-lod-count", count = count)).color(p.muted))
+                                    if let Some(count) = actual {
+                                        ui.label(
+                                            RichText::new(aurora_i18n::tr!("import-lod-count", count = count))
+                                                .small()
+                                                .color(p.muted),
+                                        )
                                         .on_hover_text(aurora_i18n::tr!(
                                             "import-lod-result-help",
                                             original = triangles,
                                             remaining = aurora_i18n::number(count as f64 * 100.0 / triangles.max(1) as f64, 1)
                                         ));
-                                }
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    if lod.source == mesh::LodSource::File {
+                                        source_path(ui, p, lod.path.as_deref());
+                                    } else if lod.source != mesh::LodSource::Above {
+                                        let before = lod.error_mode;
+                                        egui::ComboBox::from_id_salt("criterion")
+                                            .width(146.0)
+                                            .selected_text(
+                                                RichText::new(if lod.error_mode {
+                                                    aurora_i18n::tr!("import-error-threshold")
+                                                } else {
+                                                    aurora_i18n::tr!("import-triangle-target")
+                                                })
+                                                .small(),
+                                            )
+                                            .show_ui(ui, |ui| {
+                                                selection(ui, &mut lod.error_mode, false, aurora_i18n::tr!("import-triangle-target"));
+                                                selection(ui, &mut lod.error_mode, true, aurora_i18n::tr!("import-error-threshold"));
+                                            });
+                                        edited |= before != lod.error_mode;
+                                        edited |= if lod.error_mode {
+                                            let mut percent = lod.error * 100.0;
+                                            let response = ui.add_sized(
+                                                Vec2::new(74.0, 26.0),
+                                                egui::DragValue::new(&mut percent).range(0.0..=100.0).speed(0.01).suffix(" %"),
+                                            );
+                                            if response.changed() {
+                                                lod.error = percent * 0.01;
+                                            }
+                                            response.changed()
+                                        } else {
+                                            ui.add_sized(
+                                                Vec2::new(74.0, 26.0),
+                                                egui::DragValue::new(&mut lod.triangles).range(0..=triangles),
+                                            )
+                                            .changed()
+                                        };
+                                    }
+                                });
                             });
-                            if lod_changed {
-                                // Show the level being edited, so a threshold change is visible immediately.
+                            if edited {
                                 draft.preview_lod = level;
                                 changed = true;
                             }
                         });
+                    });
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::new(("import_lod_card", id, level)), response.response.rect));
+                    // Observe the press without placing an interaction over the native fields.
+                    let position = ui.input(|input| input.pointer.primary_pressed().then(|| input.pointer.interact_pos()).flatten());
+                    let clicked = ui.is_enabled()
+                        && position.is_some_and(|position| {
+                            response.response.rect.contains(position)
+                                && ui.clip_rect().contains(position)
+                                && ui.ctx().layer_id_at(position) == Some(ui.layer_id())
+                        });
+                    if clicked {
+                        draft.preview_lod = level;
+                    }
                 });
             }
-            checkbox(ui, p, &mut draft.options.normals, aurora_i18n::tr!("import-generate-normals"));
-            ui.add_enabled(
-                draft.options.normals,
-                egui::Slider::new(&mut draft.options.crease, 0.0..=180.0).text(aurora_i18n::tr!("import-crease-angle")),
-            );
+            ui.horizontal_wrapped(|ui| {
+                checkbox(ui, p, &mut draft.options.normals, aurora_i18n::tr!("import-generate-normals"));
+                ui.add_enabled_ui(draft.options.normals, |ui| {
+                    ui.label(RichText::new(aurora_i18n::tr!("import-crease-angle")).small());
+                    ui.add_sized(
+                        Vec2::new(62.0, 26.0),
+                        egui::DragValue::new(&mut draft.options.crease).range(0.0..=180.0).suffix("Â°"),
+                    );
+                });
+            });
         });
     }
     if section == 1 {
@@ -585,6 +695,48 @@ fn load_settings(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
     });
 }
 
+// Topology glyphs requested for LOD density; labels remain in the preview and tooltips.
+fn lod_icon(ui: &egui::Ui, rect: egui::Rect, level: usize, color: egui::Color32) {
+    let faces = [
+        [[20.0, 3.0], [35.0, 11.0], [20.0, 19.0], [5.0, 11.0]],
+        [[5.0, 11.0], [20.0, 19.0], [20.0, 36.0], [5.0, 28.0]],
+        [[20.0, 19.0], [35.0, 11.0], [35.0, 28.0], [20.0, 36.0]],
+    ];
+    let rect = rect.shrink(4.0);
+    let point = |face: [[f32; 2]; 4], u: f32, v: f32| {
+        let value = |axis| {
+            face[0][axis] * (1.0 - u) * (1.0 - v) + face[1][axis] * u * (1.0 - v) + face[2][axis] * u * v + face[3][axis] * (1.0 - u) * v
+        };
+        rect.min + Vec2::new(value(0) / 40.0 * rect.width(), value(1) / 40.0 * rect.height())
+    };
+    let line = |a, b| ui.painter().line_segment([a, b], egui::Stroke::new(1.0, color));
+    for face in faces {
+        for i in 0..4 {
+            line(
+                point(face, if i == 1 || i == 2 { 1.0 } else { 0.0 }, if i >= 2 { 1.0 } else { 0.0 }),
+                point(
+                    face,
+                    if (i + 1) % 4 == 1 || (i + 1) % 4 == 2 { 1.0 } else { 0.0 },
+                    if (i + 1) % 4 >= 2 { 1.0 } else { 0.0 },
+                ),
+            );
+        }
+        for i in 1..level {
+            let f = i as f32 / level as f32;
+            line(point(face, f, 0.0), point(face, f, 1.0));
+            line(point(face, 0.0, f), point(face, 1.0, f));
+        }
+        for y in 0..level {
+            for x in 0..level {
+                line(
+                    point(face, x as f32 / level as f32, y as f32 / level as f32),
+                    point(face, (x + 1) as f32 / level as f32, (y + 1) as f32 / level as f32),
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -636,7 +788,7 @@ mod tests {
                 },
                 |ui| {
                     ui.set_width(1000.0);
-                    show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), |_, _| {});
+                    show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), 430.0, |_, _| {});
                 },
             );
             output.textures_delta.clear();
@@ -726,7 +878,7 @@ mod tests {
                 },
                 |ui| {
                     ui.set_width(1000.0);
-                    show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), |_, _| {});
+                    show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), 430.0, |_, _| {});
                 },
             );
             output.textures_delta.clear();
@@ -786,7 +938,7 @@ mod tests {
                 },
                 |ui| {
                     ui.set_width(1000.0);
-                    show(ui, &theme.palette(), entry, &mut prefs, &mut actions, |_, _| {});
+                    show(ui, &theme.palette(), entry, &mut prefs, &mut actions, 430.0, |_, _| {});
                 },
             );
             output.textures_delta.clear();
@@ -835,22 +987,24 @@ mod tests {
             draft.lods[2].source == mesh::LodSource::Auto,
             "cancelled file picker keeps the working source"
         );
-        assert_eq!(entry.preview_generation, 0);
+        assert_eq!(
+            entry.preview_generation, 1,
+            "opening the source field also selects its card for the preview"
+        );
         assert!(entry.preview_error.is_none());
 
-        output = Some(frame(Vec::new(), &mut entry).0);
-        let low = text_position(
-            output.as_ref().expect("frame"),
-            &aurora_i18n::tr!("import-lod-level", level = lod_label(1)),
-            false,
-        );
+        drop(frame(Vec::new(), &mut entry));
+        let card = ctx
+            .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("import_lod_card", entry.id, 1))))
+            .expect("Low card");
+        let low = card.right_bottom() - Vec2::splat(4.0);
         entry.preview_error = Some("previous preparation failure".into());
         for pressed in [true, false] {
             assert!(frame(events(low, pressed), &mut entry).1.is_empty());
         }
         let Some(Source::Mesh(draft)) = &entry.source else { panic!("mesh") };
         assert_eq!(draft.preview_lod, 1);
-        assert_eq!(entry.preview_generation, 1);
+        assert_eq!(entry.preview_generation, 2);
         assert!(entry.preview_error.is_none(), "new preview selection can retry after an error");
     }
 }

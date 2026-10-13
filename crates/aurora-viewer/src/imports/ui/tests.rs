@@ -115,7 +115,7 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
             map.key,
             ctx.load_texture(
                 format!("map_{slot}"),
-                egui::ColorImage::filled([1, 1], theme.palette().teal),
+                egui::ColorImage::filled([2, 1], theme.palette().teal),
                 egui::TextureOptions::LINEAR,
             ),
         ))
@@ -199,19 +199,23 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
         },
     );
     thumbnails_output.textures_delta.clear();
-    for texture in texture_ids {
+    for texture in [texture_ids[0], texture_ids[2]] {
         assert!(
             thumbnails_output
                 .shapes
                 .iter()
-                .any(|shape| matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.fill_texture_id() == texture))
+                .any(|shape| matches!(&shape.shape, egui::epaint::Shape::Mesh(mesh) if mesh.texture_id == texture && (mesh.calc_bounds().width() - 88.0).abs() < 0.1 && (mesh.calc_bounds().height() - 44.0).abs() < 0.1)),
+            "a rectangular map keeps its aspect inside the square thumbnail"
         );
     }
     for _ in 0..3 {
         drop(frame(Vec::new(), &mut imports));
     }
-    let output = frame(Vec::new(), &mut imports);
-    let reset = position(&output, aurora_i18n::tr!("import-preview-reset-view"));
+    drop(frame(Vec::new(), &mut imports));
+    let reset = ctx
+        .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("material_reset", imports.entries[0].id))))
+        .expect("reset button")
+        .center();
     for pressed in [true, false] {
         drop(frame(click(reset, pressed), &mut imports));
     }
@@ -372,7 +376,15 @@ fn every_local_asset_exposes_the_same_three_actions_without_a_footer_close_butto
         .into_iter()
         .enumerate()
         {
-            let pos = texts.iter().find(|(text, _)| text == label).expect("local control visible").1;
+            let (current, _) = frame(Vec::new());
+            let pos = current
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos + text.galley.size() * 0.5),
+                    _ => None,
+                })
+                .expect("local control visible");
             for pressed in [true, false] {
                 let (_, actions) = frame(vec![
                     egui::Event::PointerMoved(pos),
@@ -396,6 +408,111 @@ fn every_local_asset_exposes_the_same_three_actions_without_a_footer_close_butto
                 }
             }
         }
+    }
+}
+
+#[test]
+fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() {
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for choice in [Choice::Mesh, Choice::Material] {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let mut prefs = Preferences::default();
+        let mesh = Entry::new(
+            "mesh.dae".into(),
+            Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
+            Default::default(),
+        );
+        let material = Entry::new(
+            "pbr.gltf".into(),
+            Ok(Source::Material {
+                value: Default::default(),
+                images: Box::new(std::array::from_fn(|_| None)),
+            }),
+            Default::default(),
+        );
+        let active = if choice == Choice::Mesh { mesh.id } else { material.id };
+        let mut imports = Imports {
+            open: true,
+            choice,
+            active: Some(active),
+            entries: vec![mesh, material],
+            ..Default::default()
+        };
+        let mut frame = |imports: &mut Imports, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui.ctx(), &theme.palette(), imports, &mut prefs, &world, &Default::default());
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        for _ in 0..60 {
+            drop(frame(&mut imports, Vec::new()));
+        }
+        let size = ctx
+            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v4").with("expanded_size")))
+            .expect("window size");
+        assert!(
+            size.x <= 902.0 && size.y <= 612.0,
+            "compact window grew for {}: {size:?}",
+            choice.label()
+        );
+        let output = frame(&mut imports, Vec::new());
+        let permissions = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-permissions-tab") => {
+                    Some(text.pos + text.galley.size() * 0.5)
+                }
+                _ => None,
+            })
+            .expect("main Permissions tab");
+        for pressed in [true, false] {
+            drop(frame(
+                &mut imports,
+                vec![
+                    egui::Event::PointerMoved(permissions),
+                    egui::Event::PointerButton {
+                        pos: permissions,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            ));
+        }
+        assert!(imports.permissions_open);
+        assert!(imports.choice == choice, "permissions are independent of the asset type");
+        assert_eq!(imports.active, Some(active));
+        for _ in 0..20 {
+            drop(frame(&mut imports, Vec::new()));
+        }
+        let size = ctx
+            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v4").with("expanded_size")))
+            .expect("permissions size");
+        assert!(size.x <= 902.0 && size.y <= 612.0, "permissions table grew: {size:?}");
+        let output = frame(&mut imports, Vec::new());
+        for name in ["mesh", "pbr"] {
+            assert!(
+                output
+                    .shapes
+                    .iter()
+                    .any(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.text().starts_with(name))),
+                "all files remain selectable in Permissions"
+            );
+        }
+        imports.open(choice);
+        assert!(!imports.permissions_open);
+        assert_eq!(imports.active, Some(active));
     }
 }
 

@@ -1,0 +1,85 @@
+//! Large previews share the draft camera and its current render settings.
+use super::*;
+
+pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, actions: &mut Vec<Action>) {
+    if imports.demo_started
+        && let Some(target) = ctx.data_mut(|data| data.get_temp::<(Uuid, Option<usize>)>(egui::Id::new("import_demo_zoom")))
+        && imports.entries.iter().any(|entry| entry.id == target.0)
+    {
+        ctx.data_mut(|data| data.remove_temp::<(Uuid, Option<usize>)>(egui::Id::new("import_demo_zoom")));
+        imports.preview_zoom = Some(target);
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("import_large_preview")));
+    }
+    if !imports.open {
+        imports.preview_zoom = None;
+    }
+    // One enlarged map at a time; changing/closing the loupe frees its GPU handle.
+    for entry in &mut imports.entries {
+        for (slot, cached) in entry.material_large_previews.iter_mut().enumerate() {
+            if imports.preview_zoom != Some((entry.id, Some(slot))) {
+                *cached = None;
+            }
+        }
+    }
+    let Some((id, slot)) = imports.preview_zoom else { return };
+    let Some(entry) = imports.entries.iter_mut().find(|entry| entry.id == id) else {
+        imports.preview_zoom = None;
+        return;
+    };
+    let mut open = true;
+    let mut window = Floater::new(
+        "import_large_preview",
+        aurora_i18n::tr!("import-preview-enlarged", name = entry.name.clone()),
+        egui::pos2(180.0, 100.0),
+        Vec2::new(760.0, 590.0),
+    );
+    window.min_size = Vec2::new(420.0, 360.0);
+    window.show(ctx, p, &mut open, |ui| {
+        let size = Vec2::new(ui.available_width(), (ui.available_height() - 65.0).max(220.0));
+        if let Some(slot) = slot.filter(|slot| *slot < 4) {
+            let key = match &entry.source {
+                Some(Source::Material { images, .. }) => images[slot].as_ref().map(|image| image.key),
+                _ => None,
+            };
+            let preview = entry.material_large_previews[slot]
+                .as_ref()
+                .filter(|(stored, generation, _)| Some(*stored) == key && *generation == entry.preview_generation);
+            let square = size.min_elem();
+            ui.vertical_centered(|ui| {
+                widgets::picture(
+                    ui,
+                    p,
+                    preview.map(|(_, _, texture)| texture),
+                    Vec2::splat(square),
+                    "photo-filled",
+                    "",
+                );
+                ui.horizontal(|ui| {
+                    if entry.material_large_pending[slot] {
+                        ui.spinner();
+                    }
+                    ui.label(map_label(slot));
+                });
+            });
+            if preview.is_none() && key.is_some() && !entry.material_large_pending[slot] {
+                actions.push(Action::LargeMap(id, slot));
+            }
+        } else if let Some(model) = &entry.model {
+            aurora_render::preview::paint(
+                ui,
+                egui::Id::new(("large_import_preview", id)),
+                model.clone(),
+                &mut entry.view,
+                size,
+            );
+            camera_hint(ui, p);
+            preview_camera_controls(ui, p, &mut entry.view);
+        } else {
+            ui.spinner();
+        }
+    });
+    if !open || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+        imports.preview_zoom = None;
+        entry.material_large_previews = std::array::from_fn(|_| None);
+    }
+}

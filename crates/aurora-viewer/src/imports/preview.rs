@@ -659,6 +659,37 @@ fn build(
 }
 
 impl Imports {
+    pub fn request_large_map(&mut self, id: Uuid, slot: usize, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
+        let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) else {
+            return;
+        };
+        let Some(Source::Material { images, .. }) = &entry.source else {
+            return;
+        };
+        let Some(image) = images.get(slot).and_then(Option::as_ref) else {
+            return;
+        };
+        if entry.material_large_pending[slot] {
+            return;
+        }
+        entry.material_large_pending[slot] = true;
+        let image = image.clone();
+        let generation = entry.preview_generation;
+        let tx = self.tx.clone();
+        let wake = ctx.clone();
+        jobs.execute(move || {
+            let pixels = &image.pixels;
+            let rgba = crate::scene::jobs::to_rgba(pixels.components, &pixels.data, pixels.width as usize * pixels.height as usize);
+            let pixels = image::RgbaImage::from_raw(pixels.width, pixels.height, rgba).map(|rgba| {
+                let scaled = image::DynamicImage::ImageRgba8(rgba)
+                    .thumbnail(pixels.width.min(2048), pixels.height.min(2048))
+                    .to_rgba8();
+                egui::ColorImage::from_rgba_unmultiplied([scaled.width() as usize, scaled.height() as usize], scaled.as_raw())
+            });
+            let _ = tx.send(Worker::MaterialLargePreview(id, generation, slot, image.key, pixels));
+            wake.request_repaint();
+        });
+    }
     pub fn request_model(
         &mut self,
         id: Uuid,

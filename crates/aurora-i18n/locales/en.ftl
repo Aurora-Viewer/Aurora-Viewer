@@ -4529,3 +4529,14 @@ currency-confirm-question = Are you sure you want to proceed with this purchase?
 currency-confirm-password = Please re-enter your password and click OK.
 currency-bought = { "Thank you for your payment!\u000A\u000AYour L$ balance will be updated when processing completes. If processing takes more than 20 minutes, your transaction may be canceled. In that case, the purchase amount will be credited to your US$ balance.\u000A\u000AThe status of your payment can be checked on the Transaction History page of your account." }
 demo-currency-refused = Simulated refusal of the L$ purchase service (demo).
+
+import-permissions-tab = Permissions
+import-permissions-help = These settings apply to uploaded textures, sounds, animations, materials and meshes.
+import-permissions-sharing = Sharing
+import-permissions-payment = Payment
+import-preview-enlarge = Enlarge preview
+import-preview-enlarged = Enlarged preview — { $name }
+import-preview-gestures = Drag: rotate · Shift + drag: pan · Wheel: zoom
+import-permissions-basic-help = Choose next-owner rights for each import type. These preferences are saved automatically.
+import-permissions-type = Import type
+import-permissions-fair-use = Transfer remains mandatory when copying is disabled.
