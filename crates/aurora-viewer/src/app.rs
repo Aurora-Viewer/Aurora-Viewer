@@ -6272,7 +6272,8 @@ impl App {
                         alt: self.alt,
                     };
                     crate::build::ui::shortcuts(&ctx, &mut self.build, &mut self.world, &mut self.settings.build);
-                    self.build.draw_overlay(&ctx, &self.world, &self.scene, &self.settings.build, mods);
+                    self.build
+                        .draw_overlay(&ctx, &self.palette, &self.world, &self.scene, &self.settings.build, mods);
                     let mut env = crate::build::ui::Env {
                         images: &self.ui_images,
                         media: &mut self.media,
