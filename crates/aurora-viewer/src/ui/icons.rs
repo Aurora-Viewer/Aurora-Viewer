@@ -28,6 +28,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "arrows-maximize",
     "arrows-minimize",
     "arrows-move",
+    "arrows-sort",
     "arrows-vertical",
     "at",
     "bell-off",

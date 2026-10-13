@@ -497,7 +497,9 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     ) {
         act(CtxAction::ActivateGroup(id));
     }
-    menu::todo(ui, p, "info-circle-filled", aurora_i18n::tr!("common-view-info"));
+    if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-view-info")) {
+        super::group_profile::request_open(ui.ctx(), id);
+    }
     if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl-2")) {
         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
     }

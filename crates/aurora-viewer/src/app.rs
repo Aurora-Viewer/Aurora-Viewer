@@ -258,6 +258,8 @@ pub struct App {
     demo_mmo_start: Option<u64>,
     /// Where the offline demo teleport lands (the asked position).
     demo_tp_dest: Option<Vec3>,
+    /// AURORA_DEMO_RADAR=tp: the radar starts in another region.
+    demo_radar_tp: bool,
     /// Destination of the teleport being started (teleport screen).
     tp_dest: Option<String>,
     /// Window moved / resized: its normal geometry is recorded once settled.
@@ -584,6 +586,7 @@ impl App {
             demo_tp_triggered: false,
             demo_mmo_start: None,
             demo_tp_dest: None,
+            demo_radar_tp: false,
             tp_dest: None,
             geom_changed: None,
             frame_start: Instant::now(),
@@ -2724,17 +2727,24 @@ impl App {
     fn update_radar(&mut self) {
         use crate::world::radar::Event;
         let now = self.radar_clock.elapsed().as_secs_f64();
-        if !self.in_world() || !self.radar.due(now) {
+        // not during a teleport: our position is still the one we had in
+        // the region we leave, and the avatars left behind fade from the
+        // arrival on
+        if !self.in_world() || self.world.teleporting || !self.radar.due(now) {
             return;
         }
         let seen = crate::world::radar::sightings(&self.world);
-        let mut events = self.radar.sweep(
-            seen,
-            self.world.agent.position,
-            self.world.main_region,
-            self.settings.draw_distance,
-            now,
-        );
+        let gaps = crate::world::radar::region_gaps(&self.world);
+        // AURORA_DEMO_RADAR=tp: for the first ten seconds (at 60 images a
+        // second) we are still in the region the demo "teleports" from
+        let my_region = if self.demo_radar_tp && self.frame_count < 600 {
+            Some(crate::demo::RADAR_LEFT_REGION)
+        } else {
+            self.world.main_region
+        };
+        let mut events = self
+            .radar
+            .sweep(seen, self.world.agent.position, my_region, &gaps, self.settings.draw_distance, now);
         let s = self.settings.radar.clone();
         // Firestorm asks for every profile as its entry appears; here only
         // when something reads them (a column on screen, the age alert)
@@ -3554,6 +3564,7 @@ impl App {
         wanted.extend(self.contacts_ui.wanted_pics.drain());
         wanted.extend(self.plates.wanted_pics.drain());
         wanted.extend(self.search_ui.wanted_pics.drain());
+        wanted.extend(self.people_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -5239,6 +5250,11 @@ impl App {
                 self.open_context_menu();
             }
         }
+        // AURORA_DEMO_STATUSMENU=invisible: the status menu, invisible (shown
+        // only: no right is changed, nothing is saved), once logged in
+        if self.demo && self.frame_count == 60 && std::env::var("AURORA_DEMO_STATUSMENU").is_ok_and(|v| v == "invisible") {
+            self.world.status.invisible.on = true;
+        }
         // AURORA_DEMO_CONTACTS: contact sets and aliases to show, once logged in
         if self.demo && self.frame_count == 60 && std::env::var_os("AURORA_DEMO_CONTACTS").is_some() {
             crate::demo::seed_contact_sets(&mut self.world);
@@ -5866,6 +5882,7 @@ impl App {
                 self.world.set_away(m.away);
                 self.auto_away = false;
                 self.world.set_dnd(m.dnd);
+                self.world.set_invisible(m.invisible);
                 let a = &mut self.settings.autoresponse;
                 a.autorespond = m.autorespond;
                 a.autorespond_nonfriends = m.autorespond_nonfriends;
@@ -6443,13 +6460,14 @@ impl App {
                     );
                     mini.extend(acts);
                 };
-                let radar_before = self.settings.radar.clone();
+                let people_before = (self.settings.radar.clone(), self.settings.friends_list.clone());
                 let mut radar = ui::people::RadarData {
                     radar: &self.radar,
                     settings: &mut self.settings.radar,
                     voice: &voice_levels,
                     draw_distance: self.settings.draw_distance,
                     now: self.radar_clock.elapsed().as_secs_f64(),
+                    pics: &self.avatar_pics,
                 };
                 let people = ui::people::people_window(
                     &ctx,
@@ -6458,9 +6476,10 @@ impl App {
                     &mut self.panels,
                     &mut self.people_ui,
                     &mut radar,
+                    &mut self.settings.friends_list,
                     &mut people_map,
                 );
-                if radar_before != self.settings.radar {
+                if people_before != (self.settings.radar.clone(), self.settings.friends_list.clone()) {
                     self.settings.save();
                 }
                 for pa in people {
@@ -6481,7 +6500,8 @@ impl App {
                             self.world.start_group_chat(id);
                             self.panels.chat = true;
                         }
-                        ui::people::PeopleAction::GroupChatBlocked(id, on) => self.world.set_group_chat_blocked(id, on),
+                        ui::people::PeopleAction::GroupNotices(id, on) => self.world.groups.set_accept_notices(id, on),
+                        ui::people::PeopleAction::PickFriend => self.contacts_ui.pick_new_friend(),
                         ui::people::PeopleAction::Unblock(id, name) => self.world.unblock(id, &name, 0),
                         ui::people::PeopleAction::BlockByName(name) => {
                             if let Err(e) = self.world.block(uuid::Uuid::nil(), &name, crate::world::mutes::MuteType::ByName) {
@@ -7345,13 +7365,24 @@ impl ApplicationHandler for App {
                 // (nothing over the rows of plates)
                 self.panels.people = false;
             }
-            // AURORA_DEMO_RADAR=1: residents around for the radar of People
-            if std::env::var_os("AURORA_DEMO_RADAR").is_some() {
-                for ev in crate::demo::radar_events() {
+            // AURORA_DEMO_RADAR=1|tp|amis|groupes|profil: residents around
+            // for the radar of People (tp: with the ones of a region a
+            // teleport just left), or its friends / groups tab (profil: with
+            // the profile of a group)
+            if let Ok(v) = std::env::var("AURORA_DEMO_RADAR") {
+                self.demo_radar_tp = v == "tp";
+                for ev in crate::demo::radar_events(self.demo_radar_tp) {
                     self.world.apply(ev);
                 }
                 self.panels.people = true;
-                self.panels.people_tab = 0;
+                self.panels.people_tab = match v.as_str() {
+                    "amis" => 1,
+                    "groupes" | "profil" => 2,
+                    _ => 0,
+                };
+                if v == "profil" {
+                    self.group_profile_ui.open(&mut self.world, crate::demo::DEMO_GROUP1);
+                }
             }
             if std::env::var_os("AURORA_DEMO_UI").is_some() {
                 self.panels.people = true;

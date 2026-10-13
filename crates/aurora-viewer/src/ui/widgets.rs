@@ -1172,6 +1172,43 @@ pub fn picture(
     resp
 }
 
+/// First letters of the two first words of a name.
+pub fn initials(name: &str) -> String {
+    name.split_whitespace()
+        .filter_map(|w| w.chars().next())
+        .take(2)
+        .collect::<String>()
+        .to_uppercase()
+}
+
+/// Part of a `w` x `h` picture a square shows: its center, the longer side
+/// cut (profile pictures are often 4:3).
+fn square_crop(w: usize, h: usize) -> egui::Rect {
+    let (w, h) = (w.max(1) as f32, h.max(1) as f32);
+    let (u, v) = if w > h { (h / w, 1.0) } else { (1.0, w / h) };
+    egui::Rect::from_center_size(egui::pos2(0.5, 0.5), Vec2::new(u, v))
+}
+
+/// Profile picture of a resident over the square `rect` of a list row or a
+/// chat line, or the initials of `name` on a tile while there is none.
+/// `dim` fades it with its row.
+pub fn avatar_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, pic: Option<&egui::TextureHandle>, name: &str, dim: bool) {
+    match pic {
+        Some(t) => {
+            let [w, h] = t.size();
+            let tint = if dim { PICTURE_TINT_DISABLED } else { PICTURE_TINT };
+            ui.painter().image(t.id(), rect, square_crop(w, h), tint);
+        }
+        None => {
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+            let color = if dim { p.muted_dim } else { p.violet_pale };
+            let font = egui::FontId::proportional(rect.height() * 0.45);
+            ui.painter()
+                .text(rect.center(), egui::Align2::CENTER_CENTER, initials(name), font, color);
+        }
+    }
+}
+
 /// A menu opened by a Tabler icon button, with the rows and the frame of the
 /// right-click menus (`menu::button`).
 pub fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, content: impl FnOnce(&mut egui::Ui)) {

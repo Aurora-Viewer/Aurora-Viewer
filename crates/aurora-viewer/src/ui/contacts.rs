@@ -198,6 +198,13 @@ impl ContactsUi {
 /// or not (they are also asked from the other right-click menus).
 pub fn dialog_windows(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut ContactsUi) -> Vec<ContactsAction> {
     let mut actions = Vec::new();
+    // the resident picker shared with About Land (LLFloaterAvatarPicker),
+    // also opened by the friends tab of the People window
+    if let Some(ids) = st.picker.show(ctx, p, world)
+        && let Some(what) = st.pick_for.take()
+    {
+        picked(world, st, what, ids);
+    }
     dialogs(ctx, p, world, st, &mut actions);
     actions
 }
@@ -263,7 +270,7 @@ fn color32(c: [f32; 4]) -> Color32 {
 }
 
 /// Group limit of the account (LLAgentBenefitsMgr group_membership_limit).
-fn group_limit(world: &World) -> usize {
+pub(crate) fn group_limit(world: &World) -> usize {
     world
         .login
         .as_ref()
@@ -276,7 +283,7 @@ fn group_limit(world: &World) -> usize {
 }
 
 /// FSCommon::populateGroupCount (strings.xml groupcountstring).
-fn group_count_text(count: usize, limit: usize) -> String {
+pub(crate) fn group_count_text(count: usize, limit: usize) -> String {
     if limit > 0 {
         aurora_i18n::tr!(
             "ui-contacts-you-belong-to-groups-remaining",
@@ -455,12 +462,6 @@ pub fn panel(
     }
     if let Some((set, ids)) = st.add_to_set.take() {
         picked(world, st, PickFor::Set(set), ids);
-    }
-    // the resident picker shared with About Land (LLFloaterAvatarPicker)
-    if let Some(ids) = st.picker.show(ui.ctx(), p, world)
-        && let Some(what) = st.pick_for.take()
-    {
-        picked(world, st, what, ids);
     }
     set_config_window(ui.ctx(), p, world, st, settings);
     actions
@@ -1228,7 +1229,9 @@ fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
     ) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(id)));
     }
-    menu::todo(ui, p, "info-circle-filled", aurora_i18n::tr!("common-view-info"));
+    if menu::item_if(ui, p, "info-circle-filled", aurora_i18n::tr!("common-view-info"), real) {
+        super::group_profile::request_open(ui.ctx(), id);
+    }
     if menu::item_if(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl-2"), real) {
         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
     }
@@ -1267,7 +1270,9 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     ) {
         actions.push(ContactsAction::GroupChat(sel));
     }
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-information"), soon, false);
+    if side_button(ui, p, aurora_i18n::tr!("ui-contacts-information"), "", real) {
+        super::group_profile::request_open(ui.ctx(), sel);
+    }
     side_button(ui, p, aurora_i18n::tr!("ui-contacts-titles"), soon, false);
     if side_button(ui, p, aurora_i18n::tr!("common-enable"), "", sel != world.groups.active) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(sel)));

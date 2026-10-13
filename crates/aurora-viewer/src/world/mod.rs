@@ -904,6 +904,7 @@ impl World {
                 let account = crate::settings::account_dir(&l.agent_id);
                 self.contact_sets = contact_sets::ContactSets::load(account.join(contact_sets::CONTACT_SETS_FILE));
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
+                self.status.invisible = status::Invisible::load(account.join(status::INVISIBLE_FILE), &self.social.friends);
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
                 self.aliases_synced = u64::MAX;
@@ -1978,6 +1979,8 @@ impl World {
             }
             d::FRIENDSHIP_ACCEPTED => {
                 self.social.form_friendship(im.from_agent_id);
+                self.status
+                    .hide_from_new_friend(&mut self.social, &mut self.groups.out, im.from_agent_id);
                 n.push(
                     Kind::Friendship,
                     aurora_i18n::tr!("world-mod-accepted-your-friendship", from = from.to_string()),
@@ -2042,6 +2045,7 @@ impl World {
                 self.notifications.list.iter().find(|n| n.id == id).map(|n| n.data.clone())
         {
             self.social.form_friendship(from);
+            self.status.hide_from_new_friend(&mut self.social, &mut self.groups.out, from);
         }
         let inv = &self.inventory;
         let folder_of = |t: i32| {

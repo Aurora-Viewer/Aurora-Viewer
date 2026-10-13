@@ -912,7 +912,7 @@ grille.
 | `AURORA_DEMO_SNAP=<mode>` | Fenêtres aimantées : guide, collage, déplacement groupé, redimensionnement |
 | `AURORA_DEMO_EXIT=<mode>` | Modale de fermeture et choix hors ligne |
 | `AURORA_DEMO_UI=<onglet>` | Ouvre Personnes (onglet), l'inventaire et le chat |
-| `AURORA_DEMO_RADAR=1` | Résidents autour de soi pour le radar de Personnes (toutes les portées) |
+| `AURORA_DEMO_RADAR=1`, `tp`, `amis`, `groupes` ou `profil` | Fenêtre Personnes : radar, radar après une téléportation, onglet Amis, onglet Groupes, profil d'un groupe |
 | `AURORA_DEMO_OPTIONS=<section>` | Ouvre les préférences sur une section |
 | `AURORA_DEMO_PERF=compact` ou `full` | Ouvre la fenêtre Performances, compacte ou complète |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Solde de démo et fenêtre « Acheter des L$ » |
@@ -928,7 +928,7 @@ grille.
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Compilation dev à version synthétique pour cet essai |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Rapport de bug public avec données de démo, sans envoi |
 | `AURORA_DEMO_MAP=1` ou `mini` | Carte du monde et mini-carte |
-| `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Liste des notifications, menu de statut, panneau du micro, champ de lieu |
+| `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` ou `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Liste des notifications, menu de statut, panneau du micro, champ de lieu |
 | `AURORA_DEMO_COLORPICK=1` | Ouvre le sélecteur de couleur compact de la première pastille affichée |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Conversation de groupe, micro ouvert |
 | `AURORA_DEMO_CONTACTS=<onglet>` | Onglet Contacts de Conversations |
@@ -1226,6 +1226,18 @@ grille.
   le nom entier s'affiche au survol d'un nom coupé (pour une capture :
   `AURORA_DEMO_POINTER="85,633,s"` sur la conférence, `"120,377,s"` sur un
   résident proche, fenêtre de 1600 × 900).
+- **`AURORA_DEMO_RADAR=1|tp|amis|groupes|profil`** : la fenêtre Personnes.
+  `1` : des résidents à toutes les portées dans « Près de vous » (avec
+  `AURORA_DEMO_TAGS=1`, ceux des plaques de nom, dont plusieurs ont une photo
+  de profil). `tp` : trois résidents de plus dans une région à 10 km, que la
+  démo quitte « par téléportation » à l'image 600 ; avec
+  `AURORA_FPS_LIMIT=60`, ils sont grisés à l'image 780 et sortis de la liste
+  à l'image 1400. `amis` et `groupes` : ces onglets. `profil` : l'onglet
+  Groupes et la fenêtre « Profil du groupe » du premier groupe.
+- **`AURORA_DEMO_STATUSMENU=1|invisible`** : le menu de la pastille de
+  statut, ouvert à l'image 300. `invisible` : avec ce statut choisi (pastille
+  grise évidée) ; seul l'affichage change, aucun droit n'est modifié et rien
+  n'est enregistré.
 - **`AURORA_DEMO_CONTACTS=amis|groupes|cercles|detache|ajout`** : onglet
   Contacts de Conversations sur Amis, Groupes ou Cercles de contacts (cercles
   et surnoms de démo), la fenêtre Contacts détachée, ou le sélecteur de

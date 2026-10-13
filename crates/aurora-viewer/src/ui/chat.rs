@@ -328,37 +328,12 @@ pub enum ConvAction {
     Profile(uuid::Uuid),
 }
 
-fn initials(name: &str) -> String {
-    name.split_whitespace()
-        .filter_map(|w| w.chars().next())
-        .take(2)
-        .collect::<String>()
-        .to_uppercase()
-}
+use super::widgets::initials;
 
 /// Profile picture (or initials) of an avatar, `size` px square.
 fn avatar_pic(ui: &mut egui::Ui, p: &Palette, pic: Option<&egui::TextureHandle>, name: &str, size: f32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
-    match pic {
-        Some(t) => {
-            ui.painter().image(
-                t.id(),
-                rect,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                super::widgets::PICTURE_TINT,
-            );
-        }
-        None => {
-            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                initials(name),
-                egui::FontId::proportional(size * 0.45),
-                p.violet_pale,
-            );
-        }
-    }
+    super::widgets::avatar_picture(ui, p, rect, pic, name, false);
 }
 
 /// Tabler icon button of the conversation toolbar.
