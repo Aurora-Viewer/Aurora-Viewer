@@ -4,7 +4,12 @@
 
 # Aurora Viewer
 
-**A modern Second Life viewer written in Rust.**
+**A modern Second Life viewer, written from scratch in Rust.**<br>
+A Vulkan renderer, a clean interface, and the Second Life you already know.
+
+[![Download](docs/readme/button-download.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/latest)&nbsp;
+[![Discord](docs/readme/button-discord.svg)](https://discord.gg/swn83ftMXS)&nbsp;
+[![Website](docs/readme/button-website.svg)](https://auroraviewer.com)
 
 [![CI](https://github.com/Aurora-Viewer/Aurora-Viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Aurora-Viewer/Aurora-Viewer?include_prereleases&color=8B5CF6)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases)
@@ -12,7 +17,7 @@
 [![Rust](https://img.shields.io/badge/rust-stable-5EEAD4?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-Windows-070B1F)](#build)
 
-[Aurora vs Firestorm](#how-aurora-differs-from-firestorm) · [Roadmap](#roadmap) · [Build](#build) · [Contributing](#contributing)
+[Why Aurora](#why-aurora) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
 
 </div>
 
@@ -21,13 +26,305 @@
 Aurora Viewer is a Second Life client built from scratch in Rust, with a
 modern GPU renderer (wgpu on Vulkan) and a clean, flat interface. It follows
 the behaviour of [Firestorm](https://www.firestormviewer.org) — same protocol,
-same rules, same defaults — while rethinking the user interface. AMD FSR
-upscaling and anti-aliasing are planned (see the [roadmap](#roadmap)).
+same rules, same defaults — while rethinking the user interface.
 
 > **Status:** early development (0.x). Usable for exploring, chatting and
 > testing; many features are still in progress — see [TASKS.md](TASKS.md).
 
-## How Aurora differs from Firestorm
+## Why Aurora
+
+<table>
+  <tr>
+    <td width="25%" align="center" valign="top">
+      <h3>5×</h3>
+      the frame rate of a classic viewer in a busy store
+    </td>
+    <td width="25%" align="center" valign="top">
+      <h3>½</h3>
+      the video memory for the same textures
+    </td>
+    <td width="25%" align="center" valign="top">
+      <h3>Instant</h3>
+      teleports within a region, with no loading screen
+    </td>
+    <td width="25%" align="center" valign="top">
+      <h3>Vulkan</h3>
+      a renderer built for today's graphics cards
+    </td>
+  </tr>
+</table>
+
+Items marked <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle">
+are planned or in progress: they are not in the viewer yet.
+
+### Fast, and smooth
+
+- **Hundreds of frames per second in crowded places.** In a busy store of
+  about 16,000 objects, Aurora ran at around 340 fps where a classic viewer
+  gave 68, on the same PC and at the same spot
+  ([how it was measured](#performance)).
+- **The picture keeps moving when you arrive.** Textures and meshes are
+  decoded on background threads and written straight into GPU memory, so
+  landing in a busy region doesn't freeze the view.
+- **Places you know come back at once.** Textures are cached on disk ready
+  for the graphics card: back in a place already visited, nothing is decoded
+  again.
+- **About half the video memory for textures**, with nothing lost to the
+  eye: each texture is checked before it is kept compressed.
+- **Instant teleports within a region.** The other teleports show your last
+  view, blurred, with real step-by-step progress.
+- **A graphics card that finally does the work.** It decides by itself what
+  is visible and draws thousands of objects in a handful of calls, while a
+  dedicated render thread keeps the frames coming.
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **AMD FSR upscaling** and its native anti-aliasing, on every brand of
+  graphics card.
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Graphics presets matched to your machine**, chosen at first launch.
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Even faster arrivals**: what you are looking at loads first, with fewer
+  round trips to the first pixels.
+
+### The Second Life you know
+
+- **The same world, the same look.** PBR and legacy materials, EEP skies,
+  shadows, reflection probes, mirrors, water, glow and particles, compared
+  side by side on the main grid.
+- **Nothing to relearn.** The rules, options and defaults you are used to,
+  down to the chat commands of the built-in Animation Overrider.
+- **Voice, IMs, groups and offline messages**, with a conversation history
+  you can search, kept on your disk only.
+- **A well-behaved client.** Aurora speaks to the servers the way they
+  expect: same messages, same request rates.
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Snapshots, gestures, RLVa**, and the shape and clothing editors.
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Smoother avatars**: movement of the people around you extrapolated and
+  smoothed between two server updates.
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **A full pass on water**, and PBR terrain.
+
+### An interface made for today
+
+- **Flat, calm and readable**: a single top bar, a notification center,
+  searchable conversations and a redesigned performance window.
+- **Windows that get out of the way**: double-click a window's title to
+  collapse it into a movable bar, then restore it with its size and content.
+- **Ready for your keyboard**: movement keys adapt to the keyboard layout on
+  first launch (WASD or ZQSD).
+- **English and French**, following the system language or your choice,
+  applied at once.
+- **A clean way out**: on closing, a dialog over a blurred background offers
+  Quit, Log out (back to the login screen) and Cancel. Esc cancels; the
+  viewer waits for the logout before closing.
+- **It keeps itself up to date**: release checks, verified downloads,
+  installation and restart with rollback.
+
+### Only in Aurora
+
+- **Link safety check**: web links in chat and profiles are marked trusted,
+  unknown or dangerous, judged locally with nothing sent anywhere.
+- **Parcel permissions at a glance**: the icons show everything, green for
+  allowed and red for forbidden, instead of the restrictions only.
+- **HUDs you can move and resize**: Alt + drag moves a HUD without opening
+  the build tools, and scrolling with the same key resizes it — even a
+  no-modify one. Sizes are remembered ([details](#huds)).
+- **Faces in the conversation**: local chat bubbles show the speaker's
+  profile picture.
+- **A password that stays safe**: the remembered password is kept in Windows
+  Credential Manager, as a hash only.
+- **Try it without an account**: an offline demo mode simulates a server
+  locally, with no grid connection.
+- **Bug reports from inside the viewer**, with a screenshot and the data you
+  choose to share ([details](#reporting-a-bug-during-the-alpha)).
+
+### Open
+
+- **Free software (GPLv3)**, written from scratch: it is not a fork.
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Linux and macOS builds**: the code is portable, the builds remain to be
+  validated.
+
+## Performance
+
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/compare-firestorm.png" alt="Firestorm statistics window in a busy store: 68 fps"><br>
+      <b>Firestorm</b> · 68 fps
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/compare-aurora.png" alt="Aurora Viewer performance window in the same store: 386 fps"><br>
+      <b>Aurora Viewer</b> · 386 fps
+    </td>
+  </tr>
+</table>
+
+Measured on 10 October 2026 with the frame cap off, on one PC (RTX 4090), in
+one busy store of about 16,000 objects. This is an informal test, not a
+benchmark:
+
+- 138 fps where Firestorm gave 68 fps at the same spot;
+- about 343 fps at that spot (median) once the render thread landed, 386 fps
+  in the capture above.
+
+The texture memory budget is set automatically from the detected VRAM.
+
+## What works today
+
+- **Rendering** — wgpu / Vulkan, bindless textures, multi-draw-indirect,
+  PBR and legacy materials, shadows, reflection probes, water, glow,
+  particles, GPU occlusion (experimental).
+- **Avatars** — skeleton and Bento animations blended like Firestorm,
+  server bakes, shape, rigged mesh, complexity limits, impostors, look-at.
+- **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
+  world sounds, parcel music, media on prims.
+- **Social** — local chat, IMs and groups, people list, blocking,
+  notifications, voice (WebRTC); conversation history kept on disk per
+  account and grid in Firestorm's text format, shown greyed when a
+  conversation opens, with search and a History window; instant messages
+  received while offline.
+- **Interface** — flat Aurora theme, Tabler icons, mini-map and world map,
+  inventory, preferences, debug overlays.
+- **Windows updates** — release checks, cancellable verified downloads,
+  installation and restart with rollback. The prompt explains whether cache
+  and settings will be preserved, migrated or reset.
+
+![Login screen](docs/screenshots/login.jpg)
+
+## Roadmap
+
+**Not there yet**
+
+- Snapshots, gestures, RLVa, the shape and clothing editors, and the full
+  sky / water editors.
+- Voice is WebRTC only (no Vivox).
+- Linux and macOS builds: the code is portable but not validated.
+
+**Planned**
+
+- AMD FSR (FidelityFX Super Resolution) upscaling and native anti-aliasing,
+  on every GPU vendor.
+- Frame Generation (under investigation).
+- Compression for the textures that fast BC7 encoding would harm (they
+  stay uncompressed and are decoded at each visit).
+- PBR terrain and a full pass on water rendering.
+- Maybe a VR mode with controller support.
+
+The detailed list of what is done, in progress and to do is in
+[TASKS.md](TASKS.md).
+
+## Using Aurora
+
+### Language
+
+The interface is available in English and French: system language detection,
+a choice saved in Preferences and applied at once. Fluent catalogues make it
+possible to add a language; see [the translation guide](docs/TRANSLATING.md).
+
+The viewer first follows the language saved in **Preferences › Interface ›
+Language**, then the system's if "System language" is selected. English is
+the fallback. The change applies at once; the "Language visible to scripts"
+setting is on by default, like Firestorm. The translations are in
+`crates/aurora-i18n/locales/`.
+
+### Frame limiter
+
+The frame limiter is enabled at **120 fps by default** and can be disabled
+or adjusted in Preferences › Graphics › Smoothness. Saved preferences are
+preserved.
+
+### HUDs
+
+HUDs can be moved directly with Alt + drag (the key is configurable), without
+opening the build tools. Hold the same key and scroll over a HUD to resize it
+locally (Shift gives finer steps), including no-modify HUDs. Sizes from 10%
+to 800% are saved per account by inventory name and creator, then restored on
+new copies. Right-click a HUD to reset its size to 100% or forget its saved
+size (the current copy keeps its size). While editing a HUD, scrolling
+without the HUD key zooms the entire HUD view, revealing off-screen HUDs
+while keeping their saved local sizes.
+
+### Animation Overrider (AO)
+
+The **AO** button of the bottom bar opens the built-in Animation Overrider.
+Sets are kept under `#Firestorm/#AO`; import a ZHAO notecard from the same
+folder as its animations. The AO is off at first, as in Firestorm. `cao on` /
+`cao off` turn it on or off; `cao sit` toggles the sit, `cao sit off` replaces
+the sit and `cao sit on` keeps the standard sit, like Firestorm. The demo
+scenario is described in
+[the test options](docs/TESTING.md#avatars-and-animations).
+
+### Notecards
+
+Notecards show images, landmarks and other embedded items with their icon and
+name in the text. Drag an item from the inventory to insert it; a left click
+opens it directly, and the right click offers Open or Copy to inventory. Save
+(Ctrl+S) keeps their permissions. The demo scenarios are described in
+[the testing guide](docs/TESTING.md#interface).
+
+### Script editor
+
+The editor offers `Ctrl+K` (or `Ctrl+/`) for line comments, `Ctrl+Shift+K`
+for block comments, and Tab / Shift+Tab to indent or outdent the selected
+lines. The arrows in the margin fold the blocks between braces; the Edit menu
+offers Collapse all / Expand all.
+
+### Inventory
+
+The inventory's right-click menu offers "Move to…" for a folder, an item or a
+multiple selection. Type a name in the window's filter, choose the
+destination folder then confirm with Move.
+
+### Reporting a bug during the alpha
+
+The bug icon in the top bar, the Help menu, the login screen and the "Send a
+crash report" button after a crash open the same form. After a crash, the
+data comes from the session that stopped. The bar button can be hidden in
+Preferences › Interface.
+
+**Filling in the form**
+
+- Describe the problem and check the information in the Data tab; untick
+  what you want to keep private. The screenshot and the filtered diagnostics
+  are optional.
+- The interface follows the chosen language, even with the form open. The
+  file meant for GitHub uses English headings; your description stays in the
+  language you typed it in.
+- A new report opens on Description. Closing then reopening the form resumes
+  the draft at the same place until it is sent or the viewer is closed.
+- After a screenshot taken in Aurora, ticking or unticking "Include the
+  interface" retakes the picture automatically; imported files stay
+  unchanged.
+
+**Sending it**
+
+Two modes, both with a GitHub account: "Send from Aurora", shown first and
+selected by default, or opening a pre-filled issue in the browser. Without an
+account, save a local copy.
+
+- **Send from Aurora** asks you to authorise its GitHub application; the
+  authorisation stays in memory only, until the viewer is closed or logged
+  out; nothing is published automatically after the authorisation. It
+  publishes the chosen image on auroraviewer.com and shows it in the issue.
+  A separate option of the Data tab, unticked by default, attaches the ZIP of
+  the logs for the developers; its link requires a GitHub login authorised in
+  the private repository. The files stay in the private Cellar. An
+  interrupted upload can be finished on the same issue.
+- **In the browser**, add the image by hand from the `public` folder. If the
+  text is too long for a link, Aurora copies it in full so that you can paste
+  it into GitHub. Click "I have published the report" after publishing on
+  GitHub to start another report.
+
+Never publish the `private-do-not-upload` folder.
+
+Offline test: `AURORA_DEMO=1` and `AURORA_DEMO_BUG_REPORT=1` open a sample
+report; sending is simulated and the browser stays closed. See
+[TESTING.md](docs/TESTING.md) and the [GitHub configuration](docs/BUG_REPORTING.md).
+
+### Where your files are
+
+Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
+
+Conversation history (plain text, one file per conversation) is in
+`%APPDATA%\Aurora\AuroraViewer\config\accounts\<account id>\chat_logs\<grid>\`;
+Preferences › Chat shows the folder, turns logging off and erases it. These
+files never leave the machine and are never attached to a bug report.
+
+## Under the hood
 
 **What it is**
 
@@ -58,150 +355,6 @@ upscaling and anti-aliasing are planned (see the [roadmap](#roadmap)).
 - Same look as Firestorm: PBR and legacy materials, EEP sky, shadows,
   reflection probes, mirrors, water, glow and particles, checked side by
   side on the main grid.
-
-**Performance**
-
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <img src="docs/screenshots/compare-firestorm.png" alt="Firestorm statistics window in a busy store: 68 fps"><br>
-      <b>Firestorm</b> · 68 fps
-    </td>
-    <td width="50%" align="center" valign="top">
-      <img src="docs/screenshots/compare-aurora.png" alt="Aurora Viewer performance window in the same store: 386 fps"><br>
-      <b>Aurora Viewer</b> · 386 fps
-    </td>
-  </tr>
-</table>
-
-Measured on 10 October 2026 with the frame cap off, on one PC (RTX 4090), in
-one busy store of about 16,000 objects. This is an informal test, not a
-benchmark:
-
-- 138 fps where Firestorm gave 68 fps at the same spot;
-- about 343 fps at that spot (median) once the render thread landed, 386 fps
-  in the capture above.
-
-The texture memory budget is set automatically from the detected VRAM.
-
-**Interface**
-
-- A flat, modern interface of our own: a single top bar, a notification
-  center, searchable conversations and a redesigned performance window.
-- Teleport and loading screens show the blurred last view and real
-  step-by-step progress.
-- Teleports within the same region are instant, with no loading screen.
-- Movement keys adapt to the keyboard layout on first launch (WASD or ZQSD).
-- The interface is available in English and French: system language
-  detection, a choice saved in Preferences and applied at once. Fluent
-  catalogues make it possible to add a language; see
-  [the translation guide](docs/TRANSLATING.md).
-- Double-click a window's title to collapse it into a movable bar, then
-  restore it with its size and content.
-- On closing: a dialog over a blurred background with Quit, Log out (back to
-  the login screen) and Cancel. Esc cancels; the viewer waits for the logout
-  before closing.
-
-**Things Firestorm doesn't have**
-
-- Link safety check: web links in chat and profiles are marked trusted,
-  unknown or dangerous, judged locally with nothing sent anywhere.
-- Parcel permission icons show everything, green for allowed and red for
-  forbidden; Firestorm shows only the restrictions.
-- HUDs can be moved directly with Alt + drag (the key is configurable),
-  without opening the build tools. Hold the same key and scroll over a HUD
-  to resize it locally (Shift gives finer steps), including no-modify HUDs.
-  Sizes from 10% to 800% are saved per account by inventory name and creator,
-  then restored on new copies. Right-click a HUD to reset its size to 100%
-  or forget its saved size (the current copy keeps its size).
-  While editing a HUD, scrolling without the HUD key zooms the entire HUD
-  view, revealing off-screen HUDs while keeping their saved local sizes.
-- Local chat bubbles show the speaker's profile picture.
-- The remembered password is kept in Windows Credential Manager, as a hash
-  only.
-- An offline demo mode simulates a server locally, so the viewer can be
-  tested with no account and no grid connection.
-
-## What works today
-
-- **Rendering** — wgpu / Vulkan, bindless textures, multi-draw-indirect,
-  PBR and legacy materials, shadows, reflection probes, water, glow,
-  particles, GPU occlusion (experimental).
-- **Avatars** — skeleton and Bento animations blended like Firestorm,
-  server bakes, shape, rigged mesh, complexity limits, impostors, look-at.
-- **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
-  world sounds, parcel music, media on prims.
-- **Social** — local chat, IMs and groups, people list, blocking,
-  notifications, voice (WebRTC); conversation history kept on disk per
-  account and grid in Firestorm's text format, shown greyed when a
-  conversation opens, with search and a History window; instant messages
-  received while offline.
-- **Interface** — flat Aurora theme, Tabler icons, mini-map and world map,
-  inventory, preferences, debug overlays.
-- **Windows updates** — release checks, cancellable verified downloads,
-  installation and restart with rollback. The prompt explains whether cache
-  and settings will be preserved, migrated or reset.
-
-![Login screen](docs/screenshots/login.jpg)
-
-## Reporting a bug during the alpha
-
-The bug icon in the top bar, the Help menu, the login screen and the "Send a
-crash report" button after a crash open the same form. After a crash, the
-data comes from the session that stopped. Describe the problem and check the
-information in the Data tab; untick what you want to keep private. The
-interface follows the chosen language, even with the form open. The
-screenshot and the filtered diagnostics are optional. The file meant for
-GitHub uses English headings; your description stays in the language you
-typed it in. A new report opens on Description. Closing then reopening the
-form resumes the draft at the same place until it is sent or the viewer is
-closed. In browser mode, click "I have published the report" after publishing
-on GitHub to start another report. After a screenshot taken in Aurora,
-ticking or unticking "Include the interface" retakes the picture
-automatically; imported files stay unchanged.
-
-Two modes, both with a GitHub account: "Send from Aurora", shown first and
-selected by default, or opening a pre-filled issue in the browser. Sending
-from Aurora asks you to authorise its GitHub application; the authorisation
-stays in memory only, until the viewer is closed or logged out; nothing is
-published automatically after the authorisation. Without an account, save a
-local copy.
-
-Sending from Aurora publishes the chosen image on auroraviewer.com and shows
-it in the issue. A separate option of the Data tab, unticked by default,
-attaches the ZIP of the logs for the developers; its link requires a GitHub
-login authorised in the private repository. The files stay in the private
-Cellar. An interrupted upload can be finished on the same issue. In the
-browser, add the image by hand from the `public` folder. If the text is too
-long for a link, Aurora copies it in full so that you can paste it into
-GitHub. Never publish the `private-do-not-upload` folder. The bar button can
-be hidden in Preferences › Interface.
-
-Offline test: `AURORA_DEMO=1` and `AURORA_DEMO_BUG_REPORT=1` open a sample
-report; sending is simulated and the browser stays closed. See
-[TESTING.md](docs/TESTING.md) and the [GitHub configuration](docs/BUG_REPORTING.md).
-
-## Roadmap
-
-**Not there yet**
-
-- Snapshots, gestures, RLVa, the shape and clothing editors, group
-  profiles, and the full sky / water editors.
-- Voice is WebRTC only (no Vivox).
-- Linux and macOS builds: the code is portable but not validated.
-
-**Planned**
-
-- AMD FSR (FidelityFX Super Resolution) upscaling and native anti-aliasing,
-  on every GPU vendor.
-- Frame Generation (under investigation).
-- Compression for the textures that fast BC7 encoding would harm (they
-  stay uncompressed and are decoded at each visit).
-- PBR terrain, projector lights and a full pass on water rendering.
-- Maybe a VR mode with controller support.
-
-The detailed list of what is done, in progress and to do is in
-[TASKS.md](TASKS.md).
 
 ## Build
 
@@ -246,6 +399,8 @@ profile (`cargo run -p aurora-viewer`): it behaves like the release build
 without its slow link-time optimization. `./scripts/build-release.ps1`
 builds GitHub's latest `main` with `--release` into `..\RELEASE\`.
 
+### Versions
+
 The **Git tag is the reference for the viewer's version**: `v0.2.0` gives
 `0.2.0` everywhere (title, interface, logs and network clients). Between two
 tags, `0.2.0+7.gabcdef123` gives the number of commits and the short
@@ -272,43 +427,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 - `--language`: also accepts `--language=fr`. An unavailable language falls
   back to English; the argument is meant for demos and screenshots.
 
-The viewer first follows the language saved in **Preferences › Interface ›
-Language**, then the system's if "System language" is selected. English is
-the fallback. The change applies at once; the "Language visible to scripts"
-setting is on by default, like Firestorm. The translations are in
-`crates/aurora-i18n/locales/`: [translation guide](docs/TRANSLATING.md).
-
-The frame limiter is enabled at **120 fps by default** and can be disabled
-or adjusted in Preferences › Graphics › Smoothness. Saved preferences are
-preserved.
-
-### Animation Overrider (AO)
-
-The **AO** button of the bottom bar opens the built-in Animation Overrider.
-Sets are kept under `#Firestorm/#AO`; import a ZHAO notecard from the same
-folder as its animations. The AO is off at first, as in Firestorm. `cao on` /
-`cao off` turn it on or off; `cao sit` toggles the sit, `cao sit off` replaces
-the sit and `cao sit on` keeps the standard sit, like Firestorm. The demo
-scenario is described in
-[the test options](docs/TESTING.md#avatars-and-animations).
-
-### Notecards
-
-Notecards show images, landmarks and other embedded items with their icon and
-name in the text. Drag an item from the inventory to insert it; a left click
-opens it directly, and the right click offers Open or Copy to inventory. Save
-(Ctrl+S) keeps their permissions. The demo scenarios are described in
-[the testing guide](docs/TESTING.md#interface).
-
-### Test switches
-
-The compact build inspector also accepts `AURORA_DEMO_BUILD_TAB=transform|shape`;
-`object` remains an alias for the transformation section. Window redesign
-scenarios use the existing inventory, appearance, land, profile, environment
-and preferences switches listed in [docs/TESTING.md](docs/TESTING.md).
-
-Local and editing HUD zoom scenarios (`AURORA_DEMO_HUDS=scale|scale-copy|scale-touch|scale-reset|scale-forget|scale-ctrl|scale-key|scale-secondary|edit-scroll`)
-are described in [the testing guide](docs/TESTING.md#huds).
+### Demo mode and test switches
 
 The offline **demo mode** simulates a server locally (a plaza, avatars,
 objects, chat, notifications…): no connection, no account. It keeps its own
@@ -327,33 +446,24 @@ cargo run -p aurora-viewer
 | `AURORA_CAPTURE=<file.png>` | Saves a capture of a frame |
 | `AURORA_PROFILE=1` | Writes one profiling line per second to the log |
 
+The compact build inspector also accepts `AURORA_DEMO_BUILD_TAB=transform|shape`;
+`object` remains an alias for the transformation section. Window redesign
+scenarios use the existing inventory, appearance, land, profile, environment
+and preferences switches listed in [docs/TESTING.md](docs/TESTING.md).
+
+Local and editing HUD zoom scenarios (`AURORA_DEMO_HUDS=scale|scale-copy|scale-touch|scale-reset|scale-forget|scale-ctrl|scale-key|scale-secondary|edit-scroll`)
+are described in [the testing guide](docs/TESTING.md#huds).
+
 The script editor demos (`AURORA_DEMO_SCRIPTS`): `close-brace` /
 `object-close-brace` check the outdent of closing braces; `colors`,
 `color-picker`, `color-accept` and `color-cancel` show the RGB vectors and
-the shared colour picker. The full scenarios are in
-[docs/TESTING.md](docs/TESTING.md).
-
-The editor also offers `Ctrl+K` (or `Ctrl+/`) for line comments,
-`Ctrl+Shift+K` for block comments, and Tab / Shift+Tab to indent or outdent
-the selected lines. The arrows in the margin fold the blocks between braces;
-the Edit menu offers Collapse all / Expand all. The `comment-lines`,
-`comment-block`, `multiline-indent`, `multiline-outdent`, `folding` and
-`object-folding` demos check these actions offline.
-
-The inventory's right-click menu offers "Move to…" for a folder, an item or a
-multiple selection. Type a name in the window's filter, choose the
-destination folder then confirm with Move.
+the shared colour picker; `comment-lines`, `comment-block`,
+`multiline-indent`, `multiline-outdent`, `folding` and `object-folding` check
+the comment, indent and folding actions offline.
 
 The full list of switches (demo scenarios, captures, forced settings,
 diagnostics) and how to read the profiling output are in
 [docs/TESTING.md](docs/TESTING.md).
-
-Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
-
-Conversation history (plain text, one file per conversation) is in
-`%APPDATA%\Aurora\AuroraViewer\config\accounts\<account id>\chat_logs\<grid>\`;
-Preferences › Chat shows the folder, turns logging off and erases it. These
-files never leave the machine and are never attached to a bug report.
 
 ## Contributing
 
@@ -372,6 +482,8 @@ its own task in its own git worktree:
 Behaviour follows Firestorm: its sources are expected next to the repository
 (`../phoenix-firestorm`, cloned from
 [FirestormViewer/phoenix-firestorm](https://github.com/FirestormViewer/phoenix-firestorm)).
+
+Questions and ideas are welcome on [Discord](https://discord.gg/swn83ftMXS).
 
 ## License
 
