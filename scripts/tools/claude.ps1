@@ -61,8 +61,8 @@ function Merge-ClaudeSettings([string]$File) {
         $text = [IO.File]::ReadAllText($File)
         if ($text.Trim()) {
             try { $settings = $text | ConvertFrom-Json -ErrorAction Stop }
-            catch { return @{ Error = "JSON illisible : $($_.Exception.Message)" } }
-            if ($settings -isnot [pscustomobject]) { return @{ Error = 'le fichier ne contient pas un objet JSON' } }
+            catch { return @{ Error = "unreadable JSON: $($_.Exception.Message)" } }
+            if ($settings -isnot [pscustomobject]) { return @{ Error = 'the file does not hold a JSON object' } }
         }
     }
     $added = @()
@@ -83,7 +83,7 @@ function Merge-ClaudeSettings([string]$File) {
         if (-not $settings.PSObject.Properties[$section]) {
             $settings | Add-Member -NotePropertyName $section -NotePropertyValue ([pscustomobject]@{})
         } elseif ($settings.$section -isnot [pscustomobject]) {
-            return @{ Error = "« $section » n'est pas un objet" }
+            return @{ Error = "'$section' is not an object" }
         }
     }
     $added += & $addTo $settings.permissions 'allow' $ClaudeAllowRules @()
@@ -95,45 +95,45 @@ function Merge-ClaudeSettings([string]$File) {
 
 function Invoke-ClaudePermissions {
     $file = Get-ClaudeSettingsFile
-    Write-Title 'Permissions de Claude Code pour les PR et les issues des agents'
-    Write-Color '  Les agents suivent leurs PR et la CI, postent leur relecture et leurs captures,' muted
-    Write-Color '  fusionnent, trient les issues et y répondent eux-mêmes (AGENTS.md) ; sans ces' muted
-    Write-Color '  règles, le mode auto de Claude Code peut le leur refuser. Autorisés ensuite :' muted
+    Write-Title 'Claude Code permissions for the PRs and issues of the agents'
+    Write-Color '  The agents follow their PRs and CI, post their review and their screenshots,' muted
+    Write-Color '  merge, triage the issues and answer them themselves (AGENTS.md); without these' muted
+    Write-Color '  rules, the auto mode of Claude Code may refuse it. Allowed afterwards:' muted
     foreach ($r in $ClaudeAllowRules) { Write-Color "    • $r" ink }
-    Write-Color '  La file de fusion et la protection de main s''appliquent toujours.' muted
+    Write-Color '  The merge queue and the protection of main still apply.' muted
     Write-Host ''
-    Write-Color "  Fichier : $file" muted
+    Write-Color "  File: $file" muted
     $merge = Merge-ClaudeSettings $file
     if ($merge.Error) {
-        Write-Color "  Rien n'a été modifié : $($merge.Error)" danger
-        Write-Color '  Corrige le fichier (ou renomme-le) puis relance.' muted
+        Write-Color "  Nothing was changed: $($merge.Error)" danger
+        Write-Color '  Fix the file (or rename it) then try again.' muted
         Wait-Back
         return
     }
     if (-not $merge.Added) {
-        Write-Color '  Déjà en place : rien à faire.' success
+        Write-Color '  Already in place: nothing to do.' success
         Wait-Back
         return
     }
-    Write-Color "  À ajouter ($($merge.Added.Count)) :" ink
+    Write-Color "  To add ($($merge.Added.Count)):" ink
     foreach ($a in $merge.Added) { Write-Color "    + $(if ($a.Length -gt 90) { $a.Substring(0, 89) + '…' } else { $a })" teal }
     if ($DryRun) {
         Write-Host ''
-        Write-Color '  -DryRun : le fichier n''est pas modifié. Il deviendrait :' warn
+        Write-Color '  -DryRun: the file is not changed. It would become:' warn
         $merge.Json -split "`n" | ForEach-Object { Write-Color "    $_" muted }
         Wait-Back
         return
     }
-    if (-not (Read-YesNo 'Mettre à jour le fichier (une copie de l''ancien est gardée) ?')) { return }
+    if (-not (Read-YesNo 'Update the file (a copy of the old one is kept)?')) { return }
     $dir = Split-Path $file -Parent
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     if (Test-Path -LiteralPath $file) {
         $backup = "$file.aurora-$(Get-Date -Format 'yyyyMMdd-HHmmss').bak"
         Copy-Item -LiteralPath $file -Destination $backup
-        Write-Color "  Copie de l'ancien fichier : $backup" muted
+        Write-Color "  Copy of the old file: $backup" muted
     }
     # UTF-8 without BOM: Claude Code reads it as plain JSON
     [IO.File]::WriteAllText($file, $merge.Json, (New-Object Text.UTF8Encoding $false))
-    Write-Color '  Fait. Ouvre une nouvelle session de Claude Code pour qu''elle lise ces règles.' success
+    Write-Color '  Done. Open a new Claude Code session so that it reads these rules.' success
     Wait-Back
 }

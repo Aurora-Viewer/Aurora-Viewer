@@ -1,128 +1,129 @@
-# HUMANS.md — guide des humains
+# HUMANS.md — guide for humans
 
-Ce dépôt est conçu pour que deux personnes (ou plus) travaillent chacune avec
-plusieurs agents IA (Claude Code, Codex…) en parallèle. Les agents suivent
-[AGENTS.md](AGENTS.md) ; ce guide explique **ton** rôle et comment tout
-s'enchaîne.
+This repository is designed so that two people (or more) each work with
+several AI agents (Claude Code, Codex…) in parallel. The agents follow
+[AGENTS.md](AGENTS.md); this guide explains **your** role and how everything
+fits together.
 
-**Pour commencer :** [clone le dépôt et double-clique sur
-`aurora-tools.cmd`](#installer-lenvironnement) ; ensuite, tout se fait avec
-[les outils Aurora](#les-outils-aurora--aurora-toolscmd).
+**To get started:** [clone the repository and double-click
+`aurora-tools.cmd`](#installing-the-environment); after that, everything is
+done with [the Aurora tools](#the-aurora-tools-aurora-toolscmd).
 
-## Ce que font les agents, ce que tu fais
+## What the agents do, what you do
 
-| Les agents | Toi |
+| The agents | You |
 |---|---|
-| Codent dans leur propre dossier de travail (un par tâche) | Choisis les tâches à lancer |
-| Testent en **mode démo** (serveur simulé en local) | **Valides** chaque fonctionnalité avant la PR |
-| Te lancent le viewer pour que tu testes | **Te connectes et testes sur la grille AGNI** (eux ne le font jamais) |
-| Ouvrent la PR, la relisent, corrigent, commentent, **la fusionnent** | Tranches quand l'agent te le demande (verdict ⚠️ ou ❌) |
-| Tiennent TASKS.md à jour, publient les releases | **Demandes** une release quand tu veux (« sors la 0.4.0 ») |
-| Lisent les issues et leurs captures / fichiers, les analysent, les étiquettent, répondent et les ferment après résolution | Donnes les précisions et validations nécessaires, tranches les choix produit |
+| Code in their own working folder (one per task) | Choose the tasks to start |
+| Test in **demo mode** (server simulated locally) | **Validate** each feature before the PR |
+| Launch the viewer for you to test | **Log in and test on the AGNI grid** (they never do) |
+| Open the PR, review it, fix, comment, **merge it** | Decide when the agent asks you to (verdict ⚠️ or ❌) |
+| Keep TASKS.md up to date, publish the releases | **Ask** for a release when you want one ("release 0.4.0") |
+| Read the issues and their screenshots / files, analyse them, label them, reply and close them once resolved | Give the details and validations needed, decide the product choices |
 
-Tu n'as **aucune action à faire sur GitHub** : ton seul travail est de tester
-ce que l'agent te montre, et de te connecter à la grille quand il le faut.
+You have **nothing to do on GitHub**: your only job is to test what the agent
+shows you, and to log in to the grid when needed.
 
-## Le cycle d'une tâche
+Everything in the repository and on GitHub is written in English. You can talk
+to your agent in French or in English: it answers in your language.
 
-1. Tu demandes une tâche à un agent (« fais le suivi du regard comme Firestorm »).
-2. L'agent crée son dossier de travail `..\work\<tâche>` sur une branche à lui :
-   il ne voit pas le code en cours des autres agents, et réciproquement.
-3. Il code, teste en démo, puis **compile et te lance le viewer** avec une
-   fenêtre nommée « Aurora Viewer <version> - Test <tâche> (Dev) » ; le titre se
-   termine par le profil de compilation : (Dev), (Release) ou (Debug).
-4. **Tu testes** ce qu'il te demande (en démo ou sur la grille : c'est toi qui
-   te connectes) et tu lui dis si c'est bon. Pour une PR sans effet sur le
-   viewer (documentation, CI, scripts), il te dit juste ce qui va changer.
-5. L'agent ouvre la **pull request** : un résumé lisible (à quoi ça sert, si ça
-   vient de Firestorm, ce qui change, captures).
-6. Dans la foulée, sans que tu aies à le demander, il attend la fin de la CI
-   puis **relit sa PR** : conflits avec `main`, CI, non-régression,
-   secrets… et poste un **commentaire de relecture** (onglet « Conversation »
-   de la PR) avec un verdict :
-   - ✅ prête à fusionner ;
-   - ⚠️ un point à trancher (il te propose des solutions) ;
-   - ❌ bloquée (il t'explique pourquoi).
-7. **Si le verdict est ✅, il la fusionne** : la PR entre dans la **file de
-   fusion**, où GitHub la teste avec le `main` le plus récent (tests
-   compris) et la fusionne si tout est vert. Si toi et un autre fusionnez en
-   même temps, les PR font simplement la queue : plus de « Update branch ».
-   Sinon (⚠️ ou ❌), il s'arrête et te demande de trancher.
-8. L'agent nettoie son dossier de travail et te prévient : lien de la PR, ce
-   qui a changé, et ce qu'il reste à tester sur la grille s'il y en a.
+## Life of a task
 
-Une PR n'est ouverte qu'à la **fin d'une tâche**, jamais pour des changements
-intermédiaires. Si l'agent n'a pas tout fini, il te le dit avant. Si une
-session s'interrompt, l'agent de la session suivante reprend en priorité les
-PR sans relecture ou sorties de la file.
+1. You ask an agent for a task ("do gaze tracking like Firestorm").
+2. The agent creates its working folder `..\work\<task>` on a branch of its
+   own: it does not see the other agents' code in progress, and vice versa.
+3. It codes, tests in demo mode, then **builds and launches the viewer for
+   you** with a window named "Aurora Viewer <version> - Test <task> (Dev)";
+   the title ends with the build profile: (Dev), (Release) or (Debug).
+4. **You test** what it asks you to (in demo mode or on the grid: you are the
+   one who logs in) and tell it whether it is good. For a PR with no effect
+   on the viewer (documentation, CI, scripts), it just tells you what is
+   going to change.
+5. The agent opens the **pull request**: a readable summary (what it is for,
+   whether it comes from Firestorm, what changes, screenshots).
+6. Right after, without you having to ask, it waits for the end of CI then
+   **reviews its PR**: conflicts with `main`, CI, non-regression, secrets…
+   and posts a **review comment** ("Conversation" tab of the PR) with a
+   verdict:
+   - ✅ ready to merge;
+   - ⚠️ a point to decide (it proposes solutions);
+   - ❌ blocked (it explains why).
+7. **If the verdict is ✅, it merges it**: the PR enters the **merge queue**,
+   where GitHub tests it with the most recent `main` (tests included) and
+   merges it if everything is green. If you and someone else merge at the
+   same time, the PRs simply queue up: no more "Update branch". Otherwise
+   (⚠️ or ❌), it stops and asks you to decide.
+8. The agent cleans up its working folder and tells you: link of the PR, what
+   changed, and what is left to test on the grid if anything.
 
-## GitHub en pratique
+A PR is only opened at the **end of a task**, never for intermediate changes.
+If the agent has not finished everything, it tells you before. If a session
+is interrupted, the agent of the next session first takes up the PRs without
+a review or that left the queue.
 
-- **`main` est protégée**, pour tout le monde, admins compris : personne ne
-  pousse directement dessus ; tout passe par une PR, puis par la file de
-  fusion.
-- **La CI** (GitHub Actions, sous Windows) a deux étages :
-  - sur chaque PR, les vérifications rapides : formatage, clippy, recherche
-    de secrets (les tests, l'agent les a déjà passés sur sa machine) ;
-  - dans la file de fusion, tout, tests compris, sur la PR combinée avec le
-    dernier `main` : ce qui arrive sur `main` est exactement ce qui a été
-    testé.
-  Une PR qui ne touche que la documentation ou les images passe en une
-  minute (pas de compilation). Une croix rouge = l'agent corrige.
-- **Étiquettes** : chaque PR a un **type** (`feature`, `fix`,
-  `performance`, `maintenance`, `docs`, et `breaking` si elle casse une
-  compatibilité), qui la range dans les notes de version, et une **zone**
-  (`render`, `avatar`, `world`, `network`, `audio-voice`, `ui`,
-  `build-tools`, `tooling`) pour s'y retrouver.
-- **Captures** : les images des PR sont rangées sur la branche `captures`
-  (elle ne contient que ça).
-- **Issues** : les agents lisent aussi les captures et fichiers joints,
-  classent les rapports par nature, zone, suivi et priorité, puis répondent
-  directement sur GitHub. `bug` désigne le signalement, `fix` la PR.
-  Une issue reste ouverte si des informations ou une validation manquent ;
-  elle est fermée après résolution vérifiée et fusion, ou avec une explication
-  pour un doublon / une demande hors périmètre. Les règles et étiquettes sont
-  détaillées dans [AGENTS.md](AGENTS.md#15-github-issues-read-analyse-label-reply-and-close)
-  et créées par `scripts/setup-labels.ps1`, qui conserve les autres étiquettes.
-- **Dependabot** ouvre chaque semaine des PR de mise à jour des dépendances ;
-  un agent peut les vérifier pour toi, et les fusionne si tu es d'accord.
-- **Le dépôt** appartient à l'organisation `Aurora-Viewer` ; les
-  développeurs sont dans l'équipe `Devs`.
+## GitHub in practice
 
-### Publier une version
+- **`main` is protected**, for everyone, admins included: nobody pushes to it
+  directly; everything goes through a PR, then through the merge queue.
+- **CI** (GitHub Actions, on Windows) has two stages:
+  - on each PR, the quick checks: formatting, clippy, secret scan (the
+    tests, the agent already ran them on its machine);
+  - in the merge queue, everything, tests included, on the PR combined with
+    the latest `main`: what lands on `main` is exactly what was tested.
+  A PR that only touches documentation or images passes in a minute (no
+  build). A red cross = the agent fixes it.
+- **Labels**: each PR has a **type** (`feature`, `fix`, `performance`,
+  `maintenance`, `docs`, and `breaking` if it breaks a compatibility), which
+  files it in the release notes, and an **area** (`render`, `avatar`,
+  `world`, `network`, `audio-voice`, `ui`, `build-tools`, `tooling`) to find
+  one's way around.
+- **Screenshots**: the images of the PRs are stored on the `captures` branch
+  (it contains nothing else).
+- **Issues**: the agents also read the screenshots and attached files, sort
+  the reports by nature, area, tracking and priority, then reply directly on
+  GitHub. `bug` designates the report, `fix` the PR. An issue stays open if
+  information or a validation is missing; it is closed after a verified
+  resolution and merge, or with an explanation for a duplicate / an
+  out-of-scope request. The rules and labels are detailed in
+  [AGENTS.md](AGENTS.md#15-github-issues-read-analyse-label-reply-and-close)
+  and created by `scripts/setup-labels.ps1`, which keeps the other labels.
+- **Dependabot** opens dependency update PRs every week; an agent can check
+  them for you, and merges them if you agree.
+- **The repository** belongs to the `Aurora-Viewer` organisation; the
+  developers are in the `Devs` team.
 
-On suit [SemVer](https://semver.org/lang/fr/) : `vMAJEUR.MINEUR.CORRECTIF`.
-Avant la 1.0, une nouveauté fait `v0.3.0 → v0.4.0`, un correctif
-`v0.4.0 → v0.4.1`.
+### Publishing a release
 
-Le tag est la référence du numéro du viewer : `v0.2.0` produit `0.2.0`,
-affiché dans le titre, la connexion et le menu Aide. Entre deux tags, un
-build indique aussi le nombre de commits et l'identifiant court, par
-exemple `0.2.0+7.gabcdef123`. Il n'y a pas de numéro à modifier dans
-`Cargo.toml` avant de publier. Le workflow vérifie le numéro annoncé par
-l'exe avec `--version` et refuse une release incohérente.
+We follow [SemVer](https://semver.org/): `vMAJOR.MINOR.PATCH`. Before 1.0, a
+feature makes `v0.3.0 → v0.4.0`, a fix `v0.4.0 → v0.4.1`.
 
-Le plus simple : choix **Gérer les releases** des outils Aurora (section
-plus bas). Ils vérifient que `main` est vert, proposent le numéro d'après les
-étiquettes des PR fusionnées depuis la dernière version, montrent ces PR,
-créent le tag et suivent la publication jusqu'au lien de la release. Ils
-servent aussi à **supprimer** une release (il faut taper son tag pour
-confirmer ; `assets-1`, qui contient la police emoji, est protégée). Il faut
-le droit d'écriture sur le dépôt.
+The tag is the reference for the viewer's number: `v0.2.0` produces `0.2.0`,
+shown in the title, the login screen and the Help menu. Between two tags, a
+build also gives the number of commits and the short identifier, for example
+`0.2.0+7.gabcdef123`. There is no number to change in `Cargo.toml` before
+publishing. The workflow checks the number announced by the exe with
+`--version` and refuses an inconsistent release.
 
-Avant la confirmation de création, deux choix règlent l’effet de la mise à jour
-chez les utilisateurs : **conserver ou invalider le cache**, puis **conserver et
-migrer les paramètres automatiquement** (choix habituel) ou **les réinitialiser**.
-Les migrations doivent être implémentées dans le viewer ; une rupture incompatible
-peut imposer le retour aux valeurs par défaut. La fenêtre de mise à jour annonce
-ces effets avant l’installation. Les choix sont enregistrés dans le tag annoté,
-puis publiés avec la release ; ils restent applicables aux utilisateurs qui
-sautent une version. Les autres fichiers du profil ne sont pas réinitialisés.
+The simplest way: the **Manage releases** choice of the Aurora tools (section
+below). They check that `main` is green, suggest the number from the labels
+of the PRs merged since the last version, show these PRs, create the tag and
+follow the publication up to the release link. They are also used to
+**delete** a release (you have to type its tag to confirm; `assets-1`, which
+holds the emoji font, is protected). Write access to the repository is
+required.
 
-Tu peux aussi le demander à un agent : « sors la 0.4.0 » (ou « sors une
-version » : il te propose le numéro). Dans les deux cas, GitHub Actions
-compile le viewer, crée la release avec le zip Windows et écrit les notes,
-classées par catégorie, à partir des PR fusionnées. À la main, c'est :
+Before the creation is confirmed, two choices set the effect of the update
+for users: **keep or invalidate the cache**, then **keep and migrate the
+settings automatically** (the usual choice) or **reset them**. Migrations
+must be implemented in the viewer; an incompatible break can force a return
+to the defaults. The update window announces these effects before installing.
+The choices are recorded in the annotated tag, then published with the
+release; they still apply to users who skip a version. The other files of
+the profile are not reset.
+
+You can also ask an agent: "release 0.4.0" (or "make a release": it suggests
+the number). In both cases, GitHub Actions builds the viewer, creates the
+release with the Windows zip and writes the notes, sorted by category, from
+the merged PRs. By hand, it is:
 
 ```bash
 git switch main && git pull
@@ -130,254 +131,245 @@ git tag -a v0.4.0 -m "Aurora Viewer 0.4.0"
 git push origin v0.4.0
 ```
 
-### Publier une actualité
+### Publishing a news item
 
-Le panneau « Actualités » de l'écran de connexion affiche deux fichiers du
-dépôt, écrits à la main : [news/fr.md](news/fr.md) et
-[news/en.md](news/en.md), un par langue de l'interface. Le viewer les lit sur
-`main` à chaque démarrage : **pas besoin de publier une version** pour
-annoncer quelque chose.
+The "News" panel of the login screen displays two files of the repository,
+written by hand: [news/en.md](news/en.md) and [news/fr.md](news/fr.md), one
+per interface language. The viewer reads them on `main` at each start: **no
+need to publish a release** to announce something.
 
-Ajoute l'actualité **en haut** de chaque fichier (la plus récente en
-premier), sous le commentaire qui rappelle le format :
+Add the news item **at the top** of each file (the most recent first), under
+the comment that recalls the format:
 
 ```markdown
-## 2026-10-08 — Titre de l'actualité
-Une ou plusieurs lignes de texte simple.
-[En savoir plus](https://exemple.org/lien-facultatif)
+## 2026-10-08 — Title of the news item
+One or more lines of plain text.
+[Learn more](https://example.org/optional-link)
 ```
 
-- **Titre** : `## `, la date `AAAA-MM-JJ`, puis « — » (un simple « - » ou
-  « : » convient aussi) et le titre. La date est facultative.
-- **Texte** : du texte simple, sans gras, liste ni image. Une ligne vide
-  commence un nouveau paragraphe.
-- **Lien** : facultatif, seul sur sa ligne, et en `https://` (tout autre lien
-  est ignoré). Un clic sur l'actualité l'ouvre dans le navigateur.
-- **Limites** : les 20 premières actualités sont affichées ; un titre est
-  coupé à 120 caractères, un texte à 600. Retire les plus anciennes de temps
-  en temps.
-- **Langues** : écris l'actualité dans les deux fichiers. Une langue de
-  l'interface qui n'a pas de fichier affiche `en.md`.
+- **Title**: `## `, the date `YYYY-MM-DD`, then "—" (a plain "-" or ":" also
+  works) and the title. The date is optional.
+- **Text**: plain text, without bold, list or image. An empty line starts a
+  new paragraph.
+- **Link**: optional, alone on its line, and in `https://` (any other link is
+  ignored). A click on the news item opens it in the browser.
+- **Limits**: the first 20 news items are displayed; a title is cut at 120
+  characters, a text at 600. Remove the oldest ones from time to time.
+- **Languages**: write the news item in both files. An interface language
+  that has no file displays `en.md`.
 
-`main` étant protégée, la modification passe par une PR (étiquette `docs`) :
-le crayon de GitHub sur le fichier, puis « Create a new branch and start a
-pull request », ou demande-le à un agent. Ces fichiers sont aussi compilés
-dans le viewer (c'est ce qu'il affiche hors ligne tant qu'il n'a rien
-téléchargé), donc la PR passe toute la CI dans la file de fusion ; un test y
-vérifie qu'ils se lisent bien (titre vide, texte trop long).
+Since `main` is protected, the change goes through a PR (label `docs`): the
+GitHub pencil on the file, then "Create a new branch and start a pull
+request", or ask an agent. These files are also compiled into the viewer
+(that is what it displays offline as long as it has downloaded nothing), so
+the PR goes through the whole CI in the merge queue; a test there checks
+that they read correctly (empty title, text too long).
 
-Après la fusion, GitHub met environ cinq minutes à servir le nouveau
-fichier ; chaque viewer l'affiche à son démarrage suivant et le garde pour
-les lancements hors ligne. Pour voir l'actualité dans le viewer **avant** de
-fusionner, lance-le avec `AURORA_NEWS_URL` (voir
-[docs/TESTING.md](docs/TESTING.md#interface)).
+After the merge, GitHub takes about five minutes to serve the new file; each
+viewer displays it at its next start and keeps it for offline launches. To
+see the news item in the viewer **before** merging, launch it with
+`AURORA_NEWS_URL` (see [docs/TESTING.md](docs/TESTING.md#interface)).
 
-## Installer l'environnement
+## Installing the environment
 
-1. Crée un dossier pour le projet (par exemple `C:\Aurora-Viewer`), ouvre une
-   invite de commandes dedans (dans l'Explorateur : tape `cmd` dans la barre
-   d'adresse, puis Entrée) et clone le dépôt :
+1. Create a folder for the project (for example `C:\Aurora-Viewer`), open a
+   command prompt in it (in Explorer: type `cmd` in the address bar, then
+   Enter) and clone the repository:
 
    ```bat
    git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
    ```
 
-2. Double-clic sur **`aurora-viewer\aurora-tools.cmd`** (les outils Aurora,
-   section suivante). Ils vérifient ce qui manque et proposent **Réparer** :
-   - ils installent ce qui manque avec winget : GitHub CLI (pour toute la
-     machine), les outils C++ de Visual Studio dont Rust a besoin pour
-     compiler (plusieurs Go), et Rust (rustup, pour ton compte, comme le veut
-     Rust sous Windows) ; des fenêtres d'autorisation Windows peuvent
-     s'ouvrir ;
-   - ils clonent les sources de Firestorm dans `phoenix-firestorm\`, à côté
-     du dépôt ;
-   - ils téléchargent la police emoji, la toolchain Rust et toutes les crates ;
-   - ils te connectent à GitHub (`gh auth login`, dans le navigateur) si
-     besoin, et règlent ton identité git dans le dépôt : ton pseudo GitHub et
-     ton adresse « noreply » (ton e-mail reste privé).
+2. Double-click **`aurora-viewer\aurora-tools.cmd`** (the Aurora tools, next
+   section). They check what is missing and offer **Repair / update**:
+   - they install what is missing with winget: GitHub CLI (for the whole
+     machine), the Visual Studio C++ tools that Rust needs to build (several
+     GB), and Rust (rustup, for your account, as Rust wants on Windows);
+     Windows permission prompts may open;
+   - they clone the Firestorm sources into `phoenix-firestorm\`, next to the
+     repository;
+   - they download the emoji font, the Rust toolchain and all the crates;
+   - they log you in to GitHub (`gh auth login`, in the browser) if needed,
+     and set your git identity in the repository: your GitHub user name and
+     your "noreply" address (your e-mail stays private).
 
-**Pas encore de Git ?** Dans une invite de commandes ouverte dans le dossier
-du projet, cette commande installe tout, Git compris, puis ouvre les outils
-(elle montre d'abord ce qu'elle va faire et demande où installer) :
+**No Git yet?** In a command prompt opened in the project folder, this
+command installs everything, Git included, then opens the tools (it first
+shows what it is going to do and asks where to install):
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = Join-Path $env:TEMP 'aurora-setup.ps1'; irm https://raw.githubusercontent.com/Aurora-Viewer/Aurora-Viewer/main/scripts/setup.ps1 -OutFile $f; & $f"
 ```
 
-Dans la suite, **le dossier du projet** est celui de l'installation : il
-contient `aurora-viewer\`, `phoenix-firestorm\`, `work\` (les tâches des
-agents) et, plus tard, `RELEASE\`.
+From here on, **the project folder** is the one of the installation: it
+contains `aurora-viewer\`, `phoenix-firestorm\`, `work\` (the agents' tasks)
+and, later, `RELEASE\`.
 
-## Les outils Aurora : `aurora-tools.cmd`
+## The Aurora tools: `aurora-tools.cmd`
 
-Double-clic sur **`aurora-tools.cmd`**, à la racine du dépôt (ou sur le
-raccourci « Aurora Tools » que l'outil peut créer). Tout se fait au clavier :
-**↑ ↓** pour choisir, **Entrée** pour valider, **Échap** ou **Retour
-arrière** pour revenir, et la touche affichée devant chaque choix comme
-raccourci.
+Double-click **`aurora-tools.cmd`**, at the root of the repository (or the
+"Aurora Tools" shortcut the tool can create). Everything is done with the
+keyboard: **↑ ↓** to choose, **Enter** to confirm, **Esc** or **Backspace**
+to go back, and the key shown in front of each choice as a shortcut.
 
-Le lanceur charge les scripts présents dans `scripts/tools/` à chaque ouverture.
-Il fonctionne aussi placé dans le dossier du projet, à côté de `aurora-viewer/` ;
-seul dans un dossier vide, il télécharge l'installateur depuis le `main` de GitHub.
-En ligne de commande, il transmet les arguments aux outils et retourne leur code
-de sortie, par exemple `aurora-tools.cmd -Action diagnose`. Les points d'exclamation
-dans le chemin restent valides même depuis une invite avec expansion retardée.
+The launcher loads the scripts present in `scripts/tools/` each time it
+opens. It also works when placed in the project folder, next to
+`aurora-viewer/`; alone in an empty folder, it downloads the installer from
+the `main` of GitHub. On the command line, it passes the arguments to the
+tools and returns their exit code, for example
+`aurora-tools.cmd -Action diagnose`. Exclamation marks in the path stay valid
+even from a prompt with delayed expansion.
 
-Le choix actif porte un repère **›** sur fond violet ; le curseur de saisie
-reste masqué pendant la navigation. Les longues listes défilent avec la
-sélection et les menus s'adaptent au redimensionnement de la console.
-La création d'une release sépare le numéro, le cache et les paramètres en
-trois écrans, avec la version choisie et un récapitulatif avant confirmation.
+The active choice carries a **›** mark on a violet background; the text
+cursor stays hidden while navigating. Long lists scroll with the selection
+and the menus adapt when the console is resized. Creating a release splits
+the number, the cache and the settings into three screens, with the chosen
+version and a summary before confirmation.
 
-À l'ouverture, l'outil vérifie l'environnement : outils, dépôt en retard sur
-GitHub, sources de Firestorm périmées, Rust pas à jour, police, connexion
-GitHub… S'il manque ou s'il est périmé quelque chose, le premier choix est
-**Réparer / mettre à jour** (la même installation que la commande en une
-ligne : ce qui est là est mis à jour, rien n'est réinstallé).
-Si cette mise à jour modifie les scripts d'Aurora Tools, l'outil redémarre
-automatiquement dans la même console et rouvre son menu avec le nouveau
-comportement. Cela s'applique aussi à l'action `-Action repair` ; une
-réparation qui ne modifie pas les outils conserve la session en cours.
+When it opens, the tool checks the environment: tools, repository behind
+GitHub, outdated Firestorm sources, Rust not up to date, font, GitHub
+login… If something is missing or outdated, the first choice is **Repair /
+update** (the same installation as the one-line command: what is there is
+updated, nothing is reinstalled). If that update changes the Aurora Tools
+scripts, the tool restarts automatically in the same console and reopens its
+menu with the new behaviour. This also applies to the `-Action repair`
+action; a repair that does not change the tools keeps the current session.
 
-Pour vérifier ces comportements sans installer ni publier quoi que ce soit :
-`powershell -NoProfile -File scripts/test-tools.ps1` teste les menus dans des
-consoles Windows masquées et la relance sur des scripts temporaires isolés.
+To check these behaviours without installing or publishing anything:
+`powershell -NoProfile -File scripts/test-tools.ps1` tests the menus in
+hidden Windows consoles and the restart on isolated temporary scripts.
 
-| Choix | Ce que ça fait |
+| Choice | What it does |
 |---|---|
-| Viewer release | Le dernier `main` de GitHub en `--release`, dans `RELEASE\` (voir plus bas), puis « lancer ? » |
-| Viewer de dev | Ton dépôt local, profil par défaut (celui des agents) |
-| Viewer de debug | Ton dépôt local avec une console, les contrôles de débogage et les infos de débogage complètes (profil `debugging`, son propre dossier de quelques Go) |
-| Démo | Le viewer hors ligne, avec le choix d'un scénario `AURORA_DEMO_*` (lus dans [docs/TESTING.md](docs/TESTING.md)) |
-| Tâches des agents | Les dossiers de `work\` : PR, changements en cours, dernière compilation, taille ; ménage de celles dont la PR est fusionnée |
-| Disque | La place prise par les compilations, et le nettoyage (`clean.ps1`) |
-| Logs du viewer | Ouvrir le dossier, lire la fin du dernier log, copier son chemin pour un agent |
-| Suivi des PR | Le panneau en direct (voir ci-dessous) |
-| Gérer les releases | Créer ou supprimer une version (voir [Publier une version](#publier-une-version)) |
-| Raccourcis | « Aurora Tools » et « Aurora PR » (le panneau des PR directement) sur le Bureau et dans le menu Démarrer, avec le logo |
-| Permissions de Claude | Laisse tes agents Claude Code suivre leurs PR et la CI, poster leur relecture et leurs captures, fusionner leur PR, trier les issues et y répondre (`gh pr view / list / checks / comment`, `gh run view / list / watch`, `gh issue list / view / edit / comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1`), que le mode auto peut leur refuser sinon (« auto-approbation », « écriture sur un système externe », « interférence avec des charges de travail »). `gh api`, `git push`, `gh pr merge`, les releases et `end-task.ps1` restent sans règle, au jugement du mode auto. Ajoute ces règles dans tes réglages Claude Code (`%USERPROFILE%\.claude\settings.json`) sans toucher au reste, en gardant une copie de l'ancien fichier ; la file de fusion et la protection de `main` s'appliquent toujours. À relancer après une mise à jour des outils qui ajoute une règle : seules les règles manquantes sont ajoutées. Ouvre ensuite une nouvelle session de Claude Code |
-| Vérifier à nouveau | Le tableau complet de l'environnement |
-| Réinitialiser le dépôt | Repartir d'un clone neuf du `main` de GitHub : l'outil liste d'abord tout ce qui serait perdu (changements non commités, commits jamais poussés, stashs, tâches des agents avec leurs changements, fichiers ignorés comme un `.env`), refuse si une compilation ou un viewer tourne, et ne fait rien sans que tu tapes `REINITIALISER`. Il supprime alors les tâches de `work\` et `RELEASE\`, remet le dépôt sur `origin/main` (fichiers non suivis et compilations effacés, branches locales et stashs supprimés), puis répare l'environnement. Ton identité git, ta connexion GitHub et les sources de Firestorm sont gardées |
+| Release viewer | The latest `main` of GitHub in `--release`, in `RELEASE\` (see below), then "launch?" |
+| Dev viewer | Your local repository, default profile (the agents' one) |
+| Debug viewer | Your local repository with a console, the debug controls and full debug information (`debugging` profile, its own folder of a few GB) |
+| Demo | The viewer offline, with the choice of an `AURORA_DEMO_*` scenario (read from [docs/TESTING.md](docs/TESTING.md)) |
+| Agent tasks | The folders of `work\`: PR, changes in progress, last build, size; cleanup of those whose PR is merged |
+| Disk | The space taken by the builds, and the cleanup (`clean.ps1`) |
+| Viewer logs | Open the folder, read the end of the last log, copy its path for an agent |
+| PR tracking | The live panel (see below) |
+| Manage releases | Create or delete a release (see [Publishing a release](#publishing-a-release)) |
+| Shortcuts | "Aurora Tools" and "Aurora PR" (the PR panel directly) on the Desktop and in the Start menu, with the logo |
+| Claude permissions | Lets your Claude Code agents follow their PRs and CI, post their review and their screenshots, merge their PR, triage the issues and reply to them (`gh pr view / list / checks / comment`, `gh run view / list / watch`, `gh issue list / view / edit / comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1`), which auto mode can otherwise refuse them ("auto-approval", "write to an external system", "interference with workloads"). `gh api`, `git push`, `gh pr merge`, the releases and `end-task.ps1` stay without a rule, left to the judgement of auto mode. Adds these rules to your Claude Code settings (`%USERPROFILE%\.claude\settings.json`) without touching the rest, keeping a copy of the former file; the merge queue and the protection of `main` still apply. Run it again after a tools update that adds a rule: only the missing rules are added. Then open a new Claude Code session |
+| Check again | The full table of the environment |
+| Reset the repository | Start again from a fresh clone of the `main` of GitHub: the tool first lists everything that would be lost (uncommitted changes, commits never pushed, stashes, agents' tasks with their changes, ignored files such as a `.env`), refuses if a build or a viewer is running, and does nothing unless you type `RESET`. It then deletes the tasks of `work\` and `RELEASE\`, puts the repository back on `origin/main` (untracked files and builds erased, local branches and stashes deleted), then repairs the environment. Your git identity, your GitHub login and the Firestorm sources are kept |
 
-**Les PR en direct.** Tant que les outils sont ouverts, le bandeau du bas
-résume les PR (« PR : 3 ouvertes · 1 CI · 1 en file · 1 rouge »), et une
-**notification Windows** signale une PR fusionnée, une CI qui passe au rouge,
-une PR sortie de la file de fusion, une nouvelle PR, ou `main` qui casse. Le
-panneau **Suivi des PR** (ou le raccourci « Aurora PR ») a trois sections :
-la **file de fusion** (place et durée), les **PR ouvertes** (CI avec la
-durée qui défile, verdict de la relecture de l'agent) et les **fusionnées
-récemment** (depuis combien de temps : « 04 min »), avec pour chaque PR son
-auteur et ses lignes ajoutées et supprimées (**+120** en vert, **-8** en
-rouge). Chaque état est une étiquette précédée d'un carré de sa couleur :
-`■ CI OK` (vert), `■ CI FAIL clippy` (rouge), `■ CI RUN 4:00` (ambre),
-`■ QUEUE #1 TESTS`, `■ AUTO-MERGE`, `■ REVIEW OK`, `■ REVIEW WARN` (à
-trancher), `■ REVIEW FAIL`, `■ REVIEW PENDING` (pas encore relue). Il
-s'adapte à la taille de la fenêtre : réduis-la et garde-la dans un coin de l'écran (trop
-basse, elle cache d'abord les dernières fusions, puis fait défiler les PR
-avec la sélection).
-**↑ ↓** choisir, **Entrée** ouvrir la PR dans le navigateur, **R**
-rafraîchir. GitHub est interrogé toutes les 10 à 20 secondes, pas plus :
-le quota de GitHub (5 000 requêtes par heure) est partagé avec tes agents.
+**Live PRs.** As long as the tools are open, the bottom banner sums up the
+PRs ("PR: 3 open · 1 CI · 1 queued · 1 red"), and a **Windows notification**
+reports a merged PR, a CI that turns red, a PR that left the merge queue, a
+new PR, or `main` breaking. The **PR tracking** panel (or the "Aurora PR"
+shortcut) has three sections: the **merge queue** (position and duration),
+the **open PRs** (CI with its running duration, verdict of the agent's
+review) and the **recently merged** ones (how long ago: "04 min"), with for
+each PR its author and its added and deleted lines (**+120** in green,
+**-8** in red). Each state is a tag preceded by a square of its colour:
+`■ CI OK` (green), `■ CI FAIL clippy` (red), `■ CI RUN 4:00` (amber),
+`■ QUEUE #1 TESTS`, `■ AUTO-MERGE`, `■ REVIEW OK`, `■ REVIEW WARN` (to
+decide), `■ REVIEW FAIL`, `■ REVIEW PENDING` (not reviewed yet). It adapts to
+the size of the window: shrink it and keep it in a corner of the screen (too
+low, it first hides the latest merges, then scrolls the PRs with the
+selection). **↑ ↓** choose, **Enter** open the PR in the browser, **R**
+refresh. GitHub is queried every 10 to 20 seconds, no more: GitHub's quota
+(5,000 requests per hour) is shared with your agents.
 
-Chaque choix existe aussi sans menu, pour un script :
+Each choice also exists without the menu, for a script:
 `./scripts/tools/aurora-tools.ps1 -Action diagnose` (`repair`, `release`,
 `dev`, `debug`, `demo`, `tasks`, `disk`, `logs`, `prs`, `releases`,
-`reset`, `shortcut`, `claude`) ; `-DryRun` montre ce que `releases`,
-`reset` et `claude` feraient sans le faire.
+`reset`, `shortcut`, `claude`); `-DryRun` shows what `releases`, `reset` and
+`claude` would do without doing it.
 
-## Le viewer à jour de `main`, en `--release`
+## The up-to-date viewer of `main`, in `--release`
 
-Choix **Viewer release** des outils, ou double-clic sur
-`RELEASE\build-release.bat` dans le dossier du projet. L'exe prêt à lancer
-est dans `RELEASE\Aurora-Viewer\` (avec ses assets, comme le zip des
-releases), et `version.txt` donne la version annoncée par le viewer et le
-commit compilé.
+The **Release viewer** choice of the tools, or a double-click on
+`RELEASE\build-release.bat` in the project folder. The ready-to-launch exe is
+in `RELEASE\Aurora-Viewer\` (with its assets, like the zip of the releases),
+and `version.txt` gives the version announced by the viewer and the commit
+built.
 
-- Le code vient **toujours de GitHub** : tes changements locaux et tes
-  commits non poussés n'y entrent pas.
-- Le premier build prend quelques minutes ; les suivants ne recompilent que
-  ce qui a changé.
-- Le dossier prêt à lancer est préparé aussi bien avec Windows PowerShell
-  5.1 qu’avec PowerShell 7.
-- `build-release.bat 42` compile la PR n°42 (pour tester ses performances
-  avant de la fusionner).
-- Ferme le viewer de ce dossier avant de recompiler (le script le signale).
+- The code **always comes from GitHub**: your local changes and your
+  unpushed commits do not go in.
+- The first build takes a few minutes; the next ones only rebuild what
+  changed.
+- The ready-to-launch folder is prepared with Windows PowerShell 5.1 as well
+  as with PowerShell 7.
+- `build-release.bat 42` builds PR no. 42 (to test its performance before
+  merging it).
+- Close the viewer of that folder before rebuilding (the script says so).
 
-## Compiler et lancer à la main
+## Building and launching by hand
 
 ```bash
 cargo run -p aurora-viewer
 ```
 
-- Le profil par défaut (sans `--release`) est celui des agents : il se
-  comporte comme la version publiée, sans l'optimisation lente de
-  `--release`. `cargo build --release` reste possible pour mesurer des
-  performances (il recompile tout une deuxième fois).
-- Mode démo (aucune connexion) : `$env:AURORA_DEMO="1"` avant de lancer.
-- Nommer la fenêtre : `cargo run -p aurora-viewer -- --title "Mon test"`.
-- Tout vérifier comme la CI : `./scripts/check.ps1`.
-- Les agents compilent dans leur propre dossier `..\work\<tâche>\target` :
-  leurs viewers ouverts ne bloquent pas les tiens.
+- The default profile (without `--release`) is the agents' one: it behaves
+  like the published version, without the slow optimisation of `--release`.
+  `cargo build --release` is still possible to measure performance (it
+  rebuilds everything a second time).
+- Demo mode (no connection): `$env:AURORA_DEMO="1"` before launching.
+- Naming the window: `cargo run -p aurora-viewer -- --title "My test"`.
+- Checking everything like CI: `./scripts/check.ps1`.
+- The agents build in their own folder `..\work\<task>\target`: their open
+  viewers do not block yours.
 
-### Place sur le disque
+### Disk space
 
-Les compilations prennent de la place : comptez 3 à 4 Go par dossier
-`target` (le dépôt, chaque tâche en cours, `RELEASE`). Ce n'est que du
-cache, qu'on peut toujours supprimer : il sera recompilé au besoin. Une
-nouvelle tâche libère d'elle-même le `target` des tâches fusionnées ou
-inactives depuis 7 jours.
+Builds take space: count 3 to 4 GB per `target` folder (the repository, each
+task in progress, `RELEASE`). It is only cache, which can always be deleted:
+it will be rebuilt when needed. A new task frees by itself the `target` of
+the tasks that are merged or inactive for 7 days.
 
-Le choix **Disque** des outils fait la même chose que :
+The **Disk** choice of the tools does the same as:
 
 ```powershell
-./scripts/clean.ps1                 # montre la place prise, n'efface rien
-./scripts/clean.ps1 -Apply          # libère les compilations du dépôt (garde target\release)
-./scripts/clean.ps1 -Tasks -Apply   # libère aussi celles des tâches en cours
+./scripts/clean.ps1                 # shows the space taken, deletes nothing
+./scripts/clean.ps1 -Apply          # frees the builds of the repository (keeps target\release)
+./scripts/clean.ps1 -Tasks -Apply   # also frees those of the tasks in progress
 ```
 
-Le script ne supprime que des dossiers de compilation Cargo, et refuse de
-travailler pendant une compilation ou quand un viewer est ouvert.
+The script only deletes Cargo build folders, and refuses to work during a
+build or when a viewer is open.
 
-## Où sont les fichiers
+## Where the files are
 
-Les paquets Windows vérifient les mises à jour au lancement, en arrière-plan.
-« Ignorer cette version » masque sa proposition automatique ; « Vérifier les
-mises à jour », dans Aide et sur la connexion, permet de la retrouver.
-Préférences → Interface → Mises à jour : demander (par défaut), télécharger
-automatiquement ou seulement les mises à jour obligatoires. Le téléchargement
-automatique attend votre accord pour installer et relancer.
+The Windows packages check for updates at launch, in the background. "Skip
+this version" hides its automatic offer; "Check for updates", in Help and on
+the login screen, brings it back. Preferences → Interface → Updates: ask (by
+default), download automatically or required updates only. The automatic
+download waits for your agreement to install and restart.
 
-Le viewer vérifie le ZIP, garde l’ancien dossier jusqu’à la première image
-affichée et le restaure si le démarrage échoue. Utiliser un dossier dédié, avec
-des droits d’écriture ; les dossiers contenant du code ou des fichiers personnels
-demandent une installation manuelle. Réglages et cache restent dans les dossiers
-habituels. Développement et démo ne vérifient pas les releases. Voir
-[docs/UPDATES.md](docs/UPDATES.md) pour le format des paquets et leur politique.
+The viewer verifies the ZIP, keeps the former folder until the first frame is
+displayed and restores it if the start fails. Use a dedicated folder, with
+write access; folders that contain code or personal files require a manual
+installation. Settings and cache stay in the usual folders. Development and
+demo builds do not check the releases. See [docs/UPDATES.md](docs/UPDATES.md)
+for the format of the packages and their policy.
 
-| Quoi | Où |
+| What | Where |
 |---|---|
-| Code du viewer | `crates/` (voir [ARCHITECTURE.md](ARCHITECTURE.md)) |
-| Suivi des tâches | [TASKS.md](TASKS.md) |
-| Dossiers de travail des agents | `work\`, dans le dossier du projet |
-| Sources Firestorm (référence) | `phoenix-firestorm\`, dans le dossier du projet |
-| Réglages, skins, disposition | `%APPDATA%\Aurora\AuroraViewer\config\` |
-| Historique des conversations (fichiers texte, par compte et par grille ; Préférences › Chat pour l'ouvrir, le désactiver ou l'effacer) | `%APPDATA%\Aurora\AuroraViewer\config\accounts\<uuid du compte>\chat_logs\<grille>\` |
-| Cache (textures, mesh…) — peut être supprimé sans risque | `%LOCALAPPDATA%\Aurora\AuroraViewer\cache\` |
-| Logs (à envoyer à un agent après un test) | `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\` |
-| Viewer `--release` du dernier `main` | `RELEASE\Aurora-Viewer\aurora-viewer.exe`, dans le dossier du projet |
-| Programme compilé à la main | `target\debug\aurora-viewer.exe` (ou `work\<tâche>\target\debug\`) |
+| Viewer code | `crates/` (see [ARCHITECTURE.md](ARCHITECTURE.md)) |
+| Task tracking | [TASKS.md](TASKS.md) |
+| Agents' working folders | `work\`, in the project folder |
+| Firestorm sources (reference) | `phoenix-firestorm\`, in the project folder |
+| Settings, skins, layout | `%APPDATA%\Aurora\AuroraViewer\config\` |
+| Conversation history (text files, per account and per grid; Preferences › Chat to open it, turn it off or erase it) | `%APPDATA%\Aurora\AuroraViewer\config\accounts\<account uuid>\chat_logs\<grid>\` |
+| Cache (textures, mesh…) — can be deleted safely | `%LOCALAPPDATA%\Aurora\AuroraViewer\cache\` |
+| Logs (to send to an agent after a test) | `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\` |
+| `--release` viewer of the latest `main` | `RELEASE\Aurora-Viewer\aurora-viewer.exe`, in the project folder |
+| Program built by hand | `target\debug\aurora-viewer.exe` (or `work\<task>\target\debug\`) |
 
-`aurora.log` est le log de ta dernière session réelle ; la session d'avant est
-gardée en `aurora.previous.log`. Les sessions de démo ont leurs propres logs
+`aurora.log` is the log of your last real session; the session before is kept
+as `aurora.previous.log`. Demo sessions have their own logs
 (`aurora-demo*.log`).
 
-## Sécurité
+## Security
 
-- Les agents ne se connectent jamais à la grille et ne manipulent jamais tes
-  identifiants. Le mot de passe retenu est stocké par Windows (Gestionnaire
-  d'identification), sous forme d'empreinte uniquement.
-- La CI cherche des secrets dans chaque PR (et dans la file de fusion), et la
-  relecture de l'agent aussi. Si tu vois passer un identifiant ou un jeton,
-  dis à l'agent d'arrêter et signale-le.
-- Tu peux toujours demander à un agent de t'expliquer un changement, ou de
-  ne pas fusionner une PR avant que tu l'aies regardée.
+- The agents never connect to the grid and never handle your credentials.
+  The remembered password is stored by Windows (Credential Manager), as a
+  hash only.
+- CI looks for secrets in each PR (and in the merge queue), and so does the
+  agent's review. If you see a credential or a token go by, tell the agent
+  to stop and report it.
+- You can always ask an agent to explain a change to you, or not to merge a
+  PR before you have looked at it.

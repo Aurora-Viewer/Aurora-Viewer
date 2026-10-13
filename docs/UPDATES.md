@@ -42,7 +42,7 @@ Les préférences et le tag ignoré ne suppriment pas ce contrôle. Modifier cet
 politique est une décision de publication revue dans une PR ; elle prend effet
 à la release suivante.
 
-Dans **aurora-tools.cmd → Gérer les releases → Créer une release**, les choix
+Dans **aurora-tools.cmd → Manage releases → Create a release**, les choix
 Cache et Paramètres précèdent la confirmation. Conserver le cache et les
 paramètres est le choix habituel ; `Settings::sanitized` applique les migrations
 codées dans le viewer. Forcer une action inscrit la version de publication comme

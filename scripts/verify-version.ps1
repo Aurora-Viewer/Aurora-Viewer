@@ -1,7 +1,7 @@
 ﻿<#
 .SYNOPSIS
-    Vérifie qu'un viewer compilé annonce exactement le numéro du tag de
-    release. --version quitte avant les journaux, la fenêtre et le réseau.
+    Checks that a built viewer reports exactly the number of the release
+    tag. --version exits before the logs, the window and the network.
 #>
 param(
     [Parameter(Mandatory)][string]$Exe,
@@ -9,11 +9,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($Tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
-    throw "Tag de version invalide : $Tag"
+    throw "Invalid version tag: $Tag"
 }
 $path = (Resolve-Path -LiteralPath $Exe -ErrorAction Stop).Path
 $reported = (& $path --version | Out-String).Trim()
-if ($LASTEXITCODE -ne 0) { throw "Le viewer n'a pas pu annoncer sa version (code $LASTEXITCODE)." }
+if ($LASTEXITCODE -ne 0) { throw "The viewer could not report its version (code $LASTEXITCODE)." }
 $expected = "Aurora Viewer $($Tag.Substring(1))"
-if ($reported -cne $expected) { throw "Version compilée incohérente : attendu '$expected', reçu '$reported'." }
-Write-Host "Version vérifiée : $reported"
+if ($reported -cne $expected) { throw "Built version mismatch: expected '$expected', got '$reported'." }
+Write-Host "Version verified: $reported"

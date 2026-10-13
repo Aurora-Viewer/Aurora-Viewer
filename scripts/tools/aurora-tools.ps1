@@ -1,19 +1,19 @@
 ﻿<#
 .SYNOPSIS
-    Les outils de développement d'Aurora Viewer, en menu au clavier
-    (flèches, Entrée, Échap) : diagnostic et réparation de l'environnement,
-    viewers release / dev / debug, démo, tâches des agents, disque, logs,
-    suivi des PR en direct (bandeau du bas, notifications), gestion des
-    releases, raccourcis, permissions de Claude Code, réinitialisation du dépôt. Se lance par aurora-tools.cmd, à la racine du dépôt.
+    The development tools of Aurora Viewer, as a keyboard menu
+    (arrows, Enter, Esc): diagnosis and repair of the environment,
+    release / dev / debug viewers, demo, agent tasks, disk, logs,
+    live PR tracking (bottom bar, notifications), release
+    management, shortcuts, Claude Code permissions, repository reset. Started by aurora-tools.cmd, at the repository root.
 
 .DESCRIPTION
-    Sans dépôt (première installation : la commande en une ligne lance
-    scripts/setup.ps1, qui télécharge ces outils), il installe tout dans le
-    dossier choisi, puis ouvre le menu du dépôt installé.
+    Without a repository (first installation: the one-line command runs
+    scripts/setup.ps1, which downloads these tools), it installs everything in
+    the chosen folder, then opens the menu of the installed repository.
 
 .EXAMPLE
-    ./scripts/tools/aurora-tools.ps1                     # le menu
-    ./scripts/tools/aurora-tools.ps1 -Action diagnose    # une action, sans menu
+    ./scripts/tools/aurora-tools.ps1                     # the menu
+    ./scripts/tools/aurora-tools.ps1 -Action diagnose    # one action, without the menu
 #>
 param(
     [ValidateSet('menu', 'install', 'diagnose', 'repair', 'release', 'dev', 'debug', 'demo', 'tasks', 'disk', 'logs', 'shortcut', 'prs', 'releases', 'reset', 'claude')]
@@ -49,8 +49,8 @@ function Find-Project {
 
 function Show-Failure($Err) {
     Write-Host ''
-    Write-Color "  ÉCHEC : $($Err.Exception.Message)" danger
-    Write-Color '  Corrige le problème puis relance : ce qui est fait est gardé.' muted
+    Write-Color "  FAILED: $($Err.Exception.Message)" danger
+    Write-Color '  Fix the problem then run it again: what is done is kept.' muted
 }
 
 # Compare the scripts on disk with the session's snapshot, including module
@@ -72,7 +72,7 @@ function Invoke-ToolsRepair($P) {
 }
 
 function Restart-AuroraTools([string]$ToolsPath) {
-    Write-Color '  Aurora Tools a été mis à jour. Redémarrage automatique…' success
+    Write-Color '  Aurora Tools was updated. Restarting automatically…' success
     # Run in this console, with the same PowerShell edition. The old session
     # has stopped its watcher and will exit when the replacement exits.
     $engine = (Get-Process -Id $PID).Path
@@ -84,40 +84,40 @@ function Restart-AuroraTools([string]$ToolsPath) {
 # --- Installation ---------------------------------------------------------------
 
 function Start-Install {
-    Show-Logo 'Installation de l''environnement de développement'
+    Show-Logo 'Development environment setup'
     $here = (Get-Location).Path
     # in the repository itself: propose its parent (no clone inside a clone)
     $proposed = if (Test-Path (Join-Path $here 'AGENTS.md')) { Split-Path $here -Parent } else { $here }
     if ($Path) {
         $root = [IO.Path]::GetFullPath($Path)
-        Show-Checks (Get-Checks (Get-Paths $root)) "Dossier du projet : $root"
+        Show-Checks (Get-Checks (Get-Paths $root)) "Project folder: $root"
     } else {
         $root = $proposed
-        Show-Checks (Get-Checks (Get-Paths $root)) "Dossier du projet proposé : $root"
-        if (-not $Yes -and -not (Read-YesNo "Tout installer dans $root ?")) {
+        Show-Checks (Get-Checks (Get-Paths $root)) "Proposed project folder: $root"
+        if (-not $Yes -and -not (Read-YesNo "Install everything in ${root}?")) {
             do {
-                $answer = Read-Text 'Chemin du dossier Aurora-Viewer (créé s''il n''existe pas), par exemple D:\Dev\Aurora-Viewer ; vide : annuler'
-                if (-not $answer) { Write-Color '  Rien n''a été installé.' muted; exit 0 }
+                $answer = Read-Text 'Path of the Aurora-Viewer folder (created if missing), for example D:\Dev\Aurora-Viewer; empty: cancel'
+                if (-not $answer) { Write-Color '  Nothing was installed.' muted; exit 0 }
                 $root = [IO.Path]::GetFullPath($answer)
-                if (Test-Path -LiteralPath $root -PathType Leaf) { Write-Color "  $root est un fichier, pas un dossier." warn; $root = $null }
+                if (Test-Path -LiteralPath $root -PathType Leaf) { Write-Color "  $root is a file, not a folder." warn; $root = $null }
             } until ($root)
             Write-Host ''
-            Show-Checks (Get-Checks (Get-Paths $root)) "Dossier du projet : $root"
-            if (-not (Read-YesNo "Tout installer dans $root ?")) { Write-Color '  Rien n''a été installé.' muted; exit 0 }
+            Show-Checks (Get-Checks (Get-Paths $root)) "Project folder: $root"
+            if (-not (Read-YesNo "Install everything in ${root}?")) { Write-Color '  Nothing was installed.' muted; exit 0 }
         }
     }
     $p = Get-Paths $root
     $started = Get-Date
     try { Invoke-Repair $p } catch { Show-Failure $_; exit 1 }
     Write-Host ''
-    Show-Checks (Get-Checks $p) 'Récapitulatif' -Summary
+    Show-Checks (Get-Checks $p) 'Summary' -Summary
     $took = (Get-Date) - $started
     Write-Host ''
-    Write-Aurora "  » Tout est prêt, en $([math]::Floor($took.TotalMinutes)) min $($took.Seconds) s."
+    Write-Aurora "  » All set, in $([math]::Floor($took.TotalMinutes)) min $($took.Seconds) s."
     Write-Color "    $($p.Repo)" ink
-    Write-Color '    Ouvre ton agent (Claude Code…) dans ce dossier ; ton rôle est expliqué dans HUMANS.md.' muted
+    Write-Color '    Open your agent (Claude Code…) in this folder; your role is explained in HUMANS.md.' muted
     $tools = Join-Path $p.Repo 'scripts\tools\aurora-tools.ps1'
-    if (-not $Yes -and (Test-Path $tools) -and (Read-YesNo 'Ouvrir les outils Aurora (aurora-tools.cmd) ?')) {
+    if (-not $Yes -and (Test-Path $tools) -and (Read-YesNo 'Open the Aurora tools (aurora-tools.cmd)?')) {
         & $tools
     }
 }
@@ -126,15 +126,15 @@ function Start-Install {
 
 function Show-Status($Checks) {
     $problems = Get-Problems $Checks
-    Write-Color "  Projet : $($Paths.Root)" muted
+    Write-Color "  Project: $($Paths.Root)" muted
     if (-not $problems) {
-        Write-Color '  Environnement : tout est en place et à jour.' success
+        Write-Color '  Environment: everything is in place and up to date.' success
     } else {
-        Write-Color "  Environnement : $($problems.Count) point(s) à réparer ou mettre à jour" warn
-        foreach ($c in $problems) { Write-Color "    • $($c.Item) : $(if ($c.State -eq 'todo') { 'absent' } else { $c.Found })" warn }
+        Write-Color "  Environment: $($problems.Count) item(s) to repair or update" warn
+        foreach ($c in $problems) { Write-Color "    • $($c.Item): $(if ($c.State -eq 'todo') { 'missing' } else { $c.Found })" warn }
     }
-    foreach ($c in $Checks | Where-Object { $_.Id -eq 'release' -and $_.Action -ne 'rien à faire' }) {
-        Write-Color "  $($c.Item) : $($c.Found)" teal
+    foreach ($c in $Checks | Where-Object { $_.Id -eq 'release' -and $_.Action -ne 'nothing to do' }) {
+        Write-Color "  $($c.Item): $($c.Found)" teal
     }
 }
 
@@ -143,30 +143,30 @@ function Show-Main {
     $selected = 0
     while ($true) {
         if (-not $checks) {
-            Show-Logo 'Outils'
-            Write-Color '  Vérification de l''environnement (GitHub, Firestorm, Rust)…' muted_dim
+            Show-Logo 'Tools'
+            Write-Color '  Checking the environment (GitHub, Firestorm, Rust)…' muted_dim
             $checks = Get-Checks $Paths
         }
         $problems = Get-Problems $checks
         $items = @()
-        if ($problems) { $items += @{ Key = 'r'; Label = "Réparer / mettre à jour ($($problems.Count))"; Hint = 'installe ce qui manque, met à jour le reste' } }
+        if ($problems) { $items += @{ Key = 'r'; Label = "Repair / update ($($problems.Count))"; Hint = 'installs what is missing, updates the rest' } }
         $items += @(
-            @{ Key = '1'; Label = 'Viewer release'; Hint = 'dernier main de GitHub, --release, dans RELEASE\' }
-            @{ Key = '2'; Label = 'Viewer de dev'; Hint = 'ton dépôt local, profil par défaut' }
-            @{ Key = '3'; Label = 'Viewer de debug'; Hint = 'avec console et contrôles de débogage' }
-            @{ Key = '4'; Label = 'Démo'; Hint = 'hors ligne, choix du scénario' }
-            @{ Key = '5'; Label = 'Tâches des agents'; Hint = 'dossiers de work\, PR, ménage' }
-            @{ Key = '6'; Label = 'Disque'; Hint = 'place des compilations, nettoyage' }
-            @{ Key = '7'; Label = 'Logs du viewer'; Hint = 'ouvrir, lire la fin, copier le chemin' }
-            @{ Key = 'p'; Label = 'Suivi des PR'; Hint = 'en direct, à garder dans un coin de l''écran' }
-            @{ Key = 'g'; Label = 'Gérer les releases'; Hint = 'créer ou supprimer une version' }
-            @{ Key = '8'; Label = 'Raccourcis'; Hint = 'Bureau et menu Démarrer' }
-            @{ Key = 'c'; Label = 'Permissions de Claude'; Hint = 'laisser les agents suivre et fusionner leurs PR, traiter les issues' }
-            @{ Key = 'v'; Label = 'Vérifier à nouveau'; Hint = 'le tableau complet de l''environnement' }
-            @{ Key = 'x'; Label = 'Réinitialiser le dépôt'; Hint = 'clone neuf de GitHub, efface tout le local (inventaire d''abord)' }
-            @{ Key = '0'; Label = 'Quitter'; Hint = '' }
+            @{ Key = '1'; Label = 'Release viewer'; Hint = 'latest main from GitHub, --release, in RELEASE\' }
+            @{ Key = '2'; Label = 'Dev viewer'; Hint = 'your local repository, default profile' }
+            @{ Key = '3'; Label = 'Debug viewer'; Hint = 'with console and debugging controls' }
+            @{ Key = '4'; Label = 'Demo'; Hint = 'offline, choice of scenario' }
+            @{ Key = '5'; Label = 'Agent tasks'; Hint = 'folders of work\, PRs, cleanup' }
+            @{ Key = '6'; Label = 'Disk'; Hint = 'space taken by builds, cleanup' }
+            @{ Key = '7'; Label = 'Viewer logs'; Hint = 'open, read the end, copy the path' }
+            @{ Key = 'p'; Label = 'PR tracking'; Hint = 'live, to keep in a corner of the screen' }
+            @{ Key = 'm'; Label = 'Manage releases'; Hint = 'create or delete a release' }
+            @{ Key = '8'; Label = 'Shortcuts'; Hint = 'Desktop and Start menu' }
+            @{ Key = 'c'; Label = 'Claude permissions'; Hint = 'let the agents follow and merge their PRs, handle the issues' }
+            @{ Key = 'v'; Label = 'Check again'; Hint = 'the full table of the environment' }
+            @{ Key = 'x'; Label = 'Reset the repository'; Hint = 'fresh clone from GitHub, erases everything local (inventory first)' }
+            @{ Key = '0'; Label = 'Quit'; Hint = '' }
         )
-        $pick = Show-Menu 'Que veux-tu faire ?' $items { Show-Logo 'Outils'; Show-Status $checks } $selected
+        $pick = Show-Menu 'What do you want to do?' $items { Show-Logo 'Tools'; Show-Status $checks } $selected
         if (-not $pick -or $pick.Key -eq '0') { Clear-Screen; return }
         $selected = [array]::IndexOf(@($items | ForEach-Object { $_.Key }), $pick.Key)
         Show-Logo $pick.Label
@@ -181,11 +181,11 @@ function Show-Main {
                 '6' { Invoke-Disk }
                 '7' { Invoke-Logs }
                 'p' { Show-PrPanel }
-                'g' { Invoke-Releases }
+                'm' { Invoke-Releases }
                 '8' { Invoke-Shortcut }
                 'c' { Invoke-ClaudePermissions }
                 'x' { Invoke-Reset; $checks = $null }
-                'v' { $checks = Get-Checks $Paths; Show-Checks $checks "Environnement : $($Paths.Root)"; Wait-Back }
+                'v' { $checks = Get-Checks $Paths; Show-Checks $checks "Environment: $($Paths.Root)"; Wait-Back }
             }
         } catch {
             Show-Failure $_
@@ -215,7 +215,7 @@ try {
         'prs' { Show-PrPanel }
         'releases' { Invoke-Releases }
         'reset' { Invoke-Reset }
-        'diagnose' { Show-Checks (Get-Checks $Paths) "Environnement : $($Paths.Root)" }
+        'diagnose' { Show-Checks (Get-Checks $Paths) "Environment: $($Paths.Root)" }
         'repair' { try { Invoke-ToolsRepair $Paths } catch { Show-Failure $_; if (-not $ToolsRestartPath) { exit 1 } } }
         'release' { Invoke-ReleaseViewer }
         'dev' { Invoke-DevViewer }

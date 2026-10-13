@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Continue'
 # folder, so a script works whatever the current folder (double-click…).
 function Get-AuroraPaths {
     $common = (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir).Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $common) { throw "Pas dans un dépôt git Aurora Viewer." }
+    if ($LASTEXITCODE -ne 0 -or -not $common) { throw "Not in an Aurora Viewer git repository." }
     $main = Split-Path $common -Parent
     $root = Split-Path $main -Parent
     [pscustomobject]@{ Main = $main; Root = $root; Work = (Join-Path $root 'work') }
@@ -20,7 +20,7 @@ function Get-AuroraPaths {
 # Task name -> folder / branch name: lowercase letters, digits and dashes.
 function Get-TaskSlug([string]$Name) {
     $slug = ($Name.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
-    if (-not $slug) { throw "Nom de tâche invalide : '$Name'." }
+    if (-not $slug) { throw "Invalid task name: '$Name'." }
     $slug
 }
 
@@ -39,5 +39,5 @@ function Test-InUse([string]$Dir) {
 # Run a native command and stop on failure.
 function Invoke-Checked([string]$What, [scriptblock]$Command) {
     & $Command
-    if ($LASTEXITCODE -ne 0) { throw "Échec : $What (code $LASTEXITCODE)." }
+    if ($LASTEXITCODE -ne 0) { throw "Failed: $What (code $LASTEXITCODE)." }
 }

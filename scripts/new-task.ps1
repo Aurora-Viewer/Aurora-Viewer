@@ -1,15 +1,15 @@
 ﻿<#
 .SYNOPSIS
-    Crée le dossier de travail d'une tâche : un worktree git sur sa propre
-    branche, à côté du dépôt (..\work\<tâche>), avec son propre target\.
+    Creates the work folder of a task: a git worktree on its own branch,
+    next to the repository (..\work\<task>), with its own target\.
 
-    Au passage, libère le target\ des autres tâches qui n'en ont plus
-    besoin (PR fusionnée, ou aucune compilation depuis -IdleDays jours) : le
-    code reste, seule la compilation part ; une tâche qui reprend recompile.
+    On its way, frees the target\ of the other tasks that no longer need
+    it (PR merged, or no build for -IdleDays days): the code stays, only
+    the build goes; a task that resumes rebuilds.
 
 .EXAMPLE
-    ./scripts/new-task.ps1 -Name "regard des avatars" -Kind feat
-    # -> ..\work\regard-des-avatars, branche feat/regard-des-avatars
+    ./scripts/new-task.ps1 -Name "avatar gaze" -Kind feat
+    # -> ..\work\avatar-gaze, branch feat/avatar-gaze
 #>
 param(
     [Parameter(Mandatory)][string]$Name,
@@ -22,7 +22,7 @@ $p = Get-AuroraPaths
 $slug = Get-TaskSlug $Name
 $branch = "$Kind/$slug"
 $dir = Join-Path $p.Work $slug
-if (Test-Path $dir) { throw "Le dossier $dir existe déjà (tâche en cours ?)." }
+if (Test-Path $dir) { throw "The folder $dir already exists (task in progress?)." }
 
 # Free the build folders of the other tasks that no longer need them. The
 # last build is when Cargo last wrote into a deps\ or incremental\ folder.
@@ -33,21 +33,21 @@ if (Test-Path -LiteralPath $p.Work) {
         $why = $null
         $b = git -C $t.FullName rev-parse --abbrev-ref HEAD 2>$null
         if ($LASTEXITCODE -eq 0 -and (gh pr view $b.Trim() --json state --jq .state 2>$null) -eq 'MERGED') {
-            $why = 'PR fusionnée'
+            $why = 'PR merged'
         } else {
             $last = Get-ChildItem -LiteralPath $target -Directory -Force | ForEach-Object {
                 Get-Item -LiteralPath (Join-Path $_.FullName 'deps'), (Join-Path $_.FullName 'incremental') -Force -ErrorAction SilentlyContinue
             } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
             $idle = if ($last) { ((Get-Date) - $last.LastWriteTime).Days } else { [int]::MaxValue }
-            if ($idle -ge $IdleDays) { $why = "aucune compilation depuis $idle jours" }
+            if ($idle -ge $IdleDays) { $why = "no build for $idle days" }
         }
         if (-not $why) { continue }
-        if (Test-InUse $t.FullName) { Write-Warning "$($t.Name) : target gardé (compilation ou viewer en cours)."; continue }
+        if (Test-InUse $t.FullName) { Write-Warning "$($t.Name): target kept (a build or a viewer is running)."; continue }
         Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $target) {
-            Write-Warning "$($t.Name) : target pas entièrement supprimé (fichier verrouillé ?)."
+            Write-Warning "$($t.Name): target not fully deleted (locked file?)."
         } else {
-            Write-Host "$($t.Name) : target libéré ($why)." -ForegroundColor DarkGray
+            Write-Host "$($t.Name): target freed ($why)." -ForegroundColor DarkGray
         }
     }
 }
@@ -68,16 +68,16 @@ if (Test-Path $font) {
     try {
         New-Item -ItemType HardLink -Path (Join-Path $dir 'assets\emoji\Noto-3D-128.ttf') -Target $font -ErrorAction Stop | Out-Null
     } catch {
-        Write-Warning "Police emoji non liée ($($_.Exception.Message)) : lance scripts/fetch-assets.ps1 dans le worktree."
+        Write-Warning "Emoji font not linked ($($_.Exception.Message)): run scripts/fetch-assets.ps1 in the worktree."
     }
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $dir '.scratch') | Out-Null
 
 Write-Host ""
-Write-Host "Tâche prête :" -ForegroundColor Green
-Write-Host "  dossier  $dir"
-Write-Host "  branche  $branch (depuis $base)"
+Write-Host "Task ready:" -ForegroundColor Green
+Write-Host "  folder  $dir"
+Write-Host "  branch  $branch (from $base)"
 Write-Host ""
-Write-Host "Tester :  `$env:AURORA_DEMO='1'; cargo run -p aurora-viewer -- --title `"Test $slug`""
-Write-Host "Vérifier: ./scripts/check.ps1"
-Write-Host "Finir   : ./scripts/end-task.ps1 -Name $slug (après la fusion de la PR)"
+Write-Host "Test:   `$env:AURORA_DEMO='1'; cargo run -p aurora-viewer -- --title `"Test $slug`""
+Write-Host "Check:  ./scripts/check.ps1"
+Write-Host "Finish: ./scripts/end-task.ps1 -Name $slug (after the PR is merged)"

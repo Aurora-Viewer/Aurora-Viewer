@@ -1,10 +1,10 @@
 ﻿<#
 .SYNOPSIS
-    Publie des captures d'écran pour une PR sur la branche `captures` (jamais
-    sur main) et affiche le Markdown à coller dans la PR ou la relecture.
+    Publishes screenshots for a PR on the `captures` branch (never on main)
+    and prints the Markdown to paste into the PR or the review.
 
 .EXAMPLE
-    ./scripts/pr-captures.ps1 -Pr 42 -Files .scratch\avant.png, .scratch\apres.png
+    ./scripts/pr-captures.ps1 -Pr 42 -Files .scratch\before.png, .scratch\after.png
 #>
 param(
     [Parameter(Mandatory)][int]$Pr,
@@ -38,7 +38,7 @@ try {
         $names += $name
     }
     Invoke-Checked 'add' { git -C $tmp add $sub }
-    Invoke-Checked 'commit' { git -C $tmp commit --quiet -m "Captures de la PR #$Pr" }
+    Invoke-Checked 'commit' { git -C $tmp commit --quiet -m "Add the screenshots of PR #$Pr" }
     git -C $tmp push --quiet origin HEAD:captures
     if ($LASTEXITCODE -ne 0) {
         # another agent pushed captures meanwhile: replay ours on top
@@ -46,7 +46,7 @@ try {
         Invoke-Checked 'push' { git -C $tmp push --quiet origin HEAD:captures }
     }
     Write-Host ""
-    Write-Host "Markdown à coller :" -ForegroundColor Green
+    Write-Host "Markdown to paste:" -ForegroundColor Green
     foreach ($n in $names) {
         Write-Host "![$n](https://raw.githubusercontent.com/$nwo/captures/$sub/$n)"
     }

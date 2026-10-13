@@ -44,46 +44,46 @@ function Get-ReleaseContext($Repo) {
 function Get-PrType($Pr) {
     $names = @($Pr.labels | ForEach-Object name)
     foreach ($t in 'breaking', 'feature', 'fix', 'performance', 'maintenance', 'docs') { if ($names -contains $t) { return $t } }
-    'autre'
+    'other'
 }
 
 function Show-ReleaseList($Releases) {
     Write-Rule 90
-    Write-Color ('  ' + 'Tag'.PadRight(18) + 'Nom'.PadRight(40) + 'Publiée le'.PadRight(14) + 'Type') muted
+    Write-Color ('  ' + 'Tag'.PadRight(18) + 'Name'.PadRight(40) + 'Published'.PadRight(14) + 'Type') muted
     Write-Rule 90
-    if (-not $Releases) { Write-Color '  Aucune release.' muted }
+    if (-not $Releases) { Write-Color '  No release.' muted }
     foreach ($r in $Releases) {
-        $kind = if ($r.tagName -notmatch '^v\d') { 'assets (protégée)' } elseif ($r.isDraft) { 'brouillon' } elseif ($r.isPrerelease) { 'pré-release' } elseif ($r.isLatest) { 'dernière' } else { 'release' }
+        $kind = if ($r.tagName -notmatch '^v\d') { 'assets (protected)' } elseif ($r.isDraft) { 'draft' } elseif ($r.isPrerelease) { 'pre-release' } elseif ($r.isLatest) { 'latest' } else { 'release' }
         $name = if ($r.name.Length -gt 38) { $r.name.Substring(0, 37) + '…' } else { $r.name }
         Write-Color ('  ' + $r.tagName.PadRight(18)) violet_light -NoNewline
         Write-Color $name.PadRight(40) ink -NoNewline
-        Write-Color ([datetime]$r.publishedAt).ToString('dd/MM/yyyy').PadRight(14) muted -NoNewline
-        Write-Color $kind $(if ($kind -eq 'dernière') { 'success' } elseif ($kind -like 'assets*') { 'teal' } else { 'muted' })
+        Write-Color ([datetime]$r.publishedAt).ToString('yyyy-MM-dd').PadRight(14) muted -NoNewline
+        Write-Color $kind $(if ($kind -eq 'latest') { 'success' } elseif ($kind -like 'assets*') { 'teal' } else { 'muted' })
     }
     Write-Rule 90
 }
 
 function Invoke-Releases {
     $repo = Get-RepoSlug
-    if (-not $repo) { Write-Color '  Dépôt GitHub introuvable (remote origin).' danger; Wait-Back; return }
+    if (-not $repo) { Write-Color '  GitHub repository not found (remote origin).' danger; Wait-Back; return }
     while ($true) {
         Show-Logo 'Releases'
-        Write-Color "  Dépôt : $($repo.Slug)" muted
-        Write-Color '  Lecture des releases et de tes droits sur GitHub…' muted_dim
+        Write-Color "  Repository: $($repo.Slug)" muted
+        Write-Color '  Reading the releases and your rights on GitHub…' muted_dim
         $releases = Get-ReleaseList $repo
         $rights = Test-ReleaseRights $repo
         if (-not $rights) {
             Show-Logo 'Releases'
-            Write-Color "  Dépôt : $($repo.Slug)" muted
+            Write-Color "  Repository: $($repo.Slug)" muted
             Show-ReleaseList $releases
-            Write-Color '  Ton compte GitHub n''a pas le droit d''écriture sur ce dépôt : création et suppression indisponibles.' warn
+            Write-Color '  Your GitHub account has no write access to this repository: creating and deleting are unavailable.' warn
             Wait-Back
             return
         }
-        $pick = Show-Menu 'Gérer les releases' @(
-            @{ Key = '1'; Label = 'Créer une release'; Hint = 'tag SemVer sur le dernier main, publiée par la CI' }
-            @{ Key = '2'; Label = 'Supprimer une release'; Hint = 'release et tag, irréversible' }
-        ) { Show-Logo 'Releases'; Write-Color "  Dépôt : $($repo.Slug)" muted; Show-ReleaseList $releases }
+        $pick = Show-Menu 'Manage releases' @(
+            @{ Key = '1'; Label = 'Create a release'; Hint = 'SemVer tag on the latest main, published by CI' }
+            @{ Key = '2'; Label = 'Delete a release'; Hint = 'release and tag, cannot be undone' }
+        ) { Show-Logo 'Releases'; Write-Color "  Repository: $($repo.Slug)" muted; Show-ReleaseList $releases }
         switch ($pick.Key) {
             '1' { New-AuroraRelease $repo }
             '2' { Remove-AuroraRelease $repo $releases }
@@ -93,68 +93,68 @@ function Invoke-Releases {
 }
 
 function New-AuroraRelease($Repo) {
-    Show-Logo 'Nouvelle release'
-    Write-Color '  Vérification de main et des PR fusionnées depuis la dernière version…' muted_dim
+    Show-Logo 'New release'
+    Write-Color '  Checking main and the PRs merged since the last release…' muted_dim
     $run = Invoke-GhJson @('run', 'list', '-R', $Repo.Slug, '--workflow', 'CI', '--branch', 'main', '--limit', '1', '--json', 'status,conclusion,displayTitle') | Select-Object -First 1
     if (-not $run -or $run.status -ne 'completed') {
-        Write-Color '  La CI de main tourne encore : attends qu''elle finisse, puis recommence.' warn; Wait-Back; return
+        Write-Color '  CI is still running on main: wait for it to finish, then try again.' warn; Wait-Back; return
     }
     if ($run.conclusion -ne 'success') {
-        Write-Color "  La CI de main est rouge ($($run.displayTitle)) : on ne publie pas une version cassée." danger; Wait-Back; return
+        Write-Color "  CI is red on main ($($run.displayTitle)): a broken version is not published." danger; Wait-Back; return
     }
     $ctx = Get-ReleaseContext $Repo
     $base = if ($ctx.Last) { $ctx.Last.V } else { [pscustomobject]@{ Major = 0; Minor = 0; Patch = 0 } }
     $types = @{}
     foreach ($p in $ctx.Prs) { $t = Get-PrType $p; $types[$t] = 1 + [int]$types[$t] }
     $summary = (($types.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Value) $($_.Name)" }) -join ', ')
-    if (-not $summary) { $summary = 'aucune PR' }
+    if (-not $summary) { $summary = 'no PR' }
     # SemVer before 1.0 (AGENTS.md): a new feature or a break bumps MINOR, the rest PATCH
     $minor = "v$($base.Major).$($base.Minor + 1).0"
     $patch = "v$($base.Major).$($base.Minor).$($base.Patch + 1)"
     $major = "v$($base.Major + 1).0.0"
     $suggested = if ($types['feature'] -or $types['breaking']) { $minor } else { $patch }
 
-    $items = @(@{ Key = '1'; Label = "$suggested (proposée)"; Hint = 'd''après les étiquettes des PR'; Tag = $suggested })
+    $items = @(@{ Key = '1'; Label = "$suggested (suggested)"; Hint = 'from the PR labels'; Tag = $suggested })
     foreach ($t in @($patch, $minor, $major) | Where-Object { $_ -ne $suggested }) {
-        $hint = if ($t -eq $patch) { 'correctifs seulement' } elseif ($t -eq $minor) { 'nouveautés' } else { 'version majeure' }
+        $hint = if ($t -eq $patch) { 'fixes only' } elseif ($t -eq $minor) { 'new features' } else { 'major version' }
         $items += @{ Key = [string]($items.Count + 1); Label = $t; Hint = $hint; Tag = $t }
     }
-    $items += @{ Key = 'n'; Label = 'Autre numéro…'; Hint = 'par exemple v0.3.0-beta.1 (pré-release)'; Tag = $null }
-    $pick = Show-Menu 'Étape 1/3 · Quel numéro ?' $items {
-        Show-Logo 'Nouvelle release'
-        Write-Color "  Dernière version : $(if ($ctx.Last) { $ctx.Last.Tag } else { 'aucune' })" muted
-        Write-Color "  PR fusionnées depuis : $($ctx.Prs.Count) ($summary)" muted
+    $items += @{ Key = 'n'; Label = 'Other number…'; Hint = 'for example v0.3.0-beta.1 (pre-release)'; Tag = $null }
+    $pick = Show-Menu 'Step 1/3 · Which number?' $items {
+        Show-Logo 'New release'
+        Write-Color "  Last release: $(if ($ctx.Last) { $ctx.Last.Tag } else { 'none' })" muted
+        Write-Color "  PRs merged since: $($ctx.Prs.Count) ($summary)" muted
         $limit = if ($Interactive) { [Math]::Max(0, [Math]::Min(12, $Host.UI.RawUI.WindowSize.Height - 17)) } else { 12 }
         foreach ($p in $ctx.Prs | Select-Object -First $limit) {
             $line = "    #$($p.number)".PadRight(10) + "$($p.title)"
             if ($Interactive -and $line.Length -ge $Host.UI.RawUI.WindowSize.Width) { $line = $line.Substring(0, [Math]::Max(0, $Host.UI.RawUI.WindowSize.Width - 2)) + '…' }
             Write-Color $line muted_dim
         }
-        if ($ctx.Prs.Count -gt $limit) { Write-Color "    … et $($ctx.Prs.Count - $limit) autres" muted_dim }
+        if ($ctx.Prs.Count -gt $limit) { Write-Color "    … and $($ctx.Prs.Count - $limit) more" muted_dim }
     }
     if (-not $pick) { return }
     $tag = $pick.Tag
     if (-not $tag) {
-        $tag = Read-Text 'Numéro (vMAJEUR.MINEUR.CORRECTIF, suffixe -… pour une pré-release ; vide : annuler) :'
+        $tag = Read-Text 'Number (vMAJOR.MINOR.PATCH, suffix -… for a pre-release; empty: cancel):'
         if (-not $tag) { return }
         if ($tag -notmatch '^v') { $tag = "v$tag" }
-        if (-not (ConvertTo-Version $tag)) { Write-Color "  « $tag » n'est pas un numéro SemVer." danger; Wait-Back; return }
+        if (-not (ConvertTo-Version $tag)) { Write-Color "  '$tag' is not a SemVer number." danger; Wait-Back; return }
     }
-    if (git -C $Paths.Repo tag --list $tag) { Write-Color "  Le tag $tag existe déjà." danger; Wait-Back; return }
+    if (git -C $Paths.Repo tag --list $tag) { Write-Color "  The tag $tag already exists." danger; Wait-Back; return }
     $pre = [bool](ConvertTo-Version $tag).Suffix
     $policy = Get-UpdatePolicy -RepoPath $Paths.Repo -Tag $tag -BaseTag $(if ($ctx.Last) { $ctx.Last.Tag }) -Ref origin/main
     $policy = Read-ReleaseMaintenance $policy
     if (-not $policy) { return }
-    Show-Logo 'Confirmation de la release'
-    Write-Color "  $tag, sur le dernier main$(if ($pre) { ', en pré-release' }) : le workflow Release compile le viewer et publie le zip avec les notes." ink
-    Write-Color "  Cache : $(if ($policy.cache_invalidation_before) { 'vidé pour les versions antérieures à ' + $policy.cache_invalidation_before } else { 'conservé' })." ink
-    Write-Color "  Paramètres : $(if ($policy.settings_reset_before) { 'réinitialisés pour les versions antérieures à ' + $policy.settings_reset_before } else { 'conservés et migrés automatiquement si nécessaire' })." ink
-    if (-not (Read-YesNo "Créer la release $tag ?")) { return }
+    Show-Logo 'Confirmation of the release'
+    Write-Color "  $tag, on the latest main$(if ($pre) { ', as a pre-release' }): the Release workflow builds the viewer and publishes the zip with the notes." ink
+    Write-Color "  Cache: $(if ($policy.cache_invalidation_before) { 'cleared for versions before ' + $policy.cache_invalidation_before } else { 'kept' })." ink
+    Write-Color "  Settings: $(if ($policy.settings_reset_before) { 'reset for versions before ' + $policy.settings_reset_before } else { 'kept and migrated automatically if needed' })." ink
+    if (-not (Read-YesNo "Create the release ${tag}?")) { return }
 
     $message = "Aurora Viewer $($tag.TrimStart('v'))`n`nAurora-Update-Policy: $($policy | ConvertTo-Json -Compress -Depth 4)"
 
     if ($DryRun) {
-        Write-Color "  [simulation] tag $tag sur origin/main avec politique : $($policy | ConvertTo-Json -Compress -Depth 4)" teal
+        Write-Color "  [dry run] tag $tag on origin/main with policy: $($policy | ConvertTo-Json -Compress -Depth 4)" teal
         Wait-Back; return
     }
     git -C $Paths.Repo fetch origin --quiet
@@ -166,13 +166,13 @@ function New-AuroraRelease($Repo) {
     } finally {
         Remove-Item -LiteralPath $tagMessageFile -Force
     }
-    if ($tagExit -ne 0) { Write-Color '  Création du tag impossible.' danger; Wait-Back; return }
+    if ($tagExit -ne 0) { Write-Color '  Could not create the tag.' danger; Wait-Back; return }
     git -C $Paths.Repo push origin $tag
     if ($LASTEXITCODE -ne 0) {
         git -C $Paths.Repo tag -d $tag | Out-Null
-        Write-Color '  Envoi du tag refusé par GitHub : rien n''a été publié.' danger; Wait-Back; return
+        Write-Color '  GitHub refused the tag push: nothing was published.' danger; Wait-Back; return
     }
-    Write-Color "  Tag $tag envoyé. Compilation et publication de la release…" success
+    Write-Color "  Tag $tag pushed. Building and publishing the release…" success
     $id = $null
     for ($i = 0; $i -lt 30 -and -not $id; $i++) {
         Start-Sleep -Seconds 2
@@ -183,47 +183,47 @@ function New-AuroraRelease($Repo) {
         gh run watch $id -R $Repo.Slug --exit-status
         if ($LASTEXITCODE -eq 0) {
             $url = gh release view $tag -R $Repo.Slug --json url --jq .url 2>$null
-            Write-Color "  Release publiée : $url" success
-            if ($url -and (Read-YesNo 'L''ouvrir dans le navigateur ?')) { Start-Process $url }
+            Write-Color "  Release published: $url" success
+            if ($url -and (Read-YesNo 'Open it in the browser?')) { Start-Process $url }
         } else {
-            Write-Color "  Le workflow Release a échoué : gh run view $id --log-failed (le tag $tag existe ; supprime-le ici pour recommencer)." danger
+            Write-Color "  The Release workflow failed: gh run view $id --log-failed (the tag $tag exists; delete it here to start again)." danger
         }
     } else {
-        Write-Color '  Workflow Release introuvable pour l''instant : suis-le sur GitHub (onglet Actions).' warn
+        Write-Color '  Release workflow not found yet: follow it on GitHub (Actions tab).' warn
     }
     Wait-Back
 }
 
 function Remove-AuroraRelease($Repo, $Releases) {
-    if (-not $Releases) { Write-Color '  Aucune release à supprimer.' muted; Wait-Back; return }
+    if (-not $Releases) { Write-Color '  No release to delete.' muted; Wait-Back; return }
     $shortcuts = @(1..9 | ForEach-Object { [string]$_ }) + @(97..122 | ForEach-Object { [string][char]$_ })
     $items = @()
     for ($i = 0; $i -lt $Releases.Count -and $i -lt $shortcuts.Count; $i++) {
         $r = $Releases[$i]
         $items += @{ Key = $shortcuts[$i]; Label = $r.tagName; Hint = $r.name; Release = $r }
     }
-    $pick = Show-Menu 'Quelle release supprimer ?' $items { Show-Logo 'Supprimer une release' }
+    $pick = Show-Menu 'Which release to delete?' $items { Show-Logo 'Delete a release' }
     if (-not $pick) { return }
     $tag = $pick.Release.tagName
     # releases that hold assets (assets-1: the emoji font fetch-assets.ps1 downloads)
     if ($tag -notmatch '^v\d') {
-        Write-Color "  $tag n'est pas une version : elle contient des fichiers dont le dépôt a besoin (la police emoji pour assets-1). Protégée." warn
+        Write-Color "  $tag is not a version: it holds files the repository needs (the emoji font for assets-1). Protected." warn
         Wait-Back; return
     }
     Write-Host ''
-    Write-Color "  Supprimer $tag efface la release, ses fichiers et le tag, sur GitHub et ici. C'est irréversible." warn
-    $typed = Read-Text "Pour confirmer, tape « $tag » (vide : annuler) :"
-    if ($typed -cne $tag) { Write-Color '  Annulé : rien n''a été supprimé.' muted; Wait-Back; return }
+    Write-Color "  Deleting $tag erases the release, its files and the tag, on GitHub and here. This cannot be undone." warn
+    $typed = Read-Text "To confirm, type '$tag' (empty: cancel):"
+    if ($typed -cne $tag) { Write-Color '  Cancelled: nothing was deleted.' muted; Wait-Back; return }
     if ($DryRun) {
-        Write-Color "  [simulation] gh release delete $tag --cleanup-tag --yes ; git tag -d $tag" teal
+        Write-Color "  [dry run] gh release delete $tag --cleanup-tag --yes ; git tag -d $tag" teal
         Wait-Back; return
     }
     gh release delete $tag -R $Repo.Slug --cleanup-tag --yes
     if ($LASTEXITCODE -eq 0) {
         git -C $Paths.Repo tag -d $tag 2>$null | Out-Null
-        Write-Color "  Release $tag supprimée." success
+        Write-Color "  Release $tag deleted." success
     } else {
-        Write-Color '  Suppression refusée par GitHub (voir ci-dessus).' danger
+        Write-Color '  GitHub refused the deletion (see above).' danger
     }
     Wait-Back
 }

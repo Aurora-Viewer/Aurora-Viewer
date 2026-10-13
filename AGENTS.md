@@ -71,8 +71,8 @@ best implementation for Aurora.
 - The official sources must sit **next to the repository**:
   `../phoenix-firestorm` (read-only, never inside the repository).
 - **If that folder is missing**, suggest that the human opens
-  `aurora-tools.cmd` and chooses « Réparer » (it clones it with the rest), or
-  clones it alone:
+  `aurora-tools.cmd` and chooses "Repair / update" (it clones it with the
+  rest), or clones it alone:
 
   ```bash
   git clone --depth 1 -c core.longpaths=true https://github.com/FirestormViewer/phoenix-firestorm ../phoenix-firestorm
@@ -149,7 +149,7 @@ cargo run -p aurora-viewer -- --title "Test avatar-gaze"
   `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\aurora-demo-test-<task>.log`.
   The agents' windows and logs do not get mixed up.
 - **Automated tests without human intervention**: use
-  `--title "Test <task> [AUTOMATISATION - NE PAS TOUCHER]"` and run
+  `--title "Test <task> [AUTOMATION - DO NOT TOUCH]"` and run
   `scripts/automation-window-border.ps1` with the viewer's PID (not
   `cargo`'s). The dashed yellow outline tells the human to let the agent
   drive the window. See the [launch command on
@@ -331,7 +331,7 @@ change to the interface:
    - **Command refused by your tool** (Claude Code in auto mode:
      "auto-approval" on `gh pr comment` or `merge-pr.ps1`, for example): do
      not work around it. Give the command to the human, and suggest the
-     « Permissions de Claude » choice of `aurora-tools.cmd`, which allows the
+     "Claude permissions" choice of `aurora-tools.cmd`, which allows the
      follow-up commands once and for all: `gh pr view / list / checks /
      comment`, `gh run view / list / watch`, `gh issue list / view / edit /
      comment / close / reopen`, `merge-pr.ps1` and `pr-captures.ps1`. Run
@@ -473,8 +473,8 @@ the review comment.
   Git or a provided tag, the build identifies itself as `0.0.0+0.gunknown`.
 - **SemVer**: `vMAJOR.MINOR.PATCH`. Before 1.0: a feature bumps MINOR, a fix
   bumps PATCH.
-- The human can publish or delete a release themselves, with the « Gérer les
-  releases » choice of `aurora-tools.cmd`; they can also ask you to.
+- The human can publish or delete a release themselves, with the "Manage
+  releases" choice of `aurora-tools.cmd`; they can also ask you to.
 - A release is made **when the human asks for it** ("release 0.4.0"), never
   on your own initiative. If they give no number, propose one from the labels
   of the PRs merged since the last version and wait for their agreement.
@@ -530,7 +530,7 @@ gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n>/comments --paginate
   or PowerShell loop around them (to choose the fields: `--json … --jq …`).
   If your tool still refuses the read (Claude Code in auto mode:
   "interference with workloads"), do not work around it: suggest to the human
-  the « Permissions de Claude » choice of `aurora-tools.cmd`, which allows
+  the "Claude permissions" choice of `aurora-tools.cmd`, which allows
   these two commands once and for all.
 - **Really open the screenshots and attached files**, in the description as
   in the comments: Markdown images, HTML `<img src="…">` tags, file links
@@ -599,7 +599,7 @@ others.
 
   If your tool refuses this command (Claude Code in auto mode: "write to an
   external system"), do not work around it: give it to the human and suggest
-  the « Permissions de Claude » choice of `aurora-tools.cmd`, which allows it
+  the "Claude permissions" choice of `aurora-tools.cmd`, which allows it
   once and for all. Run it alone, with no `cd` or `;`.
 
 - **Resolved**: close only when the solution covers the whole issue, has
