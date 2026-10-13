@@ -80,7 +80,7 @@ if ($ConsoleFixture) {
         . "$PSScriptRoot/tools/releases.ps1"
         function Invoke-GhJson { @{ status = 'completed'; conclusion = 'success' } }
         function Get-ReleaseContext {
-            @{ Last = @{ Tag = 'v0.5.0'; V = @{ Major = 0; Minor = 5; Patch = 0 } }; Prs = @(@{ number = 1; title = 'Fixture'; labels = @(@{ name = [string][char]0x006E + 'ouveaut' + [char]0x00E9 }) }) }
+            @{ Last = @{ Tag = 'v0.5.0'; V = @{ Major = 0; Minor = 5; Patch = 0 } }; Prs = @(@{ number = 1; title = 'Fixture'; labels = @(@{ name = 'feature' }) }) }
         }
         function Get-UpdatePolicy { [ordered]@{ schema = 1; version = '0.6.0'; cache_invalidation_before = $null; settings_reset_before = $null } }
         function git { $global:LASTEXITCODE = 0 }

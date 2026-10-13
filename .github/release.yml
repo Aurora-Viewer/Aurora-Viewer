@@ -2,17 +2,17 @@
 # (see scripts/setup-labels.ps1).
 changelog:
   categories:
-    - title: ⚠️ Changements cassants
-      labels: [rupture]
-    - title: ✨ Nouveautés
-      labels: [nouveauté]
-    - title: 🐛 Correctifs
-      labels: [correctif]
-    - title: ⚡ Performances
+    - title: ⚠️ Breaking changes
+      labels: [breaking]
+    - title: ✨ New features
+      labels: [feature]
+    - title: 🐛 Fixes
+      labels: [fix]
+    - title: ⚡ Performance
       labels: [performance]
     - title: 🔧 Maintenance
       labels: [maintenance, dependencies]
     - title: 📚 Documentation
       labels: [docs]
-    - title: Autres changements
+    - title: Other changes
       labels: ['*']
