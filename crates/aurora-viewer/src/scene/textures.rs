@@ -205,6 +205,104 @@ struct Entry {
     error_logged: bool,
     /// The last fetch was answered 404: asked again much later.
     gone: bool,
+    /// Listed in `TextureStreamer::todo`.
+    queued: bool,
+    /// What it adds to `TextureStreamer::counts` (`count` bits).
+    counted: u8,
+}
+
+/// `Entry::counted`.
+mod count {
+    pub const LOADED: u8 = 1;
+    pub const FETCHING: u8 = 2;
+    pub const FAILING: u8 = 4;
+    pub const READING: u8 = 8;
+}
+
+/// How many textures are in each state of `count`, kept as they change.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Counts {
+    loaded: usize,
+    fetching: usize,
+    failing: usize,
+    reading: usize,
+}
+
+impl Counts {
+    /// A texture went from the states `old` to the states `new`.
+    fn change(&mut self, old: u8, new: u8) {
+        for (bit, n) in [
+            (count::LOADED, &mut self.loaded),
+            (count::FETCHING, &mut self.fetching),
+            (count::FAILING, &mut self.failing),
+            (count::READING, &mut self.reading),
+        ] {
+            match (old & bit != 0, new & bit != 0) {
+                (false, true) => *n += 1,
+                (true, false) => *n = n.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+}
+
+impl Entry {
+    /// `TextureStreamer::update` has something to do for it, now or once a
+    /// delay, a decode slot or an upload has passed: its first disk read,
+    /// or a finer level than the one on the GPU to read, decode or
+    /// download. Not while nothing uses it, nor while a read, a decode or a
+    /// download is under way: their result lists it again.
+    fn has_work(&self) -> bool {
+        if self.refs == 0 {
+            return false;
+        }
+        if self.cache_state == 0 {
+            return true;
+        }
+        if self.cache_state == 1 || self.decoding || self.fetching {
+            return false;
+        }
+        self.decoded.is_none_or(|d| self.want < d)
+    }
+
+    /// Its states for `Counts`.
+    fn count_bits(&self) -> u8 {
+        let mut bits = 0;
+        if self.decoded.is_some() {
+            bits |= count::LOADED;
+        }
+        if self.fetching {
+            bits |= count::FETCHING;
+        }
+        if self.refs > 0 && self.decoded.is_none() && self.last_error.is_some() {
+            bits |= count::FAILING;
+        }
+        if self.cache_state == 1 {
+            bits |= count::READING;
+        }
+        bits
+    }
+}
+
+/// AURORA_TEXTURE_TODO.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TodoMode {
+    /// `update` visits the textures listed for it.
+    Listed,
+    /// It walks every texture, as before the list.
+    Walk,
+    /// It visits the listed ones; the list and the counters are compared
+    /// with a walk of every texture now and then.
+    Check,
+}
+
+fn todo_mode() -> TodoMode {
+    static MODE: std::sync::OnceLock<TodoMode> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("AURORA_TEXTURE_TODO").as_deref() {
+        Ok("0") => TodoMode::Walk,
+        Ok("check") => TodoMode::Check,
+        _ => TodoMode::Listed,
+    })
 }
 
 /// What decides the texture page of an upload: texel format, level-0
@@ -465,6 +563,9 @@ pub struct TextureStats {
     pub uploads_direct: u64,
     /// In use, never loaded, and the last fetch failed.
     pub failing: usize,
+    /// Listed for `update`: they have work, or wait for a delay, a decode
+    /// slot or an upload.
+    pub listed: usize,
     /// Memory budget (texture_budget.rs): bytes the pages may hold now, the
     /// pressure step, and textures lowered on the GPU since the start.
     pub target_bytes: u64,
@@ -537,6 +638,18 @@ fn set_slot_alpha(alpha: &mut Vec<AlphaKind>, generation: &mut u64, changes: &mu
 
 pub struct TextureStreamer {
     entries: HashMap<Uuid, Entry>,
+    /// The textures `update` has something to do for (`Entry::has_work`),
+    /// each listed once. It only visits these: walking every texture at
+    /// each frame cost 0.14 to 0.17 ms for the 4,300 textures of a skybox
+    /// at rest, and 0.26 to 0.45 ms with the 13,700 of a busy region, kept
+    /// 45 s after leaving it. Every change to what `has_work` reads goes
+    /// through `settle`.
+    todo: Vec<Uuid>,
+    /// Loaded, downloading, failing and being read: counted as the
+    /// textures change, not by the walk.
+    counts: Counts,
+    /// AURORA_TEXTURE_TODO=check: updates since the session began.
+    checks: u32,
     by_fetch_key: HashMap<u64, Uuid>,
     next_key: u64,
     uploads: PendingUploads,
@@ -616,6 +729,9 @@ impl TextureStreamer {
             // (room for a busy region, ~14,000 textures at BackBone: a
             // table of that size growing moves every entry in one frame)
             entries: HashMap::with_capacity(28_000),
+            todo: Vec::new(),
+            counts: Counts::default(),
+            checks: 0,
             by_fetch_key: HashMap::new(),
             next_key: 1,
             uploads: PendingUploads::default(),
@@ -769,6 +885,43 @@ impl TextureStreamer {
         }
     }
 
+    /// After any change to an entry: its states in the counters, and its
+    /// place on the list of `update` when it has work.
+    fn settle(todo: &mut Vec<Uuid>, counts: &mut Counts, id: Uuid, e: &mut Entry) {
+        let bits = e.count_bits();
+        if bits != e.counted {
+            counts.change(e.counted, bits);
+            e.counted = bits;
+        }
+        if !e.queued && e.has_work() {
+            e.queued = true;
+            todo.push(id);
+        }
+    }
+
+    /// AURORA_TEXTURE_TODO=check: every texture with work must be listed,
+    /// and the counters must be those of a walk of every texture.
+    fn verify(&self) {
+        let mut walked = Counts::default();
+        let mut reported = 0;
+        for (id, e) in &self.entries {
+            walked.change(0, e.count_bits());
+            if e.has_work() && !e.queued && reported < 8 {
+                reported += 1;
+                log::warn!(
+                    "texture todo check: {id} has work and is not listed (cache state {}, decoded {:?}, want {}, refs {})",
+                    e.cache_state,
+                    e.decoded,
+                    e.want,
+                    e.refs
+                );
+            }
+        }
+        if walked != self.counts {
+            log::warn!("texture todo check: counters {:?}, a walk gives {walked:?}", self.counts);
+        }
+    }
+
     pub fn acquire(&mut self, renderer: &mut Renderer, id: Uuid, source: TexSource) -> u32 {
         if id.is_nil() {
             return aurora_render::textures::WHITE;
@@ -785,6 +938,7 @@ impl TextureStreamer {
             if e.source == TexSource::Asset && source != TexSource::Asset {
                 e.source = source;
             }
+            Self::settle(&mut self.todo, &mut self.counts, id, e);
             return e.slot;
         }
         // procedural textures of the offline demo (never streamed)
@@ -818,39 +972,39 @@ impl TextureStreamer {
             slot,
             AlphaKind::Opaque,
         );
-        self.entries.insert(
-            id,
-            Entry {
-                slot,
-                refs: 1,
-                source,
-                data: Arc::default(),
-                complete: false,
-                info: None,
-                decoded: None,
-                want: 2,
-                need_px: 0.0,
-                away_px: 0.0,
-                fixed_px: 0.0,
-                gpu_size: (0, 0),
-                fetching: false,
-                decoding: false,
-                cache_state: 0,
-                transcoded: None,
-                keep_rgba: false,
-                failures: 0,
-                retry_at: None,
-                keep_pixels: false,
-                sculpt: None,
-                alpha: AlphaKind::Opaque,
-                unused_since: None,
-                fetch_key: 0,
-                dirty_cache: false,
-                last_error: None,
-                error_logged: false,
-                gone: false,
-            },
-        );
+        let e = self.entries.entry(id).or_insert(Entry {
+            slot,
+            refs: 1,
+            source,
+            data: Arc::default(),
+            complete: false,
+            info: None,
+            decoded: None,
+            want: 2,
+            need_px: 0.0,
+            away_px: 0.0,
+            fixed_px: 0.0,
+            gpu_size: (0, 0),
+            fetching: false,
+            decoding: false,
+            cache_state: 0,
+            transcoded: None,
+            keep_rgba: false,
+            failures: 0,
+            retry_at: None,
+            keep_pixels: false,
+            sculpt: None,
+            alpha: AlphaKind::Opaque,
+            unused_since: None,
+            fetch_key: 0,
+            dirty_cache: false,
+            last_error: None,
+            error_logged: false,
+            gone: false,
+            queued: false,
+            counted: 0,
+        });
+        Self::settle(&mut self.todo, &mut self.counts, id, e);
         slot
     }
 
@@ -898,6 +1052,7 @@ impl TextureStreamer {
                 e.unused_since = Some(now);
                 self.unused.push_back((now, *id));
             }
+            Self::settle(&mut self.todo, &mut self.counts, *id, e);
         }
     }
 
@@ -907,6 +1062,7 @@ impl TextureStreamer {
             e.keep_pixels = true;
             e.want = 0;
             e.need_px = e.need_px.max(4096.0);
+            Self::settle(&mut self.todo, &mut self.counts, *id, e);
         }
     }
 
@@ -1007,6 +1163,8 @@ impl TextureStreamer {
             entries,
             reductions,
             ui_wanted,
+            todo,
+            counts,
             ..
         } = self;
         reductions.clear();
@@ -1015,6 +1173,7 @@ impl TextureStreamer {
             if e.keep_pixels {
                 e.want = 0;
                 bytes_below += bytes_at(e, 0);
+                Self::settle(todo, counts, *id, e);
                 continue;
             }
             let full = full_size(e).map_or(512, |(w, h)| w.max(h)) as f32;
@@ -1041,6 +1200,8 @@ impl TextureStreamer {
             e.need_px *= 0.5;
             e.away_px *= 0.5;
             e.fixed_px *= 0.5;
+            // (a finer level wanted: `update` hears of it)
+            Self::settle(todo, counts, *id, e);
         }
         // (memory comes back soonest from the largest; the id settles ties,
         // the table has no order of its own)
@@ -1066,14 +1227,21 @@ impl TextureStreamer {
         }
     }
 
-    /// Drive fetches and decodes. Runs every frame over every texture, so the
-    /// common case (nothing to do) must stay a few comparisons: no key copy,
-    /// no second lookup, cache paths only for the first disk read.
+    /// Drive fetches and decodes, for the textures that have work (`todo`):
+    /// the others are not visited. While most of them have some (a region
+    /// arriving), the table is walked in its own order instead, without a
+    /// lookup each. A texture is visited at each frame while it waits for a
+    /// retry delay, a decode slot or its upload, as it was before the list.
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>) {
         let now = Instant::now();
-        let mut fetching = 0;
-        let mut loaded = 0;
-        let mut failing = 0;
+        let mode = todo_mode();
+        if mode == TodoMode::Check {
+            self.checks = self.checks.wrapping_add(1);
+            // (a thirtieth of the frames: the check walks every texture)
+            if self.checks.is_multiple_of(30) {
+                self.verify();
+            }
+        }
         let TextureStreamer {
             entries,
             by_fetch_key,
@@ -1090,6 +1258,8 @@ impl TextureStreamer {
             ui_wanted,
             cache_writer,
             demo_source,
+            todo,
+            counts,
             ..
         } = self;
         if *bc7_cache && cache_writer.is_none() {
@@ -1099,165 +1269,188 @@ impl TextureStreamer {
         let (bc7, bc7_cache) = (*bc7, *bc7_cache);
         // first disk reads of the new textures, queued in one go
         let mut cache_reads = Vec::new();
-        let mut reading = 0;
-        for (&id, e) in entries.iter_mut() {
-            if e.decoded.is_some() {
-                loaded += 1;
-            }
-            if e.fetching {
-                fetching += 1;
-            }
-            if e.refs == 0 {
-                continue;
-            }
-            if e.decoded.is_none() && e.last_error.is_some() {
-                failing += 1;
-            }
-            if e.retry_at.is_some_and(|t| now < t) {
-                continue;
-            }
-            // 1. disk cache
-            // (a texture whose pixels are kept, or copied for the
-            // interface, needs a decode: the transcoded cache has blocks)
-            let blocks_do = bc7_cache && !e.keep_pixels && !ui_wanted.contains(&id);
-            if e.cache_state == 0 {
-                e.cache_state = 1;
-                // its size on screen is not known yet: the coarsest level of
-                // a transcoded chain shows it at once, and the level it
-                // needs is read when known (the default level would load
-                // every texture of a region at a quarter of its size)
-                let level = if e.need_px > 0.0 {
-                    e.want
-                } else {
-                    aurora_assets::j2k::MAX_DISCARD_LEVEL
-                };
-                cache_reads.push((id, level, blocks_do));
-                continue;
-            }
-            if e.cache_state == 1 || e.decoding || e.fetching {
-                reading += usize::from(e.cache_state == 1);
-                continue;
-            }
-            // (before looking at the data, which is behind a pointer: most
-            // textures stop here, every frame)
-            let better = match e.decoded {
-                None => true,
-                Some(d) => e.want < d,
-            };
-            if !better {
-                continue;
-            }
-            if e.cache_state == 3 {
-                // shown from the transcoded cache and another level is
-                // wanted: from that file again if it holds it, else the
-                // JPEG 2000 data is read at last, for a decode
-                let from_file = blocks_do && e.transcoded.is_some_and(|finest| e.want >= finest);
-                if from_file && uploads.covers(&id, e.want) {
-                    continue;
+        {
+            let mut visit = |id: Uuid, e: &mut Entry| {
+                if e.refs == 0 {
+                    return;
                 }
-                e.cache_state = 1;
-                cache_reads.push((id, e.want, from_file));
-                continue;
-            }
-            if let Some(source) = demo_source.filter(|s| e.data.is_empty() && (s.has)(&id)) {
-                // (its first texels come from the scenario)
-                if e.decoded.is_some() && *decodes < *max_decodes {
+                if e.retry_at.is_some_and(|t| now < t) {
+                    return;
+                }
+                // 1. disk cache
+                // (a texture whose pixels are kept, or copied for the
+                // interface, needs a decode: the transcoded cache has blocks)
+                let blocks_do = bc7_cache && !e.keep_pixels && !ui_wanted.contains(&id);
+                if e.cache_state == 0 {
+                    e.cache_state = 1;
+                    // its size on screen is not known yet: the coarsest level of
+                    // a transcoded chain shows it at once, and the level it
+                    // needs is read when known (the default level would load
+                    // every texture of a region at a quarter of its size)
+                    let level = if e.need_px > 0.0 {
+                        e.want
+                    } else {
+                        aurora_assets::j2k::MAX_DISCARD_LEVEL
+                    };
+                    cache_reads.push((id, level, blocks_do));
+                    return;
+                }
+                if e.cache_state == 1 || e.decoding || e.fetching {
+                    return;
+                }
+                // (before looking at the data, which is behind a pointer: most
+                // textures stop here, every frame)
+                let better = match e.decoded {
+                    None => true,
+                    Some(d) => e.want < d,
+                };
+                if !better {
+                    return;
+                }
+                if e.cache_state == 3 {
+                    // shown from the transcoded cache and another level is
+                    // wanted: from that file again if it holds it, else the
+                    // JPEG 2000 data is read at last, for a decode
+                    let from_file = blocks_do && e.transcoded.is_some_and(|finest| e.want >= finest);
+                    if from_file && uploads.covers(&id, e.want) {
+                        return;
+                    }
+                    e.cache_state = 1;
+                    cache_reads.push((id, e.want, from_file));
+                    return;
+                }
+                if let Some(source) = demo_source.filter(|s| e.data.is_empty() && (s.has)(&id)) {
+                    // (its first texels come from the scenario)
+                    if e.decoded.is_some() && *decodes < *max_decodes {
+                        e.decoding = true;
+                        *decodes += 1;
+                        let (want, pool) = (e.want, staging.clone());
+                        jobs.spawn(move || {
+                            texture_result(
+                                id,
+                                want,
+                                (source.texels)(&id, want),
+                                (AlphaKind::Opaque, false),
+                                None,
+                                pool.as_deref(),
+                            )
+                        });
+                    }
+                    return;
+                }
+                let needed = Self::bytes_needed(e);
+                let have_enough = !e.data.is_empty() && (e.complete || e.data.len() >= needed);
+                if have_enough || (e.info.is_some() && e.decoded.is_none() && !e.data.is_empty() && e.failures > 0) {
+                    if *decodes >= *max_decodes {
+                        return;
+                    }
+                    // Decode at the best level the data allows.
+                    let mut discard = e.want;
+                    if let Some(info) = &e.info
+                        && !e.complete
+                    {
+                        // level 0 only from the complete file (a partial one is blurry)
+                        while discard < 5 && (discard == 0 || aurora_assets::bytes_for_discard(info, discard) > e.data.len()) {
+                            discard += 1;
+                        }
+                    }
+                    if e.decoded.is_some_and(|d| discard >= d) {
+                        return;
+                    }
+                    // That level, or a finer one, is already decoded and waits
+                    // for its turn to the GPU (`decoded` only follows once it is
+                    // sent): decoding it again each time a decode slot frees up
+                    // was half of the decodes of an arrival (AURORA_DEMO_STREAM
+                    // with j2k=, 9000 textures: 9126 of 18129).
+                    if uploads.covers(&id, discard) {
+                        return;
+                    }
                     e.decoding = true;
                     *decodes += 1;
-                    let (want, pool) = (e.want, staging.clone());
-                    jobs.spawn(move || {
-                        texture_result(
-                            id,
-                            want,
-                            (source.texels)(&id, want),
-                            (AlphaKind::Opaque, false),
-                            None,
-                            pool.as_deref(),
-                        )
-                    });
+                    load.again += u64::from(e.decoded.is_some());
+                    let data = e.data.clone();
+                    let job = DecodeJob {
+                        id,
+                        discard,
+                        keep_pixels: e.keep_pixels,
+                        bc7: bc7 && !e.keep_rgba,
+                        // (not over a file that already holds this level)
+                        cache: e
+                            .info
+                            .filter(|_| bc7_cache && !e.keep_rgba && !e.transcoded.is_some_and(|finest| finest <= discard))
+                            .zip(cache_writer.clone())
+                            .map(|(info, writer)| (Self::transcoded_path(cache_dir, &id), info, writer)),
+                    };
+                    let pool = staging.clone();
+                    let meter = meter.clone();
+                    jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
+                    return;
                 }
-                continue;
-            }
-            let needed = Self::bytes_needed(e);
-            let have_enough = !e.data.is_empty() && (e.complete || e.data.len() >= needed);
-            if have_enough || (e.info.is_some() && e.decoded.is_none() && !e.data.is_empty() && e.failures > 0) {
-                if *decodes >= *max_decodes {
-                    continue;
-                }
-                // Decode at the best level the data allows.
-                let mut discard = e.want;
-                if let Some(info) = &e.info
-                    && !e.complete
-                {
-                    // level 0 only from the complete file (a partial one is blurry)
-                    while discard < 5 && (discard == 0 || aurora_assets::bytes_for_discard(info, discard) > e.data.len()) {
-                        discard += 1;
-                    }
-                }
-                if e.decoded.is_some_and(|d| discard >= d) {
-                    continue;
-                }
-                // That level, or a finer one, is already decoded and waits
-                // for its turn to the GPU (`decoded` only follows once it is
-                // sent): decoding it again each time a decode slot frees up
-                // was half of the decodes of an arrival (AURORA_DEMO_STREAM
-                // with j2k=, 9000 textures: 9126 of 18129).
-                if uploads.covers(&id, discard) {
-                    continue;
-                }
-                e.decoding = true;
-                *decodes += 1;
-                load.again += u64::from(e.decoded.is_some());
-                let data = e.data.clone();
-                let job = DecodeJob {
-                    id,
-                    discard,
-                    keep_pixels: e.keep_pixels,
-                    bc7: bc7 && !e.keep_rgba,
-                    // (not over a file that already holds this level)
-                    cache: e
-                        .info
-                        .filter(|_| bc7_cache && !e.keep_rgba && !e.transcoded.is_some_and(|finest| finest <= discard))
-                        .zip(cache_writer.clone())
-                        .map(|(info, writer)| (Self::transcoded_path(cache_dir, &id), info, writer)),
+                // 2. fetch more
+                let Some(url) = (match &e.source {
+                    TexSource::Bake { url } => Some(url.clone()),
+                    TexSource::Asset => viewer_asset.map(|base| asset_url(base, "texture_id", &id)),
+                }) else {
+                    return;
                 };
-                let pool = staging.clone();
-                let meter = meter.clone();
-                jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
-                continue;
-            }
-            // 2. fetch more
-            let Some(url) = (match &e.source {
-                TexSource::Bake { url } => Some(url.clone()),
-                TexSource::Asset => viewer_asset.map(|base| asset_url(base, "texture_id", &id)),
-            }) else {
-                continue;
+                let range = next_range(e.data.len(), needed);
+                let key = FETCH_KIND_TEXTURE | *next_key;
+                *next_key += 1;
+                e.fetch_key = key;
+                e.fetching = true;
+                let priority = e.need_px.max(e.fixed_px).max(1.0) + if e.decoded.is_none() { 1e5 } else { 0.0 };
+                by_fetch_key.insert(key, id);
+                fetcher.request(FetchRequest {
+                    key,
+                    url,
+                    range: Some(range),
+                    priority,
+                    accept: "image/x-j2c",
+                });
             };
-            let range = next_range(e.data.len(), needed);
-            let key = FETCH_KIND_TEXTURE | *next_key;
-            *next_key += 1;
-            e.fetch_key = key;
-            e.fetching = true;
-            let priority = e.need_px.max(e.fixed_px).max(1.0) + if e.decoded.is_none() { 1e5 } else { 0.0 };
-            by_fetch_key.insert(key, id);
-            fetcher.request(FetchRequest {
-                key,
-                url,
-                range: Some(range),
-                priority,
-                accept: "image/x-j2c",
-            });
+            let walk_all = mode == TodoMode::Walk;
+            let mut listed = std::mem::take(todo);
+            if walk_all || listed.len() * 2 > entries.len() {
+                listed.clear();
+                for (&id, e) in entries.iter_mut() {
+                    if !(walk_all || e.queued) {
+                        continue;
+                    }
+                    e.queued = false;
+                    visit(id, e);
+                    Self::settle(todo, counts, id, e);
+                }
+            } else {
+                for id in listed.drain(..) {
+                    let Some(e) = entries.get_mut(&id) else {
+                        continue;
+                    };
+                    e.queued = false;
+                    visit(id, e);
+                    Self::settle(todo, counts, id, e);
+                }
+            }
+            // (the emptied list keeps its room when nothing was listed again)
+            if todo.is_empty() {
+                *todo = listed;
+            }
         }
-        reading += cache_reads.len();
         let dir = cache_dir.clone();
         let pool = staging.clone();
         jobs.spawn_many(cache_reads, move |(id, want, blocks)| {
             read_job(&dir, id, want, blocks, pool.as_deref())
         });
         self.stats.total = self.entries.len();
+        let Counts {
+            loaded,
+            fetching,
+            failing,
+            reading,
+        } = self.counts;
         self.stats.loaded = loaded;
         self.stats.fetching = fetching;
         self.stats.failing = failing;
+        self.stats.listed = self.todo.len();
         self.stats.decoding = self.decodes;
         self.stats.pending_upload = self.uploads.len();
         let _ = Self::url_for;
@@ -1379,6 +1572,7 @@ impl TextureStreamer {
                 e.last_error = Some(err);
             }
         }
+        Self::settle(&mut self.todo, &mut self.counts, id, e);
     }
 
     pub fn on_job(&mut self, r: JobResult) {
@@ -1389,6 +1583,7 @@ impl TextureStreamer {
                     e.cache_state = 3;
                     e.transcoded = Some(finest);
                     e.info.get_or_insert(info);
+                    Self::settle(&mut self.todo, &mut self.counts, id, e);
                 }
                 // (queued as the result of a decode; it took no decode slot,
                 // and the handler below gives one back)
@@ -1416,6 +1611,7 @@ impl TextureStreamer {
                         e.data = Arc::new(d);
                         e.complete = complete;
                     }
+                    Self::settle(&mut self.todo, &mut self.counts, id, e);
                 }
             }
             JobResult::Texture {
@@ -1453,6 +1649,7 @@ impl TextureStreamer {
                     e.decoded.is_none(),
                     e.need_px.max(e.fixed_px),
                 );
+                Self::settle(&mut self.todo, &mut self.counts, id, e);
             }
             JobResult::TextureFailed { id } => {
                 self.decodes = self.decodes.saturating_sub(1);
@@ -1468,6 +1665,7 @@ impl TextureStreamer {
                         let _ = std::fs::remove_file(self.cache_dir.join("tex").join(format!("{id}.part")));
                     }
                     e.retry_at = Some(Instant::now() + Duration::from_secs(2u64.pow(e.failures.min(6))));
+                    Self::settle(&mut self.todo, &mut self.counts, id, e);
                 }
             }
             _ => {}
@@ -1590,6 +1788,7 @@ impl TextureStreamer {
                 );
                 e.decoded = Some(u.discard);
                 e.failures += 1;
+                Self::settle(&mut self.todo, &mut self.counts, u.id, e);
                 u.retire(&mut self.trash);
                 continue;
             }
@@ -1616,6 +1815,8 @@ impl TextureStreamer {
             }
             e.decoded = Some(u.discard);
             e.alpha = u.alpha;
+            // (a finer level may still be wanted: `update` hears of it)
+            Self::settle(&mut self.todo, &mut self.counts, u.id, e);
             let old = if let Some(mask) = u.pick_mask.take() {
                 self.pick_masks.insert(u.id, mask)
             } else {
@@ -1686,6 +1887,7 @@ impl TextureStreamer {
             let mut gone = Vec::with_capacity(evict.len());
             for id in evict {
                 if let Some(e) = self.entries.remove(&id) {
+                    self.counts.change(e.counted, 0);
                     if let Some(mask) = self.pick_masks.remove(&id) {
                         self.trash.push(mask.bits);
                     }
@@ -1763,6 +1965,7 @@ impl TextureStreamer {
             if levels > 0 {
                 e.decoded = Some(d + levels);
                 e.gpu_size = ((e.gpu_size.0 >> levels).max(1), (e.gpu_size.1 >> levels).max(1));
+                Self::settle(&mut self.todo, &mut self.counts, id, e);
                 self.stats.reduced += 1;
                 done += 1;
             }
@@ -2127,6 +2330,8 @@ mod tests {
             last_error: None,
             error_logged: false,
             gone: false,
+            queued: false,
+            counted: 0,
         }
     }
 
@@ -2222,6 +2427,95 @@ mod tests {
         assert!(s.reductions.is_empty());
         // (loading still follows the size on screen)
         assert_eq!(s.entries[&Uuid::from_u128(1)].want, 5);
+    }
+
+    #[test]
+    fn a_texture_has_work_until_it_shows_the_level_it_wants() {
+        // (the test entry: in use, disk cache looked up, level 0 wanted)
+        let mut e = entry(None, 100.0);
+        assert!(e.has_work(), "never loaded");
+        e.cache_state = 0;
+        assert!(e.has_work(), "its first disk read");
+        // a read, a download or a decode under way: their result is awaited
+        e.cache_state = 1;
+        assert!(!e.has_work());
+        e.cache_state = 2;
+        e.fetching = true;
+        assert!(!e.has_work());
+        e.fetching = false;
+        e.decoding = true;
+        assert!(!e.has_work());
+        e.decoding = false;
+        // shown at a coarser level than wanted, then at that level
+        e.decoded = Some(2);
+        assert!(e.has_work());
+        e.decoded = Some(0);
+        assert!(!e.has_work());
+        // a coarser level wanted is nothing to load
+        e.want = 3;
+        assert!(!e.has_work());
+        // nothing uses it: it only waits for its eviction
+        e.decoded = None;
+        assert!(e.has_work());
+        e.refs = 0;
+        assert!(!e.has_work());
+    }
+
+    /// The counters a walk of every texture gives.
+    fn walked(s: &TextureStreamer) -> Counts {
+        let mut c = Counts::default();
+        for e in s.entries.values() {
+            c.change(0, e.count_bits());
+        }
+        c
+    }
+
+    #[test]
+    fn textures_are_listed_once_and_counted_as_they_change() {
+        let mut s = pressed(0, vec![(1, entry(None, 100.0)), (2, entry(Some(0), 100.0))]);
+        let (new, shown) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let settle = |s: &mut TextureStreamer, id: Uuid, change: &dyn Fn(&mut Entry)| {
+            let e = s.entries.get_mut(&id).expect("entry");
+            change(e);
+            TextureStreamer::settle(&mut s.todo, &mut s.counts, id, e);
+        };
+        // the one to load is listed, once; the one shown is only counted
+        for _ in 0..2 {
+            settle(&mut s, new, &|_| {});
+            settle(&mut s, shown, &|_| {});
+        }
+        assert_eq!(s.todo, [new]);
+        assert_eq!(
+            s.counts,
+            Counts {
+                loaded: 1,
+                ..Default::default()
+            }
+        );
+        // its download starts, then fails
+        settle(&mut s, new, &|e| e.fetching = true);
+        assert_eq!((s.counts.fetching, s.counts.failing), (1, 0));
+        settle(&mut s, new, &|e| {
+            e.fetching = false;
+            e.last_error = Some("status 503".into());
+        });
+        assert_eq!((s.counts.fetching, s.counts.failing), (0, 1));
+        assert_eq!(s.counts, walked(&s));
+        // nothing uses it any more: no longer failing, as for the walk
+        s.release(&new);
+        assert_eq!(s.counts.failing, 0);
+        assert_eq!(s.counts, walked(&s));
+        // a finer level wanted of the one shown lists it; shown, it is done
+        settle(&mut s, shown, &|e| e.decoded = Some(3));
+        assert_eq!(s.todo, [new, shown]);
+        settle(&mut s, shown, &|e| e.decoded = Some(0));
+        assert_eq!(s.counts.loaded, 1);
+        // the pass over every texture keeps both right
+        s.recompute_wants();
+        assert_eq!(s.counts, walked(&s));
+        for (id, e) in &s.entries {
+            assert!(!e.has_work() || e.queued, "{id}");
+        }
     }
 
     #[test]

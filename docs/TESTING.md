@@ -1704,6 +1704,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_PRESENT_MODE=<mode>` | Force le mode de présentation de la swapchain |
 | `AURORA_CPU_CULL=1` | Listes de dessin construites sur le CPU |
 | `AURORA_LIST_INDEX=0` ou `check` | Listes de dessin qui parcourent tous les objets comme avant, ou contrôle de leur index |
+| `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Objets portés et mesh riggés placés par la synchro, sans les ancres du GPU |
 | `AURORA_SYNC_SLICE=1` ou `alt` | Synchro de la scène par tranche de tous les objets, comme avant |
 | `AURORA_SYNC_CHECK=1` | Ce que la synchro de la scène visite à chaque image |
@@ -1831,6 +1832,26 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   (le repli quand le GPU n'a pas `MULTI_DRAW_INDIRECT_COUNT`) au lieu de les
   trier sur le GPU, pour comparer ; `cull=cpu|gpu` dans la ligne
   `perf summary`.
+- **`AURORA_TEXTURE_TODO=0|check`**: by default, the texture streamer
+  (`TextureStreamer::update`) only visits at each frame the textures that
+  have work: a first disk read, or a finer level than the one on the GPU
+  to read, decode or download. A texture is listed when it gets some, and
+  the counts shown by the performance window (loaded, downloading,
+  failing) are kept as the textures change. Same loading, same image.
+  - `0`: every texture is walked at each frame, as before, to compare
+    `s_tex_update` in `perf summary`.
+  - `check`: one frame in thirty, the list and the counts are compared
+    with a walk of every texture; the log gives the differences
+    (`texture todo check`). There must be none, in demo mode as on the
+    grid.
+  - The `streaming:` line of the log, every 30 s, gives the textures
+    listed (`with work`): a few at rest (those that never load), all of
+    them while a region arrives.
+  - In demo mode: `AURORA_DEMO_STREAM=6000,6000` with
+    `AURORA_FPS_LIMIT=240` (6,000 textures kept loaded), with `,leave`
+    (released then evicted), and with `AURORA_TEXTURE_BUDGET_MB=96` and
+    `AURORA_DEMO_POS="168,126"` (lowered under memory pressure, then
+    loaded again).
 - **`AURORA_LIST_INDEX=0|check`** : par défaut, les listes de dessin et celles
   des HUD trouvent les avatars, les objets à faces transparentes ou
   lumineuses, la tranche du suivi des textures et les HUD portés dans un
