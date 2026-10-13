@@ -39,6 +39,8 @@ pub struct Rig {
     pub order: Vec<usize>,
     pub names: HashMap<String, usize>,
     pub pelvis: usize,
+    /// Upright root-to-skull chain, including the Bento spine joints.
+    pub(super) tag_chain: Vec<(usize, f32)>,
 }
 
 impl Rig {
@@ -79,6 +81,14 @@ impl Rig {
             }
         }
         let pelvis = names.get("mPelvis").copied().unwrap_or(0);
+        let skull = names.get("mSkull").copied();
+        let mut joint = skull.or_else(|| names.get("mHead").copied());
+        let mut tag_chain = Vec::new();
+        while let Some(j) = joint {
+            // computeBodySize's skull extent, with the complete Bento chain.
+            tag_chain.push((j, if Some(j) == skull { std::f32::consts::SQRT_2 } else { 1.0 }));
+            joint = parent[j];
+        }
         let mut rig = Rig {
             parent,
             local_pos,
@@ -89,6 +99,7 @@ impl Rig {
             order,
             names,
             pelvis,
+            tag_chain,
         };
         let rot = rig.local_rot.clone();
         let world = rig.world(&rot, Vec3::ZERO);
@@ -98,6 +109,18 @@ impl Rig {
 
     pub fn len(&self) -> usize {
         self.parent.len()
+    }
+
+    fn name_tag_height(&self, pos: &[Vec3], scale: &[Vec3], delta: &[f32], pelvis_offset: f32) -> Option<f32> {
+        if self.tag_chain.is_empty() {
+            return None;
+        }
+        let mut height = pelvis_offset - self.local_pos[self.pelvis].z;
+        for &(j, extent) in &self.tag_chain {
+            let parent_scale = self.parent[j].and_then(|p| scale.get(p)).map_or(self.parent_scale[j].z, |s| s.z);
+            height += (pos.get(j).unwrap_or(&self.local_pos[j]).z + delta[j]) * parent_scale * extent;
+        }
+        (height.is_finite() && height > 0.0).then_some(height)
     }
 
     /// World transforms (rotation + translation) for given local rotations.
@@ -150,12 +173,30 @@ pub struct SkeletonBase {
 pub struct BoundAnim {
     pub anim: Animation,
     pub joints: Vec<Option<usize>>,
+    /// Upper translation over the entire track, computed once when loading.
+    /// Name tags use this envelope, never the current animation sample.
+    position_top: Vec<Option<f32>>,
 }
 
 impl BoundAnim {
     pub fn bind(anim: Animation, rig: &Rig) -> BoundAnim {
         let joints = anim.joints.iter().map(|j| rig.names.get(&j.joint_name).copied()).collect();
-        BoundAnim { anim, joints }
+        let position_top = anim
+            .joints
+            .iter()
+            .map(|j| {
+                j.pos_keys
+                    .iter()
+                    .filter(|k| k.position.is_finite())
+                    .map(|k| k.position.z)
+                    .reduce(f32::max)
+            })
+            .collect();
+        BoundAnim {
+            anim,
+            joints,
+            position_top,
+        }
     }
 }
 
@@ -244,6 +285,11 @@ pub struct Controller {
     /// like the rotations (a shape change still moves them).
     pos_delta: Vec<Vec3>,
     pelvis_offset: Vec3,
+    /// The same held translations, using whole-track upper bounds for a
+    /// stable upright height. Rotations and sampled bobbing never enter it.
+    tag_pos_delta: Vec<f32>,
+    tag_pelvis_offset: f32,
+    pub name_tag_height: Option<f32>,
     /// Look-at point (LookAtPoint): from the head to the target, in the
     /// avatar's root frame; None = look forward.
     pub look: Option<Vec3>,
@@ -650,6 +696,7 @@ impl Controller {
         if self.rot.len() != rig.len() {
             self.rot = rig.local_rot.clone();
             self.pos_delta = vec![Vec3::ZERO; rig.len()];
+            self.tag_pos_delta = vec![0.0; rig.len()];
         }
         let rest_pos: &[Vec3] = match base {
             Some(b) => &b.local_pos,
@@ -658,7 +705,7 @@ impl Controller {
         // joint states per joint: (priority, weight, rotation, position),
         // highest priority first, newer motions first among equals
         // (LLJointStateBlender::addJointState)
-        type State = (i32, f32, Option<Quat>, Option<Vec3>);
+        type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>);
         let mut states: Vec<Vec<State>> = vec![Vec::new(); n];
         for m in &self.motions {
             if m.weight <= 0.0 {
@@ -666,7 +713,7 @@ impl Controller {
             }
             let a = &m.anim.anim;
             let t = m.local_time(now) as f32;
-            for (jm, j) in a.joints.iter().zip(m.anim.joints.iter()) {
+            for ((jm, j), top) in a.joints.iter().zip(&m.anim.joints).zip(&m.anim.position_top) {
                 let Some(j) = *j else {
                     continue;
                 };
@@ -674,7 +721,10 @@ impl Controller {
                     continue;
                 }
                 let rot = jm.rotation_at_loop(t, a.loop_range());
-                let pos = jm.position_at_loop(t, a.loop_range()).filter(|p| p.is_finite());
+                let pos = jm
+                    .position_at_loop(t, a.loop_range())
+                    .filter(|p| p.is_finite())
+                    .map(|p| (p, top.unwrap_or(p.z)));
                 if rot.is_none() && pos.is_none() {
                     continue;
                 }
@@ -705,6 +755,7 @@ impl Controller {
             let mut rot = self.rot[j];
             let mut pos_sum = 0.0f32;
             let mut pos = Vec3::ZERO;
+            let mut top = 0.0f32;
             for &(_, w, r, p) in s {
                 if let Some(r) = r {
                     if rot_sum > 0.0 {
@@ -716,13 +767,15 @@ impl Controller {
                         rot_sum = w;
                     }
                 }
-                if let Some(p) = p {
+                if let Some((p, z)) = p {
                     if pos_sum > 0.0 {
                         let sum = (pos_sum + w).min(1.0);
                         pos = p.lerp(pos, pos_sum / sum);
+                        top = z + (top - z) * (pos_sum / sum);
                         pos_sum = sum;
                     } else {
                         pos = p;
+                        top = z;
                         pos_sum = w;
                     }
                 }
@@ -732,8 +785,10 @@ impl Controller {
                 if j == rig.pelvis {
                     // the pelvis is animated relative to the avatar root
                     self.pelvis_offset = pos;
+                    self.tag_pelvis_offset = top;
                 } else if let Some(rest) = rest_pos.get(j) {
                     self.pos_delta[j] = pos - *rest;
+                    self.tag_pos_delta[j] = top - rest.z;
                 }
             }
             if j != rig.pelvis
@@ -747,6 +802,12 @@ impl Controller {
             None => rig.scale.as_slice(),
         };
         let world = rig.world_with(&self.rot, self.pelvis_offset, &local_pos, scale);
+        // Deliberate difference from LLVOAvatar::idleCalcNameTagPosition:
+        // the human requested a stable tag, not one following the posed head.
+        // Keep shape / mesh offsets and translation deformers, but measure
+        // the upright skeleton with the whole animation's translation bounds.
+        // Only the cached root-to-skull chain is summed; no extra matrices.
+        self.name_tag_height = rig.name_tag_height(rest_pos, scale, &self.tag_pos_delta, self.tag_pelvis_offset);
         for j in 0..n {
             out[j] = world[j].to_cols_array_2d();
         }
@@ -1018,6 +1079,105 @@ mod tests {
     fn rig() -> Rig {
         let xml = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/character/avatar_skeleton.xml")).expect("skeleton");
         Rig::new(&Skeleton::parse(&xml).expect("parse"))
+    }
+
+    #[test]
+    fn name_tag_height_clears_a_deformer_without_following_animated_head_or_bob() {
+        let rig = rig();
+        let animation = Arc::new(BoundAnim::bind(crate::demo::tags::height_animation(&rig), &rig));
+        let epoch = Instant::now();
+        let playing = [signal(Uuid::from_u128(261), 1, epoch)];
+        let mut controller = Controller::default();
+        let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        controller.evaluate(&rig, epoch, None, &mut pose);
+        let normal = controller.name_tag_height.expect("rest height");
+        controller.sync(&playing, epoch, |_| Some(animation.clone()));
+        let mut heads = Vec::new();
+        let mut heights = Vec::new();
+        for millis in [500, 1500, 2500, 3500, 4500] {
+            let now = epoch + Duration::from_millis(millis);
+            controller.sync(&playing, now, |_| Some(animation.clone()));
+            controller.evaluate(&rig, now, None, &mut pose);
+            heads.push(controller.head_pos().expect("head"));
+            heights.push(controller.name_tag_height.expect("height"));
+        }
+        assert!(heights[0] > normal + 0.7, "deformer raises the tag: {normal} -> {heights:?}");
+        assert!(heads.windows(2).any(|h| h[0].distance(h[1]) > 0.05), "the head really moves");
+        assert!(
+            heights.iter().all(|h| (h - heights[0]).abs() < 1e-5),
+            "tag height must stay still: {heights:?}"
+        );
+        for head in heads {
+            assert!(
+                head.z - rig.local_pos[rig.pelvis].z < heights[0],
+                "head stays below the upright envelope"
+            );
+        }
+    }
+
+    #[test]
+    fn name_tag_height_updates_with_shape_and_mesh_offsets_but_not_look_at() {
+        let rig = rig();
+        let epoch = Instant::now();
+        let mut controller = Controller::default();
+        let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        controller.evaluate(&rig, epoch, None, &mut pose);
+        let normal = controller.name_tag_height.expect("height");
+        let mut base = SkeletonBase {
+            local_pos: rig.local_pos.clone(),
+            scale: rig.scale.clone(),
+        };
+        base.local_pos[rig.names["mTorso"]].z += 0.8;
+        base.scale[rig.names["mHead"]] *= 1.5;
+        controller.evaluate(&rig, epoch, Some(&base), &mut pose);
+        let tall = controller.name_tag_height.expect("height");
+        assert!(tall > normal + 0.8);
+        for look in [Vec3::X, Vec3::Y, -Vec3::Z] {
+            controller.look = Some(look);
+            controller.evaluate(&rig, epoch + Duration::from_secs(2), Some(&base), &mut pose);
+            assert_eq!(controller.name_tag_height, Some(tall));
+        }
+        base.local_pos[rig.names["mSpine3"]].z += 0.6;
+        controller.evaluate(&rig, epoch + Duration::from_secs(3), Some(&base), &mut pose);
+        assert!((controller.name_tag_height.expect("Bento height") - tall - 0.6).abs() < 1e-5);
+        controller.evaluate(&rig, epoch + Duration::from_secs(3), None, &mut pose);
+        assert_eq!(
+            controller.name_tag_height,
+            Some(normal),
+            "removing the structural deformation restores height"
+        );
+    }
+
+    #[test]
+    fn name_tag_height_respects_position_priority_and_a_reset_animation() {
+        let rig = rig();
+        let mut deformer = crate::demo::tags::height_animation(&rig);
+        deformer.ease_in = 0.0;
+        deformer.joints.retain(|j| j.joint_name == "mTorso");
+        let low = Arc::new(BoundAnim::bind(deformer.clone(), &rig));
+        deformer.joints[0].priority = 6;
+        deformer.joints[0]
+            .pos_keys
+            .iter_mut()
+            .for_each(|k| k.position = rig.local_pos[rig.names["mTorso"]]);
+        let high = Arc::new(BoundAnim::bind(deformer, &rig));
+        let epoch = Instant::now();
+        let (lo, hi) = (Uuid::from_u128(261), Uuid::from_u128(262));
+        let mut controller = Controller::default();
+        let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        controller.evaluate(&rig, epoch, None, &mut pose);
+        let normal = controller.name_tag_height;
+        controller.sync(&[signal(lo, 1, epoch)], epoch, |_| Some(low.clone()));
+        controller.evaluate(&rig, epoch, None, &mut pose);
+        assert!(controller.name_tag_height > normal);
+        controller.sync(&[signal(lo, 1, epoch), signal(hi, 1, epoch)], epoch, |id| {
+            Some(if *id == hi { high.clone() } else { low.clone() })
+        });
+        controller.evaluate(&rig, epoch, None, &mut pose);
+        assert_eq!(
+            controller.name_tag_height, normal,
+            "a winning reset must suppress the lower deformer envelope"
+        );
     }
 
     #[test]

@@ -3868,6 +3868,14 @@ impl Scene {
         })
     }
 
+    /// Stable name tag above the avatar root, also used for click depth.
+    /// Its height includes shape, mesh offsets and translation deformers;
+    /// neither body/head rotations nor animation bobbing move the anchor.
+    pub fn name_tag_anchor(&self, id: &Uuid, root: Vec3) -> Vec3 {
+        let height = self.motions.get(id).and_then(|c| c.name_tag_height).map_or(1.05, |h| h + 0.2);
+        root + Vec3::Z * height
+    }
+
     /// Where a look-at target is (LLHUDEffectLookAt::calcTargetPosition).
     fn look_target_pos(&self, world: &World, source: Uuid, t: &crate::world::lookat::Target, now: Instant) -> Option<Vec3> {
         use crate::world::lookat::{FREELOOK, MOUSELOOK};
