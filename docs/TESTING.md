@@ -80,7 +80,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
-| `AURORA_EMOJI_FONT=<path>` | Uses another emoji font |
+| `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
 
 The demo shows no sample offer or dialog by default. The fountain menu,
@@ -1161,6 +1161,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
+| `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -1378,6 +1379,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
+- **`AURORA_DEMO_EMOJI_PICKER=1|<text>`**: the Conversations window open on
+  local chat with its emoji picker shown (first tab, smileys); any value
+  other than `1` is put in the input field, as if picked. With
+  `AURORA_DEMO_GLYPHS=1`, the emoji line of the chat is visible beside it;
+  with `AURORA_DEMO_CHATCMD=<same text>`, the line is sent.
+  What to see: colour emojis in every cell, centred, with their
+  proportions (the 2D font's images are wider than tall), and the same
+  colour emojis, same size, in the input field and in the sent line.
+  `AURORA_EMOJI_FONT=<file>` compares two fonts.
 - **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery`**, only
   with `AURORA_DEMO`: triggers a Rust panic, a native Windows
   exception, an abnormal exit without a trace, a normal close or an

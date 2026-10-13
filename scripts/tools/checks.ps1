@@ -82,8 +82,6 @@ function Get-Checks($P, [switch]$Offline) {
         else { & $add (New-Check firestorm 'Firestorm sources' "from $date" ok 'nothing to do') }
     }
 
-    $font = Test-Path (Join-Path $P.Repo 'assets\emoji\Noto-3D-128.ttf')
-    & $add (New-Check font 'Emoji font' $(if ($font) { 'present' }) $(if ($font) { 'ok' } else { 'todo' }) $(if ($font) { 'nothing to do' } else { 'downloaded (142 MB)' }))
     $work = Test-Path $P.Work
     & $add (New-Check work 'work\ folder (tasks)' $(if ($work) { 'present' }) $(if ($work) { 'ok' } else { 'todo' }) $(if ($work) { 'nothing to do' } else { 'created' }))
     & $add (New-Check crates 'Rust toolchain and crates' $null always 'installed or updated (cargo fetch)')
@@ -182,9 +180,6 @@ function Invoke-Repair($P) {
         git clone --depth 1 -c core.longpaths=true $FirestormUrl $P.Firestorm
         if ($LASTEXITCODE -ne 0) { throw 'cloning the Firestorm sources.' }
     }
-
-    Write-Title 'Emoji font'
-    & (Join-Path $P.Repo 'scripts\fetch-assets.ps1')
 
     Write-Title 'Rust toolchain and crates'
     Push-Location $P.Repo

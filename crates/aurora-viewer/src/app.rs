@@ -351,7 +351,7 @@ pub struct App {
     sound_changes: Vec<usize>,
     /// Audio devices listed for the preferences.
     devices_listed: bool,
-    /// Color emoji (Noto 3D) for chat and the picker.
+    /// Color emoji (Noto Color Emoji) for chat and the picker.
     emoji: ui::emoji::Emoji,
     /// The system's fallback fonts were still being looked for when the
     /// fonts were installed: installed again once they are there.
@@ -8498,6 +8498,16 @@ impl ApplicationHandler for App {
                 self.panels.inventory = false;
                 self.panels.minimap = false;
                 self.panels.perf = false;
+            }
+            // AURORA_DEMO_EMOJI_PICKER=1|<text>: the conversation window open
+            // on its emoji picker (colour emoji font); a text is put in the
+            // input field, as if picked
+            if let Ok(text) = std::env::var("AURORA_DEMO_EMOJI_PICKER") {
+                self.panels.chat = true;
+                self.chat_ui.emoji_open = true;
+                if text.trim() != "1" {
+                    self.chat_ui.conv_input = text;
+                }
             }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)
