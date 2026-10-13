@@ -16,6 +16,7 @@ pub mod inspect;
 pub mod jobs;
 pub mod legacy_mat;
 pub mod lights;
+mod list_index;
 pub mod loading;
 mod lod_watch;
 pub mod meshes;
@@ -535,6 +536,8 @@ pub struct Scene {
     system_bounds: Vec<animesh::JointBounds>,
     /// Objects visited by the CPU lists this frame (reused).
     visit_tmp: Vec<(usize, bool)>,
+    /// What the lists look for in each object slot (list_index.rs).
+    list_index: list_index::ListIndex,
     /// Objects with light parameters (kept by `sync_object`, which sees every
     /// object when it arrives and on each update): the light list reads
     /// these instead of every object each frame. May hold removed indices;
@@ -895,6 +898,7 @@ impl Scene {
             removal_pending: Vec::new(),
             system_bounds: Vec::new(),
             visit_tmp: Vec::new(),
+            list_index: Default::default(),
             light_objects: Default::default(),
             light_textures: HashMap::new(),
             spot_shadows: Default::default(),
@@ -1350,6 +1354,7 @@ impl Scene {
         self.sets.forget(i);
         self.anchors.forget(i);
         self.pick.remove(i);
+        self.list_index.remove(i);
         if let Some(mut g) = self.gpu.get_mut(i).map(std::mem::take) {
             self.release_obj(renderer, i, &mut g);
         }
@@ -1370,6 +1375,7 @@ impl Scene {
         self.removal_pending.clear();
         self.slot_users.clear();
         self.pick.reset();
+        self.list_index.reset();
         renderer.cull.objects.reset();
         for (_, r) in self.regions.drain() {
             for (_, c) in r.chunks {
@@ -1864,11 +1870,13 @@ impl Scene {
         let t_part = self.parts.lap(Part::SyncAnchors, t_part);
         self.sync_flexibles(renderer, world, &synced, now, view);
         // GPU object table: bounds and flags of what was synced (unchanged
-        // entries are not uploaded); the same bounds for the hover search
+        // entries are not uploaded); the same bounds for the hover search,
+        // the same flags for the lists
         for idx in synced {
             if let Some(g) = self.gpu.get(idx) {
                 renderer.cull.objects.set(idx, g.cull_object(idx));
                 self.pick.set(idx, hover::PickEntry::of(g));
+                self.list_index.set(idx, g);
             }
         }
 
@@ -1929,6 +1937,7 @@ impl Scene {
                 }
                 if any {
                     g.special = is_special(&g.faces);
+                    self.list_index.set(idx, g);
                     // (a face that became see-through, or stopped being)
                     self.pick.changed(idx);
                 }
@@ -3005,22 +3014,32 @@ impl Scene {
 
         // nearest avatars in full (own avatar always), the others as
         // impostors (RenderAvatarMaxNonImpostors)
-        let mut avatars: Vec<(f32, usize)> = self
-            .gpu
-            .iter()
-            .enumerate()
-            .filter(|(_, g)| g.is_avatar)
-            .map(|(i, g)| {
-                (
-                    if Some(i) == self.agent_idx {
-                        -1.0
-                    } else {
-                        g.center.distance(view.eye)
-                    },
-                    i,
-                )
-            })
-            .collect();
+        let index_mode = list_index::mode();
+        // (a thirtieth of the frames: the check walks every object)
+        if index_mode == list_index::Mode::Check && self.frame.is_multiple_of(30) {
+            self.list_index.verify(&self.gpu);
+        }
+        let by_index = index_mode != list_index::Mode::Walk;
+        let avatar_distance = |i: usize, g: &ObjGpu| {
+            if Some(i) == self.agent_idx {
+                -1.0
+            } else {
+                g.center.distance(view.eye)
+            }
+        };
+        let mut avatars: Vec<(f32, usize)> = if by_index {
+            self.list_index
+                .with(list_index::AVATAR)
+                .filter_map(|(i, _)| Some((avatar_distance(i, self.gpu.get(i)?), i)))
+                .collect()
+        } else {
+            self.gpu
+                .iter()
+                .enumerate()
+                .filter(|(_, g)| g.is_avatar)
+                .map(|(i, g)| (avatar_distance(i, g), i))
+                .collect()
+        };
         avatars.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
         let mut avatar_ok = vec![false; self.gpu.len()];
         for (_, i) in avatars.iter().take(self.max_avatars.max(1)) {
@@ -3080,13 +3099,32 @@ impl Scene {
             let debug = debug_alpha.is_some();
             let selection = &self.selection_wire;
             let captured = |g: &ObjGpu, i: usize| !plan.capture.is_empty() && g.avatar(i).is_some_and(|a| plan.capture.contains_key(&a));
-            for (i, g) in self.gpu.iter().enumerate() {
-                if g.faces.is_empty() || g.hud {
-                    continue;
+            if by_index {
+                // (the pictured avatars and what they wear: read in the
+                // objects, on the frames a picture is taken)
+                let capturing = !plan.capture.is_empty();
+                for (i, bits) in self.list_index.with(list_index::DRAWN) {
+                    let usage = i % 30 == usage_phase;
+                    if usage
+                        || bits & list_index::SPECIAL != 0
+                        || debug
+                        || selection.contains_key(&i)
+                        || self.selection_faces.contains_key(&i)
+                        || (capturing && self.gpu.get(i).is_some_and(|g| captured(g, i)))
+                    {
+                        visit.push((i, usage));
+                    }
                 }
-                let usage = i % 30 == usage_phase;
-                if usage || g.special || debug || selection.contains_key(&i) || self.selection_faces.contains_key(&i) || captured(g, i) {
-                    visit.push((i, usage));
+            } else {
+                for (i, g) in self.gpu.iter().enumerate() {
+                    if g.faces.is_empty() || g.hud {
+                        continue;
+                    }
+                    let usage = i % 30 == usage_phase;
+                    if usage || g.special || debug || selection.contains_key(&i) || self.selection_faces.contains_key(&i) || captured(g, i)
+                    {
+                        visit.push((i, usage));
+                    }
                 }
             }
         } else {
@@ -4566,7 +4604,7 @@ mod tests {
         assert!(changed(&mut scene, &world).is_empty());
     }
 
-    fn test_face(p: Pass, glow: bool) -> FaceDraw {
+    pub(in crate::scene) fn test_face(p: Pass, glow: bool) -> FaceDraw {
         FaceDraw {
             te_index: 0,
             record: 0,
