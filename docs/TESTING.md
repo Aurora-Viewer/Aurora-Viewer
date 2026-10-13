@@ -1385,7 +1385,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   copied and open its folder; no window after a normal
   close. The screenshots are taken after three frames of the independent
   window. `AURORA_DEMO_CRASH_DIR` makes it possible to use one temporary
-  folder per scenario, without touching the real reports.
+  folder per scenario, without touching the real reports. While a
+  viewer runs, its session folder holds a `watching` marker; without it
+  the watcher did not start (its error is the first line of the console)
+  and no window would follow a crash.
   The "Send a crash report" button must open the shared
   form, with the title and the information of this session. To
   capture it automatically, combine with `AURORA_DEMO_BUG_REPORT=1`
