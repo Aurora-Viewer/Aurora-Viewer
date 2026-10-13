@@ -1544,7 +1544,10 @@ impl App {
             NetEvent::AgentMovementComplete { .. } => {
                 self.move_complete_at = Some(Instant::now());
                 self.tp_checks = vec![10.0, 3.0];
-                self.camera.on_teleport_arrival(&self.settings.camera);
+                // (a border crossing leaves the camera where it is)
+                if !self.world.arrived_by_crossing {
+                    self.camera.on_teleport_arrival(&self.settings.camera);
+                }
                 self.scene.textures.mark_arrival();
                 self.loading_stage = aurora_i18n::tr!("app-loading-scene").into();
             }
@@ -3842,6 +3845,12 @@ impl App {
             if t_ev.elapsed() > Duration::from_millis(8) {
                 break;
             }
+        }
+        // a border crossing changed what positions are relative to: the
+        // camera moves with the agent, in the same frame
+        let shift = self.world.take_origin_shift();
+        if shift != Vec3::ZERO {
+            self.camera.shift(shift);
         }
         self.world.poll_inventory_cache();
         self.world.poll_transcripts();

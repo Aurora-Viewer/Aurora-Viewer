@@ -246,6 +246,11 @@ pub struct World {
     /// `tp_storage` (LLViewerParcelMgr's teleport finished signal): global
     /// position and when it happened.
     tp_record: Option<(glam::DVec3, Instant)>,
+    /// Between the change of region of a border crossing and its arrival.
+    crossing: bool,
+    /// The last arrival was a border crossing: the agent was not placed.
+    pub arrived_by_crossing: bool,
+    origin_shift: Vec3,
     /// Since when our avatar wears objects the region it is in has not sent
     /// (`drop_left_behind`).
     left_behind_since: Option<Instant>,
@@ -269,6 +274,9 @@ pub struct World {
 /// view only lays out the lines in sight, so the bound is about memory;
 /// older lines are in the conversation's transcript.
 const MAX_CHAT: usize = 2000;
+/// An arrival without teleport this far from where the agent is was not a
+/// walk into a neighbour: the agent is placed as for a teleport.
+const CROSSING_MAX_GAP: f32 = 64.0;
 
 /// "(Saved <date>) " before a message kept while we were offline, with the
 /// moment it was sent (Second Life time, like the times of the chat).
@@ -360,6 +368,9 @@ impl World {
             tp_history: tphistory::TeleportHistory::default(),
             tp_storage: Default::default(),
             tp_record: None,
+            crossing: false,
+            arrived_by_crossing: false,
+            origin_shift: Vec3::ZERO,
             left_behind_since: None,
             landmarks: Default::default(),
             map: worldmap::WorldMap::default(),
@@ -489,6 +500,36 @@ impl World {
 
     pub fn main_origin(&self) -> Option<(u32, u32)> {
         self.main_region.map(aurora_net::handle_to_origin)
+    }
+
+    /// The agent's region changes; returns whether it did. Positions are
+    /// relative to it: as LLAgent::setRegion, an agent walking or flying
+    /// into a neighbour keeps its place in the world, and the camera follows
+    /// (`take_origin_shift`). A teleport places the agent on its arrival.
+    fn set_main_region(&mut self, handle: RegionHandle) -> bool {
+        let old = self.main_region.replace(handle);
+        self.ensure_region(handle, (256, 256));
+        if old == Some(handle) {
+            return false;
+        }
+        if let Some(old) = old
+            && self.arrived_once
+            && !self.teleporting
+        {
+            let (ox, oy) = aurora_net::handle_to_origin(old);
+            let (nx, ny) = aurora_net::handle_to_origin(handle);
+            let shift = Vec3::new((ox as f64 - nx as f64) as f32, (oy as f64 - ny as f64) as f32, 0.0);
+            self.agent.shift(shift);
+            self.origin_shift += shift;
+            self.crossing = true;
+        }
+        true
+    }
+
+    /// How far what is kept in main-region coordinates outside the world
+    /// (the camera) must move since last asked, after a border crossing.
+    pub fn take_origin_shift(&mut self) -> Vec3 {
+        std::mem::take(&mut self.origin_shift)
     }
 
     /// Behaviour of LLAgent::teleportCore(is_local), indra/newview/llagent.cpp:
@@ -632,7 +673,9 @@ impl World {
     /// constraints. The default Firestorm crossing fix is disabled, so known
     /// neighboring regions do not impose a separate prediction time limit.
     pub fn predict_agent(&mut self, time_dilation: f32, packet_age: f32) {
-        if !self.agent.has_local_control() || !self.movement_complete {
+        // (a border crossing does not stop the agent while the new region
+        // completes the move)
+        if !self.agent.has_local_control() || !(self.movement_complete || self.crossing) {
             return;
         }
         let start = self.agent.predicted_position();
@@ -953,11 +996,8 @@ impl World {
                 Some(NetEvent::LoggedIn(l))
             }
             NetEvent::MainRegionChanged { handle } => {
-                let changed = self.main_region != Some(handle);
-                self.main_region = Some(handle);
-                self.ensure_region(handle, (256, 256));
-                if changed {
-                    // Region-local agent position is now relative to the new region.
+                if self.set_main_region(handle) {
+                    // no agent update before the new region completes the move
                     self.movement_complete = false;
                 }
                 None
@@ -992,13 +1032,21 @@ impl World {
                     self.teleporting,
                     !self.arrived_once
                 );
+                // process_agent_movement_complete: only a teleport (or the
+                // login) places the agent, turns it and stops it. Walking or
+                // flying into a neighbour, it goes on where it is; an agent
+                // the simulator puts far from there was moved all the same.
+                let crossed = !self.teleporting && self.arrived_once;
                 if region_changed {
-                    self.main_region = Some(handle);
-                    self.ensure_region(handle, (256, 256));
+                    self.set_main_region(handle);
                 }
-                self.agent.position = position;
-                self.agent.set_look_at(look_at);
-                self.agent.reset_motion();
+                self.crossing = false;
+                self.arrived_by_crossing = crossed && self.agent.position.distance(position) < CROSSING_MAX_GAP;
+                if !self.arrived_by_crossing {
+                    self.agent.position = position;
+                    self.agent.set_look_at(look_at);
+                    self.agent.reset_motion();
+                }
                 self.movement_complete = true;
                 if self.teleporting || !self.arrived_once {
                     let region = self.regions.get(&handle).map(|r| r.name.clone()).unwrap_or_default();
@@ -3103,5 +3151,81 @@ mod motion_tests {
         });
         assert!(world.objects.index_of_uuid(&world.agent_id).is_some());
         assert!(world.objects.index_of_uuid(&worn.full_id).is_none());
+    }
+
+    /// The region west of `here`.
+    fn west_of(here: RegionHandle) -> RegionHandle {
+        here - (256u64 << 32)
+    }
+
+    #[test]
+    fn flying_into_a_neighbour_keeps_the_agent_where_it_is() {
+        let (mut world, here) = teleport_fixture();
+        let there = west_of(here);
+        world.agent.position = Vec3::new(0.5, 50.0, 30.0);
+        world.agent.velocity = Vec3::new(-15.0, 0.0, 0.0);
+        let yaw = world.agent.yaw;
+        world.apply(NetEvent::MainRegionChanged { handle: there });
+        // the same place, in the coordinates of the region entered
+        assert_eq!(world.agent.position, Vec3::new(256.5, 50.0, 30.0));
+        assert_eq!(world.take_origin_shift(), Vec3::new(256.0, 0.0, 0.0));
+        assert_eq!(world.take_origin_shift(), Vec3::ZERO);
+        assert!(!world.movement_complete);
+        // the region entered completes the move: nothing is placed again
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: there,
+            position: Vec3::new(254.0, 50.0, 30.0),
+            look_at: Vec3::Y,
+        });
+        assert!(world.arrived_by_crossing && world.movement_complete);
+        assert_eq!(world.agent.position, Vec3::new(256.5, 50.0, 30.0));
+        assert_eq!(world.agent.velocity, Vec3::new(-15.0, 0.0, 0.0));
+        assert_eq!(world.agent.yaw, yaw);
+        assert_eq!(world.take_origin_shift(), Vec3::ZERO);
+    }
+
+    #[test]
+    fn crossing_announced_by_the_arrival_alone_shifts_the_agent_too() {
+        let (mut world, here) = teleport_fixture();
+        world.agent.position = Vec3::new(0.5, 50.0, 30.0);
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: west_of(here),
+            position: Vec3::new(255.0, 50.0, 30.0),
+            look_at: Vec3::Y,
+        });
+        assert!(world.arrived_by_crossing);
+        assert_eq!(world.agent.position, Vec3::new(256.5, 50.0, 30.0));
+        assert_eq!(world.take_origin_shift(), Vec3::new(256.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn teleport_to_a_neighbour_still_places_the_agent() {
+        let (mut world, here) = teleport_fixture();
+        let there = west_of(here);
+        world.agent.position = Vec3::new(0.5, 50.0, 30.0);
+        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::MainRegionChanged { handle: there });
+        assert_eq!(world.take_origin_shift(), Vec3::ZERO);
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: there,
+            position: Vec3::new(200.0, 20.0, 40.0),
+            look_at: Vec3::Y,
+        });
+        assert!(!world.arrived_by_crossing);
+        assert_eq!(world.agent.position, Vec3::new(200.0, 20.0, 40.0));
+        assert_eq!(world.agent.velocity, Vec3::ZERO);
+    }
+
+    #[test]
+    fn arrival_far_from_the_agent_places_it_even_without_a_teleport() {
+        let (mut world, here) = teleport_fixture();
+        world.agent.position = Vec3::new(10.0, 50.0, 30.0);
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: here,
+            position: Vec3::new(200.0, 50.0, 30.0),
+            look_at: Vec3::Y,
+        });
+        assert!(!world.arrived_by_crossing);
+        assert_eq!(world.agent.position, Vec3::new(200.0, 50.0, 30.0));
     }
 }
