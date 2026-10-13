@@ -1066,6 +1066,8 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   un clic dans toute leur surface ; les champs restent éditables normalement.
   `material-maps` affiche les quatre cartes en grille 2 × 2, sans défilement,
   chacune dans une surface distincte avec sa vignette carrée et ses réglages.
+  Titres à gauche, trois commandes alignées à droite, noms de textures à
+  gauche sous le titre, libellés et valeurs rangés sur des lignes régulières.
   Les proportions originales des textures sont conservées. Métallique et
   Rugosité ont uniquement un champ numérique ; Normales apparaît seulement
   dans le titre de sa carte. `material-loading` garde exactement le cadre 3D
@@ -1081,8 +1083,9 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   saisir un autre nom doit filtrer sans changer la destination ni fermer
   la liste. Choisir un résultat ferme la liste et applique ce dossier.
   Pour le mesh, la liste reste à gauche ; l’aperçu et les quatre cartes LOD
-  sont côte à côte dans une fenêtre de 900 × 720 points par défaut, avec
-  la même largeur et une liste de fichiers de 180 points. Nom, description
+  sont côte à côte dans une fenêtre de 900 × 760 points par défaut, avec
+  la même largeur et une liste de fichiers de 180 points. Les coches sont
+  rapprochées des noms sans changer la hauteur des lignes. Nom, description
   et destination sont toujours présentés en trois lignes identiques en haut
   de chaque panneau d’import, y compris pour le mesh ; la section Import ne
   les répète plus. Permissions reste un onglet principal commun.

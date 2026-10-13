@@ -296,16 +296,16 @@ pub fn show(
     let busy = imports.busy() || imports.confirm;
     let connected = imports.demo_started || world.login.is_some();
     let old_permissions = prefs.clone();
-    let window_id = egui::Id::new("asset_imports_v5");
+    let window_id = egui::Id::new("asset_imports_v6");
     if imports.demo_started && imports.preview_zoom.is_none() {
         // Keep the requested demo inspector above other scripted floaters.
         ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id));
     }
     let mut floater = Floater::new(
-        "asset_imports_v5",
+        "asset_imports_v6",
         aurora_i18n::tr!("import-title"),
         egui::pos2(100.0, 80.0),
-        Vec2::new(900.0, 720.0),
+        Vec2::new(900.0, 760.0),
     );
     floater.min_size = Vec2::new(880.0, 580.0);
     floater.show(ctx, p, &mut open, |ui| {
@@ -401,7 +401,11 @@ pub fn show(
                             .filter(|e| imports.permissions_open || imports.choice.accepts(e))
                         {
                             ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.spacing_mut().button_padding.x = 6.0;
                                 ui.add_enabled_ui(!busy && matches!(entry.status, Status::Ready | Status::Error(_)), |ui| {
+                                    // An unlabeled checkbox needs only its mark, not the trailing room of a text row.
+                                    ui.spacing_mut().interact_size.y = ui.spacing().icon_width;
                                     checkbox(ui, p, &mut entry.selected, "");
                                 });
                                 let name_width = (ui.available_width() - 18.0 - ui.spacing().item_spacing.x).max(40.0);

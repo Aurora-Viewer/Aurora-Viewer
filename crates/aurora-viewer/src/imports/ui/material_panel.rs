@@ -66,9 +66,9 @@ pub(super) fn show(
                     for slot in pair {
                         ui.push_id(slot, |ui| {
                             let card = ui
-                                .allocate_ui_with_layout(Vec2::new(card_width, 182.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                .allocate_ui_with_layout(Vec2::new(card_width, 204.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                                     widgets::surface(ui, p, |ui| {
-                                        ui.set_min_size(Vec2::new(card_width - 22.0, 160.0));
+                                        ui.set_min_size(Vec2::new(card_width - 22.0, 182.0));
                                         ui.set_max_width(card_width - 22.0);
                                         ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                                         map_card(ui, p, id, slot, material, images, actions, previews);
@@ -97,7 +97,19 @@ fn map_card(
     previews: &[Option<(Uuid, egui::TextureHandle)>; 4],
 ) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(map_label(slot)).small().strong());
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().interact_size.y = 20.0;
+        let title_width = (ui.available_width() - 72.0).max(40.0);
+        ui.allocate_ui_with_layout(
+            Vec2::new(title_width, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_size(Vec2::new(title_width, 20.0));
+                ui.add(egui::Label::new(RichText::new(map_label(slot)).small().strong()).truncate())
+            },
+        )
+        .inner
+        .on_hover_text(map_label(slot));
         if widgets::icon_button(ui, p, "folder-open-filled", aurora_i18n::tr!("import-browse"), true) {
             actions.push(Action::MapFile(id, slot));
         }
@@ -121,10 +133,12 @@ fn map_card(
         }
     });
     let name = images[slot].as_ref().map(|image| image.name.as_str()).unwrap_or("");
-    ui.add_sized(
-        Vec2::new(ui.available_width(), 14.0),
-        egui::Label::new(RichText::new(name).small().color(p.muted)).truncate(),
-    )
+    let caption_size = Vec2::new(ui.available_width(), 14.0);
+    ui.allocate_ui_with_layout(caption_size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_min_size(caption_size);
+        ui.add(egui::Label::new(RichText::new(name).small().color(p.muted)).truncate())
+    })
+    .inner
     .on_hover_text(name);
     let parameters_width = (ui.available_width() - 88.0 - ui.spacing().item_spacing.x).max(100.0);
     ui.horizontal_top(|ui| {
@@ -147,56 +161,71 @@ fn map_card(
                 actions.push(Action::Zoom(id, Some(slot)));
             }
         }
-        ui.allocate_ui_with_layout(Vec2::new(parameters_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+        ui.allocate_ui_with_layout(Vec2::new(parameters_width, 128.0), egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.set_width(parameters_width);
-            match slot {
-                0 => {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(aurora_i18n::tr!("build-ui-texture-tint")).small());
+            ui.spacing_mut().button_padding.x = 6.0;
+            egui::Grid::new("map_parameters")
+                .num_columns(2)
+                .min_col_width(0.0)
+                .spacing(Vec2::new(4.0, 6.0))
+                .show(ui, |ui| match slot {
+                    0 => {
+                        parameter_label(ui, aurora_i18n::tr!("build-ui-texture-tint"));
                         factor_swatch(ui, p, "base", &mut material.base_color_factor, true);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(aurora_i18n::tr!("common-alpha")).small());
-                        ui.add(
-                            egui::DragValue::new(&mut material.base_color_factor[3])
-                                .range(0.0..=1.0)
-                                .speed(0.01),
-                        );
-                    });
-                    egui::ComboBox::from_id_salt("alpha")
-                        .width(parameters_width - 8.0)
-                        .selected_text(alpha_name(material.alpha_mode))
-                        .show_ui(ui, |ui| {
-                            for mode in [
-                                aurora_assets::AlphaMode::Opaque,
-                                aurora_assets::AlphaMode::Blend,
-                                aurora_assets::AlphaMode::Mask,
-                            ] {
-                                selection(ui, &mut material.alpha_mode, mode, alpha_name(mode));
-                            }
-                        });
-                    if material.alpha_mode == aurora_assets::AlphaMode::Mask {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(aurora_i18n::tr!("import-alpha-cutoff-short")).small());
-                            ui.add(egui::DragValue::new(&mut material.alpha_cutoff).range(0.0..=1.0).speed(0.01))
-                                .on_hover_text(aurora_i18n::tr!("import-alpha-cutoff"));
-                        });
+                        ui.end_row();
+                        parameter_value(ui, aurora_i18n::tr!("common-alpha"), &mut material.base_color_factor[3]);
                     }
-                }
-                2 => {
-                    ui.label(RichText::new(aurora_i18n::tr!("import-metallic")).small());
-                    ui.add(egui::DragValue::new(&mut material.metallic_factor).range(0.0..=1.0).speed(0.01));
-                    ui.label(RichText::new(aurora_i18n::tr!("import-roughness")).small());
-                    ui.add(egui::DragValue::new(&mut material.roughness_factor).range(0.0..=1.0).speed(0.01));
-                }
-                3 => {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(aurora_i18n::tr!("build-ui-texture-tint")).small());
+                    2 => {
+                        parameter_value(ui, aurora_i18n::tr!("import-metallic"), &mut material.metallic_factor);
+                        parameter_value(ui, aurora_i18n::tr!("import-roughness"), &mut material.roughness_factor);
+                    }
+                    3 => {
+                        parameter_label(ui, aurora_i18n::tr!("build-ui-texture-tint"));
                         factor_swatch(ui, p, "emission", &mut material.emissive_factor, false);
+                        ui.end_row();
+                    }
+                    _ => {}
+                });
+            if slot == 0 {
+                egui::ComboBox::from_id_salt("alpha")
+                    .width(parameters_width - 8.0)
+                    .selected_text(alpha_name(material.alpha_mode))
+                    .show_ui(ui, |ui| {
+                        for mode in [
+                            aurora_assets::AlphaMode::Opaque,
+                            aurora_assets::AlphaMode::Blend,
+                            aurora_assets::AlphaMode::Mask,
+                        ] {
+                            selection(ui, &mut material.alpha_mode, mode, alpha_name(mode));
+                        }
                     });
+                if material.alpha_mode == aurora_assets::AlphaMode::Mask {
+                    egui::Grid::new("map_cutoff")
+                        .num_columns(2)
+                        .min_col_width(0.0)
+                        .spacing(Vec2::new(4.0, 6.0))
+                        .show(ui, |ui| {
+                            parameter_value(ui, aurora_i18n::tr!("import-alpha-cutoff-short"), &mut material.alpha_cutoff);
+                        })
+                        .response
+                        .on_hover_text(aurora_i18n::tr!("import-alpha-cutoff"));
                 }
-                _ => {}
             }
         });
     });
+}
+
+fn parameter_label(ui: &mut egui::Ui, label: &str) {
+    ui.allocate_ui_with_layout(Vec2::new(50.0, 26.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_min_size(Vec2::new(50.0, 26.0));
+        ui.add(egui::Label::new(RichText::new(label).small()).truncate())
+    })
+    .inner
+    .on_hover_text(label);
+}
+
+fn parameter_value(ui: &mut egui::Ui, label: &str, value: &mut f32) {
+    parameter_label(ui, label);
+    ui.add_sized(Vec2::new(44.0, 26.0), egui::DragValue::new(value).range(0.0..=1.0).speed(0.01));
+    ui.end_row();
 }

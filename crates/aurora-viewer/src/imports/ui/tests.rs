@@ -265,7 +265,7 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
     assert_eq!(cards[2].top(), cards[3].top());
     assert!(cards[1].left() > cards[0].right() && cards[2].top() > cards[0].bottom());
     assert!(
-        cards[3].bottom() <= 750.0,
+        cards[3].bottom() <= 790.0,
         "all four maps fit below the shared metadata without scrolling"
     );
 }
@@ -576,10 +576,10 @@ fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() 
             drop(frame(&mut imports, Vec::new()));
         }
         let size = ctx
-            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v5").with("expanded_size")))
+            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v6").with("expanded_size")))
             .expect("window size");
         assert!(
-            size.x <= 902.0 && size.y <= 722.0,
+            size.x <= 902.0 && size.y <= 762.0,
             "compact window grew for {}: {size:?}",
             choice.label()
         );
@@ -613,9 +613,9 @@ fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() 
                     drop(frame(&mut imports, Vec::new()));
                 }
                 let size = ctx
-                    .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v5").with("expanded_size")))
+                    .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v6").with("expanded_size")))
                     .expect("mesh section size");
-                assert!(size.x <= 902.0 && size.y <= 722.0, "mesh section {section} grew: {size:?}");
+                assert!(size.x <= 902.0 && size.y <= 762.0, "mesh section {section} grew: {size:?}");
                 let output = frame(&mut imports, Vec::new());
                 for (index, label) in [
                     aurora_i18n::tr!("common-name"),
@@ -668,9 +668,9 @@ fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() 
             drop(frame(&mut imports, Vec::new()));
         }
         let size = ctx
-            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v5").with("expanded_size")))
+            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v6").with("expanded_size")))
             .expect("permissions size");
-        assert!(size.x <= 902.0 && size.y <= 722.0, "permissions table grew: {size:?}");
+        assert!(size.x <= 902.0 && size.y <= 762.0, "permissions table grew: {size:?}");
         let output = frame(&mut imports, Vec::new());
         for name in ["mesh", "pbr"] {
             assert!(
