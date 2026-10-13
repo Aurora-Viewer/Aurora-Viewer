@@ -62,6 +62,8 @@ struct TpOverlay {
     loading_end: bool,
     /// Displayed progress (glides toward the steps, never backwards).
     shown: f32,
+    /// What the screen said when its fade out began; it leaves saying that.
+    leaving: Option<ui::loading::BannerText>,
 }
 
 impl TpOverlay {
@@ -73,6 +75,7 @@ impl TpOverlay {
             dest,
             loading_end,
             shown: 0.0,
+            leaving: None,
         }
     }
 }
@@ -6987,7 +6990,7 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiOptions, t);
                 // teleport screen (and the login loading screen fading out)
-                if let Some(o) = &self.tp_overlay {
+                if let Some(o) = self.tp_overlay.as_mut() {
                     // quick fade in, fade out at the end
                     let fade_in = if o.loading_end {
                         1.0
@@ -6996,37 +6999,54 @@ impl App {
                     };
                     let fade_out = o.end.map_or(1.0, |e| 1.0 - e.elapsed().as_secs_f32() / ui::loading::FADE_SECONDS);
                     let alpha = fade_in.min(fade_out).clamp(0.0, 1.0);
-                    // the banner names the region; its arrival point is one of its facts
-                    let (dest, point) = ui::loading::split_destination(&o.dest);
-                    let arrived = o.loading_end || o.arrived.is_some() || dest.is_empty();
-                    let (title, sub, detail) = if o.loading_end {
-                        (aurora_i18n::tr!("common-loading-world"), self.world.region_name(), String::new())
+                    let title = if o.loading_end {
+                        aurora_i18n::tr!("common-loading-world")
                     } else {
-                        let sub = if dest.is_empty() {
+                        aurora_i18n::tr!("common-teleport-2")
+                    };
+                    // a screen fading out says what it said when the fade began
+                    let text = o.leaving.take().unwrap_or_else(|| {
+                        // the banner names the region; its arrival point is one of its facts
+                        let (dest, point) = ui::loading::split_destination(&o.dest);
+                        let arrived = o.loading_end || o.arrived.is_some() || dest.is_empty();
+                        let name = if dest.is_empty() {
                             self.world.region_name()
                         } else {
                             dest.to_owned()
                         };
-                        let detail = if o.shown >= 0.985 {
+                        let stage = if o.loading_end {
+                            // the line the loading screen ended on
+                            let stats = self.scene.textures.stats;
+                            ui::loading::stage_line(
+                                &self.loading_stage,
+                                &name,
+                                self.world.terrain_progress(),
+                                self.world.objects.len(),
+                                (stats.loaded, stats.total),
+                            )
+                        } else if o.shown >= 0.985 {
                             aurora_i18n::tr!("app-welcome").to_owned()
                         } else {
                             self.world.tp_status.clone()
                         };
-                        (aurora_i18n::tr!("common-teleport-2"), sub, detail)
-                    };
-                    let facts = ui::loading::PlaceFacts::gather(&mut self.world, &mut self.map_tiles, &sub, point, arrived);
+                        let facts = ui::loading::PlaceFacts::gather(&mut self.world, &mut self.map_tiles, &name, point, arrived);
+                        ui::loading::BannerText { name, stage, facts }
+                    });
                     ui::loading::teleport_overlay(
                         &ctx,
                         &p,
                         self.logo.as_ref(),
                         self.settings.loading_backdrop.then_some(&self.backdrop),
                         title,
-                        &sub,
-                        &detail,
+                        &text.name,
+                        &text.stage,
                         Some(o.shown),
                         alpha,
-                        &facts.place(),
+                        &text.facts.place(),
                     );
+                    if o.end.is_some() {
+                        o.leaving = Some(text);
+                    }
                 }
             }
         }
