@@ -15,7 +15,7 @@ pub mod impostors;
 pub mod inspect;
 pub mod jobs;
 pub mod legacy_mat;
-mod lights;
+pub mod lights;
 pub mod loading;
 mod lod_watch;
 pub mod meshes;
@@ -543,6 +543,8 @@ pub struct Scene {
     /// Texture each projector of the frame's light list holds (object
     /// index: texture, slot), see `lights.rs`.
     light_textures: HashMap<usize, (Uuid, u32)>,
+    /// The projectors that cast shadows (`lights.rs`).
+    spot_shadows: lights::SpotShadowSlots,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
@@ -895,6 +897,7 @@ impl Scene {
             visit_tmp: Vec::new(),
             light_objects: Default::default(),
             light_textures: HashMap::new(),
+            spot_shadows: Default::default(),
             mirror_objects: Default::default(),
             selection_wire: HashMap::new(),
             selection_silhouettes: HashSet::new(),
@@ -4763,6 +4766,7 @@ mod tests {
             &[all; 3],
             &[aurora_render::shadow_cull::CASTER_PLANES_ALL; 3],
             [Mat4::IDENTITY; 3],
+            [None; 2],
             flags,
         );
         frame.water = [[0.0, 0.0, 0.0, 1.0]; 6];

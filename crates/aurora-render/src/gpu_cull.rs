@@ -71,7 +71,7 @@ pub mod avatar_state {
     pub const LOADING: u32 = 4;
 }
 
-pub const BINS: usize = 13;
+pub const BINS: usize = 15;
 pub const MAIN_BINS: usize = 4;
 /// Shadow casters of each cascade drawn depth only: opaque faces, which
 /// `fs_shadow` never discards.
@@ -82,21 +82,26 @@ pub const BIN_PROBE: usize = 9;
 /// Shadow casters of each cascade drawn with the alpha test of `fs_shadow`
 /// (masked faces, blended rigged faces).
 pub const BIN_SHADOW_ALPHA: usize = 10;
+/// Shadow casters of the two projectors that cast shadows, drawn with the
+/// alpha test.
+pub const BIN_SPOT: usize = 13;
+/// Projector shadow maps of a frame.
+pub const SPOT_SHADOWS: usize = 2;
 /// Argument regions: the bins, then the occlusion's phase 1 and phase 2
 /// prepass lists of the main bins (depth only, in no particular order).
-pub const REGION_PRE1: usize = 13;
-pub const REGION_PRE2: usize = 17;
-const REGIONS: usize = 21;
+pub const REGION_PRE1: usize = 15;
+pub const REGION_PRE2: usize = 19;
+const REGIONS: usize = 23;
 
-const COUNT_VISIBLE: usize = 13;
-const COUNT_TRIANGLES: usize = 14;
-const COUNT_HIDDEN: usize = 15;
+const COUNT_VISIBLE: usize = 15;
+const COUNT_TRIANGLES: usize = 16;
+const COUNT_HIDDEN: usize = 17;
 /// Counts of the phase 1 and phase 2 prepass lists of each main bin.
-pub const COUNT_PRE1: usize = 16;
-pub const COUNT_PRE2: usize = 20;
+pub const COUNT_PRE1: usize = 18;
+pub const COUNT_PRE2: usize = 22;
 /// Profile (`frame_flags::SHADOW_STATS`), per cascade: triangles of its
 /// casters, then its rigged casters, then their triangles.
-const COUNT_SHADOW: usize = 24;
+const COUNT_SHADOW: usize = 26;
 #[cfg(test)]
 const SHADOW_STATS: usize = 9;
 const COUNTS: usize = 40;
@@ -115,6 +120,8 @@ pub mod frame_flags {
     /// Every caster drawn with the alpha test, none depth only
     /// (AURORA_SHADOW_LEGACY).
     pub const SHADOW_ALPHA_ALL: u32 = 128;
+    /// Projector shadow map 0 is drawn (map 1: the next bit).
+    pub const SPOT: u32 = 256;
 }
 
 const CLASSIFY_GROUP: u32 = 128;
@@ -286,6 +293,8 @@ pub struct CullFrame {
     pub water: [[f32; 4]; 6],
     pub mirror: [[f32; 4]; 6],
     pub probe: [[f32; 4]; 6],
+    /// Frustums of the projector shadow maps (`frame_flags::SPOT`).
+    pub spots: [[[f32; 4]; 6]; SPOT_SHADOWS],
     pub cascades: [[[f32; 4]; 4]; 3],
     /// Per cascade: planes around what can cast a shadow the main view
     /// samples in it (`caster_planes`).
@@ -304,20 +313,30 @@ impl CullFrame {
     /// Frame parameters from the scene's view, the cascade matrices with
     /// their caster planes and the water reflection, mirror and probe face
     /// view-projections (`flags` says which are drawn); sizes are filled by
-    /// `GpuCull::prepare`.
+    /// `GpuCull::prepare`. `spots`: view-projections of the projector shadow
+    /// maps that are drawn.
     pub fn new(
         view: &GpuCullView,
         cascades: &[Mat4; 3],
         shadow_planes: &[[[f32; 4]; SHADOW_PLANES]; 3],
         [water, mirror, probe]: [Mat4; 3],
-        flags: u32,
+        spots: [Option<Mat4>; SPOT_SHADOWS],
+        mut flags: u32,
     ) -> CullFrame {
         let planes = |vp: Mat4| view_planes(vp).map(|p| p.to_array());
+        for (k, s) in spots.iter().enumerate() {
+            if s.is_some() {
+                flags |= frame_flags::SPOT << k;
+            }
+        }
         CullFrame {
             planes: view.planes.map(|p| p.to_array()),
             water: planes(water),
             mirror: planes(mirror),
             probe: planes(probe),
+            // (a depth of 0 to 1: the fifth plane is the far one, and
+            // nothing is left out for being before the near one)
+            spots: spots.map(|s| planes(s.unwrap_or(Mat4::IDENTITY))),
             cascades: cascades.map(|m| m.to_cols_array_2d()),
             shadow_planes: *shadow_planes,
             eye: view.eye.extend(view.draw_distance).to_array(),
@@ -421,6 +440,13 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         for (k, cm) in frame.cascades.iter().enumerate() {
             if in_cascade(&Mat4::from_cols_array_2d(cm), c, r) && casts_into(&frame.shadow_planes[k], c, r) {
                 m |= 1 << (bin + k);
+            }
+        }
+    }
+    if casts && (p != pass::BLEND || o.flags & (object_flags::RIGGED | object_flags::AVATAR) != 0) {
+        for (k, planes) in frame.spots.iter().enumerate() {
+            if fl & (frame_flags::SPOT << k) != 0 && sphere_in(planes, c, r) {
+                m |= 1 << (BIN_SPOT + k);
             }
         }
     }
@@ -1186,10 +1212,10 @@ mod tests {
         assert_eq!(wgsl_fields(src, "SkinBind"), ["inverse_bind", "joint"]);
         assert!(src.contains(&format!("const POSED_RADIUS_MAX: f32 = {POSED_RADIUS_MAX:?};")));
         assert!(src.contains("const POSED_COORD_MAX: f32 = 1.0e6;") && POSED_COORD_MAX == 1.0e6);
-        // uniform layout: 4 x 6 planes, 3 matrices, 3 x 12 planes, 4 vectors
+        // uniform layout: (4 + 2) x 6 planes, 3 matrices, 3 x 12 planes, 4 vectors
         assert_eq!(
             std::mem::size_of::<CullFrame>(),
-            4 * 6 * 16 + 3 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
+            (4 + SPOT_SHADOWS) * 6 * 16 + 3 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
         );
         assert_eq!(
             wgsl_fields(src, "CullFrame"),
@@ -1198,6 +1224,7 @@ mod tests {
                 "water",
                 "mirror",
                 "probe",
+                "spots",
                 "cascades",
                 "shadow_planes",
                 "eye",
@@ -1229,8 +1256,10 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 37] = [
+        let pairs: [(&str, u32); 39] = [
             ("BIN_SHADOW_ALPHA", BIN_SHADOW_ALPHA as u32),
+            ("BIN_SPOT", BIN_SPOT as u32),
+            ("F_SPOT", frame_flags::SPOT),
             ("COUNT_SHADOW", COUNT_SHADOW as u32),
             ("SHADOW_STATS", SHADOW_STATS as u32),
             ("SHADOW_PLANES", SHADOW_PLANES as u32),
@@ -1392,6 +1421,7 @@ mod tests {
             water: planes,
             mirror: planes,
             probe: planes,
+            spots: [planes; SPOT_SHADOWS],
             cascades: [cascade.to_cols_array_2d(); 3],
             shadow_planes: [crate::shadow_cull::CASTER_PLANES_ALL; 3],
             eye: [0.0, 0.0, 0.0, 64.0],

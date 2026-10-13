@@ -2012,6 +2012,17 @@ pub fn events() -> Vec<NetEvent> {
             },
             "",
         ));
+        // a post in the first projector's beam: its shadow falls on the wall
+        add(prim(
+            9717,
+            Vec3::new(137.2, 114.2, floor + 2.0),
+            Quat::IDENTITY,
+            Vec3::new(0.3, 0.3, 1.6),
+            boxp,
+            te([0.7, 0.7, 0.75, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
         // an ordinary point light beside them, the same in both modes
         add(prim(
             9716,

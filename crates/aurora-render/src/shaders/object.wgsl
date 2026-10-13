@@ -581,7 +581,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        let at = projector_at(i, world_pos);
+        let at = projector_at(i, world_pos, n);
         if (at.atten <= 0.0) {
             continue;
         }
@@ -602,7 +602,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
                 if (stc.z > 0.0 && uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
                     let levels = projector_levels(pj.tex.x);
                     let image = projector_specular(pj.tex.x, uv, (1.0 - spec.a) * levels * 0.6, levels);
-                    col += frame.lights[i].color_falloff.rgb / 3.25 * image.rgb * env;
+                    col += frame.lights[i].color_falloff.rgb / 3.25 * image.rgb * at.shadow * env;
                 }
             }
         }

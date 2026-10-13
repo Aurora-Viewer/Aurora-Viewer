@@ -81,7 +81,7 @@ processus du viewer. Pour un test avec intervention humaine, garder le titre
 | `AURORA_WINDOW_SIZE="l,h"` | Taille de la fenêtre pour ce lancement |
 | `AURORA_LOG_NAME=<nom>` | Nom du fichier journal |
 | `AURORA_EMOJI_FONT=<chemin>` | Utilise une autre police emoji |
-| `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS` | Remplacent ces réglages |
+| `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Remplacent ces réglages |
 
 Le limiteur d'images/s est activé à **120 images/s par défaut**. Il peut
 être désactivé ou réglé dans Préférences › Graphismes › Fluidité ; les
@@ -799,21 +799,25 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   une seule face, un matériau legacy (la normal map suit) et une face PBR.
 - **`AURORA_DEMO_PROJECTOR=1|point`** : quatre lumières, les trois premières
   avec l'image de démo (quatre quarts de couleur autour d'un disque blanc) :
-  un projecteur blanc tourné vers un mur à 4,5 m ; un projecteur cyan à 2,5 m
-  du sol tourné vers le bas (flou à partir de 1 m, ambiance 0,3) ; une
-  lumière de piscine, projecteur cyan très large (champ 3,0 rad, rayon 20 m,
-  sans atténuation) tourné vers le bas, 2 m sous le sol et à 4 m du milieu
-  d'une dalle à normal map ; une lumière ponctuelle ordinaire, orange, au
-  bout du mur. À regarder avec `AURORA_DEMO_POS="131,112"`, en
-  `AURORA_AA=6` et `AURORA_AA=3` : l'image est projetée sur le mur (vert en
-  haut à gauche, jaune en haut à droite, rouge et bleu en dessous : le haut
-  de l'image suit l'axe Y du prim), le sol n'est éclairé que dans les cônes,
-  et la lumière de piscine n'éclaire rien au-dessus d'elle : ni la dalle, ni
-  notre avatar. `point` : les trois projecteurs sans leur texture, donc
-  ponctuels, comme ils étaient rendus avant d'être gérés — la lumière de
-  piscine éclaire alors en cyan notre avatar par en dessous et les flancs du
-  relief de la dalle tournés vers elle. La lumière orange est la même dans
-  les deux modes.
+  un projecteur blanc tourné vers un mur à 4,5 m, avec un poteau dans son
+  faisceau ; un projecteur cyan à 2,5 m du sol tourné vers le bas (flou à
+  partir de 1 m, ambiance 0,3) ; une lumière de piscine, projecteur cyan
+  très large (champ 3,0 rad, rayon 20 m, sans atténuation) tourné vers le
+  bas, 2 m sous le sol et à 4 m du milieu d'une dalle à normal map ; une
+  lumière ponctuelle ordinaire, orange, au bout du mur. À regarder avec
+  `AURORA_DEMO_POS="131,112"`, en `AURORA_AA=6` et `AURORA_AA=3` : l'image
+  est projetée sur le mur (vert en haut à gauche, jaune en haut à droite,
+  rouge et bleu en dessous : le haut de l'image suit l'axe Y du prim), le
+  sol n'est éclairé que dans les cônes, et la lumière de piscine n'éclaire
+  rien au-dessus d'elle : ni la dalle, ni notre avatar. Le poteau projette
+  son ombre sur le mur : les deux projecteurs les plus présents à l'écran
+  ont une carte d'ombre (`AURORA_PROJECTOR_SHADOWS=0` : aucune, le mur est
+  éclairé derrière le poteau), et leurs ombres apparaissent en fondu
+  pendant la première seconde. `point` : les trois projecteurs sans leur
+  texture, donc ponctuels, comme ils étaient rendus avant d'être gérés — la
+  lumière de piscine éclaire alors en cyan notre avatar par en dessous et
+  les flancs du relief de la dalle tournés vers elle. La lumière orange est
+  la même dans les deux modes.
 - **`AURORA_DEMO_GLOW_LAYERS=1|shell`** : deux panneaux « peau » (le premier
   avec un glow de 0,02, le second sans) et, 1 cm devant leur moitié basse, un
   calque rose transparent (alpha de 0 à 1) au glow de 0,02, comme les calques

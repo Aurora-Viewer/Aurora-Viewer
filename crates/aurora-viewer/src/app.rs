@@ -424,6 +424,9 @@ impl App {
         if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
             settings.shadow_quality = v;
         }
+        if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
+            settings.projector_shadows = v != "0";
+        }
         if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
             settings.occlusion_culling = v != "0";
         }
@@ -4532,10 +4535,16 @@ impl App {
             self.scene.lists.particles = out;
             t_part = Instant::now();
         }
-        let lights = if in_world {
-            self.scene.local_lights(&self.world, &mut gfx.renderer, self.camera.position)
+        let (lights, spot_shadows) = if in_world {
+            let view = crate::scene::lights::LightView {
+                eye: self.camera.position,
+                forward: self.camera.forward(),
+                dt,
+                projector_shadows: self.settings.projector_shadows && self.settings.shadow_quality > 0,
+            };
+            self.scene.local_lights(&self.world, &mut gfx.renderer, &view)
         } else {
-            Vec::new()
+            (Vec::new(), [None; 2])
         };
         t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
         let probes = if in_world {
@@ -4576,6 +4585,7 @@ impl App {
             shadows: self.settings.shadow_quality > 0 && matches!(self.screen, Screen::World),
             shadow_distance: self.settings.shadow_params().1,
             lights,
+            spot_shadows,
             clear_color: Vec4::new(env.fog_color.x, env.fog_color.y, env.fog_color.z, 1.0),
             sky: env.sky,
             water: env.water,
