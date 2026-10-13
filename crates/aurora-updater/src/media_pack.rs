@@ -30,8 +30,8 @@ pub struct Pack {
 /// `media-plugins-<version>`.
 pub const PACK: Pack = Pack {
     version: "1",
-    size: 0,
-    sha256: "",
+    size: 252_643_184,
+    sha256: "74e9a33e5231b60da7fbdbce8d32050283ee14aa39c68b0b929a5d5cea2f72fa",
 };
 
 const MANIFEST: &str = "aurora-media-plugins.json";
