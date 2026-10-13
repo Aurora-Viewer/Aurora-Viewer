@@ -3815,6 +3815,12 @@ impl Backend {
             main.light_sets.mode[1] = u32::from(light_culling == LightCulling::Check);
         }
         stats.light_tiles = light_tiles_on;
+        // how a fragment walks the reflection probes (sample_probes_pair)
+        main.light_sets.mode[3] = u32::from(match crate::probes::ProbeWalk::from_env() {
+            crate::probes::ProbeWalk::Shared => false,
+            crate::probes::ProbeWalk::PerLookup => true,
+            crate::probes::ProbeWalk::Alternate => f.probe_walk_per_lookup,
+        });
         // AURORA_DEBUG_SHADOWS: the cascade each pixel reads and its shadow,
         // instead of the image (shadow_view in common.wgsl)
         static SHADOW_VIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

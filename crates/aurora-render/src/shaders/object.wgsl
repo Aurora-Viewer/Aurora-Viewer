@@ -519,12 +519,20 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     var gloss_sky = sky;
     var env_sky = sky;
     if (probes_on()) {
-        let g = sample_probes(world_pos, r, (1.0 - spec.a) * probe_max_lod());
+        // (both in one walk of the probes)
+        let both = sample_probes_pair(
+            world_pos,
+            ProbeLookup(r, (1.0 - spec.a) * probe_max_lod(), false),
+            ProbeLookup(r, 0.0, false),
+            env > 0.0,
+            vec3<f32>(0.0),
+        );
+        let g = both.a;
         if (g.w > 0.0) {
             gloss_sky = g.rgb;
         }
         if (env > 0.0) {
-            let e = sample_probes(world_pos, r, 0.0);
+            let e = both.b;
             if (e.w > 0.0) {
                 env_sky = e.rgb;
             }
