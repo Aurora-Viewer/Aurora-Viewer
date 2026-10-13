@@ -28,6 +28,22 @@ struct MeshEntry {
     gone: bool,
     wanted_lods: HashSet<u8>,
     building: HashSet<u8>,
+    /// Listed in `MeshStreamer::todo`.
+    queued: bool,
+}
+
+impl MeshEntry {
+    /// `MeshStreamer::update` has something to do for it, now or at its
+    /// retry time: a new mesh to read from the disk cache, a download to
+    /// start or to start again, LODs to build.
+    fn has_work(&self) -> bool {
+        match self.state {
+            0 | 5 => true,
+            3 => !self.wanted_lods.is_empty(),
+            4 => self.failures <= 3,
+            _ => false,
+        }
+    }
 }
 
 /// Info about a mesh needed for placement.
@@ -40,6 +56,11 @@ pub struct MeshMeta {
 
 pub struct MeshStreamer {
     entries: HashMap<Uuid, MeshEntry>,
+    /// The meshes `update` has something to do for (`MeshEntry::has_work`),
+    /// each listed once. It only visits these: a region leaves thousands of
+    /// loaded meshes behind, and walking them all at each frame cost 0.13 ms
+    /// for good after one visit to a busy region (7,700 meshes).
+    todo: Vec<Uuid>,
     by_key: HashMap<u64, Uuid>,
     next_key: u64,
     cache_dir: PathBuf,
@@ -58,6 +79,7 @@ impl MeshStreamer {
         let _ = std::fs::create_dir_all(cache_dir.join("mesh"));
         MeshStreamer {
             entries: HashMap::new(),
+            todo: Vec::new(),
             by_key: HashMap::new(),
             next_key: 1,
             cache_dir,
@@ -72,6 +94,14 @@ impl MeshStreamer {
     pub fn want(&mut self, id: Uuid, lod: u8) {
         let e = self.entries.entry(id).or_default();
         e.wanted_lods.insert(lod);
+        Self::attend(&mut self.todo, id, e);
+    }
+
+    /// List a mesh for `update`, once.
+    fn attend(todo: &mut Vec<Uuid>, id: Uuid, e: &mut MeshEntry) {
+        if !std::mem::replace(&mut e.queued, true) {
+            todo.push(id);
+        }
     }
 
     /// Disk cache file of a mesh asset (media picking reads it).
@@ -176,68 +206,78 @@ impl MeshStreamer {
 
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>, rig: &Arc<super::anim::Rig>) {
         let now = Instant::now();
-        let mut fetching = 0;
-        for (id, e) in self.entries.iter_mut() {
-            if e.state == 2 {
-                fetching += 1;
-            }
-            if e.retry_at.is_some_and(|t| now < t) {
+        let mut todo = std::mem::take(&mut self.todo);
+        for id in todo.drain(..) {
+            let Some(e) = self.entries.get_mut(&id) else {
                 continue;
-            }
-            match e.state {
-                0 => {
-                    e.state = 1;
-                    let path = self.cache_dir.join("mesh").join(format!("{id}.mesh"));
-                    let id = *id;
-                    jobs.spawn(move || JobResult::MeshCache {
-                        id,
-                        data: crate::cache::read_touch(path).ok(),
+            };
+            e.queued = false;
+            // (a block: whatever stops the visit, the mesh is listed again
+            // below while it has work left)
+            'visit: {
+                if e.retry_at.is_some_and(|t| now < t) {
+                    break 'visit;
+                }
+                match e.state {
+                    0 => {
+                        e.state = 1;
+                        let path = self.cache_dir.join("mesh").join(format!("{id}.mesh"));
+                        jobs.spawn(move || JobResult::MeshCache {
+                            id,
+                            data: crate::cache::read_touch(path).ok(),
+                        });
+                    }
+                    4 if e.failures <= 3 => {
+                        e.state = 5; // trigger fetch below
+                    }
+                    _ => {}
+                }
+                if e.state == 5 {
+                    let Some(base) = viewer_asset else {
+                        e.state = 4;
+                        break 'visit;
+                    };
+                    let key = FETCH_KIND_MESH | self.next_key;
+                    self.next_key += 1;
+                    self.by_key.insert(key, id);
+                    e.state = 2;
+                    fetcher.request(FetchRequest {
+                        key,
+                        url: super::textures::asset_url(base, "mesh_id", &id),
+                        range: None,
+                        // geometry first: texture priorities (pixel area) would starve it
+                        priority: 1e12,
+                        accept: "application/vnd.ll.mesh",
                     });
                 }
-                4 if e.failures <= 3 => {
-                    e.state = 5; // trigger fetch below
-                }
-                _ => {}
-            }
-            if e.state == 5 {
-                let Some(base) = viewer_asset else {
-                    e.state = 4;
-                    continue;
-                };
-                let key = FETCH_KIND_MESH | self.next_key;
-                self.next_key += 1;
-                self.by_key.insert(key, *id);
-                e.state = 2;
-                fetcher.request(FetchRequest {
-                    key,
-                    url: super::textures::asset_url(base, "mesh_id", id),
-                    range: None,
-                    // geometry first: texture priorities (pixel area) would starve it
-                    priority: 1e12,
-                    accept: "application/vnd.ll.mesh",
-                });
-            }
-            // nothing new wanted: no clones (every ready mesh, every frame)
-            if e.state == 3 && !e.wanted_lods.is_empty() {
-                let (Some(data), Some(header)) = (e.data.clone(), e.header.clone()) else {
-                    continue;
-                };
-                let lods: Vec<u8> = e.wanted_lods.drain().collect();
-                for lod in lods {
-                    if !e.building.insert(lod) {
-                        continue;
+                if e.state == 3 && !e.wanted_lods.is_empty() {
+                    let (Some(data), Some(header)) = (e.data.clone(), e.header.clone()) else {
+                        break 'visit;
+                    };
+                    let lods: Vec<u8> = e.wanted_lods.drain().collect();
+                    for lod in lods {
+                        if !e.building.insert(lod) {
+                            continue;
+                        }
+                        let skin = e.skin.clone();
+                        let header = header.clone();
+                        let data = data.clone();
+                        let rig = rig.clone();
+                        let pool = self.staging.clone();
+                        jobs.spawn(move || build_mesh_lod(id, lod, &data, &header, skin, &rig, pool.as_deref()));
                     }
-                    let id = *id;
-                    let skin = e.skin.clone();
-                    let header = header.clone();
-                    let data = data.clone();
-                    let rig = rig.clone();
-                    let pool = self.staging.clone();
-                    jobs.spawn(move || build_mesh_lod(id, lod, &data, &header, skin, &rig, pool.as_deref()));
                 }
+            }
+            if e.has_work() {
+                Self::attend(&mut self.todo, id, e);
             }
         }
-        self.fetching = fetching;
+        // (the emptied list keeps its room when nothing was listed again)
+        if self.todo.is_empty() {
+            self.todo = todo;
+        }
+        // one entry per download under way
+        self.fetching = self.by_key.len();
     }
 
     fn accept_data(&mut self, id: Uuid, data: Vec<u8>) -> bool {
@@ -259,6 +299,8 @@ impl MeshStreamer {
                 e.state = 3;
                 e.gone = false;
                 e.building.clear();
+                // (the LODs asked for while it was coming)
+                Self::attend(&mut self.todo, id, e);
                 self.meta_generation += 1;
                 true
             }
@@ -330,6 +372,7 @@ impl MeshStreamer {
             e.failures += 1;
             e.gone = gone;
             e.retry_at = Some(Instant::now() + backoff);
+            Self::attend(&mut self.todo, id, e);
         }
     }
 
@@ -346,9 +389,13 @@ impl MeshStreamer {
                     && let Some(e) = self.entries.get_mut(&id)
                 {
                     e.state = 5;
+                    Self::attend(&mut self.todo, id, e);
                 }
             }
-            None => e.state = 5,
+            None => {
+                e.state = 5;
+                Self::attend(&mut self.todo, id, e);
+            }
         }
     }
 
@@ -426,6 +473,8 @@ struct MatEntry {
     /// HTTP status of the last failed download (0: none, or a network
     /// error), for the diagnostics.
     last_status: u16,
+    /// Listed in `MaterialStreamer::todo`.
+    queued: bool,
 }
 
 impl MatEntry {
@@ -436,7 +485,14 @@ impl MatEntry {
             retry_at: None,
             failures: 0,
             last_status: 0,
+            queued: false,
         }
+    }
+
+    /// `MaterialStreamer::update` has something to do for it, now or at its
+    /// retry time.
+    fn has_work(&self) -> bool {
+        matches!(self.state, MatState::New | MatState::Retry)
     }
 }
 
@@ -448,6 +504,13 @@ pub enum MaterialStatus {
     Pending,
     /// Given up (missing asset, invalid asset, repeated failures).
     Missing,
+}
+
+#[cfg(test)]
+impl MaterialStatus {
+    fn is_loaded(&self) -> bool {
+        matches!(self, MaterialStatus::Loaded(_))
+    }
 }
 
 /// The material a face with a GLTF material id is drawn with. Port of
@@ -475,6 +538,9 @@ pub fn render_material(status: &MaterialStatus, ov: Option<&PbrOverride>) -> Pbr
 
 pub struct MaterialStreamer {
     entries: HashMap<Uuid, MatEntry>,
+    /// The materials `update` has something to do for (`MatEntry::has_work`),
+    /// each listed once: it visits these, not every material known.
+    todo: Vec<Uuid>,
     by_key: HashMap<u64, Uuid>,
     next_key: u64,
     cache_dir: PathBuf,
@@ -488,6 +554,7 @@ impl MaterialStreamer {
         let _ = std::fs::create_dir_all(cache_dir.join("mat"));
         MaterialStreamer {
             entries: HashMap::new(),
+            todo: Vec::new(),
             by_key: HashMap::new(),
             next_key: 1,
             cache_dir,
@@ -497,12 +564,28 @@ impl MaterialStreamer {
 
     /// The material if it is loaded; requests it otherwise.
     pub fn get(&mut self, id: &Uuid) -> Option<Arc<PbrMaterial>> {
-        self.entries.entry(*id).or_insert_with(MatEntry::new).material.clone()
+        self.entry(id).material.clone()
     }
 
     /// Where the material stands; requests it when it is new.
     pub fn resolve(&mut self, id: &Uuid) -> MaterialStatus {
-        Self::status_of(self.entries.entry(*id).or_insert_with(MatEntry::new))
+        Self::status_of(self.entry(id))
+    }
+
+    /// The entry of a material, new and listed for `update` when unknown.
+    fn entry(&mut self, id: &Uuid) -> &mut MatEntry {
+        let e = self.entries.entry(*id).or_insert_with(MatEntry::new);
+        if e.has_work() {
+            Self::attend(&mut self.todo, *id, e);
+        }
+        e
+    }
+
+    /// List a material for `update`, once.
+    fn attend(todo: &mut Vec<Uuid>, id: Uuid, e: &mut MatEntry) {
+        if !std::mem::replace(&mut e.queued, true) {
+            todo.push(id);
+        }
     }
 
     fn status_of(e: &MatEntry) -> MaterialStatus {
@@ -572,43 +655,53 @@ impl MaterialStreamer {
 
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>) {
         let now = Instant::now();
-        for (id, e) in self.entries.iter_mut() {
-            if e.retry_at.is_some_and(|t| now < t) {
+        let mut todo = std::mem::take(&mut self.todo);
+        for id in todo.drain(..) {
+            let Some(e) = self.entries.get_mut(&id) else {
                 continue;
-            }
-            match e.state {
-                MatState::New => {
-                    e.state = MatState::Cache;
-                    let path = self.cache_dir.join("mat").join(format!("{id}.mat"));
-                    let id = *id;
-                    jobs.spawn(move || {
-                        let material = crate::cache::read_touch(path)
-                            .ok()
-                            .and_then(|d| aurora_assets::parse_material_asset(&d).ok());
-                        JobResult::Material { id, material }
-                    });
+            };
+            e.queued = false;
+            if !e.retry_at.is_some_and(|t| now < t) {
+                match e.state {
+                    MatState::New => {
+                        e.state = MatState::Cache;
+                        let path = self.cache_dir.join("mat").join(format!("{id}.mat"));
+                        jobs.spawn(move || {
+                            let material = crate::cache::read_touch(path)
+                                .ok()
+                                .and_then(|d| aurora_assets::parse_material_asset(&d).ok());
+                            JobResult::Material { id, material }
+                        });
+                    }
+                    // (without the capability yet: asked again at the next frame)
+                    MatState::Retry => {
+                        if let Some(base) = viewer_asset {
+                            let key = FETCH_KIND_MATERIAL | self.next_key;
+                            self.next_key += 1;
+                            self.by_key.insert(key, id);
+                            e.state = MatState::Fetching;
+                            e.retry_at = None;
+                            // LLGLTFMaterialList::getMaterial -> LLViewerAssetStorage
+                            // (ViewerAsset capability, `material_id=`)
+                            fetcher.request(FetchRequest {
+                                key,
+                                url: super::textures::asset_url(base, "material_id", &id),
+                                range: None,
+                                priority: 9e11,
+                                accept: "*/*",
+                            });
+                        }
+                    }
+                    _ => {}
                 }
-                MatState::Retry => {
-                    let Some(base) = viewer_asset else {
-                        continue;
-                    };
-                    let key = FETCH_KIND_MATERIAL | self.next_key;
-                    self.next_key += 1;
-                    self.by_key.insert(key, *id);
-                    e.state = MatState::Fetching;
-                    e.retry_at = None;
-                    // LLGLTFMaterialList::getMaterial -> LLViewerAssetStorage
-                    // (ViewerAsset capability, `material_id=`)
-                    fetcher.request(FetchRequest {
-                        key,
-                        url: super::textures::asset_url(base, "material_id", id),
-                        range: None,
-                        priority: 9e11,
-                        accept: "*/*",
-                    });
-                }
-                _ => {}
             }
+            if e.has_work() {
+                Self::attend(&mut self.todo, id, e);
+            }
+        }
+        // (the emptied list keeps its room when nothing was listed again)
+        if self.todo.is_empty() {
+            self.todo = todo;
         }
     }
 
@@ -644,6 +737,7 @@ impl MaterialStreamer {
                 } else {
                     e.state = MatState::Retry;
                     e.retry_at = Some(Instant::now() + Duration::from_secs(5));
+                    Self::attend(&mut self.todo, id, e);
                 }
             }
         }
@@ -661,7 +755,10 @@ impl MaterialStreamer {
                 self.generation += 1;
             }
             // cache miss (or unreadable cache file): download it
-            None if e.state == MatState::Cache => e.state = MatState::Retry,
+            None if e.state == MatState::Cache => {
+                e.state = MatState::Retry;
+                Self::attend(&mut self.todo, id, e);
+            }
             // a downloaded asset that does not parse will not get better: LL
             // keeps the default values (onAssetLoadComplete still completes)
             None => {
@@ -694,6 +791,7 @@ mod tests {
     fn streamer() -> MaterialStreamer {
         MaterialStreamer {
             entries: HashMap::new(),
+            todo: Vec::new(),
             by_key: HashMap::new(),
             next_key: 1,
             cache_dir: PathBuf::new(),
@@ -725,6 +823,7 @@ mod tests {
     fn mesh_streamer() -> MeshStreamer {
         MeshStreamer {
             entries: HashMap::new(),
+            todo: Vec::new(),
             by_key: HashMap::new(),
             next_key: 1,
             cache_dir: PathBuf::new(),
@@ -745,6 +844,125 @@ mod tests {
             e.state = 2;
         }
         key
+    }
+
+    /// A fetcher whose requests go nowhere: its runtime is never driven.
+    fn idle_fetcher() -> (tokio::runtime::Runtime, Fetcher) {
+        let rt = tokio::runtime::Builder::new_current_thread().build().expect("runtime");
+        let (fetcher, _results) = Fetcher::new(rt.handle(), reqwest::Client::new(), 1, Default::default());
+        (rt, fetcher)
+    }
+
+    const CAP: Option<&str> = Some("https://assets.example/cap");
+
+    #[test]
+    fn update_only_visits_the_meshes_that_have_work() {
+        let (jobs, _rx) = Jobs::new();
+        let (_rt, fetcher) = idle_fetcher();
+        let rig = crate::scene::avatar::AvatarLibrary::load().rig.clone();
+        let mut s = mesh_streamer();
+        // a region's worth of loaded meshes: nothing to visit
+        for i in 0..2000 {
+            s.insert_demo_skin(Uuid::from_u128(1000 + i), SkinInfo::default());
+        }
+        assert!(s.todo.is_empty());
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert!(s.todo.is_empty());
+
+        // a new mesh is listed once, however often it is asked for
+        let id = Uuid::from_u128(1);
+        s.want(id, 2);
+        s.want(id, 3);
+        assert_eq!(s.todo, [id]);
+        // its disk cache is read: it waits for the answer, off the list
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert_eq!(s.entries[&id].state, 1);
+        assert!(s.todo.is_empty());
+        // not in the cache, and no capability yet: asked again at each frame
+        s.on_cache(id, None);
+        assert_eq!(s.todo, [id]);
+        s.update(&jobs, &fetcher, None, &rig);
+        assert_eq!(s.todo, [id]);
+        // downloaded once the capability is there
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert_eq!(s.entries[&id].state, 2);
+        assert_eq!(s.fetching, 1);
+        assert!(s.todo.is_empty());
+        // a failed download stays listed until its retry
+        let key = *s.by_key.keys().next().expect("download");
+        s.on_fetch(failed(key, 503), &jobs);
+        assert_eq!(s.todo, [id]);
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert_eq!(s.entries[&id].state, 4, "not before its retry time");
+        assert_eq!(s.todo, [id]);
+        assert_eq!(s.fetching, 0);
+        s.entries.get_mut(&id).expect("entry").retry_at = Some(Instant::now());
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert_eq!(s.entries[&id].state, 2);
+        assert!(s.todo.is_empty());
+        // given up after the fourth failure: off the list for good
+        for _ in 0..3 {
+            let key = *s.by_key.keys().next().expect("download");
+            s.on_fetch(failed(key, 503), &jobs);
+            s.entries.get_mut(&id).expect("entry").retry_at = Some(Instant::now());
+            s.update(&jobs, &fetcher, CAP, &rig);
+        }
+        assert!(s.failed(&id));
+        assert!(s.todo.is_empty());
+
+        // a LOD asked of a loaded mesh lists it for the frame that builds it
+        let loaded = Uuid::from_u128(1000);
+        s.entries.get_mut(&loaded).expect("entry").data = Some(Arc::new(Vec::new()));
+        s.want(loaded, 1);
+        assert_eq!(s.todo, [loaded]);
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert!(s.entries[&loaded].building.contains(&1));
+        assert!(s.todo.is_empty());
+    }
+
+    #[test]
+    fn update_only_visits_the_materials_that_have_work() {
+        let (jobs, _rx) = Jobs::new();
+        let (_rt, fetcher) = idle_fetcher();
+        let mut s = streamer();
+        for i in 0..500 {
+            s.insert(Uuid::from_u128(1000 + i), PbrMaterial::default());
+        }
+        assert!(s.resolve(&Uuid::from_u128(1000)).is_loaded());
+        assert!(s.todo.is_empty());
+
+        // a new material is listed once, however often it is asked for
+        let id = Uuid::from_u128(1);
+        s.resolve(&id);
+        s.get(&id);
+        assert_eq!(s.todo, [id]);
+        // its disk cache is read: it waits for the answer, off the list
+        s.update(&jobs, &fetcher, CAP);
+        assert_eq!(s.entries[&id].state, MatState::Cache);
+        s.resolve(&id);
+        assert!(s.todo.is_empty());
+        // a cache miss: downloaded when the capability is there
+        s.on_material(id, None);
+        assert_eq!(s.todo, [id]);
+        s.update(&jobs, &fetcher, None);
+        assert_eq!(s.entries[&id].state, MatState::Retry);
+        assert_eq!(s.todo, [id]);
+        s.update(&jobs, &fetcher, CAP);
+        assert_eq!(s.entries[&id].state, MatState::Fetching);
+        assert!(s.todo.is_empty());
+        // a failed download stays listed until its retry
+        let key = *s.by_key.keys().next().expect("download");
+        s.on_fetch(failed(key, 503), &jobs);
+        assert_eq!(s.todo, [id]);
+        s.update(&jobs, &fetcher, CAP);
+        assert_eq!(s.entries[&id].state, MatState::Retry, "not before its retry time");
+        assert_eq!(s.todo, [id]);
+        // loaded at last: nothing left to visit
+        s.on_material(id, Some(PbrMaterial::default()));
+        s.update(&jobs, &fetcher, CAP);
+        assert!(s.todo.is_empty());
+        assert!(s.resolve(&id).is_loaded());
+        assert!(s.todo.is_empty());
     }
 
     #[test]
