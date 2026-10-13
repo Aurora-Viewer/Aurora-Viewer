@@ -724,8 +724,8 @@ grille.
   restaient en nuage pendant les 60 s de la limite (issue #121) : bake de
   tête invisible (calque alpha), haut et bas texturés, un mesh porté que le
   serveur d'assets n'a pas (404) et un chapeau. Il doit apparaître environ
-  5 s après son arrivée, sans tête et sans le mesh, et le journal contenir
-  « avatar … (own) shown after 5.0 s ». Captures avec `AURORA_FPS_LIMIT=60`
+  3 s après son arrivée, sans tête et sans le mesh, et le journal contenir
+  « avatar … (own) shown after 3.0 s ». Captures avec `AURORA_FPS_LIMIT=60`
   et `AURORA_CAPTURE_FRAMES=240,1200` : nuage, puis avatar.
 
 ## Rendu et environnement

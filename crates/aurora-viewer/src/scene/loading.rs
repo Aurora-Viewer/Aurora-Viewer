@@ -6,6 +6,11 @@
 //! 15 s the first time, 1 s later on); until then it is a particle cloud
 //! (Firestorm cloud.xml) with a progress bar under its name.
 //!
+//! The worn objects to wait for are those the simulator lists with the
+//! appearance (mSimAttachments): another avatar shows once as many have
+//! come, within the 60 s limit. Ours is not compared with that list
+//! (`!isSelf()`), and neither is an avatar the simulator lists nothing for.
+//!
 //! What cannot come is not waited for, as in Firestorm: an invisible bake is
 //! a defined bake with nothing to download (LLVOAvatar::isTextureDefined,
 //! getBakedTextureImage), and a mesh the asset server does not have is not
@@ -28,9 +33,6 @@ const LOADED_DELAY: f32 = 1.0;
 const FIRST_MIN_DELAY: f32 = 3.0;
 /// MAX_TEXTURE_WAIT_TIME_SEC / MAX_ATTACHMENT_WAIT_TIME_SEC: shown anyway.
 const MAX_WAIT: f32 = 60.0;
-/// The worn objects count changed less than this long ago: more may come
-/// (LL compares with the simulator's attachment list).
-const ATTACHMENTS_SETTLE: f32 = 2.0;
 /// Still a cloud after this long: what is missing goes to the log, once.
 const REPORT_AFTER: f32 = 20.0;
 
@@ -100,8 +102,11 @@ struct State {
     loading_at: Instant,
     /// Shown fully once (later loads use the short delay).
     shown_once: bool,
-    attachments: usize,
-    attachments_changed: Instant,
+    /// Worn objects the simulator lists (mSimAttachments)...
+    announced: usize,
+    /// ...and as many came once: not compared again
+    /// (mLastCloudAttachmentCount reaching the list size).
+    all_came: bool,
     /// "Still loading" already logged.
     reported: bool,
     /// Progress shown so far (it never goes back when more parts arrive).
@@ -113,8 +118,8 @@ struct State {
 struct Tick {
     /// Seconds since the avatar was first seen.
     waited: f32,
-    /// Its worn objects count changed a moment ago.
-    settling: bool,
+    /// Worn objects the simulator lists have not come yet.
+    waiting: bool,
     /// Something is still expected: the delay before showing restarts.
     still: bool,
     /// Shown fully.
@@ -128,31 +133,44 @@ struct Tick {
 }
 
 impl State {
-    fn new(now: Instant, attachments: usize) -> State {
+    fn new(now: Instant) -> State {
         State {
             first_seen: now,
             loading_at: now,
             shown_once: false,
-            attachments,
-            attachments_changed: now,
+            announced: 0,
+            all_came: false,
             reported: false,
             shown: 0.0,
         }
     }
 
-    /// processFullyLoadedChange: once nothing is missing (`complete`) and
-    /// the worn objects have stopped arriving, 3 s the first time (1 s later
-    /// on); LL's 3..15 s delay (x1.25 for impostors) only applies while
-    /// still loading, when the timer is reset anyway. After MAX_WAIT the
-    /// avatar shows whatever is missing.
-    fn tick(&mut self, now: Instant, attachments: usize, complete: bool) -> Tick {
-        if self.attachments != attachments {
-            self.attachments = attachments;
-            self.attachments_changed = now;
+    /// updateIsFullyLoaded, the worn objects against the simulator's list
+    /// (`announced`, 0 for our avatar: not compared), until the avatar has
+    /// shown once: fewer than listed are waited for. LL gives up 60 s after
+    /// the last one came; here MAX_WAIT ends the wait, sooner.
+    fn waiting_for_worn(&mut self, worn: usize, announced: usize) -> bool {
+        // processAvatarAppearance: a list of another size starts again
+        if self.announced != announced {
+            self.announced = announced;
+            self.all_came = false;
         }
-        let settling = now.duration_since(self.attachments_changed).as_secs_f32() < ATTACHMENTS_SETTLE;
+        if self.shown_once || self.all_came || announced == 0 {
+            return false;
+        }
+        self.all_came = worn >= announced;
+        !self.all_came
+    }
+
+    /// processFullyLoadedChange: once nothing is missing (`complete`) and
+    /// the worn objects the simulator lists have come, 3 s the first time
+    /// (1 s later on); LL's 3..15 s delay (x1.25 for impostors) only applies
+    /// while still loading, when the timer is reset anyway. After MAX_WAIT
+    /// the avatar shows whatever is missing.
+    fn tick(&mut self, now: Instant, worn: usize, announced: usize, complete: bool) -> Tick {
+        let waiting = self.waiting_for_worn(worn, announced);
         let waited = now.duration_since(self.first_seen).as_secs_f32();
-        let expecting = !complete || settling;
+        let expecting = !complete || waiting;
         let still = expecting && waited < MAX_WAIT;
         if still {
             self.loading_at = now;
@@ -166,7 +184,7 @@ impl State {
         }
         Tick {
             waited,
-            settling,
+            waiting,
             still,
             loaded,
             first_show,
@@ -314,23 +332,29 @@ impl Scene {
             }
             let id = o.full_id;
             seen.push(id);
-            let attachments = world.objects.children_of(&o.key).len();
-            let s = loading.states.entry(id).or_insert_with(|| State::new(now, attachments));
+            let own = id == world.agent_id;
+            let worn = world.objects.children_of(&o.key).len();
+            // (ours is not compared with the simulator's list: `!isSelf()`)
+            let announced = if own { 0 } else { world.announced_attachments(&id) };
+            let s = loading.states.entry(id).or_insert_with(|| State::new(now));
             // the textures to hurry are only used until the avatar shows
             let shown_before = s.shown_once;
             let mut wanted = Vec::new();
             let (done, total, missing) = self.avatar_load_parts(world, idx, (!shown_before).then_some(&mut wanted));
-            let t = s.tick(now, attachments, missing.is_empty());
-            let own = if id == world.agent_id { " (own)" } else { "" };
+            let t = s.tick(now, worn, announced, missing.is_empty());
+            // (for the log: ours has no list to compare with)
+            let listed = || if own { String::new() } else { format!(" of {announced} listed") };
+            let own = if own { " (own)" } else { "" };
             if !shown_before {
                 hurry.extend(wanted);
                 // diagnostic: still a cloud after a while
                 if !t.loaded && t.waited > REPORT_AFTER && !s.reported {
                     s.reported = true;
                     log::info!(
-                        "avatar {id}{own} still loading after {:.0} s: {done}/{total} parts, attachments settling {}, missing [{}]",
+                        "avatar {id}{own} still loading after {:.0} s: {done}/{total} parts, worn objects {worn}{} (waited for: {}), missing [{}]",
                         t.waited,
-                        t.settling,
+                        listed(),
+                        t.waiting,
                         self.describe_missing(world, &missing)
                     );
                 }
@@ -339,17 +363,18 @@ impl Scene {
                 // shown by the time limit: what it was waiting for is the
                 // cause to look at
                 log::warn!(
-                    "avatar {id}{own} shown by the {MAX_WAIT:.0} s limit after {:.1} s: {done}/{total} parts, attachments settling {}, still missing [{}]",
+                    "avatar {id}{own} shown by the {MAX_WAIT:.0} s limit after {:.1} s: {done}/{total} parts, worn objects {worn}{} (waited for: {}), still missing [{}]",
                     t.waited,
-                    t.settling,
+                    listed(),
+                    t.waiting,
                     self.describe_missing(world, &missing)
                 );
             } else if t.first_show {
-                log::info!("avatar {id}{own} shown after {:.1} s", t.waited);
+                log::info!("avatar {id}{own} shown after {:.1} s, worn objects {worn}{}", t.waited, listed());
             }
             if !t.loaded && !s.shown_once {
-                // parts ready over parts known; the last bit is the settling
-                // delay (it fills as the avatar is about to show)
+                // parts ready over parts known; the last bit is the delay
+                // before showing (it fills as the avatar is about to show)
                 let parts = done as f32 / total as f32;
                 let p = if t.still { parts * 0.9 } else { 0.9 + 0.1 * t.delay };
                 s.shown = s.shown.max(p.min(0.99));
@@ -414,75 +439,134 @@ mod tests {
     }
 
     #[test]
-    fn shows_three_seconds_after_everything_settled() {
+    fn shows_three_seconds_after_everything_is_there() {
         let t0 = Instant::now();
-        let mut s = State::new(t0, 4);
-        // complete from the start: the worn objects settle (2 s), then 3 s
-        let t = s.tick(t0 + secs(1.9), 4, true);
-        assert!(t.still && t.settling && !t.loaded);
-        let t = s.tick(t0 + secs(2.5), 4, true);
-        assert!(!t.still && !t.settling && !t.loaded);
-        assert!(t.delay > 0.0 && t.delay < 1.0);
-        // (the delay runs from the last frame it was still loading: 1.9 s)
-        assert!(!s.tick(t0 + secs(4.8), 4, true).loaded);
-        let t = s.tick(t0 + secs(5.0), 4, true);
+        let mut s = State::new(t0);
+        // complete from the start, no worn object listed: 3 s
+        let t = s.tick(t0, 4, 0, true);
+        assert!(!t.still && !t.waiting && !t.loaded);
+        let t = s.tick(t0 + secs(1.5), 4, 0, true);
+        assert!(!t.loaded && t.delay > 0.0 && t.delay < 1.0);
+        assert!(!s.tick(t0 + secs(2.9), 4, 0, true).loaded);
+        let t = s.tick(t0 + secs(3.1), 4, 0, true);
         assert!(t.loaded && t.first_show && !t.timed_out);
         assert_eq!(t.delay, 1.0);
         // later frames: shown, no longer "first"
-        let t = s.tick(t0 + secs(5.1), 4, true);
+        let t = s.tick(t0 + secs(3.2), 4, 0, true);
         assert!(t.loaded && !t.first_show);
     }
 
     #[test]
     fn a_missing_part_restarts_the_delay() {
         let t0 = Instant::now();
-        let mut s = State::new(t0, 0);
-        assert!(s.tick(t0 + secs(3.0), 0, false).still);
+        let mut s = State::new(t0);
+        assert!(s.tick(t0 + secs(3.0), 0, 0, false).still);
         // complete at 3 s: not shown before 6 s
-        assert!(!s.tick(t0 + secs(5.9), 0, true).loaded);
+        assert!(!s.tick(t0 + secs(5.9), 0, 0, true).loaded);
         // a mesh changes LOD at 5.95 s: the 3 s start again
-        assert!(s.tick(t0 + secs(5.95), 0, false).still);
-        assert!(!s.tick(t0 + secs(8.9), 0, true).loaded);
-        assert!(s.tick(t0 + secs(9.0), 0, true).loaded);
+        assert!(s.tick(t0 + secs(5.95), 0, 0, false).still);
+        assert!(!s.tick(t0 + secs(8.9), 0, 0, true).loaded);
+        assert!(s.tick(t0 + secs(9.0), 0, 0, true).loaded);
     }
 
     #[test]
-    fn new_attachments_restart_the_wait() {
+    fn worn_objects_the_simulator_lists_are_waited_for() {
         let t0 = Instant::now();
-        let mut s = State::new(t0, 1);
-        assert!(!s.tick(t0 + secs(2.5), 1, true).still);
-        // another worn object arrives: 2 s of settling again
-        let t = s.tick(t0 + secs(3.0), 2, true);
-        assert!(t.still && t.settling);
-        assert!(s.tick(t0 + secs(4.9), 2, true).still);
-        assert!(!s.tick(t0 + secs(5.1), 2, true).still);
-        assert!(!s.tick(t0 + secs(7.8), 2, true).loaded);
-        assert!(s.tick(t0 + secs(8.0), 2, true).loaded);
+        let mut s = State::new(t0);
+        // 3 listed, 1 here: the others are expected, however long ago the
+        // last one came (the blind 2 s of before showed half-dressed avatars)
+        let t = s.tick(t0, 1, 3, true);
+        assert!(t.still && t.waiting);
+        assert!(s.tick(t0 + secs(10.0), 1, 3, true).waiting);
+        assert!(s.tick(t0 + secs(10.5), 2, 3, true).waiting);
+        // the last one comes: nothing more to wait for, 3 s
+        let t = s.tick(t0 + secs(12.0), 3, 3, true);
+        assert!(!t.still && !t.waiting && !t.loaded);
+        // (the delay runs from the last frame it was still loading: 10.5 s)
+        assert!(!s.tick(t0 + secs(13.4), 3, 3, true).loaded);
+        let t = s.tick(t0 + secs(13.6), 3, 3, true);
+        assert!(t.loaded && t.first_show && !t.timed_out);
+    }
+
+    #[test]
+    fn listed_worn_objects_that_never_come_end_with_the_time_limit() {
+        let t0 = Instant::now();
+        let mut s = State::new(t0);
+        assert!(s.tick(t0, 0, 2, true).waiting);
+        assert!(s.tick(t0 + secs(30.0), 1, 2, true).still);
+        let t = s.tick(t0 + secs(59.9), 1, 2, true);
+        assert!(t.still && t.waiting && !t.loaded);
+        let t = s.tick(t0 + secs(60.1), 1, 2, true);
+        assert!(t.loaded && t.first_show && t.timed_out);
+    }
+
+    #[test]
+    fn worn_objects_that_all_came_once_are_not_counted_again() {
+        let t0 = Instant::now();
+        let mut s = State::new(t0);
+        assert!(!s.tick(t0, 3, 3, true).waiting);
+        // one is taken off before the avatar shows
+        let t = s.tick(t0 + secs(1.0), 2, 3, true);
+        assert!(!t.waiting && !t.still);
+    }
+
+    #[test]
+    fn another_list_starts_the_count_again() {
+        let t0 = Instant::now();
+        let mut s = State::new(t0);
+        assert!(!s.tick(t0, 2, 2, true).waiting);
+        // a new appearance lists one more
+        let t = s.tick(t0 + secs(1.0), 2, 3, true);
+        assert!(t.waiting && t.still);
+        assert!(!s.tick(t0 + secs(2.0), 3, 3, true).waiting);
+    }
+
+    #[test]
+    fn own_avatar_and_unlisted_ones_do_not_wait_for_worn_objects() {
+        let t0 = Instant::now();
+        // (ours is given no list: `!isSelf()`)
+        let mut s = State::new(t0);
+        for (i, worn) in [0, 3, 7, 12].into_iter().enumerate() {
+            let t = s.tick(t0 + secs(i as f32 * 0.5), worn, 0, true);
+            assert!(!t.waiting && !t.still);
+        }
+        // 3 s after it was complete, whatever came since
+        assert!(s.tick(t0 + secs(3.1), 12, 0, true).loaded);
+    }
+
+    #[test]
+    fn worn_objects_coming_after_an_avatar_showed_do_not_hide_it() {
+        let t0 = Instant::now();
+        let mut s = State::new(t0);
+        assert!(s.tick(t0 + secs(3.1), 2, 2, true).loaded);
+        // a new outfit: listed and not here yet
+        let t = s.tick(t0 + secs(10.0), 2, 5, true);
+        assert!(t.loaded && !t.waiting && !t.first_show);
     }
 
     #[test]
     fn time_limit_shows_an_incomplete_avatar_and_says_so() {
         let t0 = Instant::now();
-        let mut s = State::new(t0, 0);
-        let t = s.tick(t0 + secs(59.9), 0, false);
+        let mut s = State::new(t0);
+        let t = s.tick(t0 + secs(59.9), 0, 0, false);
         assert!(t.still && !t.loaded && !t.timed_out);
-        let t = s.tick(t0 + secs(60.1), 0, false);
+        let t = s.tick(t0 + secs(60.1), 0, 0, false);
         assert!(!t.still && t.loaded && t.first_show && t.timed_out);
         // reported once
-        let t = s.tick(t0 + secs(60.2), 0, false);
+        let t = s.tick(t0 + secs(60.2), 0, 0, false);
         assert!(t.loaded && !t.first_show && !t.timed_out);
     }
 
     #[test]
     fn once_shown_an_avatar_uses_the_short_delay() {
         let t0 = Instant::now();
-        let mut s = State::new(t0, 0);
-        assert!(s.tick(t0 + secs(5.1), 0, true).loaded);
+        let mut s = State::new(t0);
+        assert!(s.tick(t0 + secs(3.1), 0, 0, true).loaded);
         // a new bake to download at 10 s: loading again, 1 s after it is there
-        let t = s.tick(t0 + secs(10.0), 0, false);
+        let t = s.tick(t0 + secs(10.0), 0, 0, false);
         assert!(t.still && !t.loaded && !t.first_show);
-        assert!(!s.tick(t0 + secs(10.9), 0, true).loaded);
-        let t = s.tick(t0 + secs(11.1), 0, true);
+        assert!(!s.tick(t0 + secs(10.9), 0, 0, true).loaded);
+        let t = s.tick(t0 + secs(11.1), 0, 0, true);
         assert!(t.loaded && !t.first_show && !t.timed_out);
     }
 
@@ -533,6 +617,7 @@ mod tests {
             visual_params: Vec::new(),
             cof_version: 1,
             hover_height: 0.0,
+            attachments: 0,
         }));
         let (_, _, missing) = scene.avatar_load_parts(&world, loup, Some(&mut hurry));
         assert_eq!(missing, [Missing::Appearance; 3]);

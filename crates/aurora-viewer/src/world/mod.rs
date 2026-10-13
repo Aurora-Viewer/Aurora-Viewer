@@ -719,6 +719,12 @@ impl World {
         self.appearances.get(avatar).map(|(a, _)| a.cof_version).unwrap_or(-1)
     }
 
+    /// Worn objects the simulator listed in the avatar's last appearance
+    /// (LLVOAvatar::mSimAttachments); 0 when it listed none.
+    pub fn announced_attachments(&self, avatar: &Uuid) -> usize {
+        self.appearances.get(avatar).map(|(a, _)| a.attachments as usize).unwrap_or(0)
+    }
+
     /// Inventory items attached to our avatar (AttachItemID name-values).
     pub fn worn_attachment_items(&self) -> HashSet<Uuid> {
         let Some(idx) = self.objects.index_of_uuid(&self.agent_id) else {
