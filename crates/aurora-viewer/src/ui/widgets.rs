@@ -71,6 +71,45 @@ pub(crate) fn bold_text_offset(ui: &egui::Ui) -> Vec2 {
     Vec2::new(ppp.round().max(1.0) / ppp, 0.0)
 }
 
+/// What a floater has above and below its body besides its title: the
+/// margins of its frame and its outline.
+const BODY_CHROME: f32 = 17.0;
+/// The least height the scrolled body of a floater keeps.
+const MIN_SCROLLED_BODY: f32 = 80.0;
+
+/// `pos` moved so that a window of `size` placed there stands inside `area`
+/// (its top left corner first, when it is larger).
+fn fit_in(area: egui::Rect, pos: egui::Pos2, size: Vec2) -> egui::Pos2 {
+    let max = (area.max - size).max(area.min);
+    pos.clamp(area.min, max)
+}
+
+/// Height of a floater's title bar, and the width of it that stays inside
+/// the room at least: enough to grab it and bring the window back.
+const TITLE_BAR_H: f32 = 38.0;
+const TITLE_GRIP: f32 = 96.0;
+
+/// `pos` of a window `width` wide, moved so that its title bar is in
+/// `area`: whole in height, and by `TITLE_GRIP` at least in width.
+fn keep_title_in(area: egui::Rect, pos: egui::Pos2, width: f32) -> egui::Pos2 {
+    let grip = TITLE_GRIP.min(width);
+    let left = area.left() - (width - grip);
+    let right = (area.right() - grip).max(left);
+    let bottom = (area.bottom() - TITLE_BAR_H).max(area.top());
+    egui::pos2(pos.x.clamp(left, right), pos.y.clamp(area.top(), bottom))
+}
+
+/// The position to give window `id` this frame: `asked` (by the layout, a
+/// placement or a resize) or where it stood, with its title bar kept in
+/// `area`. None when it stands well and nothing asks for it elsewhere.
+fn title_in_reach(ctx: &egui::Context, id: egui::Id, area: egui::Rect, asked: Option<egui::Pos2>) -> Option<egui::Pos2> {
+    let state = egui::AreaState::load(ctx, id).filter(|s| s.size.is_some());
+    let width = state.as_ref().and_then(|s| s.size).map_or(TITLE_GRIP, |s| s.x);
+    let pos = asked.or_else(|| state.as_ref().map(|s| s.left_top_pos()))?;
+    let kept = keep_title_in(area, pos, width);
+    (asked.is_some() || kept != pos).then_some(kept)
+}
+
 pub struct Floater<'a> {
     pub id: &'a str,
     pub title: String,
@@ -186,7 +225,27 @@ impl<'a> Floater<'a> {
         let expanded = ctx.data_mut(|d| d.get_persisted::<Vec2>(expanded_id)).unwrap_or(self.default_size);
         let restore = ctx.data_mut(|d| d.remove_temp::<bool>(restore_id)).unwrap_or(false);
         let resizable = self.resizable && !minimized;
+        // The windows live between the bars (`layout::work_area`): none
+        // opens larger than that room, nor outside it.
+        let work = super::layout::work_area(ctx);
+        self.min_size = self.min_size.min(work.size());
+        self.default_size = self.default_size.min(work.size());
+        self.default_pos = fit_in(work, self.default_pos, self.default_size);
+        // A window as tall as its content (fixed, or of automatic height)
+        // whose content is taller than the room scrolls it, from the frame
+        // after the one that showed it too tall, and for as long as it is.
+        let content_sized = !self.resizable && !minimized;
+        let scroll_id = window_id.with("body_scrolls");
+        let scrolls = content_sized && ctx.data(|d| d.get_temp::<bool>(scroll_id)).unwrap_or(false);
+        let mut still_too_tall = false;
         let resize_drag = resizable.then(|| resize::Drag::prepare(ctx, window_id, self.min_size)).flatten();
+        // A resizable window left larger than the room (the viewer window
+        // was made smaller) is brought down to it, as Firestorm's floaters
+        // are (LLFloaterView::adjustToFitScreen).
+        let shrink = egui::AreaState::load(ctx, window_id)
+            .and_then(|s| s.size)
+            .filter(|s| resizable && resize_drag.is_none() && (s.x > work.width() + 0.5 || s.y > work.height() + 0.5))
+            .map(|s| s.min(work.size()));
         // Our handles clamp both geometry and position at the minimum, while
         // Window retains its normal movement and persisted layout.
         let mut w = egui::Window::new(&self.title)
@@ -211,24 +270,32 @@ impl<'a> Floater<'a> {
         if minimized {
             w = w.fixed_size(Vec2::new(expanded.x, if self.framed_header.is_some() { 40.0 } else { 38.0 }));
         } else if restore && !self.auto_height {
-            w = w.fixed_size(expanded);
+            w = w.fixed_size(expanded.min(work.size()));
+        } else if let Some(size) = shrink {
+            w = w.fixed_size(size);
         }
         // the viewer window changed size: the floater follows its edges;
         // a placement asked this frame and a resize in progress come after
         let slot = super::layout::slot(ctx, window_id);
-        if let Some(pos) = slot.pos {
-            w = w.current_pos(pos);
-        }
-        if let Some(limits) = slot.limits {
-            w = w.constrain_to(limits);
-        }
+        let mut asked = slot.pos;
+        // (a window dragged with its group has its own limits; the others
+        // stay off the bars, which egui's own limit, the screen, lets them
+        // cover)
+        w = w.constrain_to(slot.limits.unwrap_or(work));
         if let Some(pos) = ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS))) {
-            w = w.current_pos(pos);
+            asked = Some(pos);
         }
         // the edge dragged snaps to the other windows and to the work area
         let resized = resize_drag.map(|drag| super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()));
         if let Some(rect) = resized {
-            w = w.fixed_size(rect.size()).current_pos(rect.min);
+            w = w.fixed_size(rect.size());
+            asked = Some(rect.min);
+        }
+        // Whatever places the window, its title bar stays in reach: egui
+        // lets a window larger than its limits slide out of them by what it
+        // has in excess, title first.
+        if let Some(pos) = title_in_reach(ctx, window_id, work, asked) {
+            w = w.current_pos(pos);
         }
         let mut glass_slot = None;
         let response = w.show(ctx, |ui| {
@@ -342,10 +409,26 @@ impl<'a> Floater<'a> {
                         ui.add_space(5.0);
                     }
                 }
-                out = Some(body(ui));
+                if scrolls {
+                    let above = ui.cursor().top() - ui.max_rect().top();
+                    let room = (work.height() - above - BODY_CHROME).max(MIN_SCROLLED_BODY);
+                    let shown = egui::ScrollArea::vertical().id_salt("floater_body").max_height(room).show(ui, body);
+                    still_too_tall = shown.content_size.y > room + 0.5;
+                    out = Some(shown.inner);
+                } else {
+                    out = Some(body(ui));
+                }
             }
         });
         if let Some(response) = response {
+            if content_sized {
+                let too_tall = if scrolls {
+                    still_too_tall
+                } else {
+                    response.response.rect.height() > work.height() + 0.5
+                };
+                ctx.data_mut(|d| d.insert_temp(scroll_id, too_tall));
+            }
             slot.shown(ctx, response.response.rect, minimized);
             if let Some((painter, slot)) = glass_slot {
                 let radius = f32::from(ctx.global_style().visuals.window_corner_radius.nw);
