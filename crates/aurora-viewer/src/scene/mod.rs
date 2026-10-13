@@ -1374,6 +1374,8 @@ impl Scene {
         self.water.clear(renderer);
         self.banlines.clear(renderer);
         self.particles.clear(&mut self.textures);
+        // (our avatar is a first appearance again at the next login)
+        self.loading = Default::default();
         self.last_origin = None;
         self.sets.clear();
         self.anchors.clear();
