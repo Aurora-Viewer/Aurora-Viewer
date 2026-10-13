@@ -1,9 +1,8 @@
 ﻿<#
 .SYNOPSIS
-    Range le viewer compilé et ses fichiers dans un dossier prêt à lancer
-    (ou à zipper) : exe, assets, licences. La release GitHub et
-    build-release.ps1 l'utilisent tous les deux : leurs dossiers sont
-    identiques.
+    Puts the built viewer and its files in a folder ready to launch (or to
+    zip): exe, assets, licences. The GitHub release and build-release.ps1
+    both use it: their folders are identical.
 
 .EXAMPLE
     ./scripts/package.ps1 -Exe target/release/aurora-viewer.exe -Out Aurora-Viewer
@@ -24,7 +23,7 @@ $docs = 'LICENSE', 'NOTICE.md', 'README.md' | ForEach-Object { Join-Path $Source
 Copy-Item -LiteralPath $docs -Destination $Out -ErrorAction Stop
 $taskExePath = (Resolve-Path -LiteralPath $Exe).Path
 $taskVersion = (& $taskExePath --version | Out-String).Trim() -replace '^Aurora Viewer ', ''
-if ($LASTEXITCODE -ne 0 -or $taskVersion -notmatch '^\d+\.\d+\.\d+([+-][0-9A-Za-z.+-]+)?$') { throw 'Version du paquet invalide.' }
+if ($LASTEXITCODE -ne 0 -or $taskVersion -notmatch '^\d+\.\d+\.\d+([+-][0-9A-Za-z.+-]+)?$') { throw 'Invalid package version.' }
 $taskJson = @{ schema = 1; version = $taskVersion } | ConvertTo-Json
 $taskMetadataPath = Join-Path (Resolve-Path -LiteralPath $Out -ErrorAction Stop).Path 'aurora-install.json'
 # Windows PowerShell 5.1 does not support Set-Content -Encoding utf8NoBOM.

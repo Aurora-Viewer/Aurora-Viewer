@@ -43,13 +43,13 @@ Sommaire : [Fenêtres automatisées](#fenêtres-de-test-automatisé-sous-windows
 ## Fenêtres de test automatisé sous Windows
 
 Lors d'un test sans intervention humaine, ajouter
-`[AUTOMATISATION - NE PAS TOUCHER]` au titre et lancer le contour jaune en
+`[AUTOMATION - DO NOT TOUCH]` au titre et lancer le contour jaune en
 pointillés. Depuis le worktree de la tâche, après compilation :
 
 ```powershell
 $env:AURORA_DEMO = '1'
 $viewer = Start-Process -FilePath '.\target\debug\aurora-viewer.exe' -PassThru `
-  -ArgumentList '--title "Test ma-tâche [AUTOMATISATION - NE PAS TOUCHER]"'
+  -ArgumentList '--title "Test ma-tâche [AUTOMATION - DO NOT TOUCH]"'
 $borderScript = (Resolve-Path '.\scripts\automation-window-border.ps1').Path
 $borderArgs = @(
   '-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass',

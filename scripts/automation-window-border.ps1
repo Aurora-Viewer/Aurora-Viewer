@@ -49,7 +49,7 @@ namespace AuroraAutomation
             if (GetCloaked(window, 14, out cloaked, sizeof(int)) == 0 && cloaked != 0) return false;
             var title = new StringBuilder(1024);
             GetWindowText(window, title, title.Capacity);
-            return title.ToString().IndexOf("[AUTOMATISATION - NE PAS TOUCHER]", StringComparison.Ordinal) >= 0;
+            return title.ToString().IndexOf("[AUTOMATION - DO NOT TOUCH]", StringComparison.Ordinal) >= 0;
         }
     }
 

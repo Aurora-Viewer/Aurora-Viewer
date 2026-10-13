@@ -1,4 +1,4 @@
-﻿<# Publie les métadonnées du tag dans le paquet de release, sans changer le dépôt. #>
+﻿<# Publishes the tag metadata in the release package, without changing the repository. #>
 param([Parameter(Mandatory)][string]$Tag, [string]$Out = 'aurora-update-policy.json')
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/tools/update-policy.ps1"

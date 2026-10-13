@@ -7,7 +7,7 @@
 # delete a folder a program has open. A hard reset plus a clean of every
 # untracked and ignored file leaves exactly what a clone holds.
 
-$ResetWord = 'REINITIALISER'
+$ResetWord = 'RESET'
 
 # Commits of $Branch that exist nowhere on GitHub: ahead of its upstream, or
 # not in origin/main when it was never pushed. A branch whose upstream was
@@ -57,82 +57,82 @@ function Get-ResetInventory {
 function Show-ResetInventory($Inv) {
     $lost = $false
     Write-Rule 90
-    Write-Color '  Ce qui serait perdu' ink
+    Write-Color '  What would be lost' ink
     Write-Rule 90
     if ($Inv.Changes) {
         $lost = $true
-        Write-Color "  • $($Inv.Changes.Count) changement(s) non commité(s) dans le dépôt :" warn
+        Write-Color "  • $($Inv.Changes.Count) uncommitted change(s) in the repository:" warn
         foreach ($c in $Inv.Changes | Select-Object -First 8) { Write-Color "      $c" muted }
-        if ($Inv.Changes.Count -gt 8) { Write-Color "      … et $($Inv.Changes.Count - 8) autres" muted_dim }
+        if ($Inv.Changes.Count -gt 8) { Write-Color "      … and $($Inv.Changes.Count - 8) more" muted_dim }
     }
     foreach ($b in $Inv.Branches) {
         $lost = $true
-        Write-Color "  • branche $($b.Branch) : $($b.Count) commit(s) $(if ($b.Pushed) { 'pas encore poussés' } else { 'jamais poussés sur GitHub' })" warn
+        Write-Color "  • branch $($b.Branch): $($b.Count) commit(s) $(if ($b.Pushed) { 'not pushed yet' } else { 'never pushed to GitHub' })" warn
     }
     if ($Inv.Stashes) {
         $lost = $true
-        Write-Color "  • $($Inv.Stashes.Count) stash(s) (de côté avec git stash)" warn
+        Write-Color "  • $($Inv.Stashes.Count) stash(es) (set aside with git stash)" warn
     }
     foreach ($w in $Inv.Worktrees) {
         $risk = @()
-        if ($w.Changes) { $risk += "$($w.Changes) changement(s) non commité(s)" }
-        if ($w.Unpushed) { $risk += "$($w.Unpushed) commit(s) pas sur GitHub" }
+        if ($w.Changes) { $risk += "$($w.Changes) uncommitted change(s)" }
+        if ($w.Unpushed) { $risk += "$($w.Unpushed) commit(s) not on GitHub" }
         if ($risk) {
             $lost = $true
-            Write-Color "  • tâche $($w.Name) ($($w.Branch)) : $($risk -join ', ')" warn
+            Write-Color "  • task $($w.Name) ($($w.Branch)): $($risk -join ', ')" warn
         } else {
-            Write-Color "  • tâche $($w.Name) : rien de perdu (tout est sur GitHub), dossier supprimé" muted
+            Write-Color "  • task $($w.Name): nothing lost (everything is on GitHub), folder deleted" muted
         }
     }
     if ($Inv.Ignored) {
         $lost = $true
-        Write-Color "  • fichiers ignorés par git, hors compilations :" warn
+        Write-Color "  • files ignored by git, other than builds:" warn
         foreach ($f in $Inv.Ignored | Select-Object -First 8) { Write-Color "      $f" muted }
-        if ($Inv.Ignored.Count -gt 8) { Write-Color "      … et $($Inv.Ignored.Count - 8) autres" muted_dim }
+        if ($Inv.Ignored.Count -gt 8) { Write-Color "      … and $($Inv.Ignored.Count - 8) more" muted_dim }
     }
-    if (-not $lost) { Write-Color '  Rien : tout ton travail est déjà sur GitHub.' success }
-    Write-Color '  Effacés aussi, mais refaits ensuite : compilations (target), police emoji, dossier RELEASE.' muted_dim
-    Write-Color '  Gardés : ton identité git, ta connexion GitHub, les sources de Firestorm (mises à jour).' muted_dim
+    if (-not $lost) { Write-Color '  Nothing: all your work is already on GitHub.' success }
+    Write-Color '  Also erased, but rebuilt afterwards: builds (target), emoji font, RELEASE folder.' muted_dim
+    Write-Color '  Kept: your git identity, your GitHub login, the Firestorm sources (updated).' muted_dim
     Write-Rule 90
     $lost
 }
 
 function Invoke-Reset {
-    Write-Title 'Réinitialiser le dépôt'
-    Write-Color "  Remet $($Paths.Repo) dans l'état d'un clone neuf du main de GitHub," ink
-    Write-Color '  supprime les tâches des agents (work\) et RELEASE\, puis répare l''environnement.' ink
-    Write-Color '  Inventaire (GitHub, branches, tâches)…' muted_dim
+    Write-Title 'Reset the repository'
+    Write-Color "  Puts $($Paths.Repo) back in the state of a fresh clone of main on GitHub," ink
+    Write-Color '  deletes the agent tasks (work\) and RELEASE\, then repairs the environment.' ink
+    Write-Color '  Inventory (GitHub, branches, tasks)…' muted_dim
     $inv = Get-ResetInventory
     $lost = Show-ResetInventory $inv
     # Test-InUse (scripts\common.ps1): a build or a viewer running in the project
     . (Join-Path $Paths.Repo 'scripts\common.ps1')
     if (Test-InUse $Paths.Root) {
-        Write-Color '  Une compilation ou un viewer tourne dans le projet : ferme-le, puis recommence.' danger
+        Write-Color '  A build or a viewer is running in the project: close it, then try again.' danger
         Wait-Back; return
     }
-    $typed = Read-Text "$(if ($lost) { 'Ce qui est listé plus haut sera perdu. ' })Pour confirmer, tape $ResetWord (vide : annuler) :"
-    if ($typed -cne $ResetWord) { Write-Color '  Annulé : rien n''a été touché.' muted; Wait-Back; return }
+    $typed = Read-Text "$(if ($lost) { 'What is listed above will be lost. ' })To confirm, type $ResetWord (empty: cancel):"
+    if ($typed -cne $ResetWord) { Write-Color '  Cancelled: nothing was touched.' muted; Wait-Back; return }
     if ($DryRun) {
-        Write-Color '  [simulation] git worktree remove --force (chaque tâche, RELEASE\src) ; dossiers work\* et RELEASE\ supprimés' teal
-        Write-Color '  [simulation] git checkout -B main origin/main ; git reset --hard origin/main ; git clean -ffdx ; branches locales et stashs supprimés' teal
-        Write-Color '  [simulation] réparation (police, toolchain, crates, Firestorm)' teal
+        Write-Color '  [dry run] git worktree remove --force (each task, RELEASE\src); folders work\* and RELEASE\ deleted' teal
+        Write-Color '  [dry run] git checkout -B main origin/main; git reset --hard origin/main; git clean -ffdx; local branches and stashes deleted' teal
+        Write-Color '  [dry run] repair (font, toolchain, crates, Firestorm)' teal
         Wait-Back; return
     }
 
     $repo = $Paths.Repo
-    Write-Title 'Tâches des agents et RELEASE\'
+    Write-Title 'Agent tasks and RELEASE\'
     foreach ($w in $inv.Worktrees) {
         git -C $repo worktree remove --force $w.Path 2>$null
         if (Test-Path -LiteralPath $w.Path) { Remove-Item -LiteralPath $w.Path -Recurse -Force -ErrorAction SilentlyContinue }
-        if (Test-Path -LiteralPath $w.Path) { Write-Color "  $($w.Name) : dossier verrouillé (un programme l'utilise), à supprimer plus tard." warn }
-        else { Write-Color "  $($w.Name) : supprimé." success }
+        if (Test-Path -LiteralPath $w.Path) { Write-Color "  $($w.Name): folder locked (a program is using it), delete it later." warn }
+        else { Write-Color "  $($w.Name): deleted." success }
     }
     git -C $repo worktree prune
     foreach ($dir in @(Get-ChildItem -LiteralPath $Paths.Work -Directory -Force -ErrorAction SilentlyContinue) + @(Get-Item -LiteralPath $Paths.Release -ErrorAction SilentlyContinue)) {
         if ($dir) { Remove-Item -LiteralPath $dir.FullName -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    Write-Title 'Dépôt : clone neuf du main de GitHub'
+    Write-Title 'Repository: fresh clone of main on GitHub'
     git -C $repo checkout --force --quiet -B main origin/main
     git -C $repo reset --hard --quiet origin/main
     git -C $repo clean -ffdxq
@@ -142,12 +142,12 @@ function Invoke-Reset {
     }
     git -C $repo stash clear
     $left = @(git -C $repo status --porcelain --ignored)
-    if ($left) { Write-Color "  $($left.Count) fichier(s) n'ont pas pu être effacés (verrouillés) : $($left[0])…" warn }
-    else { Write-Color "  $repo : identique à origin/main." success }
+    if ($left) { Write-Color "  $($left.Count) file(s) could not be erased (locked): $($left[0])…" warn }
+    else { Write-Color "  ${repo}: identical to origin/main." success }
 
     Invoke-Repair $Paths
     Write-Host ''
-    Write-Aurora '  » Dépôt réinitialisé.'
-    Write-Color '    Ferme et relance aurora-tools.cmd pour utiliser les outils de ce main.' muted
+    Write-Aurora '  » Repository reset.'
+    Write-Color '    Close and reopen aurora-tools.cmd to use the tools of this main.' muted
     Wait-Back
 }

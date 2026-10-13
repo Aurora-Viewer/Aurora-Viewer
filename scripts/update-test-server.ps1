@@ -1,4 +1,4 @@
-<# Serveur de paquets pour test-update.ps1 ; écoute uniquement sur loopback. #>
+<# Package server for test-update.ps1; listens on loopback only. #>
 param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][int]$Port)
 $ErrorActionPreference = 'Stop'
 $taskFeedRoot = (Resolve-Path -LiteralPath (Join-Path $Root 'feed')).Path
