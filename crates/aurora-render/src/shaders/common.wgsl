@@ -191,9 +191,9 @@ fn light_set(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
 
 // The lights a fragment walks: the point lights left in `held` (bit i for
 // `frame.lights[i]`), and its projectors. The two are walked apart, each
-// with its own loop: a projector reads its texture, and that code inside
-// the loop of the point lights slows every one of them down (measured:
-// 0.09 ms of GPU time a frame with 64 point lights and no projector).
+// with its own loop, and the point lights' is written out in each lighting
+// function: sharing one loop and one `LightAt` with the projectors cost
+// 0.09 ms of GPU time a frame with 64 point lights and no projector.
 struct LightWalk {
     held: vec2<u32>,
     projectors: vec2<u32>,
@@ -817,7 +817,24 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v:
     var lights = light_walk(world_pos, frag);
     var spots = projector_walk(lights);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        col += pbr_local_light(point_at(i, world_pos), n, v, f0, a, nv, diffuse_color);
+        let lt = frame.lights[i];
+        let to_l = lt.pos_radius.xyz - world_pos;
+        let dist = length(to_l);
+        let radius = lt.pos_radius.w;
+        if (dist < radius) {
+            let ll = to_l / max(dist, 1e-4);
+            let lnl = max(dot(n, ll), 0.0);
+            if (lnl > 0.0) {
+                let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
+                let h = normalize(ll + v);
+                let nh = max(dot(n, h), 0.0);
+                let vh = max(dot(v, h), 0.0);
+                let f = f_schlick(f0, vh);
+                let spec = d_ggx(nh, a) * v_smith(nv, lnl, a) * f;
+                let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
+                col += (kd + spec) * lt.color_falloff.rgb * lnl * atten;
+            }
+        }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
         col += pbr_local_light(projector_at(i, world_pos), n, v, f0, a, nv, diffuse_color);
@@ -1046,26 +1063,6 @@ struct LightAt {
     ambiance: f32,
     projector: bool,
 };
-
-// Point light `i` of the frame's list.
-fn point_at(i: i32, world_pos: vec3<f32>) -> LightAt {
-    let lt = frame.lights[i];
-    var at: LightAt;
-    at.atten = 0.0;
-    at.l = vec3<f32>(0.0, 0.0, 1.0);
-    at.color = lt.color_falloff.rgb;
-    at.amb_color = vec3<f32>(0.0);
-    at.ambiance = 0.0;
-    at.projector = false;
-    let to_l = lt.pos_radius.xyz - world_pos;
-    let dist = length(to_l);
-    let radius = lt.pos_radius.w;
-    if (dist < radius) {
-        at.atten = ll_light_atten(dist / radius, lt.color_falloff.w);
-        at.l = to_l / max(dist, 1e-4);
-    }
-    return at;
-}
 
 // Projector `i` of the frame's list.
 fn projector_at(i: i32, world_pos: vec3<f32>) -> LightAt {
@@ -1317,7 +1314,16 @@ fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, frag: v
     var lights = light_walk(world_pos, frag);
     var spots = projector_walk(lights);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        local += ll_diffuse_light(point_at(i, world_pos), n, base);
+        let lt = frame.lights[i];
+        let to_l = lt.pos_radius.xyz - world_pos;
+        let dist = length(to_l);
+        let radius = lt.pos_radius.w;
+        if (dist < radius) {
+            let nl = dot(n, to_l / max(dist, 1e-4));
+            if (nl > 0.0) {
+                local += lt.color_falloff.rgb / 3.25 * nl * ll_light_atten(dist / radius, lt.color_falloff.w) * base;
+            }
+        }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
         local += ll_diffuse_light(projector_at(i, world_pos), n, base);
@@ -1394,7 +1400,22 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
     var lights = light_walk(world_pos, frag);
     var spots = projector_walk(lights);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-        col += ll_pbr_light(point_at(i, world_pos), n, v, f0, ra, nv, diffuse_color);
+        let lt = frame.lights[i];
+        let to_l = lt.pos_radius.xyz - world_pos;
+        let dist = length(to_l);
+        let radius = lt.pos_radius.w;
+        if (dist < radius) {
+            let ll = to_l / max(dist, 1e-4);
+            let lnl = max(dot(n, ll), 0.0);
+            if (lnl > 0.0) {
+                let h = normalize(ll + v);
+                let f = f_schlick(f0, max(dot(v, h), 0.0));
+                let spec = d_ggx(max(dot(n, h), 0.0), ra) * v_smith(nv, lnl, ra) * f;
+                let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
+                let intensity = ll_light_atten(dist / radius, lt.color_falloff.w) * lt.color_falloff.rgb;
+                col += intensity * clamp(lnl * (diff + spec), vec3<f32>(0.0), vec3<f32>(10.0));
+            }
+        }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
         col += ll_pbr_light(projector_at(i, world_pos), n, v, f0, ra, nv, diffuse_color);

@@ -569,9 +569,15 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
     var spots = projector_walk(lights);
     if (spec.a > 0.0) {
         for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-            let at = point_at(i, world_pos);
-            let s = ll_spec(n, v, at.l, spec.a) * at.atten;
-            col += clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            let lt = frame.lights[i];
+            let to_l = lt.pos_radius.xyz - world_pos;
+            let dist = length(to_l);
+            let radius = lt.pos_radius.w;
+            if (dist < radius) {
+                let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
+                let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
+                col += clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            }
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
