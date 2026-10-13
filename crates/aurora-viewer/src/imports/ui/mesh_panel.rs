@@ -5,15 +5,7 @@
 
 use super::*;
 
-pub(super) fn show(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    entry: &mut Entry,
-    prefs: &mut Preferences,
-    actions: &mut Vec<Action>,
-    height: f32,
-    metadata: impl FnOnce(&mut egui::Ui, &mut Entry),
-) {
+pub(super) fn show(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &mut Preferences, actions: &mut Vec<Action>, height: f32) {
     let preview_width = 230.0;
     let controls_width = (ui.available_width() - preview_width - ui.spacing().item_spacing.x).max(360.0);
     ui.horizontal_top(|ui| {
@@ -33,10 +25,6 @@ pub(super) fn show(
                     } else {
                         return;
                     };
-                    if section == 2 {
-                        metadata(ui, entry);
-                        ui.add_space(8.0);
-                    }
                     let Some(Source::Mesh(draft)) = &mut entry.source else { return };
                     let before_lod = draft.preview_lod;
                     if mesh_controls(ui, p, entry.id, draft, prefs, actions, section) || before_lod != draft.preview_lod {
@@ -402,7 +390,7 @@ fn mesh_controls(
                                         } else {
                                             let changed = ui
                                                 .add_sized(
-                                                    Vec2::new(82.0, 26.0),
+                                                    Vec2::new(62.0, 26.0),
                                                     egui::DragValue::new(&mut lod.triangles).range(0..=triangles),
                                                 )
                                                 .changed();
@@ -566,6 +554,9 @@ fn mesh_controls(
         ui.label(RichText::new(aurora_i18n::tr!("import-upload-options-help")).color(p.muted));
         ui.add_space(4.0);
         ui.columns(2, |columns| {
+            for column in columns.iter_mut() {
+                column.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            }
             upload_options(&mut columns[0], p, id, draft, actions);
             load_options(&mut columns[1], p, prefs);
         });
@@ -603,11 +594,8 @@ fn mesh_controls(
 fn upload_options(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Draft, actions: &mut Vec<Action>) {
     fold(ui, p, aurora_i18n::tr!("import-modifiers"), true, |ui| {
         let (_, limit) = draft.dimensions_and_limit();
-        ui.add(
-            egui::Slider::new(&mut draft.options.scale, 0.01..=limit.max(0.01))
-                .logarithmic(true)
-                .text(aurora_i18n::tr!("import-scale")),
-        );
+        ui.label(aurora_i18n::tr!("import-scale"));
+        ui.add(egui::Slider::new(&mut draft.options.scale, 0.01..=limit.max(0.01)).logarithmic(true));
         let (dimensions, _) = draft.dimensions_and_limit();
         ui.label(aurora_i18n::tr!(
             "import-dimensions",
@@ -691,7 +679,7 @@ fn load_settings(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
                 .sum::<f32>()
         });
         let room = ui.available_width() - label_width - 9.0 * ui.spacing().item_spacing.x;
-        let pairs = if room >= 400.0 { 5 } else { 3 };
+        let pairs = if room >= 400.0 { 5 } else { 2 };
         let field_width = if pairs == 5 { (room / 5.0).min(120.0) } else { 100.0 };
         egui::Grid::new("mesh_suffixes")
             .num_columns(pairs * 2)
@@ -879,7 +867,7 @@ mod tests {
                 },
                 |ui| {
                     ui.set_width(1000.0);
-                    show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), 430.0, |_, _| {});
+                    show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), 430.0);
                 },
             );
             output.textures_delta.clear();
@@ -969,7 +957,7 @@ mod tests {
                 },
                 |ui| {
                     ui.set_width(1000.0);
-                    show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), 430.0, |_, _| {});
+                    show(ui, &theme.palette(), entry, &mut prefs, &mut Vec::new(), 430.0);
                 },
             );
             output.textures_delta.clear();
@@ -1029,7 +1017,7 @@ mod tests {
                 },
                 |ui| {
                     ui.set_width(1000.0);
-                    show(ui, &theme.palette(), entry, &mut prefs, &mut actions, 430.0, |_, _| {});
+                    show(ui, &theme.palette(), entry, &mut prefs, &mut actions, 430.0);
                 },
             );
             output.textures_delta.clear();

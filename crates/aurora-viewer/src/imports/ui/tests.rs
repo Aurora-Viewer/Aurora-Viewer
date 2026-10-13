@@ -264,7 +264,10 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
     assert_eq!(cards[0].top(), cards[1].top());
     assert_eq!(cards[2].top(), cards[3].top());
     assert!(cards[1].left() > cards[0].right() && cards[2].top() > cards[0].bottom());
-    assert!(cards[3].bottom() <= 640.0, "all four maps fit in the original compact window");
+    assert!(
+        cards[3].bottom() <= 750.0,
+        "all four maps fit below the shared metadata without scrolling"
+    );
 }
 
 #[test]
@@ -513,7 +516,8 @@ fn every_local_asset_exposes_the_same_three_actions_without_a_footer_close_butto
 #[test]
 fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() {
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    for choice in [Choice::Mesh, Choice::Material] {
+    let mut metadata_positions = None;
+    for choice in [Choice::Texture, Choice::Mesh, Choice::Material, Choice::Bulk] {
         let ctx = egui::Context::default();
         let theme = crate::theme::Theme::default();
         theme.apply(&ctx, 1.0);
@@ -531,12 +535,27 @@ fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() 
             }),
             Default::default(),
         );
-        let active = if choice == Choice::Mesh { mesh.id } else { material.id };
+        let texture = Entry::new(
+            "texture.png".into(),
+            Ok(Source::Texture(Arc::new(DecodedImage {
+                width: 1,
+                height: 1,
+                components: 3,
+                data: vec![255; 3],
+                discard: 0,
+            }))),
+            Default::default(),
+        );
+        let active = match choice {
+            Choice::Texture => texture.id,
+            Choice::Material => material.id,
+            _ => mesh.id,
+        };
         let mut imports = Imports {
             open: true,
             choice,
             active: Some(active),
-            entries: vec![mesh, material],
+            entries: vec![mesh, material, texture],
             ..Default::default()
         };
         let mut frame = |imports: &mut Imports, events| {
@@ -557,14 +576,67 @@ fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() 
             drop(frame(&mut imports, Vec::new()));
         }
         let size = ctx
-            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v4").with("expanded_size")))
+            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v5").with("expanded_size")))
             .expect("window size");
         assert!(
-            size.x <= 902.0 && size.y <= 612.0,
+            size.x <= 902.0 && size.y <= 722.0,
             "compact window grew for {}: {size:?}",
             choice.label()
         );
         let output = frame(&mut imports, Vec::new());
+        let positions = [
+            aurora_i18n::tr!("common-name"),
+            aurora_i18n::tr!("common-description"),
+            aurora_i18n::tr!("import-destination"),
+        ]
+        .map(|label| {
+            let positions: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(positions.len(), 1, "one shared metadata row for {label}");
+            positions[0]
+        });
+        if let Some(previous) = metadata_positions {
+            assert_eq!(positions, previous, "metadata keeps the same layout across asset panels");
+        }
+        metadata_positions = Some(positions);
+        assert!(positions[0].y < positions[1].y && positions[1].y < positions[2].y);
+        if matches!(choice, Choice::Mesh | Choice::Bulk) {
+            for section in [2, 1, 0] {
+                ctx.data_mut(|data| data.insert_temp(egui::Id::new(("mesh_section", active)), section));
+                for _ in 0..20 {
+                    drop(frame(&mut imports, Vec::new()));
+                }
+                let size = ctx
+                    .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v5").with("expanded_size")))
+                    .expect("mesh section size");
+                assert!(size.x <= 902.0 && size.y <= 722.0, "mesh section {section} grew: {size:?}");
+                let output = frame(&mut imports, Vec::new());
+                for (index, label) in [
+                    aurora_i18n::tr!("common-name"),
+                    aurora_i18n::tr!("common-description"),
+                    aurora_i18n::tr!("import-destination"),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let rows: Vec<_> = output
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            egui::epaint::Shape::Text(text) if text.galley.text() == label => Some(text.pos),
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(rows, [positions[index]], "metadata stays above every mesh section");
+                }
+            }
+        }
         let permissions = output
             .shapes
             .iter()
@@ -596,9 +668,9 @@ fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() 
             drop(frame(&mut imports, Vec::new()));
         }
         let size = ctx
-            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v4").with("expanded_size")))
+            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v5").with("expanded_size")))
             .expect("permissions size");
-        assert!(size.x <= 902.0 && size.y <= 612.0, "permissions table grew: {size:?}");
+        assert!(size.x <= 902.0 && size.y <= 722.0, "permissions table grew: {size:?}");
         let output = frame(&mut imports, Vec::new());
         for name in ["mesh", "pbr"] {
             assert!(

@@ -203,27 +203,6 @@ fn metadata_controls(
     picker: &mut destination::Picker,
     demo: bool,
 ) {
-    if matches!(entry.source, Some(Source::Material { .. })) {
-        ui.horizontal(|ui| {
-            ui.label(aurora_i18n::tr!("common-name"));
-            ui.add(egui::TextEdit::singleline(&mut entry.name).desired_width(190.0).char_limit(63));
-            if !entry.local {
-                ui.label(aurora_i18n::tr!("common-description"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut entry.description)
-                        .desired_width(ui.available_width().max(100.0))
-                        .char_limit(127),
-                );
-            }
-        });
-        if !entry.local {
-            ui.horizontal(|ui| {
-                ui.label(aurora_i18n::tr!("import-destination"));
-                picker.show(ui, p, inventory, protected, &mut entry.folder);
-            });
-        }
-        return;
-    }
     egui::Grid::new("import_metadata")
         .num_columns(2)
         .spacing(Vec2::new(12.0, 8.0))
@@ -317,16 +296,16 @@ pub fn show(
     let busy = imports.busy() || imports.confirm;
     let connected = imports.demo_started || world.login.is_some();
     let old_permissions = prefs.clone();
-    let window_id = egui::Id::new("asset_imports_v4");
+    let window_id = egui::Id::new("asset_imports_v5");
     if imports.demo_started && imports.preview_zoom.is_none() {
         // Keep the requested demo inspector above other scripted floaters.
         ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id));
     }
     let mut floater = Floater::new(
-        "asset_imports_v4",
+        "asset_imports_v5",
         aurora_i18n::tr!("import-title"),
         egui::pos2(100.0, 80.0),
-        Vec2::new(900.0, 610.0),
+        Vec2::new(900.0, 720.0),
     );
     floater.min_size = Vec2::new(880.0, 580.0);
     floater.show(ctx, p, &mut open, |ui| {
@@ -461,6 +440,7 @@ pub fn show(
                             details = details.vertical_scroll_offset(0.0);
                         }
                         details.show(ui, |ui| {
+                            let detail_top = ui.cursor().top();
                             if let Some(entry) = imports.active.and_then(|id| imports.entries.iter_mut().find(|e| e.id == id)) {
                                 entry.view.background = prefs.preview_background.unwrap_or_else(|| palette_color(p.field));
                                 entry.view.edge_color = prefs.preview_edges.unwrap_or_else(|| palette_color(p.teal));
@@ -487,30 +467,19 @@ pub fn show(
                                     actions.push(Action::RestoreDraft(entry.id));
                                 }
                                 ui.add_enabled_ui(!busy && matches!(entry.status, Status::Ready), |ui| {
-                                    if !matches!(entry.source, Some(Source::Mesh(_))) {
-                                        metadata_controls(
-                                            ui,
-                                            p,
-                                            entry,
-                                            &world.inventory,
-                                            &inventory_prefs.protected,
-                                            &mut imports.destination,
-                                            imports.demo_mode == "destination",
-                                        );
-                                        ui.add_space(12.0);
-                                    }
+                                    metadata_controls(
+                                        ui,
+                                        p,
+                                        entry,
+                                        &world.inventory,
+                                        &inventory_prefs.protected,
+                                        &mut imports.destination,
+                                        imports.demo_mode == "destination",
+                                    );
+                                    ui.add_space(12.0);
                                     if matches!(entry.source, Some(Source::Mesh(_))) {
-                                        mesh_panel::show(ui, p, entry, prefs, &mut actions, height, |ui, entry| {
-                                            metadata_controls(
-                                                ui,
-                                                p,
-                                                entry,
-                                                &world.inventory,
-                                                &inventory_prefs.protected,
-                                                &mut imports.destination,
-                                                imports.demo_mode == "destination",
-                                            )
-                                        });
+                                        let remaining_height = (height - (ui.cursor().top() - detail_top)).max(100.0);
+                                        mesh_panel::show(ui, p, entry, prefs, &mut actions, remaining_height);
                                     } else if let Some(source) = &mut entry.source {
                                         match source {
                                             Source::Texture(image) => texture(

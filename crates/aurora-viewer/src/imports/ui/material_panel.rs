@@ -66,10 +66,13 @@ pub(super) fn show(
                     for slot in pair {
                         ui.push_id(slot, |ui| {
                             let card = ui
-                                .allocate_ui_with_layout(Vec2::new(card_width, 160.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                                    ui.set_width(card_width);
-                                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-                                    map_card(ui, p, id, slot, material, images, actions, previews);
+                                .allocate_ui_with_layout(Vec2::new(card_width, 182.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                    widgets::surface(ui, p, |ui| {
+                                        ui.set_min_size(Vec2::new(card_width - 22.0, 160.0));
+                                        ui.set_max_width(card_width - 22.0);
+                                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                                        map_card(ui, p, id, slot, material, images, actions, previews);
+                                    });
                                 })
                                 .response
                                 .rect;
@@ -123,7 +126,7 @@ fn map_card(
         egui::Label::new(RichText::new(name).small().color(p.muted)).truncate(),
     )
     .on_hover_text(name);
-    let parameters_width = (ui.available_width() - 88.0 - ui.spacing().item_spacing.x).max(110.0);
+    let parameters_width = (ui.available_width() - 88.0 - ui.spacing().item_spacing.x).max(100.0);
     ui.horizontal_top(|ui| {
         let texture = previews[slot]
             .as_ref()
@@ -146,7 +149,6 @@ fn map_card(
         }
         ui.allocate_ui_with_layout(Vec2::new(parameters_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.set_width(parameters_width);
-            ui.spacing_mut().slider_width = 44.0;
             match slot {
                 0 => {
                     ui.horizontal(|ui| {
@@ -183,9 +185,9 @@ fn map_card(
                 }
                 2 => {
                     ui.label(RichText::new(aurora_i18n::tr!("import-metallic")).small());
-                    ui.add(egui::Slider::new(&mut material.metallic_factor, 0.0..=1.0));
+                    ui.add(egui::DragValue::new(&mut material.metallic_factor).range(0.0..=1.0).speed(0.01));
                     ui.label(RichText::new(aurora_i18n::tr!("import-roughness")).small());
-                    ui.add(egui::Slider::new(&mut material.roughness_factor, 0.0..=1.0));
+                    ui.add(egui::DragValue::new(&mut material.roughness_factor).range(0.0..=1.0).speed(0.01));
                 }
                 3 => {
                     ui.horizontal(|ui| {
@@ -193,9 +195,7 @@ fn map_card(
                         factor_swatch(ui, p, "emission", &mut material.emissive_factor, false);
                     });
                 }
-                _ => {
-                    ui.label(RichText::new(aurora_i18n::tr!("import-normal")).small().color(p.muted));
-                }
+                _ => {}
             }
         });
     });

@@ -1064,7 +1064,12 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   désactiver Copier impose Transférer, sans modifier les autres lignes.
   Les cartes LOD sélectionnent l’aperçu par
   un clic dans toute leur surface ; les champs restent éditables normalement.
-  `material-maps` affiche les quatre cartes en grille 2 × 2, sans défilement, avec cadres carrés et proportions originales ; `material-loading` garde exactement le cadre 3D et les gestes avec un modèle en attente. Le menu « Modèle
+  `material-maps` affiche les quatre cartes en grille 2 × 2, sans défilement,
+  chacune dans une surface distincte avec sa vignette carrée et ses réglages.
+  Les proportions originales des textures sont conservées. Métallique et
+  Rugosité ont uniquement un champ numérique ; Normales apparaît seulement
+  dans le titre de sa carte. `material-loading` garde exactement le cadre 3D
+  et les gestes avec un modèle en attente. Le menu « Modèle
   d’aperçu » permet de passer entre Sphère, Cube et Aurora 3D. Glisser tourne,
   Maj + glisser ou le bouton du milieu déplacent dans les axes de l’écran,
   la molette zoome ; « Réinitialiser la vue » et le double-clic restaurent
@@ -1076,11 +1081,16 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   saisir un autre nom doit filtrer sans changer la destination ni fermer
   la liste. Choisir un résultat ferme la liste et applique ce dossier.
   Pour le mesh, la liste reste à gauche ; l’aperçu et les quatre cartes LOD
-  sont côte à côte dans une fenêtre de 900 × 610 points par défaut. Nom,
-  description et destination se trouvent dans la section Import ; Permissions
-  reste un onglet principal commun. Haut est affiché par défaut ; cliquer
-  une carte LOD change l’aperçu, y compris dans un champ ou sur un résultat.
-  `mesh-normals` affiche 105° sans caractère parasite ; les compteurs sont à droite des sources et critères, avec la proportion conservée en dessous.
+  sont côte à côte dans une fenêtre de 900 × 720 points par défaut, avec
+  la même largeur et une liste de fichiers de 180 points. Nom, description
+  et destination sont toujours présentés en trois lignes identiques en haut
+  de chaque panneau d’import, y compris pour le mesh ; la section Import ne
+  les répète plus. Permissions reste un onglet principal commun.
+  Haut est affiché par défaut ; cliquer une carte LOD change l’aperçu,
+  y compris dans un champ ou sur un résultat.
+  `mesh-normals` affiche 105° sans caractère parasite ; les compteurs sont
+  à droite des sources et critères, avec « triangles » écrit en entier et
+  la proportion conservée en dessous.
   `bulk-mesh-denied` simule un compte connecté sans droit d’import mesh : le lot contient un mesh et une texture, le message indique le refus mesh ; décocher le mesh permet d’importer la texture. Recalculer les frais simule le même refus.
   `mesh-low` affiche Très bas pour comparer réellement les géométries et
   leurs compteurs. Choisir « Fichier » pour un LOD généré doit ouvrir le
