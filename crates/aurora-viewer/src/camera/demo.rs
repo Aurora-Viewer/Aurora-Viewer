@@ -20,6 +20,10 @@
 //! - `fly`: flying forward from frame 300 (camera lag)
 //! - `sit`: sit on a turning seat with a sit camera at frame 300, stand up
 //!   at 700 (demo::sit_events)
+//! - `right-click,x,y` / `right-jitter,x,y`: right click with small motion / repeated
+//!   back-and-forth motion: the camera stays still and the menu opens on release
+//! - `right-drag,x,y` / `right-slow,x,y`: held right button with fast / slow motion:
+//!   the camera orbits and no menu opens on release
 
 /// What the app does this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,6 +38,7 @@ pub enum Step {
     },
     Press,
     Release,
+    RightButton(bool),
     /// Mouse motion in pixels (y down).
     Drag(f32, f32),
     /// Hold / release the up arrow.
@@ -52,6 +57,33 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
     let num = |i: usize| parts.get(i).and_then(|v| v.parse::<f32>().ok());
     let mut out = Vec::new();
     match parts.first().copied().unwrap_or("") {
+        mode @ ("right-click" | "right-jitter" | "right-drag" | "right-slow") => {
+            let (Some(x), Some(y)) = (num(1), num(2)) else {
+                return out;
+            };
+            match frame {
+                600 => out.extend([Step::Cursor(x, y), Step::RightButton(true), Step::Log]),
+                601..=660 => {
+                    let drag = match mode {
+                        "right-click" if frame == 601 => Some((6.0, 6.0)),
+                        "right-click" => None,
+                        "right-jitter" if !frame.is_multiple_of(2) => Some((2.0, -1.0)),
+                        "right-jitter" => Some((-2.0, 1.0)),
+                        "right-slow" => Some((1.0, 0.0)),
+                        _ => Some((6.0, 1.0)),
+                    };
+                    if let Some((dx, dy)) = drag {
+                        out.push(Step::Drag(dx, dy));
+                    }
+                    if frame == 630 {
+                        out.push(Step::Log);
+                    }
+                }
+                661 => out.extend([Step::RightButton(false), Step::Log]),
+                700 => out.push(Step::Log),
+                _ => {}
+            }
+        }
         mode @ ("alt" | "pan" | "zoom") => {
             let (Some(x), Some(y)) = (num(1), num(2)) else {
                 return out;

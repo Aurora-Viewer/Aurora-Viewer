@@ -438,6 +438,8 @@ What limits the frame rate, the smoothness, the memory and the loading time in a
 
 ## Controls
 
+- ✅ Right-click tolerance (2026-10-13), validated by the human in "Test right-click-tolerance", merge authorised: small motion and back-and-forth jitter remain a context-menu click, while a deliberate held drag still orbits. Replace the accumulated 4-unit travel threshold with 10 UI points of net displacement and latch orbit until release. Deliberate Aurora extension to Firestorm's LLToolPie::handleRightMouseDown (which opens the menu on press); no hold-time requirement. Four unit regressions cover diagonal motion, repeated jitter, slow motion / return and interface scale. `check.ps1` green with sequential tests: 1,982 passed, 24 ignored, formatting and Clippy clean (two existing render-thread timing tests failed in parallel and passed sequentially; the sandbox initially denied an audio loopback socket). Demo `AURORA_DEMO_CAMERA=right-click|right-jitter|right-drag|right-slow,x,y`: screenshots and logs verify a stationary camera and menu for small motion / jitter, orbit without a menu for fast / slow drags; pie menu, left steering and mouselook rechecked, no GPU warnings or errors.
+
 - ⬜ Object rez, later: show visual feedback on the target object during the drag from the inventory, as long as Ctrl is held, to indicate the insertion into its contents.
 
 - ⬜ Name tags of other avatars, later: left click on their name tag as on the avatar
