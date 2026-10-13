@@ -133,6 +133,38 @@ impl Manager {
         self.choose(&matching)
     }
 
+    /// LLGestureMgr::matchPrefix: exact triggers win, otherwise complete only
+    /// the common suffix of active triggers, preserving the typed casing.
+    pub fn complete(&self, prefix: &str) -> Option<String> {
+        if !self.enabled || prefix.is_empty() {
+            return None;
+        }
+        let count = prefix.chars().count();
+        let mut common: Option<Vec<char>> = None;
+        for entry in self.active.iter().filter_map(|id| self.entries.get(id)) {
+            let trigger = &entry.definition.trigger;
+            if trigger.chars().count() < count
+                || !trigger
+                    .chars()
+                    .zip(prefix.chars())
+                    .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
+            {
+                continue;
+            }
+            let rest: Vec<_> = trigger.chars().skip(count).collect();
+            if rest.is_empty() {
+                return Some(prefix.to_owned());
+            }
+            if let Some(common) = common.as_mut() {
+                let shared = common.iter().zip(&rest).take_while(|(a, b)| a == b).count();
+                common.truncate(shared);
+            } else {
+                common = Some(rest);
+            }
+        }
+        common.map(|rest| prefix.chars().chain(rest).collect())
+    }
+
     /// Firestorm matches space-delimited words, case-insensitively, and
     /// replaces only the first matching trigger in a chat line.
     pub fn revise(&mut self, text: &str) -> (String, Option<Uuid>) {

@@ -4891,6 +4891,7 @@ impl App {
         }
         let ctx = self.egui_ctx.clone();
         if self.demo {
+            self.gesture_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
@@ -6671,6 +6672,7 @@ impl App {
                     layout,
                     &mut self.panels,
                     &mut self.chat_ui,
+                    &self.gesture_state.manager,
                     self.world.chat_unread + self.world.social.total_unread(),
                     self.world.agent.flying,
                     self.world.agent.is_sitting(),
@@ -6795,6 +6797,7 @@ impl App {
                     &self.avatar_pics,
                     &self.ui_images,
                     &mut self.world,
+                    &self.gesture_state.manager,
                     &mut self.chat_ui,
                     &mut self.contacts_ui,
                     &mut self.settings.contacts,

@@ -8,6 +8,45 @@ fn chat(text: &str) -> Step {
 }
 
 #[test]
+fn completion_uses_active_triggers_exact_matches_and_common_suffixes() {
+    let mut manager = Manager::default();
+    for (id, trigger, active) in [
+        (1, "/eject", true),
+        (2, "/ejection", true),
+        (3, "/enjoy", false),
+        (4, "/éject", true),
+    ] {
+        let id = Uuid::from_u128(id);
+        manager.entries.insert(
+            id,
+            Entry {
+                asset: Uuid::nil(),
+                definition: Gesture {
+                    trigger: trigger.into(),
+                    ..Default::default()
+                },
+            },
+        );
+        if active {
+            manager.active.insert(id);
+        }
+    }
+    manager.active.insert(Uuid::from_u128(99)); // Still loading.
+    assert_eq!(manager.complete("/ej").as_deref(), Some("/eject"));
+    assert_eq!(manager.complete("/EJ").as_deref(), Some("/EJect"));
+    assert_eq!(manager.complete("/eject").as_deref(), Some("/eject"));
+    assert_eq!(manager.complete("/Éj").as_deref(), Some("/Éject"));
+    assert_eq!(manager.complete("/en"), None);
+    assert_eq!(manager.complete("/missing"), None);
+    assert_eq!(manager.complete(""), None);
+    manager.active.insert(Uuid::from_u128(3));
+    assert_eq!(manager.complete("/e").as_deref(), Some("/e"));
+    assert_eq!(manager.complete("/ej").as_deref(), Some("/eject"));
+    manager.enabled = false;
+    assert_eq!(manager.complete("/ej"), None);
+}
+
+#[test]
 fn simultaneous_steps_and_explicit_timer() {
     let mut manager = Manager::default();
     let now = Instant::now();

@@ -231,20 +231,21 @@ pub fn show(
                                         },
                                     );
                                     let color = if selected { p.on_accent } else { p.ink };
-                                    ui.add_sized(
-                                        [columns[1], 24.0],
-                                        egui::Label::new(RichText::new(trigger).color(color))
-                                            .truncate()
-                                            .selectable(false)
-                                            .sense(egui::Sense::hover()),
-                                    );
-                                    ui.add_sized(
-                                        [columns[2], 24.0],
-                                        egui::Label::new(RichText::new(shortcut).color(color))
-                                            .truncate()
-                                            .selectable(false)
-                                            .sense(egui::Sense::hover()),
-                                    );
+                                    for (width, text) in [(columns[1], trigger), (columns[2], shortcut)] {
+                                        ui.allocate_ui_with_layout(
+                                            Vec2::new(width, 24.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.set_min_size(Vec2::new(width, 24.0));
+                                                ui.add(
+                                                    egui::Label::new(RichText::new(text).color(color))
+                                                        .truncate()
+                                                        .selectable(false)
+                                                        .sense(egui::Sense::hover()),
+                                                );
+                                            },
+                                        );
+                                    }
                                 },
                             );
                             if response.clicked() {

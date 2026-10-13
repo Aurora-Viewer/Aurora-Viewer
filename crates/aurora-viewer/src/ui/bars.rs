@@ -1452,6 +1452,7 @@ pub fn bottom_bar(
     layout: &Layout,
     panels: &mut Panels,
     chat: &mut super::chat::ChatUi,
+    gestures: &crate::gestures::Manager,
     unread: usize,
     flying: bool,
     seated: bool,
@@ -1483,7 +1484,7 @@ pub fn bottom_bar(
                     total * layout.chat_bar_fraction
                 };
                 let chat_w = wanted.clamp(120.0, max_chat);
-                out = super::chat::bar(ui, p, chat, chat_w);
+                out = super::chat::bar(ui, p, chat, gestures, chat_w);
 
                 // draggable separator (dotted, like Firestorm's) between chat and toolbar
                 let (handle, hresp) = ui.allocate_exact_size(Vec2::new(10.0, 22.0), egui::Sense::drag());

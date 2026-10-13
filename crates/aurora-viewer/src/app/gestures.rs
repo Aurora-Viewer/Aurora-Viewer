@@ -751,6 +751,25 @@ impl App {
         }
     }
 
+    pub(super) fn gesture_demo_input(&mut self, raw: &mut egui::RawInput) {
+        let mode = std::env::var("AURORA_DEMO_GESTURES").unwrap_or_default();
+        if !matches!(mode.as_str(), "completion" | "completion-send") {
+            return;
+        }
+        match self.frame_count {
+            540 => self.chat_ui.focus_request = true,
+            550 => raw.events.push(egui::Event::Text("/ej".into())),
+            650 if mode == "completion-send" => raw.events.push(egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }),
+            _ => {}
+        }
+    }
+
     fn seed_gesture_demo(&mut self) {
         if !self.demo || self.gesture_state.demo_seeded || std::env::var_os("AURORA_DEMO_GESTURES").is_none() {
             return;
@@ -758,7 +777,12 @@ impl App {
         self.gesture_state.demo_seeded = true;
         crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
         let definition = Gesture {
-            trigger: "/hello".into(),
+            trigger: if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("completion")) {
+                "/eject"
+            } else {
+                "/hello"
+            }
+            .into(),
             replacement: aurora_i18n::tr!("gesture-demo-replacement").into(),
             key: 0xa8,
             steps: vec![
