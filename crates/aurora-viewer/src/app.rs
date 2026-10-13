@@ -336,6 +336,8 @@ pub struct App {
     login_info: ui::news::LoginInfo,
     update_demo: Option<ui::update::UpdateDemo>,
     updater: crate::updater::Updater,
+    /// Aurora's media plugins pack: installed, downloading or missing.
+    plugin_pack: crate::media::pack::PluginPack,
     update_acknowledged: bool,
     /// Smoothed speaking outlines of the avatar name tags.
     voice_tags: ui::voice_tag::VoiceTags,
@@ -479,6 +481,9 @@ impl App {
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
         let updater = crate::updater::Updater::new(net.runtime());
+        let plugin_pack = crate::media::pack::PluginPack::new(crate::settings::media_plugins_dir());
+        let mut media = crate::media::MediaManager::default();
+        media.set_pack_dir(plugin_pack.dir());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
         let lib = Arc::new(AvatarLibrary::load());
         let cache = crate::settings::cache_dir();
@@ -674,13 +679,14 @@ impl App {
             music_parcel_url: String::new(),
             music_override: None,
             key_to_name: Vec::new(),
-            media: Default::default(),
+            media,
             media_ui: Default::default(),
             media_cursor: None,
             voice: Default::default(),
             voice_http,
             update_demo,
             updater,
+            plugin_pack,
             update_acknowledged: false,
             login_info,
             voice_tags: Default::default(),
@@ -3898,6 +3904,17 @@ impl App {
             self.shutdown(event_loop);
             return;
         }
+        // Aurora's media plugins: downloaded once, when none are found (the
+        // web pages of the profiles need them even with media disabled)
+        let plugins_wanted = self.media.plugins(&self.settings.media).is_none();
+        if std::mem::take(&mut self.options_ui.media_pack_retry) {
+            self.plugin_pack.retry(self.net.runtime());
+        }
+        if self.plugin_pack.poll(plugins_wanted, self.net.runtime()) {
+            self.media.set_pack_dir(self.plugin_pack.dir());
+        }
+        self.options_ui.media_pack = self.plugin_pack.state();
+        ui::web_view::set_plugins_status(&self.egui_ctx, self.plugin_pack.state());
         self.poll_inventory_images();
         // a click whose depth is back already (the render thread finished
         // the last frame while this thread waited for its next one)
