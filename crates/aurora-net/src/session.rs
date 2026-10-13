@@ -15,6 +15,7 @@ mod object_actions;
 mod scripts;
 mod task_notecard;
 
+use crate::agent_update::AgentUpdateRule;
 use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::login::{self, LoginError, LoginRequest, LoginResponse};
@@ -55,8 +56,6 @@ mod search_net;
 use crate::build::BUILD_PARCEL_SEQ;
 
 const SIM_TIMEOUT: Duration = Duration::from_secs(60);
-const AGENT_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
-const AGENT_UPDATE_KEEPALIVE: Duration = Duration::from_secs(1);
 const PING_INTERVAL: Duration = Duration::from_secs(5);
 /// Diagnostic: the RegionHandshake of a region the agent arrived in should
 /// come along with AgentMovementComplete; without it the simulator never
@@ -147,8 +146,10 @@ struct Session<'a> {
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
     inventory_move_tx: mpsc::UnboundedSender<inventory_moves::Request>,
     notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
-    last_controls: AgentControls,
-    last_agent_update: Instant,
+    /// When an AgentUpdate leaves (agent_update.rs).
+    agent_update: AgentUpdateRule,
+    /// Control flags of the last `NetCommand::AgentControls`.
+    control_flags: u32,
     one_shot: u32,
     /// "No agent updates" already reported for this CompleteAgentMovement.
     cam_warned: bool,
@@ -245,6 +246,9 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         }
     };
 
+    // The session only learns the control flags from the changes handed to
+    // it: start both sides from none, whatever the previous session left.
+    *sh.controls.lock() = AgentControls::default();
     let (eq_tx, mut eq_rx) = mpsc::unbounded_channel();
     let (caps_tx, mut caps_rx) = mpsc::unbounded_channel();
     let (notecard_copy_tx, mut notecard_copy_rx) = mpsc::unbounded_channel();
@@ -257,8 +261,8 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         main: None,
         eq_tx,
         caps_tx,
-        last_controls: AgentControls::default(),
-        last_agent_update: Instant::now(),
+        agent_update: AgentUpdateRule::new(Instant::now()),
+        control_flags: 0,
         one_shot: 0,
         cam_warned: false,
         far: 128.0,
@@ -897,22 +901,31 @@ impl Session<'_> {
         );
     }
 
+    /// The tick's look at the controls: the keep-alive, the follow-up of a
+    /// flag change, and what moved without being handed over. The flags are
+    /// those of the last command, so that they only ever change in the
+    /// order the viewer changed them.
     fn maybe_send_agent_update(&mut self, now: Instant) {
-        let since = now.duration_since(self.last_agent_update);
-        let (c, send) = {
-            let controls = self.sh.controls.lock();
-            let mut c = *controls;
-            c.far = self.far;
-            c.control_flags |= self.one_shot;
-            let changed = c.significantly_differs(&self.last_controls);
-            let send = (changed && since >= AGENT_UPDATE_INTERVAL) || since >= AGENT_UPDATE_KEEPALIVE || self.one_shot != 0;
-            if send {
-                // (under the lock: the change it times is the one in `c`)
-                self.sh.stats.agent_update_sent();
-            }
-            (c, send)
-        };
-        if send {
+        let mut c = *self.sh.controls.lock();
+        c.control_flags = self.control_flags;
+        self.send_agent_update_if_due(c, now);
+    }
+
+    /// Controls handed over by the viewer because they changed enough to
+    /// leave now (`NetCommand::AgentControls`).
+    fn on_agent_controls(&mut self, c: AgentControls) {
+        self.control_flags = c.control_flags;
+        if self.agent_moved && self.logout_started.is_none() {
+            self.send_agent_update_if_due(c, Instant::now());
+        }
+    }
+
+    fn send_agent_update_if_due(&mut self, mut c: AgentControls, now: Instant) {
+        c.far = self.far;
+        c.control_flags |= self.one_shot;
+        let flags_changed = c.control_flags != self.agent_update.sent_flags();
+        if self.agent_update.should_send(&c, now) {
+            self.sh.stats.agent_update_sent(flags_changed);
             let mut m = AgentUpdate::default();
             let a = &mut m.agent_data;
             a.agent_id = self.agent_id();
@@ -928,8 +941,6 @@ impl Session<'_> {
             a.control_flags = c.control_flags;
             a.flags = c.flags;
             self.send_main(&m, false);
-            self.last_controls = c;
-            self.last_agent_update = now;
             self.one_shot = 0;
         }
     }
@@ -1833,6 +1844,7 @@ impl Session<'_> {
                 self.send_main(&m, true);
             }
             NetCommand::OneShotControl(f) => self.one_shot |= f,
+            NetCommand::AgentControls(c) => self.on_agent_controls(c),
             NetCommand::ClearObjectCache => {
                 for c in self.obj_caches.values_mut() {
                     c.reset();
@@ -3441,7 +3453,7 @@ impl Session<'_> {
             // the agent is in this region: keep (or start) sending its updates
             self.agent_moved = true;
             self.cam_requested_at = None;
-            self.last_agent_update = Instant::now() - AGENT_UPDATE_KEEPALIVE;
+            self.agent_update.force();
             emit(
                 self.sh,
                 NetEvent::TeleportLocal {
@@ -3657,8 +3669,8 @@ mod event_queue_tests {
             notecard_copy_tx,
             inventory_move_tx,
             notecard_copies: HashMap::new(),
-            last_controls: AgentControls::default(),
-            last_agent_update: Instant::now(),
+            agent_update: AgentUpdateRule::new(Instant::now()),
+            control_flags: 0,
             one_shot: 0,
             cam_warned: false,
             far: 128.0,

@@ -1,6 +1,7 @@
 //! Aurora Viewer network layer: login, UDP circuits, capabilities, event
 //! queue and HTTP asset fetching, running on a dedicated tokio runtime.
 
+mod agent_update;
 pub mod build;
 pub mod caps;
 pub mod circuit;
@@ -54,6 +55,8 @@ pub struct NetClient {
     /// Events of the session, each with the time the network side sent it.
     pub events: crossbeam_channel::Receiver<(std::time::Instant, NetEvent)>,
     pub controls: Arc<Mutex<AgentControls>>,
+    /// The controls last handed to the session as a command.
+    pushed_controls: Mutex<AgentControls>,
     pub stats: Arc<NetStats>,
     pub fetcher: Fetcher,
     pub fetch_results: crossbeam_channel::Receiver<FetchResult>,
@@ -141,6 +144,8 @@ impl NetClient {
                     NetCommand::Login(req) => {
                         session::run_session(&shared, *req, &mut cmd_rx).await;
                     }
+                    // (the offline demo moves its agent every frame)
+                    NetCommand::AgentControls(_) => {}
                     other => log::debug!("ignoring command while offline: {other:?}"),
                 }
             }
@@ -151,6 +156,7 @@ impl NetClient {
             cmd_tx,
             events: ev_rx,
             controls,
+            pushed_controls: Mutex::new(AgentControls::default()),
             stats,
             fetcher,
             fetch_results,
@@ -180,10 +186,25 @@ impl NetClient {
     /// Controls of this frame, sent by the session with its next AgentUpdate.
     /// A change of their flags (a key pressed or released) is timed until
     /// that update leaves (`NetStats::take_peaks`).
+    ///
+    /// The session reads them on its own tick, which is enough for the
+    /// keep-alive; what must leave sooner is handed to it right away: every
+    /// change of the flags, in order, and whatever moved past the thresholds
+    /// of `send_agent_update` since the last hand-over (the session then
+    /// applies its limit of 125 updates a second).
     pub fn set_controls(&self, c: AgentControls) {
-        let mut controls = self.controls.lock();
-        self.stats.note_controls(c.control_flags != controls.control_flags);
-        *controls = c;
+        let flags_changed = {
+            let mut controls = self.controls.lock();
+            let changed = c.control_flags != controls.control_flags;
+            self.stats.note_controls(changed);
+            *controls = c;
+            changed
+        };
+        let mut pushed = self.pushed_controls.lock();
+        if flags_changed || c.update_worthy(&pushed) {
+            *pushed = c;
+            self.send(NetCommand::AgentControls(c));
+        }
     }
 
     pub fn send(&self, cmd: NetCommand) {

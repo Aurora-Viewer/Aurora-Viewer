@@ -255,7 +255,7 @@ mod tests {
         stats.http_retries.fetch_add(1, Ordering::Relaxed);
         stats.eq_idle_polls.fetch_add(4, Ordering::Relaxed);
         stats.eq_errors.fetch_add(1, Ordering::Relaxed);
-        stats.agent_update_sent();
+        stats.agent_update_sent(true);
         p.event_applied(t, t + Duration::from_millis(12));
         p.event_applied(t, t + Duration::from_millis(4));
         p.events_left(7);
@@ -301,7 +301,7 @@ mod tests {
         let mut p = NetProfile::new(false);
         let t = p.start;
         stats.note_controls(true);
-        stats.agent_update_sent();
+        stats.agent_update_sent(true);
         p.corrections(Corrections { count: 2, largest: 1.5 });
         p.end_frame_at(&stats, t + PERIOD);
         let delay = p.totals.input_delay_ms.expect("measured");

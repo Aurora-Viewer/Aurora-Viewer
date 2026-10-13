@@ -129,10 +129,11 @@ impl NetStats {
         *self.control_changed.lock() = None;
     }
 
-    /// An AgentUpdate left with the current controls.
-    pub fn agent_update_sent(&self) {
+    /// An AgentUpdate left; `flag_change` when it carries control flags the
+    /// simulator did not have, which ends the wait of the change being timed.
+    pub fn agent_update_sent(&self, flag_change: bool) {
         self.agent_updates.fetch_add(1, Ordering::Relaxed);
-        if let Some(changed) = self.control_changed.lock().take() {
+        if flag_change && let Some(changed) = self.control_changed.lock().take() {
             // (+1: a delay below the microsecond still counts as one sent)
             self.input_delay_us.fetch_max(micros(changed.elapsed()) + 1, Ordering::Relaxed);
         }
@@ -192,7 +193,7 @@ mod tests {
         let stats = NetStats::default();
         // nothing changed: an update measures nothing
         stats.note_controls(false);
-        stats.agent_update_sent();
+        stats.agent_update_sent(false);
         assert_eq!(stats.take_peaks().input_delay_ms, None);
         // a press, then a release before anything was sent: the press counts
         stats.note_controls(true);
@@ -200,12 +201,16 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
         stats.note_controls(true);
         assert_eq!(*stats.control_changed.lock(), Some(pressed));
-        stats.agent_update_sent();
+        // an update that still carries the old flags (keep-alive, camera)
+        // leaves the change waiting
+        stats.agent_update_sent(false);
+        assert_eq!(*stats.control_changed.lock(), Some(pressed));
+        stats.agent_update_sent(true);
         let delay = stats.take_peaks().input_delay_ms.expect("measured");
         assert!(delay >= 5.0, "{delay}");
         // taken: the next period starts empty, and the update count stays
         assert_eq!(stats.take_peaks(), NetPeaks::default());
-        assert_eq!(stats.snapshot().agent_updates, 2);
+        assert_eq!(stats.snapshot().agent_updates, 3);
     }
 
     #[test]
