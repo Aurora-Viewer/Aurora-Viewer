@@ -108,7 +108,9 @@ fn button_rows(ui: &egui::Ui, buttons: &[Btn], width: f32) -> Vec<Vec<usize>> {
 fn pane(ui: &mut egui::Ui, p: &Palette, salt: (&str, Key), buttons: &[Btn], body: impl FnOnce(&mut egui::Ui)) -> Option<usize> {
     let rows = button_rows(ui, buttons, ui.available_width());
     let buttons_h = rows.len() as f32 * BUTTON_H + rows.len().saturating_sub(1) as f32 * BUTTON_GAP;
-    let body_h = (ui.available_height() - buttons_h - 8.0).max(60.0);
+    // the layout also puts its spacing around the gap before the buttons
+    let gaps = 8.0 + 2.0 * ui.spacing().item_spacing.y;
+    let body_h = (ui.available_height() - buttons_h - gaps).max(60.0);
     egui::ScrollArea::vertical()
         .id_salt(salt)
         .auto_shrink([false, false])
@@ -240,7 +242,7 @@ pub fn show(
     let row_name = list.rows.iter().find(|r| r.key == key).map_or("", |r| r.name.as_str());
     match (list.tab, key) {
         (Tab::People, Key::Id(id)) => person(ui, c, pics, wanted_pics, id, row_name),
-        (Tab::Groups, Key::Id(id)) => group(ui, c, id, row_name, actions),
+        (Tab::Groups, Key::Id(id)) => group(ui, c, id, row_name, false, actions),
         (Tab::Places | Tab::Land, Key::Id(id)) => place(ui, c, id, actions),
         (Tab::Classifieds, Key::Id(id)) => classified(ui, c, id, row_name, actions),
         (Tab::Events, Key::Event(id)) => event(ui, c, id, row_name, actions),
@@ -367,19 +369,23 @@ fn person(
     }
 }
 
-fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions: &mut Vec<SearchAction>) {
+/// A group: the details of the groups tab, and the body of the group
+/// profile window (`standalone`), which the last button opens from the tab.
+pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, standalone: bool, actions: &mut Vec<SearchAction>) {
     let (p, world) = (c.p, c.world);
     let data = world.search.groups.get(&id);
     let member = world.groups.is_member(&id);
     let name = data.map_or(row_name, |g| g.name.as_str()).to_owned();
-    let buttons = [
+    let mut buttons = vec![
         Btn::new("refresh", aurora_i18n::tr!("search-refresh")),
         Btn::new("messages-filled", aurora_i18n::tr!("search-group-chat")).enabled(member),
         // LLGroupActions::join: fee confirmation and JoinGroupRequest
         Btn::new("users-plus", aurora_i18n::tr!("search-group-join")).not_yet(),
-        // LLGroupActions::show: Aurora has no group profile window yet
-        Btn::new("users-group", aurora_i18n::tr!("search-show-profile")).not_yet(),
     ];
+    if !standalone {
+        // LLGroupActions::show
+        buttons.push(Btn::new("users-group", aurora_i18n::tr!("search-show-profile")).primary());
+    }
     let clicked = pane(ui, p, ("search-group", Key::Id(id)), &buttons, |ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         ui.horizontal_top(|ui| {
@@ -462,6 +468,7 @@ fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions: &mut
     match clicked {
         Some(0) => actions.push(SearchAction::RefreshGroup(id)),
         Some(1) => context::request(ui.ctx(), CtxAction::GroupChat(id)),
+        Some(3) => crate::ui::group_profile::request_open(ui.ctx(), id),
         _ => {}
     }
 }

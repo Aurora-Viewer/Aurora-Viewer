@@ -61,7 +61,18 @@ pub struct NameTag {
     pub rect: egui::Rect,
 }
 
-/// llSetText on our HUD attachments, without world-distance fading.
+/// Painter of what belongs to the world (name tags, floating texts, the
+/// tracking beacon). Nothing of it may pass in front of an element of the
+/// interface: it is painted on the layer egui draws first, before the bars
+/// are laid out on that layer, and `aurora_render::end_world_labels` ends
+/// it, so that the renderer draws it before the HUD attachments too.
+pub fn world_painter(ctx: &egui::Context) -> egui::Painter {
+    ctx.layer_painter(egui::LayerId::background())
+}
+
+/// llSetText on our HUD attachments, without world-distance fading. Painted
+/// after the world's labels and before the bars: over the HUD attachments,
+/// under the interface.
 pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
     let Some(view) = scene.lists.hud_view else { return };
     let own = world.objects.index_of_uuid(&world.agent_id);
@@ -72,7 +83,7 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
         height: view.height,
         ppp,
     };
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("attachment_text")));
+    let painter = ctx.layer_painter(egui::LayerId::background());
     for (idx, o) in world.objects.texted() {
         if o.text_color[3] == 0 || !scene.gpu.get(idx).is_some_and(|g| g.hud && g.owner_avatar == own) {
             continue;
@@ -199,7 +210,7 @@ pub fn draw(
     loading: Option<&HashMap<uuid::Uuid, f32>>,
     plates: Option<PlateFrame<'_>>,
 ) -> Vec<NameTag> {
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("hud")));
+    let painter = world_painter(ctx);
     let now = Instant::now();
     // (distance, anchor, lines, voice: (level, speaking), loading, avatar)
     #[allow(clippy::type_complexity)]

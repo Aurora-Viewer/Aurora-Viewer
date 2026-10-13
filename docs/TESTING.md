@@ -963,6 +963,8 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
 | `AURORA_DEMO_IMPORT_REGISTRY=<fichier>` | Bibliothèque persistante isolée des essais d’import |
 | `AURORA_DEMO_REZ=<mode>` | Rez par glisser-déposer depuis l’inventaire |
 | `AURORA_DEMO_LAND=<onglet>[:owner]` | « À propos du terrain » sur un onglet |
+| `AURORA_DEMO_LAND_PRIMS=<utilisés>[,<pas>]` | Objets de la parcelle de démo, qui augmentent à chaque réponse |
+| `AURORA_DEMO_GROUP_PROFILE=1` | Fenêtre de profil du groupe de la parcelle de démo |
 | `AURORA_DEMO_PLACE=<lieu>` | « Lieux » sur un profil de lieu |
 | `AURORA_DEMO_PLACES=<onglet>` | « Lieux » sur un onglet |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Profils de lieu en fenêtres séparées |
@@ -1276,6 +1278,17 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   `environnement`, ou leur index ; `:owner` rend l'avatar propriétaire de la
   parcelle (contrôles activés), sinon elle appartient à un groupe sans
   pouvoirs.
+- **`AURORA_DEMO_LAND_PRIMS=<utilisés>[,<pas>]`** : avec `AURORA_DEMO_LAND`,
+  les objets du terrain du propriétaire dans la région (sur 15 000) ; la
+  jauge de l'en-tête est violette, orange quand il reste 20 % ou moins
+  (`12200`), rouge quand il reste 10 % ou moins (`13900`, ou `16200` au-delà
+  de la capacité). Avec un pas (`10500,450`),
+  chaque réponse du simulateur de démo en compte autant de plus : la
+  jauge avance toute seule à chaque rafraîchissement de la parcelle
+  (toutes les 15 s fenêtre ouverte, 1 s après un objet posé ou retiré).
+- **`AURORA_DEMO_GROUP_PROFILE=1`** : le profil du groupe « Aurora
+  Builders », comme après un clic sur le groupe ou le propriétaire dans
+  « À propos du terrain ».
 - **`AURORA_DEMO_PLACE=1|lagune|nordheim|pinede|faille|inconnue|repere|historique`** :
   « Lieux » sur un profil de lieu, comme après un clic sur un lien de lieu.
   `1` : le domicile de Loup Violet sur Aurora Démo (la parcelle d'« À propos
@@ -2012,7 +2025,10 @@ thread principal est déjà sur l'image suivante. Avec
     transparentes triées, leur glow intercalé, les calques de débogage et de
     sélection, les particules et la fin de la passe (en MSAA, la résolution
     de l'image) ; l'eau, le glow des faces opaques et les imposteurs n'en
-    font pas partie ;
+    font pas partie. `g_post` va jusqu'à la fin de la passe des HUD portés :
+    quand ils sont affichés, il compte aussi les étiquettes du monde,
+    dessinées juste avant eux, et le flou des plaques de nom (0,017 ms en
+    démo avec `AURORA_DEMO_HUDS=1` et `AURORA_DEMO_TAGS=voice`) ;
   - ce que les faces transparentes dessinent : `blend` (faces),
     `blend_tris_k` (leurs triangles, en milliers), `blend_glow`,
     `blend_early` (part des images où leurs fragments invisibles sont

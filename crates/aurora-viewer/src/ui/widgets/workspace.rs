@@ -267,7 +267,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "appearance" | "appearance_item_profile" => "shirt-filled",
         "conversations" | "contacts" => "messages-filled",
         "chat_history" => "history",
-        "people" | "group_picker" | "contact_set_config" => "users-group",
+        "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",

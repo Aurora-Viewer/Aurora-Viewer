@@ -1712,6 +1712,7 @@ ui-perf-geometries = Geometries
 world-notifications-manage-estate-silently = Manage estate silently
 common-demo-hud = Demo HUD
 demo-hud-demo-hud = { "Demo HUD " }{ $point }
+demo-worn-item = Demo backpack
 demo-clothes = Clothes
 demo-place-nordheim-hall = Nordheim Hall
 demo-place-nordheim-hall-nordheim = Nordheim Hall, Nordheim
@@ -1802,6 +1803,36 @@ ui-land-general-script-info = Script info
 world-profiles-joined-today = Joined today
 keybinds-insert = Insert
 ui-context-inspect-2 = Inspect
+inspect-title = Inspect Objects
+inspect-col-name = Object Name
+inspect-col-description = Description
+inspect-col-owner = Owner
+inspect-col-creator = Creator
+inspect-col-faces = Faces
+inspect-col-vertices = Vertices
+inspect-col-triangles = Triangles
+inspect-col-tmem = TMem (KB)
+inspect-col-vram = VRAM (KB)
+inspect-col-created = Creation Date
+inspect-date = { $year }-{ $month }-{ $day } { $hour }:{ $minute }
+inspect-empty = Nothing to inspect.
+inspect-group-owner = [{ $name }] (group)
+inspect-owner-profile = See Owner Profile…
+inspect-owner-profile-tip = Profile of the highlighted object's owner
+inspect-creator-profile = See Creator Profile…
+inspect-creator-profile-tip = Profile of the highlighted object's original creator
+inspect-options = Columns shown
+inspect-totals = Total stats
+inspect-totals-objects = { $objects ->
+    [one] { $objects } object
+   *[other] { $objects } objects
+    }, { $prims ->
+    [one] { $prims } prim
+   *[other] { $prims } prims
+    }
+inspect-totals-visible = Visible faces
+inspect-totals-complexity = Complexity
+inspect-totals-textures = Textures
 ui-login-installed = Installed
 world-inventory-demo-instructions = Instructions
 build-ui-features-intensity = Intensity
@@ -1952,7 +1983,6 @@ world-inventory-actions-the-clipboard-is-empty-or-the-folder-is-protected = The 
 build-ui-object-the-clipboard-does-not-contain-a-vector-x-y = The clipboard does not contain a vector <x, y, z>.
 build-ui-general-next-owner = Next owner:
 build-ui-floaters-next-owner-can = Next owner can:
-app-group-profiles-are-not-available-in-aurora-yet = Group profiles are not available in Aurora yet.
 world-mod-could-not-save-the-profile = Could not save the profile ({ $reason }).
 ui-land-general-owner-contributes-when-deeding-land = Owner contributes when deeding land
 world-status-the-resident-you-messaged-has-enabled-aurora-viewer-s = The resident you messaged has enabled Aurora Viewer's mode that rejects all friendship requests. They do not want to be disturbed by friendship requests, but you can still send them an IM.
@@ -4430,34 +4460,11 @@ search-event-place-info = Show the place details
 ui-context-do-not-show-again = Do not show again
 ui-options-confirm-teleports = Confirm teleports
 ui-options-ask-before-teleporting-to-a-landmark-a-history-entry = Ask before teleporting to a landmark, a history entry or a teleport link
-inspect-title = Inspect Objects
-inspect-col-name = Object Name
-inspect-col-description = Description
-inspect-col-owner = Owner
-inspect-col-creator = Creator
-inspect-col-faces = Faces
-inspect-col-vertices = Vertices
-inspect-col-triangles = Triangles
-inspect-col-tmem = TMem (KB)
-inspect-col-vram = VRAM (KB)
-inspect-col-created = Creation Date
-inspect-date = { $year }-{ $month }-{ $day } { $hour }:{ $minute }
-inspect-empty = Nothing to inspect.
-inspect-group-owner = [{ $name }] (group)
-inspect-owner-profile = See Owner Profile…
-inspect-owner-profile-tip = Profile of the highlighted object's owner
-inspect-creator-profile = See Creator Profile…
-inspect-creator-profile-tip = Profile of the highlighted object's original creator
-inspect-options = Columns shown
-inspect-totals = Total stats
-inspect-totals-objects = { $objects ->
-    [one] { $objects } object
-   *[other] { $objects } objects
-    }, { $prims ->
-    [one] { $prims } prim
-   *[other] { $prims } prims
+ui-land-mod-objects-available = Available
+ui-land-mod-objects-capacity-used = { $percent } of the capacity used by the objects on all of this owner's land in the region
+ui-land-mod-objects-over-capacity = { $count ->
+    [one] { $count } object over the capacity, which will be returned
+   *[other] { $count } objects over the capacity, which will be returned
     }
-inspect-totals-visible = Visible faces
-inspect-totals-complexity = Complexity
-inspect-totals-textures = Textures
-demo-worn-item = Demo backpack
+ui-group-profile-title = Group Profile
+ui-group-profile-view = View the group's profile
