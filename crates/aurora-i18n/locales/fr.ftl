@@ -1,4 +1,37 @@
 language-name = Français
+login-accounts-title = Choisissez votre compte
+login-accounts-first-title = Ajoutez votre premier compte
+login-accounts-last-place = Dernier lieu visité
+login-accounts-place-after-visit = Disponible après votre première visite
+login-accounts-count = { $count ->
+    [0] Aucun compte enregistré
+    [one] { $count } compte enregistré
+   *[other] { $count } comptes enregistrés
+    }
+login-accounts-add = Ajouter un compte
+login-accounts-manage = Gérer les comptes
+login-accounts-manager-description = Retrouvez les informations de connexion mémorisées pour chaque compte.
+login-accounts-reorder = Glissez les comptes pour changer leur ordre sur l’écran de connexion.
+login-accounts-reorder-failed = L’ordre des comptes n’a pas pu être enregistré. Réessayez.
+login-accounts-search = Rechercher par compte, grille ou lieu de départ
+login-accounts-no-results = Aucun compte correspondant
+login-accounts-start-summary = Départ : { $location }
+login-accounts-password-not-saved = Mot de passe non mémorisé
+login-accounts-mfa-saved = 2FA : mémorisation de 30 jours
+login-accounts-mfa-not-saved = 2FA : code à usage unique
+login-accounts-forget-mfa = Oublier le 2FA
+login-accounts-confirm-title = Confirmer cette action
+login-accounts-confirm-password = Oublier le mot de passe mémorisé de { $name } ? Il faudra le saisir à la prochaine connexion.
+login-accounts-confirm-mfa = Oublier l’autorisation 2FA de 30 jours de { $name } ? Un nouveau code sera demandé à la prochaine connexion.
+login-accounts-confirm-remove = Retirer { $name } de ce viewer et oublier son mot de passe et son autorisation 2FA mémorisés ?
+login-accounts-local-only = Ces actions concernent uniquement les comptes mémorisés dans ce viewer.
+login-accounts-remember-mfa = Retenir ce compte sur cet ordinateur pendant 30 jours
+login-accounts-mfa-once = Décoché : le code sert uniquement à cette connexion.
+login-accounts-remembered = Mot de passe mémorisé
+login-accounts-password-needed = Saisir le mot de passe
+login-accounts-forget-password = Oublier le mot de passe
+login-accounts-remove = Retirer le compte
+login-accounts-confirm = Cette action concerne uniquement { $name }. Confirmer ?
 
 import-title = Importer des assets
 import-open-inventory = Voir dans l’inventaire

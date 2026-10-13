@@ -33,7 +33,7 @@ fn log_stem() -> String {
     };
     match crate::cli::title_slug() {
         Some(slug) => format!("{base}-{slug}"),
-        None => base.to_string(),
+        None => format!("{base}-{}", std::process::id()),
     }
 }
 

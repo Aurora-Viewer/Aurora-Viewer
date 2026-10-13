@@ -465,6 +465,28 @@ The full list of switches (demo scenarios, captures, forced settings,
 diagnostics) and how to read the profiling output are in
 [docs/TESTING.md](docs/TESTING.md).
 
+
+Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
+
+Normal launches without a test title use a PID suffix (`aurora-<pid>.log`) so concurrent viewers do not overwrite each other's logs. Saved login accounts are kept separately from global preferences, with a grid and start location on each card. Each account/grid retains its own OS-stored password hash and optional 30-day MFA authorization. Leaving the MFA checkbox unchecked uses the code for the current login only. Cache entries and preference files are published atomically; every process uses its own temporary filename.
+
+With no saved accounts, a complete login form appears directly; once a profile exists, the separate Add account button opens that form. Saved cards contain grid/start selectors and a thumbnail of the last visited place, saved without the interface at logout or quit. Cards contain no password field: clicking a card or pressing Enter connects, with a compact password prompt and remember option when needed, followed by MFA if required. Left/Right select an account; with more than three profiles, the selection stays centred. With three or fewer profiles, the middle card is selected initially and cards keep their positions when the selection changes. The account manager shows portraits, grid/start information and remembered password/MFA preferences, with search and separate confirmed actions to forget a password, forget 2FA, or remove a saved account. Drag a row to reorder accounts: a floating preview and insertion marker show the destination, the list scrolls at its edges, and the order is saved for the login screen. Escape or dropping outside the list cancels the move; passwords, MFA and the selected identity stay intact.
+
+The account screen keeps the Version/News column on desktop windows, community links and the installed version along the bottom. Up to three complete cards align horizontally, with faded previews of neighbouring accounts when more exist. Cards and their images grow moderately on larger displays (at most 22%), with the Manage/Add actions directly below them. Narrow windows reduce the central capacity, show information through the News dialog and retain all footer links.
+
+With more than three accounts, hold the left mouse button on a card or in the space beside the cards and drag horizontally to rotate the carousel. Three or fewer accounts form a fixed row without arrows or dragging. Portraits, place images, names, card surfaces and Connect buttons allow dragging; a simple click still connects. Cards follow the pointer, coast according to release velocity and settle gently. Browsing loops and highlights the nearest central card; when inertia settles, that account becomes the selection without starting a connection or changing saved credentials. The wheel also browses over gaps and faded previews. Hovering gently lights a card without selecting or moving it. Grid/start menus and text-field selection keep their own interactions.
+
+Add/password/MFA and management dialogs share the login cards’ frosted Aurora glass, colors and window geometry. Opaque skins retain solid surfaces.
+
+Cards keep the normal pointer on hover. The viewer's grasping-hand cursor appears only during an active drag and clears on release, including while inertia continues. Fields and buttons retain their normal cursors.
+
+Selecting a card starts a brief fragment/centering effect and requests login during the animation. The chosen card remains visible over the Aurora background with the server status and progress replacing its Connect button. Successful authentication switches directly to region loading; a password/MFA/terms challenge returns to the corresponding form.
+
+Conversation history (plain text, one file per conversation) is in
+`%APPDATA%\Aurora\AuroraViewer\config\accounts\<account id>\chat_logs\<grid>\`;
+Preferences › Chat shows the folder, turns logging off and erases it. These
+files never leave the machine and are never attached to a bug report.
+
 ## Contributing
 
 This repository is worked on by humans together with AI agents, each agent on

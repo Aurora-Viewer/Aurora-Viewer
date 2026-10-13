@@ -155,6 +155,8 @@ pub struct Settings {
     pub window_maximized: bool,
     /// Random stable machine identifier (hashed before being sent).
     pub machine_id: String,
+    /// Legacy single-account authorization, read once for migration only.
+    #[serde(skip_serializing)]
     pub mfa_hash: String,
     pub font: String,
     pub font_scale: f32,
@@ -905,7 +907,7 @@ impl Settings {
         }
         match serde_json::to_vec_pretty(&copy) {
             Ok(b) => {
-                if let Err(e) = std::fs::write(Self::path(), b) {
+                if let Err(e) = crate::atomic_file::write(&Self::path(), &b) {
                     log::warn!("cannot save settings: {e}");
                 }
             }

@@ -10,11 +10,44 @@ use super::widgets::{self, ActionKind};
 use crate::settings::{GridChoice, Settings};
 use crate::theme::Palette;
 use egui::{Color32, Frame, Margin, RichText, Sense, Stroke, TextEdit, Vec2};
+mod carousel;
+mod chrome;
+mod credentials_form;
+mod derez;
+mod fade;
+mod layout;
+pub(crate) mod manager;
+mod manager_drag;
+pub(crate) mod motion;
 
 const REMEMBERED_PASSWORD_MASK: &str = "••••••••••••••••";
 
 #[derive(Default)]
 pub struct LoginForm {
+    pub accounts: Vec<crate::login_accounts::Account>,
+    pub accounts_loaded: bool,
+    pub remember_checked: bool,
+    pub remember_mfa: bool,
+    pub mfa_authorization: Option<crate::credentials::MfaAuthorization>,
+    pub mfa_for: Option<(String, String)>,
+    pub content_height: f32,
+    pub editing: bool,
+    pub adding: bool,
+    pub add_return: Option<(String, String)>,
+    pub places: crate::login_places::Cache,
+    pub managing: bool,
+    pub show_info: bool,
+    pub page: usize,
+    pub selection_shown_for: Option<(String, String)>,
+    pub pending_connect: Option<usize>,
+    pub pending_since: Option<f64>,
+    pub wheel_scroll: f32,
+    pub wheel_time: Option<f64>,
+    pub motion: motion::State,
+    pub manager: manager::State,
+    pub transition: Option<derez::Transition>,
+    pub portraits: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    pub portrait_rx: Option<crossbeam_channel::Receiver<(uuid::Uuid, egui::ColorImage)>>,
     pub password: String,
     pub mfa_token: String,
     pub show_mfa: bool,
@@ -108,6 +141,7 @@ fn field(
                 let resp = ui.add(
                     TextEdit::singleline(text)
                         .id(id)
+                        .interactive(ui.is_enabled())
                         .frame(egui::Frame::NONE)
                         .margin(Margin::ZERO)
                         .password(hidden)
@@ -173,10 +207,6 @@ fn link_button(ui: &mut egui::Ui, p: &Palette, icon: &str, name: &str, url: &str
     }
 }
 
-/// Share of the windows' opacity kept by the tint of a card: the pane lets
-/// the frosted sky through as much as an in-world window lets the scene.
-const CARD_TINT: f32 = 0.56;
-
 /// A strip whose color runs through `stops` (position 0..1, color) from left
 /// to right.
 fn strip(r: egui::Rect, stops: &[(f32, Color32)]) -> egui::Shape {
@@ -201,20 +231,31 @@ fn strip(r: egui::Rect, stops: &[(f32, Color32)]) -> egui::Shape {
 /// is for (`accent`) wears the brand line. An opaque skin (panel_alpha =
 /// 255) keeps its plain surface.
 fn card<R>(ui: &mut egui::Ui, p: &Palette, margin: i8, accent: bool, body: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+    card_hover(ui, p, margin, accent, 0.0, body)
+}
+
+fn card_hover<R>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    margin: i8,
+    accent: bool,
+    hover: f32,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
     let behind = (ui.painter().clone(), ui.painter().add(egui::Shape::Noop));
     let mut pane = None;
-    let response = widgets::overlay_frame(ui.ctx(), p)
-        .inner_margin(Margin::same(margin))
-        .show(ui, |ui| {
-            pane = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
-            body(ui)
-        });
+    let mut frame = widgets::overlay_frame(ui.ctx(), p);
+    frame.stroke.color = frame.stroke.color.lerp_to_gamma(p.violet_pale, hover * 0.7);
+    let response = frame.inner_margin(Margin::same(margin)).show(ui, |ui| {
+        pane = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
+        body(ui)
+    });
     if let Some((painter, slot)) = pane.filter(|_| p.panel_alpha < 255) {
         let ctx = ui.ctx();
         let outer = response.response.rect;
         // inside the border of the frame
         let rect = outer.shrink(1.0);
-        let strength = if accent { 1.0 } else { 0.6 };
+        let strength = if accent { 1.0 } else { 0.6 } + hover * 0.45;
         let lights = vec![
             super::aurora_bg::radial_glow_shape(
                 outer.left_top() + Vec2::new(outer.width() * 0.18, outer.height() * 0.12),
@@ -230,11 +271,7 @@ fn card<R>(ui: &mut egui::Ui, p: &Palette, margin: i8, accent: bool, body: impl 
             ),
         ];
         behind.0.set(behind.1, egui::Shape::Vec(lights.clone()));
-        let mut shapes = super::aurora_bg::frosted(p, ctx.content_rect(), ctx.input(|i| i.time) as f32);
-        shapes.extend(lights);
-        let alpha = (f32::from(p.panel_alpha) * CARD_TINT) as u8;
-        let tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), alpha);
-        shapes.push(egui::Shape::rect_filled(rect, 0.0, tint));
+        let mut shapes = super::aurora_bg::frosted_pane(p, ctx.content_rect(), ctx.input(|i| i.time) as f32, rect, lights);
         let top = |height: f32| egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), height));
         if accent {
             shapes.push(strip(top(2.0), &[(0.0, p.violet), (1.0, p.teal)]));
@@ -386,6 +423,9 @@ pub fn show(
     info: &LoginInfo,
     progress: Option<(&str, f32)>,
 ) -> LoginAction {
+    if form.accounts_loaded {
+        return carousel::show(ui, p, icons, logo, settings, form, info, progress);
+    }
     draw_background(ui, p);
     let mut action = LoginAction::None;
     let ctx = ui.ctx().clone();
@@ -490,6 +530,7 @@ pub fn show(
                             &mut form.mfa_token,
                             None,
                         ));
+                        widgets::checkbox(ui, p, &mut form.remember_mfa, aurora_i18n::tr!("login-accounts-remember-mfa"));
                     }
 
                     ui.add_space(6.0);
@@ -666,27 +707,9 @@ pub fn show(
 
     // ---- version + news (right)
     if wide {
-        // the news stand beside the login card, on its line and of its
-        // height; the version sits on top of them
-        let col_w = 330.0;
-        let left = screen.right() - 48.0 - col_w;
-        egui::Area::new(egui::Id::new("login_news"))
-            .fixed_pos(egui::pos2(left, login_card.top()))
-            .show(&ctx, |ui| {
-                ui.set_width(col_w);
-                // (a card too tall to be moved up enough: the news stop
-                // above the line of buttons)
-                news_panel(ui, p, icons, info, login_card.height().min(lowest - login_card.top()));
-            });
-        egui::Area::new(egui::Id::new("login_version"))
-            .pivot(egui::Align2::LEFT_BOTTOM)
-            .fixed_pos(egui::pos2(left, login_card.top() - 14.0))
-            .show(&ctx, |ui| {
-                ui.set_width(col_w);
-                if version_panel(ui, p, icons, info) {
-                    action = LoginAction::CheckUpdates;
-                }
-            });
+        if chrome::sidebar(&ctx, p, icons, info, login_card, 330.0, lowest) {
+            action = LoginAction::CheckUpdates;
+        }
     } else if info.can_check_updates {
         egui::Area::new(egui::Id::new("login_check_updates"))
             .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-20.0, 20.0))
@@ -700,47 +723,10 @@ pub fn show(
             });
     }
 
-    // ---- community links (bottom left)
-    egui::Area::new(egui::Id::new("login_links"))
-        .anchor(egui::Align2::LEFT_BOTTOM, Vec2::new(32.0, -BAR_MARGIN))
-        .show(&ctx, |ui| {
-            ui.label(
-                RichText::new(aurora_i18n::tr!("ui-login-join-the-community"))
-                    .size(11.5)
-                    .color(p.muted),
-            );
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                link_button(ui, p, "brand-discord-filled", "Discord", crate::links::DISCORD);
-                link_button(ui, p, "brand-github-filled", "GitHub", crate::links::GITHUB);
-                link_button(ui, p, "world-filled", aurora_i18n::tr!("ui-login-website"), crate::links::WEBSITE);
-                let label = aurora_i18n::tr!("bug-title");
-                if widgets::action_button(ui, p, "bug-filled", label, ActionKind::Caution, Vec2::new(0.0, BAR_BUTTON)).clicked() {
-                    action = LoginAction::ReportBug;
-                }
-            });
-        });
-
-    // ---- version + quit (bottom right)
-    egui::Area::new(egui::Id::new("login_quit"))
-        .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-32.0, -BAR_MARGIN))
-        .show(&ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 14.0;
-                // the version stands on the line of the buttons' labels
-                let version = aurora_i18n::tr!("ui-login-aurora-viewer-v", value0 = aurora_version::version().to_string());
-                let version = ui.painter().layout_no_wrap(version, egui::FontId::proportional(11.5), p.muted_dim);
-                let (line, _) = ui.allocate_exact_size(Vec2::new(version.size().x, BAR_BUTTON), Sense::hover());
-                // on the line box, like the labels of the buttons beside it
-                let at = egui::pos2(line.left(), line.center().y - version.size().y / 2.0).round();
-                ui.painter().galley(at, version, p.muted_dim);
-                let label = aurora_i18n::tr!("common-quit");
-                if widgets::action_button(ui, p, "power", label, ActionKind::FlatDanger, Vec2::new(0.0, BAR_BUTTON)).clicked() {
-                    action = LoginAction::Quit;
-                }
-            });
-        });
+    let chrome_action = chrome::footer(&ctx, p, icons, info, wide, form);
+    if !matches!(chrome_action, LoginAction::None) {
+        action = chrome_action;
+    }
     action
 }
 

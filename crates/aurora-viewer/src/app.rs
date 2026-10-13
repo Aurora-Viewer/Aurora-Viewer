@@ -256,6 +256,7 @@ pub struct App {
     /// Capture the 3D view on the next frame; a capture is on its way.
     want_scene_capture: bool,
     scene_capture_pending: bool,
+    scene_capture_place: Option<(crate::login_accounts::Account, String)>,
     /// Teleport screen: start, end (fade out), destination.
     tp_overlay: Option<TpOverlay>,
     was_teleporting: bool,
@@ -595,6 +596,7 @@ impl App {
             backdrop,
             want_scene_capture: false,
             scene_capture_pending: false,
+            scene_capture_place: None,
             tp_overlay: None,
             was_teleporting: false,
             demo_tp_start: None,
@@ -1135,7 +1137,13 @@ impl App {
 
     fn start_login(&mut self) {
         if self.demo {
-            self.login_form.error = Some(aurora_i18n::tr!("app-demo-mode-no-grid-connection").into());
+            if std::env::var("AURORA_DEMO_LOGIN").is_ok_and(|mode| matches!(mode.as_str(), "derez" | "connecting")) {
+                self.login_form.busy = true;
+                self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
+            } else {
+                self.login_form.transition = None;
+                self.login_form.error = Some(aurora_i18n::tr!("app-demo-mode-no-grid-connection").into());
+            }
             return;
         }
         let start = match self.settings.start_location.as_str() {
@@ -1162,7 +1170,12 @@ impl App {
             agree_to_tos: self.login_form.agree_tos,
             read_critical: self.login_form.agree_tos,
             mfa_token: self.login_form.mfa_token.trim().to_owned(),
-            mfa_hash: self.settings.mfa_hash.clone(),
+            mfa_hash: self
+                .login_form
+                .mfa_authorization
+                .as_ref()
+                .filter(|authorization| self.login_form.remember_mfa && authorization.valid_at(crate::credentials::now()))
+                .map_or_else(String::new, |authorization| authorization.hash.clone()),
             mac,
             id0,
         };
@@ -1236,6 +1249,8 @@ impl App {
         self.interactions = Default::default();
         self.screen = Screen::Login;
         self.login_form.busy = false;
+        self.login_form.transition = None;
+        self.login_form.pending_connect = None;
         self.login_form.focused = false;
         self.login_form.error = error;
         self.login_progress = None;
@@ -1479,13 +1494,23 @@ impl App {
                 bad_credentials,
             } => {
                 self.login_form.busy = false;
+                self.login_form.transition = None;
                 self.login_form.focused = false;
                 self.login_progress = None;
                 // wrong name / password: do not try the remembered one again
                 if bad_credentials && self.login_form.password.is_empty() && self.login_form.stored.take().is_some() {
                     crate::credentials::forget(&self.settings.login_uri(), &self.settings.username);
+                    let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
+                    if let Some(mut account) = self.login_form.accounts.iter().find(|account| account.key() == key).cloned() {
+                        account.remember_password = false;
+                        self.login_form.accounts = crate::login_accounts::save(account);
+                    }
                 }
                 if mfa_required {
+                    // A server challenge invalidates this account's authorization only.
+                    self.login_form.mfa_authorization = None;
+                    self.login_form.mfa_token.clear();
+                    crate::credentials::forget_mfa(&self.settings.login_uri(), &self.settings.username);
                     self.login_form.show_mfa = true;
                     self.login_form.error = Some(aurora_i18n::tr!("app-enter-the-code-from-your-authenticator-app").into());
                 } else if tos_required {
@@ -1496,6 +1521,11 @@ impl App {
             }
             NetEvent::LoggedIn(l) => {
                 self.net_profile.reset();
+                self.login_form.transition = None;
+                self.login_form.busy = false;
+                self.login_form.adding = false;
+                self.login_form.add_return = None;
+                self.login_form.editing = false;
                 // the demo's teleport history: several days, never saved
                 if self.demo {
                     self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
@@ -1524,6 +1554,23 @@ impl App {
                 } else {
                     crate::credentials::forget(&uri, &user);
                 }
+                if !self.demo && self.settings.remember_username {
+                    self.login_form.accounts = crate::login_accounts::save(crate::login_accounts::Account::from_settings(
+                        &self.settings,
+                        self.login_form.remember_mfa,
+                        Some(l.agent_id),
+                    ));
+                }
+                if !self.demo {
+                    // An explicit MFA opt-in is independent of remembering the login name/password.
+                    let previous = self
+                        .login_form
+                        .mfa_authorization
+                        .as_ref()
+                        .filter(|_| self.login_form.mfa_token.is_empty());
+                    self.login_form.mfa_authorization =
+                        crate::credentials::complete_mfa(&uri, &user, self.login_form.remember_mfa, l.mfa_hash.as_deref(), previous);
+                }
                 // the typed password is not kept in memory
                 self.login_form.password.clear();
                 self.login_form.stored = None;
@@ -1531,10 +1578,7 @@ impl App {
                 self.login_form.password.clear();
                 self.login_form.mfa_token.clear();
                 self.login_form.agree_tos = false;
-                if let Some(h) = &l.mfa_hash {
-                    self.settings.mfa_hash = h.clone();
-                    self.settings.save();
-                }
+                self.settings.mfa_hash.clear();
                 if let Some(path) = self.name_cache_path() {
                     self.world.social.avatar_names.load(&path);
                 }
@@ -2612,9 +2656,7 @@ impl App {
         }
         if self.in_world() && !self.demo {
             self.record_inventory_logout();
-            if self.settings.loading_backdrop {
-                self.want_scene_capture = true;
-            }
+            self.want_scene_capture = true;
             self.net.send(NetCommand::Logout);
         }
     }
@@ -3564,6 +3606,9 @@ impl App {
             self.world.social.want_name(id);
         }
         let mut wanted: Vec<uuid::Uuid> = self.chat_ui.wanted_pics.drain().collect();
+        if !self.demo && !self.world.agent_id.is_nil() {
+            wanted.push(self.world.agent_id);
+        }
         wanted.extend(self.profile_ui.wanted_pics.drain());
         wanted.extend(self.contacts_ui.wanted_pics.drain());
         wanted.extend(self.plates.wanted_pics.drain());
@@ -3591,6 +3636,25 @@ impl App {
                 let t = self.egui_ctx.load_texture(format!("pic-{agent}"), ci, egui::TextureOptions::LINEAR);
                 self.avatar_pic_images.insert(image, t.clone());
                 self.avatar_pics.insert(agent, t);
+                if agent == self.world.agent_id && !self.demo {
+                    if let Some(texture) = self.avatar_pics.get(&agent) {
+                        self.login_form.portraits.insert(agent, texture.clone());
+                    }
+                    let path = crate::settings::account_dir(&agent).join("login_portrait.png");
+                    rayon::spawn(move || {
+                        let Some(image) = image::RgbaImage::from_raw(w, h, rgba) else {
+                            return;
+                        };
+                        let image = image::DynamicImage::ImageRgba8(image).resize(512, 512, image::imageops::FilterType::Triangle);
+                        let mut bytes = std::io::Cursor::new(Vec::new());
+                        if image.write_to(&mut bytes, image::ImageFormat::Png).is_ok() {
+                            if let Some(parent) = path.parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            let _ = crate::atomic_file::write(&path, &bytes.into_inner());
+                        }
+                    });
+                }
             }
         }
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
@@ -4659,6 +4723,10 @@ impl App {
         }
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         self.demo_script_input(&mut raw);
+        if self.demo && self.capture.is_some() {
+            raw.events.extend(self.login_form.motion.demo_events(self.frame_count));
+            raw.events.extend(self.login_form.manager.demo_events(self.frame_count));
+        }
         // Inline-edit captures simulate logical focus without activating the
         // native window or taking the user's keyboard (with_active(false)).
         if self.demo
@@ -4989,6 +5057,13 @@ impl App {
             full.platform_output.cursor_icon = egui::CursorIcon::None;
             full.platform_output.cursor_image = None;
         }
+        if matches!(self.screen, Screen::Login)
+            && (self.login_form.motion.is_dragging() || self.login_form.manager.is_dragging())
+            && full.platform_output.cursor_icon == egui::CursorIcon::Grabbing
+        {
+            // Windows substitutes arrows for the system Grabbing cursor.
+            full.platform_output.cursor_image = self.cursors.hud_drag();
+        }
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
             log::info!(
                 "demo cursor output: icon={:?}, bitmap={}",
@@ -5048,11 +5123,23 @@ impl App {
             }
         }
         if self.want_scene_capture
+            && !self.scene_capture_pending
             && self.inventory_images.capturing.is_none()
             && !self.inventory_images.auto_capture_pending
             && !self.bug_report.capture_pending
         {
             self.want_scene_capture = false;
+            self.scene_capture_place = None;
+            if !self.demo && matches!(self.screen, Screen::World) {
+                let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
+                self.scene_capture_place = self
+                    .login_form
+                    .accounts
+                    .iter()
+                    .find(|account| account.key() == key && account.agent == Some(self.world.agent_id))
+                    .cloned()
+                    .map(|account| (account, self.world.region_name()));
+            }
             gfx.renderer.capture_scene = true;
             self.scene_capture_pending = true;
         }
@@ -5174,8 +5261,14 @@ impl App {
             && let Some((w, h, px)) = gfx.renderer.captured.take()
         {
             self.scene_capture_pending = false;
-            let wait = self.quit_at.is_some();
-            self.backdrop.set_capture(w, h, px, wait);
+            let wait = self.quit_at.is_some() || self.exit_prompt.open;
+            let pixels = std::sync::Arc::new(px);
+            if let Some((account, region)) = self.scene_capture_place.take() {
+                self.login_form.places.capture(account, region, w, h, pixels.clone(), wait);
+            }
+            if self.settings.loading_backdrop {
+                self.backdrop.set_capture(w, h, pixels, wait);
+            }
         }
         if let Some((files, exit)) = &mut self.capture {
             if !self.inventory_images.auto_capture_pending
@@ -5970,9 +6063,7 @@ impl App {
                 self.flush_build();
             }
             BarAction::Logout => {
-                if self.settings.loading_backdrop {
-                    self.want_scene_capture = true;
-                }
+                self.want_scene_capture = true;
                 self.net.send(NetCommand::Logout);
                 self.world.system_message(aurora_i18n::tr!("app-logging-out"));
             }
@@ -6122,24 +6213,145 @@ impl App {
     /// switched off.
     fn sync_remembered_password(&mut self) {
         let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
+        if !self.login_form.accounts_loaded && !self.demo {
+            self.login_form.accounts = crate::login_accounts::load();
+            if !crate::settings::config_dir().join("login_accounts.json").exists()
+                && self.settings.remember_username
+                && !key.1.is_empty()
+                && !self.login_form.accounts.iter().any(|a| a.key() == key)
+            {
+                self.login_form.accounts =
+                    crate::login_accounts::save(crate::login_accounts::Account::from_settings(&self.settings, false, None));
+            }
+            self.login_form.accounts_loaded = true;
+            self.login_form.places.load(&self.login_form.accounts);
+            if !self.login_form.editing
+                && let Some(account) = self.login_form.accounts.iter().find(|account| account.key() == key)
+            {
+                account.apply(&mut self.settings);
+            }
+            let (tx, rx) = crossbeam_channel::unbounded();
+            let portraits: Vec<_> = self
+                .login_form
+                .accounts
+                .iter()
+                .filter_map(|a| a.agent)
+                .filter(|agent| !self.login_form.portraits.contains_key(agent))
+                .collect();
+            self.login_form.portrait_rx = Some(rx);
+            rayon::spawn(move || {
+                for agent in portraits {
+                    let path = crate::settings::account_dir(&agent).join("login_portrait.png");
+                    let Ok(bytes) = std::fs::read(path) else {
+                        continue;
+                    };
+                    if bytes.len() > 4 * 1024 * 1024 {
+                        continue;
+                    }
+                    let Ok(mut reader) = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format() else {
+                        continue;
+                    };
+                    let mut limits = image::Limits::default();
+                    limits.max_image_width = Some(512);
+                    limits.max_image_height = Some(512);
+                    limits.max_alloc = Some(4 * 1024 * 1024);
+                    reader.limits(limits);
+                    let Ok(image) = reader.decode() else {
+                        continue;
+                    };
+                    let rgba = image.to_rgba8();
+                    let image = egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
+                    let _ = tx.send((agent, image));
+                }
+            });
+        }
+        if let Some(rx) = &self.login_form.portrait_rx {
+            for (agent, image) in rx.try_iter() {
+                self.login_form.portraits.insert(
+                    agent,
+                    self.egui_ctx
+                        .load_texture(format!("login-portrait-{agent}"), image, egui::TextureOptions::LINEAR),
+                );
+            }
+        }
+        self.sync_remembered_mfa(&key);
+        // Derez snapshots retain texture IDs until the transition completes.
+        if self.login_form.transition.is_none() {
+            self.login_form.places.poll(&self.egui_ctx, &mut self.login_form.accounts);
+        }
         if self.demo {
+            if self.login_form.accounts_loaded {
+                self.login_form.stored = self.settings.remember_password.then(|| "demo-login-marker".into());
+                self.login_form.stored_for = Some(key);
+                return;
+            }
             // The login demo uses a synthetic marker and never accesses the OS store.
             if !self.settings.remember_password || self.login_form.stored_for.as_ref() != Some(&key) {
                 self.login_form.stored = None;
             }
             return;
         }
+        let was_checked = self.login_form.remember_checked;
+        let changed = self.login_form.stored_for.as_ref() != Some(&key);
+        if changed {
+            if self.login_form.stored_for.is_some() {
+                self.login_form.password.clear();
+                self.login_form.mfa_token.clear();
+                self.settings.mfa_hash.clear();
+            }
+            self.login_form.stored = None;
+            if !self.login_form.editing
+                && let Some(account) = self.login_form.accounts.iter().find(|a| a.key() == key)
+            {
+                self.settings.remember_password = account.remember_password;
+            }
+            self.login_form.stored_for = Some(key.clone());
+        }
+        self.login_form.remember_checked = self.settings.remember_password;
         if !self.settings.remember_password {
             if self.login_form.stored.take().is_some() {
                 crate::credentials::forget(&key.0, &key.1);
+                if let Some(mut account) = self.login_form.accounts.iter().find(|a| a.key() == key).cloned() {
+                    account.remember_password = false;
+                    self.login_form.accounts = crate::login_accounts::save(account);
+                }
             }
-            self.login_form.stored_for = None;
             return;
         }
-        if self.login_form.stored_for.as_ref() != Some(&key) {
+        if changed || !was_checked {
             self.login_form.stored = crate::credentials::load(&key.0, &key.1);
             self.login_form.stored_for = Some(key);
         }
+    }
+
+    fn sync_remembered_mfa(&mut self, key: &(String, String)) {
+        if self.demo || self.login_form.mfa_for.as_ref() == Some(key) {
+            return;
+        }
+        self.login_form.mfa_authorization = crate::credentials::load_mfa(&key.0, &key.1);
+        // Migrate the old global value only for the user/grid it was saved with.
+        if !self.settings.mfa_hash.is_empty() && !key.1.is_empty() {
+            if self.login_form.mfa_authorization.is_none() {
+                let authorization = crate::credentials::MfaAuthorization::renewed(
+                    std::mem::take(&mut self.settings.mfa_hash),
+                    None,
+                    crate::credentials::now(),
+                );
+                crate::credentials::store_mfa(&key.0, &key.1, &authorization);
+                self.login_form.mfa_authorization = Some(authorization);
+            }
+            self.settings.mfa_hash.clear();
+            self.settings.save();
+        }
+        self.login_form.mfa_token.clear();
+        self.login_form.remember_mfa = self.login_form.mfa_authorization.is_some()
+            || self
+                .login_form
+                .accounts
+                .iter()
+                .find(|account| account.key() == *key)
+                .is_some_and(|account| account.remember_mfa);
+        self.login_form.mfa_for = Some(key.clone());
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
@@ -7412,6 +7624,97 @@ impl ApplicationHandler for App {
                 return;
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_LOGIN") {
+                if matches!(
+                    mode.as_str(),
+                    "cards"
+                        | "cards2"
+                        | "cards8"
+                        | "drag"
+                        | "drag2"
+                        | "drag-card"
+                        | "drag-card2"
+                        | "hover"
+                        | "wheel-gap"
+                        | "arrows"
+                        | "static-arrows"
+                        | "derez"
+                        | "mfa"
+                        | "manage"
+                        | "manage8"
+                        | "manage-drag"
+                        | "manage-confirm"
+                        | "first"
+                        | "first-mfa"
+                        | "add"
+                        | "password"
+                        | "connecting"
+                        | "first-connecting"
+                        | "add-connecting"
+                ) {
+                    self.login_form.accounts = (0..match mode.as_str() {
+                        "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
+                        | "add-connecting" => 2,
+                        "first" | "first-mfa" | "first-connecting" => 0,
+                        "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
+                        _ => 3,
+                    })
+                        .map(|i| crate::login_accounts::Account {
+                            username: format!("Example {}", i + 1),
+                            uri: self.settings.login_uri(),
+                            remember_password: !mode.starts_with("manage") || i % 3 != 2,
+                            remember_mfa: mode.starts_with("manage") && i % 2 == 0,
+                            start_location: if i % 2 == 0 { "last" } else { "home" }.into(),
+                            start_region: String::new(),
+                            agent: None,
+                            last_place: None,
+                        })
+                        .collect();
+                    self.login_form.accounts_loaded = true;
+                    self.login_form
+                        .places
+                        .preview(&self.egui_ctx, &self.palette, &mut self.login_form.accounts);
+                    self.settings.username = self
+                        .login_form
+                        .accounts
+                        .first()
+                        .map_or_else(String::new, |account| account.username.clone());
+                    self.settings.remember_password = !self.login_form.accounts.is_empty();
+                    if matches!(mode.as_str(), "first" | "first-mfa" | "add" | "password") {
+                        self.settings.remember_password = false;
+                        self.login_form.editing = true;
+                        self.login_form.adding = mode == "add";
+                        if mode == "add" {
+                            self.settings.username.clear();
+                        }
+                        if mode == "first-mfa" {
+                            self.settings.username = "Example new account".into();
+                            self.login_form.show_mfa = true;
+                        }
+                        if mode == "password" {
+                            self.login_form.accounts[0].remember_password = false;
+                        }
+                    }
+                    if mode.ends_with("-connecting") {
+                        self.settings.username = "Example new account".into();
+                        self.settings.remember_password = false;
+                        self.login_form.busy = true;
+                        self.login_form.adding = mode == "add-connecting";
+                        self.login_form.editing = true;
+                        self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
+                    }
+                    if matches!(mode.as_str(), "derez" | "connecting") {
+                        self.login_form.pending_connect = Some(0);
+                    } else if mode == "mfa" {
+                        self.login_form.editing = true;
+                        self.login_form.show_mfa = true;
+                    } else if mode.starts_with("manage") {
+                        self.login_form.managing = true;
+                        if mode == "manage-confirm" {
+                            self.login_form.manager.preview_remove(&self.login_form.accounts[0]);
+                        }
+                    }
+                    return;
+                }
                 self.settings.username = "Demo Resident".into();
                 self.settings.remember_username = true;
                 self.settings.remember_password = mode == "remembered";
@@ -8302,7 +8605,20 @@ impl ApplicationHandler for App {
                     self.build.reset_selection_wheel();
                 }
             }
-            WindowEvent::Focused(true) => self.focused = true,
+            WindowEvent::Focused(true) => {
+                self.focused = true;
+                if !self.demo
+                    && matches!(self.screen, Screen::Login)
+                    && !self.login_form.editing
+                    && !self.login_form.busy
+                    && self.login_form.transition.is_none()
+                {
+                    self.login_form.accounts_loaded = false;
+                    self.login_form.mfa_for = None;
+                    self.login_form.stored = None;
+                    self.login_form.stored_for = None;
+                }
+            }
             WindowEvent::Focused(false) => {
                 self.numeric_drag.cancel();
                 self.build.reset_selection_wheel();

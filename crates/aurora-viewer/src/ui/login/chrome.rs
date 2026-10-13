@@ -1,0 +1,122 @@
+//! Shared login information, community links and version footer.
+use super::{LoginAction, LoginForm};
+use crate::theme::Palette;
+use crate::ui::{
+    icons::Icons,
+    news::LoginInfo,
+    widgets::{self, ActionKind},
+};
+use egui::{Context, Id, Rect, RichText, Vec2};
+
+pub fn sidebar(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, card: Rect, width: f32, lowest: f32) -> bool {
+    let left = ctx.content_rect().right() - 32.0 - width;
+    egui::Area::new(Id::new("login_news"))
+        .fixed_pos(egui::pos2(left, card.top()))
+        .show(ctx, |ui| {
+            ui.set_width(width);
+            super::news_panel(ui, p, icons, info, card.height().min(lowest - card.top()).max(120.0));
+        });
+    egui::Area::new(Id::new("login_version"))
+        .pivot(egui::Align2::LEFT_BOTTOM)
+        .fixed_pos(egui::pos2(left, card.top() - 14.0))
+        .show(ctx, |ui| {
+            ui.set_width(width);
+            super::version_panel(ui, p, icons, info)
+        })
+        .inner
+}
+
+fn version(ui: &mut egui::Ui, p: &Palette) {
+    let label = aurora_i18n::tr!("ui-login-aurora-viewer-v", value0 = aurora_version::version().to_string());
+    ui.label(RichText::new(label).size(11.5).color(p.muted_dim));
+}
+
+pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sidebar_visible: bool, form: &mut LoginForm) -> LoginAction {
+    let mut action = LoginAction::None;
+    let screen = ctx.content_rect();
+    egui::Area::new(Id::new("login_links"))
+        .anchor(egui::Align2::LEFT_BOTTOM, Vec2::new(25.0, -20.0))
+        .show(ctx, |ui| {
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-login-join-the-community"))
+                    .size(11.5)
+                    .color(p.muted),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                super::link_button(ui, p, "brand-discord-filled", "Discord", crate::links::DISCORD);
+                super::link_button(ui, p, "brand-github-filled", "GitHub", crate::links::GITHUB);
+                super::link_button(ui, p, "world-filled", aurora_i18n::tr!("ui-login-website"), crate::links::WEBSITE);
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "bug-filled",
+                    aurora_i18n::tr!("bug-title"),
+                    ActionKind::Caution,
+                    Vec2::new(0.0, 30.0),
+                )
+                .clicked()
+                {
+                    action = LoginAction::ReportBug;
+                }
+                if !sidebar_visible
+                    && widgets::action_button(
+                        ui,
+                        p,
+                        "article-filled",
+                        aurora_i18n::tr!("ui-login-news"),
+                        ActionKind::Flat,
+                        Vec2::new(0.0, 30.0),
+                    )
+                    .clicked()
+                {
+                    form.show_info = true;
+                }
+            });
+        });
+    if screen.width() < 1100.0 {
+        egui::Area::new(Id::new("login_footer_version"))
+            .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-25.0, -59.0))
+            .show(ctx, |ui| version(ui, p));
+    }
+    egui::Area::new(Id::new("login_quit"))
+        .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-25.0, -20.0))
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
+                if screen.width() >= 1100.0 {
+                    version(ui, p);
+                }
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "power",
+                    aurora_i18n::tr!("common-quit"),
+                    ActionKind::FlatDanger,
+                    Vec2::new(0.0, 30.0),
+                )
+                .clicked()
+                {
+                    action = LoginAction::Quit;
+                }
+            });
+        });
+    if form.show_info {
+        let response = widgets::Modal::new(Id::new("accounts_news_dialog")).show(ctx, |ui| {
+            ui.set_width(340.0);
+            if super::version_panel(ui, p, icons, info) {
+                action = LoginAction::CheckUpdates;
+            }
+            ui.add_space(8.0);
+            super::news_panel(ui, p, icons, info, 235.0);
+            if ui.button(aurora_i18n::tr!("common-close")).clicked() {
+                form.show_info = false;
+            }
+        });
+        if response.should_close() {
+            form.show_info = false;
+        }
+    }
+    action
+}

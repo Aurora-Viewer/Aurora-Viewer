@@ -346,34 +346,50 @@ pub(crate) fn overlay<R>(
 }
 
 /// Modal dialogs use the same surface and spacing as regular windows.
-pub struct Modal(egui::Modal);
+pub struct Modal(egui::Modal, Option<Palette>);
 
 impl Modal {
     pub fn new(id: egui::Id) -> Self {
-        Self(egui::Modal::new(id))
+        Self(egui::Modal::new(id), None)
     }
     /// For a modal that blurs what is behind it (`aurora_render::blurred_backdrop`)
     /// instead of dimming it.
     pub fn transparent_backdrop(self) -> Self {
-        Self(self.0.backdrop_color(Color32::TRANSPARENT))
+        Self(self.0.backdrop_color(Color32::TRANSPARENT), self.1)
+    }
+
+    /// Login glass includes the sky and account cards, drawn below the modal.
+    pub fn login_surface(mut self, p: &Palette) -> Self {
+        self.1 = Some(*p);
+        if p.panel_alpha < 255 {
+            self.0 = self.0.backdrop_color(Color32::TRANSPARENT);
+        }
+        self
     }
     pub fn show<T>(self, ctx: &egui::Context, body: impl FnOnce(&mut egui::Ui) -> T) -> egui::ModalResponse<T> {
         // Theme supplies skin colors and radii; per-modal frames remain local.
+        let mut frame = egui::Frame::popup(&ctx.global_style())
+            .inner_margin(18)
+            .corner_radius(ctx.global_style().visuals.window_corner_radius);
+        if let Some(p) = self.1.filter(|p| p.panel_alpha < 255) {
+            // The world sampler cannot include egui cards. The existing modal
+            // backdrop blurs lower UI layers on the GPU before drawing this frame.
+            aurora_render::blurred_backdrop(ctx, self.0.area.layer());
+            frame.fill = Color32::from_rgba_unmultiplied(
+                p.panel.r(),
+                p.panel.g(),
+                p.panel.b(),
+                (f32::from(p.panel_alpha) * super::super::aurora_bg::LOGIN_TINT) as u8,
+            );
+        }
         let mut glass_slot = None;
-        let response = self
-            .0
-            .frame(
-                egui::Frame::popup(&ctx.global_style())
-                    .inner_margin(18)
-                    .corner_radius(ctx.global_style().visuals.window_corner_radius),
-            )
-            .show(ctx, |ui| {
-                glass_slot = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
-                body(ui)
-            });
+        let response = self.0.frame(frame).show(ctx, |ui| {
+            glass_slot = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
+            body(ui)
+        });
         if let Some((painter, slot)) = glass_slot {
             let style = ctx.global_style();
-            if style.visuals.window_fill.a() < 255 {
+            if self.1.is_none() && style.visuals.window_fill.a() < 255 {
                 painter.set(
                     slot,
                     aurora_render::glass_panel(
@@ -391,6 +407,68 @@ impl Modal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_glass_blurs_lower_layers_before_the_translucent_frame_and_skips_opaque_skins() {
+        fn has_fill(shape: &egui::Shape, color: Color32) -> bool {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().any(|shape| has_fill(shape, color)),
+                egui::Shape::Rect(rect) => rect.fill == color && rect.rect.width() > 300.0 && rect.stroke.width > 0.0,
+                _ => false,
+            }
+        }
+        for alpha in [230, 255] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme {
+                panel_alpha: alpha,
+                ..Default::default()
+            };
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let mut output = None;
+            for frame in 0..8 {
+                output = Some(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 720.0))),
+                        time: Some(frame as f64 / 30.0),
+                        ..Default::default()
+                    },
+                    |_ui| {
+                        Modal::new(egui::Id::new("synthetic_login_glass"))
+                            .login_surface(&p)
+                            .show(&ctx, |ui| {
+                                ui.set_width(340.0);
+                                ui.label("Synthetic dialog");
+                            });
+                    },
+                ));
+            }
+            let output = output.unwrap();
+            let markers = output
+                .shapes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, source)| {
+                    matches!(&source.shape, egui::Shape::Callback(callback) if callback.rect == ctx.content_rect()).then_some(index)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(markers.len(), usize::from(alpha < 255));
+            let tint_alpha = if alpha < 255 {
+                (f32::from(alpha) * super::super::super::aurora_bg::LOGIN_TINT) as u8
+            } else {
+                255
+            };
+            let tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), tint_alpha);
+            let frame = output
+                .shapes
+                .iter()
+                .position(|source| has_fill(&source.shape, tint))
+                .expect("themed modal frame");
+            if let Some(marker) = markers.first() {
+                assert!(*marker < frame, "the modal frame must stay above the blur boundary");
+            }
+        }
+    }
 
     fn frame(ctx: &egui::Context, events: Vec<egui::Event>, mut body: impl FnMut(&mut egui::Ui)) {
         let mut output = ctx.run_ui(

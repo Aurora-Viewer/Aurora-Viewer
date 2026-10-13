@@ -18,7 +18,7 @@ static WRITTEN: AtomicU64 = AtomicU64::new(0);
 
 /// Write a cache file (counted towards the size limit).
 pub fn write(path: impl AsRef<Path>, data: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, data)?;
+    crate::atomic_file::write(path.as_ref(), data)?;
     WRITTEN.fetch_add(data.len() as u64, Ordering::Relaxed);
     Ok(())
 }
@@ -59,7 +59,7 @@ fn walk(dir: &Path, out: &mut Vec<(PathBuf, u64, SystemTime)>) {
         };
         if md.is_dir() {
             walk(&e.path(), out);
-        } else {
+        } else if !e.file_name().to_string_lossy().ends_with(".tmp") {
             out.push((e.path(), md.len(), md.modified().unwrap_or(SystemTime::UNIX_EPOCH)));
         }
     }

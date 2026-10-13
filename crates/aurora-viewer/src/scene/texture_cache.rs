@@ -58,10 +58,7 @@ impl Writer {
         let spawned = std::thread::Builder::new().name("aurora-texcache".into()).spawn(move || {
             for (path, file) in rx {
                 // (written apart then renamed: a reader never sees a part of it)
-                let tmp = path.with_extension("bc7.tmp");
-                if crate::cache::write(&tmp, &file).is_ok() {
-                    let _ = std::fs::rename(&tmp, &path);
-                }
+                let _ = crate::cache::write(&path, &file);
                 left.fetch_sub(file.len() as u64, Ordering::Relaxed);
             }
         });

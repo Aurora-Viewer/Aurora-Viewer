@@ -60,10 +60,7 @@ pub fn save(ctx: &egui::Context) {
                 let _ = std::fs::create_dir_all(dir);
             }
             // write then rename: never leave a half-written file
-            let tmp = p.with_extension("ron.tmp");
-            if std::fs::write(&tmp, text).is_ok() {
-                let _ = std::fs::rename(&tmp, &p);
-            }
+            let _ = crate::atomic_file::write(&p, text.as_bytes());
         }
         Err(e) => log::warn!("ui layout not saved: {e}"),
     }

@@ -5,6 +5,7 @@
 mod agent;
 mod ao;
 mod app;
+mod atomic_file;
 mod bug_report;
 mod build;
 mod cache;
@@ -23,6 +24,8 @@ mod keybinds;
 mod link_trust;
 mod links;
 mod logging;
+mod login_accounts;
+mod login_places;
 mod media;
 mod net_profile;
 mod scene;
