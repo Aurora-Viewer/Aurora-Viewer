@@ -130,32 +130,97 @@ pub async fn request_llsd(http: &reqwest::Client, url: &str, body: &Llsd, put: b
     Ok(from_xml(&bytes)?)
 }
 
+/// How long the seed capability is asked for before the region is given up.
+///
+/// LLViewerRegionImpl::requestBaseCapabilitiesCoro (indra/newview/
+/// llviewerregion.cpp, originally LGPL 2.1) asks again until more than
+/// MAX_CAP_REQUEST_ATTEMPTS (30) requests have failed, each one given the
+/// 30 s of llcorehttp (HTTP_REQUEST_TIMEOUT_DEFAULT) and its retries 1 to
+/// 5 s apart (HTTP_RETRY_BACKOFF_MIN / MAX_DEFAULT). A simulator that lags
+/// at the wrong moment, at login or on arrival, is not a region without
+/// textures, inventory nor teleports for the rest of the session.
+#[derive(Debug, Clone, Copy)]
+pub struct SeedRetry {
+    pub attempts: u32,
+    pub timeout: Duration,
+    pub min_wait: Duration,
+    pub max_wait: Duration,
+}
+
+impl SeedRetry {
+    pub const FIRESTORM: SeedRetry = SeedRetry {
+        attempts: 31,
+        timeout: Duration::from_secs(30),
+        min_wait: Duration::from_secs(1),
+        max_wait: Duration::from_secs(5),
+    };
+
+    /// The wait after failed attempt number `failed` (from 1): doubled each
+    /// time, up to the longest.
+    pub fn wait(&self, failed: u32) -> Duration {
+        let doubled = self.min_wait.saturating_mul(1u32 << failed.saturating_sub(1).min(16));
+        doubled.min(self.max_wait)
+    }
+}
+
+/// The wait with up to a fifth more, so that the viewers a restarting
+/// simulator threw out do not all come back at the same instant.
+fn jittered(wait: Duration) -> Duration {
+    use std::hash::{BuildHasher, Hasher};
+    // (a fresh hasher is seeded at random: no generator to carry around)
+    let roll = std::collections::hash_map::RandomState::new().build_hasher().finish() % 1000;
+    wait + wait.mul_f32(roll as f32 / 5000.0)
+}
+
 /// POST the list of wanted capabilities to the seed and return the map.
-pub async fn resolve_seed(http: &reqwest::Client, seed: &str) -> Result<HashMap<String, String>, CapsError> {
+/// `still_wanted` is asked before each new attempt: the session ended, or
+/// the region has another seed by now.
+pub async fn resolve_seed(
+    http: &reqwest::Client,
+    seed: &str,
+    retry: SeedRetry,
+    still_wanted: impl Fn() -> bool,
+) -> Result<HashMap<String, String>, CapsError> {
     let req = Llsd::Array(REQUESTED_CAPS.iter().map(|s| Llsd::from(*s)).collect());
-    let mut last_err = None;
-    for attempt in 0..4 {
-        match post_llsd(http, seed, &req).await {
-            Ok(v) => {
-                let mut caps = HashMap::new();
-                if let Some(m) = v.as_map() {
+    let mut last_err = CapsError::Status(0);
+    for attempt in 1..=retry.attempts.max(1) {
+        let reply = match tokio::time::timeout(retry.timeout, post_llsd(http, seed, &req)).await {
+            Ok(reply) => reply,
+            Err(_) => Err(CapsError::Http(format!("no reply in {} s", retry.timeout.as_secs()))),
+        };
+        match reply {
+            Ok(v) => match v.as_map() {
+                Some(m) => {
+                    let mut caps = HashMap::new();
                     for (k, val) in m {
                         let s = val.to_string_value();
                         if !s.is_empty() {
                             caps.insert(k.clone(), s);
                         }
                     }
+                    if attempt > 1 {
+                        log::info!("seed capability answered at attempt {attempt}");
+                    }
+                    return Ok(caps);
                 }
-                return Ok(caps);
-            }
-            Err(e) => {
-                log::warn!("seed capability request failed (attempt {attempt}): {e}");
-                last_err = Some(e);
-                tokio::time::sleep(Duration::from_millis(500 * (attempt + 1))).await;
-            }
+                // (Firestorm's "malformed response": asked again)
+                None => last_err = CapsError::Http("malformed response".into()),
+            },
+            Err(e) => last_err = e,
+        }
+        log::warn!(
+            "seed capability request failed (attempt {attempt} of {}): {last_err}",
+            retry.attempts
+        );
+        if attempt == retry.attempts || !still_wanted() {
+            break;
+        }
+        tokio::time::sleep(jittered(retry.wait(attempt))).await;
+        if !still_wanted() {
+            break;
         }
     }
-    Err(last_err.unwrap_or(CapsError::Status(0)))
+    Err(last_err)
 }
 
 #[derive(Debug, Clone)]
@@ -512,9 +577,133 @@ mod tests {
             .timeout(Duration::from_secs(5))
             .build()
             .expect("HTTP client");
-        let resolved = resolve_seed(&http, &seed).await.expect("seed response");
+        let resolved = resolve_seed(&http, &seed, SeedRetry::FIRESTORM, || true)
+            .await
+            .expect("seed response");
         assert!(server.await.expect("seed server"), "simulator was not told to send ObjectAnimation");
         assert_eq!(resolved.get("ViewerAsset").map(String::as_str), Some("http://127.0.0.1/asset"));
         assert!(!resolved.contains_key("ObjectAnimation"));
+    }
+
+    /// A simulator that answers each seed request in turn with one of
+    /// `replies` (an HTTP status; 200 comes with a capability map, 0 with a
+    /// body that is not a map), then refuses. Returns its seed and the
+    /// count of requests it got.
+    async fn seed_server(replies: Vec<u16>) -> (String, std::sync::Arc<std::sync::atomic::AtomicU32>) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let seed = format!("http://{}/seed", listener.local_addr().expect("address"));
+        let count = Arc::new(AtomicU32::new(0));
+        let seen = count.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let n = seen.fetch_add(1, Ordering::SeqCst) as usize;
+                // (the request is small: its headers and body come together
+                // or in the next read)
+                let mut request = Vec::new();
+                let mut buf = [0; 4096];
+                while !request.windows(7).any(|w| w == b"</llsd>") {
+                    match socket.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => request.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let (status, body) = match replies.get(n).copied() {
+                    Some(200) => ("200 OK", to_xml(&llsd_map! { "ViewerAsset" => "http://127.0.0.1/asset" })),
+                    Some(0) => ("200 OK", to_xml(&Llsd::from("not a map"))),
+                    Some(503) | None => ("503 Service Unavailable", Vec::new()),
+                    Some(other) => panic!("no reply written for {other}"),
+                };
+                let head = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket.write_all(&body).await;
+            }
+        });
+        (seed, count)
+    }
+
+    fn quick(attempts: u32) -> SeedRetry {
+        SeedRetry {
+            attempts,
+            timeout: Duration::from_secs(5),
+            min_wait: Duration::from_millis(2),
+            max_wait: Duration::from_millis(8),
+        }
+    }
+
+    fn client() -> reqwest::Client {
+        reqwest::Client::builder().no_proxy().build().expect("HTTP client")
+    }
+
+    #[test]
+    fn seed_requests_are_spaced_like_firestorms_http_retries() {
+        let f = SeedRetry::FIRESTORM;
+        // more than MAX_CAP_REQUEST_ATTEMPTS (30) failures give the region up
+        assert_eq!(f.attempts, 31);
+        assert_eq!(f.timeout, Duration::from_secs(30));
+        let waits: Vec<u64> = (1..=6).map(|failed| f.wait(failed).as_secs()).collect();
+        assert_eq!(waits, [1, 2, 4, 5, 5, 5]);
+        assert_eq!(f.wait(10_000), Duration::from_secs(5));
+        // a wait is never shortened, and lengthened by a fifth at most
+        for _ in 0..200 {
+            let j = jittered(Duration::from_secs(5));
+            assert!(j >= Duration::from_secs(5) && j <= Duration::from_secs(6), "{j:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_seed_that_fails_at_first_is_asked_again_until_it_answers() {
+        use std::sync::atomic::Ordering;
+        // two refusals and a reply that is not a map, then the capabilities
+        let (seed, count) = seed_server(vec![503, 0, 503, 200]).await;
+        let caps = resolve_seed(&client(), &seed, quick(31), || true).await.expect("capabilities");
+        assert_eq!(caps.get("ViewerAsset").map(String::as_str), Some("http://127.0.0.1/asset"));
+        assert_eq!(count.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn a_seed_that_never_answers_is_given_up_after_every_attempt() {
+        use std::sync::atomic::Ordering;
+        let (seed, count) = seed_server(Vec::new()).await;
+        let err = resolve_seed(&client(), &seed, quick(6), || true).await.expect_err("given up");
+        assert!(matches!(err, CapsError::Status(503)), "{err}");
+        assert_eq!(count.load(Ordering::SeqCst), 6);
+        // the session ended, or the region changed its seed: no more requests
+        let (seed, count) = seed_server(Vec::new()).await;
+        let wanted = std::sync::atomic::AtomicBool::new(true);
+        let stop_after_two = || count.load(Ordering::SeqCst) < 2 && wanted.load(Ordering::SeqCst);
+        resolve_seed(&client(), &seed, quick(31), stop_after_two)
+            .await
+            .expect_err("stopped");
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_seed_request_left_without_reply_times_out_and_is_asked_again() {
+        use std::sync::atomic::Ordering;
+        // a simulator that accepts the connection and says nothing
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let seed = format!("http://{}/seed", listener.local_addr().expect("address"));
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let seen = count.clone();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                seen.fetch_add(1, Ordering::SeqCst);
+                held.push(socket);
+            }
+        });
+        let retry = SeedRetry {
+            timeout: Duration::from_millis(60),
+            ..quick(3)
+        };
+        let err = resolve_seed(&client(), &seed, retry, || true).await.expect_err("no reply");
+        assert!(matches!(err, CapsError::Http(_)), "{err}");
+        assert_eq!(count.load(Ordering::SeqCst), 3);
     }
 }
