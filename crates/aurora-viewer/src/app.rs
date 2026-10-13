@@ -2917,6 +2917,9 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_ACTIONS") else {
             return;
         };
+        if mode.ends_with("-ready") {
+            return;
+        }
         let id = crate::demo::action_mode_id(&mode);
         let click_frame = if mode.starts_with("linked-") { 724 } else { 284 };
         if self.frame_count == 260
@@ -2958,6 +2961,8 @@ impl App {
             if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
                 self.click(click_pick::Click::Build);
+            } else if mode.ends_with("-menu") {
+                self.open_context_menu();
             } else {
                 self.on_left_press();
             }
@@ -3061,12 +3066,20 @@ impl App {
             let Some(picked) = self.click_pick() else {
                 return false;
             };
-            let hit = picked.depth;
+            let (hit, target) = if matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
+                self.scene
+                    .selection_pick(&self.world, picked.ray, picked.depth, true, self.settings.draw_distance)
+            } else {
+                (
+                    picked.depth,
+                    picked.depth.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now())),
+                )
+            };
             // a rigged mesh is selected where it is shown (Firestorm: with
             // the move tool only, LLToolCompTranslate)
             let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
                 Some(d) => (Some(d.hit.point), Some(d.idx)),
-                None => (hit, hit.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now()))),
+                None => (hit, target),
             };
             (hit, target, picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y)))
         };

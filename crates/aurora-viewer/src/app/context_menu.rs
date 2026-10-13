@@ -30,9 +30,9 @@ impl App {
                 return;
             };
             let (ray, depth) = (picked.ray, picked.depth);
-            let hit = self
+            let (hit, target) = self
                 .scene
-                .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
+                .selection_pick(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
             match self.pick_name_tag(hit, ray) {
                 Some((idx, p)) => (
                     Some(idx),
@@ -48,7 +48,7 @@ impl App {
                         let Some(p) = hit else {
                             return;
                         };
-                        (self.scene.interaction_at(&self.world, p, now, self.build.open), p)
+                        (target, p)
                     }
                 },
             }
@@ -91,7 +91,7 @@ impl App {
             }
             None => Target::Ground,
         };
-        if self.clicks.scripted() {
+        if self.clicks.scripted() || self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
             log::info!("demo menu: {target:?}");
         }
         let ppp = self.egui_ctx.pixels_per_point().max(0.1);

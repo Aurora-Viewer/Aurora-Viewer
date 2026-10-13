@@ -65,7 +65,7 @@ const STILL: f32 = 0.002;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PickEntry {
     center: Vec3,
-    /// Negative: nothing to pick (no face, or a HUD attachment).
+    /// Negative: nothing to pick (no geometry, or a HUD attachment).
     radius: f32,
     /// Tested whatever the ray: avatars (their own box test), rigged meshes
     /// (the exact tests do not trust their bounds), objects without bounds.
@@ -93,7 +93,9 @@ impl PickEntry {
 
     /// The entry of an object as its last sync left it.
     pub fn of(g: &ObjGpu) -> PickEntry {
-        if g.faces.is_empty() || g.hud {
+        // Fully transparent texture entries have CPU geometry but no draw
+        // records. Selection still needs their bounds (pick_transparent).
+        if (g.faces.is_empty() && g.geom.is_none()) || g.hud {
             PickEntry::NEVER
         } else if g.is_avatar {
             // (the extent the scene gives a wearer's rigged meshes)
@@ -989,6 +991,9 @@ mod tests {
         let mut g = ObjGpu::default();
         // no face yet
         assert_eq!(PickEntry::of(&g), PickEntry::NEVER);
+        g.geom = Some(super::super::GeomKey::Prim { hash: 0, lod: 0 });
+        assert!(PickEntry::of(&g).pickable()); // invisible faces still have geometry
+        g.geom = None;
         g.faces.push(face());
         g.center = Vec3::new(1.0, 2.0, 3.0);
         g.radius = 0.5;

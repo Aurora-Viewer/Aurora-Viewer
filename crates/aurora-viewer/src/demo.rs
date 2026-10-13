@@ -1297,6 +1297,9 @@ pub fn action_mode_id(mode: &str) -> u32 {
         "linked-sit" => return 986,
         _ => {}
     }
+    if mode.starts_with("transparent-") || mode.starts_with("invisible-") {
+        return 976;
+    }
     if mode.starts_with("open-media") {
         return 978;
     }
@@ -1374,6 +1377,14 @@ pub fn action_overlay(id: u32, pos: Vec3, rotation: Quat) -> NetEvent {
 /// a target and App::demo_action_steps exercises the real picking / input.
 pub fn action_events() -> Vec<NetEvent> {
     let mode = std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default();
+    if mode.starts_with("transparent-") || mode.starts_with("invisible-") {
+        let alpha = if mode.starts_with("invisible-") { 0.0 } else { 0.4 };
+        let o = action_object(976, 0, 138.0, 126.0, [0.7, 0.55, 0.8, alpha], "");
+        return vec![NetEvent::ObjectUpdates {
+            handle: HANDLE,
+            objects: vec![o],
+        }];
+    }
     if mode.starts_with("linked-") {
         // The root's hollow geometry encloses a larger child's seat: its
         // smaller bounding box must not steal hits on the seat inside it.

@@ -67,6 +67,55 @@ pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
 }
 
 impl Scene {
+    /// LLToolPie::handleRightMouseDown / LLToolSelectRect::handleMouseDown:
+    /// pick_transparent includes every volume surface, without requiring a
+    /// touch handler or click action. The displayed depth still bounds the
+    /// search so terrain and GPU-posed surfaces occlude CPU geometry.
+    pub fn selection_pick(
+        &self,
+        world: &World,
+        ray: Option<(Vec3, Vec3)>,
+        depth: Option<Vec3>,
+        build: bool,
+        far: f32,
+    ) -> (Option<Vec3>, Option<usize>) {
+        let now = Instant::now();
+        let mut candidates = Vec::new();
+        if let Some(ray) = ray {
+            self.pick.ray_candidates(ray, &mut candidates);
+        }
+        let point = if !build && ray.is_some_and(|r| self.ignored_before(world, r, depth, far, now, Some(&candidates))) {
+            ray.and_then(|r| self.point_behind_ignored(world, r, far, now, Some(&candidates)))
+        } else {
+            depth
+        };
+        if let Some(ray) = ray {
+            let limit = point.map_or(far, |p| (p - ray.0).dot(ray.1) + 0.06).min(far);
+            let hit = candidates
+                .par_iter()
+                .filter_map(|&idx| {
+                    let g = self.gpu.get(idx)?;
+                    let o = world.objects.get(idx)?;
+                    if g.hud
+                        || g.is_avatar
+                        || g.rigged
+                        || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
+                        || (!build && o.click_action == crate::interaction::code::IGNORE)
+                        || !ray_may_hit(g, ray)
+                    {
+                        return None;
+                    }
+                    let hit = self.face_hit(world, idx, ray, now, true)?;
+                    (hit.t.is_finite() && hit.t <= limit).then_some((hit.t, idx))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+            if let Some((t, idx)) = hit {
+                return (Some(ray.0 + ray.1 * t), Some(idx));
+            }
+        }
+        (point, point.and_then(|p| self.interaction_at(world, p, now, build)))
+    }
+
     /// LLToolPipette: sample the texture entry tint of the nearest volume face,
     /// independent of lighting, texture pixels, selection and modify rights.
     /// Candidate bounds and rendered triangles avoid a GPU readback.
@@ -1265,6 +1314,141 @@ pub(super) mod tests {
         assert!(scene.lists.hud_opaque.is_empty());
         assert!(scene.hud_pick(&world, cursor, true).is_none());
         assert!(scene.hud_move_pick(&world, cursor).is_none());
+    }
+
+    #[test]
+    fn selection_reaches_transparent_surfaces_without_an_action_or_touch_handler() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        for idx in [front, back] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.click_action = crate::interaction::code::NONE;
+            o.update_flags = 0;
+            scene.gpu[idx].center = o.position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let depth = Vec3::new(6.5, 0.0, 50.0);
+        assert!(crate::interaction::target(&world, front, &HashMap::new()).is_none());
+        for (te_alpha, pbr_alpha, legacy_alpha, tex_alpha) in [
+            (0.5, None, None, AlphaKind::Opaque),
+            (1.0, Some(2), None, AlphaKind::Opaque),
+            (1.0, None, Some(1), AlphaKind::Opaque),
+            (1.0, None, None, AlphaKind::Blend),
+        ] {
+            scene.gpu[front].faces[0].te_alpha = te_alpha;
+            scene.gpu[front].faces[0].pbr_alpha = pbr_alpha;
+            scene.gpu[front].faces[0].legacy_alpha = legacy_alpha;
+            scene.gpu[front].faces[0].pass = Pass::Blend;
+            scene.textures.alpha_by_slot = vec![tex_alpha];
+            for build in [false, true] {
+                assert_eq!(
+                    scene.selection_pick(&world, Some(ray), Some(depth), build, 100.0),
+                    (Some(front_point), Some(front))
+                );
+                // No opaque depth (sky behind it) must still allow selection.
+                assert_eq!(
+                    scene.selection_pick(&world, Some(ray), None, build, 100.0),
+                    (Some(front_point), Some(front))
+                );
+            }
+            // Left-click actions and hover keep their existing priorities.
+            assert_eq!(scene.action_point(&world, Some(ray), Some(depth), false, 100.0), Some(depth));
+        }
+        // Fully invisible TE faces are omitted from draw records altogether.
+        scene.gpu[front].faces.clear();
+        for f in &mut Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces {
+            f.color[3] = 0.0;
+        }
+        scene.pick.set(front, super::super::hover::PickEntry::of(&scene.gpu[front]));
+        for build in [false, true] {
+            assert_eq!(
+                scene.selection_pick(&world, Some(ray), Some(depth), build, 100.0),
+                (Some(front_point), Some(front))
+            );
+        }
+    }
+
+    #[test]
+    fn selection_obeys_depth_distance_and_ignore_but_disabled_remains_selectable() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let back_point = Vec3::new(6.5, 0.0, 50.0);
+        let occluder = Vec3::new(1.0, 0.0, 50.0);
+        for build in [false, true] {
+            assert_eq!(
+                scene.selection_pick(&world, Some(ray), Some(occluder), build, 100.0),
+                (Some(occluder), None)
+            );
+            assert_eq!(scene.selection_pick(&world, Some(ray), None, build, 2.0), (None, None));
+        }
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), Some(front_point), false, 100.0),
+            (Some(back_point), Some(back))
+        );
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), Some(back_point), true, 100.0),
+            (Some(front_point), Some(front))
+        );
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::DISABLED;
+        scene.gpu[front].faces[0].te_alpha = 0.5;
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), Some(back_point), false, 100.0),
+            (Some(front_point), Some(front))
+        );
+    }
+
+    #[test]
+    fn selection_uses_the_hit_triangles_instead_of_an_overlapping_prim_box() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let o = world.objects.get_mut(front).unwrap();
+        o.position.y = 2.0;
+        o.scale.y = 6.0; // box contains the ray; the only face is above it
+        o.click_action = crate::interaction::code::NONE;
+        o.update_flags = 0;
+        let key = GeomKey::Prim { hash: 123, lod: 0 };
+        let source = scene.geom_ready(&scene.gpu[front].geom.unwrap()).unwrap();
+        let geom = GpuGeom {
+            faces: source.faces.clone(),
+            min: source.min,
+            max: source.max,
+            joint_bounds: Vec::new(),
+            pick_faces: vec![Some(PickFace::new(
+                vec![[-0.5, -0.1, -0.5], [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [-0.5, -0.1, 0.5]],
+                vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                vec![0, 2, 1, 0, 3, 2],
+            ))],
+        };
+        scene.geoms.insert(
+            key,
+            GeomEntry {
+                refs: 1,
+                zero_since: 0,
+                state: GeomState::Ready(Arc::new(geom)),
+            },
+        );
+        scene.gpu[front].geom = Some(key);
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 4.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let depth = Vec3::new(6.5, 0.0, 50.0);
+        for build in [false, true] {
+            assert_eq!(
+                scene.selection_pick(&world, Some(ray), Some(depth), build, 100.0),
+                (Some(depth), Some(back))
+            );
+        }
     }
 
     #[test]
