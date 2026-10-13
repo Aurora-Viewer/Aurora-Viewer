@@ -758,7 +758,7 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
 | `AURORA_DEMO_PBR_OVERRIDE=1` | Override de matériau GLTF |
 | `AURORA_DEMO_TEXANIM=1` | Animations de texture (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` ou `shell` | Calque lumineux transparent sur une peau lumineuse |
-| `AURORA_DEMO_SKY=<gamma>[,<brume>]` | Ciel EEP classique avec ce gamma |
+| `AURORA_DEMO_SKY=<gamma>[,<brume>[,<ambiance>]]` | Ciel EEP classique avec ce gamma |
 | `AURORA_DEMO_OCCLUSION=1` | Mur avec des objets cachés (test d'occlusion) |
 | `AURORA_DEMO_DEBUG="<calques>"` | Calques de débogage |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | Environnement EEP de la région et de la parcelle |
@@ -794,7 +794,7 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   sur la peau sans glow et reste à 0,02 sur l'autre, sans s'additionner.
   `shell` : le calque montre aussi ses autres faces ; celle de derrière, vue
   de dos, ne doit rien ajouter (mêmes valeurs qu'avec `1`).
-- **`AURORA_DEMO_SKY=<gamma>[,<brume>]`** : ciel EEP classique (sans ambiance
+- **`AURORA_DEMO_SKY=<gamma>[,<brume>[,<ambiance>]]`** : ciel EEP classique (sans ambiance
   des sondes de reflets) avec ce gamma de ciel et une couleur du soleil
   supérieure à 1 : gamma legacy et lumière des objets normalisée comme
   Firestorm. `brume` : multiplicateur de distance de la brume (0,8 par
@@ -802,7 +802,11 @@ vers les images 720 (menu), 770 (édition, inspection) et 850 (déplacement).
   où ce qui est à quelques dizaines de mètres est voilé). Avec
   `AURORA_DEMO_CROWD=40` et `AURORA_MAX_AVATARS=4`, les imposteurs doivent
   être voilés comme les avatars dessinés en entier à côté d'eux
-  (`AURORA_MAX_AVATARS=60` pour comparer).
+  (`AURORA_MAX_AVATARS=60` pour comparer). `ambiance` : lumière ambiante du
+  ciel (0,25 par défaut, plus de 1 dans les ciels les plus lumineux) ; avec
+  `AURORA_DEMO_SKY=1.62,0.8,1.1` et `AURORA_DEMO_PBR_OVERRIDE=1`, le tour de
+  chaque bosse des dalles doit être assombri par l'occlusion ambiante, et ne
+  plus l'être une fois l'occlusion ambiante coupée dans les réglages.
 - **`AURORA_DEMO_DEBUG`** : liste séparée par des virgules parmi `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`.
