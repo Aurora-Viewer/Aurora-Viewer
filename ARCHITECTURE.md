@@ -45,7 +45,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 │  ├─ branding/                 logos (colour, silhouette), SVG + PNG 4096, aurora.ico
 │  ├─ models/                   self-contained Aurora 3D GLB for material previews
 │  ├─ tabler-icons/             full Tabler library (SVG: outline, filled)
-│  └─ emoji/                    emoji font (downloaded, outside git)
+│  └─ emoji/                    emoji font (downloaded, outside git; inside the exe of a published build)
 ├─ crates/                      the code (see below)
 ├─ docs/                        BRANDING.md, TESTING.md (`AURORA_*` test options, profiling), README screenshots (`screenshots/`), README buttons and "Soon" pill (`readme/`)
 ├─ news/                        news of the login screen, written by hand: fr.md, en.md (read on `main` by the viewer, and compiled into it)
@@ -683,7 +683,8 @@ it. The full traces and logs stay local. A file lock
 prevents two windows from presenting the same report; a single
 automatic recovery attempt is made at the next launch if
 the first window could not open. Confirmed reports stay
-on disk; the folders of the sessions that ended normally are removed.
+on disk; the folders of the sessions that ended normally are removed, by
+their watcher or, when it could not start, at the next launch.
 
 Immediate watching and native capture concern Windows
 (the platform of the releases). A native trace contains the exception code,
@@ -695,7 +696,10 @@ The reports are under `logs/crashes/sessions/<uuid>/`, and the offline
 trials under `logs/crashes/demo/<uuid>/`; `session.json`, `session.log`,
 `panic.txt`, `native.txt` and the markers belong to a single
 run. The internal arguments `--crash-watch` and `--crash-show`
-accept only the UUID folders immediately under this root.
+take the UUID of a session, never a path: the helper process opens
+only the real folder (not a link) of that name immediately under its
+own root. In the offline demo the viewer hands it that root through
+`AURORA_DEMO_CRASH_DIR`, as an absolute path.
 
 | What | Where (Windows) |
 |---|---|

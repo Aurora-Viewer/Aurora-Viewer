@@ -21,10 +21,35 @@ fn main() {
         .map(|i| parts[i].clone())
         .unwrap_or_default();
     println!("cargo:rustc-env=AURORA_BUILD_PROFILE={dir}");
+    emoji_font();
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         windows_resources();
     }
+}
+
+/// A published viewer carries the colour emoji font inside its executable
+/// (`AURORA_EMBED_EMOJI=1`, set by the Release workflow and
+/// build-release.ps1), so an installation cannot lose it or fail to read it.
+/// The font weighs 148 MB and lives outside git: the other builds (worktrees,
+/// CI) leave it out and read the file of `assets/emoji` (ui/emoji.rs). Asked
+/// for and missing, it stops the build: a release must not ship without it.
+fn emoji_font() {
+    println!("cargo:rustc-check-cfg=cfg(aurora_embedded_emoji)");
+    println!("cargo:rerun-if-env-changed=AURORA_EMBED_EMOJI");
+    if std::env::var_os("AURORA_EMBED_EMOJI").is_none_or(|v| v.is_empty() || v == "0") {
+        return;
+    }
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("Cargo supplies CARGO_MANIFEST_DIR");
+    let font = Path::new(&manifest).join("../../assets/emoji/Noto-3D-128.ttf");
+    println!("cargo:rerun-if-changed={}", font.display());
+    if !font.is_file() {
+        panic!(
+            "AURORA_EMBED_EMOJI is set but {} is missing: run scripts/fetch-assets.ps1 first",
+            font.display()
+        );
+    }
+    println!("cargo:rustc-cfg=aurora_embedded_emoji");
 }
 
 /// The window sets its icon at run time (app.rs), but the file itself needs

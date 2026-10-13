@@ -12,6 +12,9 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      # the emoji font goes into the exe (build.rs); package.ps1 reads it too
+      AURORA_EMBED_EMOJI: '1'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -19,6 +22,9 @@ jobs:
       - name: Rust stable
         run: rustup update stable
       - uses: Swatinem/rust-cache@v2
+      - name: Emoji font
+        shell: pwsh
+        run: ./scripts/fetch-assets.ps1 -Repo "${{ github.repository }}"
       - name: Build
         env:
           AURORA_VERSION_TAG: ${{ github.ref_name }}
@@ -26,9 +32,6 @@ jobs:
       - name: Verify compiled version
         shell: pwsh
         run: ./scripts/verify-version.ps1 -Exe target/release/aurora-viewer.exe -Tag "${{ github.ref_name }}"
-      - name: Emoji font
-        shell: pwsh
-        run: ./scripts/fetch-assets.ps1 -Repo "${{ github.repository }}"
       - name: Package
         shell: pwsh
         run: |

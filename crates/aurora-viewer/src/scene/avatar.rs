@@ -6,7 +6,6 @@ use aurora_llsd::xml;
 use aurora_render::{SkinVertex, Vertex};
 use glam::{Quat, Vec3};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 pub const IMG_DEFAULT_AVATAR: Uuid = Uuid::from_u128(0xc228d1cf_4b5d_4ba8_84f4_899a0796aa97);
@@ -170,30 +169,36 @@ fn llm_to_part(name: &'static str, bake_te: usize, m: &LlmMesh, offset: Vec3, fl
     }
 }
 
+macro_rules! character_files {
+    ($($name:literal),* $(,)?) => {
+        &[$(($name, include_bytes!(concat!("../../assets/character/", $name)) as &[u8])),*]
+    };
+}
+
+/// The avatar definitions the viewer reads (`assets/character`), built into
+/// the executable: read from a folder next to it, an installation that lost
+/// that folder, or could not read it, started with an empty skeleton and
+/// stopped at the first avatar.
+const FILES: &[(&str, &[u8])] = character_files![
+    "avatar_skeleton.xml",
+    "avatar_lad.xml",
+    "avatar_head.llm",
+    "avatar_upper_body.llm",
+    "avatar_lower_body.llm",
+    "avatar_hair.llm",
+    "avatar_eyelashes.llm",
+    "avatar_skirt.llm",
+    "avatar_eye.llm",
+];
+
 impl AvatarLibrary {
-    pub fn data_dir() -> PathBuf {
-        // Next to the executable first, then the source tree (dev builds).
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(Path::to_path_buf))
-            .unwrap_or_default();
-        let candidates = [
-            exe_dir.join("assets").join("character"),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets").join("character"),
-        ];
-        for c in &candidates {
-            if c.join("avatar_skeleton.xml").exists() {
-                return c.clone();
-            }
-        }
-        candidates[1].clone()
+    /// One of the avatar definition files, by its name in `assets/character`.
+    pub fn file(name: &str) -> Option<&'static [u8]> {
+        FILES.iter().find(|(n, _)| *n == name).map(|(_, data)| *data)
     }
 
     pub fn load() -> AvatarLibrary {
-        let dir = Self::data_dir();
-        let skeleton = std::fs::read(dir.join("avatar_skeleton.xml"))
-            .ok()
-            .and_then(|d| Skeleton::parse(&d).map_err(|e| log::warn!("skeleton: {e}")).ok());
+        let skeleton = Self::file("avatar_skeleton.xml").and_then(|d| Skeleton::parse(d).map_err(|e| log::warn!("skeleton: {e}")).ok());
         let joint_pos = |name: &str| -> Option<Vec3> {
             let sk = skeleton.as_ref()?;
             let i = sk.find(name)?;
@@ -205,8 +210,8 @@ impl AvatarLibrary {
         let mut attach_points = HashMap::new();
         let mut attach_names = HashMap::new();
         let mut joint_names: Vec<(u8, String)> = Vec::new();
-        let lad = std::fs::read(dir.join("avatar_lad.xml")).ok();
-        if let Some(d) = &lad
+        let lad = Self::file("avatar_lad.xml");
+        if let Some(d) = lad
             && let Ok(root) = xml::parse(d)
         {
             let mut stack = vec![&root];
@@ -262,11 +267,9 @@ impl AvatarLibrary {
         let mut parts = Vec::new();
         let off = Vec3::ZERO;
         let load = |f: &str| -> Option<LlmMesh> {
-            std::fs::read(dir.join(f))
-                .ok()
-                .and_then(|d| aurora_assets::parse_llm(&d).map_err(|e| log::warn!("{f}: {e}")).ok())
+            Self::file(f).and_then(|d| aurora_assets::parse_llm(d).map_err(|e| log::warn!("{f}: {e}")).ok())
         };
-        let morph_params = lad.as_deref().map(super::morph::mesh_params).unwrap_or_default();
+        let morph_params = lad.map(super::morph::mesh_params).unwrap_or_default();
         // UVs stay in GL convention: the object shader flips V.
         for (file, name, te) in [
             ("avatar_head.llm", "head", 8usize),
@@ -298,7 +301,7 @@ impl AvatarLibrary {
                 }
             }
         }
-        let shape_params = match (&skeleton, &lad) {
+        let shape_params = match (&skeleton, lad) {
             (Some(sk), Some(d)) => super::shape::ShapeParams::parse(d, sk, &rig),
             _ => Default::default(),
         };
@@ -319,5 +322,29 @@ impl AvatarLibrary {
             shape_params,
             parts,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Issue 262: an empty library (no skeleton, hence no joint) stopped the
+    /// viewer at the first avatar. Every file `load` asks for is built in.
+    #[test]
+    fn the_library_is_whole_without_a_folder_next_to_the_executable() {
+        let lib = AvatarLibrary::load();
+        assert!(lib.skeleton.is_some());
+        assert!(lib.rig.pelvis < lib.rig.local_pos.len());
+        assert_eq!(lib.rig.names.get("mPelvis"), Some(&lib.rig.pelvis));
+        let mut parts: Vec<_> = lib.parts.iter().map(|p| p.name).collect();
+        parts.sort_unstable();
+        assert_eq!(
+            parts,
+            ["eye_left", "eye_right", "eyelashes", "hair", "head", "lower", "skirt", "upper"]
+        );
+        assert!(lib.parts.iter().all(|p| !p.vertices.is_empty() && !p.skin.is_empty()));
+        assert!(lib.attach_points.len() >= lib.anchor_points.len() && !lib.anchor_points.is_empty());
+        assert!(AvatarLibrary::file("avatar_head_1.llm").is_none());
     }
 }

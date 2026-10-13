@@ -78,12 +78,18 @@ $sw = [Diagnostics.Stopwatch]::StartNew()
 Push-Location $src
 # A shell inherited from a release job must not stamp another commit with
 # its tag. The local build resolves the version from this checkout's Git.
+# The emoji font goes into the exe, like the published one: build.rs and
+# package.ps1 read AURORA_EMBED_EMOJI, which must not stay set in this shell
+# either (a later build of a worktree would embed the font too).
 $previousVersionTag = [Environment]::GetEnvironmentVariable('AURORA_VERSION_TAG', 'Process')
+$previousEmbedEmoji = [Environment]::GetEnvironmentVariable('AURORA_EMBED_EMOJI', 'Process')
 try {
     [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $null, 'Process')
+    [Environment]::SetEnvironmentVariable('AURORA_EMBED_EMOJI', '1', 'Process')
     Invoke-Checked 'cargo build' { cargo build --release --locked -p aurora-viewer }
 } finally {
     [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process')
+    [Environment]::SetEnvironmentVariable('AURORA_EMBED_EMOJI', $previousEmbedEmoji, 'Process')
     Pop-Location
 }
 
@@ -106,7 +112,12 @@ if (Test-Path -LiteralPath $verifyVersion) {
 $package = Join-Path $src 'scripts\package.ps1'
 if (-not (Test-Path -LiteralPath $package)) { $package = Join-Path $PSScriptRoot 'package.ps1' }
 if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force -ErrorAction Stop }
-& $package -Exe (Join-Path $src 'target\release\aurora-viewer.exe') -Out $out -Source $src
+try {
+    [Environment]::SetEnvironmentVariable('AURORA_EMBED_EMOJI', '1', 'Process')
+    & $package -Exe (Join-Path $src 'target\release\aurora-viewer.exe') -Out $out -Source $src
+} finally {
+    [Environment]::SetEnvironmentVariable('AURORA_EMBED_EMOJI', $previousEmbedEmoji, 'Process')
+}
 @(
     if ($reportedVersion) { $reportedVersion }
     "${what}: $((git -C $src log -1 --format='%h %s (%ci)').Trim())"

@@ -1385,7 +1385,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   copied and open its folder; no window after a normal
   close. The screenshots are taken after three frames of the independent
   window. `AURORA_DEMO_CRASH_DIR` makes it possible to use one temporary
-  folder per scenario, without touching the real reports.
+  folder per scenario, without touching the real reports. While a
+  viewer runs, its session folder holds a `watching` marker; without it
+  the watcher did not start (its error is the first line of the console)
+  and no window would follow a crash.
   The "Send a crash report" button must open the shared
   form, with the title and the information of this session. To
   capture it automatically, combine with `AURORA_DEMO_BUG_REPORT=1`
@@ -1864,7 +1867,7 @@ What the inventory must show with these scenarios:
     bodies, centred on their roots at a constant height through the cycle.
     Compare frames 660 and 780 at 60 fps; also use `AURORA_NAME_TAGS=classic`.
     A change of animation can change its height envelope; its individual
-    frames never move the tag. Real deformer assets still need a grid test.
+    frames never move the tag. Use a human-run grid session to verify real deformer assets.
   - `voice`: Nova out of the voice channel; Tess in the channel, silent
     (green outline, microphone badge) and without a profile picture (the
     icon stays); Orion, a friend, is speaking (halo that follows the level,
