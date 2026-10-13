@@ -28,6 +28,19 @@
 //! already in the cache; the streamer's `texture load:` line gives what it
 //! cost. Run twice, the second run finds the transcoded chains the first
 //! one left in the demo's cache folder and asks for almost no file.
+//!
+//! With `,net=<ms>` after `j2k=`, the files are downloaded instead: a local
+//! asset server (demo_asset_server.rs) answers each request after `ms`
+//! milliseconds, the round trip to a distant grid, and the textures go
+//! through the whole path of a region seen for the first time — first
+//! range, more ranges, decodes. Their ids change at each run, so the disk
+//! cache never holds them. The log tells when half, nine tenths and all of
+//! the textures showed their first pixels (`demo stream: … shown after`),
+//! then when nothing is left to download or decode.
+//!
+//! With `,size=<m>`, the objects are that large instead of half a metre,
+//! spaced accordingly: their textures cover more of the screen and ask for
+//! finer levels, as the walls and floors of a region do.
 
 use super::{HANDLE, height, prim, shape, te};
 use crate::scene::jobs::{AlphaKind, JobResult, Jobs};
@@ -40,6 +53,7 @@ use glam::{Quat, Vec3};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -108,6 +122,27 @@ fn j2k_files(value: &str) -> Option<Arc<Vec<PathBuf>>> {
     Some(Arc::new(files))
 }
 
+/// `net=<ms>` in the variable's value: the round trip of the local asset
+/// server the files are downloaded from.
+fn net_delay(value: &str) -> Option<Duration> {
+    let ms = value.split(',').find_map(|p| p.trim().strip_prefix("net="))?;
+    ms.trim().parse().ok().map(Duration::from_millis)
+}
+
+/// Size of the objects without `size=`, and the room each one takes for
+/// one metre of its size.
+const OBJECT_SIZE: f32 = 0.5;
+const SPACING: f32 = 1.6;
+
+/// `size=<m>` in the variable's value: the size of the objects.
+fn object_size(value: &str) -> f32 {
+    value
+        .split(',')
+        .find_map(|p| p.trim().strip_prefix("size=")?.trim().parse::<f32>().ok())
+        .filter(|s| s.is_finite())
+        .map_or(OBJECT_SIZE, |s| s.clamp(0.1, 16.0))
+}
+
 /// Bytes of downloaded data held by texture `i` once loaded: about what
 /// its J2C file weighs on the grid (2 bits a pixel).
 fn data_len(i: u32) -> usize {
@@ -117,14 +152,22 @@ fn data_len(i: u32) -> usize {
 
 const TEXTURE_IDS: u128 = 0xDE57_4EA0_0000_0000_0000_0000_0000_0000;
 
+/// Part of the texture ids proper to this run (`net=`: textures the disk
+/// cache has never seen); 0 otherwise, the ids of every run.
+static RUN: AtomicU32 = AtomicU32::new(0);
+
+fn run_ids() -> u128 {
+    TEXTURE_IDS | (RUN.load(Ordering::Relaxed) as u128) << 32
+}
+
 pub fn texture(i: u32) -> Uuid {
-    Uuid::from_u128(TEXTURE_IDS | i as u128)
+    Uuid::from_u128(run_ids() | i as u128)
 }
 
 /// The scenario's texture number of `id`, if it is one of them.
 fn texture_index(id: &Uuid) -> Option<u32> {
     let n = id.as_u128();
-    (n & !(u32::MAX as u128) == TEXTURE_IDS).then_some(n as u32)
+    (n & !(u32::MAX as u128) == run_ids()).then_some(n as u32)
 }
 
 /// The scenario's textures for the streamer, when it wants one finer than
@@ -171,13 +214,14 @@ pub fn texture_mips(i: u32, discard: u32) -> Vec<(u32, u32, Vec<u8>)> {
 /// facing the start position. Shapes cycle through cylinders, spheres and
 /// tori with a hollow proper to each object, so each one has its own
 /// geometry to build and upload, as the varied prims of a shop.
-fn wave_events(n: u32, first: u32, count: u32) -> Vec<NetEvent> {
+fn wave_events(n: u32, first: u32, count: u32, size: f32) -> Vec<NetEvent> {
     let side = (n as f32).sqrt().ceil().max(1.0) as u32;
+    let step = size * SPACING;
     let objects = (first..first + count)
         .map(|i| {
             let (x, y) = (
-                146.0 + (i / side) as f32 * 0.8,
-                126.0 + ((i % side) as f32 - side as f32 * 0.5) * 0.8,
+                146.0 + (i / side) as f32 * step,
+                126.0 + ((i % side) as f32 - side as f32 * 0.5) * step,
             );
             let hollow = (i * 37 % 450) as u16 * 100;
             let volume = match i % 3 {
@@ -191,9 +235,9 @@ fn wave_events(n: u32, first: u32, count: u32) -> Vec<NetEvent> {
             }
             prim(
                 FIRST_LOCAL_ID + i,
-                Vec3::new(x, y, height(x, y) + 0.25),
+                Vec3::new(x, y, height(x, y) + size * 0.5),
                 Quat::IDENTITY,
-                Vec3::splat(0.5),
+                Vec3::splat(size),
                 volume,
                 Arc::new(t),
                 ExtraParams::default(),
@@ -256,14 +300,38 @@ pub struct StreamDemo {
     j2k: Option<Arc<Vec<PathBuf>>>,
     /// When each texture was last given its file.
     fed: Vec<Option<Instant>>,
+    /// `,net=<ms>`: the files are downloaded from the local asset server,
+    /// which answers after this long.
+    net: Option<Duration>,
+    /// Shares of the textures shown that the log has told (`SHOWN_STEPS`).
+    shown_told: usize,
+    /// `,size=<m>`: size of the objects.
+    size: f32,
+    /// Nothing was under way at the previous look.
+    idle_before: bool,
 }
+
+/// Shares of the textures showing their first pixels the log tells, in
+/// tenths (`net=`).
+const SHOWN_STEPS: [u32; 3] = [5, 9, 10];
 
 impl StreamDemo {
     pub fn from_env() -> Option<Self> {
         let value = std::env::var("AURORA_DEMO_STREAM").ok()?;
         let (n, wave, leave) = parse(&value);
+        let j2k = j2k_files(&value);
+        let net = net_delay(&value).filter(|_| j2k.is_some());
+        if net.is_some() {
+            // (never 0: the ids of the runs without `net=`)
+            let nanos = std::time::UNIX_EPOCH.elapsed().map_or(1, |t| t.subsec_nanos());
+            RUN.store(nanos.max(1), Ordering::Relaxed);
+        }
         Some(StreamDemo {
-            j2k: j2k_files(&value),
+            j2k,
+            net,
+            shown_told: 0,
+            size: object_size(&value),
+            idle_before: false,
             fed: vec![None; n as usize],
             n,
             wave,
@@ -331,6 +399,26 @@ impl StreamDemo {
     ) {
         let armed = *self.armed.get_or_insert_with(|| {
             textures.demo_source = source();
+            if let (Some(delay), Some(files)) = (self.net, &self.j2k) {
+                match super::asset_server::start(files.clone(), delay, texture_index) {
+                    Ok(url) => {
+                        log::info!(
+                            "demo stream: textures downloaded from a local server, {} ms a request",
+                            delay.as_millis()
+                        );
+                        let mut caps = world.main().map(|r| (*r.caps).clone()).unwrap_or_default();
+                        caps.insert("ViewerAsset".to_owned(), url);
+                        world.apply(NetEvent::Capabilities {
+                            handle: HANDLE,
+                            caps: Arc::new(caps),
+                        });
+                    }
+                    Err(e) => {
+                        log::warn!("demo stream: no local asset server ({e}): files handed over as cache hits");
+                        self.net = None;
+                    }
+                }
+            }
             Instant::now()
         });
         if frame < FIRST_FRAME || armed.elapsed() < FIRST_AFTER {
@@ -358,7 +446,7 @@ impl StreamDemo {
                 self.upgrades.extend(arrived.iter().map(|&i| (now + UPGRADE_AFTER, i)));
                 spawn_decodes(jobs, textures.staging.clone(), arrived, 2);
             }
-            for ev in wave_events(self.n, self.next, count) {
+            for ev in wave_events(self.n, self.next, count, self.size) {
                 world.apply(ev);
             }
             self.next += count;
@@ -374,6 +462,7 @@ impl StreamDemo {
         // JPEG 2000 data, where the grid would start a download (not the
         // textures shown from their transcoded chain)
         if let Some(files) = &self.j2k
+            && self.net.is_none()
             && frame.is_multiple_of(4)
         {
             let fed = &mut self.fed;
@@ -392,18 +481,35 @@ impl StreamDemo {
             due.extend(self.upgrades.pop_front().map(|(_, i)| i));
         }
         spawn_decodes(jobs, textures.staging.clone(), due, 0);
+        if self.net.is_some() && self.shown_told < SHOWN_STEPS.len() && self.next == self.n && frame.is_multiple_of(2) {
+            let shown = (0..self.n).filter(|&i| textures.decoded_level(&texture(i)).is_some()).count() as u32;
+            while self.shown_told < SHOWN_STEPS.len() && shown * 10 >= self.n * SHOWN_STEPS[self.shown_told] {
+                log::info!(
+                    "demo stream: {} of {} textures shown after {:.2} s",
+                    shown,
+                    self.n,
+                    now.duration_since(started).as_secs_f32()
+                );
+                self.shown_told += 1;
+            }
+        }
         if self.next == self.n && self.upgrades.is_empty() && frame.is_multiple_of(10) {
             if self.j2k.is_some() {
                 // every texture shown at some level and nothing under way:
                 // the levels follow the size on screen from there
                 let shown = (0..self.n).all(|i| textures.decoded_level(&texture(i)).is_some());
-                if shown && textures.stats.decoding == 0 && textures.stats.pending_upload == 0 && geom_pending == 0 {
+                // (nothing downloading either, twice in a row: a reply and
+                // the request that follows it are a frame apart)
+                let idle = textures.stats.decoding == 0 && textures.stats.pending_upload == 0 && textures.stats.fetching == 0;
+                let settled = std::mem::replace(&mut self.idle_before, shown && idle);
+                if shown && idle && settled && geom_pending == 0 {
                     self.loaded_logged = true;
                     self.loaded_at = Some(now);
                     log::info!(
-                        "demo stream: loaded in {:.2} s ({} textures decoded from J2C files, geometry built)",
+                        "demo stream: loaded in {:.2} s ({} textures {} J2C files, geometry built)",
                         now.duration_since(started).as_secs_f32(),
                         self.n,
+                        if self.net.is_some() { "downloaded as" } else { "decoded from" },
                     );
                 }
                 return;
@@ -464,6 +570,24 @@ mod tests {
         assert_eq!(parse("leave"), (2000, 100, true));
         // the folder of J2C files does not change the counts before it
         assert_eq!(parse("3000,3000,j2k=some folder"), (3000, 3000, false));
+        assert_eq!(parse("3000,3000,j2k=some folder,net=200"), (3000, 3000, false));
+    }
+
+    #[test]
+    fn the_size_of_the_objects_is_read() {
+        assert_eq!(object_size("3000"), OBJECT_SIZE);
+        assert_eq!(object_size("300,300,size=4"), 4.0);
+        assert_eq!(object_size("300, size=2.5, leave"), 2.5);
+        assert_eq!(object_size("300,size=1000"), 16.0);
+        assert_eq!(object_size("300,size=big"), OBJECT_SIZE);
+    }
+
+    #[test]
+    fn the_round_trip_of_the_asset_server_is_read() {
+        assert_eq!(net_delay("3000,3000,j2k=some folder,net=200"), Some(Duration::from_millis(200)));
+        assert_eq!(net_delay("3000, net=0"), Some(Duration::ZERO));
+        assert_eq!(net_delay("3000,3000,j2k=network"), None);
+        assert_eq!(net_delay("3000,net=soon"), None);
     }
 
     #[test]
@@ -474,7 +598,7 @@ mod tests {
 
     #[test]
     fn waves_give_each_object_its_texture() {
-        let events = wave_events(250, 100, 50);
+        let events = wave_events(250, 100, 50, OBJECT_SIZE);
         let [NetEvent::ObjectUpdates { objects, .. }] = events.as_slice() else {
             panic!("one update");
         };
