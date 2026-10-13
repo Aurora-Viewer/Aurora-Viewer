@@ -1851,14 +1851,20 @@ What the inventory must show with these scenarios:
   a resize, the system menu open. Windows follows those in a message loop
   of its own, in which the usual request for the next frame is never made;
   a helper thread (`window_hold.rs`) asks for the frames for as long as the
-  hold lasts, and sleeps the rest of the time.
+  hold lasts, and sleeps the rest of the time. During a hold the frame
+  limiter does not wait on the main thread, which Windows needs for its
+  loop: the helper waits between two frames, and spaces them out (60 a
+  second at most) while the cursor moves, so that a dragged or resized
+  window keeps following the cursor.
   - `0`: no helper, as before: the image stays still for the whole hold,
     which `perf summary` shows as one long `between` in `max:`.
   - It needs real mouse input, there is no demo scenario: hold the button
     for a second or two on each of those spots with `AURORA_PROFILE=1` and
     read `max=` and `between=` of the second (a hold of 1.5 s: 1,500 ms
-    with `0`, the usual frame time without). The buttons must still act
-    when released on them, and not when released elsewhere.
+    with `0`, 20 to 30 ms at most without). The buttons must still act
+    when released on them, and not when released elsewhere; a window
+    dragged or resized with fast mouse moves must stay under the cursor,
+    as with `0`.
 - **`AURORA_TEXTURE_TODO=0|check`**: by default, the texture streamer
   (`TextureStreamer::update`) only visits at each frame the textures that
   have work: a first disk read, or a finer level than the one on the GPU
