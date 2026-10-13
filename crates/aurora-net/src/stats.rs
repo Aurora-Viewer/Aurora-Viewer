@@ -32,6 +32,9 @@ impl SimulatorMotion {
 pub struct NetStats {
     /// One coherent snapshot: neighbor packets must not keep the main circuit alive.
     pub simulator_motion: Mutex<SimulatorMotion>,
+    /// The same for every simulator of the session, the agent's included:
+    /// the objects of a region are extrapolated on its own clock.
+    pub simulators: Mutex<Vec<SimulatorMotion>>,
     pub packets_in: AtomicU64,
     pub packets_out: AtomicU64,
     pub bytes_in: AtomicU64,

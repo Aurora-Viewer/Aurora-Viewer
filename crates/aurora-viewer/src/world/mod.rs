@@ -16,6 +16,7 @@ pub mod land;
 pub mod landmarks;
 pub mod lookat;
 pub mod lslbridge;
+pub mod motion;
 pub mod mutes;
 pub mod names;
 pub mod notifications;
@@ -42,7 +43,7 @@ use aurora_net::{
     AvatarAppearance, ChatMessage, ChatSourceType, ChatType, InstantMessage, LoginResponse, NetEvent, RegionHandle, RegionInfo, SunInfo,
 };
 use glam::Vec3;
-use objects::{ObjKey, ObjectStore};
+use objects::{ObjKey, Object, ObjectStore};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
@@ -133,6 +134,8 @@ pub struct World {
     pub regions: HashMap<RegionHandle, Region>,
     pub main_region: Option<RegionHandle>,
     pub objects: ObjectStore,
+    /// When the clocks of the regions were last advanced (`advance_motion`).
+    motion_tick: Instant,
     /// GLTF material overrides by object, (face, override) pairs. Kept apart
     /// from the objects like LL's region override cache: a message may come
     /// before its object, and the scene merges them when it builds the faces.
@@ -314,6 +317,7 @@ impl World {
             regions: HashMap::new(),
             main_region: None,
             objects: ObjectStore::default(),
+            motion_tick: Instant::now(),
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
             chat_clock: Default::default(),
@@ -689,6 +693,32 @@ impl World {
             }
         }
         None
+    }
+
+    /// Lowest height the centre of an avatar can be drawn at, `local` being
+    /// its position in its region: LLViewerObject::interpolateLinearMotion
+    /// keeps an extrapolated avatar half its height above the land.
+    pub fn avatar_floor(&self, o: &Object, local: Vec3) -> Option<f32> {
+        let off = self.region_offset(o.key.region)?;
+        Some(self.ground_height(off + local)? + 0.5 * o.scale.z)
+    }
+
+    /// Let the clocks of the regions run up to `now` (motion.rs): each at
+    /// the time dilation of its simulator, slowing to a stop when its
+    /// circuit goes silent. A region without a simulator in `sims` (the
+    /// offline demo, a region parked or just announced) runs at full rate.
+    /// Corrections that have faded end here.
+    pub fn advance_motion(&mut self, now: Instant, sims: &[aurora_net::stats::SimulatorMotion]) {
+        let dt = now.saturating_duration_since(self.motion_tick).as_secs_f64();
+        self.motion_tick = now;
+        for &handle in self.regions.keys() {
+            let rate = sims
+                .iter()
+                .find(|s| s.handle == Some(handle))
+                .map_or(1.0, |s| motion::clock_rate(s.time_dilation, s.packet_age()));
+            self.objects.advance_motion(handle, dt * f64::from(rate));
+        }
+        self.objects.expire_corrections(now);
     }
 
     /// LLViewerObject::interpolateLinearMotion terrain and visible-region
@@ -1165,8 +1195,8 @@ impl World {
                     if let Some(idx) = self.objects.index_of(&key) {
                         let mut mine = false;
                         let mut seated = false;
-                        if let Some(o) = self.objects.get_mut(idx) {
-                            o.apply_terse(&t);
+                        self.objects.apply_terse(idx, &t);
+                        if let Some(o) = self.objects.get(idx) {
                             mine = o.full_id == me;
                             seated = o.parent_id != 0;
                         }
@@ -2306,7 +2336,7 @@ impl World {
                 }
             } else {
                 body::Input {
-                    prim_dir: o.predicted(now).1 * Vec3::X,
+                    prim_dir: self.objects.predicted(o, now).1 * Vec3::X,
                     velocity: o.velocity,
                     in_air: o.velocity.z.abs() > 1.0,
                     mouselook_at: None,

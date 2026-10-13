@@ -3957,6 +3957,9 @@ impl App {
         }
         if self.in_world() {
             let ml = self.camera.mouselook();
+            // the clocks the other avatars and the objects move along
+            // (world/motion.rs); offline there is no simulator to slow them
+            self.world.advance_motion(Instant::now(), &self.net.stats.simulators.lock());
             if self.demo {
                 // no simulator offline: move the avatar locally
                 let p = self.world.agent.position;
