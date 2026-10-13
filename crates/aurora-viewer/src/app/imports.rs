@@ -64,18 +64,43 @@ impl App {
             && self.imports.pending_files.is_none()
             && !self.imports.entries.is_empty()
         {
-            self.imports.demo_upload_started = true;
-            self.imports.start(
-                &self.world,
-                &self.settings.inventory,
-                self.settings.imports.permissions(),
-                &Prices {
-                    texture: Some(10),
-                    large_texture: Some(40),
-                    sound: Some(10),
-                    animation: Some(10),
-                },
-            );
+            let missing_quotes: Vec<_> = self
+                .imports
+                .entries
+                .iter()
+                .filter_map(|entry| {
+                    if let Some(Source::Mesh(draft)) = &entry.source
+                        && draft.quote.is_none()
+                        && draft.pending.is_none()
+                        && matches!(entry.status, crate::imports::Status::Ready)
+                    {
+                        Some(entry.id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for id in missing_quotes {
+                self.imports.quote_mesh(
+                    id,
+                    ctx,
+                    &self.scene.jobs,
+                    &self.world,
+                    &self.settings.inventory,
+                    self.settings.imports.permissions(),
+                );
+            }
+            let prices = Prices {
+                texture: Some(10),
+                large_texture: Some(40),
+                sound: Some(10),
+                animation: Some(10),
+            };
+            if self.imports.total(&prices).is_some() {
+                self.imports.demo_upload_started = true;
+                self.imports
+                    .start(&self.world, &self.settings.inventory, self.settings.imports.permissions(), &prices);
+            }
         }
         let local_demo = self.demo
             && self.imports.demo_mode.starts_with("local-")

@@ -132,6 +132,7 @@ fn preview(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &Preference
         response
     };
     response.on_hover_text(aurora_i18n::tr!("import-preview-camera-help"));
+    preview_camera_controls(ui, p, &mut entry.view);
 }
 fn lod_source(source: mesh::LodSource) -> &'static str {
     match source {

@@ -1,6 +1,233 @@
 use super::*;
 
 #[test]
+fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let pixels = aurora_assets::DecodedImage {
+        width: 1,
+        height: 1,
+        components: 4,
+        discard: 0,
+        data: vec![90, 120, 160, 255],
+    };
+    let map = files::local_image(pixels, "map.png".into());
+    let mut entry = Entry::new(
+        "material.gltf".into(),
+        Ok(Source::Material {
+            value: PbrMaterial::default(),
+            images: Box::new(std::array::from_fn(|_| Some(map.clone()))),
+        }),
+        Default::default(),
+    );
+    entry.model = Some(Arc::new(aurora_render::preview::Model {
+        parts: Vec::new(),
+        center: glam::Vec3::ZERO,
+        radius: 1.0,
+    }));
+    entry.view.yaw = 1.8;
+    entry.view.pitch = -0.7;
+    entry.view.distance = 6.0;
+    entry.view.pan = [0.3, -0.2];
+    entry.material_previews = std::array::from_fn(|slot| {
+        Some((
+            map.key,
+            ctx.load_texture(
+                format!("map_{slot}"),
+                egui::ColorImage::filled([1, 1], theme.palette().teal),
+                egui::TextureOptions::LINEAR,
+            ),
+        ))
+    });
+    let texture_ids = entry
+        .material_previews
+        .each_ref()
+        .map(|preview| preview.as_ref().expect("map").1.id());
+    let mut imports = Imports {
+        open: true,
+        choice: Choice::Material,
+        active: Some(entry.id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    let mut prefs = Preferences::default();
+    let mut frame = |events: Vec<egui::Event>, imports: &mut Imports| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                show(ui.ctx(), &theme.palette(), imports, &mut prefs, &world, &Default::default());
+            },
+        );
+        output.textures_delta.clear();
+        output
+    };
+    let position = |output: &egui::FullOutput, label: &str| {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::epaint::Shape::Text(text) = &shape.shape
+                    && text.galley.text() == label
+                {
+                    Some(text.pos + text.galley.size() * 0.5)
+                } else {
+                    None
+                }
+            })
+            .expect("visible control")
+    };
+    let click = |pos, pressed| {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    };
+    for _ in 0..4 {
+        drop(frame(Vec::new(), &mut imports));
+    }
+    let mut thumbnails_output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+            ..Default::default()
+        },
+        |ui| {
+            let entry = &mut imports.entries[0];
+            let Some(Source::Material { value, images }) = &mut entry.source else {
+                panic!("material")
+            };
+            material(
+                ui,
+                &theme.palette(),
+                entry.id,
+                value,
+                images,
+                &mut Vec::new(),
+                &mut entry.material_shape,
+                &entry.material_previews,
+                entry.model.as_ref().map(|model| (model, &mut entry.view)),
+            );
+        },
+    );
+    thumbnails_output.textures_delta.clear();
+    for texture in texture_ids {
+        assert!(
+            thumbnails_output
+                .shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.fill_texture_id() == texture))
+        );
+    }
+    for _ in 0..3 {
+        drop(frame(Vec::new(), &mut imports));
+    }
+    let output = frame(Vec::new(), &mut imports);
+    let reset = position(&output, aurora_i18n::tr!("import-preview-reset-view"));
+    for pressed in [true, false] {
+        drop(frame(click(reset, pressed), &mut imports));
+    }
+    let view = &imports.entries[0].view;
+    let default = aurora_render::preview::View::default();
+    assert_eq!(
+        (view.yaw, view.pitch, view.distance, view.pan),
+        (default.yaw, default.pitch, default.distance, default.pan)
+    );
+    let output = frame(Vec::new(), &mut imports);
+    let sphere = position(&output, aurora_i18n::tr!("import-preview-sphere"));
+    for pressed in [true, false] {
+        drop(frame(click(sphere, pressed), &mut imports));
+    }
+    let output = frame(Vec::new(), &mut imports);
+    let cube = position(&output, aurora_i18n::tr!("import-preview-cube"));
+    for pressed in [true, false] {
+        drop(frame(click(cube, pressed), &mut imports));
+    }
+    assert!(imports.entries[0].material_shape == preview::MaterialShape::Cube);
+    assert_eq!(imports.entries[0].preview_generation, 1);
+    assert!(imports.entries[0].model.is_none());
+}
+
+#[test]
+fn mixed_batch_exposes_the_mesh_fee_button() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let entry = Entry::new(
+        "mesh.dae".into(),
+        Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
+        Default::default(),
+    );
+    let id = entry.id;
+    let mut imports = Imports {
+        open: true,
+        choice: Choice::Bulk,
+        active: Some(id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    let mut prefs = Preferences::default();
+    let mut frame = |events| {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                actions = show(ui.ctx(), &theme.palette(), &mut imports, &mut prefs, &world, &Default::default());
+            },
+        );
+        output.textures_delta.clear();
+        (output, actions)
+    };
+    for _ in 0..4 {
+        drop(frame(Vec::new()));
+    }
+    let (output, _) = frame(Vec::new());
+    let pos = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape
+                && text.galley.text() == aurora_i18n::tr!("import-calculate-fee")
+            {
+                Some(text.pos + text.galley.size() * 0.5)
+            } else {
+                None
+            }
+        })
+        .expect("mesh fee button visible in batch mode");
+    let (_, actions) = frame(vec![
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    assert!(matches!(actions.as_slice(), [Action::Quote(entry)] if *entry == id));
+}
+
+#[test]
 fn every_local_asset_exposes_the_same_three_actions_without_a_footer_close_button() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
@@ -131,6 +358,10 @@ fn menu_file_request_is_emitted_once_and_tab_changes_do_not_reopen_the_picker() 
     assert!(matches!(frame(&mut imports).as_slice(), [Action::Files]));
     assert!(frame(&mut imports).is_empty());
     imports.open(Choice::Animation);
+    assert!(frame(&mut imports).is_empty());
+    imports.open_file_picker(Choice::Bulk);
+    assert_eq!(imports.choice, Choice::Bulk);
+    assert!(matches!(frame(&mut imports).as_slice(), [Action::Files]));
     assert!(frame(&mut imports).is_empty());
 }
 

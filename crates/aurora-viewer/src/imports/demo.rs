@@ -68,7 +68,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
     imports.demo_mode = mode.clone();
     imports.choice = match mode.as_str() {
         "texture" | "destination" => Choice::Texture,
-        "material" => Choice::Material,
+        "material" | "material-cube" | "material-aurora" | "material-maps" => Choice::Material,
         "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" => Choice::Mesh,
         "animation" | "animation-own" => Choice::Animation,
         "sound" => Choice::Sound,
@@ -120,6 +120,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                         ("material-demo.gltf", Choice::Bulk),
                         ("animation-demo.anim", Choice::Bulk),
                         ("sound-demo.wav", Choice::Bulk),
+                        ("mesh-demo.dae", Choice::Bulk),
                     ],
                 };
                 let paths: Vec<_> = if let Some(path) = external {
@@ -131,6 +132,24 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                 for (path, loader) in paths {
                     match files::load(&path, loader, prefs.texture(), 30, &prefs, choice == Choice::Local) {
                         Ok(mut loaded) => {
+                            if matches!(mode.as_str(), "material-cube" | "material-aurora") {
+                                for entry in &mut loaded {
+                                    entry.material_shape = if mode == "material-cube" {
+                                        preview::MaterialShape::Cube
+                                    } else {
+                                        preview::MaterialShape::Aurora
+                                    };
+                                }
+                            }
+                            if mode == "material-maps" {
+                                for entry in &mut loaded {
+                                    if let Some(Source::Material { images, .. }) = &mut entry.source {
+                                        for slot in 1..4 {
+                                            images[slot] = images[0].clone();
+                                        }
+                                    }
+                                }
+                            }
                             if mode == "mesh-low" {
                                 for entry in &mut loaded {
                                     if let Some(Source::Mesh(draft)) = &mut entry.source {

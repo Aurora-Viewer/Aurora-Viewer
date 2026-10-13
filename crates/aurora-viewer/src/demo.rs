@@ -2768,7 +2768,22 @@ pub fn events() -> Vec<NetEvent> {
             }));
         }
     }
-    // notification center samples: an offer, an item, a script menu
+    let dialog = std::env::var("AURORA_DEMO_DIALOG").ok().filter(|mode| !mode.is_empty());
+    let inventory_offer = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "offer" | "offer-reject"));
+    ev.extend(notification_samples(
+        std::env::var_os("AURORA_DEMO_NOTIF").is_some(),
+        inventory_offer,
+        dialog.as_deref(),
+    ));
+    if long_names_scenario().is_some() {
+        ev.extend(long_name_events(agent));
+    }
+    ev
+}
+
+/// Unrelated demos stay quiet; each explicit scenario gets only its fixtures.
+fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option<&str>) -> Vec<NetEvent> {
+    let mut ev = Vec::new();
     let im = |dialog: u8, message: &str, bucket: Vec<u8>| {
         NetEvent::InstantMessage(aurora_net::InstantMessage {
             from_agent_id: Uuid::from_u128(2),
@@ -2783,12 +2798,19 @@ pub fn events() -> Vec<NetEvent> {
             timestamp: 0,
         })
     };
-    ev.push(im(22, aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"), Vec::new()));
+    if notifications {
+        ev.push(im(22, aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"), Vec::new()));
+    }
     // a resident's offer: asset type, then the item already in our inventory
-    let mut offer = vec![6];
-    offer.extend_from_slice(DEMO_OFFER.as_bytes());
-    ev.push(im(4, aurora_i18n::tr!("demo-aurora-lantern"), offer));
-    let menu = std::env::var("AURORA_DEMO_DIALOG").unwrap_or_default();
+    if notifications || inventory_offer {
+        let mut offer = vec![6];
+        offer.extend_from_slice(DEMO_OFFER.as_bytes());
+        ev.push(im(4, aurora_i18n::tr!("demo-aurora-lantern"), offer));
+    }
+    if !notifications && menu.is_none() {
+        return ev;
+    }
+    let menu = menu.unwrap_or_default();
     let (object_name, message, buttons) = if !menu.is_empty() {
         let mut buttons = [
             aurora_i18n::tr!("status-close"),
@@ -2837,10 +2859,38 @@ pub fn events() -> Vec<NetEvent> {
         channel: -4242,
         buttons,
     });
-    if long_names_scenario().is_some() {
-        ev.extend(long_name_events(agent));
-    }
     ev
+}
+
+#[cfg(test)]
+mod notification_tests {
+    use super::*;
+
+    #[test]
+    fn default_demo_is_quiet_and_explicit_scenarios_keep_only_relevant_notifications() {
+        assert!(notification_samples(false, false, None).is_empty());
+        let events = notification_samples(true, false, None);
+        assert_eq!(events.len(), 3);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, NetEvent::InstantMessage(im) if im.dialog == 22))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, NetEvent::InstantMessage(im) if im.dialog == 4))
+        );
+        assert!(events.iter().any(|event| matches!(event, NetEvent::ScriptDialog { .. })));
+        for mode in ["4", "12", "long"] {
+            let events = notification_samples(false, false, Some(mode));
+            assert!(
+                matches!(events.as_slice(), [NetEvent::ScriptDialog { buttons, .. }] if buttons.len() == if mode == "4" { 4 } else { 12 })
+            );
+        }
+        let events = notification_samples(false, true, None);
+        assert!(matches!(events.as_slice(), [NetEvent::InstantMessage(im)] if im.dialog == 4));
+    }
 }
 
 /// A procedural idle pose: arms down, slight breathing (demo only).

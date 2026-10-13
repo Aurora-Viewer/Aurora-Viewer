@@ -1975,6 +1975,7 @@ impl App {
             Action::Search => self.panels.search = !self.panels.search,
             Action::Performance => self.panels.perf = !self.panels.perf,
             Action::Preferences => self.panels.settings = !self.panels.settings,
+            Action::Import => self.imports.open_file_picker(crate::imports::Choice::Bulk),
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
                 d.show_alpha = !d.show_alpha;
@@ -5909,8 +5910,11 @@ impl App {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.bug_report.requested = true,
             BarAction::Import { choice, pick_files } => {
-                self.imports.open(choice);
-                self.imports.choose_files_on_open = pick_files;
+                if pick_files {
+                    self.imports.open_file_picker(choice);
+                } else {
+                    self.imports.open(choice);
+                }
                 self.egui_ctx.request_repaint();
             }
             BarAction::ShowHuds(visible) => {

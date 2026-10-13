@@ -1,5 +1,40 @@
 use super::*;
 
+#[test]
+fn batch_mesh_quotes_are_required_and_added_to_the_total() {
+    let mut imports = Imports {
+        choice: Choice::Bulk,
+        ..Default::default()
+    };
+    imports.entries.push(Entry::new(
+        "texture.png".into(),
+        Ok(Source::Texture(image(16, 16))),
+        Default::default(),
+    ));
+    for name in ["first.dae", "second.glb"] {
+        let entry = Entry::new(name.into(), Ok(Source::Mesh(Box::new(mesh_fixture()))), Default::default());
+        assert!(Choice::Bulk.accepts(&entry));
+        imports.entries.push(entry);
+    }
+    assert_eq!(imports.total(&prices()), None);
+    for (index, entry) in imports.entries[1..].iter_mut().enumerate() {
+        let Some(Source::Mesh(draft)) = &mut entry.source else {
+            panic!("mesh")
+        };
+        draft.quote = Some(aurora_net::inventory::mesh_upload::Quote {
+            token: Uuid::new_v4(),
+            cost: 20 + index as i32,
+            data: aurora_llsd::Llsd::Undef,
+        });
+    }
+    assert_eq!(imports.total(&prices()), Some(51));
+    imports.entries[2].selected = false;
+    assert_eq!(imports.total(&prices()), Some(30));
+    imports.entries[1].local = true;
+    assert!(!Choice::Bulk.accepts(&imports.entries[1]));
+    assert_eq!(imports.total(&prices()), Some(10));
+}
+
 pub(super) fn mesh_fixture() -> mesh::Draft {
     let skeleton = aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml")).expect("skeleton");
     let scene = aurora_assets::import_mesh::collada::parse(demo::DAE.as_bytes(), &skeleton).expect("synthetic mesh");

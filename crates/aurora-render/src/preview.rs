@@ -110,6 +110,30 @@ impl Default for View {
         }
     }
 }
+impl View {
+    /// Reset only the camera; keep display and material settings intact.
+    pub fn reset_camera(&mut self) {
+        let defaults = Self::default();
+        self.yaw = defaults.yaw;
+        self.pitch = defaults.pitch;
+        self.distance = defaults.distance;
+        self.pan = defaults.pan;
+    }
+
+    fn camera(&self, model: &Model, aspect: f32) -> (Vec3, Vec3) {
+        let outward = Vec3::new(
+            self.yaw.cos() * self.pitch.cos(),
+            self.yaw.sin() * self.pitch.cos(),
+            self.pitch.sin(),
+        );
+        let right = Vec3::Z.cross(outward).normalize_or_zero();
+        let up = outward.cross(right);
+        let height = 2.0 * model.radius.max(0.001) * self.distance * (0.75_f32 * 0.5).tan();
+        // Pan in screen coordinates at any orbit/zoom, following the pointer.
+        let center = model.center - right * self.pan[0] * height * aspect + up * self.pan[1] * height;
+        (center + outward * model.radius.max(0.001) * self.distance, center)
+    }
+}
 struct Region {
     id: egui::Id,
     model: Arc<Model>,
@@ -127,10 +151,10 @@ pub fn paint_with_pose(
     size: egui::Vec2,
     pose: Option<Pose>,
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::drag());
-    if response.dragged_by(egui::PointerButton::Primary) {
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+    if response.dragged_by(egui::PointerButton::Primary) || response.dragged_by(egui::PointerButton::Middle) {
         let delta = ui.input(|i| i.pointer.delta());
-        if ui.input(|i| i.modifiers.shift) {
+        if response.dragged_by(egui::PointerButton::Middle) || ui.input(|i| i.modifiers.shift) {
             view.pan[0] += delta.x / rect.width();
             view.pan[1] += delta.y / rect.height();
         } else {
@@ -141,12 +165,12 @@ pub fn paint_with_pose(
     if response.hovered() {
         let wheel = ui.input(|i| i.smooth_scroll_delta.y);
         if wheel != 0.0 {
+            ui.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
             view.distance = (view.distance * (-wheel * 0.002).exp()).clamp(0.2, 20.0);
         }
     }
     if response.double_clicked() {
-        view.pan = [0.0; 2];
-        view.distance = 3.0;
+        view.reset_camera();
     }
     ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
         rect,
@@ -497,14 +521,7 @@ impl Target {
         self.last = Some(view);
         self.last_pose = pose.cloned();
         let radius = self.model.radius.max(0.001);
-        let center = self.model.center + Vec3::new(view.pan[0] * radius, 0.0, -view.pan[1] * radius);
-        let eye = center
-            + Vec3::new(
-                view.yaw.cos() * view.pitch.cos(),
-                view.yaw.sin() * view.pitch.cos(),
-                view.pitch.sin(),
-            ) * radius
-                * view.distance;
+        let (eye, center) = view.camera(&self.model, self.size[0] as f32 / self.size[1] as f32);
         let projection =
             glam::camera::rh::proj::directx::perspective(0.75, self.size[0] as f32 / self.size[1] as f32, radius * 0.01, radius * 100.0)
                 * glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z);
@@ -671,6 +688,108 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_gestures_pan_with_shift_or_middle_button_and_orbit_without_them() {
+        for (button, shift, pan) in [
+            (egui::PointerButton::Primary, false, false),
+            (egui::PointerButton::Primary, true, true),
+            (egui::PointerButton::Middle, false, true),
+        ] {
+            let ctx = egui::Context::default();
+            let model = Arc::new(Model {
+                parts: Vec::new(),
+                center: Vec3::ZERO,
+                radius: 1.0,
+            });
+            let modifiers = egui::Modifiers {
+                shift,
+                ..Default::default()
+            };
+            let mut view = View::default();
+            let frame = |mut events: Vec<egui::Event>, view: &mut View| {
+                events.insert(0, egui::Event::ModifiersChanged(modifiers));
+                let mut rect = egui::Rect::NOTHING;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 400.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        rect = paint(ui, egui::Id::new("gesture"), model.clone(), view, egui::vec2(200.0, 200.0)).rect;
+                    },
+                );
+                output.textures_delta.clear();
+                rect
+            };
+            let pos = frame(Vec::new(), &mut view).center();
+            frame(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button,
+                        pressed: true,
+                        modifiers,
+                    },
+                ],
+                &mut view,
+            );
+            frame(vec![egui::Event::PointerMoved(pos + egui::vec2(30.0, 40.0))], &mut view);
+            if pan {
+                assert_eq!((view.yaw, view.pitch), (View::default().yaw, View::default().pitch));
+                assert!(view.pan[0] > 0.0 && view.pan[1] > 0.0);
+            } else {
+                assert_eq!(view.pan, [0.0; 2]);
+                assert_ne!(view.yaw, View::default().yaw);
+            }
+        }
+    }
+
+    #[test]
+    fn pan_follows_the_pointer_in_screen_coordinates_at_every_orbit_and_zoom() {
+        let model = Model {
+            parts: Vec::new(),
+            center: Vec3::new(2.0, -3.0, 1.0),
+            radius: 0.6,
+        };
+        for yaw in [0.0, 1.2, 3.0, -1.5] {
+            for pitch in [-1.0, 0.0, 0.8] {
+                for distance in [1.0, 3.0, 12.0] {
+                    for aspect in [0.7, 1.0, 2.0] {
+                        let mut view = View {
+                            yaw,
+                            pitch,
+                            distance,
+                            ..Default::default()
+                        };
+                        let project = |view: &View| {
+                            let (eye, center) = view.camera(&model, aspect);
+                            let projection = glam::camera::rh::proj::directx::perspective(0.75, aspect, 0.006, 60.0)
+                                * glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z);
+                            projection.project_point3(model.center)
+                        };
+                        let before = project(&view);
+                        view.pan = [0.12, 0.08];
+                        let delta = project(&view) - before;
+                        assert!((delta.x - 0.24).abs() < 0.0001);
+                        assert!((delta.y + 0.16).abs() < 0.0001);
+                        view.background = [0.1, 0.2, 0.3, 1.0];
+                        view.edges = true;
+                        view.reset_camera();
+                        let default = View::default();
+                        assert_eq!(
+                            (view.yaw, view.pitch, view.distance, view.pan),
+                            (default.yaw, default.pitch, default.distance, default.pan)
+                        );
+                        assert!(view.edges);
+                        assert_eq!(view.background, [0.1, 0.2, 0.3, 1.0]);
+                    }
+                }
+            }
+        }
+    }
 
     const SIZE: u32 = 64;
 

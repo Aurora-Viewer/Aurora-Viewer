@@ -272,6 +272,11 @@ pub fn show(
             .active
             .and_then(|id| imports.entries.iter().find(|e| e.id == id))
             .is_some_and(|e| matches!(e.source, Some(Source::Material { .. } | Source::Animation { .. })));
+    let material_layout = imports.choice == Choice::Material
+        || imports
+            .active
+            .and_then(|id| imports.entries.iter().find(|e| e.id == id))
+            .is_some_and(|e| matches!(e.source, Some(Source::Material { .. })));
     let mut floater = Floater::new(
         "asset_imports_v3",
         aurora_i18n::tr!("import-title"),
@@ -279,7 +284,7 @@ pub fn show(
         if mesh_layout {
             Vec2::new(1080.0, 740.0)
         } else if wide_layout {
-            Vec2::new(980.0, 740.0)
+            Vec2::new(980.0, if material_layout { 800.0 } else { 740.0 })
         } else {
             Vec2::new(840.0, 650.0)
         },
@@ -529,6 +534,7 @@ pub fn show(
                                                     Vec2::new(ui.available_width(), 180.0),
                                                     entry.player.pose.clone(),
                                                 );
+                                                preview_camera_controls(ui, p, &mut entry.view);
                                             }
                                             if old_base != entry.player.base {
                                                 entry.player.seek(animation.local_time(f64::from(entry.player.position)) as f32);
@@ -579,6 +585,7 @@ pub fn show(
                                             entry.view.material = Some(super::preview::material(value));
                                             let old = value.clone();
                                             let old_maps = images.each_ref().map(|image| image.as_ref().map(|i| i.key));
+                                            let old_shape = entry.material_shape;
                                             material(
                                                 ui,
                                                 p,
@@ -586,12 +593,19 @@ pub fn show(
                                                 value,
                                                 images,
                                                 &mut actions,
+                                                &mut entry.material_shape,
+                                                &entry.material_previews,
                                                 entry.model.as_ref().map(|model| (model, &mut entry.view)),
                                             );
-                                            if old != *value || old_maps != images.each_ref().map(|image| image.as_ref().map(|i| i.key)) {
+                                            if old != *value
+                                                || old_shape != entry.material_shape
+                                                || old_maps != images.each_ref().map(|image| image.as_ref().map(|i| i.key))
+                                            {
                                                 entry.preview_generation += 1;
                                             }
-                                            if old_maps != images.each_ref().map(|image| image.as_ref().map(|i| i.key)) {
+                                            if old_shape != entry.material_shape
+                                                || old_maps != images.each_ref().map(|image| image.as_ref().map(|i| i.key))
+                                            {
                                                 entry.model = None;
                                                 entry.preview_error = None;
                                             }
@@ -713,7 +727,7 @@ pub fn show(
                     actions.push(Action::RezLocal(entry.id));
                 }
             } else {
-                if imports.choice == Choice::Mesh
+                if matches!(imports.choice, Choice::Mesh | Choice::Bulk)
                     && let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|e| e.id == id))
                     && let Some(Source::Mesh(draft)) = &entry.source
                     && action_button_if(
@@ -936,6 +950,7 @@ fn texture(
                 view,
                 Vec2::new(ui.available_width(), 260.0),
             );
+            preview_camera_controls(ui, p, view);
         } else {
             ui.spinner();
         }
@@ -1115,18 +1130,34 @@ fn material(
     material: &mut PbrMaterial,
     images: &mut [Option<LocalImage>; 4],
     actions: &mut Vec<Action>,
+    shape: &mut super::preview::MaterialShape,
+    previews: &[Option<(Uuid, egui::TextureHandle)>; 4],
     preview: Option<(&Arc<aurora_render::preview::Model>, &mut aurora_render::preview::View)>,
 ) {
     widgets::section_header(ui, p, "droplet-filled", aurora_i18n::tr!("import-material"));
+    ui.horizontal(|ui| {
+        ui.label(aurora_i18n::tr!("import-preview-model"));
+        egui::ComboBox::from_id_salt(("material_shape", id))
+            .selected_text(shape.label())
+            .show_ui(ui, |ui| {
+                for value in super::preview::MaterialShape::ALL {
+                    selection(ui, shape, value, value.label());
+                }
+            });
+    });
     ui.horizontal_top(|ui| {
         if let Some((model, view)) = preview {
-            aurora_render::preview::paint(
-                ui,
-                egui::Id::new(("material_preview", id)),
-                model.clone(),
-                view,
-                Vec2::new(210.0, 210.0),
-            );
+            ui.vertical(|ui| {
+                aurora_render::preview::paint(
+                    ui,
+                    egui::Id::new(("material_preview", id)),
+                    model.clone(),
+                    view,
+                    Vec2::new(210.0, 210.0),
+                )
+                .on_hover_text(aurora_i18n::tr!("import-preview-camera-help"));
+                preview_camera_controls(ui, p, view);
+            });
             ui.add_space(8.0);
         }
         ui.vertical(|ui| {
@@ -1170,9 +1201,9 @@ fn material(
         });
     });
     ui.add_space(8.0);
-    let name_width = (ui.available_width() - 408.0).max(80.0);
+    let name_width = (ui.available_width() - 452.0).max(80.0);
     egui::Grid::new(("material_maps", id))
-        .num_columns(5)
+        .num_columns(6)
         .spacing(Vec2::new(8.0, 6.0))
         .show(ui, |ui| {
             for (slot, label) in [
@@ -1185,6 +1216,30 @@ fn material(
             .enumerate()
             {
                 column_label(ui, label, 140.0);
+                ui.allocate_ui_with_layout(Vec2::splat(32.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), egui::Sense::hover());
+                    if let Some((key, texture)) = &previews[slot]
+                        && images[slot].as_ref().is_some_and(|image| image.key == *key)
+                    {
+                        ui.put(rect, egui::Image::new(texture).fit_to_exact_size(Vec2::splat(32.0)))
+                            .on_hover_ui(|ui| {
+                                ui.add(egui::Image::new(texture).fit_to_exact_size(texture.size_vec2() * 2.0));
+                            });
+                    } else {
+                        let pending = images[slot].is_some() || maps::ids(material)[slot].is_some();
+                        if pending {
+                            ui.put(rect, egui::Spinner::new());
+                        } else if let Some(icon) = crate::ui::icons::global("photo-filled") {
+                            ui.put(rect, egui::Image::new(&icon).fit_to_exact_size(Vec2::splat(24.0)).tint(p.muted))
+                                .on_hover_text(aurora_i18n::tr!("import-no-local-image"));
+                        } else {
+                            ui.put(
+                                rect,
+                                egui::Label::new(RichText::new(aurora_i18n::tr!("import-no-map")).small().color(p.muted)).truncate(),
+                            );
+                        }
+                    }
+                });
                 if let Some(image) = &images[slot] {
                     column_label(ui, &image.name, name_width)
                         .on_hover_text(format!("{}\n{} × {}", image.name, image.pixels.width, image.pixels.height));
@@ -1217,6 +1272,21 @@ fn material(
                 ui.end_row();
             }
         });
+}
+fn preview_camera_controls(ui: &mut egui::Ui, p: &Palette, view: &mut aurora_render::preview::View) {
+    if action_button(
+        ui,
+        p,
+        "refresh",
+        aurora_i18n::tr!("import-preview-reset-view"),
+        ActionKind::Flat,
+        Vec2::ZERO,
+    )
+    .on_hover_text(aurora_i18n::tr!("import-preview-camera-help"))
+    .clicked()
+    {
+        view.reset_camera();
+    }
 }
 fn alpha_name(mode: aurora_assets::AlphaMode) -> &'static str {
     match mode {

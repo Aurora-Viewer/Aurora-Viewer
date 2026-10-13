@@ -46,7 +46,7 @@ impl Choice {
         }
         match entry.source.as_ref().map(Source::kind) {
             Some(kind) => {
-                (self == Choice::Bulk && kind != Kind::Mesh && !matches!(entry.source, Some(Source::Animation { bvh: Some(_), .. })))
+                (self == Choice::Bulk && !matches!(entry.source, Some(Source::Animation { bvh: Some(_), .. })))
                     || matches!(
                         (self, kind),
                         (Choice::Texture, Kind::Texture)
@@ -277,6 +277,8 @@ pub struct Entry {
     pub preview_error: Option<String>,
     pub model: Option<Arc<aurora_render::preview::Model>>,
     pub view: aurora_render::preview::View,
+    pub material_shape: preview::MaterialShape,
+    pub material_previews: [Option<(Uuid, egui::TextureHandle)>; 4],
     pub texture_target: usize,
     pub player: animation::Player,
     pub local: bool,
@@ -339,6 +341,8 @@ impl Entry {
             preview_error: None,
             model: None,
             view: Default::default(),
+            material_shape: Default::default(),
+            material_previews: std::array::from_fn(|_| None),
             texture_target: 0,
             player: Default::default(),
             local: false,
@@ -367,6 +371,7 @@ pub(super) enum Worker {
     Encoded(Uuid, Result<Vec<u8>, String>),
     Preview(Uuid, u64, egui::ColorImage),
     Model(Uuid, u64, Arc<aurora_render::preview::Model>, Option<Arc<mesh::Prepared>>),
+    MaterialPreviews(Uuid, u64, [Option<(Uuid, egui::ColorImage)>; 4]),
     PreviewFailed(Uuid, u64, String),
     MeshPrepared(
         Uuid,
@@ -488,6 +493,11 @@ impl Default for Imports {
     }
 }
 impl Imports {
+    pub fn open_file_picker(&mut self, choice: Choice) {
+        self.open(choice);
+        self.choose_files_on_open = true;
+    }
+
     pub fn demo_mesh_request(&self) -> Option<Request> {
         let step = &self.current.as_ref()?.1;
         (step.kind == Kind::Mesh).then(|| Request {
@@ -810,6 +820,26 @@ impl Imports {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {
                         entry.preview_pending = false;
                         entry.preview = Some(ctx.load_texture(format!("import_{id}"), pixels, egui::TextureOptions::LINEAR));
+                    }
+                }
+                Worker::MaterialPreviews(id, generation, previews) => {
+                    if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {
+                        for (slot, preview) in previews.into_iter().enumerate() {
+                            entry.material_previews[slot] = preview.map(|(key, pixels)| {
+                                if let Some((old_key, handle)) = &entry.material_previews[slot]
+                                    && *old_key == key
+                                {
+                                    let mut handle = handle.clone();
+                                    handle.set(pixels, egui::TextureOptions::LINEAR);
+                                    (key, handle)
+                                } else {
+                                    (
+                                        key,
+                                        ctx.load_texture(format!("import_{id}_map_{slot}"), pixels, egui::TextureOptions::LINEAR),
+                                    )
+                                }
+                            });
+                        }
                     }
                 }
                 Worker::Model(id, generation, model, prepared) => {
