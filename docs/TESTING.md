@@ -92,15 +92,16 @@ préférences déjà enregistrées sont conservées.
 hauteur : entre 2 048 et 4 096 m, une position ne varie que par pas de
 0,24 mm, soit environ un pixel en gros plan.
 
-`AURORA_AA` : 0 aucun, 1 FXAA, 2 à 4 MSAA 2x / 4x / 8x, 5 TAA, 6 SMAA. La
-démo garde le réglage par défaut (3, MSAA 4x), qui a sa propre profondeur
-multi-échantillonnée, remplie par sa propre prépasse (terrain et faces
-opaques, voir `AURORA_MSAA_PREPASS`) ; les autres modes réutilisent la
-profondeur de la prépasse à un échantillon dans la passe de scène, faces
-masquées comprises. Un changement des vertex shaders ou des passes se
-vérifie donc aussi avec `AURORA_AA=6` : c'est avec lui que le terrain
-laissait voir le ciel par taches (`AURORA_DEMO_POS="60,128"`,
-`AURORA_DEMO_ALTITUDE=86`).
+`AURORA_AA` : 0 aucun, 1 FXAA, 2 à 4 MSAA 2x / 4x / 8x, 5 TAA, 6 SMAA. Sans
+elle, la démo garde le réglage enregistré dans son profil : 6 (SMAA) pour un
+profil neuf, 3 (MSAA 4x) pour un profil créé quand c'était le défaut. Le MSAA
+a sa propre profondeur multi-échantillonnée, remplie par sa propre prépasse
+(terrain et faces opaques, voir `AURORA_MSAA_PREPASS`) ; les autres modes
+réutilisent la profondeur de la prépasse à un échantillon dans la passe de
+scène, faces masquées comprises. Un changement des vertex shaders ou des
+passes se vérifie donc avec les deux, `AURORA_AA=3` et `AURORA_AA=6` : c'est
+avec le second que le terrain laissait voir le ciel par taches
+(`AURORA_DEMO_POS="60,128"`, `AURORA_DEMO_ALTITUDE=86`).
 
 `AURORA_WINDOW_SIZE` : largeur et hauteur de la zone de rendu, en pixels
 logiques (au moins 800 × 560), pour mesurer selon la taille de la fenêtre :
