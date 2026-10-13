@@ -80,7 +80,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
-| `AURORA_EMOJI_FONT=<path>` | Uses another emoji font |
+| `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
 
 The demo shows no sample offer or dialog by default. The fountain menu,

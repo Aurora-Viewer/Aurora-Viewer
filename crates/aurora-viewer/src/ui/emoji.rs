@@ -1,11 +1,11 @@
-//! Color emoji from the Noto 3D emoji font (sbix PNG strikes, Apache 2.0 /
-//! OFL — see NOTICE.md). The font is memory-mapped (it is far
-//! too large to embed) and glyphs are decoded lazily into egui textures.
-//! Provides the emoji picker and inline emoji rendering for chat text.
+//! Color emoji from Google's Noto Color Emoji font (2D, CBDT PNG bitmaps,
+//! OFL — see NOTICE.md), built into the executable; glyphs are decoded
+//! lazily into egui textures. Provides the emoji picker and inline emoji
+//! rendering for chat text.
 
 use crate::theme::Palette;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Picker tabs: (label, Tabler icon, Unicode group).
 fn categories() -> &'static Vec<(&'static str, &'static str, emojis::Group)> {
@@ -101,56 +101,22 @@ pub struct Emoji {
     pub query: String,
 }
 
-/// The font of a published viewer, part of its executable (build.rs,
-/// `AURORA_EMBED_EMOJI`): no folder of the installation to lose or to be
-/// refused. The other builds read the file of the source tree.
-#[cfg(aurora_embedded_emoji)]
-static BUILT_IN: Option<&[u8]> = Some(include_bytes!("../../../../assets/emoji/Noto-3D-128.ttf"));
-#[cfg(not(aurora_embedded_emoji))]
-static BUILT_IN: Option<&[u8]> = None;
+/// The font is part of the executable (10.7 MB): no folder of the
+/// installation to lose or to be refused.
+static BUILT_IN: &[u8] = include_bytes!("../../../../assets/emoji/NotoColorEmoji.ttf");
 
-/// Font files tried when `AURORA_EMOJI_FONT` names none and none is built in.
-fn font_files() -> Vec<PathBuf> {
-    let mut v = Vec::new();
-    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
-        v.push(dir.join("assets").join("emoji").join("Noto-3D-128.ttf"));
-        v.push(dir.join("assets").join("emoji").join("Noto-3D-watch.ttf"));
-    }
-    // development tree: <repo>/assets/emoji (scripts/fetch-assets.ps1)
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/emoji");
-    v.push(dev.join("Noto-3D-128.ttf"));
-    v.push(dev.join("Noto-3D-watch.ttf"));
-    v
-}
-
-/// A font file mapped for the rest of the session.
-fn map_font(path: &Path) -> Option<&'static [u8]> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(e) => {
-            // A candidate that does not exist is normal; a file that is
-            // there and cannot be opened (rights, security software) is
-            // what a report needs to show.
-            if e.kind() != std::io::ErrorKind::NotFound {
-                log::warn!("emoji font {}: {e}", path.display());
-            }
-            return None;
-        }
-    };
-    // SAFETY: the font file is opened read-only and never modified
-    // while mapped; the mapping is leaked so the face can be 'static.
-    let map = unsafe { memmap2::Mmap::map(&file) }
+/// Another font to try (`AURORA_EMOJI_FONT`), kept for the session.
+fn read_font(path: &Path) -> Option<&'static [u8]> {
+    std::fs::read(path)
         .map_err(|e| log::warn!("emoji font {}: {e}", path.display()))
-        .ok()?;
-    let map: &'static memmap2::Mmap = Box::leak(Box::new(map));
-    Some(&map[..])
+        .ok()
+        .map(|bytes| &*Box::leak(bytes.into_boxed_slice()))
 }
 
 impl Emoji {
     pub fn load() -> Emoji {
-        // In order: the font asked for, the one of the executable, the files.
-        let asked = std::env::var_os("AURORA_EMOJI_FONT").map(PathBuf::from);
-        let files = font_files();
+        // The font asked for (to compare another one), else the built-in one.
+        let asked = std::env::var_os("AURORA_EMOJI_FONT");
         let parse = |bytes: &'static [u8], name: &str| match ttf_parser::Face::parse(bytes, 0) {
             Ok(f) => {
                 log::info!("emoji font: {name}");
@@ -161,18 +127,12 @@ impl Emoji {
                 None
             }
         };
-        let from_file = |path: &PathBuf| map_font(path).and_then(|bytes| parse(bytes, &path.display().to_string()));
         let face = asked
-            .as_ref()
-            .and_then(from_file)
-            .or_else(|| BUILT_IN.and_then(|bytes| parse(bytes, "built into the executable")))
-            .or_else(|| files.iter().find_map(from_file));
+            .map(std::path::PathBuf::from)
+            .and_then(|path| read_font(&path).and_then(|bytes| parse(bytes, &path.display().to_string())))
+            .or_else(|| parse(BUILT_IN, "Noto Color Emoji, built into the executable"));
         if face.is_none() {
-            let looked: Vec<String> = asked.iter().chain(&files).map(|p| p.display().to_string()).collect();
-            log::warn!(
-                "no emoji font found (Noto-3D, looked for {}); emoji use the monochrome fallback",
-                looked.join(", ")
-            );
+            log::warn!("no emoji font: emoji use the monochrome fallback");
         }
         let lists = categories()
             .iter()

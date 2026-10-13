@@ -351,7 +351,7 @@ pub struct App {
     sound_changes: Vec<usize>,
     /// Audio devices listed for the preferences.
     devices_listed: bool,
-    /// Color emoji (Noto 3D) for chat and the picker.
+    /// Color emoji (Noto Color Emoji) for chat and the picker.
     emoji: ui::emoji::Emoji,
     /// The system's fallback fonts were still being looked for when the
     /// fonts were installed: installed again once they are there.

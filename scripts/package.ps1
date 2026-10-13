@@ -16,14 +16,9 @@ param(
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Out 'assets\emoji') -ErrorAction Stop | Out-Null
 Copy-Item -LiteralPath $Exe -Destination $Out -ErrorAction Stop
-# The emoji font is inside an exe built with AURORA_EMBED_EMOJI (the release
-# and build-release.ps1); any other exe reads the file next to it. The
-# licence of the font ships in both cases, and the assets folder stays: the
-# updater of the published versions refuses a package without it.
-$emoji = @('LICENSE-OFL.txt')
-if (-not $env:AURORA_EMBED_EMOJI -or $env:AURORA_EMBED_EMOJI -eq '0') { $emoji += 'Noto-3D-128.ttf' }
-$emoji = $emoji | ForEach-Object { Join-Path $Source "assets\emoji\$_" }
-Copy-Item -LiteralPath $emoji -Destination (Join-Path $Out 'assets\emoji') -ErrorAction Stop
+# The emoji font is inside the exe; its licence ships, and the assets folder
+# stays: the updater of the published versions refuses a package without it.
+Copy-Item -LiteralPath (Join-Path $Source 'assets\emoji\LICENSE-OFL.txt') -Destination (Join-Path $Out 'assets\emoji') -ErrorAction Stop
 $docs = 'LICENSE', 'NOTICE.md', 'README.md' | ForEach-Object { Join-Path $Source $_ }
 Copy-Item -LiteralPath $docs -Destination $Out -ErrorAction Stop
 $taskExePath = (Resolve-Path -LiteralPath $Exe).Path

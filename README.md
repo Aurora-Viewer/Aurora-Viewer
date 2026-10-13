@@ -370,8 +370,8 @@ git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
 
 The tools check the environment and offer to **repair** it: they install
 whatever is missing (GitHub CLI, the Visual Studio C++ tools, Rust), clone
-the Firestorm sources next to the repository, and download the emoji font,
-the Rust toolchain and the crates. Then, driven by the keyboard: release /
+the Firestorm sources next to the repository, and download the Rust
+toolchain and the crates. Then, driven by the keyboard: release /
 dev / debug viewers, demo, agents' tasks, disk, logs, live pull requests with
 Windows notifications, releases (see
 [HUMANS.md](HUMANS.md)).
@@ -388,7 +388,6 @@ Or by hand, to build the viewer only:
 ```powershell
 git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
 cd aurora-viewer
-./scripts/fetch-assets.ps1          # emoji font (too large for git)
 cargo build --release -p aurora-viewer
 ./target/release/aurora-viewer.exe
 ```
@@ -399,10 +398,8 @@ profile (`cargo run -p aurora-viewer`): it behaves like the release build
 without its slow link-time optimization. `./scripts/build-release.ps1`
 builds GitHub's latest `main` with `--release` into `..\RELEASE\`.
 
-That build and the published one carry the emoji font inside the exe
-(`AURORA_EMBED_EMOJI=1` when building, 148 MB more), so the exe works from
-any folder. A build made by hand reads the font from `assets/emoji` of the
-source tree: moved elsewhere, its exe shows emojis without colour.
+Every build carries the emoji font (Noto Color Emoji, 10.7 MB) inside the
+exe, so the exe works from any folder.
 
 ### Versions
 

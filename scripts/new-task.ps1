@@ -61,16 +61,6 @@ if ($LASTEXITCODE -eq 0) {
 }
 New-Item -ItemType Directory -Force -Path $p.Work -ErrorAction Stop | Out-Null
 Invoke-Checked 'git worktree add' { git -C $p.Main worktree add -b $branch $dir $base }
-
-# the emoji font is not in git: hard link it from the main repository
-$font = Join-Path $p.Main 'assets\emoji\Noto-3D-128.ttf'
-if (Test-Path $font) {
-    try {
-        New-Item -ItemType HardLink -Path (Join-Path $dir 'assets\emoji\Noto-3D-128.ttf') -Target $font -ErrorAction Stop | Out-Null
-    } catch {
-        Write-Warning "Emoji font not linked ($($_.Exception.Message)): run scripts/fetch-assets.ps1 in the worktree."
-    }
-}
 New-Item -ItemType Directory -Force -Path (Join-Path $dir '.scratch') | Out-Null
 
 Write-Host ""
