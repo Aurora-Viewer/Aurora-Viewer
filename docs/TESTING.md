@@ -1287,10 +1287,10 @@ grille.
 - **`AURORA_DEMO_TP_CONFIRM=lien|repere`** : la confirmation d'une
   téléportation demandée par un lien de téléportation (`lien`, par défaut)
   ou par un repère de « Lieux » (`repere`), avec sa case « Ne plus
-  afficher ». La question est posée même si le réglage enregistré
+  afficher ». La question est posée même si le réglage de la démo
   (Préférences › Interface › Téléportation « Confirmer les téléportations »)
-  est désactivé ; cocher la case puis « Téléporter » le désactive pour de
-  bon, comme hors démo.
+  est désactivé ; cocher la case puis « Téléporter » le désactive dans les
+  réglages de la démo, séparés de ceux du viewer connecté.
 - **`AURORA_DEMO_RESTRICTED=1`** : icônes de parcelle rouges, dégâts
   activés, santé à 72 %.
 
