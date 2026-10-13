@@ -477,6 +477,38 @@ pub fn long_names_scenario() -> Option<(egui::Vec2, egui::Vec2)> {
     })
 }
 
+/// AURORA_DEMO_CONV=many: more conversations than the list of the
+/// Conversations window shows at once.
+pub const MANY_CONVERSATIONS: u32 = 24;
+
+pub fn many_conversation(i: u32) -> Uuid {
+    Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0001_0000_0000 | i as u128)
+}
+
+pub fn many_conversations_scenario() -> bool {
+    std::env::var("AURORA_DEMO_CONV").is_ok_and(|v| v == "many")
+}
+
+/// One instant message from each of `MANY_CONVERSATIONS` residents.
+pub fn many_conversation_events(agent: Uuid) -> Vec<NetEvent> {
+    (0..MANY_CONVERSATIONS)
+        .map(|i| {
+            NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: many_conversation(i),
+                from_name: format!("Resident{:02} Demo", i + 1),
+                to_agent_id: agent,
+                dialog: 0,
+                session_id: Uuid::nil(),
+                message: aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset").into(),
+                offline: false,
+                from_group: false,
+                binary_bucket: Vec::new(),
+                timestamp: 0,
+            })
+        })
+        .collect()
+}
+
 /// Instant messages, a conference invitation, a local chat line and two
 /// nearby avatars, all with names longer than their lists.
 fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
@@ -2781,6 +2813,9 @@ pub fn events() -> Vec<NetEvent> {
     ));
     if long_names_scenario().is_some() {
         ev.extend(long_name_events(agent));
+    }
+    if many_conversations_scenario() {
+        ev.extend(many_conversation_events(agent));
     }
     ev
 }

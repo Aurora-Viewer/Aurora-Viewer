@@ -1377,7 +1377,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CONV=1|names[:narrow|wide]`**: `1` opens the conversation of
+- **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many`**: `1` opens the conversation of
   the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user
   name, wide and accented letters) and a conference with a long title
@@ -1389,7 +1389,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   distance, without covering anything; the windows keep the requested width;
   the whole name is shown when hovering a cut name (for a screenshot:
   `AURORA_DEMO_POINTER="85,633,s"` on the conference, `"120,377,s"` on a
-  nearby resident, 1600 × 900 window).
+  nearby resident, 1600 × 900 window). `many` gives 24 conversations to a
+  Conversations window of 600 × 320 px and opens the last one: the window
+  keeps its size, Contacts and Nearby chat stay at the top of the list, the
+  conversations scroll under them (wheel, or the bar that shows at the
+  right edge of the list under the pointer) and the list is scrolled to the
+  conversation that is open.
 - **`AURORA_DEMO_RADAR=1|tp|friends|groups|profile`**: the People window.
   `1`: residents at every range in "Near you" (with
   `AURORA_DEMO_TAGS=1`, those of the name plates, several of whom have a
