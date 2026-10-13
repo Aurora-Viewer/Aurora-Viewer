@@ -126,17 +126,27 @@ XML. `aurora-assets/wearable.rs` parses the bounded LLWearable format and retain
 permissions, sale, textures and unknown sections when parameters are changed.
 `ui/shape.rs` uses Aurora's Floater, tabs, surfaces and modals, with visible-row
 virtualisation and a fixed Save As / Cancel / Save footer. `app/shape_editor.rs`
-opens it from Appearance or the worn shape's inventory menu, restores the camera
+opens it from Appearance, the self-avatar/attachment menu or the worn shape's
+inventory menu, restores the camera
 on closing and provides `AURORA_DEMO_SHAPE`.
 
 The draft overrides only our avatar's visual parameter view in `World`; incoming
 appearances stay authoritative underneath and Cancel restores the newest one.
 `shape_editor/preview.rs` shares compressed texture/mesh sources and the frozen
-local pose, decodes textures and rigged mesh geometry on workers, applies the
+local pose, decodes textures and mesh geometry on workers, applies the
 shape and joint overrides independently for visible minimum/maximum hints, then
 uses the ordinary `aurora-render/preview.rs` GPU pass without a readback. At most
 one snapshot and one hint batch are pending; stale replies are discarded and
-offscreen hint models are released. Hint visibility and height units are saved
+offscreen hint models are released. BOM visibility shares the world's system-part
+mask, with all bake slots mapped for the mesh faces. Static meshes follow their
+attachment joint and local parent chain. Content signatures exclude animation
+cycles and sort attachment identities; active snapshot/model keys remain separate
+from pending ones, so refreshes replace ready images without a loading flash.
+Decoded geometry is shared across texture updates; temporarily missing source
+bytes retain the same asset's ready geometry/pixels. `shape_editor/demo.rs` builds
+rigged/static mesh-head fixtures on workers through the ordinary asset codec.
+The category row consumes discrete wheel events once per frame and accumulates
+trackpad deltas. Hint visibility and height units are saved
 in Settings. The main scene continues to use its normal shape/morph streaming.
 
 `aurora-net/session/wearable_save.rs` checks shape ownership and Modify/Copy,

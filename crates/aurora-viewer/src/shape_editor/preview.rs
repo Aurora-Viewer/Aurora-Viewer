@@ -5,7 +5,7 @@
 use crate::{
     scene::{
         Scene,
-        avatar::{AvatarLibrary, IMG_INVISIBLE},
+        avatar::{AvatarLibrary, BAKES, IMG_INVISIBLE},
     },
     world::World,
 };
@@ -21,20 +21,32 @@ use std::{
 use uuid::Uuid;
 
 struct RawMesh {
-    data: Arc<Vec<u8>>,
-    skin: Arc<aurora_assets::SkinInfo>,
+    asset: Uuid,
+    data: Option<Arc<Vec<u8>>>,
+    skin: Option<Arc<aurora_assets::SkinInfo>>,
+    rigid: Option<Rigid>,
     textures: Vec<Uuid>,
     colors: Vec<[f32; 4]>,
 }
 struct Mesh {
-    faces: Vec<aurora_assets::MeshFace>,
-    skin: Arc<aurora_assets::SkinInfo>,
+    asset: Uuid,
+    faces: Arc<Vec<aurora_assets::MeshFace>>,
+    skin: Option<Arc<aurora_assets::SkinInfo>>,
+    rigid: Option<Rigid>,
     textures: Vec<Uuid>,
     colors: Vec<[f32; 4]>,
+}
+#[derive(Clone)]
+struct Rigid {
+    joint: usize,
+    point: Vec3,
+    rotation: Quat,
+    local: Mat4,
 }
 pub struct Input {
     textures: HashMap<Uuid, (Arc<Vec<u8>>, PathBuf)>,
     body: HashMap<usize, Uuid>,
+    hidden_bakes: u64,
     meshes: Vec<RawMesh>,
     pose: (Vec<Quat>, Vec<Vec3>),
     pub key: u64,
@@ -42,6 +54,7 @@ pub struct Input {
 pub struct Snapshot {
     textures: HashMap<Uuid, Arc<Image>>,
     body: HashMap<usize, Uuid>,
+    hidden_bakes: u64,
     meshes: Vec<Mesh>,
     pose: (Vec<Quat>, Vec<Vec3>),
 }
@@ -51,48 +64,60 @@ impl Input {
         let mut out = Self {
             textures: HashMap::new(),
             body: HashMap::new(),
+            hidden_bakes: 0,
             meshes: Vec::new(),
             pose: scene.preview_pose(&world.agent_id),
             key: 0,
         };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         world.agent_id.hash(&mut hasher);
-        for motion in world.animations.get(&world.agent_id).into_iter().flatten() {
-            motion.id.hash(&mut hasher);
-            scene.anims.is_loaded(&motion.id).hash(&mut hasher);
-        }
+        // Hints freeze a pose. AO cycles and blink signals are not appearance
+        // changes and must never invalidate the resident's comparison images.
         let Some(index) = world.objects.index_of_uuid(&world.agent_id) else {
             return out;
         };
-        for part in &world.avatar_lib.parts {
-            if let Some(id) = world.bake_texture(index, part.bake_te) {
-                part.bake_te.hash(&mut hasher);
+        out.hidden_bakes = Scene::bom_mask(world, index);
+        out.hidden_bakes.hash(&mut hasher);
+        for (slot, _, _) in BAKES {
+            if let Some(id) = world.bake_texture(index, slot) {
+                slot.hash(&mut hasher);
                 id.hash(&mut hasher);
-                out.body.insert(part.bake_te, id);
+                out.body.insert(slot, id);
             }
         }
-        let mut stack = vec![index];
+        let root = index;
+        let mut stack = vec![(index, 0)];
         let mut visited = HashSet::new();
-        while let Some(index) = stack.pop() {
-            if !visited.insert(index) {
+        let mut signatures = Vec::new();
+        while let Some((index, depth)) = stack.pop() {
+            if visited.len() >= 20_000 || depth >= 16 || !visited.insert(index) {
                 continue;
             }
             let Some(object) = world.objects.get(index) else {
                 continue;
             };
-            if object.is_avatar()
-                || world
+            let parent_avatar = world
+                .objects
+                .parent_of(object)
+                .and_then(|parent| world.objects.get(parent))
+                .is_some_and(|parent| parent.is_avatar());
+            if object.is_avatar() {
+                if index == root {
+                    stack.extend(world.objects.children_of(&object.key).iter().map(|index| (*index, depth + 1)));
+                }
+                continue;
+            }
+            if parent_avatar
+                && (world
                     .avatar_lib
                     .attach_points
                     .get(&object.attachment_point())
                     .is_some_and(|p| p.hud)
+                    || object.extra.extended_mesh_flags.unwrap_or(0) & aurora_prim::extra::EXTENDED_MESH_ANIMATED != 0)
             {
-                if object.is_avatar() {
-                    stack.extend(world.objects.children_of(&object.key));
-                }
                 continue;
             }
-            stack.extend(world.objects.children_of(&object.key));
+            stack.extend(world.objects.children_of(&object.key).iter().map(|index| (*index, depth + 1)));
             let Some(id) = object
                 .visual_volume()
                 .sculpt
@@ -101,9 +126,26 @@ impl Input {
             else {
                 continue;
             };
-            if let Some((data, skin)) = scene.meshes.preview_source(&id) {
-                id.hash(&mut hasher);
-                data.len().hash(&mut hasher);
+            {
+                let (data, skin) = scene.meshes.preview_source(&id);
+                let skin = skin.filter(|skin| !skin.joint_names.is_empty());
+                let rigid = skin.is_none().then(|| Rigid::capture(world, index)).flatten();
+                let mut mesh_hash = std::collections::hash_map::DefaultHasher::new();
+                id.hash(&mut mesh_hash);
+                data.as_ref().map(|bytes| bytes.len()).hash(&mut mesh_hash);
+                skin.as_ref().map(|skin| Arc::as_ptr(skin) as usize).hash(&mut mesh_hash);
+                if let Some(rigid) = &rigid {
+                    rigid.joint.hash(&mut mesh_hash);
+                    for value in rigid
+                        .local
+                        .to_cols_array()
+                        .into_iter()
+                        .chain(rigid.point.to_array())
+                        .chain(rigid.rotation.to_array())
+                    {
+                        value.to_bits().hash(&mut mesh_hash);
+                    }
+                }
                 let textures: Vec<Uuid> = object
                     .te
                     .as_ref()
@@ -118,7 +160,7 @@ impl Input {
                             .collect()
                     })
                     .unwrap_or_default();
-                textures.hash(&mut hasher);
+                textures.hash(&mut mesh_hash);
                 let colors: Vec<_> = object
                     .te
                     .as_ref()
@@ -126,17 +168,22 @@ impl Input {
                     .unwrap_or_default();
                 for color in &colors {
                     for channel in color {
-                        channel.to_bits().hash(&mut hasher);
+                        channel.to_bits().hash(&mut mesh_hash);
                     }
                 }
                 out.meshes.push(RawMesh {
+                    asset: id,
                     data,
                     skin,
+                    rigid,
                     textures,
                     colors,
                 });
+                signatures.push((object.full_id, mesh_hash.finish()));
             }
         }
+        signatures.sort_unstable();
+        signatures.hash(&mut hasher);
         let ids: HashSet<_> = out
             .body
             .values()
@@ -158,7 +205,7 @@ impl Input {
         out
     }
 
-    pub fn prepare(self) -> Snapshot {
+    pub fn prepare(self, previous: Option<Arc<Snapshot>>) -> Snapshot {
         let textures = self
             .textures
             .into_par_iter()
@@ -168,28 +215,54 @@ impl Input {
                 } else {
                     bytes
                 };
-                aurora_assets::decode_j2k(&bytes, 2).ok().map(|pixels| {
-                    (
-                        id,
+                let image = aurora_assets::decode_j2k(&bytes, 2)
+                    .ok()
+                    .map(|pixels| {
                         Arc::new(Image {
                             size: [pixels.width, pixels.height],
                             rgba: crate::scene::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize)
                                 .into(),
-                        }),
-                    )
-                })
+                        })
+                    })
+                    .or_else(|| previous.as_ref().and_then(|snapshot| snapshot.textures.get(&id).cloned()));
+                image.map(|image| (id, image))
             })
             .collect();
         let meshes = self
             .meshes
             .into_par_iter()
             .filter_map(|mesh| {
-                let header = aurora_assets::parse_mesh_header(&mesh.data).ok()?;
-                let lod = header.actual_lod(3)?;
-                let bytes = aurora_assets::mesh::section_bytes(&mesh.data, header.lods[lod]?)?;
+                // An asset UUID is immutable. Reuse its decoded geometry when
+                // textures arrive; a transient unavailable source cannot erase it.
+                let faces = previous
+                    .as_ref()
+                    .and_then(|snapshot| {
+                        snapshot
+                            .meshes
+                            .iter()
+                            .find(|ready| ready.asset == mesh.asset)
+                            .map(|ready| ready.faces.clone())
+                    })
+                    .or_else(|| {
+                        let data = mesh.data.as_ref()?;
+                        let header = aurora_assets::parse_mesh_header(data).ok()?;
+                        let lod = header.actual_lod(3)?;
+                        let bytes = aurora_assets::mesh::section_bytes(data, header.lods[lod]?)?;
+                        Some(Arc::new(aurora_assets::decode_mesh_lod(bytes).ok()?))
+                    })?;
                 Some(Mesh {
-                    faces: aurora_assets::decode_mesh_lod(bytes).ok()?,
-                    skin: mesh.skin,
+                    asset: mesh.asset,
+                    faces,
+                    skin: mesh.skin.or_else(|| {
+                        previous.as_ref().and_then(|snapshot| {
+                            snapshot
+                                .meshes
+                                .iter()
+                                .find(|ready| ready.asset == mesh.asset)
+                                .and_then(|ready| ready.skin.clone())
+                        })
+                    }),
+                    rigid: mesh.rigid,
                     textures: mesh.textures,
                     colors: mesh.colors,
                 })
@@ -198,9 +271,42 @@ impl Input {
         Snapshot {
             textures,
             body: self.body,
+            hidden_bakes: self.hidden_bakes,
             meshes,
-            pose: self.pose,
+            pose: previous
+                .as_ref()
+                .filter(|snapshot| !snapshot.pose.0.is_empty())
+                .map(|snapshot| snapshot.pose.clone())
+                .unwrap_or(self.pose),
         }
+    }
+}
+
+impl Rigid {
+    fn capture(world: &World, mut index: usize) -> Option<Self> {
+        let object = world.objects.get(index)?;
+        let scale = Mat4::from_scale(object.visual_scale());
+        let mut local = Mat4::IDENTITY;
+        for _ in 0..16 {
+            let object = world.objects.get(index)?;
+            local = Mat4::from_rotation_translation(object.rotation, object.position) * local;
+            index = world.objects.parent_of(object)?;
+            if world.objects.get(index)?.is_avatar() {
+                let point = world.avatar_lib.attach_points.get(&object.attachment_point());
+                if point.is_some_and(|point| point.hud) {
+                    return None;
+                }
+                let rig = &world.avatar_lib.rig;
+                let joint = point.and_then(|point| point.joint).unwrap_or(rig.pelvis);
+                return Some(Self {
+                    joint,
+                    point: point.map(|point| point.skel_position).unwrap_or(world.avatar_lib.pelvis),
+                    rotation: point.map(|point| point.rotation).unwrap_or(Quat::IDENTITY),
+                    local: local * scale,
+                });
+            }
+        }
+        None
     }
 }
 
@@ -210,7 +316,7 @@ impl Snapshot {
         let mut shape = avatars.shape_params.shape_weights(weights.clone(), &avatars.rig);
         let rig = &avatars.rig;
         for mesh in &self.meshes {
-            let skin = &mesh.skin;
+            let Some(skin) = &mesh.skin else { continue };
             if skin.alt_inverse_bind.len() != skin.joint_names.len() {
                 continue;
             }
@@ -249,7 +355,8 @@ impl Snapshot {
         });
         let mut parts = Vec::new();
         for part in avatars.parts.iter().filter(|p| {
-            self.body.get(&p.bake_te) != Some(&IMG_INVISIBLE)
+            self.hidden_bakes & (1u64 << p.bake_te.min(63)) == 0
+                && self.body.get(&p.bake_te) != Some(&IMG_INVISIBLE)
                 && (p.name != "skirt"
                     || self
                         .body
@@ -295,31 +402,52 @@ impl Snapshot {
             });
         }
         for mesh in &self.meshes {
-            let (faces, skin, textures) = (&mesh.faces, &mesh.skin, &mesh.textures);
-            let joints: Vec<_> = skin
-                .joint_names
-                .iter()
-                .map(|n| rig.names.get(n).copied().unwrap_or(rig.len()))
-                .collect();
-            let inverse: Vec<_> = skin.inverse_bind.iter().map(|m| *m * skin.bind_shape).collect();
-            let rest = joints
-                .iter()
-                .zip(&inverse)
-                .map(|(j, m)| world.get(*j).copied().unwrap_or(Mat4::IDENTITY) * *m)
-                .collect();
-            let binding = Arc::new(Skin {
-                joints,
-                inverse_bind: inverse,
-                rest,
+            let (faces, textures) = (&mesh.faces, &mesh.textures);
+            let binding = mesh.skin.as_ref().filter(|skin| !skin.joint_names.is_empty()).map(|skin| {
+                let joints: Vec<_> = skin
+                    .joint_names
+                    .iter()
+                    .map(|n| rig.names.get(n).copied().unwrap_or(rig.len()))
+                    .collect();
+                let inverse: Vec<_> = skin.inverse_bind.iter().map(|m| *m * skin.bind_shape).collect();
+                let rest = joints
+                    .iter()
+                    .zip(&inverse)
+                    .map(|(j, m)| world.get(*j).copied().unwrap_or(Mat4::IDENTITY) * *m)
+                    .collect();
+                Arc::new(Skin {
+                    joints,
+                    inverse_bind: inverse,
+                    rest,
+                })
             });
+            let transform = binding
+                .is_none()
+                .then_some(mesh.rigid.as_ref())
+                .flatten()
+                .map(|rigid| {
+                    // Same frame as anchors::attach_frame: the point follows
+                    // the shaped bone, but rigid geometry keeps object scale.
+                    let delta = world.get(rigid.joint).copied().unwrap_or(Mat4::IDENTITY) * rig.default_world_inv[rigid.joint];
+                    let (_, rotation, _) = delta.to_scale_rotation_translation();
+                    Mat4::from_rotation_translation(rotation.normalize() * rigid.rotation, delta.transform_point3(rigid.point))
+                        * rigid.local
+                })
+                .unwrap_or(Mat4::IDENTITY);
+            let normal_transform = glam::Mat3::from_mat4(transform).inverse().transpose();
             for (index, face) in faces.iter().enumerate() {
+                if textures.get(index) == Some(&IMG_INVISIBLE) {
+                    continue;
+                }
                 let vertices = face
                     .positions
                     .iter()
                     .enumerate()
                     .map(|(i, p)| Vertex {
-                        position: *p,
-                        normal: face.normals.get(i).copied().unwrap_or([0.0, 0.0, 1.0]),
+                        position: transform.transform_point3(Vec3::from_array(*p)).to_array(),
+                        normal: (normal_transform * Vec3::from_array(face.normals.get(i).copied().unwrap_or([0.0, 0.0, 1.0])))
+                            .normalize_or(Vec3::Z)
+                            .to_array(),
                         uv: face.uvs.get(i).copied().unwrap_or_default(),
                         joints: face.joints.get(i).copied().unwrap_or_default().map(u32::from),
                         weights: face.weights.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 0.0]),
@@ -342,7 +470,7 @@ impl Snapshot {
                         alpha_cutoff: 0.5,
                         ..Default::default()
                     },
-                    skin: Some(binding.clone()),
+                    skin: binding.clone(),
                 });
             }
         }
@@ -376,6 +504,165 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn empty() -> Snapshot {
+        Snapshot {
+            textures: HashMap::new(),
+            body: HashMap::new(),
+            hidden_bakes: 0,
+            meshes: Vec::new(),
+            pose: Default::default(),
+        }
+    }
+    fn scene(library: Arc<AvatarLibrary>) -> Scene {
+        Scene::new(std::env::temp_dir().join(format!("aurora-shape-hints-{}", Uuid::new_v4())), library)
+    }
+
+    #[test]
+    fn worn_mesh_heads_replace_the_system_head_and_animation_cycles_keep_the_content_key() {
+        let library = Arc::new(AvatarLibrary::load());
+        for rigged in [false, true] {
+            let mut world = World::new(library.clone());
+            for event in crate::demo::events() {
+                world.apply(event);
+            }
+            let object = super::super::demo::object(&world).expect("mesh head");
+            world.objects.upsert(world.main_region.expect("region"), object);
+            let mut scene = scene(library.clone());
+            let asset = super::super::demo::asset(&library, rigged).expect("head asset");
+            scene
+                .meshes
+                .insert_local(super::super::demo::ASSET, asset.data, asset.header, asset.skin);
+            let input = Input::capture(&world, &scene);
+            assert_ne!(input.hidden_bakes & (1 << 8), 0, "BOM head hides the system head");
+            assert_eq!(input.meshes.len(), 1);
+            let key = input.key;
+            world.animations.insert(
+                world.agent_id,
+                vec![crate::world::PlayingAnimation::from_signal(
+                    Uuid::from_u128(99),
+                    1,
+                    std::time::Instant::now(),
+                    None,
+                )],
+            );
+            assert_eq!(Input::capture(&world, &scene).key, key);
+            let snapshot = input.prepare(None);
+            let model = snapshot.model(&library, &[], &BTreeMap::new(), 1, 0.0);
+            let head = model.parts.last().expect("actual head");
+            assert_eq!(head.material.color, super::super::demo::TINT);
+            assert_eq!(head.skin.is_some(), rigged);
+            assert!(head.vertices.len() > 3);
+            let classic = Snapshot {
+                body: snapshot.body.clone(),
+                ..empty()
+            }
+            .model(&library, &[], &BTreeMap::new(), 1, 0.0);
+            let hidden = library.parts.iter().filter(|part| part.bake_te == 8).count();
+            assert_eq!(model.parts.len(), classic.parts.len() - hidden + 1);
+            let changed = snapshot.model(&library, &[], &BTreeMap::from([(33, 2.0)]), 1, 0.0);
+            let changed = changed.parts.last().expect("changed head");
+            if rigged {
+                assert_ne!(head.skin.as_ref().expect("skin").rest, changed.skin.as_ref().expect("skin").rest);
+            } else {
+                assert_ne!(head.vertices[0].position, changed.vertices[0].position);
+                let size = super::super::catalog::PARAMS
+                    .iter()
+                    .filter(|param| param.group == 1)
+                    .min_by(|a, b| a.order.total_cmp(&b.order))
+                    .expect("head size");
+                let small = snapshot.model(&library, &[], &BTreeMap::from([(size.id, size.min)]), 1, 0.0);
+                let large = snapshot.model(&library, &[], &BTreeMap::from([(size.id, size.max)]), 1, 0.0);
+                let edge = |model: &Model| {
+                    let part = model.parts.last().expect("static head");
+                    Vec3::from_array(part.vertices[0].position).distance(Vec3::from_array(part.vertices[1].position))
+                };
+                assert!(
+                    (edge(&small) - edge(&large)).abs() < 1e-5,
+                    "rigid heads retain object scale, as in the world"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn transient_sources_keep_ready_geometry_textures_and_the_frozen_pose() {
+        let id = Uuid::from_u128(1);
+        let image = Arc::new(Image {
+            size: [1, 1],
+            rgba: Arc::from([255u8; 4]),
+        });
+        let faces = Arc::new(vec![aurora_assets::MeshFace {
+            positions: vec![[0.0; 3]; 3],
+            indices: vec![0, 1, 2],
+            ..Default::default()
+        }]);
+        let previous = Snapshot {
+            textures: HashMap::from([(id, image.clone())]),
+            meshes: vec![Mesh {
+                asset: id,
+                faces: faces.clone(),
+                skin: None,
+                rigid: None,
+                textures: vec![id],
+                colors: Vec::new(),
+            }],
+            pose: (vec![Quat::IDENTITY], vec![Vec3::ZERO]),
+            ..empty()
+        };
+        let input = Input {
+            textures: HashMap::from([(id, (Arc::new(vec![0]), PathBuf::new()))]),
+            body: HashMap::new(),
+            hidden_bakes: 0,
+            meshes: vec![RawMesh {
+                asset: id,
+                data: None,
+                skin: None,
+                rigid: None,
+                textures: vec![id],
+                colors: vec![[0.5; 4]],
+            }],
+            pose: (vec![Quat::from_rotation_z(1.0)], vec![Vec3::ONE]),
+            key: 2,
+        };
+        let next = input.prepare(Some(Arc::new(previous)));
+        assert!(Arc::ptr_eq(&next.textures[&id], &image));
+        assert!(Arc::ptr_eq(&next.meshes[0].faces, &faces));
+        assert_eq!(next.meshes[0].colors, vec![[0.5; 4]]);
+        assert_eq!(next.pose.0, vec![Quat::IDENTITY]);
+    }
+
+    #[test]
+    fn refreshes_keep_visible_hints_and_reject_models_from_the_previous_snapshot() {
+        let (mut world, mut state) = crate::shape_editor::tests::fixture();
+        let scene = scene(world.avatar_lib.clone());
+        let ctx = egui::Context::default();
+        let old = empty().model(&world.avatar_lib, &[], &BTreeMap::new(), 1, 0.0);
+        state.snapshot = Some(Arc::new(empty()));
+        state.snapshot_ready_key = Some(1);
+        state.snapshot_key = 2;
+        state.snapshot_pending = Some(2);
+        state.checked = std::time::Instant::now();
+        state.models.insert((33, false), old.clone());
+        state.update(&mut world, &scene, &ctx);
+        assert!(Arc::ptr_eq(&state.models[&(33, false)], &old));
+        state.snapshot_tx.send((2, empty())).expect("snapshot");
+        state.update(&mut world, &scene, &ctx);
+        assert!(Arc::ptr_eq(&state.models[&(33, false)], &old));
+        let new = empty().model(&world.avatar_lib, &[], &BTreeMap::from([(33, 2.0)]), 1, 0.0);
+        state
+            .model_tx
+            .send((state.generation, 1, vec![(33, false, new.clone())]))
+            .expect("stale hint");
+        state.update(&mut world, &scene, &ctx);
+        assert!(Arc::ptr_eq(&state.models[&(33, false)], &old));
+        state
+            .model_tx
+            .send((state.generation, 2, vec![(33, false, new.clone())]))
+            .expect("fresh hint");
+        state.update(&mut world, &scene, &ctx);
+        assert!(Arc::ptr_eq(&state.models[&(33, false)], &new));
+    }
+
     #[test]
     fn rigged_hints_follow_shape_bones_preserve_tint_and_apply_camera_elevation_once() {
         let library = AvatarLibrary::load();
@@ -384,19 +671,22 @@ mod tests {
         let snapshot = Snapshot {
             textures: HashMap::new(),
             body: HashMap::new(),
+            hidden_bakes: 0,
             meshes: vec![Mesh {
-                faces: vec![aurora_assets::MeshFace {
+                asset: Uuid::from_u128(1),
+                rigid: None,
+                faces: Arc::new(vec![aurora_assets::MeshFace {
                     positions: vec![[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.0, 0.1, 0.0]],
                     indices: vec![0, 1, 2],
                     joints: vec![[0; 4]; 3],
                     weights: vec![[1.0, 0.0, 0.0, 0.0]; 3],
                     ..Default::default()
-                }],
-                skin: Arc::new(aurora_assets::SkinInfo {
+                }]),
+                skin: Some(Arc::new(aurora_assets::SkinInfo {
                     joint_names: vec!["mChest".into()],
                     inverse_bind: vec![library.rig.default_world_inv[chest]],
                     ..Default::default()
-                }),
+                })),
                 textures: Vec::new(),
                 colors: vec![tint],
             }],
@@ -420,6 +710,7 @@ mod tests {
         let snapshot = Snapshot {
             textures: HashMap::new(),
             body: HashMap::from([(8, IMG_INVISIBLE)]),
+            hidden_bakes: 0,
             meshes: Vec::new(),
             pose: Default::default(),
         };
@@ -435,6 +726,7 @@ mod tests {
         let without_mask = Snapshot {
             textures: HashMap::new(),
             body: HashMap::new(),
+            hidden_bakes: 0,
             meshes: Vec::new(),
             pose: Default::default(),
         }
@@ -446,6 +738,7 @@ mod tests {
         let visible = Snapshot {
             textures: HashMap::new(),
             body: HashMap::new(),
+            hidden_bakes: 0,
             meshes: Vec::new(),
             pose: Default::default(),
         };

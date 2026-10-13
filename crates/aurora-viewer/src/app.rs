@@ -7031,6 +7031,7 @@ impl App {
                     self.apply_appearance_action(action);
                 }
                 self.panels.appearance = open;
+                self.update_demo_shape_mesh();
                 self.shape_ui.update(&mut self.world, &self.scene, &ctx);
                 let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
                 let (shape_actions, visible) = ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui);

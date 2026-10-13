@@ -2807,7 +2807,7 @@ impl Scene {
 
     /// Bake slots (texture-entry index bits) shown by the avatar's attachments
     /// and their child prims.
-    fn bom_mask(world: &World, avatar_idx: usize) -> u64 {
+    pub(crate) fn bom_mask(world: &World, avatar_idx: usize) -> u64 {
         let Some(av) = world.objects.get(avatar_idx) else {
             return 0;
         };

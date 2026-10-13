@@ -2,6 +2,26 @@ use super::*;
 use crate::shape_editor::worn_shape;
 
 impl App {
+    pub(super) fn update_demo_shape_mesh(&mut self) {
+        let Some(result) = self.shape_ui.demo_mesh.as_ref().and_then(|rx| rx.try_recv().ok()) else {
+            return;
+        };
+        self.shape_ui.demo_mesh = None;
+        match result {
+            Ok(asset) => {
+                self.scene
+                    .meshes
+                    .insert_local(crate::shape_editor::demo::ASSET, asset.data, asset.header, asset.skin);
+                if let Some(object) = crate::shape_editor::demo::object(&self.world) {
+                    self.world.apply(NetEvent::ObjectUpdates {
+                        handle: self.world.main_region.unwrap_or_default(),
+                        objects: vec![object],
+                    });
+                }
+            }
+            Err(error) => log::warn!("shape head fixture: {error}"),
+        }
+    }
     pub(super) fn open_shape_editor(&mut self, item: uuid::Uuid) {
         self.shape_ui.hints = self.settings.shape_show_hints;
         self.shape_ui.feet = self.settings.shape_height_feet;
@@ -104,7 +124,7 @@ impl App {
         self.panels.appearance = false;
         self.open_shape_editor(item);
         self.shape_ui.group = match mode.as_str() {
-            "head" => 1,
+            "head" | "mesh-head" | "static-head" => 1,
             "eyes" => 2,
             "ears" => 3,
             "nose" => 4,
@@ -127,5 +147,13 @@ impl App {
             }
         }
         self.shape_ui.changed(&mut self.world);
+        if matches!(mode.as_str(), "mesh-head" | "static-head") {
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.shape_ui.demo_mesh = Some(rx);
+            let library = self.world.avatar_lib.clone();
+            self.scene.jobs.run(move || {
+                let _ = tx.send(crate::shape_editor::demo::asset(&library, mode == "mesh-head"));
+            });
+        }
     }
 }

@@ -2,6 +2,7 @@
 //! LLPanelEditWearable / LLAgentWearables (Firestorm, originally LGPL 2.1).
 
 pub mod catalog;
+pub mod demo;
 mod preview;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -63,6 +64,8 @@ type Hint = (i32, bool, Arc<Model>);
 pub struct State {
     pub open: bool,
     pub group: usize,
+    pub(crate) category_wheel: f32,
+    pub(crate) category_wheel_frame: Option<u64>,
     pub filter: String,
     pub hints: bool,
     pub feet: bool,
@@ -73,14 +76,17 @@ pub struct State {
     pub close_confirmation: bool,
     pub close_after_save: bool,
     pub models: HashMap<(i32, bool), Arc<Model>>,
+    pub(crate) demo_mesh: Option<mpsc::Receiver<Result<demo::MeshAsset, String>>>,
     snapshot: Option<Arc<preview::Snapshot>>,
     snapshot_key: u64,
+    snapshot_ready_key: Option<u64>,
     snapshot_pending: Option<u64>,
     snapshot_tx: mpsc::Sender<(u64, preview::Snapshot)>,
     snapshot_rx: mpsc::Receiver<(u64, preview::Snapshot)>,
     checked: Instant,
     generation: u64,
     models_generation: u64,
+    models_key: Option<u64>,
     model_pending: Option<(u64, u64)>,
     model_tx: mpsc::Sender<(u64, u64, Vec<Hint>)>,
     model_rx: mpsc::Receiver<(u64, u64, Vec<Hint>)>,
@@ -93,6 +99,8 @@ impl Default for State {
         Self {
             open: false,
             group: 0,
+            category_wheel: 0.0,
+            category_wheel_frame: None,
             filter: String::new(),
             hints: true,
             feet: false,
@@ -103,14 +111,17 @@ impl Default for State {
             close_confirmation: false,
             close_after_save: false,
             models: HashMap::new(),
+            demo_mesh: None,
             snapshot: None,
             snapshot_key: 0,
+            snapshot_ready_key: None,
             snapshot_pending: None,
             snapshot_tx,
             snapshot_rx,
             checked: Instant::now() - Duration::from_secs(1),
             generation: 1,
             models_generation: 0,
+            models_key: None,
             model_pending: None,
             model_tx,
             model_rx,
@@ -145,6 +156,7 @@ impl State {
         self.draft = None;
         self.models.clear();
         self.snapshot = None;
+        self.snapshot_ready_key = None;
         self.group = 0;
         self.filter.clear();
         self.copy_name = None;
@@ -221,6 +233,7 @@ impl State {
         self.draft = None;
         self.models.clear();
         self.snapshot = None;
+        self.snapshot_ready_key = None;
         self.close_confirmation = false;
         self.copy_name = None;
         self.close_after_save = false;
@@ -311,32 +324,40 @@ impl State {
         while let Ok((key, snapshot)) = self.snapshot_rx.try_recv() {
             self.snapshot_pending = None;
             if key == self.snapshot_key {
-                self.snapshot = Some(Arc::new(snapshot));
+                let old = self.snapshot.replace(Arc::new(snapshot));
+                scene.jobs.discard(old);
+                self.snapshot_ready_key = Some(key);
                 self.models_generation = 0;
+            } else {
+                scene.jobs.discard(snapshot);
             }
         }
         while let Ok((generation, key, models)) = self.model_rx.try_recv() {
             self.model_pending = None;
-            if generation == self.generation && key == self.snapshot_key {
-                self.models.extend(models.into_iter().map(|(id, max, model)| ((id, max), model)));
+            if generation == self.generation && Some(key) == self.snapshot_ready_key {
+                let old: Vec<_> = models
+                    .into_iter()
+                    .filter_map(|(id, max, model)| self.models.insert((id, max), model))
+                    .collect();
+                scene.jobs.discard(old);
                 self.models_generation = generation;
+                self.models_key = Some(key);
+            } else {
+                scene.jobs.discard(models);
             }
         }
         if self.hints && self.draft.is_some() && self.checked.elapsed() > Duration::from_millis(300) {
             self.checked = Instant::now();
             let input = preview::Input::capture(world, scene);
-            if input.key != self.snapshot_key {
-                self.snapshot_key = input.key;
-                self.snapshot = None;
-                self.models.clear();
-            }
-            if self.snapshot.is_none() && self.snapshot_pending.is_none() {
+            self.snapshot_key = input.key;
+            if self.snapshot_ready_key != Some(input.key) && self.snapshot_pending.is_none() {
                 let key = input.key;
                 self.snapshot_pending = Some(key);
                 let tx = self.snapshot_tx.clone();
                 let ctx = ctx.clone();
+                let previous = self.snapshot.clone();
                 scene.jobs.run(move || {
-                    let _ = tx.send((key, input.prepare()));
+                    let _ = tx.send((key, input.prepare(previous)));
                     ctx.request_repaint();
                 });
             }
@@ -344,13 +365,14 @@ impl State {
     }
 
     pub fn request_hints(&mut self, world: &World, jobs: &Jobs, ctx: &egui::Context, visible: &[i32]) {
-        let (Some(snapshot), Some(draft)) = (&self.snapshot, &self.draft) else {
+        let (Some(snapshot), Some(draft), Some(key)) = (&self.snapshot, &self.draft, self.snapshot_ready_key) else {
             return;
         };
         if !self.hints
             || self.model_pending.is_some()
             || self.model_requested.elapsed() < Duration::from_millis(80)
             || (self.models_generation == self.generation
+                && self.models_key == Some(key)
                 && visible
                     .iter()
                     .all(|id| self.models.contains_key(&(*id, false)) && self.models.contains_key(&(*id, true))))
@@ -363,7 +385,6 @@ impl State {
         let values = world.server_visual_params().to_vec();
         let params = draft.edited.params.clone();
         let generation = self.generation;
-        let key = self.snapshot_key;
         self.model_pending = Some((generation, key));
         self.model_requested = Instant::now();
         let tx = self.model_tx.clone();

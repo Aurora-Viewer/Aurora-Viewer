@@ -1677,11 +1677,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_RESTRICTED=1`**: red parcel icons, damage
   enabled, health at 72%.
 
-**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as`**
+**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|mesh-head|static-head`**
 opens the editor with a synthetic worn shape, without reading a real inventory or
 connecting to a grid. Category modes select the corresponding controls; `male`
 selects the male shape, `readonly` removes Modify, `nocopy` removes Copy, `dirty`
 opens the unsaved-changes confirmation and `save-as` opens the copy name dialog.
+`mesh-head` and `static-head` wear a tinted head through the real mesh codec,
+with/without skin weights, using BOM so the system head is hidden in the world
+and in the hints. Check the same head in both views and change Head Size. Wheel
+over the category row goes forward/backward, stays within Body/Legs and does not
+scroll the parameter list. The self-avatar/attachment menu's Appearance › Edit
+Shape opens this editor. Asset arrivals and AO cycles must keep ready hint images
+visible, with no repeated "Preparing preview" placeholders.
 Combine with `AURORA_DEMO_CLASSIC=1` for a baked system avatar. Move a slider or
 type a value, switch sex, use minimum/maximum
 hints, filter parameters, toggle hints and height units, then Cancel, Save and Save

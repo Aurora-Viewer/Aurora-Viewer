@@ -109,9 +109,11 @@ impl MeshStreamer {
         self.cache_dir.join("mesh").join(format!("{id}.mesh"))
     }
 
-    pub fn preview_source(&self, id: &Uuid) -> Option<(Arc<Vec<u8>>, Arc<SkinInfo>)> {
-        let entry = self.entries.get(id)?;
-        Some((entry.data.clone()?, entry.skin.clone()?))
+    pub fn preview_source(&self, id: &Uuid) -> (Option<Arc<Vec<u8>>>, Option<Arc<SkinInfo>>) {
+        self.entries
+            .get(id)
+            .map(|entry| (entry.data.clone(), entry.skin.clone()))
+            .unwrap_or_default()
     }
 
     pub fn meta(&self, id: &Uuid) -> Option<MeshMeta> {

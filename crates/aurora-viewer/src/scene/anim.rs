@@ -882,10 +882,6 @@ impl AnimStreamer {
         self.entries.get(id).is_some_and(|entry| entry.state >= 3)
     }
 
-    pub fn is_loaded(&self, id: &Uuid) -> bool {
-        self.entries.get(id).is_some_and(|entry| entry.anim.is_some())
-    }
-
     /// Register an already-built animation (demo / built-in motions).
     pub fn insert(&mut self, id: Uuid, anim: Arc<BoundAnim>) {
         self.entries.insert(

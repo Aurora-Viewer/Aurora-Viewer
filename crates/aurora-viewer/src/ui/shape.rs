@@ -26,6 +26,63 @@ fn groups() -> [&'static str; 9] {
     ]
 }
 
+fn category_wheel(
+    ctx: &egui::Context,
+    group: usize,
+    remainder: &mut f32,
+    last_frame: &mut Option<u64>,
+    response: &egui::Response,
+    enabled: bool,
+) -> Option<usize> {
+    if !enabled || !response.contains_pointer() {
+        *remainder = 0.0;
+        return None;
+    }
+    let frame = ctx.cumulative_frame_nr();
+    if *last_frame == Some(frame) {
+        return None;
+    }
+    *last_frame = Some(frame);
+    let delta = ctx.input_mut(|input| {
+        let delta: f32 = input
+            .events
+            .iter()
+            .filter_map(|event| {
+                let egui::Event::MouseWheel {
+                    unit, delta, modifiers, ..
+                } = event
+                else {
+                    return None;
+                };
+                (*modifiers == egui::Modifiers::NONE).then_some(
+                    (delta.x + delta.y)
+                        / match unit {
+                            egui::MouseWheelUnit::Point => 55.0,
+                            _ => 1.0,
+                        },
+                )
+            })
+            .filter(|delta| delta.is_finite())
+            .sum::<f32>()
+            .clamp(-9.0, 9.0);
+        if delta != 0.0 {
+            input.smooth_scroll_delta = Vec2::ZERO;
+        }
+        delta
+    });
+    *remainder += delta;
+    let steps = remainder.trunc() as i32;
+    *remainder -= steps as f32;
+    if steps != 0 {
+        let next = (group as i32 - steps).clamp(0, 8) as usize;
+        if next != group {
+            ctx.request_repaint();
+            return Some(next);
+        }
+    }
+    None
+}
+
 pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State) -> (Vec<Action>, Vec<i32>) {
     if !st.open {
         return (Vec::new(), Vec::new());
@@ -98,7 +155,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
             });
             ui.add_space(6.0);
             let names = groups();
-            ui.horizontal(|ui| {
+            let category_row = ui.horizontal(|ui| {
                 if widgets::icon_button(ui, p, "arrow-left", aurora_i18n::tr!("common-previous"), st.group > 0) {
                     st.group -= 1;
                     st.filter.clear();
@@ -120,6 +177,17 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
                     st.filter.clear();
                 }
             });
+            if let Some(group) = category_wheel(
+                ctx,
+                st.group,
+                &mut st.category_wheel,
+                &mut st.category_wheel_frame,
+                &category_row.response,
+                !had_confirmation && !had_copy,
+            ) {
+                st.group = group;
+                st.filter.clear();
+            }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - 32.0 - ui.spacing().item_spacing.x).max(80.0);
@@ -431,6 +499,70 @@ mod tests {
             modifiers: Default::default(),
         }
     }
+    #[test]
+    fn wheel_over_categories_navigates_both_ways_and_respects_bounds_and_modals() {
+        let (mut world, mut state) = crate::shape_editor::tests::fixture();
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 800.0))),
+            ..Default::default()
+        };
+        let mut output = Default::default();
+        for _ in 0..3 {
+            output = ctx.run_ui(input.clone(), |ui| {
+                let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, &mut state);
+            });
+        }
+        let at = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == groups()[1] => Some(text.pos + text.galley.size() * 0.5),
+                _ => None,
+            })
+            .expect("head category");
+        let wheel = |unit, value| egui::Event::MouseWheel {
+            unit,
+            delta: Vec2::new(0.0, value),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(
+            &ctx,
+            &mut world,
+            &mut state,
+            vec![egui::Event::PointerMoved(at), wheel(egui::MouseWheelUnit::Line, -1.0)],
+        );
+        assert_eq!(state.group, 1);
+        draw(&ctx, &mut world, &mut state, vec![wheel(egui::MouseWheelUnit::Line, 1.0)]);
+        assert_eq!(state.group, 0);
+        draw(&ctx, &mut world, &mut state, vec![wheel(egui::MouseWheelUnit::Point, -30.0)]);
+        assert_eq!(state.group, 0);
+        draw(&ctx, &mut world, &mut state, vec![wheel(egui::MouseWheelUnit::Point, -30.0)]);
+        assert_eq!(state.group, 1);
+        state.group = 8;
+        draw(&ctx, &mut world, &mut state, vec![wheel(egui::MouseWheelUnit::Line, -1.0)]);
+        assert_eq!(state.group, 8);
+        draw(
+            &ctx,
+            &mut world,
+            &mut state,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(700.0, 650.0)),
+                wheel(egui::MouseWheelUnit::Line, 1.0),
+            ],
+        );
+        assert_eq!(state.group, 8);
+        state.copy_name = Some("Copy".into());
+        draw(
+            &ctx,
+            &mut world,
+            &mut state,
+            vec![egui::Event::PointerMoved(at), wheel(egui::MouseWheelUnit::Line, 1.0)],
+        );
+        assert_eq!(state.group, 8);
+    }
+
     #[test]
     fn drawing_the_editor_does_not_round_or_edit_the_original_shape() {
         let (mut world, mut state) = crate::shape_editor::tests::fixture();

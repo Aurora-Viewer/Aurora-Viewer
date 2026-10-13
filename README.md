@@ -251,12 +251,15 @@ scenario is described in
 
 ### Shape editor
 
-Open **Appearance › Edit worn shape**, or right-click your worn shape in the
+Open **Appearance › Edit worn shape**, use **Appearance › Edit Shape** in your
+avatar's right-click menu, or right-click your worn shape in the
 inventory and choose **Edit**. Nine body/face categories and a filter expose the
 shape parameters as 0–100 sliders and numeric values, with male/female selection
 and height in metres or feet. The images show the minimum and maximum effect on
 your body under neutral lighting; clicking one changes the value by one percent. Preview visibility
-and height units are remembered.
+and height units are remembered. Scroll the wheel over the categories to move
+between them. Hints use the worn head, including rigged and static mesh heads,
+and retain their images while new assets are prepared.
 
 Changes are previewed locally until **Save**. **Save As** preserves the original
 and wears the confirmed copy; Copy permission is required. **Cancel** restores

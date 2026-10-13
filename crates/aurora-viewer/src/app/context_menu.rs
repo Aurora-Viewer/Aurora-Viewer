@@ -124,6 +124,7 @@ impl App {
     pub(super) fn context_facts(&self) -> Facts {
         let w = &self.world;
         let mut f = Facts {
+            worn_shape: crate::shape_editor::worn_shape(&self.world),
             me: w.agent_id,
             seated: w.agent.is_sitting(),
             flying: w.agent.flying,
