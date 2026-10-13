@@ -11,6 +11,11 @@
 //! getBakedTextureImage), and a mesh the asset server does not have is not
 //! expected (check_object_for_mesh_loading: isMeshAssetUnavaliable). Waiting
 //! for them kept the avatar a cloud for the whole 60 s limit.
+//!
+//! Our own avatar is remembered while no region has it: Firestorm never
+//! destroys gAgentAvatarp (LLViewerObjectList::killObject moves it to the
+//! agent's region), so arriving from a teleport is not a first appearance
+//! and it shows at once, its worn objects coming back one by one.
 
 use super::{GeomKey, Scene, avatar};
 use crate::world::World;
@@ -352,7 +357,10 @@ impl Scene {
                 loading.indices.insert(idx);
             }
         }
-        loading.states.retain(|id, _| seen.contains(id));
+        // (ours stays between the region left by a teleport and the next
+        // one: forgotten with its object, it was a cloud again for 6 to 8 s
+        // at every arrival)
+        loading.states.retain(|id, _| seen.contains(id) || *id == world.agent_id);
         self.loading = loading;
         for t in hurry {
             self.textures.note_usage(&t, 512.0);
@@ -528,6 +536,36 @@ mod tests {
         }));
         let (_, _, missing) = scene.avatar_load_parts(&world, loup, Some(&mut hurry));
         assert_eq!(missing, [Missing::Appearance; 3]);
+    }
+
+    #[test]
+    fn own_avatar_is_not_a_cloud_again_after_a_teleport() {
+        let (mut world, mut scene, _, _) = cloud_self();
+        let own = world.agent_id;
+        let t0 = Instant::now();
+        scene.update_loading(&world, t0);
+        assert!(scene.loading_avatars().contains_key(&own), "first appearance: a cloud");
+        scene.update_loading(&world, t0 + secs(5.1));
+        assert!(scene.loading_avatars().is_empty(), "{:?}", scene.loading_avatars());
+        // the region left goes with its objects, ours included
+        let handle = world.main_region.expect("demo region");
+        world.apply(aurora_net::NetEvent::RegionRemoved { handle });
+        assert!(world.objects.index_of_uuid(&own).is_none());
+        scene.update_loading(&world, t0 + secs(20.0));
+        // the destination sends everyone as new objects
+        for ev in crate::demo::events().into_iter().chain(crate::demo::cloud_self_events()) {
+            world.apply(ev);
+        }
+        scene.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);
+        scene.update_loading(&world, t0 + secs(23.0));
+        let clouds = scene.loading_avatars();
+        assert!(!clouds.contains_key(&own), "shown as it arrives");
+        // the others are first appearances there, as in Firestorm
+        assert!(clouds.contains_key(&crate::demo::DEMO_LOUP));
+        // logged out: nothing is remembered for the next session
+        world.reset();
+        scene.update_loading(&world, t0 + secs(30.0));
+        assert!(scene.loading.states.is_empty());
     }
 
     #[test]
