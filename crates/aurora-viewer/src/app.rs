@@ -2059,7 +2059,9 @@ impl App {
         self.name_tags.iter().rev().filter(|t| t.rect.contains(cursor)).find_map(|tag| {
             let idx = self.world.objects.index_of_uuid(&tag.id)?;
             let (pos, _, _) = crate::scene::Scene::object_transform(&self.world, idx, now, 0)?;
-            let t = (pos + Vec3::Z * ui::hud::TAG_HEIGHT - o).dot(d);
+            // where the tag stands for the scene's depth: what hides it there
+            // keeps the click, what shows it gives it
+            let t = (ui::hud::tag_point(pos + Vec3::Z * ui::hud::TAG_HEIGHT, self.camera.position) - o).dot(d);
             match world_t {
                 Some(h) if h < t - 0.05 => None,
                 _ => Some((idx, o + d * t)),

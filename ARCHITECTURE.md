@@ -395,6 +395,18 @@ The name plates sample a blur of the scene alone, limited to the area they
 cover; the windows and the bars, a blur of the scene with its labels and the
 HUDs. A new world label is painted with `world_painter`, never on a layer of
 its own.
+The scene hides the name tags and floating texts behind it, as in Firestorm
+(LLHUDNameTag::render and LLHUDText::render test the depth): before a label
+is painted, `aurora_render::world_label_at` marks the point of the world it
+stands at, and the renderer draws what `world_painter` painted with a
+pipeline of its own instead of egui-wgpu's (`aurora-render/src/label_depth.rs`,
+`shaders/labels.wgsl`: egui's vertices, textures and colours, each fragment
+compared with the scene's depth at its pixel, the cut smoothed over the four
+texels around it). A wall cuts the name of someone standing half behind it;
+nothing is read back from the GPU. What is painted without a mark (the
+destination beacon) is never hidden. A name tag stands half a metre in front
+of its anchor (`ui::hud::tag_point`), so that its avatar's head never cuts it,
+and a click on it reaches the avatar only where the tag shows.
 
 The display of item permissions is shared by the inventory, the contents
 window of an object and the Contents tab of building in

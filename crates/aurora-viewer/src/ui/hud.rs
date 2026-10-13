@@ -30,6 +30,22 @@ pub struct TagComplexity<'a> {
 /// Height of an avatar name tag's anchor above the avatar's position.
 pub const TAG_HEIGHT: f32 = 1.05;
 
+/// How far an avatar's name tag stands in front of its anchor, toward the
+/// camera, when the scene is asked what it hides of it: the avatar's own
+/// head, hair or hat never cut its name. LLHUDNameTag::updateVisibility
+/// pulls the tag by the radius of the whole avatar, which lets the name of
+/// someone standing a metre behind a wall show through it; half a metre
+/// clears a head and keeps more names behind their walls.
+pub const TAG_PULL: f32 = 0.5;
+
+/// Where the name tag anchored at `head` stands for the scene's depth:
+/// `TAG_PULL` toward `eye`, and never more than half way.
+pub fn tag_point(head: Vec3, eye: Vec3) -> Vec3 {
+    let to = eye - head;
+    let d = to.length();
+    if d < 1e-3 { head } else { head + to / d * TAG_PULL.min(d * 0.5) }
+}
+
 pub struct Projector {
     pub view_proj: Mat4,
     pub width: f32,
@@ -193,6 +209,9 @@ fn plate_content(
 
 /// `voice`: avatars in voice chat (level, speaking); absence means no voice.
 /// `plates`: the avatars get name plates instead of the classic tags.
+/// Each name tag and floating text is painted after the mark of where it
+/// stands in the world (`aurora_render::world_label_at`): the scene hides
+/// what is behind it, as in Firestorm.
 /// Returns the avatar name tags, far first as drawn (the last one on top).
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
@@ -212,7 +231,8 @@ pub fn draw(
 ) -> Vec<NameTag> {
     let painter = world_painter(ctx);
     let now = Instant::now();
-    // (distance, anchor, lines, voice: (level, speaking), loading, avatar)
+    // (distance, anchor, lines, voice: (level, speaking), loading, avatar,
+    // where it stands in the world)
     #[allow(clippy::type_complexity)]
     let mut tags: Vec<(
         f32,
@@ -221,6 +241,7 @@ pub fn draw(
         Option<(f32, bool)>,
         Option<f32>,
         Option<uuid::Uuid>,
+        Vec3,
     )> = Vec::new();
     let mut name_tags = Vec::new();
     let (plates, plate_frame) = match plates {
@@ -246,6 +267,7 @@ pub fn draw(
             let Some((sp, _)) = proj.project(head) else {
                 continue;
             };
+            let at = tag_point(head, eye);
             if let Some((pictures, too_complex, demo_too_complex)) = plate_frame {
                 use super::nameplate::Picture;
                 let id = o.full_id;
@@ -260,6 +282,7 @@ pub fn draw(
                 plate_tags.push(super::nameplate::Tag {
                     id,
                     anchor: sp,
+                    at,
                     distance: d,
                     // the distance fade of the classic tags
                     fade: (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0),
@@ -356,7 +379,7 @@ pub fn draw(
             }
             let in_voice = voice.get(&o.full_id).copied();
             let progress = loading.and_then(|l| l.get(&o.full_id).copied());
-            tags.push((d, sp, lines, in_voice, progress, Some(o.full_id)));
+            tags.push((d, sp, lines, in_voice, progress, Some(o.full_id), at));
         } else {
             let Some((pos, _, hud)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
@@ -394,7 +417,7 @@ pub fn draw(
             };
             let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], (c[3] as f32 * fade) as u8);
             let lines = o.text.lines().map(|l| (l.to_owned(), col, 12.0)).collect();
-            tags.push((d + 1000.0, sp, lines, None, None, None));
+            tags.push((d + 1000.0, sp, lines, None, None, None, anchor));
         }
     }
     let now_s = ctx.input(|i| i.time);
@@ -402,7 +425,9 @@ pub fn draw(
     let tag_radius = ctx.global_style().visuals.window_corner_radius;
     // far first so near tags draw on top
     tags.sort_by(|a, b| b.0.total_cmp(&a.0));
-    for (d, sp, lines, in_voice, progress, avatar) in tags {
+    for (d, sp, lines, in_voice, progress, avatar, at) in tags {
+        // the scene hides what it has in front of this point
+        aurora_render::world_label_at(ctx, Some(at));
         let is_avatar = d < 1000.0;
         let fade = if is_avatar {
             (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0)
@@ -493,6 +518,28 @@ pub fn draw(
             name_tags.push(NameTag { id, rect })
         });
     }
+    // what else is painted for the world (the tracking beacon) stands nowhere
+    aurora_render::world_label_at(ctx, None);
     voice_tags.prune(now_s);
     name_tags
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_tag_stands_in_front_of_its_anchor_but_never_past_the_camera() {
+        let eye = Vec3::new(0.0, 0.0, 2.0);
+        let head = Vec3::new(10.0, 0.0, 2.0);
+        assert!(tag_point(head, eye).distance(Vec3::new(10.0 - TAG_PULL, 0.0, 2.0)) < 1e-5);
+        // the camera against the avatar: half way at most
+        let near = Vec3::new(0.4, 0.0, 2.0);
+        assert!(tag_point(near, eye).distance(Vec3::new(0.2, 0.0, 2.0)) < 1e-5);
+        assert_eq!(tag_point(eye, eye), eye);
+        // on the line of sight: the tag stays where it is on screen
+        let up = Vec3::new(6.0, 3.0, 9.0);
+        let pulled = tag_point(up, eye);
+        assert!((pulled - eye).normalize().distance((up - eye).normalize()) < 1e-5);
+    }
 }

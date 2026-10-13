@@ -1155,6 +1155,9 @@ pub(crate) struct Backend {
     depth_pick: crate::pick::DepthPick,
     /// Faces drawn under a clicked pixel (drawn_pick.rs).
     drawn_pick: crate::drawn_pick::DrawnPick,
+    /// The world's labels, drawn behind what the scene has in front of
+    /// them (label_depth.rs).
+    label_depth: crate::label_depth::LabelDepth,
     impostors: Impostors,
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
@@ -2171,6 +2174,7 @@ impl Backend {
         });
         let depth_pick = crate::pick::DepthPick::new(&device);
         let drawn_pick = crate::drawn_pick::DrawnPick::new(&device, DEPTH_FORMAT);
+        let label_depth = crate::label_depth::LabelDepth::new(&device, format);
         let occlusion = crate::occlusion::Occlusion::new(&device);
         let cull = GpuCull::new(&device);
         let impostors = Impostors::new(&device, &frame_layout, &records_layout, &tex_layout, msaa_samples, settings.ssr);
@@ -2232,6 +2236,7 @@ impl Backend {
             gpu_cull,
             depth_pick,
             drawn_pick,
+            label_depth,
             impostors,
             cull_cpu: Vec::new(),
             particle_buffer,
@@ -3769,10 +3774,13 @@ impl Backend {
         let (cascades, splits) = self.cascade_matrices(f);
         let unjittered_vp = f.proj * f.view;
         let jittered;
+        // where the scene's depth has a pixel of the image, in pixels (y down)
+        let mut depth_jitter = glam::Vec2::ZERO;
         let fu: &FrameParams = if self.taa.is_some() {
             let i = (self.frame_index % 16) + 1;
             let jx = halton(i, 2) * 2.0 / self.config.width.max(1) as f32;
             let jy = halton(i, 3) * 2.0 / self.config.height.max(1) as f32;
+            depth_jitter = glam::Vec2::new(halton(i, 2), -halton(i, 3));
             let mut j = f.clone();
             j.proj = Mat4::from_translation(Vec3::new(jx, jy, 0.0)) * f.proj;
             jittered = j;
@@ -5277,6 +5285,24 @@ impl Backend {
                 Some(glass) if window_glass => glass.resolve(rest, scale, glass.texture),
                 _ => crate::ui_glass::skip(rest),
             }
+            if self.label_depth.enabled() {
+                // the labels leave egui-wgpu's hands: drawn below behind
+                // what the scene has in front of them
+                self.label_depth.prepare(
+                    &self.device,
+                    &self.queue,
+                    &self.targets.depth_ss,
+                    labels,
+                    &crate::label_depth::LabelView {
+                        view_proj: unjittered_vp,
+                        pixels_per_point: scale,
+                        size,
+                        jitter: depth_jitter,
+                    },
+                );
+            } else {
+                crate::label_depth::skip(labels);
+            }
             self.previews
                 .render(&self.device, &self.queue, &mut encoder, &mut self.egui, &mut ui.primitives, scale);
             extra_cmds = self
@@ -5303,16 +5329,37 @@ impl Backend {
             let mut pass = pass.forget_lifetime();
             self.egui.render(&mut pass, primitives, &sd);
         };
-        if labels_end > 0
-            && let Some(ui) = &mut ui
-        {
-            draw_ui(&mut encoder, &surface_view, &ui.primitives[..labels_end]);
-            // egui starts its mesh-buffer iterators at zero on each render.
-            // Empty clips advance them without drawing the labels a second
-            // time with the rest of the interface.
-            for primitive in &mut ui.primitives[..labels_end] {
-                primitive.clip_rect = egui::Rect::NOTHING;
+        if !self.label_depth.enabled() {
+            // AURORA_LABEL_OCCLUSION=0: over the scene, by egui-wgpu
+            if labels_end > 0
+                && let Some(ui) = &mut ui
+            {
+                draw_ui(&mut encoder, &surface_view, &ui.primitives[..labels_end]);
+                // egui starts its mesh-buffer iterators at zero on each
+                // render. Empty clips advance them without drawing the
+                // labels a second time with the rest of the interface.
+                for primitive in &mut ui.primitives[..labels_end] {
+                    primitive.clip_rect = egui::Rect::NOTHING;
+                }
             }
+        } else if labels_end > 0 && ui.is_some() && self.label_depth.any() {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("world labels"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &surface_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            self.label_depth.render(&mut pass, &self.egui);
         }
         // HUDs retain their original texture colors and never inherit world
         // depth, fog, shadows, exposure or post effects (render_hud_attachments).

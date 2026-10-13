@@ -492,6 +492,9 @@ pub struct Tag<'a> {
     pub id: Uuid,
     /// Bottom center of the plate, in points.
     pub anchor: Pos2,
+    /// Where the plate stands in the world: the scene hides what it has in
+    /// front of this point (`ui::hud::tag_point`).
+    pub at: glam::Vec3,
     /// Distance to the camera.
     pub distance: f32,
     /// Opacity of the whole plate (the distance fade of the name tags).
@@ -631,6 +634,7 @@ impl Plates {
                 halo: entry.voice.halo(SCALE),
                 glass: entry.glass,
             };
+            aurora_render::world_label_at(painter.ctx(), Some(tag.at));
             placed(tag.id, paint::plate(&env, tag, &state, &mut entry.cache));
             if entry.level == Level::Full && matches!(tag.picture, Picture::Wanted) {
                 waiting.push(tag.id);
