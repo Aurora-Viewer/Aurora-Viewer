@@ -994,6 +994,7 @@ pub(super) mod tests {
             g.radius = 1.0;
         }
         world.objects.get_mut(front).unwrap().rotation = Quat::from_rotation_z(std::f32::consts::PI);
+        scene.index_objects();
         scene.build_huds(&world, [1280, 720], true);
         let cursor = (640.0, 360.0);
         for hidden in [false, true] {
@@ -1233,6 +1234,7 @@ pub(super) mod tests {
         child.parent_id = front_id;
         child.state = 0;
         child.position = Vec3::new(4.0, 0.0, 0.0);
+        scene.index_objects();
         scene.build_huds(&world, [1280, 720], true);
         let cursor = (640.0, 360.0);
         let (picked, p, ray) = scene.hud_pick(&world, cursor, true).unwrap();

@@ -1696,6 +1696,7 @@ Ce que l'inventaire doit montrer avec ces scénarios :
 | `AURORA_NOVSYNC=1` | Coupe la synchronisation verticale |
 | `AURORA_PRESENT_MODE=<mode>` | Force le mode de présentation de la swapchain |
 | `AURORA_CPU_CULL=1` | Listes de dessin construites sur le CPU |
+| `AURORA_LIST_INDEX=0` ou `check` | Listes de dessin qui parcourent tous les objets comme avant, ou contrôle de leur index |
 | `AURORA_CPU_ATTACH=1` | Objets portés et mesh riggés placés par la synchro, sans les ancres du GPU |
 | `AURORA_SYNC_SLICE=1` ou `alt` | Synchro de la scène par tranche de tous les objets, comme avant |
 | `AURORA_SYNC_CHECK=1` | Ce que la synchro de la scène visite à chaque image |
@@ -1823,6 +1824,21 @@ Ce que l'inventaire doit montrer avec ces scénarios :
   (le repli quand le GPU n'a pas `MULTI_DRAW_INDIRECT_COUNT`) au lieu de les
   trier sur le GPU, pour comparer ; `cull=cpu|gpu` dans la ligne
   `perf summary`.
+- **`AURORA_LIST_INDEX=0|check`** : par défaut, les listes de dessin et celles
+  des HUD trouvent les avatars, les objets à faces transparentes ou
+  lumineuses, la tranche du suivi des textures et les HUD portés dans un
+  octet par emplacement d'objet (`scene/list_index.rs`), tenu à jour là où
+  l'est la table d'objets du GPU. Même image.
+  - `0` : elles parcourent les objets eux-mêmes à chaque image, comme
+    avant, pour comparer `lists` dans `perf summary`. L'écart grandit avec
+    le plus grand nombre d'objets vus depuis le début de la session, pas
+    avec ceux qui sont là.
+  - `check` : une image sur trente, l'index est comparé aux objets ; le
+    journal donne les emplacements qui diffèrent (`list index check`). Il
+    ne doit y en avoir aucun, en démo comme sur la grille.
+  - En démo : `AURORA_DEMO_CROWD=52,200` avec `AURORA_DEMO_ANIMESH=1` et
+    `AURORA_DEMO_STREAM=6000,6000,leave` (19 500 objets, puis 13 500),
+    `AURORA_FPS_LIMIT=500`.
 - **`AURORA_CPU_ATTACH=1`** : replace à chaque image, sur le thread
   principal, tout ce que portent les avatars et tous les mesh riggés,
   comme avant les ancres (`scene/anchors.rs`), pour comparer l'image et les

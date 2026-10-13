@@ -52,7 +52,17 @@ impl Scene {
         let mut min_x = f32::INFINITY;
         let mut max_x = f32::NEG_INFINITY;
         let mut blend = Vec::new();
-        for (idx, g) in self.gpu.iter().enumerate() {
+        // (the HUD attachments, from the lists' index: not a walk of every
+        // object at each frame)
+        let slots: Box<dyn Iterator<Item = usize> + '_> = if list_index::mode() == list_index::Mode::Walk {
+            Box::new(0..self.gpu.len())
+        } else {
+            Box::new(self.list_index.with(list_index::HUD).map(|(idx, _)| idx))
+        };
+        for idx in slots {
+            let Some(g) = self.gpu.get(idx) else {
+                continue;
+            };
             if !g.hud || g.owner_avatar != Some(own) || g.geom.is_none() {
                 continue;
             }
