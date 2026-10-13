@@ -69,20 +69,20 @@ PR sans relecture ou sorties de la file.
     testé.
   Une PR qui ne touche que la documentation ou les images passe en une
   minute (pas de compilation). Une croix rouge = l'agent corrige.
-- **Étiquettes** : chaque PR a un **type** (`nouveauté`, `correctif`,
-  `performance`, `maintenance`, `docs`, et `rupture` si elle casse une
+- **Étiquettes** : chaque PR a un **type** (`feature`, `fix`,
+  `performance`, `maintenance`, `docs`, et `breaking` si elle casse une
   compatibilité), qui la range dans les notes de version, et une **zone**
-  (`rendu`, `avatar`, `monde`, `réseau`, `audio-voix`, `interface`,
-  `construction`, `outillage`) pour s'y retrouver.
+  (`render`, `avatar`, `world`, `network`, `audio-voice`, `ui`,
+  `build-tools`, `tooling`) pour s'y retrouver.
 - **Captures** : les images des PR sont rangées sur la branche `captures`
   (elle ne contient que ça).
 - **Issues** : les agents lisent aussi les captures et fichiers joints,
   classent les rapports par nature, zone, suivi et priorité, puis répondent
-  directement sur GitHub. `bug` désigne le signalement, `correctif` la PR.
+  directement sur GitHub. `bug` désigne le signalement, `fix` la PR.
   Une issue reste ouverte si des informations ou une validation manquent ;
   elle est fermée après résolution vérifiée et fusion, ou avec une explication
   pour un doublon / une demande hors périmètre. Les règles et étiquettes sont
-  détaillées dans [AGENTS.md](AGENTS.md#15-issues-github--lire-analyser-étiqueter-répondre-et-fermer)
+  détaillées dans [AGENTS.md](AGENTS.md#15-github-issues-read-analyse-label-reply-and-close)
   et créées par `scripts/setup-labels.ps1`, qui conserve les autres étiquettes.
 - **Dependabot** ouvre chaque semaine des PR de mise à jour des dépendances ;
   un agent peut les vérifier pour toi, et les fusionne si tu es d'accord.

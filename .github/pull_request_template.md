@@ -1,29 +1,29 @@
-## À quoi ça sert
+## What it is for
 
-<!-- 2 ou 3 phrases simples, du point de vue de l'utilisateur. -->
+<!-- 2 or 3 simple sentences, from the user's point of view. -->
 
-## Origine Firestorm
+## Firestorm origin
 
-<!-- Oui / non. Si oui : fichiers et fonctions suivis
-     (ex. indra/llcharacter/llmotioncontroller.cpp, updateMotionsByType). -->
+<!-- Yes / no. If yes: files and functions followed
+     (e.g. indra/llcharacter/llmotioncontroller.cpp, updateMotionsByType). -->
 
-## Ce qui change
+## What changes
 
-<!-- Par zone, en puces courtes. Options ajoutées avec leur valeur par défaut. -->
+<!-- By area, in short bullets. Options added with their default value. -->
 
-- **Interface :**
-- **Rendu :**
+- **Interface:**
+- **Rendering:**
 
-## Captures
+## Screenshots
 
-<!-- Captures du mode démo (scripts/pr-captures.ps1). -->
+<!-- Demo mode screenshots (scripts/pr-captures.ps1). -->
 
 ## Tests
 
-- [ ] `scripts/check.ps1` au vert (fmt, clippy, tests)
-- [ ] Scénarios démo : <!-- variables AURORA_DEMO_* utilisées -->
-- [ ] Validé par l'humain avant la PR : <!-- date, ce qui a été testé, démo ou grille ; « sans objet » pour une PR sans effet sur le viewer (docs, CI, scripts) -->
+- [ ] `scripts/check.ps1` green (fmt, clippy, tests)
+- [ ] Demo scenarios: <!-- AURORA_DEMO_* variables used -->
+- [ ] Validated by the human before the PR: <!-- date, what was tested, demo or grid; "not applicable" for a PR with no effect on the viewer (docs, CI, scripts) -->
 
-## Limites et suite
+## Limits and follow-up
 
-<!-- Ce qui n'est pas fait ; lignes ⬜ ajoutées à TASKS.md. -->
+<!-- What is not done; ⬜ lines added to TASKS.md. -->

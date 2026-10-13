@@ -43,7 +43,7 @@ function Get-ReleaseContext($Repo) {
 
 function Get-PrType($Pr) {
     $names = @($Pr.labels | ForEach-Object name)
-    foreach ($t in 'rupture', 'nouveauté', 'correctif', 'performance', 'maintenance', 'docs') { if ($names -contains $t) { return $t } }
+    foreach ($t in 'breaking', 'feature', 'fix', 'performance', 'maintenance', 'docs') { if ($names -contains $t) { return $t } }
     'autre'
 }
 
@@ -112,7 +112,7 @@ function New-AuroraRelease($Repo) {
     $minor = "v$($base.Major).$($base.Minor + 1).0"
     $patch = "v$($base.Major).$($base.Minor).$($base.Patch + 1)"
     $major = "v$($base.Major + 1).0.0"
-    $suggested = if ($types['nouveauté'] -or $types['rupture']) { $minor } else { $patch }
+    $suggested = if ($types['feature'] -or $types['breaking']) { $minor } else { $patch }
 
     $items = @(@{ Key = '1'; Label = "$suggested (proposée)"; Hint = 'd''après les étiquettes des PR'; Tag = $suggested })
     foreach ($t in @($patch, $minor, $major) | Where-Object { $_ -ne $suggested }) {
