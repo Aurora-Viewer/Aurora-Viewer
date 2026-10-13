@@ -13,7 +13,7 @@ noté dans `TASKS.md`. L'interface, elle, est propre à Aurora (voir
 [docs/BRANDING.md](docs/BRANDING.md)). Firestorm est la référence du
 résultat, pas de l'implémentation : le rendu doit être le même ou meilleur,
 mais le moteur est conçu pour Vulkan et le GPU moderne, sans reprendre les
-procédés hérités d'OpenGL (voir [AGENTS.md](AGENTS.md#2-comportement-de-référence--firestorm)).
+procédés hérités d'OpenGL (voir [AGENTS.md](AGENTS.md#2-reference-behaviour-firestorm)).
 
 **Hors périmètre pour l'instant :** les grilles OpenSim, le support de
 plateformes autres que Windows pour les releases (le code reste portable).

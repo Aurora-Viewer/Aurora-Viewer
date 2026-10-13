@@ -1,53 +1,78 @@
 ﻿<#
 .SYNOPSIS
-    Crée (ou met à jour) les étiquettes des PR et des issues sur GitHub :
-    types, zones, suivi et priorité. Conserve les autres étiquettes et leur
-    historique. À relancer si la liste change.
+    Creates (or updates) the PR and issue labels on GitHub: types, areas,
+    tracking and priority. Keeps the other labels and their history. A label
+    still under its former French name (Was) is renamed, so the PRs and
+    issues that carry it keep it. Run again when the list changes.
+
+.EXAMPLE
+    ./scripts/setup-labels.ps1 -DryRun    # show the changes without making them
 #>
+param([switch]$DryRun)
 . "$PSScriptRoot\common.ps1"
+# gh writes UTF-8; the console decodes it with its OEM code page by default
+# (the accents of the former names would not match)
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 $origin = git -C $PSScriptRoot remote get-url origin
-if ($LASTEXITCODE -ne 0 -or -not $origin) { throw 'Remote origin introuvable : aucune étiquette modifiée.' }
+if ($LASTEXITCODE -ne 0 -or -not $origin) { throw 'Remote origin not found: no label changed.' }
 $repo = gh repo view $origin.Trim() --json nameWithOwner --jq .nameWithOwner
-if ($LASTEXITCODE -ne 0 -or -not $repo) { throw 'Impossible de déterminer le dépôt GitHub : aucune étiquette modifiée.' }
+if ($LASTEXITCODE -ne 0 -or -not $repo) { throw 'Could not determine the GitHub repository: no label changed.' }
 
 $labels = @(
-    # retours des testeurs (issues publiques)
-    @{ Name = 'bug'; Color = 'F87171'; Desc = 'Problème signalé par un utilisateur' },
-    @{ Name = 'alpha'; Color = '8B5CF6'; Desc = 'Rapport de l''alpha test Aurora' },
-    @{ Name = 'question'; Color = '38BDF8'; Desc = 'Question sur le fonctionnement ou l''utilisation' },
-    # type de changement (notes de version, .github/release.yml)
-    @{ Name = 'nouveauté'; Color = '8B5CF6'; Desc = 'Nouvelle fonctionnalité' },
-    @{ Name = 'correctif'; Color = 'F87171'; Desc = 'Correction de bug' },
-    @{ Name = 'performance'; Color = '5EEAD4'; Desc = 'Plus rapide, moins de mémoire' },
-    @{ Name = 'maintenance'; Color = '6F7BA0'; Desc = 'Refactorisation, dépendances, outillage' },
+    # reports from testers (public issues)
+    @{ Name = 'bug'; Color = 'F87171'; Desc = 'Problem reported by a user' },
+    @{ Name = 'alpha'; Color = '8B5CF6'; Desc = 'Report from the Aurora alpha test' },
+    @{ Name = 'question'; Color = '38BDF8'; Desc = 'Question about how the viewer works or is used' },
+    # type of change (release notes, .github/release.yml)
+    @{ Name = 'feature'; Was = 'nouveauté'; Color = '8B5CF6'; Desc = 'New feature' },
+    @{ Name = 'fix'; Was = 'correctif'; Color = 'F87171'; Desc = 'Bug fix' },
+    @{ Name = 'performance'; Color = '5EEAD4'; Desc = 'Faster, less memory' },
+    @{ Name = 'maintenance'; Color = '6F7BA0'; Desc = 'Refactoring, dependencies, tooling' },
     @{ Name = 'docs'; Color = 'A78BFA'; Desc = 'Documentation' },
-    @{ Name = 'rupture'; Color = 'FB923C'; Desc = 'Casse une compatibilité (réglages, cache, format…)' },
-    # zone du viewer
-    @{ Name = 'rendu'; Color = '4F46E5'; Desc = 'Moteur de rendu, shaders, GPU' },
-    @{ Name = 'avatar'; Color = '818CF8'; Desc = 'Avatars : animations, apparence, mouvements' },
-    @{ Name = 'monde'; Color = '4ADE80'; Desc = 'Objets, terrain, environnement, sons du monde' },
-    @{ Name = 'réseau'; Color = '070B1F'; Desc = 'Protocole, connexion, assets' },
-    @{ Name = 'audio-voix'; Color = 'F472B6'; Desc = 'Son, musique, voix' },
-    @{ Name = 'interface'; Color = 'C4B5FD'; Desc = 'Fenêtres, options, ergonomie' },
-    @{ Name = 'construction'; Color = 'FCD34D'; Desc = 'Outils de construction et d''édition' },
-    @{ Name = 'outillage'; Color = '6F7BA0'; Desc = 'Dépôt GitHub, CI, scripts et environnement de développement' },
-    # suivi d’une issue ouverte : un seul état à la fois
-    @{ Name = 'à-trier'; Color = 'CBD5E1'; Desc = 'Signalement à analyser et à classer' },
-    @{ Name = 'besoin-infos'; Color = 'FCD34D'; Desc = 'Informations ou pièce jointe nécessaires pour poursuivre' },
-    @{ Name = 'à-reproduire'; Color = 'FDBA74'; Desc = 'Analyse faite, reproduction du problème encore nécessaire' },
-    @{ Name = 'confirmé'; Color = 'F87171'; Desc = 'Problème reproduit ou cause établie par des preuves' },
-    @{ Name = 'en-cours'; Color = '8B5CF6'; Desc = 'Prise en charge annoncée avec une tâche ou une PR liée' },
-    @{ Name = 'à-valider'; Color = '5EEAD4'; Desc = 'Solution proposée, validation ou fusion encore attendue' },
-    # priorité d’une issue : impact constaté, pas une date promise
-    @{ Name = 'priorité:haute'; Color = 'DC2626'; Desc = 'Blocage majeur, crash fréquent ou risque de perte de données' },
-    @{ Name = 'priorité:normale'; Color = 'FB923C'; Desc = 'Problème ou demande utile sans blocage majeur' },
-    @{ Name = 'priorité:basse'; Color = '94A3B8'; Desc = 'Gêne mineure, cosmétique ou amélioration de confort' },
-    # motifs de clôture sans correctif
-    @{ Name = 'doublon'; Color = 'A1A1AA'; Desc = 'Même problème qu''une autre issue liée dans le commentaire' },
-    @{ Name = 'hors-périmètre'; Color = '64748B'; Desc = 'Demande hors du périmètre documenté du projet' }
+    @{ Name = 'breaking'; Was = 'rupture'; Color = 'FB923C'; Desc = 'Breaks a compatibility (settings, cache, format...)' },
+    # area of the viewer
+    @{ Name = 'render'; Was = 'rendu'; Color = '4F46E5'; Desc = 'Rendering engine, shaders, GPU' },
+    @{ Name = 'avatar'; Color = '818CF8'; Desc = 'Avatars: animations, appearance, movement' },
+    @{ Name = 'world'; Was = 'monde'; Color = '4ADE80'; Desc = 'Objects, terrain, environment, world sounds' },
+    @{ Name = 'network'; Was = 'réseau'; Color = '070B1F'; Desc = 'Protocol, connection, assets' },
+    @{ Name = 'audio-voice'; Was = 'audio-voix'; Color = 'F472B6'; Desc = 'Sound, music, voice' },
+    @{ Name = 'ui'; Was = 'interface'; Color = 'C4B5FD'; Desc = 'Windows, options, usability' },
+    @{ Name = 'build-tools'; Was = 'construction'; Color = 'FCD34D'; Desc = 'In-world building and editing tools' },
+    @{ Name = 'tooling'; Was = 'outillage'; Color = '6F7BA0'; Desc = 'GitHub repository, CI, scripts and development environment' },
+    # tracking of an open issue: one state at a time
+    @{ Name = 'needs-triage'; Was = 'à-trier'; Color = 'CBD5E1'; Desc = 'Report to analyse and classify' },
+    @{ Name = 'needs-info'; Was = 'besoin-infos'; Color = 'FCD34D'; Desc = 'Information or attachment needed to go on' },
+    @{ Name = 'needs-repro'; Was = 'à-reproduire'; Color = 'FDBA74'; Desc = 'Analysed, the problem still has to be reproduced' },
+    @{ Name = 'confirmed'; Was = 'confirmé'; Color = 'F87171'; Desc = 'Problem reproduced or cause established by evidence' },
+    @{ Name = 'in-progress'; Was = 'en-cours'; Color = '8B5CF6'; Desc = 'Ownership announced with a linked task or PR' },
+    @{ Name = 'needs-validation'; Was = 'à-valider'; Color = '5EEAD4'; Desc = 'Solution proposed, validation or merge still pending' },
+    # priority of an issue: observed impact, not a promised date
+    @{ Name = 'priority:high'; Was = 'priorité:haute'; Color = 'DC2626'; Desc = 'Major blocker, frequent crash or risk of data loss' },
+    @{ Name = 'priority:normal'; Was = 'priorité:normale'; Color = 'FB923C'; Desc = 'Useful problem or request without a major blocker' },
+    @{ Name = 'priority:low'; Was = 'priorité:basse'; Color = '94A3B8'; Desc = 'Minor annoyance, cosmetic or comfort improvement' },
+    # reasons for closing without a fix
+    @{ Name = 'duplicate'; Was = 'doublon'; Color = 'A1A1AA'; Desc = 'Same problem as another issue linked in the comment' },
+    @{ Name = 'out-of-scope'; Was = 'hors-périmètre'; Color = '64748B'; Desc = 'Request outside the documented scope of the project' }
 )
+
+$existing = @(gh label list --repo $repo --limit 500 --json name --jq '.[].name')
+if ($LASTEXITCODE -ne 0) { throw 'Could not list the labels: no label changed.' }
 foreach ($l in $labels) {
-    Invoke-Checked "label $($l.Name)" { gh label create $l.Name --repo $repo --color $l.Color --description $l.Desc --force }
+    if ($l.Was -and $existing -contains $l.Was) {
+        if ($existing -contains $l.Name) {
+            # both exist: GitHub cannot merge two labels, a human moves the PRs and issues
+            Write-Warning "'$($l.Was)' and '$($l.Name)' both exist: move the PRs and issues to '$($l.Name)', then delete '$($l.Was)'."
+        } elseif ($DryRun) {
+            Write-Host "rename  $($l.Was) -> $($l.Name)"
+        } else {
+            Invoke-Checked "rename $($l.Was) -> $($l.Name)" { gh label edit $l.Was --repo $repo --name $l.Name }
+        }
+    }
+    if ($DryRun) {
+        Write-Host "update  $($l.Name): $($l.Desc)"
+    } else {
+        Invoke-Checked "label $($l.Name)" { gh label create $l.Name --repo $repo --color $l.Color --description $l.Desc --force }
+    }
 }
-Write-Host "Étiquettes à jour." -ForegroundColor Green
+if ($DryRun) { Write-Host 'Dry run: nothing changed.' -ForegroundColor Yellow } else { Write-Host 'Labels up to date.' -ForegroundColor Green }

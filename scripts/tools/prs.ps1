@@ -159,12 +159,13 @@ function Get-PrRows {
             $queueState = 'Auto'; $queue = 'AUTO-MERGE'; $queueColor = 'teal'
         }
         # the agent's review comment: Ok, Warn, Fail, Done (no verdict read) or Pending
-        $review = $p.comments.nodes | Where-Object { $_.body -match '^\s*## Relecture' } | Select-Object -Last 1
+        # (PRs opened before the switch to English: "## Relecture", "Verdict : ✅")
+        $review = $p.comments.nodes | Where-Object { $_.body -match '^\s*## (Review|Relecture)' } | Select-Object -Last 1
         $reviewState = 'Pending'
         if ($review) {
-            $reviewState = if ($review.body -match 'Verdict : ✅') { 'Ok' }
-                elseif ($review.body -match 'Verdict : ⚠') { 'Warn' }
-                elseif ($review.body -match 'Verdict : ❌') { 'Fail' }
+            $reviewState = if ($review.body -match 'Verdict ?: ✅') { 'Ok' }
+                elseif ($review.body -match 'Verdict ?: ⚠') { 'Warn' }
+                elseif ($review.body -match 'Verdict ?: ❌') { 'Fail' }
                 else { 'Done' }
         }
         $verdict, $verdictColor = switch ($reviewState) {
