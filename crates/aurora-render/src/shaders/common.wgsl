@@ -73,7 +73,7 @@ struct Frame {
     // which of `lights` a fragment walks (light_tiles.rs, LightSets)
     light_grid: vec4<f32>,      // x, y: columns and rows per pixel
     light_forward: vec4<f32>,   // camera forward axis (fragment depth)
-    light_mode: vec4<u32>,      // x: 1 = the list narrowed by the sets below, y: 1 = checked, z: 1 = shadow view (AURORA_DEBUG_SHADOWS), w: 1 = one walk of the probes per lookup (AURORA_PROBE_WALK)
+    light_mode: vec4<u32>,      // x: 1 = the list narrowed by the sets below, y: 1 = checked, z: 1 = shadow view (AURORA_DEBUG_SHADOWS), w: how the probes are walked (PROBE_WALK_*)
     // lights that cover each screen column, each screen row and each slice
     // of depth: two sets per element, each its low then its high 32 lights
     light_columns: array<vec4<u32>, 16>,
@@ -152,6 +152,16 @@ struct ProbeSet {
     // the box probes (x: probes 0..31, y: 32..63), which sample_probes_pair
     // looks through first
     boxes: vec4<u32>,
+    // the probes that cover each screen column, each screen row and each
+    // slice of depth of the main view (probes::tiles), laid out as the
+    // lights' sets of the frame: two sets per element, each its low then
+    // its high 32 probes
+    tile_grid: vec4<f32>,       // x, y: columns and rows per pixel
+    tile_forward: vec4<f32>,    // camera forward axis (fragment depth)
+    tile_mode: vec4<u32>,
+    tile_columns: array<vec4<u32>, 16>,
+    tile_rows: array<vec4<u32>, 16>,
+    tile_slices: array<vec4<u32>, 16>,
     probes: array<Probe, 64>,
 };
 @group(0) @binding(9) var<storage, read> probe_set: ProbeSet;
@@ -186,16 +196,39 @@ fn light_table_set(pair: vec4<u32>, i: u32) -> vec2<u32> {
     return select(pair.xy, pair.zw, (i & 1u) == 1u);
 }
 
-// The lights of the main view's sets for a fragment.
-fn light_set(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
-    let column = min(u32(frag.x * frame.light_grid.x), LIGHT_TILES - 1u);
-    let row = min(u32(frag.y * frame.light_grid.y), LIGHT_TILES - 1u);
-    let depth = dot(world_pos - frame.camera_pos.xyz, frame.light_forward.xyz);
+// Column, row and slice of depth of a fragment of the main view, in tables
+// of `grid.xy` columns and rows per pixel, for a camera looking along
+// `forward`.
+fn tile_cell(world_pos: vec3<f32>, frag: vec2<f32>, grid: vec2<f32>, forward: vec3<f32>) -> vec3<u32> {
+    let column = min(u32(frag.x * grid.x), LIGHT_TILES - 1u);
+    let row = min(u32(frag.y * grid.y), LIGHT_TILES - 1u);
+    let depth = dot(world_pos - frame.camera_pos.xyz, forward);
     let octaves = log2(max(depth, LIGHT_SLICE_NEAR) / LIGHT_SLICE_NEAR);
     let slice = min(u32(octaves * LIGHT_SLICES_PER_OCTAVE), LIGHT_TILES - 1u);
-    return light_table_set(frame.light_columns[column >> 1u], column)
-        & light_table_set(frame.light_rows[row >> 1u], row)
-        & light_table_set(frame.light_slices[slice >> 1u], slice);
+    return vec3<u32>(column, row, slice);
+}
+
+// The lights of the main view's sets for a fragment.
+fn light_set(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
+    let cell = tile_cell(world_pos, frag, frame.light_grid.xy, frame.light_forward.xyz);
+    return light_table_set(frame.light_columns[cell.x >> 1u], cell.x)
+        & light_table_set(frame.light_rows[cell.y >> 1u], cell.y)
+        & light_table_set(frame.light_slices[cell.z >> 1u], cell.z);
+}
+
+// Next member of a set, lowest first; -1 once it is empty.
+fn next_member(members: ptr<function, vec2<u32>>) -> i32 {
+    let lo = (*members).x;
+    if (lo != 0u) {
+        (*members).x = lo & (lo - 1u);
+        return i32(firstTrailingBit(lo));
+    }
+    let hi = (*members).y;
+    if (hi != 0u) {
+        (*members).y = hi & (hi - 1u);
+        return i32(32u + firstTrailingBit(hi));
+    }
+    return -1;
 }
 
 // The lights a fragment walks: the point lights left in `held` (bit i for
@@ -309,15 +342,68 @@ fn probe_max_lod() -> f32 {
 // sphereWeight, boxIntersect), in world space: radiance seen along `dir`
 // from `pos` at mip `lod`. Probe 0 is the default probe, sampled whenever
 // automatic probes are. w = 0 when no probe covers `pos`.
-fn sample_probes(pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec4<f32> {
+// `frag`: the fragment's pixel, `pos` being where it is in the world (the
+// main view finds its probes by screen tile and depth).
+fn sample_probes(pos: vec3<f32>, frag: vec2<f32>, dir: vec3<f32>, lod: f32) -> vec4<f32> {
     let radiance = ProbeLookup(dir, lod, false);
-    return sample_probes_pair(pos, radiance, radiance, false, vec3<f32>(0.0)).a;
+    return sample_probes_pair(pos, frag, radiance, radiance, false, true, vec3<f32>(0.0)).a;
 }
 
 // sampleReflectionProbesWater: the default probe and manual probes only
 // (automatic probes are not sampled for water).
-fn sample_probes_water(pos: vec3<f32>, dir: vec3<f32>, lod: f32) -> vec4<f32> {
-    return sample_probes_ex(pos, dir, lod, false, vec3<f32>(0.0), true);
+fn sample_probes_water(pos: vec3<f32>, frag: vec2<f32>, dir: vec3<f32>, lod: f32) -> vec4<f32> {
+    let radiance = ProbeLookup(dir, lod, false);
+    return sample_probes_pair(pos, frag, radiance, radiance, false, false, vec3<f32>(0.0)).a;
+}
+
+// How a fragment walks the probes (`frame.light_mode.w`, probes::ProbeWalk):
+// the whole list (the views other than the main one), the whole list twice
+// per lookup as at first, the probes of its screen tile and depth, or those
+// and a check of them.
+const PROBE_WALK_LIST: u32 = 0u;
+const PROBE_WALK_PER_LOOKUP: u32 = 1u;
+const PROBE_WALK_TILES: u32 = 2u;
+const PROBE_WALK_CHECK: u32 = 3u;
+
+// The probes of the main view's sets for a fragment (bit i for
+// `probe_set.probes[i]`): those that cover its screen column, its screen
+// row and its slice of depth at once.
+fn probe_tiles(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
+    let cell = tile_cell(world_pos, frag, probe_set.tile_grid.xy, probe_set.tile_forward.xyz);
+    return light_table_set(probe_set.tile_columns[cell.x >> 1u], cell.x)
+        & light_table_set(probe_set.tile_rows[cell.y >> 1u], cell.y)
+        & light_table_set(probe_set.tile_slices[cell.z >> 1u], cell.z);
+}
+
+// AURORA_PROBE_WALK=check: whether a probe of the list covers `pos` without
+// being in the fragment's sets. That never happens: the image is the one
+// the whole list gives.
+fn probe_tiles_miss(pos: vec3<f32>, frag: vec2<f32>) -> bool {
+    let held = probe_tiles(pos, frag);
+    let count = min(probe_set.count, 64u);
+    for (var i = 1u; i < count; i++) {
+        var bit = held.x >> (i & 31u);
+        if (i >= 32u) {
+            bit = held.y >> (i & 31u);
+        }
+        if ((bit & 1u) != 0u) {
+            continue;
+        }
+        if (probe_set.probes[i].params.w < 0.0) {
+            let lp = (probe_set.probes[i].box_inv * vec4<f32>(pos, 1.0)).xyz;
+            if (all(abs(lp) <= vec3<f32>(1.0))) {
+                return true;
+            }
+        } else {
+            let sphere = probe_set.probes[i].center_radius;
+            let delta = pos - sphere.xyz;
+            if (dot(delta, delta) <= sphere.w * sphere.w) {
+                return true;
+            }
+        }
+    }
+    // (the default probe is in every set)
+    return count > 0u && (held.x & 1u) == 0u;
 }
 
 fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, amblit: vec3<f32>, water: bool) -> vec4<f32> {
@@ -483,33 +569,47 @@ fn probe_mix(col0_in: vec3<f32>, col1_in: vec3<f32>, w0: f32, w1: f32, dw1: f32,
 // the point alone. A PBR fragment asks for its ambient and its reflection,
 // a legacy one for its glossy and its environment reflection: each used to
 // walk the list for itself, twice (the box probes first, to know whether
-// the automatic ones may be sampled). The box probes are now found through
-// their mask (`probe_set.boxes`). Same sums, in the same order, as
-// sample_probes_ex, which AURORA_PROBE_WALK=0 brings back to compare.
-fn sample_probes_pair(pos: vec3<f32>, a: ProbeLookup, b: ProbeLookup, want_b: bool, amblit: vec3<f32>) -> ProbePair {
+// the automatic ones may be sampled). The box probes are found through
+// their mask (`probe_set.boxes`).
+//
+// In the main view the walk is that of the probes which cover the
+// fragment's screen column, its screen row and its slice of depth at once
+// (`probe_tiles`; `frag` is the fragment's pixel and `pos` where it is in
+// the world), in the list's order: a probe left out does not cover `pos`.
+// The walk of the list, 32 probes by default, was what the probes cost a
+// fragment, far more than the samples of the two or three that cover it.
+//
+// `automatic`: false for water, which only samples the default probe and
+// the manual ones. Same sums, in the same order, as sample_probes_ex, which
+// AURORA_PROBE_WALK=0 brings back to compare.
+fn sample_probes_pair(pos: vec3<f32>, frag: vec2<f32>, a: ProbeLookup, b: ProbeLookup, want_b: bool, automatic: bool, amblit: vec3<f32>) -> ProbePair {
     var out: ProbePair;
     out.b = vec4<f32>(0.0);
-    if (frame.light_mode.w != 0u) {
-        out.a = sample_probes_ex(pos, a.dir, a.lod, a.irradiance, amblit, false);
+    let walk = frame.light_mode.w;
+    if (walk == PROBE_WALK_PER_LOOKUP) {
+        out.a = sample_probes_ex(pos, a.dir, a.lod, a.irradiance, amblit, !automatic);
         if (want_b) {
-            out.b = sample_probes_ex(pos, b.dir, b.lod, b.irradiance, amblit, false);
+            out.b = sample_probes_ex(pos, b.dir, b.lod, b.irradiance, amblit, !automatic);
         }
         return out;
     }
-    let count = min(probe_set.count, 64u);
+    // the probes of the fragment's sets or, without the sets, the list
+    var held = light_first(min(probe_set.count, 64u));
+    if (walk >= PROBE_WALK_TILES) {
+        if (walk == PROBE_WALK_CHECK && probe_tiles_miss(pos, frag)) {
+            out.a = vec4<f32>(4.0, 0.0, 4.0, 1.0);
+            out.b = out.a;
+            return out;
+        }
+        held &= probe_tiles(pos, frag);
+    }
     // never let automatic probes encroach on box probes
     var sample_automatic = true;
-    for (var word = 0u; word < 2u; word++) {
-        var bits = probe_set.boxes[word];
-        while (bits != 0u) {
-            let i = word * 32u + countTrailingZeros(bits);
-            bits &= bits - 1u;
-            if (i < count) {
-                let lp = (probe_set.probes[i].box_inv * vec4<f32>(pos, 1.0)).xyz;
-                if (all(abs(lp) <= vec3<f32>(1.0))) {
-                    sample_automatic = false;
-                }
-            }
+    var boxes = probe_set.boxes.xy & held;
+    for (var n = next_member(&boxes); n >= 0; n = next_member(&boxes)) {
+        let lp = (probe_set.probes[n].box_inv * vec4<f32>(pos, 1.0)).xyz;
+        if (all(abs(lp) <= vec3<f32>(1.0))) {
+            sample_automatic = false;
         }
     }
     var a0 = vec3<f32>(0.0);
@@ -519,10 +619,11 @@ fn sample_probes_pair(pos: vec3<f32>, a: ProbeLookup, b: ProbeLookup, want_b: bo
     var w0 = 0.0;
     var w1 = 0.0;
     var dw1 = 0.0;
-    for (var i = 0u; i < count; i++) {
+    for (var n = next_member(&held); n >= 0; n = next_member(&held)) {
+        let i = u32(n);
         let kind = probe_set.probes[i].params.w;
         let manual = kind != 0.0;
-        if (!manual && !sample_automatic) {
+        if (!manual && (!sample_automatic || (!automatic && i != 0u))) {
             continue;
         }
         let sphere = probe_set.probes[i].center_radius;
@@ -591,11 +692,11 @@ fn sample_probes_pair(pos: vec3<f32>, a: ProbeLookup, b: ProbeLookup, want_b: bo
 // Radiance of the environment along `r` for a surface of the given
 // perceptual roughness (glossiness = 1 - roughness): the probes when they
 // cover `pos`, else `fallback` (sky reflection).
-fn probe_radiance(pos: vec3<f32>, r: vec3<f32>, roughness: f32, fallback: vec3<f32>) -> vec3<f32> {
+fn probe_radiance(pos: vec3<f32>, frag: vec2<f32>, r: vec3<f32>, roughness: f32, fallback: vec3<f32>) -> vec3<f32> {
     if (!probes_on()) {
         return fallback;
     }
-    let s = sample_probes(pos, r, clamp(roughness, 0.0, 1.0) * probe_max_lod());
+    let s = sample_probes(pos, frag, r, clamp(roughness, 0.0, 1.0) * probe_max_lod());
     return select(fallback, s.rgb, s.w > 0.0);
 }
 
@@ -1058,7 +1159,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v:
         // normal, each probe mixed with the sky ambient by its ambiance
         // (sampleProbeAmbient), and pbrIbl radiance from the probes (ambient
         // occlusion only), in one walk of the probes
-        let s = sample_probes_pair(world_pos, ProbeLookup(n, 0.0, true), ProbeLookup(r, roughness * probe_max_lod(), false), true, hemi);
+        let s = sample_probes_pair(world_pos, frag, ProbeLookup(n, 0.0, true), ProbeLookup(r, roughness * probe_max_lod(), false), true, true, hemi);
         if (s.a.w > 0.0) {
             amb = s.a.rgb;
         }
@@ -1633,7 +1734,7 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32
     let hemi = mix(mix(frame.ground_color.rgb, frame.sky_horizon.rgb, clamp(up * 2.0, 0.0, 1.0)),
                    frame.sky_zenith.rgb, clamp(up * 2.0 - 1.0, 0.0, 1.0));
     let r = reflect(-v, n);
-    var env = probe_radiance(world_pos, r, roughness, mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness));
+    var env = probe_radiance(world_pos, frag, r, roughness, mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness));
     let mw = mirror_weight(world_pos, n) * clamp(1.0 - roughness * 1.5, 0.0, 1.0);
     if (mw > 0.0) {
         let m = textureSampleLevel(mirror_tex, lin_clamp, screen_uv(frag), 0.0).rgb;

@@ -15,6 +15,9 @@
 //!
 //! The other views of a frame (reflections, probe faces, impostor pictures)
 //! keep the whole list ([`LightSets::whole`]).
+//!
+//! The reflection probes of a fragment are found the same way, in sets of
+//! their own ([`bin_spheres`], `probes::tiles`).
 
 use crate::types::PointLight;
 use bytemuck::{Pod, Zeroable};
@@ -92,6 +95,36 @@ impl LightSets {
     /// The whole list for every fragment.
     pub fn whole() -> LightSets {
         Zeroable::zeroed()
+    }
+
+    /// Member `i` in every set: what reaches every fragment whatever its
+    /// extent says.
+    pub fn hold_everywhere(&mut self, i: usize) {
+        let (word, bit) = (i / 32 % 2, 1u32 << (i % 32));
+        for pair in self.columns.iter_mut().chain(&mut self.rows).chain(&mut self.slices) {
+            pair[word] |= bit;
+            pair[2 + word] |= bit;
+        }
+    }
+
+    /// The members a fragment at pixel (`x`, `y`) and `depth` walks, as the
+    /// shaders find them (`light_set`, `probe_tiles` in common.wgsl).
+    #[cfg(test)]
+    pub(crate) fn at(&self, x: f32, y: f32, depth: f32) -> u64 {
+        if self.mode[0] == 0 {
+            return u64::MAX;
+        }
+        let set = |table: &[[u32; 4]], i: usize| {
+            let pair = table[i / 2];
+            let (lo, hi) = if i.is_multiple_of(2) {
+                (pair[0], pair[1])
+            } else {
+                (pair[2], pair[3])
+            };
+            lo as u64 | (hi as u64) << 32
+        };
+        let tile = |px: f32, per_px: f32| ((px * per_px) as usize).min(TILES - 1);
+        set(&self.columns, tile(x, self.grid[0])) & set(&self.rows, tile(y, self.grid[1])) & set(&self.slices, slice_of(depth))
     }
 }
 
@@ -201,11 +234,18 @@ fn reach(view: Mat4, proj: Mat4, eye: Vec3, forward: Vec3, size: [f32; 2], posit
 /// list (its first [`LIGHTS`]), the screen `size` in pixels, the camera at
 /// `eye` (the position the shaders measure depths from).
 pub fn bin(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], lights: &[PointLight]) -> LightSets {
+    bin_spheres(view, proj, eye, size, lights.iter().map(|l| (l.position, l.radius)))
+}
+
+/// The sets of the main view for members that each reach the fragments of
+/// a sphere (centre, radius) and no other: the first [`LIGHTS`] of
+/// `spheres`, in their order.
+pub fn bin_spheres(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], spheres: impl IntoIterator<Item = (Vec3, f32)>) -> LightSets {
     let size = [size[0].max(1) as f32, size[1].max(1) as f32];
     let forward = view.inverse().transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::X);
     let (mut columns, mut rows, mut slices) = ([0u64; TILES], [0u64; TILES], [0u64; SLICES]);
-    for (i, l) in lights.iter().take(LIGHTS).enumerate() {
-        let Some(reach) = reach(view, proj, eye, forward, size, l.position, l.radius) else {
+    for (i, (position, radius)) in spheres.into_iter().take(LIGHTS).enumerate() {
+        let Some(reach) = reach(view, proj, eye, forward, size, position, radius) else {
             continue;
         };
         for (sets, [from, to]) in [(&mut columns[..], reach.x), (&mut rows[..], reach.y), (&mut slices[..], reach.z)] {
@@ -269,11 +309,20 @@ mod tests {
     /// The lights of a fragment at pixel (`x`, `y`) and `depth`, as
     /// `light_walk` finds them in the shaders.
     fn set_at(sets: &LightSets, x: f32, y: f32, depth: f32) -> u64 {
-        if sets.mode[0] == 0 {
-            return u64::MAX;
+        sets.at(x, y, depth)
+    }
+
+    #[test]
+    fn a_member_held_everywhere_is_in_every_set() {
+        let (view, proj) = camera();
+        // a light behind the camera reaches nothing of the view
+        let mut sets = bin(view, proj, Vec3::ZERO, SIZE, &vec![light(Vec3::new(-10.0, 0.0, 0.0), 2.0); 40]);
+        assert_eq!(set_at(&sets, 300.0, 200.0, 12.0), 0);
+        sets.hold_everywhere(0);
+        sets.hold_everywhere(39);
+        for (x, y, depth) in [(0.5, 0.5, 0.01), (300.0, 200.0, 12.0), (1279.5, 719.5, 5000.0)] {
+            assert_eq!(set_at(&sets, x, y, depth), 1 | 1 << 39, "pixel {x},{y}, depth {depth}");
         }
-        let tile = |px: f32, per_px: f32| ((px * per_px) as usize).min(TILES - 1);
-        set(&sets.columns, tile(x, sets.grid[0])) & set(&sets.rows, tile(y, sets.grid[1])) & set(&sets.slices, slice_of(depth))
     }
 
     fn random_lights(mut seed: u32) -> Vec<PointLight> {
