@@ -50,6 +50,9 @@ enum Screen {
 
 struct Gfx {
     window: Arc<Window>,
+    /// Revealed only once the renderer has presented its first image.
+    shown: bool,
+    maximize_on_show: bool,
     renderer: Renderer,
     egui_state: egui_winit::State,
 }
@@ -4996,6 +4999,16 @@ impl App {
         let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
         let stats = gfx.renderer.render(fp, lists, Some(egui_frame));
         self.last_render = stats;
+        if stats.presented && !gfx.shown {
+            gfx.shown = true;
+            // On Windows, maximizing can show even a hidden window. Defer
+            // it until its client area already contains a rendered image.
+            if gfx.maximize_on_show {
+                gfx.window.set_maximized(true);
+            }
+            gfx.window.set_visible(true);
+            log::info!("startup window shown after the first presented frame");
+        }
         if stats.presented && !self.update_acknowledged {
             self.update_acknowledged = true;
             aurora_updater::install::acknowledge_frame();
@@ -7247,6 +7260,9 @@ impl ApplicationHandler for App {
         }
         let mut attrs = Window::default_attributes()
             .with_title(crate::cli::window_title())
+            // Vulkan initialization and the first frame take time: Windows
+            // must not expose the unpainted client area while they run.
+            .with_visible(false)
             // Automated captures must not steal the user's keyboard focus.
             .with_active(!capture)
             .with_inner_size(winit::dpi::LogicalSize::new(w, h))
@@ -7262,10 +7278,6 @@ impl ApplicationHandler for App {
                 return;
             }
         };
-        // maximized after creation: the creation attribute is not reliable on Windows
-        if self.settings.window_maximized && !capture {
-            window.set_maximized(true);
-        }
         let size = window.inner_size();
         if std::env::var_os("AURORA_NOVSYNC").is_some() {
             self.settings.vsync = false;
@@ -7303,6 +7315,8 @@ impl ApplicationHandler for App {
         );
         self.gfx = Some(Gfx {
             window,
+            shown: false,
+            maximize_on_show: self.settings.window_maximized && !capture,
             renderer,
             egui_state,
         });
@@ -8349,9 +8363,14 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.record_window_geometry();
-        if let Some(g) = &self.gfx {
+        if self.gfx.as_ref().is_some_and(|g| !g.shown) {
+            // Hidden windows may receive no RedrawRequested event. Keep
+            // producing frames until a real presentation makes it visible,
+            // including when the render thread returns the previous frame.
+            self.frame(event_loop);
+        } else if let Some(g) = &self.gfx {
             g.window.request_redraw();
         }
     }
