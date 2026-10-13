@@ -463,11 +463,11 @@ impl App {
             .entries
             .iter()
             .filter(|e| {
-                self.imports.active == Some(e.id)
+                (self.imports.active == Some(e.id) || e.local)
                     && e.preview.is_none()
                     && (!e.preview_pending || e.preview_job_generation != e.preview_generation)
                     && e.preview_error.is_none()
-                    && e.texture_target == 0
+                    && (e.texture_target == 0 || e.local)
                     && matches!(e.source, Some(Source::Texture(_)))
             })
             .map(|e| e.id)
@@ -497,7 +497,11 @@ impl App {
             .entries
             .iter()
             .filter(|e| {
-                (e.local_published || e.local_restore_active)
+                // Local images/materials must be selectable before their
+                // first application. Mesh resources still load on demand.
+                (e.local_published
+                    || e.local_restore_active
+                    || (e.local && matches!(e.source, Some(Source::Texture(_) | Source::Material { .. }))))
                     && e.source.is_some()
                     && !e.local_pending
                     && (!e.local_published || e.local_generation != e.preview_generation)

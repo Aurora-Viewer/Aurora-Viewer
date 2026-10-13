@@ -373,10 +373,19 @@ extérieures des deux faces sélectionnées, matériaux inchangés après le fon
 
 `faces-picker,object:99620` sélectionne une face à 625 et ouvre son sélecteur
 de textures à 635, avec un nom très long dans un sous-dossier « Textures du projet ».
-Capturer à 660 puis 960 : la fenêtre garde sa largeur initiale de 680 points,
+Capturer à 660 puis 960 : la fenêtre garde sa largeur initiale de 530 points,
 sans croissance autonome. La liste conserve les dossiers, les noms sont tronqués
 et leur infobulle affiche le texte entier. Le séparateur ajuste la place donnée
 aux noms, l’aperçu reste borné et les commandes sont regroupées en bas.
+Le dossier repliable « Fichiers locaux » précède l’inventaire dans les sélecteurs
+de texture diffuse et de matériau PBR. Il liste les aperçus locaux déjà chargés,
+textures ou matériaux selon le choix demandé, et suit le filtre de recherche.
+Un clic applique l’aperçu local ; « OK » le conserve, « Annuler » le restaure.
+Pour montrer les fichiers locaux synthétiques, combiner ce scénario avec
+`AURORA_DEMO_IMPORTS=local`. `faces-picker-material,object:99620` ouvre le même
+sélecteur pour un matériau PBR : seul le matériau local doit être listé.
+Ces fichiers apparaissent sans avoir été appliqués auparavant à un objet.
+La fenêtre d’import se ferme à l’ouverture du sélecteur pour dégager la vue.
 
 Dans le sélecteur de construction, un clic sur une texture copiable, un matériau,
 « Défaut », « Vierge », « Transparent » ou « Appliquer » pour l’UUID applique

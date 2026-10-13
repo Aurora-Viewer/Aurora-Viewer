@@ -3259,6 +3259,7 @@ ui-texture-picker-invalid-uuid = UUID invalide
 ui-texture-picker-confirm-no-copy = Texture sans copie : validez avec OK.
 ui-texture-picker-preview = Aperçu
 ui-texture-picker-adjust-list-width = Ajuster la largeur de la liste
+ui-texture-picker-local-files = Fichiers locaux
 build-review-face-selection = Revoir la sélection
 demo-picker-texture-project = Textures du projet
 ui-options-ultra = Ultra

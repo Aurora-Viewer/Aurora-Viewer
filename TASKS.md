@@ -1,5 +1,7 @@
 # Aurora Viewer — suivi des tâches
 
+- 🔧 Sélecteur de textures / matériaux (13/10) : colonne d’inventaire réduite d’un tiers par défaut, fenêtre de 680 à 530 points et aperçu conservé ; dossier repliable « Fichiers locaux » au-dessus de l’inventaire, filtré par type et par nom, disponible dès le chargement des fichiers locaux. Disposition demandée par l’humain, règles de type de Firestorm `LLFloaterTexturePicker::refreshLocalList` conservées. `check.ps1` vert : 1 782 tests réussis, 23 ignorés, Clippy sans avertissement ; clics locaux, repliage, recherche séparée et largeur stable avec noms longs / grandes polices vérifiés. Captures texture / matériau examinées, validation humaine en attente. Démo : `faces-picker` / `faces-picker-material` avec `AURORA_DEMO_IMPORTS=local`.
+
 Client Second Life en Rust (wgpu/Vulkan, egui), basé sur les sources Firestorm.
 Légende : ✅ fait (et vérifié sur Agni quand ça dépend de la grille) · 🟡 fait mais pas encore vérifié sur la grille · 🔧 en cours · ⬜ à faire
 
