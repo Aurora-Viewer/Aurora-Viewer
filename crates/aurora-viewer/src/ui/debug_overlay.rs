@@ -1,10 +1,10 @@
 //! Debug overlays drawn over the 3D view (Preferences › Debug): bounding
-//! boxes, culling decisions, lights, glowing objects, reflection probes and
-//! avatar skeletons. Lines are projected on the CPU and painted by egui, on
-//! top of the scene (no depth test).
+//! boxes, culling decisions, lights, glowing objects, reflection probes,
+//! avatar skeletons and detail levels. Lines are projected on the CPU and
+//! painted by egui, on top of the scene (no depth test).
 
 use super::hud::Projector;
-use crate::scene::Scene;
+use crate::scene::{LodInfo, Scene};
 use crate::settings::DebugView;
 use crate::world::World;
 use egui::{Color32, Stroke};
@@ -13,7 +13,13 @@ use std::time::Instant;
 
 /// Objects considered around the camera (nearest first).
 const MAX_OBJECTS: usize = 600;
-const RANGE: f32 = 96.0;
+pub const RANGE: f32 = 96.0;
+/// Detail levels: labels drawn at most, and how far from the pointer
+/// (points) an object is labelled.
+const LOD_LABELS: usize = 16;
+const LOD_REACH: f32 = 150.0;
+/// Height of a label line (points).
+const LOD_LINE: f32 = 13.0;
 const SKELETON_RANGE: f32 = 32.0;
 
 const GREEN: Color32 = Color32::from_rgb(80, 220, 120);
@@ -107,8 +113,103 @@ impl Lines<'_> {
 /// Probes passed in: (origin, radius, kind, box world-to-unit, captured).
 pub type ProbeList = Vec<(Vec3, f32, f32, Mat4, bool)>;
 
+/// The label of a detail level, like Firestorm's "LOD Info" (LOD, Dist,
+/// BiasedR): the level shown, the one the distance asks for when it is
+/// another, that distance and the radius, and how many objects share them
+/// (the rigged meshes an avatar wears are judged together).
+fn lod_text(info: &LodInfo, count: usize) -> String {
+    let mut s = format!("LOD {}", info.shown);
+    if info.asked != info.shown {
+        s.push_str(&format!(" → {}", info.asked));
+    }
+    s.push_str(&format!(
+        " · d {} · r {}",
+        aurora_i18n::number(info.distance as f64, 2),
+        aurora_i18n::number(info.radius as f64, 2)
+    ));
+    if info.rigged {
+        s.push_str(" · ");
+        s.push_str(aurora_i18n::tr!("ui-debug-overlay-rigged"));
+    }
+    if count > 1 {
+        s.push_str(&format!(" ×{count}"));
+    }
+    s
+}
+
+/// Green at the finest level, orange below it, red while the level shown
+/// is not the one asked for (its geometry is on its way, or never came).
+fn lod_color(info: &LodInfo) -> Color32 {
+    if info.shown != info.asked {
+        RED
+    } else if info.shown >= 3 {
+        GREEN
+    } else {
+        ORANGE
+    }
+}
+
+/// The labels to draw: the objects that show within `reach` of the pointer,
+/// those it is over first (the disc of their bounds), then the nearest to
+/// it, `max` at most. `on_screen` gives where a point shows. Objects with
+/// the same numbers (what an avatar wears) make one label, at the first of
+/// them.
+fn lod_labels(
+    infos: &[LodInfo],
+    pointer: egui::Pos2,
+    reach: f32,
+    max: usize,
+    on_screen: impl Fn(Vec3) -> Option<egui::Pos2>,
+) -> Vec<(egui::Pos2, LodInfo, usize)> {
+    let mut near: Vec<((f32, f32), egui::Pos2, LodInfo)> = infos
+        .iter()
+        .filter_map(|i| {
+            let p = on_screen(i.at)?;
+            let d = p.distance(pointer);
+            // (the size of its bounds on screen, from a point above it)
+            let disc = on_screen(i.at + Vec3::Z * i.bounds).map_or(0.0, |q| q.distance(p));
+            let outside = (d - disc).max(0.0);
+            (outside <= reach).then_some(((outside, d), p, *i))
+        })
+        .collect();
+    near.sort_by(|a, b| a.0.0.total_cmp(&b.0.0).then(a.0.1.total_cmp(&b.0.1)));
+    let mut out: Vec<(egui::Pos2, LodInfo, usize)> = Vec::new();
+    for (_, p, info) in near {
+        let same = |o: &LodInfo| {
+            o.rigged
+                && info.rigged
+                && (o.shown, o.asked) == (info.shown, info.asked)
+                && o.radius == info.radius
+                && o.distance == info.distance
+        };
+        if let Some(group) = out.iter_mut().find(|(_, o, _)| same(o)) {
+            group.2 += 1;
+        } else if out.len() < max {
+            out.push((p, info, 1));
+        }
+    }
+    // one under the other where they would cover each other
+    out.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
+    for i in 1..out.len() {
+        let (above, here) = (out[i - 1].0, out[i].0);
+        if (here.x - above.x).abs() < 170.0 && here.y < above.y + LOD_LINE {
+            out[i].0.y = above.y + LOD_LINE;
+        }
+    }
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
-pub fn draw(ctx: &egui::Context, world: &World, scene: &Scene, proj: &Projector, eye: Vec3, dv: &DebugView, probes: Option<ProbeList>) {
+pub fn draw(
+    ctx: &egui::Context,
+    world: &World,
+    scene: &Scene,
+    proj: &Projector,
+    eye: Vec3,
+    dv: &DebugView,
+    probes: Option<ProbeList>,
+    lod: &[LodInfo],
+) {
     if !dv.any_overlay() {
         return;
     }
@@ -117,6 +218,27 @@ pub fn draw(ctx: &egui::Context, world: &World, scene: &Scene, proj: &Projector,
         proj,
     };
     let now = Instant::now();
+
+    if dv.lod_info {
+        let pointer = ctx.input(|i| i.pointer.latest_pos()).unwrap_or_else(|| ctx.content_rect().center());
+        let font = egui::FontId::proportional(11.0);
+        for (at, info, count) in lod_labels(lod, pointer, LOD_REACH, LOD_LABELS, |p| proj.project(p).map(|(p, _)| p)) {
+            let text = lod_text(&info, count);
+            // (a dark copy under it: the label is read over any scene)
+            let shadow = Color32::from_black_alpha(200);
+            lines
+                .painter
+                .text(at + egui::vec2(5.0, 1.0), egui::Align2::LEFT_CENTER, &text, font.clone(), shadow);
+            lines.painter.text(
+                at + egui::vec2(4.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                &text,
+                font.clone(),
+                lod_color(&info),
+            );
+            lines.painter.circle_filled(at, 2.0, lod_color(&info));
+        }
+    }
 
     // objects near the camera, nearest first
     let mut near: Vec<(f32, usize)> = scene
@@ -272,5 +394,83 @@ pub fn draw(ctx: &egui::Context, world: &World, scene: &Scene, proj: &Projector,
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(x: f32, shown: u8, asked: u8, distance: f32, rigged: bool) -> LodInfo {
+        LodInfo {
+            at: Vec3::new(x, 0.0, 0.0),
+            bounds: 0.0,
+            shown,
+            asked,
+            radius: 1.25,
+            distance,
+            rigged,
+        }
+    }
+
+    #[test]
+    fn a_label_tells_the_level_and_what_it_comes_from() {
+        // (numbers and words in the language the tests run in)
+        let n = |v: f64| aurora_i18n::number(v, 2);
+        let r = n(1.25);
+        assert_eq!(lod_text(&info(0.0, 3, 3, 12.5, false), 1), format!("LOD 3 · d {} · r {r}", n(12.5)));
+        assert_eq!(
+            lod_text(&info(0.0, 1, 2, 40.0, false), 1),
+            format!("LOD 1 → 2 · d {} · r {r}", n(40.0))
+        );
+        assert_eq!(
+            lod_text(&info(0.0, 2, 2, 23.0, true), 6),
+            format!("LOD 2 · d {} · r {r} · {} ×6", n(23.0), aurora_i18n::tr!("ui-debug-overlay-rigged"))
+        );
+        assert_eq!(lod_color(&info(0.0, 3, 3, 1.0, false)), GREEN);
+        assert_eq!(lod_color(&info(0.0, 2, 2, 1.0, false)), ORANGE);
+        assert_eq!(lod_color(&info(0.0, 2, 3, 1.0, false)), RED);
+    }
+
+    #[test]
+    fn labels_are_those_around_the_pointer() {
+        // objects along x, shown where they are (1 m = 1 point)
+        let on_screen = |p: Vec3| (p.x >= 0.0).then_some(egui::pos2(p.x, 100.0));
+        let infos = [
+            info(500.0, 3, 3, 10.0, false),
+            info(520.0, 2, 2, 30.0, false),
+            // behind the camera: not shown
+            info(-5.0, 2, 2, 30.0, false),
+            // too far from the pointer
+            info(900.0, 1, 1, 80.0, false),
+            // three rigged meshes of one avatar, and one of another
+            info(560.0, 2, 2, 25.0, true),
+            info(561.0, 2, 2, 25.0, true),
+            info(562.0, 2, 2, 25.0, true),
+            info(563.0, 2, 2, 26.0, true),
+        ];
+        let labels = lod_labels(&infos, egui::pos2(510.0, 100.0), 150.0, 16, on_screen);
+        assert_eq!(labels.len(), 4);
+        let counts: Vec<usize> = labels.iter().map(|l| l.2).collect();
+        assert_eq!(counts.iter().sum::<usize>(), 6);
+        assert!(counts.contains(&3), "{counts:?}");
+        // none over another: a line apart where they are close
+        for (i, a) in labels.iter().enumerate() {
+            for b in &labels[i + 1..] {
+                assert!((a.0.y - b.0.y).abs() >= LOD_LINE - 0.01, "{:?} {:?}", a.0, b.0);
+            }
+        }
+        // no more than asked, the nearest to the pointer first
+        let two = lod_labels(&infos, egui::pos2(510.0, 100.0), 150.0, 2, on_screen);
+        assert_eq!(two.len(), 2);
+        assert!(two.iter().all(|l| !l.1.rigged || l.2 == 3), "{two:?}");
+        // a large object the pointer is over comes before a small one nearer
+        // to it: its centre is far, its bounds are under the pointer
+        let on_plane = |p: Vec3| Some(egui::pos2(p.x, 100.0 - p.z));
+        let mut large = info(100.0, 1, 1, 60.0, false);
+        large.bounds = 300.0;
+        let small = info(400.0, 3, 3, 5.0, false);
+        let first = lod_labels(&[small, large], egui::pos2(380.0, 100.0), 150.0, 1, on_plane);
+        assert_eq!(first[0].1.shown, 1);
     }
 }

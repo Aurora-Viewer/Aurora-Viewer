@@ -355,6 +355,9 @@ pub struct App {
     stream_demo: Option<crate::demo::stream::StreamDemo>,
     /// AURORA_DEMO_GEOMETRY: meshes filling the geometry arena.
     geometry_demo: Option<crate::demo::geometry::GeometryDemo>,
+    /// Detail levels of the objects around the camera, while the debug
+    /// overlay shows them.
+    lod_infos: Vec<crate::scene::LodInfo>,
     /// Parcel snapshots and group names the place profiles want.
     place_images: std::collections::HashSet<uuid::Uuid>,
     place_groups: std::collections::HashSet<uuid::Uuid>,
@@ -664,6 +667,7 @@ impl App {
             demo_place: None,
             stream_demo: None,
             geometry_demo: None,
+            lod_infos: Vec::new(),
             place_groups: Default::default(),
             land_ui: Default::default(),
             group_profile_ui: Default::default(),
@@ -4326,6 +4330,14 @@ impl App {
                 }
             }
             self.options_ui.vram = (gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
+            // Preferences › Debug › Detail levels: what the overlay labels
+            self.lod_infos = if self.settings.debug.lod_info {
+                let range = ui::debug_overlay::RANGE;
+                self.scene
+                    .lod_infos(&self.world, &gfx.renderer.records, self.camera.position, Instant::now(), range)
+            } else {
+                Vec::new()
+            };
             // diagnostic: our attachments 40 s and 120 s after arrival
             let since_arrival = self.move_complete_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
             if (self.attachments_logged == 0 && since_arrival >= 40) || (self.attachments_logged == 1 && since_arrival >= 120) {
@@ -6437,6 +6449,7 @@ impl App {
                     self.camera.position,
                     &self.settings.debug,
                     self.settings.debug.probes.then(|| self.probes.debug_list()),
+                    &self.lod_infos,
                 );
                 if self.camera.mouselook() {
                     let c = ctx.content_rect().center();
@@ -7468,6 +7481,7 @@ impl ApplicationHandler for App {
                         "glow_view" => d.glow_view = true,
                         "probes" => d.probes = true,
                         "skeletons" => d.skeletons = true,
+                        "lod" => d.lod_info = true,
                         _ => {}
                     }
                 }

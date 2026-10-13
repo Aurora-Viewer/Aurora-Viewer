@@ -435,6 +435,13 @@ fn debug_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
         c |= row(
             ui,
             p,
+            aurora_i18n::tr!("ui-options-detail-levels"),
+            aurora_i18n::tr!("ui-options-detail-level-of-the-objects-around-the-pointer"),
+            |ui| toggle(ui, p, &mut d.lod_info),
+        );
+        c |= row(
+            ui,
+            p,
             aurora_i18n::tr!("common-culling"),
             aurora_i18n::tr!("ui-options-each-object-s-tested-sphere-green-drawn-red-outside"),
             |ui| toggle(ui, p, &mut d.culling),

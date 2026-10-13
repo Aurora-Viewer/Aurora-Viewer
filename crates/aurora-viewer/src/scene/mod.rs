@@ -32,6 +32,7 @@ pub mod sounds;
 pub mod still_check;
 mod sync_check;
 mod sync_plan;
+pub use sync_plan::LodInfo;
 pub mod sync_sets;
 pub mod texture_budget;
 mod texture_cache;

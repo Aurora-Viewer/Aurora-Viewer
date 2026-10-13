@@ -130,6 +130,42 @@ impl SyncState for FrameState<'_> {
     }
 }
 
+/// The detail level of an object as the debug overlay shows it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LodInfo {
+    /// Where the object is drawn (centre and radius of its bounds).
+    pub at: Vec3,
+    pub bounds: f32,
+    /// Level of the geometry it is drawn with (0 lowest, 3 highest).
+    pub shown: u8,
+    /// Level its distance asks for at this moment.
+    pub asked: u8,
+    /// Radius and distance the level comes from (`lod_metrics`).
+    pub radius: f32,
+    pub distance: f32,
+    pub rigged: bool,
+}
+
+/// LLVolume::mLODScaleBias (LLVolume::generate): what scales an object's
+/// size into the radius its detail level is chosen with. Sculpts follow
+/// their path like any other volume (a circle, as the build tools make
+/// them: 0.6); only meshes always take 0.5.
+fn lod_scale_bias(volume: &aurora_prim::params::VolumeParams) -> Vec3 {
+    use aurora_prim::params::{LL_PCODE_PATH_CIRCLE, LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE};
+    let path = volume.path.curve_type & 0xF0;
+    let profile = volume.profile.curve_type & 0x0F;
+    if volume.is_mesh() {
+        Vec3::splat(0.5)
+    } else if path == LL_PCODE_PATH_LINE && profile == LL_PCODE_PROFILE_CIRCLE {
+        // cylinders don't care about the Z axis
+        Vec3::new(0.6, 0.6, 0.0)
+    } else if path == LL_PCODE_PATH_CIRCLE {
+        Vec3::splat(0.6)
+    } else {
+        Vec3::splat(0.5)
+    }
+}
+
 /// Read-only view of the world and the scene for placing objects; shared
 /// by the rayon workers of the sync's planning.
 pub(super) struct SyncCtx<'a> {
@@ -183,19 +219,35 @@ impl SyncCtx<'_> {
             }
             return ((o.visual_scale() * 0.5).length(), pos.distance(eye));
         }
-        let path = o.visual_volume().path.curve_type & 0xF0;
-        let profile = o.visual_volume().profile.curve_type & 0x0F;
-        let bias = if o.visual_volume().is_sculpt() {
-            Vec3::splat(0.5)
-        } else if path == aurora_prim::params::LL_PCODE_PATH_LINE && profile == aurora_prim::params::LL_PCODE_PROFILE_CIRCLE {
-            // cylinders don't care about the Z axis
-            Vec3::new(0.6, 0.6, 0.0)
-        } else if path == aurora_prim::params::LL_PCODE_PATH_CIRCLE {
-            Vec3::splat(0.6)
-        } else {
-            Vec3::splat(0.5)
+        ((lod_scale_bias(&o.visual_volume()) * o.visual_scale()).length(), pos.distance(eye))
+    }
+
+    /// What the debug overlay shows of the detail level of object `idx`
+    /// (ui/debug_overlay.rs): None for what has no level of its own
+    /// (avatars, HUD attachments, objects not drawn yet).
+    pub(super) fn lod_info(&self, idx: usize) -> Option<LodInfo> {
+        let g = self.gpu.get(idx)?;
+        let o = self.world.objects.get(idx)?;
+        if g.is_avatar || g.hud || g.faces.is_empty() {
+            return None;
+        }
+        let (pos, _, _) = self.transform(idx)?;
+        let (radius, distance) = self.lod_metrics(idx, o, pos);
+        let level = |key: Option<GeomKey>| match key? {
+            GeomKey::Prim { lod, .. } | GeomKey::Flexible { lod, .. } | GeomKey::Sculpt { lod, .. } | GeomKey::Mesh { lod, .. } => {
+                Some(lod)
+            }
+            GeomKey::AvatarPart(_) => None,
         };
-        ((bias * o.visual_scale()).length(), pos.distance(eye))
+        Some(LodInfo {
+            at: g.center,
+            bounds: g.radius,
+            shown: level(g.geom)?,
+            asked: lod_for(radius, distance, self.lod_factor, self.fov_y),
+            radius,
+            distance,
+            rigged: g.rigged,
+        })
     }
 
     /// Model matrix and bounds of an object drawn with `geom`.
@@ -468,5 +520,63 @@ impl Scene {
             fov_y: self.fov_y,
             mat_gen: self.materials.generation,
         }
+    }
+
+    /// The detail levels of the objects within `range` of `eye`, for the
+    /// debug overlay.
+    pub fn lod_infos(&self, world: &World, records: &RecordStore, eye: Vec3, now: Instant, range: f32) -> Vec<LodInfo> {
+        let ctx = self.sync_ctx(world, records, eye, now);
+        (0..self.gpu.len())
+            .filter(|&idx| self.gpu[idx].center.distance(eye) - self.gpu[idx].radius < range)
+            .filter_map(|idx| ctx.lod_info(idx))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_prim::params::{
+        LL_PCODE_PATH_CIRCLE, LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, LL_SCULPT_TYPE_MESH,
+        LL_SCULPT_TYPE_SPHERE, SculptParams, VolumeParams,
+    };
+
+    fn volume(path: u8, profile: u8, sculpt: Option<u8>) -> VolumeParams {
+        let mut v = VolumeParams::default();
+        v.path.curve_type = path;
+        v.profile.curve_type = profile;
+        v.sculpt = sculpt.map(|sculpt_type| SculptParams {
+            texture: Uuid::from_u128(7),
+            sculpt_type,
+        });
+        v
+    }
+
+    /// LLVolume::generate: 0.5 by default, cylinders without their height,
+    /// 0.6 along a circle, and a mesh always 0.5.
+    #[test]
+    fn the_lod_radius_follows_the_volume_like_firestorm() {
+        let bias = |path, profile, sculpt| lod_scale_bias(&volume(path, profile, sculpt));
+        assert_eq!(bias(LL_PCODE_PATH_LINE, 0x01, None), Vec3::splat(0.5));
+        assert_eq!(bias(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, None), Vec3::new(0.6, 0.6, 0.0));
+        assert_eq!(bias(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, None), Vec3::splat(0.6));
+        // a sculpt is a sphere under its map: the circle's 0.6, not 0.5
+        assert_eq!(
+            bias(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, Some(LL_SCULPT_TYPE_SPHERE)),
+            Vec3::splat(0.6)
+        );
+        // a mesh whatever the path it was given
+        assert_eq!(
+            bias(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, Some(LL_SCULPT_TYPE_MESH)),
+            Vec3::splat(0.5)
+        );
+        assert_eq!(
+            bias(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, Some(LL_SCULPT_TYPE_MESH)),
+            Vec3::splat(0.5)
+        );
+        // a 1 m sculpt keeps its finest level to 10 m, as in Firestorm (8.5 m with 0.5)
+        let radius = (Vec3::splat(0.6) * Vec3::ONE).length();
+        assert_eq!(lod_for(radius, 10.0, 2.0, 60f32.to_radians()), 3);
+        assert_eq!(lod_for((Vec3::splat(0.5) * Vec3::ONE).length(), 10.0, 2.0, 60f32.to_radians()), 2);
     }
 }
