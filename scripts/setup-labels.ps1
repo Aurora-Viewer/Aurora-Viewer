@@ -24,6 +24,7 @@ $labels = @(
     @{ Name = 'bug'; Color = 'F87171'; Desc = 'Problem reported by a user' },
     @{ Name = 'alpha'; Color = '8B5CF6'; Desc = 'Report from the Aurora alpha test' },
     @{ Name = 'question'; Color = '38BDF8'; Desc = 'Question about how the viewer works or is used' },
+    @{ Name = 'feature-request'; Color = 'E879F9'; Desc = 'Feature or improvement asked for by a user' },
     # type of change (release notes, .github/release.yml)
     @{ Name = 'feature'; Was = 'nouveauté'; Color = '8B5CF6'; Desc = 'New feature' },
     @{ Name = 'fix'; Was = 'correctif'; Color = 'F87171'; Desc = 'Bug fix' },
