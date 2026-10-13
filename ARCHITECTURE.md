@@ -38,7 +38,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 ├─ CLAUDE.md                    points to AGENTS.md
 ├─ HUMANS.md                    guide for humans: PRs, merge, build
 ├─ ARCHITECTURE.md              this file
-├─ TASKS.md                     task tracking: done / in progress / to do
+├─ TASKS.md                     task tracking: in progress / to do / finished since the last release (older: docs/TASKS_ARCHIVE.md)
 ├─ LICENSE, NOTICE.md           GPLv3, third-party licences
 ├─ aurora-tools.cmd             development tools (double-click): scripts/tools
 ├─ assets/
