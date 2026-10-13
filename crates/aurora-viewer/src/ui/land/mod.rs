@@ -46,6 +46,21 @@ enum Tab {
 }
 
 impl Tab {
+    /// Name of the tab for AURORA_DEMO_LAND, whatever the interface language.
+    fn key(self) -> &'static str {
+        match self {
+            Tab::General => "general",
+            Tab::Covenant => "covenant",
+            Tab::Objects => "objects",
+            Tab::Options => "options",
+            Tab::Media => "media",
+            Tab::Sound => "sound",
+            Tab::Access => "access",
+            Tab::Experiences => "experiences",
+            Tab::Environment => "environment",
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Tab::General => aurora_i18n::tr!("common-general"),
@@ -225,7 +240,8 @@ impl LandUi {
         }
     }
 
-    /// Show a tab by its French name or its index (demo captures).
+    /// Show a tab by its key (`Tab::key`), its label in the interface language
+    /// or its index (demo captures).
     pub fn set_tab(&mut self, name: &str) {
         let all = [
             Tab::General,
@@ -241,7 +257,7 @@ impl LandUi {
         let key = name.trim().to_lowercase();
         let by_name = |t: &&Tab| {
             let l = t.label().to_lowercase();
-            l == key || l.replace(['é', 'è'], "e") == key
+            t.key() == key || l == key || l.replace(['é', 'è'], "e") == key
         };
         if let Some(t) = all
             .iter()
@@ -775,6 +791,23 @@ mod tests {
                 "Wed Jun 05 21:18:48 2024"
             }
         );
+    }
+
+    #[test]
+    fn demo_tabs_are_found_by_key_whatever_the_language() {
+        let mut ui = LandUi::default();
+        for (name, tab) in [
+            ("covenant", Tab::Covenant),
+            ("Objects", Tab::Objects),
+            ("environment", Tab::Environment),
+            ("4", Tab::Media),
+        ] {
+            ui.set_tab(name);
+            assert_eq!(ui.tab, tab, "{name}");
+        }
+        // an unknown name keeps the current tab
+        ui.set_tab("nowhere");
+        assert_eq!(ui.tab, Tab::Media);
     }
 
     #[test]

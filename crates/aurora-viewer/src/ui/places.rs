@@ -36,12 +36,13 @@ pub(crate) const FOLDER_LANDMARKS: i32 = 3;
 /// AT_LANDMARK.
 const ASSET_LANDMARK: i32 = 3;
 
-/// AURORA_DEMO_PLACES and the like: a tab by its French name or index.
+/// AURORA_DEMO_PLACES and the like: a tab by its name or index (the former
+/// French names are still accepted).
 pub fn tab_from_name(name: &str) -> Option<usize> {
     match name.trim().to_lowercase().as_str() {
-        "favoris" | "0" => Some(TAB_FAVORITES),
-        "reperes" | "repères" | "1" => Some(TAB_LANDMARKS),
-        "historique" | "2" => Some(TAB_HISTORY),
+        "favorites" | "favoris" | "0" => Some(TAB_FAVORITES),
+        "landmarks" | "reperes" | "repères" | "1" => Some(TAB_LANDMARKS),
+        "history" | "historique" | "2" => Some(TAB_HISTORY),
         _ => None,
     }
 }
@@ -1369,6 +1370,10 @@ mod tests {
 
     #[test]
     fn tab_names() {
+        assert_eq!(tab_from_name("favorites"), Some(TAB_FAVORITES));
+        assert_eq!(tab_from_name("landmarks"), Some(TAB_LANDMARKS));
+        assert_eq!(tab_from_name("History"), Some(TAB_HISTORY));
+        // the former French names
         assert_eq!(tab_from_name("favoris"), Some(TAB_FAVORITES));
         assert_eq!(tab_from_name("reperes"), Some(TAB_LANDMARKS));
         assert_eq!(tab_from_name("historique"), Some(TAB_HISTORY));
