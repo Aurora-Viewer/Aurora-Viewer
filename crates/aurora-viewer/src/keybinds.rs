@@ -526,7 +526,8 @@ impl KeyBindings {
             (Action::Performance, [kmod(K::Digit1, true, true), None]),
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
             (Action::Import, [kmod(K::KeyU, true, false), None]),
-            (Action::HudDrag, [k(K::AltLeft), None]),
+            // Aurora's direct HUD gesture must leave Alt to Firestorm's camera (#266).
+            (Action::HudDrag, [k(K::ControlLeft), None]),
             (
                 Action::ShowTransparency,
                 [
@@ -824,8 +825,35 @@ mod tests {
     }
 
     #[test]
+    fn default_hud_gesture_leaves_alt_and_shift_alt_to_the_camera() {
+        let kb = KeyBindings::default();
+        let down = HashSet::new();
+        for shift in [false, true] {
+            assert!(!kb.held(
+                Action::HudDrag,
+                &down,
+                Mods {
+                    alt: true,
+                    shift,
+                    ctrl: false
+                }
+            ));
+            assert!(kb.held(
+                Action::HudDrag,
+                &down,
+                Mods {
+                    ctrl: true,
+                    shift,
+                    alt: false
+                }
+            ));
+        }
+    }
+
+    #[test]
     fn either_hud_slot_can_hold_the_gesture_and_cleared_slots_stay_inactive() {
         let mut kb = KeyBindings::default();
+        kb.set(Action::HudDrag, 0, Some(HoldKey::Alt.into_binding()));
         let ctrl = Mods {
             ctrl: true,
             ..Default::default()

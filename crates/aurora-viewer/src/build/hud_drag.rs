@@ -1,4 +1,4 @@
-//! Direct HUD translation. The Alt gesture is an Aurora shortcut; the HUD
+//! Direct HUD translation. The Ctrl gesture is an Aurora shortcut; the HUD
 //! coordinates and final position update follow LLManipTranslate::handleMouseUp
 //! and LLSelectMgr::sendMultipleUpdate (Firestorm, originally LGPL 2.1).
 use super::{BuildCmd, ObjKey, TransformUpdate, World, edit_parent, root_of};

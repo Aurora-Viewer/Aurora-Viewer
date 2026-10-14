@@ -332,7 +332,7 @@ pub struct Settings {
     pub settings_version: u32,
 }
 
-const SETTINGS_VERSION: u32 = 9;
+const SETTINGS_VERSION: u32 = 10;
 
 /// RGBA color (sRGB, straight alpha).
 pub type Rgba = [u8; 4];
@@ -820,6 +820,16 @@ impl Settings {
             self.keybinds.set(crate::keybinds::Action::HudDrag, 0, Some(key.into_binding()));
         }
         self.keybinds = std::mem::take(&mut self.keybinds).sanitized();
+        if self.settings_version < 10
+            && self.keybinds.get(crate::keybinds::Action::HudDrag) == [Some(crate::keybinds::HoldKey::Alt.into_binding()), None]
+        {
+            // Replace the former HUD default without changing custom or cleared slots (#266).
+            self.keybinds.set(
+                crate::keybinds::Action::HudDrag,
+                0,
+                Some(crate::keybinds::HoldKey::Ctrl.into_binding()),
+            );
+        }
         self.camera = std::mem::take(&mut self.camera).sanitized();
         if self.settings_version < 5 {
             // new defaults: no vsync, no frame cap (the old "0 = screen rate,
@@ -1220,7 +1230,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_hud_key_migrates_without_losing_the_saved_choice() {
+    fn legacy_hud_key_migrates_to_ctrl_or_keeps_the_custom_choice() {
         let old: Settings = serde_json::from_str("{}").expect("old synthetic settings");
         assert_eq!(
             old.sanitized().keybinds.get(Action::HudDrag),
@@ -1239,11 +1249,55 @@ mod tests {
                 }
                 let loaded: Settings = serde_json::from_value(json).expect("synthetic old settings");
                 let loaded = loaded.sanitized();
-                assert_eq!(loaded.keybinds.get(Action::HudDrag), [Some(key.clone().into_binding()), None]);
+                let migrated = if key == crate::keybinds::HoldKey::Alt {
+                    crate::keybinds::HoldKey::Ctrl
+                } else {
+                    key.clone()
+                };
+                assert_eq!(loaded.keybinds.get(Action::HudDrag), [Some(migrated.into_binding()), None]);
                 let json = serde_json::to_value(&loaded).expect("migrated settings");
                 assert!(json.get("hud_drag_key").is_none());
                 let reloaded: Settings = serde_json::from_value(json).expect("reload migrated settings");
                 assert_eq!(reloaded.sanitized().keybinds, loaded.keybinds);
+            }
+        }
+    }
+
+    #[test]
+    fn old_default_hud_binding_changes_once_and_custom_slots_are_preserved() {
+        use crate::keybinds::HoldKey;
+        let alt = Some(HoldKey::Alt.into_binding());
+        let ctrl = Some(HoldKey::Ctrl.into_binding());
+        let key = Some(HoldKey::Key("KeyB".into()).into_binding());
+        for slots in [
+            [alt.clone(), None],
+            [None, None],
+            [key.clone(), ctrl.clone()],
+            [alt.clone(), key.clone()],
+            [ctrl.clone(), alt.clone()],
+        ] {
+            let expected = if slots == [alt.clone(), None] {
+                [ctrl.clone(), None]
+            } else {
+                slots.clone()
+            };
+            for version in [9, SETTINGS_VERSION] {
+                let mut settings = Settings {
+                    settings_version: version,
+                    ..Settings::default()
+                };
+                for (slot, binding) in slots.iter().enumerate() {
+                    settings.keybinds.set(Action::HudDrag, slot, binding.clone());
+                }
+                let json = serde_json::to_vec(&settings).expect("synthetic saved settings");
+                let loaded: Settings = serde_json::from_slice(&json).expect("read synthetic settings");
+                let loaded = loaded.sanitized();
+                assert_eq!(
+                    loaded.keybinds.get(Action::HudDrag),
+                    if version < 10 { expected.clone() } else { slots.clone() }
+                );
+                assert_eq!(loaded.settings_version, SETTINGS_VERSION);
+                assert_eq!(loaded.clone().sanitized().keybinds, loaded.keybinds);
             }
         }
     }
