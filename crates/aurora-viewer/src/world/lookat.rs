@@ -13,7 +13,8 @@ pub const IDLE: u8 = 1;
 pub const AUTO_LISTEN: u8 = 2;
 pub const FREELOOK: u8 = 3;
 pub const RESPOND: u8 = 4;
-#[allow(dead_code)] // set by object hovering (no caller in Firestorm either)
+/// Set by the cursor over the world: an Aurora choice, Firestorm defines
+/// the type without a caller (see `cursor_look`).
 pub const HOVER: u8 = 5;
 pub const CONVERSATION: u8 = 6;
 #[allow(dead_code)] // set by selection / editing (not ported yet)
@@ -192,6 +193,30 @@ pub fn cursor_direction(forward: Vec3, x: f32, y: f32, yaw: f32, pitch: f32) -> 
     let left = Vec3::Z.cross(forward).normalize_or(Vec3::Y);
     let up = forward.cross(left).normalize_or(Vec3::Z);
     Quat::from_axis_angle(up, -x * yaw.to_radians()) * Quat::from_axis_angle(left, -y * pitch.to_radians()) * forward
+}
+
+/// What the head looks at while the cursor moves (third person). Firestorm
+/// only turns the head toward the cursor's direction (FREELOOK,
+/// `cursor_direction`): the crosshair stands 1 m from the head, never on
+/// what the cursor points at, and LOOKAT_TARGET_HOVER has no caller. Aurora
+/// looks at the very point under the cursor when there is one (the hover
+/// pick of the cursor icon): an object with the point in its frame, or a
+/// point of the ground (`hover`); over the sky, a window or ourselves, the
+/// direction of Firestorm. Its priority and its 1 s timeout are those of
+/// the attentions table: focus and selection still win, free look and
+/// idle give way.
+pub fn cursor_look(hover: Option<(Option<Uuid>, DVec3)>, me: Uuid, free: Vec3) -> (u8, Option<Uuid>, DVec3) {
+    match hover {
+        Some((object, offset)) => (HOVER, object, offset),
+        None => (FREELOOK, Some(me), free.as_dvec3()),
+    }
+}
+
+/// A point of the world in the frame of what it lies on (`at`, `rot`): the
+/// offset a look-at on that object carries (calcTargetPosition turns it
+/// back with the object).
+pub fn local_offset(point: Vec3, at: Vec3, rot: Quat) -> DVec3 {
+    (rot.inverse() * (point - at)).as_dvec3()
 }
 
 /// Types whose crosshair gets a line to its avatar (ExodusLookAtLines).
@@ -420,6 +445,55 @@ mod tests {
         assert!((d.dot(down) - h).abs() < 1e-5 && d.y > 0.0);
         // and the pitch lifts it back to the horizon
         assert!(close(cursor_direction(down, 0.0, 0.5, 0.0, 60.0), Vec3::X));
+    }
+
+    #[test]
+    fn the_cursor_looks_at_what_it_is_over() {
+        let me = Uuid::from_u128(1);
+        let prim = Uuid::from_u128(7);
+        let free = Vec3::new(0.0, 1.0, 0.0);
+        // over an object: hover, on the object
+        let on = (Some(prim), DVec3::new(0.2, 0.0, 0.5));
+        assert_eq!(cursor_look(Some(on), me, free), (HOVER, Some(prim), on.1));
+        // over the ground: hover, a global point
+        let ground = (None, DVec3::new(256.0 + 30.0, 40.0, 21.5));
+        assert_eq!(cursor_look(Some(ground), me, free), (HOVER, None, ground.1));
+        // over the sky: Firestorm's free look
+        assert_eq!(cursor_look(None, me, free), (FREELOOK, Some(me), free.as_dvec3()));
+        // a hover target is a point in the world: the distance limit applies
+        assert!(clamped(HOVER) && !clamped(FREELOOK));
+    }
+
+    #[test]
+    fn a_point_is_kept_in_the_frame_of_its_object() {
+        let rot = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let at = Vec3::new(10.0, 10.0, 20.0);
+        let point = Vec3::new(10.0, 11.0, 20.5);
+        let off = local_offset(point, at, rot);
+        assert!((off - DVec3::new(1.0, 0.0, 0.5)).length() < 1e-5);
+        // turned back with the object, it is the point again
+        assert!((at + rot * off.as_vec3() - point).length() < 1e-5);
+    }
+
+    #[test]
+    fn hover_gives_way_to_focus_and_selection_and_beats_free_look() {
+        let t0 = Instant::now();
+        let x = DVec3::X;
+        let mut o = Own::new();
+        assert!(o.set(FREELOOK, None, x, t0));
+        assert!(o.set(HOVER, None, x, t0));
+        assert!(!o.set(FREELOOK, None, x, t0));
+        assert!(!o.set(IDLE, None, x, t0));
+        assert_eq!(o.target.kind, HOVER);
+        // a hover lasts 1 s, then the head goes back to idle / free look
+        o.update(t0 + Duration::from_secs_f32(1.2));
+        assert_eq!(o.target.kind, NONE);
+        for strong in [FOCUS, SELECT] {
+            let mut o = Own::new();
+            assert!(o.set(strong, None, x, t0));
+            assert!(!o.set(HOVER, None, x, t0));
+            assert_eq!(o.target.kind, strong);
+        }
     }
 
     #[test]

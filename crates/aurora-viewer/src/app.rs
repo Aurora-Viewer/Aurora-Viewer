@@ -228,6 +228,11 @@ pub struct App {
     /// What the simulator was told of the static eyes animation this
     /// session (FSStaticEyes); none before the arrival.
     static_eyes_sent: Option<bool>,
+    /// The world point the cursor was over last frame, and the object it
+    /// lies on (the hover pick of the cursor icon), for the look-at.
+    look_hover: Option<(Option<usize>, Vec3)>,
+    /// Fade-in of the look-at targets (`ui::lookat_targets`).
+    look_at_fades: ui::lookat_targets::Fades,
     /// Offline demo: eye tracking on without touching the saved settings.
     demo_look_at: bool,
     /// AURORA_DEMO_LOOKAT=targets: the crosshairs shown, every avatar
@@ -607,6 +612,8 @@ impl App {
             cam_key_since: [None; 10],
             look_at_privacy: None,
             static_eyes_sent: None,
+            look_hover: None,
+            look_at_fades: Default::default(),
             demo_look_at: false,
             demo_look_at_targets: false,
             look_focus: None,
@@ -2456,16 +2463,16 @@ impl App {
         let (cx, cy) = self.cursor_pos;
         let still = (cx - self.look_cursor.0).abs() < 0.5 && (cy - self.look_cursor.1).abs() < 0.5;
         self.look_cursor = (cx, cy);
-        let (kind, offset) = if still && !turning {
+        let (kind, object, offset) = if still && !turning {
             let v = self.world.agent.velocity;
             let ahead = if v.length_squared() > 4.0 {
                 v
             } else {
                 self.world.agent.forward() * 2.0
             };
-            (lookat::IDLE, body.inverse() * ahead)
+            (lookat::IDLE, Some(me), (body.inverse() * ahead).as_dvec3())
         } else if self.camera.mouselook() {
-            (lookat::MOUSELOOK, self.camera.forward())
+            (lookat::MOUSELOOK, Some(me), self.camera.forward().as_dvec3())
         } else {
             let dir = lookat::cursor_direction(
                 self.camera.forward(),
@@ -2474,9 +2481,9 @@ impl App {
                 prefs.head_yaw,
                 prefs.head_pitch,
             );
-            (lookat::FREELOOK, dir)
+            lookat::cursor_look(self.look_hover_target(now), me, dir)
         };
-        self.set_look_at(kind, Some(me), offset.as_dvec3());
+        self.set_look_at(kind, object, offset);
         let own = &mut self.world.look_at.own;
         own.update(now);
         if own.needs_send {
@@ -2552,6 +2559,35 @@ impl App {
                 self.on_app_event(e);
             }
         }
+    }
+
+    /// The point under the cursor the head looks at (`lookat::cursor_look`):
+    /// the hover pick of the last frame, on an object in its frame (an
+    /// avatar's from its head, as calcTargetPosition aims), or a global
+    /// point of the ground. None over the sky, a window, a HUD or
+    /// ourselves and what we wear.
+    fn look_hover_target(&self, now: Instant) -> Option<(Option<uuid::Uuid>, glam::DVec3)> {
+        use crate::scene::Scene;
+        let (idx, point) = self.look_hover?;
+        let me = self.world.agent_id;
+        let Some(idx) = idx else {
+            let (mx, my) = self.world.main_origin()?;
+            return Some((None, glam::DVec3::new(mx as f64, my as f64, 0.0) + point.as_dvec3()));
+        };
+        let o = self.world.objects.get(idx)?;
+        if Scene::skeleton_owner(&self.world, idx).is_some_and(|(owner, _)| owner == me) {
+            return None;
+        }
+        let (at, rot, hud) = Scene::object_transform(&self.world, idx, now, 0)?;
+        if hud {
+            return None;
+        }
+        let at = if o.is_avatar() {
+            self.scene.head_world(&self.world, &o.full_id, now)?
+        } else {
+            at
+        };
+        Some((Some(o.full_id), crate::world::lookat::local_offset(point, at, rot)))
     }
 
     /// FSStaticEyes (update_static_eyes in llstartup.cpp, its setting's
@@ -5139,6 +5175,7 @@ impl App {
                     .push(egui::OutputCommand::OpenUrl(egui::OpenUrl::new_tab(url)));
             }
         }
+        self.look_hover = None;
         if matches!(self.screen, Screen::World)
             && !self.build.open
             && !self.alt
@@ -5152,12 +5189,15 @@ impl App {
         {
             let hovered = self.scene.hover_hud(&self.world, self.cursor_pos).or_else(|| {
                 // Preserve the world hover cache (scene/hover.rs).
-                self.scene.hover_object(
+                let (point, idx) = self.scene.hover_pick(
                     &self.world,
                     gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1),
                     gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
                     self.settings.draw_distance,
-                )
+                );
+                // the same pick gives the look-at its point
+                self.look_hover = point.map(|p| (idx, p));
+                idx
             });
             if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
                 log::info!(
@@ -5748,6 +5788,18 @@ impl App {
             if let (Some((x, y, wiggle)), Some(g)) = (pin, self.gfx.as_ref()) {
                 let (w, h) = g.renderer.size();
                 self.cursor_pos = (w as f32 * x + wiggle, h as f32 * y);
+            }
+            // ",side": from frame 300 the camera beside our head, aimed at a
+            // point in front of the face (which we then look at: a focus),
+            // to see where the line leaves the head
+            if value.ends_with(",side")
+                && self.frame_count == 300
+                && let Some(eyes) = self.scene.eyes_world(&self.world, &self.world.agent_id, Instant::now())
+            {
+                let rot = self.world.agent.body_rotation();
+                let ahead = eyes + rot * Vec3::X * 0.5;
+                self.camera
+                    .set_view(ahead - rot * Vec3::Y * 1.2, ahead, &mut self.world.agent, &self.settings.camera);
             }
             if self.frame_count == 230
                 && let Some((mx, my)) = self.world.main_origin()
@@ -6658,11 +6710,13 @@ impl App {
                 // the look-at crosshairs under the name tags
                 ui::lookat_targets::draw(
                     &ctx,
+                    &p,
                     &self.world,
                     &self.scene,
                     projector,
                     self.camera.position,
                     &self.look_at_settings(),
+                    &mut self.look_at_fades,
                 );
                 let classic_tags = self.classic_name_tags();
                 self.name_tags = ui::hud::draw(

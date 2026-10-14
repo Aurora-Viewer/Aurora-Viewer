@@ -3868,6 +3868,17 @@ impl Scene {
         })
     }
 
+    /// The point between an avatar's eyes, animated (`anim::Controller::eyes_pos`),
+    /// else its head (`head_world`).
+    pub fn eyes_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<Vec3> {
+        let idx = world.objects.index_of_uuid(id)?;
+        let (p, r, _) = Self::object_transform(world, idx, now, 0)?;
+        match self.motions.get(id).and_then(|c| c.eyes_pos()) {
+            Some(e) => Some(p + r * (e - world.avatar_lib.pelvis)),
+            None => self.head_world(world, id, now),
+        }
+    }
+
     /// Stable name tag above the avatar root, also used for click depth.
     /// Its height includes shape, mesh offsets and translation deformers;
     /// neither body/head rotations nor animation bobbing move the anchor.
