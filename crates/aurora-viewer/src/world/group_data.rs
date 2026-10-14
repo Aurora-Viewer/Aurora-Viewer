@@ -43,7 +43,7 @@ pub struct NoticeView {
 }
 
 /// One group (LLGroupMgrGroupData).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct GroupData {
     pub members: HashMap<Uuid, GroupMember>,
     /// MemberCount of the replies.

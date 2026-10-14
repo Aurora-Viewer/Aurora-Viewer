@@ -360,7 +360,8 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
     let mut export = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
-        let w = (ui.available_width() - 260.0).max(120.0);
+        // room for the pills, Invite and Export
+        let w = (ui.available_width() - 350.0).max(120.0);
         widgets::search_field(ui, &mut st.members.filter, aurora_i18n::tr!("ui-group-profile-filter-members"), w);
         if pill(ui, p, aurora_i18n::tr!("common-all"), st.members.show == Show::All).clicked() {
             st.members.show = Show::All;
