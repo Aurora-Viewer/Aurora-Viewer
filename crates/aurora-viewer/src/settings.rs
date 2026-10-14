@@ -249,6 +249,14 @@ pub struct Settings {
     pub font_scale: f32,
     pub chat_timestamps: bool,
     pub chat_toast_seconds: f32,
+    /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
+    pub toast_friends_online: bool,
+    /// Toast of an IM or conference message out of sight (EnableIMChatPopups, on).
+    pub toast_im: bool,
+    /// Toast of a group chat message (EnableGroupChatPopups, off).
+    pub toast_group_im: bool,
+    /// Seconds a message toast stays (NotificationToastLifeTime, 30).
+    pub im_toast_seconds: f32,
     /// Write instant messages, group chats and conferences to text files in
     /// the account's folder (Firestorm KeepConversationLogTranscripts = 2).
     pub log_im: bool,
@@ -683,6 +691,10 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             chat_toast_seconds: 20.0,
+            toast_friends_online: true,
+            toast_im: true,
+            toast_group_im: false,
+            im_toast_seconds: 30.0,
             log_im: true,
             log_nearby: false,
             log_show_history: true,
@@ -1108,6 +1120,7 @@ impl Settings {
         self.probe_count = self.probe_count.clamp(8, 64);
         self.tonemapper = self.tonemapper.min(1);
         self.chat_toast_seconds = self.chat_toast_seconds.clamp(0.0, 60.0);
+        self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         if uuid::Uuid::parse_str(&self.machine_id).is_err() {
             self.machine_id = uuid::Uuid::new_v4().to_string();

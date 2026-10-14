@@ -61,6 +61,10 @@ pub mod tags;
 /// (AURORA_DEMO_TEXREFRESH).
 #[path = "demo_tex_refresh.rs"]
 pub mod tex_refresh;
+/// Toasts of friends and messages, and the list under the bell
+/// (AURORA_DEMO_TOASTS).
+#[path = "demo_toasts.rs"]
+pub mod toasts;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;

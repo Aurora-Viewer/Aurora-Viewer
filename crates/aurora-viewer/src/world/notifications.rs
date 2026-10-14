@@ -75,6 +75,10 @@ pub enum Kind {
     Script,
     Permissions,
     Url,
+    /// A friend came online or went offline (FriendOnlineOffline).
+    Presence,
+    /// A message in a conversation that is not in sight (IMToast).
+    Message,
 }
 
 /// What an answer needs (a friendship offer's `from` becomes a friend when
@@ -138,6 +142,20 @@ pub enum Data {
         experience: Option<ExperiencePrompt>,
     },
     Url(String),
+    /// A friend's online / offline notice: a toast only, never kept in the
+    /// list (a notifytip with can_be_stored = false, llnotificationtiphandler.cpp).
+    Presence {
+        who: Uuid,
+        online: bool,
+    },
+    /// The messages of a conversation that arrived while it was not in
+    /// sight: one entry per conversation, updated by each new message.
+    Message {
+        session: Uuid,
+        /// The sender of the last message (the picture of the card).
+        from: Uuid,
+        count: usize,
+    },
 }
 
 /// What the question of an experience shows besides the permissions.
@@ -161,6 +179,9 @@ pub struct Notification {
     pub data: Data,
     /// llTextBox reply being typed.
     pub text: String,
+    /// Shown as a toast only: never listed under the bell nor counted, and
+    /// dropped when its toast ends.
+    pub transient: bool,
     /// A region's rating (SIM_ACCESS_*) the entry is about, shown as the
     /// navigation bar's badge (0: none).
     pub maturity: u8,
@@ -169,14 +190,21 @@ pub struct Notification {
 impl Notification {
     /// Needs an answer (stays until answered).
     pub fn interactive(&self) -> bool {
-        !matches!(self.data, Data::None)
+        !matches!(self.data, Data::None | Data::Presence { .. } | Data::Message { .. })
+    }
+
+    /// Clicking the card itself acts (opens the conversation): a friend
+    /// online opens an IM (LLAvatarActions::startIM, respond_on_mousedown),
+    /// a message its conversation.
+    pub fn opens(&self) -> bool {
+        matches!(self.data, Data::Presence { online: true, .. } | Data::Message { .. })
     }
 
     /// Closing it answers "no"; a link has no answer and a resident's
     /// inventory offer is kept.
     pub fn close_declines(&self) -> bool {
         match &self.data {
-            Data::None | Data::Url(_) => false,
+            Data::None | Data::Url(_) | Data::Presence { .. } | Data::Message { .. } => false,
             Data::Inventory { object, .. } => object.is_nil(),
             _ => true,
         }
@@ -201,6 +229,29 @@ pub enum Response {
     /// llTextBox: send the typed text.
     SendText,
     OpenUrl,
+    /// The card itself was clicked: open what it is about (`Notification::opens`).
+    Open,
+}
+
+/// Which toasts the preferences allow (Preferences › Chat › Toasts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToastPrefs {
+    /// Friends online / offline (ChatOnlineNotification).
+    pub presence: bool,
+    /// Messages of IMs and conferences (EnableIMChatPopups).
+    pub im: bool,
+    /// Messages of group chats (EnableGroupChatPopups).
+    pub group_im: bool,
+}
+
+impl Default for ToastPrefs {
+    fn default() -> Self {
+        ToastPrefs {
+            presence: true,
+            im: true,
+            group_im: false,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -209,6 +260,12 @@ pub struct Notifications {
     next: u64,
     /// Our legacy full name ("First Last"), for the answers that carry it.
     pub own_name: String,
+    pub toasts: ToastPrefs,
+    /// The world is shown (the loading screen gone). Before that, the
+    /// friends already online that the server announces at login get no
+    /// toast: Firestorm's tip channel drops them until handleLoginComplete
+    /// (LLScreenChannel::addToast, mWasStartUpToastShown).
+    pub started: bool,
 }
 
 const MAX: usize = 100;
@@ -225,6 +282,7 @@ impl Notifications {
             read: false,
             data,
             text: String::new(),
+            transient: false,
             maturity: 0,
         });
         if self.list.len() > MAX {
@@ -238,8 +296,46 @@ impl Notifications {
         self.next
     }
 
+    /// A friend's online / offline toast: never kept in the list, so that a
+    /// login among many friends does not fill the bell.
+    pub fn push_presence(&mut self, who: Uuid, text: impl Into<String>, online: bool) -> u64 {
+        let id = self.push(Kind::Presence, text, "", Data::Presence { who, online });
+        if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
+            n.transient = true;
+        }
+        id
+    }
+
+    /// A message of a conversation out of sight: it replaces the entry of
+    /// that conversation still waiting (a new toast, the count of messages
+    /// since it was last read), so that a chatty friend fills one card.
+    pub fn push_message(&mut self, session: Uuid, from: Uuid, title: impl Into<String>, text: impl Into<String>) -> u64 {
+        let mut count = 1;
+        if let Some(i) = self
+            .list
+            .iter()
+            .position(|n| matches!(n.data, Data::Message { session: s, .. } if s == session))
+            && let Data::Message { count: c, .. } = self.list.remove(i).data
+        {
+            count += c;
+        }
+        self.push(Kind::Message, title, text, Data::Message { session, from, count })
+    }
+
+    /// Forget the message entries of the conversations now read (opened in
+    /// the Conversations window): the bell does not keep what was seen.
+    pub fn acknowledge_messages(&mut self, read: impl Fn(&Uuid) -> bool) {
+        self.list
+            .retain(|n| !matches!(n.data, Data::Message { session, .. } if read(&session)));
+    }
+
+    /// The listed entries (the toast-only ones left out).
+    pub fn listed(&self) -> impl Iterator<Item = &Notification> {
+        self.list.iter().filter(|n| !n.transient)
+    }
+
     pub fn unread(&self) -> usize {
-        self.list.iter().filter(|n| !n.read).count()
+        self.listed().filter(|n| !n.read).count()
     }
 
     pub fn mark_all_read(&mut self) {

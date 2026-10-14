@@ -5,16 +5,25 @@
 //! (indra/newview/lltoastnotifypanel.cpp, originally LGPL 2.1).
 
 use super::icons::Icons;
+use super::presence::Status;
 use crate::theme::Palette;
 use crate::world::notifications::{Data, Kind, Notification, Notifications, Response};
 use crate::world::worldmap::RegionRatings;
 use egui::{Color32, RichText, Vec2};
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 /// Seconds a toast stays: information / waiting for an answer.
 const TOAST_INFO: f64 = 7.0;
 const TOAST_OFFER: f64 = 25.0;
+/// A friend online / offline (NotificationTipToastLifeTime).
+const TOAST_TIP: f64 = 10.0;
 const MAX_TOASTS: usize = 3;
 const WIDTH: f32 = 320.0;
+/// Side of the picture of a friend's or a message's card.
+const PIC: f32 = 32.0;
+/// Characters of a message shown on its card (the rest is in the conversation).
+const MESSAGE_CHARS: usize = 160;
 
 #[derive(Default)]
 pub struct NotifUi {
@@ -24,6 +33,36 @@ pub struct NotifUi {
     /// (notification id, expiry time)
     toasts: Vec<(u64, f64)>,
     last_seen: u64,
+    /// Profile pictures the cards of friends and messages want.
+    pub wanted_pics: HashSet<Uuid>,
+}
+
+/// What the cards of friends and messages draw with, and when toasts stay
+/// away (mouselook, the photo's full frame: nothing over the view).
+pub struct ToastEnv<'a> {
+    pub pics: &'a HashMap<Uuid, egui::TextureHandle>,
+    pub emoji: &'a mut super::emoji::Emoji,
+    pub hidden: bool,
+    /// Seconds a message toast stays (NotificationToastLifeTime).
+    pub message_seconds: f64,
+}
+
+/// Show the Conversations window for a clicked card: opened if closed,
+/// expanded if minimized (#269), brought to the front. Its tab follows
+/// `Social::focus_im`, set by `World::open_from_notification`.
+pub fn open_conversations(ctx: &egui::Context, open: &mut bool) {
+    super::widgets::open_floater(ctx, "conversations", open);
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("conversations")));
+}
+
+/// How long the toast of `n` stays.
+fn toast_seconds(n: &Notification, message_seconds: f64) -> f64 {
+    match n.data {
+        Data::Presence { .. } => TOAST_TIP,
+        Data::Message { .. } => message_seconds,
+        _ if n.interactive() => TOAST_OFFER,
+        _ => TOAST_INFO,
+    }
 }
 
 /// Bell button with the unread count; returns true when clicked.
@@ -64,7 +103,117 @@ fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
         Kind::Script => ("code", p.teal),
         Kind::Permissions => ("key-filled", p.amber),
         Kind::Url => ("world-filled", p.teal),
+        Kind::Presence => ("user-filled", p.success),
+        Kind::Message => ("message-filled", p.violet_light),
     }
+}
+
+/// The card of a friend online / offline or of the messages of a
+/// conversation: their picture, the name, the start of the last message.
+/// Clicking the card opens the conversation (`Notification::opens`), its
+/// cross hides it.
+fn person_card(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    env: &mut ToastEnv<'_>,
+    wanted: &mut HashSet<Uuid>,
+    n: &Notification,
+    toast: bool,
+) -> Option<Response> {
+    let (who, status, count) = match n.data {
+        Data::Presence { who, online } => (who, Some(if online { Status::Online } else { Status::Offline }), 1),
+        Data::Message { from, count, .. } => (from, None, count),
+        _ => return None,
+    };
+    let mut close = egui::Rect::NOTHING;
+    let surface = if toast { p.panel } else { p.raised.gamma_multiply(0.55) };
+    let body = |ui: &mut egui::Ui| {
+        ui.set_width(WIDTH - 18.0);
+        ui.horizontal_top(|ui| {
+            let (pic, _) = ui.allocate_exact_size(Vec2::splat(PIC), egui::Sense::hover());
+            wanted.insert(who);
+            super::widgets::avatar_disc(ui, p, pic, env.pics.get(&who), &n.title, false);
+            if let Some(s) = status {
+                super::presence::paint_dot(ui.painter(), p, pic, s, surface);
+            }
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    let w = (ui.available_width() - 62.0).max(40.0);
+                    let title = if count > 1 {
+                        format!("{} ({count})", n.title)
+                    } else {
+                        n.title.clone()
+                    };
+                    ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
+                        ui.add(egui::Label::new(RichText::new(&title).size(12.5).strong().color(p.ink)).truncate());
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (r, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
+                        close = r;
+                        if resp.hovered() {
+                            ui.painter().rect_filled(r, ui.visuals().window_corner_radius, p.raised);
+                        }
+                        if let Some(t) = icons.get("x") {
+                            ui.painter().image(
+                                t.id(),
+                                egui::Rect::from_center_size(r.center(), Vec2::splat(11.0)),
+                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                if resp.hovered() { p.ink } else { p.muted },
+                            );
+                        }
+                        ui.label(RichText::new(super::chat::hhmm(n.time)).size(10.5).color(p.muted_dim));
+                    });
+                });
+                if !n.body.is_empty() {
+                    let mut text: String = n.body.chars().take(MESSAGE_CHARS).collect();
+                    if n.body.chars().count() > MESSAGE_CHARS {
+                        text.push('…');
+                    }
+                    env.emoji.rich_text(ui, &text, 12.0, p.muted, false);
+                }
+            });
+        });
+    };
+    let frame = if toast {
+        super::widgets::overlay(ui, p, egui::Margin::same(8), body).response
+    } else {
+        egui::Frame::new()
+            .fill(surface)
+            .corner_radius(ui.visuals().window_corner_radius)
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, body)
+            .response
+    };
+    // the whole card answers the click, over its text: the cross hides it,
+    // the rest opens what it is about
+    let cover = ui.interact(frame.rect, egui::Id::new(("notification_card", n.id, toast)), egui::Sense::click());
+    let on_close = cover.hover_pos().is_some_and(|pos| close.contains(pos));
+    if n.opens() && !on_close && cover.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let tip = if on_close {
+        if toast {
+            aurora_i18n::tr!("ui-notifications-hide-keep-in-bell")
+        } else {
+            aurora_i18n::tr!("common-close")
+        }
+    } else if matches!(n.data, Data::Message { .. }) {
+        aurora_i18n::tr!("ui-notifications-open-conversation")
+    } else if n.opens() {
+        aurora_i18n::tr!("ui-notifications-send-im")
+    } else {
+        ""
+    };
+    let cover = if tip.is_empty() { cover } else { cover.on_hover_text(tip) };
+    if cover.clicked() {
+        return Some(if on_close || !n.opens() {
+            Response::Dismiss
+        } else {
+            Response::Open
+        });
+    }
+    None
 }
 
 /// One notification card; returns the user's answer.
@@ -149,7 +298,8 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, ratings: &RegionRatings, 
             }
             let mut buttons: Vec<(String, Response, bool)> = Vec::new();
             match &n.data {
-                Data::None => {}
+                // drawn by `person_card`
+                Data::None | Data::Presence { .. } | Data::Message { .. } => {}
                 Data::Lure { change_rating, .. } => {
                     let accept = if *change_rating {
                         aurora_i18n::tr!("ui-chat-invite-change-and-continue")
@@ -303,24 +453,15 @@ fn button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool, size
     }
 }
 
-/// List under the bell and toasts; returns the answers to apply.
-pub fn show(
-    ctx: &egui::Context,
-    p: &Palette,
-    icons: &Icons,
-    ratings: &RegionRatings,
-    list: &mut Notifications,
-    nui: &mut NotifUi,
-) -> Vec<(u64, Response)> {
-    let mut answers = Vec::new();
-    let now = ctx.input(|i| i.time);
-
-    // new arrivals become toasts (unless the list is open, or they were
-    // already seen where they arrived: a card in the conversation in sight)
+/// The toasts that new arrivals start and those that end. A toast-only
+/// notice (a friend online) leaves the list with its toast.
+fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_seconds: f64, hidden: bool) {
+    // new arrivals become toasts (unless the list is open or the view must
+    // stay clear, or they were already seen where they arrived: a card in
+    // the conversation in sight)
     for n in list.list.iter().filter(|n| n.id > nui.last_seen) {
-        if !nui.open && !n.read {
-            let ttl = if n.interactive() { TOAST_OFFER } else { TOAST_INFO };
-            nui.toasts.push((n.id, now + ttl));
+        if !nui.open && !hidden && !n.read {
+            nui.toasts.push((n.id, now + toast_seconds(n, message_seconds)));
         }
     }
     if let Some(last) = list.list.iter().map(|n| n.id).max() {
@@ -335,6 +476,23 @@ pub fn show(
         let extra = nui.toasts.len() - MAX_TOASTS;
         nui.toasts.drain(..extra);
     }
+    let toasts = &nui.toasts;
+    list.list.retain(|n| !n.transient || toasts.iter().any(|(id, _)| *id == n.id));
+}
+
+/// List under the bell and toasts; returns the answers to apply.
+pub fn show(
+    ctx: &egui::Context,
+    p: &Palette,
+    icons: &Icons,
+    ratings: &RegionRatings,
+    list: &mut Notifications,
+    nui: &mut NotifUi,
+    env: &mut ToastEnv<'_>,
+) -> Vec<(u64, Response)> {
+    let mut answers = Vec::new();
+    let now = ctx.input(|i| i.time);
+    update_toasts(list, nui, now, env.message_seconds, env.hidden);
 
     let anchor = nui.anchor.unwrap_or(egui::pos2(8.0, 60.0));
     if nui.open {
@@ -378,7 +536,7 @@ pub fn show(
                             });
                         });
                         ui.add_space(4.0);
-                        if list.list.is_empty() {
+                        if list.listed().next().is_none() {
                             ui.add_space(14.0);
                             ui.vertical_centered(|ui| {
                                 ui.label(
@@ -396,8 +554,13 @@ pub fn show(
                             .show(ui, |ui| {
                                 ui.spacing_mut().item_spacing.y = 4.0;
                                 // newest first
-                                for n in list.list.iter_mut().rev() {
-                                    if let Some(r) = card(ui, p, icons, ratings, n, false) {
+                                for n in list.list.iter_mut().rev().filter(|n| !n.transient) {
+                                    let r = if matches!(n.data, Data::Message { .. }) {
+                                        person_card(ui, p, icons, env, &mut nui.wanted_pics, n, false)
+                                    } else {
+                                        card(ui, p, icons, ratings, n, false)
+                                    };
+                                    if let Some(r) = r {
                                         answers.push((n.id, r));
                                     }
                                 }
@@ -414,7 +577,7 @@ pub fn show(
         if clicked_out {
             nui.open = false;
         }
-    } else if !nui.toasts.is_empty() {
+    } else if !nui.toasts.is_empty() && !env.hidden {
         let screen = ctx.content_rect();
         egui::Area::new(egui::Id::new("notification_toasts"))
             .fade_in(false)
@@ -425,7 +588,12 @@ pub fn show(
                 let ids: Vec<u64> = nui.toasts.iter().map(|(id, _)| *id).collect();
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
-                        match card(ui, p, icons, ratings, n, true) {
+                        let r = if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
+                            person_card(ui, p, icons, env, &mut nui.wanted_pics, n, true)
+                        } else {
+                            card(ui, p, icons, ratings, n, true)
+                        };
+                        match r {
                             // closing a toast only hides it: the offer waits in the list
                             Some(Response::Dismiss) if !matches!(n.data, Data::Dialog { .. }) => nui.toasts.retain(|(t, _)| *t != id),
                             Some(r) => answers.push((id, r)),
@@ -454,5 +622,90 @@ mod tests {
         assert_eq!(script_rows(4).collect::<Vec<_>>(), vec![3..4, 0..3]);
         assert_eq!(script_rows(2).collect::<Vec<_>>(), vec![0..2]);
         assert_eq!(script_rows(0).count(), 0);
+    }
+
+    const JANE: Uuid = Uuid::from_u128(2);
+
+    /// A friend's notice lives as long as its toast; a message's entry
+    /// stays under the bell once its toast is gone.
+    #[test]
+    fn a_friend_toast_leaves_with_its_toast_and_a_message_stays_listed() {
+        let mut list = Notifications::default();
+        let mut nui = NotifUi::default();
+        let friend = list.push_presence(JANE, "Jane Doe is online.", true);
+        let message = list.push_message(JANE, JANE, "Jane Doe", "hello");
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, false);
+        assert_eq!(nui.toasts.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![friend, message]);
+        // the friend's toast ends after TOAST_TIP, the message's after 30 s
+        update_toasts(&mut list, &mut nui, TOAST_TIP + 1.0, 30.0, false);
+        assert!(!list.list.iter().any(|n| n.id == friend));
+        assert!(list.list.iter().any(|n| n.id == message));
+        update_toasts(&mut list, &mut nui, 31.0, 30.0, false);
+        assert!(nui.toasts.is_empty());
+        assert_eq!(list.listed().map(|n| n.id).collect::<Vec<_>>(), vec![message]);
+        assert_eq!(list.unread(), 1);
+    }
+
+    /// In mouselook or the photo's full frame no toast starts: a friend's
+    /// notice is dropped, a message waits under the bell.
+    #[test]
+    fn hidden_toasts_drop_friends_and_keep_messages() {
+        let mut list = Notifications::default();
+        let mut nui = NotifUi::default();
+        list.push_presence(JANE, "Jane Doe is online.", true);
+        let message = list.push_message(JANE, JANE, "Jane Doe", "hello");
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, true);
+        assert!(nui.toasts.is_empty());
+        assert_eq!(list.list.iter().map(|n| n.id).collect::<Vec<_>>(), vec![message]);
+    }
+
+    /// Run the Conversations floater for a few frames.
+    fn frames(ctx: &egui::Context, open: &mut bool, n: usize) {
+        let p = crate::theme::Theme::default().palette();
+        for i in 0..n {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                    time: Some(i as f64 / 60.0),
+                    ..Default::default()
+                },
+                |ui| {
+                    super::super::widgets::Floater::new(
+                        "conversations",
+                        "Conversations",
+                        egui::pos2(300.0, 200.0),
+                        egui::vec2(440.0, 300.0),
+                    )
+                    .silent()
+                    .show(ui.ctx(), &p, open, |ui| {
+                        ui.label("lines");
+                    });
+                },
+            );
+            out.textures_delta.clear();
+        }
+    }
+
+    /// A clicked card shows the Conversations window from closed and from
+    /// minimized (#269): open, expanded.
+    #[test]
+    fn a_clicked_card_opens_and_expands_the_conversations() {
+        // closed
+        let ctx = egui::Context::default();
+        let mut open = false;
+        frames(&ctx, &mut open, 2);
+        open_conversations(&ctx, &mut open);
+        frames(&ctx, &mut open, 4);
+        assert!(open && !super::super::widgets::floater_minimized(&ctx, "conversations"));
+        // minimized
+        let ctx = egui::Context::default();
+        let mut open = true;
+        frames(&ctx, &mut open, 4);
+        super::super::widgets::minimize_floater(&ctx, "conversations");
+        frames(&ctx, &mut open, 4);
+        assert!(super::super::widgets::floater_minimized(&ctx, "conversations"));
+        open_conversations(&ctx, &mut open);
+        frames(&ctx, &mut open, 4);
+        assert!(open && !super::super::widgets::floater_minimized(&ctx, "conversations"));
     }
 }

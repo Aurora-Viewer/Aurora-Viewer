@@ -1037,6 +1037,30 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
             toggle(ui, p, &mut s.show_chat)
         });
     });
+    // Firestorm's Chat › Notifications (EnableIMChatPopups,
+    // EnableGroupChatPopups) and ChatOnlineNotification
+    group(ui, p, aurora_i18n::tr!("ui-options-toasts"), |ui| {
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-toast-friends-online"),
+            aurora_i18n::tr!("ui-options-toast-friends-online-hint"),
+            |ui| toggle(ui, p, &mut s.toast_friends_online),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-toast-im"),
+            aurora_i18n::tr!("ui-options-toast-im-hint"),
+            |ui| toggle(ui, p, &mut s.toast_im),
+        );
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-toast-group-im"), "", |ui| {
+            toggle(ui, p, &mut s.toast_group_im)
+        });
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-toast-duration"), "", |ui| {
+            slider(ui, &mut s.im_toast_seconds, 3.0..=60.0, " s")
+        });
+    });
     c
 }
 

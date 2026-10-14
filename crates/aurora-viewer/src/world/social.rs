@@ -121,7 +121,7 @@ impl Social {
     }
 
     /// Online / offline notices whose name is known (or after 10 s without).
-    pub fn take_online_notices(&mut self) -> Vec<(String, bool)> {
+    pub fn take_online_notices(&mut self) -> Vec<(Uuid, String, bool)> {
         let mut out = Vec::new();
         let mut i = 0;
         while i < self.online_notices.len() {
@@ -131,6 +131,7 @@ impl Social {
                 self.online_notices.remove(i);
                 let n = self.name_of(&id);
                 out.push((
+                    id,
                     if online {
                         aurora_i18n::tr!("world-social-is-online", n = n.to_string())
                     } else {
