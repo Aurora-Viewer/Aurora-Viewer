@@ -33,6 +33,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
         NotificationsStyle::Legacy
     };
     s.world_map_style = if aurora { WorldMapStyle::Aurora } else { WorldMapStyle::Legacy };
+    s.classic_profiles = !aurora;
     s.photo_window = if aurora {
         PhotoWindowStyle::Aurora
     } else {
@@ -373,6 +374,16 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             c = true;
         }
         between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-profiles"),
+            aurora_i18n::tr!("ui-options-aurora-profiles-help"),
+            aurora_i18n::tr!("ui-options-aurora-profiles-aurora"),
+            aurora_i18n::tr!("ui-options-aurora-profiles-classic"),
+            &mut s.classic_profiles,
+        );
+        between(ui, p);
         let mut legacy = s.photo_window == PhotoWindowStyle::Legacy;
         if look_choice(
             ui,
@@ -470,6 +481,7 @@ mod tests {
         assert_eq!(s.lookat.aim, Aim::Direction);
         assert_eq!(s.notifications_style, NotificationsStyle::Legacy);
         assert_eq!(s.world_map_style, WorldMapStyle::Legacy);
+        assert!(s.classic_profiles);
         assert_eq!(s.photo_window, PhotoWindowStyle::Legacy);
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
         set_all(&mut s, Look::Aurora);
@@ -481,6 +493,7 @@ mod tests {
         assert_eq!(s.notifications_style, NotificationsStyle::Aurora);
         assert_eq!(fresh.notifications_style, NotificationsStyle::Aurora);
         assert_eq!(s.world_map_style, fresh.world_map_style);
+        assert_eq!(s.classic_profiles, fresh.classic_profiles);
         assert_eq!(s.photo_window, PhotoWindowStyle::Aurora);
         assert_eq!(fresh.photo_window, PhotoWindowStyle::Aurora);
         assert!(s.plates_friends_only_full);
@@ -550,6 +563,7 @@ mod tests {
             "ui-options-aurora-look-at",
             "ui-options-aurora-notifications",
             "ui-options-aurora-world-map",
+            "ui-options-aurora-profiles",
             "ui-options-aurora-gaze",
             "ui-options-aurora-aim",
             "ui-options-aurora-avatar-plates",
@@ -564,12 +578,13 @@ mod tests {
             assert!(found.is_some(), "{want:?} comes after the previous one in {texts:?}");
             at += found.unwrap_or(0) + 1;
         }
-        // the five choices start on Aurora's look
+        // the choices start on Aurora's look
         for choice in [
             "ui-options-aurora-bubbles",
             "ui-options-aurora-plates",
             "ui-options-aurora-halo",
             "ui-options-aurora-world-map-full",
+            "ui-options-aurora-profiles-aurora",
             "ui-options-aurora-aim-point",
             "ui-options-aurora-animated-bell",
         ] {

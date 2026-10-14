@@ -1307,7 +1307,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
-| `AURORA_DEMO_PROFILE=<avatar>[:tab]` | An avatar's profile window |
+| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -1908,8 +1908,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   ("Isolated real installation" above: exe copied into
   `<root>\install`, `AURORA_UPDATE_TEST_ROOT=<root>`): the histories
   are then under `<root>\profile\accounts\`.
-- **`AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab]`**: a profile window
-  (tab 0 Second Life, 1 Feed, 2 Favorites, 3 Classifieds, 4 Real life, 5 Notes).
+- **`AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab|edit|compact]`**: a
+  profile window (tab 0 Second Life / Profile, 1 Feed / Web, 2 Favorites,
+  3 Classifieds, 4 Real life / First life, 5 Notes). The window is the
+  Aurora one unless Preferences › Aurora › Profiles is on the classic
+  window. `:edit` opens our own profile in edit mode, `:compact` gives the
+  window the width of the compact layout (380 px). With this variable the
+  three residents of the scenarios have a profile picture, so a banner:
+  the scenarios of the profile mock-up are
+  - a friend: `friend` (Nova, Premium, a contact set if
+    `AURORA_DEMO_CONTACTS` seeded one, rights bar, three favorite places,
+    two groups of which one in common, private notes);
+  - a stranger: `wolf` (blocked: red badge, "Unblock"; "Add as friend" in
+    place of the rights bar);
+  - my profile: `self`, then `self:edit` (camera button, pencil, About
+    editor, Visibility, the unsaved bar once About is changed);
+  - compact: `wolf:compact` (icons in a row, the tabs in a drop-down list).
 - **`AURORA_DEMO_FEED=<url>`**: the user name and `/?feed_only=true`
   are appended to the address; a `data:` URL can put them in a comment.
 - **`AURORA_DEMO_LAND=<tab>[:owner]`**: tabs `general`, `covenant`,
