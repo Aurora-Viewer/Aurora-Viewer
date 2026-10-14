@@ -474,6 +474,25 @@ fn constrain(q: Quat, angle: f32) -> Quat {
     Quat::from_xyzw(v.x, v.y, v.z, c)
 }
 
+/// Between the eyes of mHead in the default skeleton (mEyeLeft / mEyeRight
+/// at x 0.098, z 0.079, avatar_skeleton.xml).
+const EYES_FROM_HEAD: Vec3 = Vec3::new(0.098, 0.0, 0.079);
+
+/// The point between the eyes: the system eyes (mEyeLeft / mEyeRight), or
+/// the Bento ones (mFaceEyeAlt*) when a mesh head has moved them away from
+/// the system eyes (both pairs stand at the same place in the default
+/// skeleton, and LLHeadRotMotion turns both); without eyes, mHead with
+/// the default offset.
+fn eyes_between(eyes: Option<(Vec3, Vec3)>, alt: Option<(Vec3, Vec3)>, head: Option<(Quat, Vec3)>) -> Option<Vec3> {
+    let mid = |(l, r): (Vec3, Vec3)| (l + r) * 0.5;
+    match (eyes.map(mid), alt.map(mid)) {
+        (Some(e), Some(a)) if a.distance(e) > 0.005 => Some(a),
+        (Some(e), _) => Some(e),
+        (None, Some(a)) => Some(a),
+        (None, None) => head.map(|(r, p)| p + r * EYES_FROM_HEAD),
+    }
+}
+
 /// Rotation facing `dir` with Z up (LLQuaternion(at, left, up)).
 fn facing(dir: Vec3) -> Option<Quat> {
     let left = Vec3::Z.cross(dir).normalize_or_zero();
@@ -494,6 +513,14 @@ impl Controller {
     /// Skeleton-space position of the head as posed last frame.
     pub fn head_pos(&self) -> Option<Vec3> {
         self.posed.head.map(|h| h.1)
+    }
+
+    /// Skeleton-space point between the eyes as posed last frame
+    /// (`eyes_between`), for the look-at line.
+    pub fn eyes_pos(&self) -> Option<Vec3> {
+        let p = &self.posed;
+        let pair = |l: Option<(Quat, Vec3)>, r: Option<(Quat, Vec3)>| Some((l?.1, r?.1));
+        eyes_between(pair(p.eye_l, p.eye_r), pair(p.alt_l, p.alt_r), p.head)
     }
 
     /// Joint states of the head and eye motions for this frame:
@@ -983,6 +1010,22 @@ impl AnimStreamer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_look_at_line_leaves_from_between_the_eyes() {
+        let close = |a: Option<Vec3>, b: Vec3| a.is_some_and(|a| a.distance(b) < 1e-5);
+        let eyes = (Vec3::new(0.1, 0.036, 1.7), Vec3::new(0.1, -0.036, 1.7));
+        let between = Vec3::new(0.1, 0.0, 1.7);
+        // the Bento eyes where the system ones are: the system eyes
+        assert!(close(eyes_between(Some(eyes), Some(eyes), None), between));
+        // a mesh head moved its Bento eyes: those
+        let moved = (Vec3::new(0.12, 0.03, 1.72), Vec3::new(0.12, -0.03, 1.72));
+        assert!(close(eyes_between(Some(eyes), Some(moved), None), Vec3::new(0.12, 0.0, 1.72)));
+        // no eyes: in front of the head joint, turned with it
+        let head = (Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), Vec3::new(0.0, 0.0, 1.6));
+        assert!(close(eyes_between(None, None, Some(head)), Vec3::new(0.0, 0.098, 1.679)));
+        assert_eq!(eyes_between(None, None, None), None);
+    }
 
     fn signal(id: Uuid, sequence: i32, start: Instant) -> PlayingAnimation {
         PlayingAnimation {

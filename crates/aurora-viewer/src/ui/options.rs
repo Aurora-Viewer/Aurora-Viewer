@@ -3,6 +3,7 @@
 
 mod camera;
 mod commands;
+mod privacy;
 
 use super::fonts::{self, SystemFont};
 use super::icons::Icons;
@@ -109,7 +110,7 @@ pub struct OptionsResult {
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
-fn categories() -> [(&'static str, &'static str); 12] {
+fn categories() -> [(&'static str, &'static str); 13] {
     [
         (aurora_i18n::tr!("ui-options-graphics"), "device-desktop-filled"),
         (aurora_i18n::tr!("common-interface"), "app-window-filled"),
@@ -123,16 +124,18 @@ fn categories() -> [(&'static str, &'static str); 12] {
         (aurora_i18n::tr!("common-debug"), "code-circle-filled"),
         (aurora_i18n::tr!("common-camera"), "camera-filled"),
         (aurora_i18n::tr!("ui-options-commands"), "square-rounded-chevron-right-filled"),
+        (aurora_i18n::tr!("ui-options-privacy"), "lock-filled"),
     ]
 }
 
 /// Order of the tabs in the sidebar.
-const ORDER: [usize; 12] = [0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, 8, 5, 6, 9];
+const ORDER: [usize; 13] = [0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, 8, 5, TAB_PRIVACY, 6, 9];
 
 pub const TAB_AUDIO: usize = 7;
 pub const TAB_CHAT: usize = 3;
 pub const TAB_CAMERA: usize = 10;
 pub const TAB_COMMANDS: usize = 11;
+pub const TAB_PRIVACY: usize = 12;
 
 const LABEL_W: f32 = 180.0;
 
@@ -175,7 +178,9 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("common-behavior") => "toggle-right-filled",
         value if value == aurora_i18n::text("common-limits") => "barrier-block-filled",
         value if value == aurora_i18n::text("common-mouselook") => "crosshair",
-        value if value == aurora_i18n::text("ui-options-look-at") => "eye-filled",
+        value if value == aurora_i18n::text("ui-options-head-follows-mouse") => "eye-filled",
+        value if value == aurora_i18n::text("ui-options-look-at-targets") => "crosshair",
+        value if value == aurora_i18n::text("ui-options-my-look-at") => "lock-filled",
         value if value == aurora_i18n::text("common-communication") => "messages-filled",
         value if value == aurora_i18n::text("ui-options-groups-and-blocking") => "forbid-filled",
         value if value == aurora_i18n::text("ui-options-auto-replies") => "message-chatbot-filled",
@@ -272,6 +277,20 @@ fn slider<T: egui::emath::Numeric>(ui: &mut egui::Ui, v: &mut T, range: std::ops
         egui::Slider::new(v, range)
             .suffix(suffix)
             .custom_parser(aurora_i18n::parse_number)
+            .trailing_fill(true),
+    )
+    .changed()
+}
+
+/// Slider of whole values (Firestorm's decimal_digits="0").
+fn slider_whole(ui: &mut egui::Ui, v: &mut f32, range: std::ops::RangeInclusive<f32>, suffix: &str) -> bool {
+    ui.spacing_mut().slider_width = SLIDER_W;
+    ui.add(
+        egui::Slider::new(v, range)
+            .suffix(suffix)
+            .custom_parser(aurora_i18n::parse_number)
+            .fixed_decimals(0)
+            .step_by(1.0)
             .trailing_fill(true),
     )
     .changed()
@@ -588,6 +607,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             9 => debug_page(ui, p, s),
                             TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
+                            TAB_PRIVACY => privacy::page(ui, p, &mut s.lookat),
                             _ => content(ui, p, s, st, &mut r),
                         };
                     });
@@ -1730,36 +1750,43 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     },
                 );
             });
-            group(ui, p, aurora_i18n::tr!("ui-options-look-at"), |ui| {
+            // Firestorm › Avatar (panel_preferences_firestorm.xml): the
+            // head follows the mouse; the look-at targets are on the
+            // Privacy page, as its note says
+            group(ui, p, aurora_i18n::tr!("ui-options-head-follows-mouse"), |ui| {
                 c |= row(
                     ui,
                     p,
-                    aurora_i18n::tr!("ui-options-look-at-tracking"),
-                    aurora_i18n::tr!("ui-options-your-avatar-s-head-and-eyes-follow-the-cursor"),
-                    |ui| toggle(ui, p, &mut s.look_at),
+                    aurora_i18n::tr!("ui-options-head-vertical-range"),
+                    aurora_i18n::tr!("ui-options-head-vertical-range-help"),
+                    |ui| slider_whole(ui, &mut s.lookat.head_pitch, crate::world::lookat::HEAD_RANGE, "°"),
                 );
-                if s.look_at {
-                    c |= row(
-                        ui,
-                        p,
-                        aurora_i18n::tr!("ui-options-look-at-range"),
-                        aurora_i18n::tr!("ui-options-more-distant-targets-are-limited-to-this-distance-from"),
-                        |ui| {
-                            let unlimited = s.look_at_range >= crate::settings::LOOK_AT_UNLIMITED;
-
-                            slider(
-                                ui,
-                                &mut s.look_at_range,
-                                1.0..=crate::settings::LOOK_AT_UNLIMITED,
-                                if unlimited {
-                                    aurora_i18n::tr!("ui-options-m-unlimited")
-                                } else {
-                                    " m"
-                                },
-                            )
-                        },
-                    );
-                }
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-head-horizontal-range"),
+                    aurora_i18n::tr!("ui-options-head-horizontal-range-help"),
+                    |ui| slider_whole(ui, &mut s.lookat.head_yaw, crate::world::lookat::HEAD_RANGE, "°"),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-static-eyes"),
+                    aurora_i18n::tr!("ui-options-static-eyes-help"),
+                    |ui| toggle(ui, p, &mut s.lookat.static_eyes),
+                );
+                row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-look-at-targets"),
+                    aurora_i18n::tr!("ui-options-look-at-targets-are-on-the-privacy-page"),
+                    |ui| {
+                        if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-privacy")).clicked() {
+                            st.tab = TAB_PRIVACY;
+                        }
+                        false
+                    },
+                );
             });
         }
         5 => {

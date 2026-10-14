@@ -32,6 +32,7 @@ pub mod land;
 pub mod layout;
 pub mod loading;
 pub mod login;
+pub mod lookat_targets;
 pub mod map_tiles;
 pub mod media;
 pub mod menu;

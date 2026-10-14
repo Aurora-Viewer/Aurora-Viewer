@@ -159,7 +159,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_POINTER=<points>` | Moves the pointer over the interface |
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
 | `AURORA_DEMO_CLICKS=<ms>` | Clicks on the world at a regular rate |
-| `AURORA_DEMO_LOOKAT=1` | Gaze tracking and gaze of another avatar |
+| `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs |
 | `AURORA_DEMO_KEYBOARD=<layout>` | Movement keys according to the layout |
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
@@ -297,7 +297,25 @@ when unfocused") is ignored during a screenshot.
     screenshots show the menu of an object worn by another avatar then that
     of an object worn by us, the object surrounded by its outline.
 - **`AURORA_DEMO_LOOKAT=1`**: gaze tracking enabled (in memory only) and
-  gaze of a remote avatar.
+  gaze of a remote avatar; the cursor is held on the left of the window,
+  moving by a pixel. **`AURORA_DEMO_LOOKAT=own`**: the same with
+  Preferences › Privacy › "Show look-at targets" on, our own target and the
+  lines shown (in memory only), and the real cursor: our crosshair stands
+  1 m from our head, toward the cursor (Firestorm's free look, not on what the
+  cursor points at). `own,x,y` holds the cursor at (x, y), fractions of the
+  window: with `own,0.15,0.45`, `own,0.85,0.45`, `own,0.5,0.1` and a capture
+  at frame 600, our crosshair stands left, right, then above our head, or
+  on what the cursor is over (the head looks at that point).
+  `own,x,y,side` also turns the camera beside our head from frame 300,
+  aimed at a point in front of the face, which we then look at: the line
+  leaves from between the eyes (capture at frame 420).
+  **`AURORA_DEMO_LOOKAT=targets`**: `own`, and from frame 240 every other avatar looking
+  somewhere new every 120 frames (focus and select points, the next avatar's
+  eyes, free look, mouselook: one colour per type). With
+  `AURORA_DEMO_CROWD=12`, `AURORA_DEMO_POS=129,134`,
+  `AURORA_DEMO_CAMERA=close,1180,380,35`, `AURORA_FPS_LIMIT=60` and a capture
+  at frame 860: crosshairs, names and lines among the crowd, hidden by the
+  avatars in front of them.
 - **`AURORA_DEMO_KEYBOARD=system|wasd|zqsd|fallback`**: fresh default values
   of the movement keys with the Windows layout, a simulated QWERTY / AZERTY,
   or a failed detection; combine with `AURORA_DEMO_OPTIONS=8` to examine the

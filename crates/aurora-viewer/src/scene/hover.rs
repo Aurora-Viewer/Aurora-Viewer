@@ -665,6 +665,7 @@ impl super::Scene {
     /// Blend surface in front of the displayed depth. Searched again
     /// only when the question or the scene around it changed, or every
     /// [`REFRESH`]. Not for clicks.
+    #[cfg(test)]
     pub fn hover_object(&mut self, world: &crate::world::World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, far: f32) -> Option<usize> {
         self.hover_pick(world, ray, depth, far).1
     }
