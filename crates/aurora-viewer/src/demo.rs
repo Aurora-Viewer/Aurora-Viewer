@@ -1530,6 +1530,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         present: Some(true),
                         moderator: Some(*a == DEMO_NOVA),
                         text_muted: None,
+                        entered: false,
                     })
                     .collect::<Vec<_>>()
             };
@@ -1633,6 +1634,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 present: Some(true),
                 moderator: None,
                 text_muted: None,
+                entered: false,
             }],
         }],
         // local chat echoes back like the simulator does

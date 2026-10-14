@@ -50,6 +50,9 @@ pub struct SessionAgent {
     pub moderator: Option<bool>,
     /// Text chat muted by a moderator.
     pub text_muted: Option<bool>,
+    /// An "ENTER" transition of "agent_updates": they just joined (the full
+    /// list of a session start or "agent_info" is not a transition).
+    pub entered: bool,
 }
 
 /// A line of the chat server history ("fetch history").
@@ -124,7 +127,10 @@ pub fn parse_session_agents(body: &Llsd) -> Vec<SessionAgent> {
                 ..Default::default()
             };
             match v["transition"].as_str() {
-                "ENTER" => a.present = Some(true),
+                "ENTER" => {
+                    a.present = Some(true);
+                    a.entered = true;
+                }
                 "LEAVE" => a.present = Some(false),
                 _ => {}
             }
@@ -391,7 +397,8 @@ mod tests {
                 agent: a,
                 present: Some(true),
                 moderator: Some(true),
-                text_muted: Some(false)
+                text_muted: Some(false),
+                entered: false,
             }]
         );
         let body = llsd_map! {
@@ -404,6 +411,9 @@ mod tests {
         assert_eq!(v.len(), 2);
         assert_eq!(v.iter().find(|x| x.agent == a).unwrap().present, Some(false));
         assert_eq!(v.iter().find(|x| x.agent == b).unwrap().moderator, Some(false));
+        // only an ENTER transition is an arrival
+        assert!(v.iter().find(|x| x.agent == b).unwrap().entered);
+        assert!(!v.iter().find(|x| x.agent == a).unwrap().entered);
         let body = llsd_map! { "agents" => Llsd::Array(vec![a.into(), b.into()]) };
         assert_eq!(parse_session_agents(&body).len(), 2);
     }
