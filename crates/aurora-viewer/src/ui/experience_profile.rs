@@ -152,7 +152,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World) -> Option<(uuid
             if action_button_if(
                 ui,
                 p,
-                "forbid-filled",
+                "ban",
                 aurora_i18n::tr!("ui-experience-profile-block"),
                 ActionKind::FlatDanger,
                 size,

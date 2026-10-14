@@ -755,7 +755,7 @@ fn second_life_tab(
             clicked |= rights_icon(
                 ui,
                 p,
-                "box",
+                "pencil-filled",
                 f.rights_given & 4 != 0,
                 aurora_i18n::tr!("ui-profile-modify-delete-or-take-my-objects"),
             );
@@ -1123,7 +1123,7 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
         } else {
             aurora_i18n::tr!("common-block")
         };
-        if menu::item(ui, p, "forbid-filled", block) {
+        if menu::item(ui, p, "ban", block) {
             actions.push(ProfileAction::ToggleBlock(id));
         }
         menu::separator(ui, p);

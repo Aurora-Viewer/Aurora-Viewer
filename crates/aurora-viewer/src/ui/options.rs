@@ -215,7 +215,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("ui-options-look-at-targets") => "crosshair",
         value if value == aurora_i18n::text("ui-options-my-look-at") => "lock-filled",
         value if value == aurora_i18n::text("common-communication") => "messages-filled",
-        value if value == aurora_i18n::text("ui-options-groups-and-blocking") => "forbid-filled",
+        value if value == aurora_i18n::text("ui-options-groups-and-blocking") => "ban",
         value if value == aurora_i18n::text("ui-options-auto-replies") => "message-chatbot-filled",
         value if value == aurora_i18n::text("ui-options-automatic-rejections") => "thumb-down-filled",
         value if value == aurora_i18n::text("common-command-line") || value == aurora_i18n::text("common-other-commands") => "terminal-2",

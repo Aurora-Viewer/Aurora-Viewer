@@ -397,7 +397,7 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
         }
     };
     let block = |ui: &mut egui::Ui| {
-        if menu::check(ui, p, "forbid-filled", aurora_i18n::tr!("common-ignore"), blocked, true) {
+        if menu::check(ui, p, "ban", aurora_i18n::tr!("common-ignore"), blocked, true) {
             act(CtxAction::ToggleBlock(id));
         }
     };

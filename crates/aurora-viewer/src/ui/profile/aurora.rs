@@ -829,8 +829,6 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             } else {
                 aurora_i18n::tr!("common-block")
             };
-            // the mock-up's struck-through circle: the filled "forbid" is a
-            // blot at this size
             ("ban", label, ActionKind::Flat, true, None)
         }
         Act::More => ("dots-filled", aurora_i18n::tr!("ui-profile-more"), ActionKind::Flat, true, None),
