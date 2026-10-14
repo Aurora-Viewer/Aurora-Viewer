@@ -4,10 +4,12 @@
 //! originally LGPL 2.1), with lure_callback and teleport_request_callback
 //! (llviewermessage.cpp) for the answers.
 //!
-//! Each offer or request is an `Invite` waiting for its answer. The
-//! notification centre shows it today; a card in the conversation with the
-//! sender can answer the same invitation later, and whichever answers first
-//! closes the other (`World::answer_teleport_invite`).
+//! Each offer or request is an `Invite` waiting for its answer, shown twice:
+//! a card in the conversation with the sender (opened if needed, as
+//! LLHandlerUtil::spawnIMSession / addNotifPanelToIM do) and an entry of the
+//! notification centre, which stands for Firestorm's toast. Whichever
+//! answers first closes the entry and leaves the card with its answer
+//! (`World::answer_teleport_invite`).
 
 use super::notifications::{Data, Kind, im};
 use super::{ChatKind, ChatLine, Origin, UiSound, World};
@@ -62,8 +64,6 @@ pub struct Invite {
     pub kind: InviteKind,
     /// The sender's text, as received.
     pub message: String,
-    #[allow(dead_code)] // shown by the conversation card (part B2)
-    pub time: SystemTime,
     pub answer: Answer,
     /// Its entry in the notification centre (0 = none).
     pub notification: u64,
@@ -90,7 +90,6 @@ impl TeleportInvites {
             from,
             kind,
             message,
-            time: SystemTime::now(),
             answer: Answer::Pending,
             notification: 0,
         });
@@ -102,15 +101,18 @@ impl TeleportInvites {
         self.next
     }
 
-    #[allow(dead_code)] // the conversation card (part B2)
     pub fn get(&self, id: u64) -> Option<&Invite> {
         self.list.iter().find(|v| v.id == id)
     }
 
-    /// The invitations of a conversation, oldest first.
-    #[allow(dead_code)] // the conversation card (part B2)
-    pub fn from(&self, sender: Uuid) -> impl Iterator<Item = &Invite> {
-        self.list.iter().filter(move |v| v.from == sender)
+    /// The entries of the pending invitations and their senders: one whose
+    /// conversation is in sight raises no toast (LLOfferHandler shows one
+    /// only when the IM floater is not open).
+    pub fn pending_notifications(&self) -> impl Iterator<Item = (u64, Uuid)> + '_ {
+        self.list
+            .iter()
+            .filter(|v| v.answer == Answer::Pending && v.notification != 0)
+            .map(|v| (v.notification, v.from))
     }
 
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
@@ -139,11 +141,11 @@ fn agent_link(id: Uuid) -> String {
 }
 
 impl World {
-    /// IM_LURE_USER (process_improved_im): an entry in the notification
-    /// centre, Teleport / Decline, with where it leads (FIRE-6786), the
-    /// TeleportOffered sound, and its text in the sender's transcript
-    /// (log_to_im). Muted senders and the "reject teleports" mode were
-    /// handled before.
+    /// IM_LURE_USER (process_improved_im): a card in the conversation with
+    /// the sender and an entry in the notification centre, Teleport /
+    /// Decline, with where it leads (FIRE-6786), the TeleportOffered sound,
+    /// and its text in the sender's transcript (log_to_im). Muted senders
+    /// and the "reject teleports" mode were handled before.
     pub(super) fn on_teleport_offer(&mut self, im: &InstantMessage, from: &str) {
         let place = parse_lure_bucket(&im.binary_bucket).map(|(grid, pos, _, _)| Place { grid, pos, region: None });
         let message = im.message.replace('\r', "");
@@ -156,9 +158,11 @@ impl World {
             message.clone(),
         );
         self.ui_sounds.push(UiSound::TeleportOffer);
+        let title = aurora_i18n::tr!("world-mod-offers-you-a-teleport", from = from.to_string());
+        self.add_invite_card(im, invite, format!("{title}\n{message}"));
         let id = self.notifications.push(
             Kind::Teleport,
-            aurora_i18n::tr!("world-mod-offers-you-a-teleport", from = from.to_string()),
+            title,
             message,
             Data::Lure {
                 from: im.from_agent_id,
@@ -176,8 +180,8 @@ impl World {
     }
 
     /// IM_TELEPORT_REQUEST: "<name> is requesting to be teleported to your
-    /// location", Yes / No (TeleportRequest), with the same sound and log as
-    /// an offer.
+    /// location", Yes / No (TeleportRequest), as a card and an entry, with
+    /// the same sound and log as an offer.
     pub(super) fn on_teleport_request(&mut self, im: &InstantMessage, from: &str) {
         let message = im.message.replace('\r', "");
         let invite = self.teleport_invites.push(im.from_agent_id, InviteKind::Request, message.clone());
@@ -187,9 +191,11 @@ impl World {
         } else {
             format!("{message}\n\n{}", aurora_i18n::tr!("world-teleport-invites-offer-a-teleport"))
         };
+        let title = aurora_i18n::tr!("world-teleport-invites-requests-a-teleport", from = from.to_string());
+        self.add_invite_card(im, invite, format!("{title}\n{message}"));
         let id = self.notifications.push(
             Kind::Teleport,
-            aurora_i18n::tr!("world-teleport-invites-requests-a-teleport", from = from.to_string()),
+            title,
             body,
             Data::TeleportRequest {
                 from: im.from_agent_id,
@@ -267,15 +273,16 @@ impl World {
     }
 
     /// The region names of the offers' places, from the world map; an
-    /// unknown region is asked once (getSLURLfromPosGlobal). The
-    /// notification then says where the offer leads, above the message.
+    /// unknown region is asked once (getSLURLfromPosGlobal). The card and
+    /// the notification then say where the offer leads, above the message
+    /// (the card keeps it once answered).
     pub fn refresh_teleport_places(&mut self) {
         let unknown: Vec<(u64, (u32, u32))> = self
             .teleport_invites
             .list
             .iter()
             .filter_map(|v| match &v.kind {
-                InviteKind::Offer { place: Some(p), .. } if p.region.is_none() && v.answer == Answer::Pending => Some((v.id, p.grid)),
+                InviteKind::Offer { place: Some(p), .. } if p.region.is_none() => Some((v.id, p.grid)),
                 _ => None,
             })
             .collect();
@@ -310,6 +317,26 @@ impl World {
                 n.body = body;
             }
         }
+    }
+
+    /// The card of an invitation in the conversation with its sender, which
+    /// opens if needed (spawnIMSession) and counts it as unread
+    /// (addNotifPanelToIM). `text`: what the find bar looks in.
+    fn add_invite_card(&mut self, im: &InstantMessage, invite: u64, text: String) {
+        let from = im.from_agent_id;
+        if !im.from_name.is_empty() {
+            self.social.names.entry(from).or_insert_with(|| im.from_name.clone());
+        }
+        self.social.session_mut(from);
+        let line = ChatLine {
+            time: SystemTime::now(),
+            from: im.from_name.clone(),
+            text,
+            kind: ChatKind::Invite(invite),
+            source: from,
+            origin: Origin::Live,
+        };
+        self.conversation_card(from, line);
     }
 
     fn set_invite_notification(&mut self, invite: u64, notification: u64) {
@@ -422,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn an_offer_waits_in_the_notification_centre_and_its_sender_transcript() {
+    fn an_offer_shows_a_card_and_an_entry_and_goes_to_the_transcript() {
         let root = temp();
         let mut w = world(&root);
         let text = "Join me in Ahern\r\nhttp://maps.secondlife.com/secondlife/Ahern/128/64/22";
@@ -430,9 +457,16 @@ mod tests {
         let (id, data) = only_notification(&w);
         assert!(matches!(data, Data::Lure { from: JANE, .. }));
         assert!(w.ui_sounds.contains(&UiSound::TeleportOffer));
-        // no conversation opened, nothing in the nearby chat
-        assert!(w.social.ims.is_empty());
+        // the conversation with Jane opens on the card (spawnIMSession,
+        // addNotifPanelToIM): one unread line, nothing in the nearby chat
+        assert_eq!(w.social.ims.len(), 1);
+        let s = &w.social.ims[0];
+        assert_eq!(s.other, JANE);
+        assert_eq!(s.unread, 1);
+        let invite = w.teleport_invites.list[0].id;
+        assert!(matches!(&s.lines.iter().map(|l| l.kind).collect::<Vec<_>>()[..], [ChatKind::Invite(i)] if *i == invite));
         assert!(w.chat.is_empty());
+        // the card is not written: the transcript has the offer once
         let log = transcript(&mut w);
         assert_eq!(log.len(), 1);
         assert!(log[0].contains("Join me in Ahern"), "{log:?}");
@@ -463,7 +497,33 @@ mod tests {
             }]
         ));
         assert!(w.notifications.list.is_empty());
+        // the card stays, with its answer
         assert_eq!(w.teleport_invites.list[0].answer, Answer::Declined);
+        assert!(matches!(w.social.ims[0].lines.back().unwrap().kind, ChatKind::Invite(_)));
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn a_card_joins_the_open_conversation_and_answers_for_the_entry() {
+        let root = temp();
+        let mut w = world(&root);
+        w.on_im(im(0, "hello", b""));
+        w.on_im(im(im::TELEPORT_REQUEST, "Can I come?", b""));
+        // the same conversation, the card after the message
+        assert_eq!(w.social.ims.len(), 1);
+        let kinds: Vec<ChatKind> = w.social.ims[0].lines.iter().map(|l| l.kind).collect();
+        assert!(matches!(&kinds[..], [ChatKind::Im, ChatKind::Invite(_)]), "{kinds:?}");
+        let ChatKind::Invite(invite) = kinds[1] else { unreachable!() };
+        // the entry of a pending invitation is known with its sender, for
+        // the toast to stay quiet while the conversation is in sight
+        let entry = w.notifications.list[0].id;
+        assert_eq!(w.teleport_invites.pending_notifications().collect::<Vec<_>>(), [(entry, JANE)]);
+        // answered from the card: the entry goes, nothing is pending
+        let cmds = w.answer_teleport_invite(invite, false);
+        assert!(cmds.is_empty());
+        assert!(w.notifications.list.is_empty());
+        assert_eq!(w.teleport_invites.pending_notifications().count(), 0);
+        assert_eq!(w.teleport_invites.get(invite).unwrap().answer, Answer::Declined);
         clean(&w, &root);
     }
 
@@ -519,7 +579,7 @@ mod tests {
         w.on_im(im(im::TELEPORT_REQUEST, "", b""));
         let (id, data) = only_notification(&w);
         assert!(matches!(data, Data::TeleportRequest { from: JANE, .. }));
-        assert!(w.chat.is_empty() && w.social.ims.is_empty());
+        assert!(w.chat.is_empty());
         let (cmds, _) = w.respond_notification(id, Response::Accept);
         let [NetCommand::OfferTeleport { to, message }] = &cmds[..] else {
             panic!("no teleport offer: {cmds:?}");
