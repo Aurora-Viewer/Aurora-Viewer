@@ -519,7 +519,7 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                 covenant_id: COVENANT,
                 timestamp: 1_717_647_528,
                 estate_name: aurora_i18n::tr!("common-aurora-demo").into(),
-                estate_owner: DEMO_LOUP,
+                estate_owner: super::region::estate_owner(),
             }),
             ev(LandEvent::CovenantText {
                 covenant_id: COVENANT,

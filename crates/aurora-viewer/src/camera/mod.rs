@@ -17,7 +17,7 @@ pub(crate) mod follow;
 mod settings;
 
 pub use focus::FocusObject;
-pub use settings::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE};
+pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE};
 
 use crate::agent::AgentState;
 use crate::scene::Scene;
@@ -251,6 +251,10 @@ pub struct Camera {
     own: Uuid,
     dt: f32,
     initialized: bool,
+    /// A passing pan of the view only (the region restart's shake,
+    /// `world::region_restart::view_shake`): the eye and what it looks at
+    /// move together, the camera itself does not.
+    pub shake: Vec3,
 }
 
 impl Default for Camera {
@@ -307,6 +311,7 @@ impl Default for Camera {
             own: Uuid::nil(),
             dt: 0.0,
             initialized: false,
+            shake: Vec3::ZERO,
         }
     }
 }
@@ -348,6 +353,23 @@ impl Camera {
             (Some(seat), Some(s)) => seat * Quat::from_rotation_z(s.local_yaw + self.orbit_yaw) * pitch,
             _ => Quat::from_rotation_z(agent.yaw + self.orbit_yaw) * pitch,
         }
+    }
+
+    /// LLAgentCamera::getCurrentCameraOffset and getCurrentFocusOffset:
+    /// the camera and the point it looks at, in the avatar's frame (a saved
+    /// camera position).
+    pub fn current_offsets(&self, agent: &AgentState) -> (Vec3, Vec3) {
+        let rotation = match (self.avatar.seat, self.seat) {
+            (Some(seat), Some(s)) => seat * Quat::from_rotation_z(s.local_yaw),
+            _ => Quat::from_rotation_z(agent.yaw),
+        };
+        let inverse = rotation.inverse();
+        // mThirdPersonHeadOffset, as `update` places the camera
+        let head = if self.avatar.seat.is_some() { Vec3::ZERO } else { Vec3::Z };
+        (
+            inverse * (self.position - self.avatar.root - head),
+            inverse * (self.target - self.avatar.position),
+        )
     }
 
     // ------------------------------------------------------------ transitions
@@ -1461,7 +1483,15 @@ impl Camera {
         } else {
             Vec3::Z
         };
-        glam::camera::rh::view::look_to_mat4(self.position, direction, up)
+        glam::camera::rh::view::look_to_mat4(self.position + self.shake, direction, up)
+    }
+
+    /// The view panned by `right` and `up` metres across the screen.
+    pub fn pan_offset(&self, right: f32, up: f32) -> Vec3 {
+        let forward = self.forward();
+        let side = forward.cross(Vec3::Z).normalize_or(Vec3::Y);
+        let above = side.cross(forward).normalize_or(Vec3::Z);
+        side * right + above * up
     }
 
     pub fn proj(&self, aspect: f32) -> Mat4 {

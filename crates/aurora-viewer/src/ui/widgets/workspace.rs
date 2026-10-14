@@ -312,6 +312,9 @@ pub(super) fn window_icon(id: &str) -> &'static str {
     if id == super::super::marketplace_listings::WINDOW || id == "marketplace_validation" {
         return "tag-filled";
     }
+    if id == super::super::region::WINDOW {
+        return "building-castle";
+    }
     if id.contains("place") || id.contains("land") {
         return "map-pin-filled";
     }
@@ -333,6 +336,8 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "environment_selector" | "personal_lighting" => "sun-filled",
         "perf" | "performance" => "gauge-filled",
         "photo" | "photo_classic" => "camera-filled",
+        "controls" | "camera_controls" => "video-filled",
+        "movement_controls" => "walk",
         "display_name" => "id-filled",
         "object_purchase" => "shopping-cart-filled",
         "object_payment" | "buy_currency" | "pay" | "pay_classic" => "coin-filled",
@@ -341,6 +346,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "build_options" => "adjustments-filled",
         "media_settings" => "device-tv-filled",
         "bulk_perms" => "lock-filled",
+        "region_restarting" => "alert-triangle-filled",
         "task_item_props" => "file-info-filled",
         "asset_imports_v3" | "asset_imports_v4" | "asset_imports_v5" | "asset_imports_v6" => "file-upload-filled",
         _ => "layout-grid-filled",

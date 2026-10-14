@@ -57,8 +57,8 @@ sections! {
     ],
     1 => [
         language, language_is_public, update_mode, ui_scale, use_pie_menu, snap_windows, show_perf,
-        show_minimap, show_bug_report, standalone_place_details, loading_backdrop, confirm_teleports,
-        confirm_no_transfer_settings,
+        show_minimap, show_bug_report, standalone_place_details, loading_backdrop, reduce_motion, confirm_teleports,
+        confirm_no_transfer_settings, region_restart,
         confirm_payments, payment_confirm_threshold,
         name_tag_distance, use_display_names, show_usernames, legacy_username_format, trim_resident,
         display_name_notices, tag_complexity, tag_complexity_too_complex_only, tag_complexity_own,
@@ -91,7 +91,7 @@ sections! {
     ],
     TAB_AURORA => [
         chat_style, classic_name_tags, lookat.style, notifications_style, world_map_style, classic_people, classic_profiles, photo_window,
-        classic_about_land, classic_pay_window,
+        classic_about_land, classic_region_estate, classic_pay_window, classic_controls, classic_restart_alert,
         lookat.aim, plates_hover_expand, plates_friends_only_full, plate_click,
     ],
 }

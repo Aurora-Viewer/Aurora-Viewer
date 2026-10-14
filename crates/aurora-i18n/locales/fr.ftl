@@ -1,4 +1,14 @@
 language-name = Français
+toolbar-edit = Modifier les boutons de la barre
+toolbar-remove = Retirer ce bouton
+toolbar-locked = Verrouiller la barre
+toolbar-help = Glissez un bouton vers la barre du bas. Glissez les boutons le long de la barre pour les réorganiser, ou cliquez ici sur un bouton disponible pour l’ajouter à la fin.
+toolbar-remove-help = Glissez un bouton de la barre dans cette fenêtre pour le retirer.
+toolbar-already-placed = Ce bouton est déjà dans la barre.
+toolbar-restore = Rétablir les boutons par défaut
+toolbar-clear = Vider la barre
+toolbar-confirm-restore = Rétablir les boutons par défaut du thème ?
+toolbar-confirm-clear = Retirer tous les boutons de la barre ?
 login-accounts-title = Choisissez votre compte
 login-accounts-first-title = Ajoutez votre premier compte
 login-accounts-last-place = Dernier lieu visité
@@ -1036,6 +1046,7 @@ build-ui-object-bias = Biais
 common-library = Bibliothèque
 app-welcome = Bienvenue !
 demo-welcome-to-the-aurora-viewer-demo = Bienvenue dans la démo d'Aurora Viewer ! 🐺✨❤️
+demo-region-day-cycle = Aube nordique
 demo-land-welcome-to-the-aurora-demo-estate-by-buying-land = { "Bienvenue sur le domaine Aurora Démo.\u000A\u000AEn achetant un terrain sur ce domaine, vous acceptez les règles suivantes :\u000A\u000A1. Les constructions restent dans le thème nordique du domaine.\u000A2. Pas de panneaux publicitaires visibles depuis les parcelles voisines.\u000A3. Les bruits de fond (radios, scripts sonores) sont limités à votre parcelle.\u000A4. Les parcelles inoccupées pendant 90 jours peuvent être reprises.\u000A\u000AMerci de garder la place d'Aurora accueillante pour tout le monde." }
 app-welcome-2 = { "Bienvenue, " }{ $value0 }{ " " }{ $value1 }.
 build-ui-object-bevel = Biseautage
@@ -1842,6 +1853,19 @@ keybinds-left-arrow = Flèche gauche
 keybinds-up-arrow = Flèche haut
 ui-options-arrows-strafe = Flèches : pas latéraux
 ui-options-loading-backdrop = Fond des chargements
+ui-options-reduce-motion = Réduire les animations
+ui-options-reduce-motion-help = Les pulsations, les secousses et les indicateurs qui tournent restent immobiles (alerte de redémarrage de région).
+ui-options-region-restart = Redémarrage de région
+ui-options-region-restart-alert = Afficher l'alerte de redémarrage
+ui-options-region-restart-alert-help = Compte à rebours, Domicile et repères. Désactivée : un simple toast à chaque avis du simulateur.
+ui-options-region-restart-shake = Secousse à l'apparition
+ui-options-region-restart-shake-help = L'alerte tremble une fois. « La vue » secoue la caméra comme Firestorm.
+ui-options-region-restart-shake-alert = L'alerte
+ui-options-region-restart-shake-view = La vue
+ui-options-region-restart-shake-none = Aucune
+ui-options-region-restart-announce = Annoncer sur un canal
+ui-options-region-restart-announce-help = Pour les HUD et scripts : chuchote region_restart_in:<secondes> sur ce canal.
+ui-options-region-restart-channel = Canal (473405 par défaut)
 ui-options-environment-fade = Fondu de l'environnement
 demo-fountain = Fontaine
 build-ui-tools-force = Force
@@ -3059,6 +3083,65 @@ keybinds-move-backward = Reculer
 build-ui-floaters-automatically-resize-media-to-the-object-face = Redimensionnement automatique du média à la taille de la face de l'objet
 world-mod-redirecting-to-another-location = Redirection vers un autre emplacement…
 ui-sound-region-restart = Redémarrage de la région
+ui-sound-region-restart-opensim = Redémarrage de la région (OpenSim)
+region-restart-title = Redémarrage de la région
+region-restart-before = avant le redémarrage
+region-restart-seconds = secondes
+region-restart-seconds-short = { $seconds } s
+region-restart-calm-title = { $region } va redémarrer
+region-restart-calm-text = Si vous restez dans la région, vous serez déconnecté.
+region-restart-near-title = Plus qu'une minute
+region-restart-near-text = Partez { $elide ->
+        [yes] d'{ $region }
+       *[other] de { $region }
+    } pour rester connecté.
+region-restart-red-title = Partez maintenant
+region-restart-red-text = { $region } redémarre dans moins de 30 secondes.
+region-restart-final-title = Redémarrage imminent
+region-restart-final-text = Restez dans { $region } et vous serez déconnecté.
+region-restart-zero-title = { $region } redémarre
+region-restart-zero-text = Si vous êtes encore ici, la connexion va se couper.
+region-restart-cancelled-title = Redémarrage annulé
+region-restart-cancelled-text = Un gérant a annulé le redémarrage { $elide ->
+        [yes] d'{ $region }
+       *[other] de { $region }
+    }.
+region-restart-left-title = Vous avez quitté { $region }
+region-restart-left-text = Arrivée : { $arrival }. L'alerte se ferme.
+region-restart-minimize = Réduire
+region-restart-show = Afficher l'alerte
+region-restart-search = Chercher un repère…
+region-restart-recent = Récents
+region-restart-no-landmark = Aucun repère trouvé
+region-restart-neighbour = Région voisine : { $region }
+region-restart-suggestion = proposition
+region-restart-last-place = Dernier lieu : { $place }
+region-restart-all-landmarks = Tous les repères…
+region-restart-manager = Vous gérez cette région
+region-restart-cancel = Annuler le redémarrage
+region-restart-region-estate = Région / Domaine ›
+region-restart-cancel-confirm-title = Annuler le redémarrage ?
+region-restart-cancel-confirm-text = { $region } ne redémarrera pas, et les résidents présents en seront avertis.
+region-restart-keep = Garder le redémarrage
+region-restart-pinned = épinglée
+region-restart-chat = La région où vous êtes est sur le point de redémarrer. Si vous restez, vous serez déconnecté.
+region-restart-chat-zero = La région redémarre.
+region-restart-chat-cancelled = Le redémarrage de la région a été annulé.
+region-restart-toast-minutes = La région « { $region } » va redémarrer dans { $count } { $count ->
+        [one] minute
+       *[other] minutes
+    }. Si vous y restez au moment de l'arrêt, vous serez déconnecté.
+region-restart-toast-seconds = La région « { $region } » va redémarrer dans { $count } { $count ->
+        [one] seconde
+       *[other] secondes
+    }. Si vous y restez au moment de l'arrêt, vous serez déconnecté.
+region-restart-disconnected = { $region } a redémarré : la connexion a été coupée.
+region-restart-legacy-text =
+    La région dans laquelle vous vous trouvez actuellement ({ $region }) est sur le point de redémarrer.
+    Si vous restez dans cette région, vous serez déconnecté(e).
+region-restart-legacy-seconds = Secondes avant le redémarrage
+region-restart-legacy-landmarks = Mes Repères
+region-restart-legacy-teleport = Se téléporter au repère
 ui-options-planar-scene-reflection-high-and-ultra-are-costly = Reflet plan du décor ; Haute et Ultra coûtent cher
 ui-options-reflections = Reflets
 ui-options-water-reflections = Reflets de l'eau
@@ -3163,6 +3246,44 @@ ui-options-camera-return-after-teleporting = Revenir après une téléportation
 ui-appearance-back-to-outfits = Revenir aux tenues
 ui-options-camera-return-when-moving = Revenir en bougeant
 keybinds-return-to-avatar = Revenir à l'avatar
+controls-title = Contrôles
+controls-camera-title = Contrôles de la caméra
+controls-movement-title = Contrôles de déplacement
+controls-tab-camera = Caméra
+controls-tab-movement = Déplacement
+controls-orbit-tip = Tourner autour du point visé : appuyer et tirer. Un clic au centre ramène la caméra.
+controls-orbit = Orbite
+controls-pan-tip = Déplacer la caméra en haut, en bas, à gauche et à droite : appuyer et tirer.
+controls-pan = Panoramique
+controls-object-view = Vue objet
+controls-object-view-tip = Un clic dans le monde y centre la caméra, comme avec Alt.
+controls-reset-camera = Réinitialiser la caméra (comme Préférences › Caméra)
+controls-reset-view = Revenir à l'avatar
+controls-drag-zoom = + glisser : zoom
+controls-drag-orbit = + glisser : orbite
+controls-drag-pan = + glisser : panoramique
+controls-shots = Positions enregistrées
+controls-shots-none = Aucune position enregistrée
+controls-shot-name = Nom de cette position de caméra
+controls-shot-save = Enregistrer
+controls-shot-save-tip = Enregistrer la position de la caméra
+controls-shot-delete = Supprimer
+controls-use-preset = Utiliser un préréglage
+controls-view-front = Avant
+controls-view-side = Côté
+controls-view-rear = Arrière
+controls-view-shoulder = Épaule
+controls-turn-left = Tourner à gauche
+controls-forward = Avancer
+controls-turn-right = Tourner à droite
+controls-up = Sauter / monter
+controls-slide-left = Pas de côté à gauche
+controls-back = Reculer
+controls-slide-right = Pas de côté à droite
+controls-down = S'accroupir / descendre
+controls-up-down = monter / descendre
+controls-walk = Marcher
+controls-run = Courir
 ui-environment-return-to-shared-environment = Revenir à l'environnement partagé
 ui-environment-return-to-shared-environment-2 = Revenir à l'environnement partagé ?
 build-ui-floaters-back-to-home-page = Revenir à la page d'accueil
@@ -3278,6 +3399,7 @@ build-ui-object-sculptie = Sculptie
 ui-perf-scene = Scène
 ui-options-entire-scene = Scène complète
 ui-login-log-in = Se connecter
+ui-login-reconnect = Se reconnecter
 ui-bars-log-out = Se déconnecter
 common-stand-up = Se lever
 ui-login-remember-me = Se souvenir de moi
@@ -3733,6 +3855,7 @@ ui-profile-real-life = Vie RL
 ui-profile-second-life = Vie SL
 demo-come-see-the-lagoon-at-sunset = Viens voir le lagon au coucher du soleil !
 demo-toast-hello = Coucou ! Je suis sur la place 😄
+demo-restart-toast = Tu viens au concert ce soir ?
 demo-toast-are-you-there = Tu es là ? Viens voir la nouvelle fontaine ✨
 demo-toast-group-message = La réunion commence dans dix minutes sur la scène
 demo-notifs-lantern = Une lanterne en papier
@@ -5295,10 +5418,20 @@ ui-options-aurora-about-land = À propos du terrain
 ui-options-aurora-about-land-help = Aperçu et gestion par intention, ou les 9 onglets de Firestorm.
 ui-options-aurora-about-land-aurora = Aurora
 ui-options-aurora-about-land-classic = Fenêtre classique (Firestorm)
+ui-options-aurora-region-estate-help = Aperçu, gestion par intention et interventions regroupées, ou les 8 onglets de Firestorm.
+ui-options-aurora-region-estate-soon = La fenêtre classique arrive bientôt : d'ici là, Région / Domaine s'ouvre dans sa version Aurora.
 ui-options-aurora-pay-window = Fenêtre Payer
 ui-options-aurora-pay-window-help = Paiement des résidents, des groupes et des objets.
 ui-options-aurora-pay-aurora = Aurora
 ui-options-aurora-pay-classic = Fenêtre classique (Firestorm)
+ui-options-aurora-controls = Contrôles caméra et déplacement
+ui-options-aurora-controls-help = Les fenêtres Caméra et Déplacement.
+ui-options-aurora-controls-aurora = Aurora
+ui-options-aurora-controls-classic = Fenêtres classiques (Firestorm)
+ui-options-aurora-restart-alert = Alerte de redémarrage
+ui-options-aurora-restart-alert-help = Carte avec compte à rebours, ou boîte jaune centrée comme Firestorm.
+ui-options-aurora-restart-card = Carte
+ui-options-aurora-restart-classic = Boîte jaune (Firestorm)
 ui-options-aurora-gaze = Regard
 ui-options-aurora-aim = Où va votre regard
 ui-options-aurora-aim-help = Votre avatar regarde le point exact sous le curseur, ou tourne la tête vers le côté du curseur comme Firestorm.
@@ -5681,6 +5814,80 @@ ui-land-overview-visitor = Visiteur
 ui-land-overview-officer = Officier
 ui-land-overview-view-as = Vu en tant que
 ui-land-overview-view-as-tip = Voir la parcelle comme un visiteur la voit : rien n'est modifiable tant que c'est activé
+region-title = Région / Domaine
+region-help = La région où vous êtes et son domaine : règles, santé du simulateur, règlement
+region-people-tab = Personnes
+region-role-owner = Propriétaire du domaine
+region-role-manager = Gérant
+region-role-resident = Résident
+region-view-as-tip = Voir la région comme un résident la voit : rien n'est modifiable tant que c'est activé
+region-estate-id-tip = Domaine n° { $id }
+region-position-server = position ({ $x }, { $y }) · serveur { $version }
+region-managers = { $n ->
+    [one] gérant : { $names }
+   *[other] gérants : { $names }
+    }
+region-avatars = Avatars
+region-avatars-most = { $max } au plus
+region-simulator = Simulateur
+region-health-smooth = Fluide
+region-health-slowed = Ralenti
+region-health-struggling = En difficulté
+region-dilation = dilatation { $value }
+region-restart-schedule = Redémarrage planifié
+region-schedule-at = { $days } à { $time } UTC
+region-schedule-every-day = Tous les jours
+region-schedule-none = Aucun
+region-weekday = { $day ->
+    [0] dimanche
+    [1] lundi
+    [2] mardi
+    [3] mercredi
+    [4] jeudi
+    [5] vendredi
+   *[6] samedi
+    }
+region-open-to-all = Ouvert à tous
+region-open-to-all-tip = Tout le monde peut venir dans le domaine, sauf les bannis
+region-lists-only = Listes seulement
+region-lists-only-tip = Seuls les résidents et les groupes autorisés du domaine peuvent venir
+region-terraform = Terraformation
+region-terraform-tip = Les propriétaires de parcelle peuvent modifier le sol de leur terrain
+region-terraform-blocked = Terraformation bloquée
+region-terraform-blocked-tip = Personne ne peut modifier le sol, même sur sa parcelle
+region-map = Carte
+region-message = Message à tous…
+region-top-scripts = Top scripts
+region-restart = Redémarrer…
+region-copy-region-id = Copier l'identifiant de la région
+region-day-cycle = Cycle du jour
+region-day-cycle-value = « { $name } », journée de { $hours } h
+region-day-length = Journée de { $hours } h
+region-default-environment = Environnement par défaut
+region-parcels = Parcelles
+region-parcels-own-environment = Peuvent avoir le leur
+region-parcels-region-environment = Gardent celui de la région
+region-health = Santé du simulateur
+region-top-scripts-link = Top scripts ›
+region-time-dilation = Dilatation du temps
+region-frames = Images par seconde
+region-frames-value = { $fps } · physique { $physics }
+region-script-time = Temps des scripts
+region-script-time-value = { $ms } ms · { $n ->
+    [one] { $count } script actif
+   *[other] { $count } scripts actifs
+    }
+region-spare-time = Temps libre
+region-spare-time-value = { $spare } ms sur { $frame }
+region-type = Type
+region-type-unknown = (inconnu)
+region-estate-id = ID du domaine
+region-grid-position = Position
+region-server = Serveur
+region-experiences-value = { $trusted } de confiance · { $allowed ->
+    [one] { $allowed } autorisée
+   *[other] { $allowed } autorisées
+    }
 ui-land-manage-access = Qui peut venir
 ui-land-manage-rules = Ce que les visiteurs peuvent faire
 ui-land-manage-objects = Objets et prims

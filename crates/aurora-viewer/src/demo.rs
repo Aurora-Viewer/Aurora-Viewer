@@ -62,6 +62,9 @@ pub mod notifs;
 pub mod people;
 #[path = "demo_place.rs"]
 pub mod place;
+/// Region / Estate answers (AURORA_DEMO_REGION).
+#[path = "demo_region.rs"]
+pub mod region;
 /// Directory answers of the search window (AURORA_DEMO_SEARCH).
 #[path = "demo_search.rs"]
 pub mod search;
@@ -1301,6 +1304,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             }]
         }
         aurora_net::NetCommand::Land(l) => land::reply(l),
+        aurora_net::NetCommand::Estate(e) => region::reply(e),
         aurora_net::NetCommand::RequestNames(ids) => {
             let names = [
                 aurora_i18n::tr!("demo-nova-example"),
@@ -2437,9 +2441,10 @@ pub fn events() -> Vec<NetEvent> {
             size_x: 256,
             size_y: 256,
             is_main: true,
-            owner: DEMO_LOUP,
+            // AURORA_DEMO_REGION: the avatar may own the estate or manage it;
             // AURORA_DEMO_ENV_EDITOR=region: the avatar manages the estate
-            is_estate_manager: env::estate_manager(),
+            owner: region::estate_owner(),
+            is_estate_manager: region::is_manager() || env::estate_manager(),
             product_name: "Estate / Full Region".into(),
             billable_factor: 1.0,
         })),
