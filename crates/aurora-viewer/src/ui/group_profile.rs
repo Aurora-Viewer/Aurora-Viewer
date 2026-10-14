@@ -14,6 +14,9 @@
 //!   group pane of "Search" (`search/details.rs`), with the members below
 //!   in a collapsing section, as Firestorm's accordions.
 //!
+//! "Create a group" (`group_profile/create.rs`) is a version of the same
+//! window: the header and the identity cards, or Firestorm's creation panel.
+//!
 //! The data: GroupProfileReply (`world.search.groups`), our membership
 //! (`world.groups`) and LLGroupMgr's members, roles, titles and notices
 //! (`world.group_data`), the land and accounts of LLPanelGroupLandMoney

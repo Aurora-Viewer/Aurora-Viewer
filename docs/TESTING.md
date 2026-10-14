@@ -1423,7 +1423,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_REGION=overview[:role][:preview][:compact]` | "Region / Estate" as estate owner, manager or resident |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -2207,7 +2208,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   interventions. `preview` opens on "View as" Resident; `compact` opens
   the window 480 px wide (no map, one column, the action buttons as
   icons). Manage and People are greyed until the next steps.
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:land|:experiences]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -2239,7 +2240,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   texture picker, charter, show in search, moderate content, open
   enrollment and fee; Save logs `demo group: identity saved`), Abilities
   (who has the ability chosen), Banned residents (two at start; Unban,
-  Ban residents by name), Invitations.
+  Ban residents by name), Invitations. `owner:identity` opens it on Group
+  identity (to compare with the creation window).
   `:notices` opens the Notices tab with the two latest notices unread
   (the tab's count): the first one is read at once (GroupNoticeRequest,
   answered by an IM_GROUP_NOTICE_REQUESTED instant message), its
@@ -2270,6 +2272,29 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   then the guest's view) and, in Preferences › Aurora › Profiles, the
   classic window with its "Members and roles", "Notices", "Land and L$"
   and "Experiences" sections.
+- **`AURORA_DEMO_GROUP_CREATE=form|cost|refused|limit|created[:classic]`**:
+  "Create a group", as from the "Create" button of People › Groups, once
+  the group list is in. The login of these scenarios gives a Base
+  membership whose group creation costs L$ 100 (Premium L$ 50, Premium
+  Plus L$ 0, listed in the fee card) and a limit of 42 groups. `form`: the
+  empty window (Aurora look: the profile's header with the name typed in
+  it and the insignia to click, the charter and settings cards of
+  Administration › Group identity, the fee card); `cost`: "Lagoon
+  Painters" filled in and Create clicked: the L$ 100 confirmation; `limit`:
+  the account at its limit (its three groups): "You have reached your
+  maximum number of groups" instead of the window; `refused`: "Aurora
+  Builders" sent: the simulated server refuses the name ("Unable to create
+  group." and its reason), the form stays; `created`: "Lagoon Painters"
+  sent: the server takes L$ 100 from the balance (top bar), the group joins
+  the list (People › Groups) and its profile opens, us its only member and
+  owner. In the window, try a name of three characters (the 4 to 35 rule),
+  an accent or a leading space (refused as typed, the rule in amber),
+  Create without a content rating (Yes / No / Cancel), then confirm the
+  fee. The server also refuses a name already created during the run, and
+  a fee above the balance. `:classic` shows Firestorm's creation panel
+  (Group Name, insignia and charter, Anyone can join, Cost to join, the
+  maturity list, the fees by membership, Create group for L$ 100, the
+  48-hour note), and the new group's classic profile.
 - **`AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown|landmark|history`**:
   "Places" on a place profile, as after a click on a place link.
   `1`: the home of Violet Wolf on Aurora Demo (the parcel of "About
