@@ -46,6 +46,7 @@ mod plate_click;
 mod reset_skeleton;
 mod scripts;
 mod shape_editor;
+mod snapshot;
 mod task_notecards;
 mod texture_refresh;
 mod worn_demo;
@@ -332,6 +333,8 @@ pub struct App {
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// Photos: the window, the frames drawn at their size, the saves.
+    snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     /// World › SL Marketplace (LLFloaterMarketplace).
@@ -477,6 +480,44 @@ fn bandwidth_kbps(settings: &Settings) -> f32 {
         .unwrap_or(settings.bandwidth_kbps as f32)
 }
 
+/// Test overrides of the settings (used by automated captures): the
+/// graphics level first, so that the single settings after it still change
+/// it. Applied at start, and again after a new profile's level is chosen.
+fn apply_test_overrides(settings: &mut Settings) {
+    if let Some(level) = std::env::var("AURORA_GRAPHICS_PRESET")
+        .ok()
+        .and_then(|v| crate::graphics_presets::Preset::from_name(&v))
+    {
+        level.apply(settings);
+    }
+    if let Some(v) = std::env::var("AURORA_FPS_LIMIT")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|&v| v > 0)
+    {
+        settings.fps_cap = true;
+        settings.fps_limit = v.clamp(10, 500);
+    }
+    if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
+        settings.antialiasing = v;
+    }
+    if let Some(v) = std::env::var("AURORA_MAX_COMPLEXITY").ok().and_then(|v| v.parse().ok()) {
+        settings.max_complexity = v;
+    }
+    if let Some(v) = std::env::var("AURORA_MAX_AVATARS").ok().and_then(|v| v.parse().ok()) {
+        settings.max_avatars = v;
+    }
+    if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
+        settings.shadow_quality = v;
+    }
+    if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
+        settings.projector_shadows = v != "0";
+    }
+    if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
+        settings.occlusion_culling = v != "0";
+    }
+}
+
 impl App {
     pub fn new() -> anyhow::Result<App> {
         // found on a background thread while the rest starts
@@ -487,33 +528,7 @@ impl App {
             // Exercise a first launch without changing the user's bindings.
             settings.keybinds = Default::default();
         }
-        // test overrides (used by automated captures)
-        if let Some(v) = std::env::var("AURORA_FPS_LIMIT")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .filter(|&v| v > 0)
-        {
-            settings.fps_cap = true;
-            settings.fps_limit = v.clamp(10, 500);
-        }
-        if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
-            settings.antialiasing = v;
-        }
-        if let Some(v) = std::env::var("AURORA_MAX_COMPLEXITY").ok().and_then(|v| v.parse().ok()) {
-            settings.max_complexity = v;
-        }
-        if let Some(v) = std::env::var("AURORA_MAX_AVATARS").ok().and_then(|v| v.parse().ok()) {
-            settings.max_avatars = v;
-        }
-        if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
-            settings.shadow_quality = v;
-        }
-        if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
-            settings.projector_shadows = v != "0";
-        }
-        if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
-            settings.occlusion_culling = v != "0";
-        }
+        apply_test_overrides(&mut settings);
         let net = NetClient::new()?;
         net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
         let voice_http = net.caps_http();
@@ -700,6 +715,7 @@ impl App {
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
             hover_height_ui: Default::default(),
+            snapshots: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
             marketplace_ui: Default::default(),
@@ -2185,7 +2201,11 @@ impl App {
                 });
             }
             Action::Mouselook => self.toggle_mouselook(),
-            Action::ResetCamera => self.reset_camera_view(),
+            Action::ResetCamera => {
+                if !self.photo_escape() {
+                    self.reset_camera_view();
+                }
+            }
             Action::Chat => self.chat_ui.focus_request = true,
             Action::ToggleMic => self.mic_on = !self.mic_on,
             // the shortcuts of the windows, like their toolbar buttons: a
@@ -2214,6 +2234,8 @@ impl App {
                 });
             }
             Action::Rebake => self.rebake(),
+            Action::PhotoWindow => ui::widgets::toggle_floater(&self.egui_ctx, ui::snapshot::WINDOW, &mut self.panels.snapshot),
+            Action::PhotoToDisk => self.photo_to_disk(),
             // held actions are read every frame
             _ => {}
         }
@@ -4372,7 +4394,18 @@ impl App {
         self.apply_local_imports(&mut gfx.renderer);
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
-        let aspect = w as f32 / h.max(1) as f32;
+        // a photo drawn at its own size this frame: its proportions, the
+        // part of it this frame draws, the height its details are chosen for
+        self.photo_update(&gfx.renderer);
+        let photo = self.photo_frame(&mut gfx.renderer);
+        let window_aspect = w as f32 / h.max(1) as f32;
+        let aspect = photo.as_ref().map_or(window_aspect, |f| f.aspect);
+        let photo_tile = photo.as_ref().map_or(glam::Mat4::IDENTITY, |f| f.tile);
+        let lod_height = photo.as_ref().map_or(h, |f| f.height);
+        let frame_proj = |camera: &crate::camera::Camera| match &photo {
+            Some(f) => photo_tile * camera.photo_proj(f.aspect, window_aspect),
+            None => camera.proj(aspect),
+        };
 
         // ---- agent / camera
         let typing = self.egui_ctx.egui_wants_keyboard_input();
@@ -4465,9 +4498,9 @@ impl App {
         self.update_voice();
         self.update_radar();
         let mut view = self.camera.view();
-        let mut proj = self.camera.proj(aspect);
+        let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
-        let mut cull = CullView::new(vp, self.camera.position, h as f32, self.camera.fov_y);
+        let mut cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y);
         // debug: frozen culling view (move around to see what it drops)
         if self.settings.debug.freeze_culling {
             cull = *self.frozen_cull.get_or_insert(cull);
@@ -4551,7 +4584,11 @@ impl App {
             );
             self.frame_profile.lap(Lap::Complexity);
             let hud_size = gfx.window.inner_size();
-            self.world.hud_aspect = hud_size.width as f32 / hud_size.height.max(1) as f32;
+            self.world.hud_aspect = match self.snapshots.capturing {
+                // the HUD laid out for the photo's proportions
+                Some(spec) => spec.width as f32 / spec.height.max(1) as f32,
+                None => hud_size.width as f32 / hud_size.height.max(1) as f32,
+            };
             self.refresh_local_huds();
             let drag_view =
                 self.scene.lists.hud_view.map(|view| {
@@ -4632,9 +4669,9 @@ impl App {
             }
             if camera_changed {
                 view = self.camera.view();
-                proj = self.camera.proj(aspect);
+                proj = frame_proj(&self.camera);
                 vp = proj * view;
-                cull = CullView::new(vp, self.camera.position, h as f32, self.camera.fov_y);
+                cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y);
                 if self.settings.debug.freeze_culling {
                     cull = *self.frozen_cull.get_or_insert(cull);
                 }
@@ -5541,6 +5578,7 @@ impl App {
         // capture is waited for, its pixels are read in the tail below.
         let lists = if self.in_world() { &self.scene.lists } else { &self.empty_lists };
         let stats = gfx.renderer.render(fp, lists, Some(egui_frame));
+        self.photo_drawn(&mut gfx.renderer);
         self.last_render = stats;
         if stats.presented && !gfx.shown {
             gfx.shown = true;
@@ -6877,6 +6915,14 @@ impl App {
             self.world.system_message(aurora_i18n::tr!("app-all-settings-have-been-reset"));
             ui::layout::forget(ctx);
         }
+        if let Some(tab) = res.reset_section {
+            if tab == 0 {
+                self.panels.time_of_day = self.settings.time_of_day;
+            }
+            self.settings.save();
+            self.world
+                .system_message(aurora_i18n::tr!("app-section-settings-reset", section = ui::options::tab_name(tab)));
+        }
         if self.panels.settings && !open {
             self.settings.save();
         }
@@ -6981,6 +7027,13 @@ impl App {
                 );
             }
             Screen::World => {
+                // the full-frame photo view: the world and its own strip only
+                if self.photo_full_frame() {
+                    self.photo_ui(&ctx, &p, renderer);
+                    return a;
+                }
+                // a held photo (freeze frame) instead of the world, under the windows
+                let held = self.photo_held(&ctx, &p);
                 // what belongs to the world first: the HUD attachments, the bars and
                 // every window cover the name tags, the floating texts and the beacon
                 let voice_levels = if self.demo {
@@ -6998,58 +7051,65 @@ impl App {
                 } else {
                     self.voice.levels(self.world.agent_id)
                 };
-                // the look-at crosshairs under the name tags
-                ui::lookat_targets::draw(
-                    &ctx,
-                    &p,
-                    &self.world,
-                    &self.scene,
-                    projector,
-                    self.camera.position,
-                    &self.look_at_settings(),
-                    &mut self.look_at_fades,
-                );
-                self.draw_walk_mark(&ctx, &p, projector);
+                // the look-at crosshairs under the name tags (none over a held
+                // photo, nor the walk mark)
+                if !held {
+                    ui::lookat_targets::draw(
+                        &ctx,
+                        &p,
+                        &self.world,
+                        &self.scene,
+                        projector,
+                        self.camera.position,
+                        &self.look_at_settings(),
+                        &mut self.look_at_fades,
+                    );
+                    self.draw_walk_mark(&ctx, &p, projector);
+                }
                 let classic_tags = self.classic_name_tags();
                 // AURORA_DEMO_FRIEND_PLATES=1: the setting for this run, without saving it
                 self.plates.friends_only_full =
                     self.settings.plates_friends_only_full || (self.demo && std::env::var_os("AURORA_DEMO_FRIEND_PLATES").is_some());
                 self.update_plate_hover(&ctx);
-                self.name_tags = ui::hud::draw(
-                    &ctx,
-                    &p,
-                    &self.skin.icons,
-                    &self.world,
-                    &self.scene,
-                    projector,
-                    self.camera.position,
-                    !self.camera.mouselook(),
-                    self.settings.name_tag_distance,
-                    &voice_levels,
-                    &mut self.voice_tags,
-                    {
-                        let s = &self.settings;
-                        // debug: on every tag
-                        let all = s.debug.complexity_tags;
-                        (all || s.tag_complexity).then_some(ui::hud::TagComplexity {
-                            values: &self.scene.avatar_complexity,
-                            areas: &self.scene.avatar_area,
+                self.name_tags = if held {
+                    Vec::new()
+                } else {
+                    ui::hud::draw(
+                        &ctx,
+                        &p,
+                        &self.skin.icons,
+                        &self.world,
+                        &self.scene,
+                        projector,
+                        self.camera.position,
+                        !self.camera.mouselook(),
+                        self.settings.name_tag_distance,
+                        &voice_levels,
+                        &mut self.voice_tags,
+                        {
+                            let s = &self.settings;
+                            // debug: on every tag
+                            let all = s.debug.complexity_tags;
+                            (all || s.tag_complexity).then_some(ui::hud::TagComplexity {
+                                values: &self.scene.avatar_complexity,
+                                areas: &self.scene.avatar_area,
+                                too_complex: &self.scene.too_complex,
+                                max: s.max_complexity,
+                                max_area: s.max_attachment_area,
+                                only_too_complex: !all && s.tag_complexity_too_complex_only,
+                                own: all || s.tag_complexity_own,
+                            })
+                        },
+                        self.scene.loading_bars.then(|| self.scene.loading_avatars()),
+                        (!classic_tags).then_some(ui::hud::PlateFrame {
+                            plates: &mut self.plates,
+                            pictures: &self.avatar_pics,
                             too_complex: &self.scene.too_complex,
-                            max: s.max_complexity,
-                            max_area: s.max_attachment_area,
-                            only_too_complex: !all && s.tag_complexity_too_complex_only,
-                            own: all || s.tag_complexity_own,
-                        })
-                    },
-                    self.scene.loading_bars.then(|| self.scene.loading_avatars()),
-                    (!classic_tags).then_some(ui::hud::PlateFrame {
-                        plates: &mut self.plates,
-                        pictures: &self.avatar_pics,
-                        too_complex: &self.scene.too_complex,
-                        demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
-                    }),
-                );
-                if !self.camera.mouselook() {
+                            demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
+                        }),
+                    )
+                };
+                if !self.camera.mouselook() && !held {
                     ui::minimap::draw_beacon(&ctx, &self.world, projector);
                 }
                 aurora_render::end_world_labels(&ctx);
@@ -7636,6 +7696,7 @@ impl App {
                 }
                 self.panels.about_land = open;
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
+                self.photo_ui(&ctx, &p, renderer);
                 let hover_enabled = self.world.hover_height_available();
                 if self.hover_height_ui.show(
                     &ctx,
@@ -8184,6 +8245,25 @@ impl ApplicationHandler for App {
             renderer.info.timestamps
         );
         let mut renderer = renderer;
+        if std::mem::take(&mut self.settings.new_profile) {
+            // a first launch: the graphics level from the card, like
+            // Firestorm's recommended settings; the test overrides still win
+            let system_mb = {
+                use sysinfo::{MemoryRefreshKind, RefreshKind, System};
+                let system = System::new_with_specifics(RefreshKind::nothing().with_memory(MemoryRefreshKind::nothing().with_ram()));
+                Some(system.total_memory() / 1024 / 1024).filter(|&mb| mb > 0)
+            };
+            let level = crate::graphics_presets::Preset::for_machine(renderer.info.integrated, renderer.info.vram_mb, system_mb);
+            log::info!(
+                "new profile: graphics level {level:?} (integrated {}, video memory {:?} MB, system memory {:?} MB)",
+                renderer.info.integrated,
+                renderer.info.vram_mb,
+                system_mb
+            );
+            level.apply(&mut self.settings);
+            apply_test_overrides(&mut self.settings);
+            self.settings.save();
+        }
         renderer.apply_settings(self.settings.render_settings());
         self.screen_rate.poll(&window, Instant::now());
         let max_tex = renderer.device.limits().max_texture_dimension_2d as usize;
@@ -8218,6 +8298,9 @@ impl ApplicationHandler for App {
                 self.options_ui.tab = tab.parse().unwrap_or(0);
                 if self.options_ui.tab == 8 {
                     self.options_ui.shortcut_filter = filter.to_owned();
+                } else if filter == "reset" {
+                    // the "Reset this section" confirmation, for captures
+                    self.options_ui.ask_reset_section();
                 } else {
                     self.options_ui.scroll_to_end = filter == "end";
                 }

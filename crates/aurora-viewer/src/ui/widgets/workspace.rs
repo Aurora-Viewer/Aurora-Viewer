@@ -277,6 +277,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "worldmap" | "minimap" => "map",
         "environment_selector" | "personal_lighting" => "sun-filled",
         "perf" | "performance" => "gauge-filled",
+        "photo" => "camera-filled",
         "display_name" => "id-filled",
         "object_purchase" => "shopping-cart-filled",
         "object_payment" | "buy_currency" => "coin-filled",

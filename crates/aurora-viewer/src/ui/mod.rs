@@ -56,6 +56,7 @@ pub mod search;
 pub mod shape;
 pub mod skin;
 pub mod snap;
+pub mod snapshot;
 pub mod sound_cues;
 pub mod texture_picker;
 #[cfg(test)]
@@ -71,6 +72,8 @@ pub mod worldmap;
 pub struct Panels {
     pub chat: bool,
     pub perf: bool,
+    /// The photo window (Firestorm's snapshot floater).
+    pub snapshot: bool,
     pub people: bool,
     pub minimap: bool,
     /// World map (Ctrl+M).
@@ -109,6 +112,7 @@ impl Panels {
         Panels {
             chat: settings.show_chat,
             perf: settings.show_perf,
+            snapshot: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,

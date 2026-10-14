@@ -5,6 +5,7 @@ mod aurora;
 mod camera;
 mod commands;
 mod privacy;
+mod sections;
 
 use super::fonts::{self, SystemFont};
 use super::icons::Icons;
@@ -51,6 +52,8 @@ pub struct OptionsUi {
     clear: Option<(crate::keybinds::Action, usize)>,
     /// "Reset everything" confirmation open.
     confirm_reset: bool,
+    /// "Reset this section" confirmation open, with the page it resets.
+    confirm_reset_section: Option<usize>,
     /// Sound assets being typed (Firestorm name -> text).
     ui_sound_text: std::collections::HashMap<&'static str, String>,
     /// Folder of the conversation transcripts of the account logged in
@@ -90,6 +93,11 @@ impl OptionsUi {
         pressed.then(|| Some(Input::key(code)))
     }
 
+    /// Opens the "Reset this section" confirmation for the page shown.
+    pub fn ask_reset_section(&mut self) {
+        self.confirm_reset_section = Some(self.tab);
+    }
+
     pub fn take_capture(&mut self) -> Option<Capture> {
         self.capture_modifier = None;
         self.capture.take()
@@ -107,6 +115,8 @@ pub struct OptionsResult {
     pub refresh_devices: bool,
     /// Every setting went back to its default.
     pub reset: bool,
+    /// The settings of one page went back to their defaults (its tab).
+    pub reset_section: Option<usize>,
     /// The camera settings went back to their defaults: the view follows.
     pub reset_camera: bool,
     /// Show the folder of the conversation transcripts.
@@ -137,6 +147,17 @@ fn categories() -> [(&'static str, &'static str); 14] {
     ]
 }
 
+/// The name of a page, as in the sidebar.
+pub fn tab_name(tab: usize) -> &'static str {
+    categories()[tab.min(categories().len() - 1)].0
+}
+
+/// Number of pages.
+#[cfg(test)]
+fn tab_count() -> usize {
+    categories().len()
+}
+
 /// Order of the tabs in the sidebar.
 const ORDER: [usize; 14] = [TAB_AURORA, 0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, 8, 5, TAB_PRIVACY, 6, 9];
 
@@ -158,6 +179,7 @@ fn category(ui: &mut egui::Ui, p: &Palette, _icons: &Icons, label: &str, icon: &
 /// Tabler icon of a settings group (by its title).
 fn group_icon(title: &str) -> Option<&'static str> {
     Some(match title {
+        value if value == aurora_i18n::text("ui-options-presets") => "gauge-filled",
         value if value == aurora_i18n::text("ui-options-quality") => "adjustments-filled",
         value if value == aurora_i18n::text("common-light") => "sun-filled",
         value if value == aurora_i18n::text("ui-options-reflections") => "droplet-filled",
@@ -597,6 +619,52 @@ fn maturity_choice(ui: &mut egui::Ui, access: aurora_net::search::AgentAccess) -
     (picked != access.preferred).then_some(picked)
 }
 
+/// "Reset this section…" of a page: neutral, red on hover, like "Reset
+/// everything…" (#291); `compact` keeps the icon alone (the Aurora page's
+/// head, where its own two buttons take the room).
+fn reset_section_button(ui: &mut egui::Ui, p: &Palette, tab: usize, compact: bool) -> bool {
+    let label = if compact {
+        ""
+    } else {
+        aurora_i18n::tr!("ui-options-reset-section")
+    };
+    let b = super::widgets::action_button(
+        ui,
+        p,
+        "restore",
+        label,
+        super::widgets::ActionKind::FlatDanger,
+        Vec2::new(if compact { 26.0 } else { 0.0 }, 26.0),
+    );
+    b.on_hover_text(aurora_i18n::tr!("ui-options-reset-section-help", section = tab_name(tab)))
+        .clicked()
+}
+
+/// The five graphics levels, side by side; none is lit once a setting of
+/// the page no longer matches any of them ("Custom", like Firestorm's
+/// slider after a manual change).
+fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+    use crate::graphics_presets::Preset;
+    let current = Preset::matching(s);
+    let options: Vec<(&str, bool)> = Preset::ALL.iter().map(|l| (l.label(), true)).collect();
+    let mut selected = current.and_then(|c| Preset::ALL.iter().position(|l| *l == c)).unwrap_or(usize::MAX);
+    let changed = super::widgets::segmented(ui, p, &mut selected, &options);
+    if current.is_none() && !changed {
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-options-preset-custom"))
+                .size(12.0)
+                .color(p.violet_pale),
+        );
+    }
+    match Preset::ALL.get(selected) {
+        Some(level) if changed => {
+            level.apply(s);
+            true
+        }
+        _ => false,
+    }
+}
+
 /// A label and a multi-line response text under it.
 fn response_text(ui: &mut egui::Ui, p: &Palette, label: &str, text: &mut String) -> bool {
     ui.label(RichText::new(label).size(12.5).color(p.ink));
@@ -663,11 +731,17 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                 // the Aurora page carries its title in its own head
                 let mut scroll_height = h;
                 if st.tab != TAB_AURORA {
-                    ui.label(
-                        RichText::new(categories()[st.tab.min(categories().len() - 1)].0)
-                            .size(17.0)
-                            .color(p.ink),
-                    );
+                    // the page's title, and the reset of this page alone at
+                    // its right (the same button as "Reset everything…")
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(tab_name(st.tab)).size(17.0).color(p.ink));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_space(8.0);
+                            if reset_section_button(ui, p, st.tab, false) {
+                                st.confirm_reset_section = Some(st.tab);
+                            }
+                        });
+                    });
                     ui.add_space(6.0);
                     scroll_height -= 34.0;
                 }
@@ -692,7 +766,14 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
                             TAB_PRIVACY => privacy::page(ui, p, &mut s.lookat),
-                            TAB_AURORA => aurora::page(ui, p, s),
+                            TAB_AURORA => {
+                                let mut reset = false;
+                                let c = aurora::page(ui, p, s, &mut reset);
+                                if reset {
+                                    st.confirm_reset_section = Some(TAB_AURORA);
+                                }
+                                c
+                            }
                             _ => content(ui, p, s, st, &mut r),
                         };
                     });
@@ -737,6 +818,45 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         });
         if modal.should_close() {
             st.confirm_reset = false;
+        }
+    }
+    if let Some(tab) = st.confirm_reset_section.filter(|_| *open) {
+        let section = tab_name(tab);
+        let modal = crate::ui::widgets::Modal::new(egui::Id::new("options_reset_section")).show(ctx, |ui| {
+            ui.set_width(340.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-options-reset-section-title", section = section))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-options-reset-section-text"))
+                    .size(12.5)
+                    .color(p.muted),
+            );
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                use super::widgets::{ActionKind, action_button};
+                let size = Vec2::new(0.0, 26.0);
+                if action_button(ui, p, "restore", aurora_i18n::tr!("common-reset"), ActionKind::Danger, size).clicked() {
+                    sections::reset(tab, s);
+                    st.capture = None;
+                    r.changed = true;
+                    r.font_changed = true;
+                    r.audio_changed = tab == TAB_AUDIO;
+                    r.reset_camera = tab == TAB_CAMERA;
+                    r.reset_section = Some(tab);
+                    st.confirm_reset_section = None;
+                }
+                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                    st.confirm_reset_section = None;
+                }
+            });
+        });
+        if modal.should_close() {
+            st.confirm_reset_section = None;
         }
     }
     if st.confirm_erase_logs && *open {
@@ -916,6 +1036,15 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
     }
     match st.tab {
         0 => {
+            group(ui, p, aurora_i18n::tr!("ui-options-presets"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-preset-level"),
+                    aurora_i18n::tr!("ui-options-preset-level-help"),
+                    |ui| preset_choice(ui, p, s),
+                );
+            });
             group(ui, p, aurora_i18n::tr!("ui-options-quality"), |ui| {
                 c |= row(
                     ui,

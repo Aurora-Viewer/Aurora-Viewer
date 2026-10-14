@@ -1,0 +1,779 @@
+//! The photo window, anchored on the right of the world (Firestorm's
+//! snapshot floater, floater_snapshot.xml / panel_snapshot_local.xml, laid
+//! out for photographers: preview with its guide, proportions and sizes in
+//! one click, file, what the image holds, focal length, latest photos), and
+//! the full-frame view: the interface gone but a small command strip, the
+//! world outside the photo's proportions darkened, a composition guide.
+
+use super::widgets::{self, ActionKind, Floater};
+use crate::snapshot::{Aspect, FileFormat, Guide, Resolution, Settings};
+use crate::theme::Palette;
+use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
+use std::path::{Path, PathBuf};
+
+pub const WINDOW: &str = "photo";
+const WIDTH: f32 = 340.0;
+/// Focal lengths of the slider and its presets (mm, full frame).
+const FOCAL_RANGE: std::ops::RangeInclusive<f32> = 10.0..=135.0;
+const FOCAL_PRESETS: [f32; 5] = [24.0, 35.0, 50.0, 85.0, 135.0];
+
+#[derive(Default)]
+pub struct SnapshotUi {
+    /// The full-frame view instead of the interface.
+    pub full_frame: bool,
+    /// The photo is taken and shown still until saved or released.
+    pub freeze: bool,
+}
+
+/// What the window shows besides the settings.
+pub struct View<'a> {
+    pub window: (u32, u32),
+    pub photo: (u32, u32),
+    /// Parts the photo is drawn in (1: one pass).
+    pub tiles: usize,
+    pub preview: Option<&'a egui::TextureHandle>,
+    /// Work in progress: (0..1, what).
+    pub busy: Option<(f32, String)>,
+    /// Last outcome: (text, is an error).
+    pub message: Option<&'a (String, bool)>,
+    pub last_saved: Option<&'a Path>,
+    pub gallery: &'a [(PathBuf, Option<egui::TextureHandle>)],
+    pub folder: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Action {
+    Refresh,
+    Take,
+    SaveAs,
+    ChooseFolder,
+    OpenFolder,
+    OpenPhoto(PathBuf),
+    /// Freeze frame switched (on: take it now).
+    Freeze(bool),
+    /// A setting that changes the photo changed: the preview follows.
+    Changed,
+    /// The settings changed (saved, the preview unchanged).
+    Saved,
+}
+
+impl SnapshotUi {
+    /// The window; `fov` is the camera's vertical field of view (radians),
+    /// `default_fov` the viewer's.
+    #[allow(clippy::too_many_arguments)]
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        open: &mut bool,
+        s: &mut Settings,
+        fov: &mut f32,
+        default_fov: f32,
+        view: &View,
+    ) -> Vec<Action> {
+        let mut out = Vec::new();
+        let screen = ctx.content_rect();
+        let mut full = false;
+        let full_tip = aurora_i18n::tr!("photo-full-frame");
+        Floater::new(
+            WINDOW,
+            aurora_i18n::tr!("photo-title"),
+            Pos2::new(screen.right() - WIDTH - 24.0, screen.top() + 64.0),
+            Vec2::new(WIDTH, 640.0),
+        )
+        .fixed()
+        .auto_height()
+        .action("maximize", full_tip, &mut full)
+        .show(ctx, p, open, |ui| self.body(ui, p, s, fov, default_fov, view, &mut out));
+        if full {
+            self.full_frame = true;
+        }
+        if !*open {
+            self.full_frame = false;
+            if self.freeze {
+                self.freeze = false;
+                out.push(Action::Freeze(false));
+            }
+        }
+        out
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn body(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        s: &mut Settings,
+        fov: &mut f32,
+        default_fov: f32,
+        view: &View,
+        out: &mut Vec<Action>,
+    ) {
+        ui.set_width(WIDTH - 24.0);
+        ui.spacing_mut().item_spacing.y = 6.0;
+        if preview(ui, p, s, view) {
+            out.push(Action::Refresh);
+        }
+
+        let before = s.clone();
+        // the settings scroll between the preview and the shutter, which
+        // stay in sight on a short screen
+        let room = (ui.ctx().content_rect().height() - 470.0).max(150.0);
+        egui::ScrollArea::vertical()
+            .id_salt("photo_settings")
+            .max_height(room)
+            .show(ui, |ui| self.settings(ui, p, s, fov, default_fov, view, out));
+
+        ui.add_space(4.0);
+        let busy = view.busy.is_some();
+        ui.horizontal(|ui| {
+            let take_w = ui.available_width() - 34.0;
+            ui.add_enabled_ui(!busy, |ui| {
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "camera-filled",
+                    aurora_i18n::tr!("photo-take"),
+                    ActionKind::Primary,
+                    Vec2::new(take_w, 32.0),
+                )
+                .clicked()
+                {
+                    out.push(Action::Take);
+                }
+                if widgets::action_button(ui, p, "folder-filled", "", ActionKind::Flat, Vec2::new(30.0, 32.0))
+                    .on_hover_text(aurora_i18n::tr!("photo-save-as"))
+                    .clicked()
+                {
+                    out.push(Action::SaveAs);
+                }
+            });
+        });
+        if let Some((fraction, what)) = &view.busy {
+            widgets::progress(ui, p, "photo_progress", *fraction, ui.available_width(), what, None);
+        } else if let Some((text, error)) = view.message {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(text).size(12.0).color(if *error { p.danger } else { p.success }));
+                if !*error
+                    && let Some(path) = view.last_saved
+                    && widgets::flat_button(ui, p, aurora_i18n::tr!("photo-open")).clicked()
+                {
+                    out.push(Action::OpenPhoto(path.to_path_buf()));
+                }
+            });
+        }
+        gallery(ui, p, view, out);
+
+        if *s != before {
+            let photo_changed = s.aspect != before.aspect
+                || s.resolution != before.resolution
+                || s.custom != before.custom
+                || s.interface != before.interface
+                || s.huds != before.huds;
+            out.push(if photo_changed { Action::Changed } else { Action::Saved });
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn settings(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        s: &mut Settings,
+        fov: &mut f32,
+        default_fov: f32,
+        view: &View,
+        out: &mut Vec<Action>,
+    ) {
+        ui.set_width(WIDTH - 36.0);
+        section(ui, p, "aspect-ratio-filled", aurora_i18n::tr!("photo-section-format"));
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+            for a in Aspect::ALL {
+                let label = a.short().unwrap_or(aurora_i18n::tr!("photo-aspect-window"));
+                if chip(ui, p, label, None, s.aspect == a, true).clicked() {
+                    s.aspect = a;
+                }
+            }
+        });
+
+        section(ui, p, "dimensions", aurora_i18n::tr!("photo-section-resolution"));
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+            for r in Resolution::ALL {
+                let (label, sub) = match r {
+                    Resolution::Window => (aurora_i18n::tr!("photo-resolution-window"), None),
+                    Resolution::Custom => (aurora_i18n::tr!("photo-resolution-custom"), None),
+                    _ => (r.short().unwrap_or(""), r.long_side().map(|v| v.to_string())),
+                };
+                if chip(ui, p, label, sub.as_deref(), s.resolution == r, true).clicked() {
+                    if r == Resolution::Custom && s.resolution != Resolution::Custom {
+                        // the typed size starts from the photo of the moment
+                        let (w, h) = s.size(view.window);
+                        s.custom = [w, h];
+                    }
+                    s.resolution = r;
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            if s.resolution == Resolution::Custom {
+                let (mut w, mut h) = (s.custom[0], s.custom[1]);
+                let range = crate::snapshot::MIN_SIDE..=crate::snapshot::MAX_SIDE;
+                let wc = ui.add(egui::DragValue::new(&mut w).range(range.clone()).speed(4.0)).changed();
+                let lock = if s.keep_ratio { "lock-filled" } else { "lock-open" };
+                if widgets::icon_toggle(ui, p, lock, aurora_i18n::tr!("photo-keep-ratio"), s.keep_ratio) {
+                    s.keep_ratio = !s.keep_ratio;
+                }
+                let hc = ui.add(egui::DragValue::new(&mut h).range(range).speed(4.0)).changed();
+                if wc || hc {
+                    s.set_custom(wc.then_some(w), hc.then_some(h), view.window);
+                }
+            } else {
+                let (w, h) = view.photo;
+                ui.label(RichText::new(aurora_i18n::tr!("photo-size", width = w, height = h)).color(p.ink));
+            }
+            let passes = if view.tiles <= 1 {
+                aurora_i18n::tr!("photo-one-pass").to_string()
+            } else {
+                aurora_i18n::tr!("photo-tiles", count = view.tiles).to_string()
+            };
+            ui.label(RichText::new(passes).size(11.5).color(p.muted));
+        });
+
+        section(ui, p, "send-filled", aurora_i18n::tr!("photo-section-destination"));
+        let mut dest = 0;
+        widgets::segmented(
+            ui,
+            p,
+            &mut dest,
+            &[
+                (aurora_i18n::tr!("photo-destination-disk"), true),
+                (aurora_i18n::tr!("photo-destination-inventory"), true),
+                (aurora_i18n::tr!("photo-destination-profile"), true),
+            ],
+        );
+        ui.label(RichText::new(aurora_i18n::tr!("photo-destination-soon")).size(11.5).color(p.muted));
+        row(ui, p, aurora_i18n::tr!("photo-file-format"), None, |ui| {
+            let mut i = FileFormat::ALL.iter().position(|f| *f == s.format).unwrap_or(0);
+            let options: Vec<(&str, bool)> = FileFormat::ALL.iter().map(|f| (f.label(), true)).collect();
+            if widgets::segmented(ui, p, &mut i, &options) {
+                s.format = FileFormat::ALL[i];
+            }
+        });
+        if s.format == FileFormat::Jpeg {
+            row(ui, p, aurora_i18n::tr!("photo-jpeg-quality"), None, |ui| {
+                ui.spacing_mut().slider_width = 130.0;
+                ui.add(egui::Slider::new(&mut s.jpeg_quality, 1..=100));
+            });
+        }
+
+        section(ui, p, "adjustments-horizontal-filled", aurora_i18n::tr!("photo-section-in-image"));
+        let interface_possible = s.interface_possible(view.window);
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("photo-interface"),
+            (!interface_possible).then(|| aurora_i18n::tr!("photo-interface-hint")),
+            |ui| {
+                let mut on = s.interface && interface_possible;
+                ui.add_enabled_ui(interface_possible, |ui| {
+                    if widgets::switch(ui, p, &mut on).changed() {
+                        s.interface = on;
+                    }
+                });
+            },
+        );
+        row(ui, p, aurora_i18n::tr!("photo-huds"), None, |ui| {
+            widgets::switch(ui, p, &mut s.huds);
+        });
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("photo-freeze"),
+            Some(aurora_i18n::tr!("photo-freeze-hint")),
+            |ui| {
+                let mut on = self.freeze;
+                if widgets::switch(ui, p, &mut on).changed() {
+                    self.freeze = on;
+                    out.push(Action::Freeze(on));
+                }
+            },
+        );
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("photo-auto-refresh"),
+            Some(aurora_i18n::tr!("photo-auto-refresh-hint")),
+            |ui| {
+                widgets::switch(ui, p, &mut s.auto_refresh);
+            },
+        );
+
+        section(ui, p, "camera-filled", aurora_i18n::tr!("photo-section-camera"));
+        if focal(ui, p, fov, default_fov) {
+            out.push(Action::Saved);
+        }
+
+        ui.add_space(2.0);
+        widgets::collapsing(ui, p, "photo_file", aurora_i18n::tr!("photo-section-file"), false, |ui| {
+            row(ui, p, aurora_i18n::tr!("photo-base-name"), None, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut s.base_name).desired_width(150.0));
+            });
+            row(ui, p, aurora_i18n::tr!("photo-timestamp"), None, |ui| {
+                widgets::switch(ui, p, &mut s.timestamp_names);
+            });
+            row(
+                ui,
+                p,
+                aurora_i18n::tr!("photo-folder"),
+                Some(&view.folder.display().to_string()),
+                |ui| {
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-folder-change")).clicked() {
+                        out.push(Action::ChooseFolder);
+                    }
+                },
+            );
+            row(ui, p, aurora_i18n::tr!("photo-remember-folder"), None, |ui| {
+                widgets::switch(ui, p, &mut s.remember_folder);
+            });
+            row(ui, p, aurora_i18n::tr!("photo-sound"), None, |ui| {
+                widgets::switch(ui, p, &mut s.sound);
+            });
+        });
+    }
+
+    /// The full-frame view (instead of the interface); `photo` the photo's
+    /// size. Escape or the exit button leaves it.
+    pub fn full_frame(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        s: &mut Settings,
+        fov: &mut f32,
+        default_fov: f32,
+        photo: (u32, u32),
+    ) -> Vec<Action> {
+        let mut out = Vec::new();
+        let screen = ctx.content_rect();
+        let frame = fit(screen, photo.0 as f32 / photo.1.max(1) as f32);
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("photo_full_frame")));
+        let mask = p.navy.gamma_multiply(0.62);
+        for r in outside(screen, frame) {
+            painter.rect_filled(r, 0.0, mask);
+        }
+        painter.rect_stroke(frame, 0.0, Stroke::new(1.0, p.ink.gamma_multiply(0.7)), egui::StrokeKind::Inside);
+        guide_lines(&painter, frame, s.guide, p.ink.gamma_multiply(0.55));
+
+        let tag = |id: &str, pos: Pos2, align: egui::Align2, icon: &str, text: String| {
+            egui::Area::new(egui::Id::new(id))
+                .order(egui::Order::Foreground)
+                .pivot(align)
+                .fixed_pos(pos)
+                .interactable(false)
+                .show(ctx, |ui| {
+                    widgets::overlay(ui, p, egui::Margin::symmetric(8, 4), |ui| {
+                        ui.horizontal(|ui| {
+                            icon_image(ui, icon, 14.0, p.teal);
+                            ui.label(RichText::new(text).size(12.0).color(p.ink));
+                        });
+                    });
+                });
+        };
+        let label = s.aspect.short().unwrap_or(aurora_i18n::tr!("photo-aspect-window"));
+        tag(
+            "photo_full_size",
+            screen.left_top() + Vec2::new(12.0, 12.0),
+            egui::Align2::LEFT_TOP,
+            "aspect-ratio-filled",
+            format!("{label} · {} × {}", photo.0, photo.1),
+        );
+        tag(
+            "photo_full_exit",
+            screen.right_top() + Vec2::new(-12.0, 12.0),
+            egui::Align2::RIGHT_TOP,
+            "x",
+            aurora_i18n::tr!("photo-exit-full-frame").to_string(),
+        );
+
+        let before = s.clone();
+        egui::Area::new(egui::Id::new("photo_full_strip"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - 14.0))
+            .show(ctx, |ui| {
+                widgets::overlay(ui, p, egui::Margin::symmetric(10, 8), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for a in [
+                            Aspect::Window,
+                            Aspect::R16x9,
+                            Aspect::R3x2,
+                            Aspect::R1x1,
+                            Aspect::R4x5,
+                            Aspect::R9x16,
+                        ] {
+                            let label = a.short().unwrap_or(aurora_i18n::tr!("photo-aspect-window"));
+                            if chip(ui, p, label, None, s.aspect == a, true).clicked() {
+                                s.aspect = a;
+                            }
+                        }
+                        ui.add_space(8.0);
+                        for g in Guide::ALL {
+                            let (icon, tip) = guide_face(g);
+                            if widgets::icon_toggle(ui, p, icon, tip, s.guide == g) {
+                                s.guide = if s.guide == g { Guide::None } else { g };
+                            }
+                        }
+                        ui.add_space(8.0);
+                        if shutter(ui, p).clicked() {
+                            out.push(Action::Take);
+                        }
+                        ui.add_space(8.0);
+                        if focal(ui, p, fov, default_fov) {
+                            out.push(Action::Saved);
+                        }
+                        ui.add_space(4.0);
+                        if widgets::icon_button(ui, p, "minimize", aurora_i18n::tr!("photo-exit-full-frame"), true) {
+                            self.full_frame = false;
+                        }
+                    });
+                });
+            });
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.full_frame = false;
+        }
+        if *s != before {
+            out.push(if s.aspect != before.aspect {
+                Action::Changed
+            } else {
+                Action::Saved
+            });
+        }
+        out
+    }
+}
+
+/// The photo held by "Freeze frame", over the whole world, in its
+/// proportions.
+pub fn frozen(ctx: &egui::Context, p: &Palette, texture: &egui::TextureHandle) {
+    let screen = ctx.content_rect();
+    let size = texture.size_vec2();
+    let rect = fit(screen, size.x / size.y.max(1.0));
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("photo_frozen")));
+    painter.rect_filled(screen, 0.0, p.navy);
+    painter.image(
+        texture.id(),
+        rect,
+        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        widgets::PICTURE_TINT,
+    );
+}
+
+/// The largest rectangle of `ratio` (width / height) centred in `area`.
+pub fn fit(area: Rect, ratio: f32) -> Rect {
+    let ratio = ratio.max(0.01);
+    let size = if area.width() / area.height().max(1.0) > ratio {
+        Vec2::new(area.height() * ratio, area.height())
+    } else {
+        Vec2::new(area.width(), area.width() / ratio)
+    };
+    Rect::from_center_size(area.center(), size)
+}
+
+/// The parts of `screen` outside `frame` (at most four bands).
+pub fn outside(screen: Rect, frame: Rect) -> Vec<Rect> {
+    let mut v = Vec::new();
+    if frame.left() > screen.left() {
+        v.push(Rect::from_min_max(screen.left_top(), Pos2::new(frame.left(), screen.bottom())));
+    }
+    if frame.right() < screen.right() {
+        v.push(Rect::from_min_max(Pos2::new(frame.right(), screen.top()), screen.right_bottom()));
+    }
+    if frame.top() > screen.top() {
+        v.push(Rect::from_min_max(
+            Pos2::new(frame.left(), screen.top()),
+            Pos2::new(frame.right(), frame.top()),
+        ));
+    }
+    if frame.bottom() < screen.bottom() {
+        v.push(Rect::from_min_max(
+            Pos2::new(frame.left(), frame.bottom()),
+            Pos2::new(frame.right(), screen.bottom()),
+        ));
+    }
+    v
+}
+
+/// Icon and name of a guide.
+fn guide_face(g: Guide) -> (&'static str, &'static str) {
+    match g {
+        Guide::Thirds => ("grid-3x3", aurora_i18n::tr!("photo-guide-thirds")),
+        Guide::Golden => ("spiral", aurora_i18n::tr!("photo-guide-golden")),
+        Guide::Diagonals => ("slash", aurora_i18n::tr!("photo-guide-diagonals")),
+        Guide::Center => ("focus-centered", aurora_i18n::tr!("photo-guide-center")),
+        Guide::None => ("x", aurora_i18n::tr!("photo-guide-off")),
+    }
+}
+
+fn guide_lines(painter: &egui::Painter, frame: Rect, guide: Guide, color: Color32) {
+    let at = |v: [f32; 2]| Pos2::new(frame.left() + v[0] * frame.width(), frame.top() + v[1] * frame.height());
+    for [a, b] in guide.lines() {
+        painter.line_segment([at(a), at(b)], Stroke::new(1.0, color));
+    }
+}
+
+/// Preview with its guide, size badge and refresh button; true when the
+/// refresh was clicked.
+fn preview(ui: &mut egui::Ui, p: &Palette, s: &Settings, view: &View) -> bool {
+    let width = ui.available_width();
+    let ratio = view.photo.0 as f32 / view.photo.1.max(1) as f32;
+    let height = (width / ratio).min(300.0);
+    let (outer, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let rect = fit(outer, ratio);
+    let radius = ui.visuals().window_corner_radius;
+    ui.painter().rect_filled(outer, radius, p.field);
+    match view.preview {
+        Some(t) => {
+            ui.painter().image(
+                t.id(),
+                rect,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                widgets::PICTURE_TINT,
+            );
+        }
+        None => {
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                aurora_i18n::tr!("photo-preview-pending"),
+                egui::FontId::proportional(12.0),
+                p.muted,
+            );
+        }
+    }
+    guide_lines(ui.painter(), rect, s.guide, p.ink.gamma_multiply(0.55));
+    // the size badge
+    let badge = format!("{} × {} · {}", view.photo.0, view.photo.1, s.format.label());
+    let galley = ui.painter().layout_no_wrap(badge, egui::FontId::proportional(11.0), p.ink);
+    let badge_rect = Rect::from_min_size(
+        rect.right_bottom() - galley.size() - Vec2::new(14.0, 10.0),
+        galley.size() + Vec2::new(10.0, 4.0),
+    );
+    ui.painter().rect_filled(badge_rect, radius, p.navy.gamma_multiply(0.72));
+    ui.painter().galley(badge_rect.min + Vec2::new(5.0, 2.0), galley, p.ink);
+    // the refresh button
+    let button = Rect::from_min_size(rect.left_bottom() + Vec2::new(6.0, -28.0), Vec2::splat(22.0));
+    let resp = ui.interact(button, ui.id().with("photo_refresh"), Sense::click());
+    let fill = if resp.hovered() { p.raised } else { p.navy.gamma_multiply(0.72) };
+    ui.painter().rect_filled(button, radius, fill);
+    if let Some(t) = super::icons::global("refresh") {
+        ui.painter().image(
+            t.id(),
+            Rect::from_center_size(button.center(), Vec2::splat(14.0)),
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            p.ink,
+        );
+    }
+    resp.on_hover_text(aurora_i18n::tr!("photo-refresh")).clicked()
+}
+
+/// The latest photos and "Open the folder".
+fn gallery(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let radius = ui.visuals().window_corner_radius;
+        for (path, tex) in view.gallery {
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(54.0, 34.0), Sense::click());
+            ui.painter().rect_filled(rect, radius, p.field);
+            if let Some(t) = tex {
+                let size = t.size_vec2();
+                // the middle of the photo, filling the thumbnail
+                let r = size.x / size.y.max(1.0);
+                let want = rect.width() / rect.height();
+                let uv = if r > want {
+                    let w = want / r;
+                    Rect::from_min_max(Pos2::new(0.5 - w / 2.0, 0.0), Pos2::new(0.5 + w / 2.0, 1.0))
+                } else {
+                    let h = r / want;
+                    Rect::from_min_max(Pos2::new(0.0, 0.5 - h / 2.0), Pos2::new(1.0, 0.5 + h / 2.0))
+                };
+                ui.painter().image(t.id(), rect, uv, widgets::PICTURE_TINT);
+            }
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if resp.on_hover_text(name).clicked() {
+                out.push(Action::OpenPhoto(path.clone()));
+            }
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if widgets::action_button(
+                ui,
+                p,
+                "folder-open-filled",
+                aurora_i18n::tr!("photo-open-folder"),
+                ActionKind::Flat,
+                Vec2::new(0.0, 26.0),
+            )
+            .clicked()
+            {
+                out.push(Action::OpenFolder);
+            }
+        });
+    });
+}
+
+/// The focal length slider and presets (mm, full frame) on the camera's
+/// field of view; true when it changed.
+fn focal(ui: &mut egui::Ui, p: &Palette, fov: &mut f32, default_fov: f32) -> bool {
+    let mut changed = false;
+    let mut mm = crate::snapshot::focal_of_fov(*fov).clamp(*FOCAL_RANGE.start(), *FOCAL_RANGE.end());
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(aurora_i18n::tr!("photo-focal")).color(p.ink))
+            .on_hover_text(aurora_i18n::tr!("photo-focal-hint"));
+        ui.spacing_mut().slider_width = 110.0;
+        if ui
+            .add(
+                egui::Slider::new(&mut mm, FOCAL_RANGE)
+                    .logarithmic(true)
+                    .suffix(" mm")
+                    .fixed_decimals(0),
+            )
+            .changed()
+        {
+            *fov = crate::snapshot::fov_of_focal(mm);
+            changed = true;
+        }
+        if widgets::icon_button(
+            ui,
+            p,
+            "restore",
+            aurora_i18n::tr!("photo-focal-reset"),
+            (*fov - default_fov).abs() > 1e-3,
+        ) {
+            *fov = default_fov;
+            changed = true;
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for preset in FOCAL_PRESETS {
+            let on = (mm - preset).abs() < 0.5;
+            if chip(ui, p, &format!("{preset:.0}"), None, on, true).clicked() {
+                *fov = crate::snapshot::fov_of_focal(preset);
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+fn section(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str) {
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        icon_image(ui, icon, 14.0, p.violet_light);
+        ui.label(RichText::new(title).size(12.5).strong().color(p.ink));
+    });
+}
+
+fn icon_image(ui: &mut egui::Ui, icon: &str, side: f32, tint: Color32) {
+    let (r, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
+    if let Some(t) = super::icons::global(icon) {
+        ui.painter()
+            .image(t.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), tint);
+    }
+}
+
+/// A setting: its label (and a hint under it) on the left, its control on
+/// the right.
+fn row(ui: &mut egui::Ui, p: &Palette, label: &str, hint: Option<&str>, control: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        let width = ui.available_width();
+        ui.vertical(|ui| {
+            ui.set_width(width * 0.55);
+            ui.label(RichText::new(label).color(p.ink));
+            if let Some(h) = hint {
+                ui.add(egui::Label::new(RichText::new(h).size(11.0).color(p.muted)).wrap());
+            }
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control);
+    });
+}
+
+/// A choice among several shown side by side: the accent when chosen.
+fn chip(ui: &mut egui::Ui, p: &Palette, label: &str, sub: Option<&str>, on: bool, enabled: bool) -> egui::Response {
+    let font = egui::FontId::proportional(12.0);
+    let main = ui.painter().layout_no_wrap(label.to_owned(), font, p.ink);
+    let sub = sub.map(|t| ui.painter().layout_no_wrap(t.to_owned(), egui::FontId::proportional(10.0), p.ink));
+    let width = main.size().x + sub.as_ref().map_or(0.0, |g| g.size().x + 4.0) + 16.0;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 24.0), if enabled { Sense::click() } else { Sense::hover() });
+    let fill = match (on, resp.hovered() && enabled) {
+        (true, _) => p.violet,
+        (false, true) => p.raised,
+        (false, false) => p.bar,
+    };
+    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
+    let text = if on {
+        p.on_accent
+    } else if enabled {
+        p.muted
+    } else {
+        p.muted_dim
+    };
+    let mut x = rect.left() + 8.0;
+    let main_w = main.size().x;
+    ui.painter().galley(
+        Pos2::new(x, rect.center().y - main.size().y / 2.0),
+        main,
+        if on { text } else { p.ink },
+    );
+    x += main_w + 4.0;
+    if let Some(g) = sub {
+        ui.painter()
+            .galley(Pos2::new(x, rect.center().y - g.size().y / 2.0), g, text.gamma_multiply(0.8));
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, on, label));
+    resp
+}
+
+/// The round shutter button of the full-frame strip.
+fn shutter(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::click());
+    let c = rect.center();
+    ui.painter().circle_filled(c, 21.0, p.violet.gamma_multiply(0.35));
+    ui.painter()
+        .circle_filled(c, 18.0, if resp.hovered() { p.violet_light } else { p.violet });
+    if let Some(t) = super::icons::global("camera-filled") {
+        ui.painter().image(
+            t.id(),
+            Rect::from_center_size(c, Vec2::splat(20.0)),
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            p.on_accent,
+        );
+    }
+    resp.on_hover_text(aurora_i18n::tr!("photo-take"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_photo_fits_the_screen_and_the_rest_is_masked() {
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 900.0));
+        let frame = fit(screen, 4.0 / 5.0);
+        assert!((frame.height() - 900.0).abs() < 0.01);
+        assert!((frame.width() - 720.0).abs() < 0.01);
+        assert!((frame.center().x - 800.0).abs() < 0.01);
+        let bands = outside(screen, frame);
+        assert_eq!(bands.len(), 2);
+        let masked: f32 = bands.iter().map(|r| r.area()).sum();
+        assert!((masked + frame.area() - screen.area()).abs() < 1.0);
+        // the screen's own proportions: nothing masked
+        assert!(outside(screen, fit(screen, 16.0 / 9.0)).is_empty());
+        // wider than the screen: bands above and below
+        let wide = fit(screen, 3.0);
+        assert_eq!(outside(screen, wide).len(), 2);
+    }
+}

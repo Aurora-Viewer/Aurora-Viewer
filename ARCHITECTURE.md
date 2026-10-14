@@ -285,7 +285,9 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `demo_chatlog.rs` | `AURORA_DEMO_CHATLOG` scenario: history files of the demo account (in its own folder), conversation with history, search, History window on a long file, IMs received offline, long conversation to measure the view |
 | `demo.rs`, `demo_land.rs`, `demo_place.rs`, `demo_eep.rs`, `demo_env.rs`, `demo_stream.rs`, `demo_asset_server.rs`, `demo_glyphs.rs`, `demo_tags.rs`, `demo_deform.rs` | Demo mode: a local scene that simulates a server (and its replies to "About Land", to the place profiles, landmarks and history of "Places" and to ExtEnvironment, a library of environments for the picker); `demo_stream.rs`: objects and textures that arrive in waves (test of the streaming hitches, AURORA_DEMO_STREAM), and `demo_asset_server.rs`, the local HTTP server its `net=` option downloads the textures from, at the round trip of a distant grid; `demo_glyphs.rs`: residents whose title, name and message use the extended characters of display names (AURORA_DEMO_GLYPHS); `demo_deform.rs`: an avatar left deformed by a finished pose, to reset (AURORA_DEMO_DEFORM) |
 | `settings.rs`, `keybinds.rs`, `keybinds/layout.rs`, `theme.rs` | Saved settings, shortcuts, Windows keyboard layout and default movement keys, palette |
+| `graphics_presets.rs`, `ui/options/sections.rs` | The five graphics levels of Preferences › Graphics (the quality settings each one writes, from Firestorm's featuretable; the level whose settings match, or none: "Custom"), and the settings each preferences page shows, put back to their defaults by "Reset this section" (a test reads the code of the pages so that a new row cannot be left out) |
 | `ui_sound.rs` | Catalogue of the interface sounds (Firestorm's UISnd*), per-sound settings |
+| `snapshot/`, `ui/snapshot.rs`, `app/snapshot.rs` | Photos (LLFloaterSnapshot): `snapshot/mod.rs` holds the pure rules (proportions and resolutions up to 7680, file names like Firestorm, tile plan and off-centre tile projection, focal length ↔ field of view, settings), `save.rs` writes the file on a worker (PNG row by row with its progress, JPEG, BMP, `.part` then rename), `gallery.rs` lists the latest photos of the folder; `ui/snapshot.rs` is the window anchored on the right and the full-frame view (mask, guides, strip); `app/snapshot.rs` asks the renderer for the photo frames (preview, tiles, freeze frame), stitches them and starts the save |
 | `ui/appearance.rs`, `ui/appearance/items.rs`, `ui/appearance/gallery.rs`, `world/appearance.rs` | Appearance window, gallery / outfits / worn, editing and Save as dialog; menus of the items and of the gallery, save / delete confirmation, image choice, renaming; attachment points / HUD, profile and original; rules for changing the COF, saving through links, protection of the body parts, offline scenario |
 | `aurora-net/src/outfits.rs`, `aurora-net/src/outfits/categories.rs` | Writing of the outfit links, favourites, names and images through AIS InventoryAPIv3, move to the trash; confirmation and read-back of the folders / items |
 | `slurl.rs`, `link_trust.rs` | Links in texts: SLURL (navigation bar, "Region (x,y,z)" labels of the place links); trust of web links (trusted site, unknown, dangerous: shorteners, fake official names, IP addresses…), judged locally on the URL |
@@ -679,7 +681,13 @@ What passes from one thread to the other:
   buffers of the packet to reuse.
 
 Only one thing waits for the render thread: the frame that carries a
-screenshot (same frame captured as before, read just after). The depth under
+screenshot (same frame captured as before, read just after). A photo is
+such a frame (`Capture::Snapshot`): the render thread gives its targets the
+photo's size for that frame alone, draws into an offscreen texture that is
+not presented, reads it back and restores the window's targets
+(`Backend::begin_snapshot` / `end_snapshot`). Beyond the card's largest
+texture or the memory budget, the photo is drawn in tiles, each with an
+off-centre projection, and stitched on the main thread. The depth under
 a click no longer waits for it (`Renderer::request_pick`): the request
 leaves in the packet of the next frame, the render thread copies the texel
 before encoding that frame — the depth and the camera are still those of the
