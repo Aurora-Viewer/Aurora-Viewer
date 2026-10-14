@@ -65,6 +65,7 @@ pub mod report_abuse;
 pub mod scripts;
 pub mod search;
 pub mod shape;
+pub mod sheet;
 pub mod skin;
 pub mod sky_beacons;
 pub mod snap;
