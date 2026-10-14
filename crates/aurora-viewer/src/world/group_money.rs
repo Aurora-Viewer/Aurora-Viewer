@@ -256,7 +256,13 @@ mod tests {
             totals: None,
             parcels: vec![parcel("Workshop")],
         });
-        let names: Vec<String> = m.get(&G).and_then(|g| g.parcels.clone()).unwrap_or_default().into_iter().map(|p| p.name).collect();
+        let names: Vec<String> = m
+            .get(&G)
+            .and_then(|g| g.parcels.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
         assert_eq!(names, ["Sandbox", "Workshop"]);
     }
 
@@ -321,7 +327,10 @@ mod tests {
         });
         let page = m.get(&G).and_then(|g| g.page(Ledger::Planning)).expect("page");
         assert_eq!(page.start_date, "2026-10-06");
-        assert!(matches!(page.body, Some(AccountBody::Summary(AccountSummary { balance: 1250, .. }))));
+        assert!(matches!(
+            page.body,
+            Some(AccountBody::Summary(AccountSummary { balance: 1250, .. }))
+        ));
         // another page's request id finds nothing
         m.on_account(&AccountReply {
             request: Uuid::from_u128(99),

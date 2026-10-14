@@ -533,7 +533,10 @@ fn the_land_tab_shows_the_totals_the_parcels_and_this_week() {
     assert_eq!(loads, 1, "asked once when the tab shows");
     answer_land(&mut world, &actions);
     let (texts, actions) = self::texts(&mut st, &world, false);
-    assert!(!actions.iter().any(|a| matches!(a, GroupAction::LoadLand { .. })), "not again while it shows");
+    assert!(
+        !actions.iter().any(|a| matches!(a, GroupAction::LoadLand { .. })),
+        "not again while it shows"
+    );
     let area = |n: i64| aurora_i18n::tr!("ui-group-profile-area", area = aurora_i18n::integer(n));
     for want in [
         area(4608),

@@ -131,14 +131,28 @@ fn stats(
     let value = |f: fn(&LandTotals) -> i32| totals.map_or_else(|| "…".to_owned(), |t| area(f(&t)));
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = GAP;
-        tile(ui, p, w, |ui| figure(ui, p, &value(|t| t.in_use), p.ink, aurora_i18n::tr!("ui-group-land-in-use")));
+        tile(ui, p, w, |ui| {
+            figure(ui, p, &value(|t| t.in_use), p.ink, aurora_i18n::tr!("ui-group-land-in-use"))
+        });
         let short = totals.is_some_and(|t| t.available() < 0);
         tile(ui, p, w, |ui| {
             let color = if short { p.danger } else { p.ink };
-            figure(ui, p, &value(LandTotals::available), color, aurora_i18n::tr!("ui-group-land-available"));
+            figure(
+                ui,
+                p,
+                &value(LandTotals::available),
+                color,
+                aurora_i18n::tr!("ui-group-land-available"),
+            );
         });
         tile(ui, p, w, |ui| {
-            figure(ui, p, &value(|t| t.contributed), p.ink, aurora_i18n::tr!("ui-group-land-contributed"));
+            figure(
+                ui,
+                p,
+                &value(|t| t.contributed),
+                p.ink,
+                aurora_i18n::tr!("ui-group-land-contributed"),
+            );
         });
         tile(ui, p, w, |ui| {
             ui.label(
@@ -264,7 +278,13 @@ fn parcels(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, data: Option
     .into_iter()
     .enumerate()
     {
-        head_label(ui, p, label, Rect::from_min_size(Pos2::new(x, head.top()), Vec2::new(widths[i], head.height())), false);
+        head_label(
+            ui,
+            p,
+            label,
+            Rect::from_min_size(Pos2::new(x, head.top()), Vec2::new(widths[i], head.height())),
+            false,
+        );
         x += widths[i];
     }
     let area_cell = Rect::from_min_size(Pos2::new(x, head.top()), Vec2::new(AREA_W, head.height()));
@@ -350,7 +370,9 @@ fn parcels(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, data: Option
             p.muted,
         );
         x += widths[2];
-        let galley = ui.painter().layout_no_wrap(parcel_area(parcel), FontId::proportional(12.5), p.muted);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(parcel_area(parcel), FontId::proportional(12.5), p.muted);
         let pos = Pos2::new(x + AREA_W - 8.0 - galley.size().x, mid - galley.size().y / 2.0);
         ui.painter().galley(pos.round(), galley, p.muted);
         // "Map" at the end of the row
@@ -533,7 +555,14 @@ fn summary(ui: &mut egui::Ui, p: &Palette, s: &AccountSummary, this_week: bool) 
     if this_week {
         kv(ui, p, aurora_i18n::tr!("ui-group-land-balance"), &lindens(s.balance), p.ink, false);
     }
-    kv(ui, p, aurora_i18n::tr!("ui-group-land-credits"), &lindens(s.total_credits), p.ink, false);
+    kv(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-group-land-credits"),
+        &lindens(s.total_credits),
+        p.ink,
+        false,
+    );
     kv(
         ui,
         p,
@@ -543,7 +572,14 @@ fn summary(ui: &mut egui::Ui, p: &Palette, s: &AccountSummary, this_week: bool) 
         false,
     );
     let total = s.total_credits.saturating_add(s.total_debits);
-    kv(ui, p, aurora_i18n::tr!("ui-group-land-total"), &lindens(total), amount_color(p, total), true);
+    kv(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-group-land-total"),
+        &lindens(total),
+        amount_color(p, total),
+        true,
+    );
     if this_week && let Some((y, m, d)) = aurora_net::group_money::parse_date(&s.next_stipend) {
         ui.label(
             egui::RichText::new(aurora_i18n::tr!("ui-group-land-next-stipend", date = day_month(y, m, d)))
@@ -562,10 +598,21 @@ fn details(ui: &mut egui::Ui, p: &Palette, lines: &[AccountLine]) {
         kv(ui, p, &l.description, &lindens(l.amount), amount_color(p, l.amount), false);
     }
     if !any {
-        ui.label(egui::RichText::new(aurora_i18n::tr!("ui-group-land-none")).size(12.5).color(p.muted));
+        ui.label(
+            egui::RichText::new(aurora_i18n::tr!("ui-group-land-none"))
+                .size(12.5)
+                .color(p.muted),
+        );
     }
     let total: i32 = lines.iter().map(|l| l.amount).fold(0, i32::saturating_add);
-    kv(ui, p, aurora_i18n::tr!("ui-group-land-total"), &lindens(total), amount_color(p, total), true);
+    kv(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-group-land-total"),
+        &lindens(total),
+        amount_color(p, total),
+        true,
+    );
 }
 
 /// The verb of a sale (GroupMoneyBought, GroupMoneyPaidYou…).
@@ -586,7 +633,11 @@ fn verb(kind: i32) -> &'static str {
 fn sales(ui: &mut egui::Ui, p: &Palette, list: &[Transaction]) {
     let shown: Vec<&Transaction> = list.iter().filter(|t| t.amount != 0).collect();
     if list.is_empty() {
-        ui.label(egui::RichText::new(aurora_i18n::tr!("ui-group-land-none")).size(12.5).color(p.muted));
+        ui.label(
+            egui::RichText::new(aurora_i18n::tr!("ui-group-land-none"))
+                .size(12.5)
+                .color(p.muted),
+        );
         return;
     }
     const TIME_W: f32 = 128.0;

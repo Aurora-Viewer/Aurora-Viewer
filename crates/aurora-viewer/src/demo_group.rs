@@ -235,7 +235,14 @@ fn spec(group: &Uuid) -> Option<Spec> {
             Scenario::Officer => (officer_title, false),
             _ => (builder_title, false),
         };
-        members.push(member(DEMO_AGENT, my_title, LastSeen::Online, my_powers(), my_owner, MY_CONTRIBUTION));
+        members.push(member(
+            DEMO_AGENT,
+            my_title,
+            LastSeen::Online,
+            my_powers(),
+            my_owner,
+            MY_CONTRIBUTION,
+        ));
         pairs.push((BUILDERS, DEMO_AGENT));
         match scenario() {
             Scenario::Owner => pairs.extend([(OWNERS, DEMO_AGENT), (OFFICERS, DEMO_AGENT)]),

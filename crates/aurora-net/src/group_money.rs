@@ -402,7 +402,11 @@ mod tests {
         let mut m = msgs::PlacesReply::default();
         m.agent_data.query_id = g;
         m.transaction_data.transaction_id = Uuid::from_u128(9);
-        m.query_data = vec![block(0, "", 5120, 0), block(7, "Sandbox", 4096, 4096), block(7, "Workshop", 512, 512)];
+        m.query_data = vec![
+            block(0, "", 5120, 0),
+            block(7, "Sandbox", 4096, 4096),
+            block(7, "Workshop", 512, 512),
+        ];
         let (_, r) = places_reply(&m);
         assert_eq!((r.group, r.transaction), (g, Uuid::from_u128(9)));
         assert_eq!(
@@ -476,9 +480,15 @@ mod tests {
         let AccountMessage::Summary(m) = account_message(Uuid::from_u128(1), Uuid::from_u128(2), &r) else {
             panic!("a summary request");
         };
-        assert_eq!((m.agent_data.group_id, m.money_data.request_id), (Uuid::from_u128(7), Uuid::from_u128(3)));
+        assert_eq!(
+            (m.agent_data.group_id, m.money_data.request_id),
+            (Uuid::from_u128(7), Uuid::from_u128(3))
+        );
         assert_eq!((m.money_data.interval_days, m.money_data.current_interval), (7, 0));
-        let r = AccountRequest { ledger: Ledger::Sales, ..r };
+        let r = AccountRequest {
+            ledger: Ledger::Sales,
+            ..r
+        };
         let AccountMessage::Sales(m) = account_message(Uuid::from_u128(1), Uuid::from_u128(2), &r) else {
             panic!("a transactions request");
         };

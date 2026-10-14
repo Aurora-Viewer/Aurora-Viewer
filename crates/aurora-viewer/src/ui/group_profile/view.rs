@@ -640,7 +640,13 @@ fn tab_button(
 fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) {
     // LLPanelGroupNotices / LLPanelGroupLandMoney::isVisibleByAgent: the
     // tabs a guest does not see are greyed with the reason
-    let members_only = |visible: bool| if visible { Ok(()) } else { Err(aurora_i18n::tr!("ui-group-profile-members-only")) };
+    let members_only = |visible: bool| {
+        if visible {
+            Ok(())
+        } else {
+            Err(aurora_i18n::tr!("ui-group-profile-members-only"))
+        }
+    };
     ui.add_space(12.0);
     ui.horizontal(|ui| {
         ui.add_space(4.0);
