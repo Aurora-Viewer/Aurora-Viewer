@@ -5,6 +5,7 @@ mod completion;
 mod find;
 mod header;
 pub mod history;
+mod invite_card;
 mod view;
 
 use super::context::CtxAction;
@@ -99,7 +100,7 @@ fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
         ChatKind::Own => p.violet_pale,
         ChatKind::Local(_) => p.ink,
         ChatKind::Object(_) | ChatKind::ObjectIm => p.teal.gamma_multiply(0.85),
-        ChatKind::System => p.muted,
+        ChatKind::System | ChatKind::Invite(_) => p.muted,
         ChatKind::Im => p.violet_light,
     }
 }
@@ -263,7 +264,7 @@ fn line_job(
     };
     // (before the name, after it, body)
     let (before, after, body) = match line.kind {
-        ChatKind::System => ("", "", &line.text[..]),
+        ChatKind::System | ChatKind::Invite(_) => ("", "", &line.text[..]),
         _ if emote => ("", "", &line.text[3..]),
         ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
         ChatKind::Local(ChatType::Shout) => ("", aurora_i18n::tr!("status-shouts"), &line.text[..]),
@@ -271,7 +272,7 @@ fn line_job(
         _ => ("", ": ", &line.text[..]),
     };
     let mut sender = None;
-    if line.kind != ChatKind::System {
+    if !line.kind.is_notice() {
         job.append(before, 0.0, name_fmt.clone());
         let who = match line.kind {
             ChatKind::Object(_) | ChatKind::ObjectIm => Some(Sender::Object),
@@ -772,6 +773,10 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     if let Some((year, month, day)) = look.marker {
         date_marker(ui, p, year, month, day);
+    }
+    if let ChatKind::Invite(invite) = line.kind {
+        invite_card::draw_line(ui, env, line, invite);
+        return;
     }
     if line.kind == ChatKind::System {
         chat_text_marked(

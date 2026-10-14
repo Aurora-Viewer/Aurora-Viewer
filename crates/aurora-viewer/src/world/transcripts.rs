@@ -260,6 +260,19 @@ impl World {
         self.chat_log.append(&stem, line.time, &from, &text);
     }
 
+    /// A card in a conversation (a teleport invitation): kept in memory and
+    /// counted as unread, like LLHandlerUtil::addNotifPanelToIM, but never
+    /// written to the transcript (its text is logged by itself).
+    pub(super) fn conversation_card(&mut self, session: Uuid, line: ChatLine) {
+        self.session_lines(session);
+        self.ensure_transcript(session);
+        let s = self.session_lines(session);
+        s.lines.push_back(line);
+        s.clock.pushed_back();
+        s.unread += 1;
+        trim(&mut s.lines, &mut s.clock);
+    }
+
     /// A line enters the nearby chat (same bound).
     pub(super) fn nearby_push(&mut self, line: ChatLine) {
         self.log_nearby(&line);

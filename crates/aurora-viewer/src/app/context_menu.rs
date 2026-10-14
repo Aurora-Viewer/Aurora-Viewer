@@ -393,6 +393,14 @@ impl App {
                 self.settings.set_render_exception(id, mode);
                 self.settings.save();
             }
+            CtxAction::AnswerTeleport { invite, accept } => {
+                for c in self.world.answer_teleport_invite(invite, accept) {
+                    if matches!(c, NetCommand::AcceptLure { .. }) {
+                        self.begin_teleport(String::new(), false);
+                    }
+                    self.send(c);
+                }
+            }
             CtxAction::OfferTeleport(id) => self.contacts_ui.ask_teleport_offer(vec![id], &self.world.region_name()),
             CtxAction::OpenPeople(tab) => {
                 self.panels.people = true;

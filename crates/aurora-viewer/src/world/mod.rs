@@ -80,6 +80,17 @@ pub enum ChatKind {
     /// Instant message sent by an object (llInstantMessage).
     ObjectIm,
     Own,
+    /// The card of a teleport offer or request (`teleport_invites.rs`),
+    /// by its invitation: never written to the transcript.
+    Invite(u64),
+}
+
+impl ChatKind {
+    /// A notice of the viewer rather than someone's message: it stands
+    /// apart from the groups of messages.
+    pub fn is_notice(self) -> bool {
+        matches!(self, ChatKind::System | ChatKind::Invite(_))
+    }
 }
 
 /// Where a line comes from: said during this session, or read back.
