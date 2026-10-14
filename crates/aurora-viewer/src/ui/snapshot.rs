@@ -36,6 +36,8 @@ pub struct SnapshotUi {
     pub destination: Destination,
     /// The caption of a profile post (not kept, like Firestorm's editor).
     pub caption: String,
+    /// The quick light, for the photo only (never saved).
+    pub light: crate::snapshot::light::PhotoLight,
 }
 
 /// Where a photo goes (Firestorm's snapshot panels; the profile feed
@@ -88,6 +90,8 @@ pub struct View<'a> {
     pub profile: Option<ProfileView>,
     /// The message tells of a post to the profile feed ("View").
     pub profile_posted: bool,
+    /// Preferences' exposure, under the photo's own.
+    pub exposure: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +112,8 @@ pub enum Action {
     ShowItem,
     /// Open our profile (its feed shows the post).
     ShowProfile,
+    /// Open the personal lighting window.
+    PersonalLighting,
     /// The upload's price was confirmed (true) or not.
     Confirm(bool),
     /// The "cannot afford" message was closed.
@@ -183,6 +189,7 @@ impl SnapshotUi {
         }
 
         let before = s.clone();
+        let light_before = self.light;
         // the settings scroll between the preview and the shutter, which
         // stay in sight on a short screen
         let room = (ui.ctx().content_rect().height() - 470.0).max(150.0);
@@ -194,6 +201,9 @@ impl SnapshotUi {
         self.actions(ui, p, view, out);
 
         changed(s, &before, out);
+        if self.light != light_before && !out.contains(&Action::Changed) {
+            out.push(Action::Changed);
+        }
     }
 
     /// The shutter (or the destination's button), the progress or the last
@@ -494,6 +504,9 @@ impl SnapshotUi {
         section(ui, p, "focus-centered", aurora_i18n::tr!("photo-section-dof"));
         dof_rows(ui, p, &mut s.dof);
 
+        section(ui, p, "sun-filled", aurora_i18n::tr!("photo-section-light"));
+        light_rows(ui, p, &mut self.light, view.exposure, out);
+
         ui.add_space(2.0);
         widgets::collapsing(ui, p, "photo_file", aurora_i18n::tr!("photo-section-file"), false, |ui| {
             row(ui, p, aurora_i18n::tr!("photo-base-name"), None, |ui| {
@@ -784,6 +797,73 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
             });
         }
     });
+}
+
+/// The window's quick light (Phototools' Quick Environments, Pause Clouds,
+/// Attached Lights and Exposure), for the photo only: the window gives the
+/// user's own back when it closes.
+fn light_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::PhotoLight, exposure: f32, out: &mut Vec<Action>) {
+    use crate::snapshot::light::EXPOSURE;
+    ui.label(RichText::new(aurora_i18n::tr!("photo-light-time")).color(p.ink));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+        let times = [
+            (None, aurora_i18n::tr!("photo-light-time-current")),
+            (Some(1), aurora_i18n::tr!("ui-environment-sunrise")),
+            (Some(2), aurora_i18n::tr!("common-midday")),
+            (Some(3), aurora_i18n::tr!("ui-environment-lie-down")),
+            (Some(4), aurora_i18n::tr!("common-midnight")),
+        ];
+        for (time, label) in times {
+            if chip(ui, p, label, None, l.time == time, true).clicked() {
+                l.time = time;
+            }
+        }
+    });
+    row(ui, p, aurora_i18n::tr!("photo-light-exposure"), None, |ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            // (the value and the reset button after it)
+            ui.spacing_mut().slider_width = (ui.available_width() - 130.0).max(40.0);
+            let mut value = l.exposure.unwrap_or(exposure);
+            let slider = egui::Slider::new(&mut value, EXPOSURE)
+                .logarithmic(true)
+                .fixed_decimals(2)
+                .custom_parser(aurora_i18n::parse_number);
+            if ui.add(slider).changed() {
+                l.exposure = Some(value);
+            }
+            if widgets::icon_button(
+                ui,
+                p,
+                "restore",
+                aurora_i18n::tr!("photo-light-exposure-reset"),
+                l.exposure.is_some(),
+            ) {
+                l.exposure = None;
+            }
+        });
+    });
+    row(
+        ui,
+        p,
+        aurora_i18n::tr!("photo-light-pause-clouds"),
+        Some(aurora_i18n::tr!("photo-light-pause-clouds-hint")),
+        |ui| {
+            widgets::switch(ui, p, &mut l.clouds_paused);
+        },
+    );
+    row(
+        ui,
+        p,
+        aurora_i18n::tr!("photo-light-attached"),
+        Some(aurora_i18n::tr!("photo-light-attached-hint")),
+        |ui| {
+            widgets::switch(ui, p, &mut l.attached_lights);
+        },
+    );
+    if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting")).clicked() {
+        out.push(Action::PersonalLighting);
+    }
 }
 
 /// The full-frame strip's depth of field: its switch and the aperture.
