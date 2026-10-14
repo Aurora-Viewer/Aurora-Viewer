@@ -57,6 +57,8 @@ pub struct OptionsUi {
     pub chat_log_status: String,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
+    /// The page opens scrolled to its end (`AURORA_DEMO_OPTIONS=<n>:end`).
+    pub scroll_to_end: bool,
 }
 
 impl OptionsUi {
@@ -624,7 +626,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                     ui.add_space(6.0);
                     scroll_height -= 34.0;
                 }
-                let mut scroll = egui::ScrollArea::vertical();
+                let mut scroll = egui::ScrollArea::vertical().stick_to_bottom(st.scroll_to_end);
                 if st.tab == 8 {
                     let search = shortcut_search(ui, p, st);
                     scroll_height -= search.response.rect.height() + ui.spacing().item_spacing.y;

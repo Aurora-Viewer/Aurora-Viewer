@@ -1407,7 +1407,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   page head with "All in Firestorm version" / "All in Aurora version", then
   the Appearance, Gaze and Avatar plates groups; each choice changes its
   element at once (conversations, name tags, look-at targets with
-  `AURORA_DEMO_LOOKAT=own`, gaze under the cursor).
+  `AURORA_DEMO_LOOKAT=own`, gaze under the cursor). `<section>:end` (other
+  than `8`) opens the page scrolled to its end, for example `13:end` for the
+  Avatar plates group.
   With `AURORA_DEMO_LOGIN` (for example `empty` or `cards`) the preferences
   open over the login screen, as its top right cogwheel does: every page
   works before login, and Chat › Conversation logs says that the folder

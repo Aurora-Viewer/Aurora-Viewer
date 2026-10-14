@@ -8065,6 +8065,8 @@ impl ApplicationHandler for App {
                 self.options_ui.tab = tab.parse().unwrap_or(0);
                 if self.options_ui.tab == 8 {
                     self.options_ui.shortcut_filter = filter.to_owned();
+                } else {
+                    self.options_ui.scroll_to_end = filter == "end";
                 }
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_LOGIN") {
