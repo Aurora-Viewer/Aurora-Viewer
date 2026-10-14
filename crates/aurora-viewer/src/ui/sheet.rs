@@ -760,20 +760,26 @@ pub fn sections_with<S: Copy + PartialEq>(
     body: impl FnMut(&mut egui::Ui, S),
 ) {
     if compact {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
-            for sec in list {
-                if nav(ui, *sec, state.current == *sec).clicked() {
-                    state.go(*sec);
+        ui.vertical(|ui| {
+            // the mockup's 10 px between the row and the column, exactly
+            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                // a long row is cut at the column's sides, never in height
+                let (mut clip, max) = (ui.clip_rect(), ui.max_rect());
+                clip.min.x = clip.min.x.max(max.min.x);
+                clip.max.x = clip.max.x.min(max.max.x);
+                ui.set_clip_rect(clip);
+                for sec in list {
+                    if nav(ui, *sec, state.current == *sec).clicked() {
+                        state.go(*sec);
+                    }
                 }
-            }
-            tail(ui);
+                tail(ui);
+            });
+            ui.add_space(10.0);
+            section_column(ui, p, id, list, state, body);
         });
-        // the mockup's 10 px between the row and the column
-        let spacing = ui.spacing().item_spacing.y;
-        ui.add_space((10.0 - 2.0 * spacing).max(0.0));
-        section_column(ui, p, id, list, state, body);
         return;
     }
     let height = ui.available_height();

@@ -77,10 +77,13 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
             aurora_i18n::tr!("region-ask-bake"),
         ),
     };
+    // the main button says what happens, as the mockup's confirmations do
     let (main, main_kind) = match ask {
-        Ask::LindenEstate => (ok, ActionKind::Danger),
+        Ask::LindenEstate => (aurora_i18n::tr!("region-ask-linden-ok"), ActionKind::Danger),
+        Ask::ObjectBonus { .. } => (aurora_i18n::tr!("region-ask-bonus-ok"), ActionKind::Primary),
+        Ask::TextureHeights => (aurora_i18n::tr!("region-ask-heights-ok"), ActionKind::Primary),
         Ask::Bake => (aurora_i18n::tr!("region-ask-bake-ok"), ActionKind::Primary),
-        _ => (ok, ActionKind::Primary),
+        Ask::AccessOverride | Ask::MaturityChanged => (ok, ActionKind::Primary),
     };
     // a notice has its OK only
     let notice = matches!(ask, Ask::AccessOverride | Ask::MaturityChanged);
@@ -94,7 +97,13 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
     buttons.push((button(main, main_kind), Choice::Ok));
     let mut answer = None;
     let modal = widgets::Modal::new(egui::Id::new("region_estate_ask")).show(ctx, |ui| {
-        ui.set_width(380.0);
+        // wider when its buttons, all of the widest one's width, need it
+        let widest = buttons
+            .iter()
+            .map(|(b, _)| widgets::action_button_fit(ui, b.icon, b.label))
+            .fold(0.0_f32, f32::max);
+        let count = buttons.len() as f32;
+        ui.set_width(380.0_f32.max(count * widest + (count - 1.0) * ui.spacing().item_spacing.x));
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let tint = if danger { p.danger } else { p.violet_light };

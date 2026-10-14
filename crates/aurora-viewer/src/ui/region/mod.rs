@@ -262,7 +262,8 @@ impl RegionUi {
                 Page::Manage => {
                     // compact, the header keeps only the region's name
                     overview::header(ui, p, self, &view, world, &pics, compact, compact);
-                    ui.add_space(12.0);
+                    // the mockup's 12 px under the header, item spacing included
+                    ui.add_space((12.0 - ui.spacing().item_spacing.y).max(0.0));
                     manage::demo(self, &view, world);
                     manage::show(ui, p, self, &view, world, images, compact);
                 }
