@@ -602,6 +602,10 @@ No real L$ and no connection to a grid.
   inject a simulated playback state before the click; `open-media` simulates
   the opening of the external browser.
 - `zoom` frames the cube.
+- `tp-door`: the Touch cube answers like a club's teleport door scripted with
+  `llMapDestination` (ScriptTeleportRequest): the world map opens centred on
+  a tracked spot of the plaza region, at 118 m; nothing teleports until the
+  map's Teleport button. `tp-door-ready` stops before the click.
 - `buy-confirm`, `pay-confirm`: confirm the simulated transaction.
 - `linked-touch`, `linked-sit`: hollow root with Touch and child seat with
   Sit, overlapping bounding boxes; checks the prim actually aimed at.

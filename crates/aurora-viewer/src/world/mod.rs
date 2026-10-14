@@ -1671,6 +1671,23 @@ impl World {
                 );
                 None
             }
+            NetEvent::ScriptTeleportRequest {
+                object_name,
+                region,
+                position,
+                flags,
+            } => {
+                log::info!("llMapDestination from {object_name:?}: {region} {position:.0?}, flags {flags:#x}");
+                // the app opens the map (LLFloaterWorldMap::openFloater)
+                self.map
+                    .map_destination(&region, position, flags)
+                    .then_some(NetEvent::ScriptTeleportRequest {
+                        object_name,
+                        region,
+                        position,
+                        flags,
+                    })
+            }
             NetEvent::Names(list) => {
                 for (id, first, last) in list {
                     self.social.avatar_names.on_legacy(id, &first, &last);

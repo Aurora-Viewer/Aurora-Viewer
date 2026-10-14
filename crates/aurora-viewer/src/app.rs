@@ -1404,6 +1404,11 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if let NetEvent::ScriptTeleportRequest { .. } = ev {
+            // llMapDestination asked for the map (BEACON_SHOW_MAP)
+            self.panels.world_map = true;
+            return;
+        }
         if let NetEvent::UploadCost(cost) = ev {
             self.world.upload_cost = Some(cost);
             return;
