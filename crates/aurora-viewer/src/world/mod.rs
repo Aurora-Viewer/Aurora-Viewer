@@ -10,6 +10,7 @@ pub mod eep_env;
 pub mod env;
 pub mod env_select;
 pub mod experiences;
+pub mod group_data;
 pub mod groups;
 pub mod hover_height;
 pub mod hud_scale;
@@ -304,6 +305,9 @@ pub struct World {
     pub place_details: place_details::PlaceDetails,
     /// "Search": result lists and details of the directory search.
     pub search: search::Search,
+    /// Members, roles, titles and notices of the groups whose profile is
+    /// open (LLGroupMgr).
+    pub group_data: group_data::GroupMgr,
     arrived_once: bool,
     /// The instant messages kept while offline were asked for (once per
     /// login).
@@ -426,6 +430,7 @@ impl World {
             map: worldmap::WorldMap::default(),
             place_details: Default::default(),
             search: Default::default(),
+            group_data: Default::default(),
             notifications: notifications::Notifications::default(),
             teleport_invites: teleport_invites::TeleportInvites::default(),
             maturity: maturity::MaturityPreference::default(),
@@ -1967,6 +1972,25 @@ impl World {
             }
             NetEvent::EventInfo(e) => {
                 self.search.events.insert(e.id, *e);
+                None
+            }
+            ev @ (NetEvent::GroupMembers(_)
+            | NetEvent::GroupRoles(_)
+            | NetEvent::GroupRoleMembers(_)
+            | NetEvent::GroupTitles { .. }
+            | NetEvent::GroupNotices { .. }) => {
+                self.group_data.on_event(&ev);
+                None
+            }
+            // LLGroupMgr::processJoinGroupReply / processLeaveGroupReply: the
+            // group list again, the group's data forgotten, its profile
+            // asked again
+            NetEvent::GroupJoined { group, success } | NetEvent::GroupLeft { group, success } => {
+                if success {
+                    self.groups.out.push(aurora_net::NetCommand::RequestGroups);
+                    self.group_data.clear(&group);
+                    self.search.request_group(group);
+                }
                 None
             }
             NetEvent::GroupProfile(g) => {

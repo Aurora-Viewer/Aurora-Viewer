@@ -58,6 +58,10 @@ mod offline_net;
 /// Directory search: queries, replies, event and group details (search.rs).
 #[path = "session_search.rs"]
 mod search_net;
+
+/// The members, roles, titles and notices of a group (groups.rs).
+#[path = "session_groups.rs"]
+mod groups_net;
 use crate::build::BUILD_PARCEL_SEQ;
 
 const SIM_TIMEOUT: Duration = Duration::from_secs(60);
@@ -1066,7 +1070,12 @@ impl Session<'_> {
     // -------------------------------------------------------------- commands
 
     fn on_command(&mut self, c: NetCommand) {
-        if self.on_object_action_command(&c) || self.on_social_command(&c) || self.on_offline_command(&c) || self.on_search_command(&c) {
+        if self.on_object_action_command(&c)
+            || self.on_social_command(&c)
+            || self.on_offline_command(&c)
+            || self.on_search_command(&c)
+            || self.on_groups_command(&c)
+        {
             return;
         }
         match c {
@@ -2058,6 +2067,15 @@ impl Session<'_> {
             | NetCommand::RequestOfflineMessagesLegacy
             | NetCommand::AnswerOfflineFriendship { .. }
             | NetCommand::AnswerOfflineGroupInvite { .. } => {}
+            // handled by on_groups_command
+            NetCommand::GroupMembersRequest { .. }
+            | NetCommand::GroupRoleDataRequest { .. }
+            | NetCommand::GroupRoleMembersRequest { .. }
+            | NetCommand::GroupTitlesRequest { .. }
+            | NetCommand::GroupTitleUpdate { .. }
+            | NetCommand::GroupNoticesListRequest(_)
+            | NetCommand::JoinGroup(_)
+            | NetCommand::InviteToGroup { .. } => {}
             // handled by on_search_command
             NetCommand::DirQuery { .. }
             | NetCommand::EventInfoRequest(_)
@@ -2823,6 +2841,7 @@ impl Session<'_> {
             || self.dispatch_social(from, pkt)?
             || self.dispatch_land(from, pkt)?
             || self.dispatch_search(from, pkt)?
+            || self.dispatch_groups(pkt)?
             || self.dispatch_build(pkt)?
         {
             return Ok(());

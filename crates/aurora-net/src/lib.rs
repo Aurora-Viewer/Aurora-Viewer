@@ -8,6 +8,7 @@ pub mod circuit;
 pub mod currency;
 pub mod experience;
 pub mod fetch;
+pub mod groups;
 pub mod inventory;
 pub mod land;
 pub mod login;

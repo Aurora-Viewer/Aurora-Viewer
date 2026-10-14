@@ -4054,6 +4054,7 @@ impl App {
         wanted.extend(self.contacts_ui.wanted_pics.drain());
         wanted.extend(self.plates.wanted_pics.drain());
         wanted.extend(self.search_ui.wanted_pics.drain());
+        wanted.extend(self.group_profile_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
         for agent in wanted {
@@ -6846,6 +6847,36 @@ impl App {
         }
     }
 
+    /// What the group profile window asked (LLGroupActions).
+    fn apply_group_actions(&mut self, ctx: &egui::Context, actions: Vec<ui::group_profile::GroupAction>) {
+        use ui::group_profile::GroupAction;
+        let mut search = Vec::new();
+        for a in actions {
+            match a {
+                GroupAction::Search(a) => search.push(a),
+                GroupAction::Load { group, member } => self.world.group_data.open(group, member),
+                GroupAction::Refresh { group, member } => {
+                    self.send(NetCommand::GroupProfileRequest(group));
+                    self.world.group_data.refresh(group, member);
+                }
+                GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
+                GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
+                GroupAction::SetTitle { group, role } => self.world.group_data.set_title(group, role),
+                GroupAction::SetFlags {
+                    group,
+                    accept_notices,
+                    list_in_profile,
+                } => self.world.groups.set_flags(group, accept_notices, list_in_profile),
+                GroupAction::ShowInPeople(name) => {
+                    self.panels.people = true;
+                    self.panels.people_tab = 2;
+                    self.people_ui.filter = name;
+                }
+            }
+        }
+        self.apply_search_actions(ctx, search);
+    }
+
     /// toggleTeleportHistory (llviewermenu.cpp) without the standalone
     /// history floater: hide Places when shown, else open it on the history.
     fn toggle_teleport_history(&mut self) {
@@ -8097,10 +8128,15 @@ impl App {
                     .show(&ctx, &mut c, &self.avatar_pics, &mut self.settings.search, &search_web, &mut open);
                 // the profile of a group, whose name was clicked anywhere
                 // (LLGroupActions::show)
-                let group_acts = self.group_profile_ui.show(&ctx, &mut c);
+                let group_env = ui::group_profile::Env {
+                    avatar_pics: &self.avatar_pics,
+                    classic: self.settings.classic_profiles,
+                    now: ctx.input(|i| i.time),
+                };
+                let group_acts = self.group_profile_ui.show(&ctx, &mut c, &group_env);
                 self.panels.search = open;
                 self.apply_search_actions(&ctx, search_acts);
-                self.apply_search_actions(&ctx, group_acts);
+                self.apply_group_actions(&ctx, group_acts);
                 if let Some(id) = ui::group_profile::take_open_request(&ctx) {
                     self.group_profile_ui.open(&mut self.world, id);
                 }
@@ -8824,10 +8860,14 @@ impl ApplicationHandler for App {
                 self.panels.about_land = true;
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_GROUP_PROFILE=1: the profile of the demo parcel's
-            // group, as after a click on its name
+            // AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest: the
+            // profile of the demo parcel's group, as after a click on its
+            // name (a guest's: a group we are not in)
             if std::env::var_os("AURORA_DEMO_GROUP_PROFILE").is_some() {
-                self.group_profile_ui.open(&mut self.world, crate::demo::DEMO_GROUP1);
+                self.group_profile_ui.open(&mut self.world, crate::demo::group::shown_group());
+                if let Some(member) = crate::demo::group::members_tab() {
+                    self.group_profile_ui.show_member(member);
+                }
                 self.panels.perf = false;
             }
             // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add: the
