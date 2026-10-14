@@ -53,6 +53,9 @@ pub enum BarAction {
     TeleportHistory,
     /// The balance, or Me › Buy L$ (LLStatusBar::onClickBuyCurrency).
     BuyCurrency,
+    /// Me › Double-click on the ground (Firestorm's "DoubleClick Teleport"
+    /// of its movement menu, Advanced.SetDoubleClickAction).
+    SetDoubleClick(crate::autopilot::DoubleClick),
 }
 
 pub struct StatusInfo<'a> {
@@ -84,6 +87,8 @@ pub struct StatusInfo<'a> {
     pub parcel_icons: Vec<super::parcel_icons::ParcelIcon>,
     /// A local environment is shown (selector, preset, personal lighting).
     pub local_env: bool,
+    /// What a double click on the ground does (Me › Double-click on the ground).
+    pub double_click: crate::autopilot::DoubleClick,
 }
 
 pub fn maturity_name(sim_access: u8) -> &'static str {
@@ -387,6 +392,22 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item(ui, p, "plane-tilt-filled", fly) {
             *action = BarAction::ToggleFly;
         }
+        // Firestorm keeps its double-click teleport beside its movement
+        // entries (Avatar › Movement): the four choices of the preference
+        menu::submenu(
+            ui,
+            p,
+            "hand-click",
+            aurora_i18n::tr!("ui-options-double-click-ground"),
+            true,
+            |ui| {
+                for choice in crate::autopilot::DoubleClick::ALL {
+                    if menu::check(ui, p, choice.icon(), choice.label(), st.double_click == choice, true) {
+                        *action = BarAction::SetDoubleClick(choice);
+                    }
+                }
+            },
+        );
         menu::separator(ui, p);
         if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-preferences")) {
             super::widgets::open_floater(ui.ctx(), "options", &mut panels.settings);
@@ -524,6 +545,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         if menu::item(ui, p, "camera-filled", aurora_i18n::tr!("ui-bars-reset-camera-esc")) {
             *action = BarAction::ResetCamera;
+        }
+        if menu::item_keys(ui, p, "photo-filled", aurora_i18n::tr!("photo-title"), "Ctrl+Shift+S") {
+            super::widgets::toggle_floater(ui.ctx(), super::snapshot::WINDOW, &mut panels.snapshot);
         }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
@@ -1037,6 +1061,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "places" => toggle("places", &mut panels.places),
         "search" => toggle(super::search::WINDOW, &mut panels.search),
         "performance" => toggle("perf", &mut panels.perf),
+        "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
         "preferences" => toggle("options", &mut panels.settings),
         "fly" => return BarAction::ToggleFly,
         "mouselook" => return BarAction::ToggleMouselook,
@@ -1059,6 +1084,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "places" => panels.places,
         "search" => panels.search,
         "performance" => panels.perf,
+        "snapshot" => panels.snapshot,
         "preferences" => panels.settings,
         "fly" => flying,
         "sit" => seated,

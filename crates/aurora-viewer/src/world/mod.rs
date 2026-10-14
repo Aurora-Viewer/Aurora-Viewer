@@ -9,6 +9,7 @@ pub mod eep;
 pub mod eep_env;
 pub mod env;
 pub mod env_select;
+pub mod experiences;
 pub mod groups;
 pub mod hover_height;
 pub mod hud_scale;
@@ -273,6 +274,8 @@ pub struct World {
     /// The content rating chosen during the session and its sync with the
     /// server.
     pub maturity: maturity::MaturityPreference,
+    /// Experiences: details, questions waiting for them, permissions.
+    pub experiences: experiences::Experiences,
     /// Teleport history (navigation bar back / forward).
     pub tp_history: tphistory::TeleportHistory,
     /// Dated history of the Places window (teleport_history.txt).
@@ -422,6 +425,7 @@ impl World {
             notifications: notifications::Notifications::default(),
             teleport_invites: teleport_invites::TeleportInvites::default(),
             maturity: maturity::MaturityPreference::default(),
+            experiences: experiences::Experiences::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
             offline_im_requested: false,
@@ -1593,7 +1597,11 @@ impl World {
             NetEvent::ScriptDialog {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
-            NetEvent::ScriptQuestion { task_id, object_name, .. } if self.object_blocked(&task_id, &object_name) => None,
+            // process_script_question drops only the questions of a blocked
+            // object (LLMuteList::isMuted(taskid)): not those of a blocked
+            // owner, nor on any other condition (no click needed, object out
+            // of view or unknown, another region, Do Not Disturb)
+            NetEvent::ScriptQuestion { task_id, .. } if self.mutes.is_muted_id(&task_id) => None,
             NetEvent::LoadUrl {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
@@ -1637,26 +1645,57 @@ impl World {
                 object_name,
                 owner_name,
                 questions,
+                experience,
+                region,
             } => {
-                // process_script_question
-                self.ui_sounds.push(UiSound::ScriptFloaterOpen);
-                let lines = notifications::permission_lines(questions);
-                let body = aurora_i18n::tr!(
-                    "extra-object-owned-by-requests-permission-to",
-                    object_name = object_name.to_string(),
-                    owner_name = owner_name.to_string(),
-                    value0 = lines.join("\n• ").to_string()
-                );
-                self.notifications.push(
-                    notifications::Kind::Permissions,
-                    aurora_i18n::tr!("world-mod-requested-permissions"),
-                    body,
-                    notifications::Data::Permissions {
+                // process_script_question: an experience's question waits
+                // for the experience's details (LLExperienceCache::get), a
+                // caution permission keeps the ordinary dialog
+                if !experience.is_nil() && !experiences::caution(questions) {
+                    let question = experiences::ExperienceQuestion {
                         task: task_id,
                         item: item_id,
+                        object_name,
+                        owner_name,
                         questions,
-                    },
-                );
+                        experience,
+                        region,
+                    };
+                    if let Some(ready) = self.experiences.question(question) {
+                        self.push_experience_question(ready);
+                    }
+                } else {
+                    self.ui_sounds.push(UiSound::ScriptFloaterOpen);
+                    let lines = notifications::permission_lines(questions);
+                    let body = aurora_i18n::tr!(
+                        "extra-object-owned-by-requests-permission-to",
+                        object_name = object_name.to_string(),
+                        owner_name = owner_name.to_string(),
+                        value0 = lines.join("\n• ").to_string()
+                    );
+                    self.notifications.push(
+                        notifications::Kind::Permissions,
+                        aurora_i18n::tr!("world-mod-requested-permissions"),
+                        body,
+                        notifications::Data::Permissions {
+                            task: task_id,
+                            item: item_id,
+                            questions,
+                            region,
+                            experience: None,
+                        },
+                    );
+                }
+                None
+            }
+            NetEvent::ExperienceInfo(list) => {
+                for question in self.experiences.arrived(list) {
+                    self.push_experience_question(question);
+                }
+                None
+            }
+            NetEvent::ExperiencePermission { experience, result, .. } => {
+                self.experiences.permission(experience, result);
                 None
             }
             NetEvent::LoadUrl {
@@ -2330,8 +2369,98 @@ impl World {
             .unwrap_or(inv.root)
     }
 
+    /// ScriptQuestionExperience (process_script_experience_details): the
+    /// experience's question once its details are known, grid-wide or not.
+    fn push_experience_question(&mut self, q: experiences::ExperienceQuestion) {
+        let details = self.experiences.details.get(&q.experience);
+        let name = details
+            .map(|d| d.name.clone())
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| q.experience.to_string());
+        let scope = if details.is_some_and(|d| d.grid_wide()) {
+            aurora_i18n::tr!("world-experiences-grid-scope")
+        } else {
+            aurora_i18n::tr!("world-experiences-land-scope")
+        };
+        let lines = notifications::permission_lines(q.questions);
+        // LLCacheName::cleanFullName: the owner without " Resident"
+        let owner = q.owner_name.strip_suffix(" Resident").unwrap_or(&q.owner_name);
+        let body = aurora_i18n::tr!(
+            "world-experiences-question",
+            object_name = q.object_name.clone(),
+            owner_name = owner.to_owned(),
+            scope = scope.to_owned(),
+            experience = name.clone(),
+            questions = lines.join("\n• ")
+        );
+        self.notifications.push(
+            notifications::Kind::Permissions,
+            aurora_i18n::tr!("world-experiences-question-title", name = name.clone()),
+            body,
+            notifications::Data::Permissions {
+                task: q.task,
+                item: q.item,
+                questions: q.questions,
+                region: q.region,
+                experience: Some(notifications::ExperiencePrompt {
+                    id: q.experience,
+                    name,
+                    object_name: q.object_name,
+                }),
+            },
+        );
+        // UISndQuestionExperience is Firestorm's own; the script sound is Aurora's
+        self.ui_sounds.push(UiSound::ScriptFloaterOpen);
+    }
+
     /// Answer a notification: messages to send and a URL to open.
     pub fn respond_notification(&mut self, id: u64, r: notifications::Response) -> (Vec<aurora_net::NetCommand>, Option<String>) {
+        let data = self.notifications.list.iter().find(|n| n.id == id).map(|n| n.data.clone());
+        // the experience's profile opens over its question, which stays
+        if let notifications::Response::OpenExperience(experience) = r {
+            self.experiences.open_profile(experience);
+            return (Vec::new(), None);
+        }
+        // script_question_cb: "Block object" (Mute) and "Block experience"
+        // refuse the question first, then block
+        if let Some(notifications::Data::Permissions { task, experience, .. }) = &data
+            && matches!(r, notifications::Response::Block | notifications::Response::BlockExperience)
+        {
+            let (out, _) = self
+                .notifications
+                .respond(id, notifications::Response::Decline, |_| Uuid::nil(), Uuid::nil());
+            match (&r, experience) {
+                (notifications::Response::Block, Some(prompt)) => {
+                    if let Err(error) = self.block(*task, &prompt.object_name, mutes::MuteType::Object) {
+                        self.system_message(error);
+                    }
+                    // script_question_mute: the object's other questions go too
+                    let blocked = *task;
+                    self.notifications
+                        .list
+                        .retain(|n| !matches!(&n.data, notifications::Data::Permissions { task, .. } if *task == blocked));
+                }
+                (notifications::Response::BlockExperience, Some(prompt)) => {
+                    self.experiences
+                        .change(prompt.id, aurora_net::experience::ExperiencePermissionChange::Block);
+                }
+                _ => {}
+            }
+            return (out, None);
+        }
+        // script_question_cb: accepting an experience's question allows it
+        // (the "experience_permission" event the profile listens to)
+        if let (
+            notifications::Response::Accept,
+            Some(notifications::Data::Permissions {
+                experience: Some(prompt), ..
+            }),
+        ) = (&r, &data)
+        {
+            self.experiences
+                .permissions
+                .insert(prompt.id, aurora_net::experience::ExperiencePermission::Allowed);
+        }
         if matches!(r, notifications::Response::Block) {
             if let Some(notifications::Data::Dialog {
                 object,
@@ -3547,6 +3676,158 @@ mod motion_tests {
             }]
         ));
         assert!(world.take_inventory_edits().is_empty());
+    }
+
+    /// An experience's question: from region 77, for teleport.
+    fn experience_question(experience: Uuid, questions: i32) -> NetEvent {
+        NetEvent::ScriptQuestion {
+            task_id: Uuid::from_u128(0x7A5C),
+            item_id: Uuid::from_u128(0x17E),
+            object_name: "Club door".into(),
+            owner_name: "Door Maker Resident".into(),
+            questions,
+            experience,
+            region: 77,
+        }
+    }
+
+    #[test]
+    fn an_experience_question_waits_for_its_details_and_is_answered_to_its_region() {
+        let (mut world, _, _) = fixture();
+        let xp = Uuid::from_u128(0xE0E0);
+        let count = world.notifications.list.len();
+        world.apply(experience_question(xp, 1 << 12));
+        // nothing shown before the details: LLExperienceCache::get first
+        assert_eq!(world.notifications.list.len(), count);
+        assert!(matches!(&world.experiences.take_commands()[..], [aurora_net::NetCommand::ExperienceInfo(ids)] if ids == &vec![xp]));
+        world.apply(NetEvent::ExperienceInfo(vec![aurora_net::experience::ExperienceDetails {
+            id: xp,
+            name: "Club Teleport".into(),
+            properties: aurora_net::experience::PROPERTY_GRID,
+            ..Default::default()
+        }]));
+        let n = world.notifications.list.last().expect("question shown");
+        assert!(n.body.contains("Club Teleport") && n.body.contains("Club door"));
+        assert!(n.body.contains("Door Maker") && !n.body.contains("Resident"));
+        assert!(n.body.contains(aurora_i18n::tr!("world-experiences-grid-scope")));
+        assert!(matches!(&n.data, notifications::Data::Permissions { experience: Some(p), .. } if p.id == xp));
+        let id = n.id;
+        // the profile link keeps the question
+        assert!(
+            world
+                .respond_notification(id, notifications::Response::OpenExperience(xp))
+                .0
+                .is_empty()
+        );
+        assert_eq!(world.experiences.profile, Some(xp));
+        assert!(world.notifications.list.iter().any(|n| n.id == id));
+        let (cmds, _) = world.respond_notification(id, notifications::Response::Accept);
+        assert!(matches!(
+            &cmds[..],
+            [aurora_net::NetCommand::ScriptAnswer {
+                questions: 4096,
+                region: 77,
+                ..
+            }]
+        ));
+        assert_eq!(
+            world.experiences.permissions.get(&xp),
+            Some(&aurora_net::experience::ExperiencePermission::Allowed)
+        );
+    }
+
+    #[test]
+    fn blocking_an_experience_or_its_object_refuses_the_question() {
+        let (mut world, _, _) = fixture();
+        let xp = Uuid::from_u128(0xE1E1);
+        world.apply(NetEvent::ExperienceInfo(vec![aurora_net::experience::ExperienceDetails::unknown(
+            xp,
+        )]));
+        world.experiences.take_commands();
+        world.apply(experience_question(xp, 1 << 12));
+        let n = world.notifications.list.last().expect("question");
+        // unknown details: still asked, land-scope, named by its id
+        assert!(n.body.contains(&xp.to_string()) && n.body.contains(aurora_i18n::tr!("world-experiences-land-scope")));
+        let (cmds, _) = world.respond_notification(n.id, notifications::Response::BlockExperience);
+        assert!(matches!(
+            &cmds[..],
+            [aurora_net::NetCommand::ScriptAnswer {
+                questions: 0,
+                region: 77,
+                ..
+            }]
+        ));
+        assert!(world.experiences.take_commands().iter().any(|c| matches!(
+            c,
+            aurora_net::NetCommand::ExperiencePermission {
+                experience,
+                change: aurora_net::experience::ExperiencePermissionChange::Block
+            } if *experience == xp
+        )));
+        // Block object: refused, the object blocked, its next question dropped
+        world.apply(experience_question(xp, 1 << 12));
+        let id = world.notifications.list.last().unwrap().id;
+        let (cmds, _) = world.respond_notification(id, notifications::Response::Block);
+        assert!(matches!(&cmds[..], [aurora_net::NetCommand::ScriptAnswer { questions: 0, .. }]));
+        assert!(world.mutes.is_muted_id(&Uuid::from_u128(0x7A5C)));
+        let count = world.notifications.list.len();
+        world.apply(experience_question(xp, 1 << 12));
+        assert_eq!(world.notifications.list.len(), count);
+    }
+
+    #[test]
+    fn a_question_shows_without_a_click_from_an_unknown_object_of_another_region() {
+        let (mut world, _, _) = fixture();
+        let xp = Uuid::from_u128(0xE3E3);
+        // nothing selected, the object never seen, a neighbouring region:
+        // a collision, a sensor or the parcel's arrival script asks
+        world.apply(NetEvent::ScriptQuestion {
+            task_id: Uuid::from_u128(0x5EE),
+            item_id: Uuid::from_u128(0x5EF),
+            object_name: "Greeter".into(),
+            owner_name: "Land Owner".into(),
+            questions: 1 << 18,
+            experience: xp,
+            region: 0xABCD,
+        });
+        world.apply(NetEvent::ExperienceInfo(vec![aurora_net::experience::ExperienceDetails::unknown(
+            xp,
+        )]));
+        let n = world.notifications.list.last().expect("shown");
+        assert!(matches!(
+            &n.data,
+            notifications::Data::Permissions {
+                region: 0xABCD,
+                experience: Some(_),
+                ..
+            }
+        ));
+        let (cmds, _) = world.respond_notification(n.id, notifications::Response::Accept);
+        assert!(matches!(&cmds[..], [aurora_net::NetCommand::ScriptAnswer { region: 0xABCD, .. }]));
+    }
+
+    #[test]
+    fn a_caution_permission_keeps_the_ordinary_question_and_a_plain_one_has_no_experience() {
+        let (mut world, _, _) = fixture();
+        world.apply(experience_question(Uuid::from_u128(0xE2E2), 1 << 1 | 1 << 12));
+        assert!(matches!(
+            world.notifications.list.last().map(|n| &n.data),
+            Some(notifications::Data::Permissions {
+                experience: None,
+                region: 77,
+                ..
+            })
+        ));
+        assert!(world.experiences.take_commands().is_empty());
+        world.apply(experience_question(Uuid::nil(), 1 << 4));
+        assert!(matches!(
+            world.notifications.list.last().map(|n| &n.data),
+            Some(notifications::Data::Permissions {
+                experience: None,
+                questions: 16,
+                ..
+            })
+        ));
     }
 
     #[test]

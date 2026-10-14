@@ -127,7 +127,7 @@ pub fn nav_entry(ui: &mut egui::Ui, p: &Palette, label: &str, icon: &str, select
 
 /// Head of the page: the aurora over the night sky, the title, what the
 /// page is for, and the two buttons that set every look at once.
-fn hero(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+fn hero(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) -> bool {
     const PAD: f32 = 16.0;
     const BUTTON_H: f32 = 26.0;
     let width = ui.available_width();
@@ -209,6 +209,8 @@ fn hero(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
         ActionKind::Flat,
         size,
     );
+    // "Reset this section…" of the other pages, its icon alone here
+    *reset |= super::reset_section_button(&mut buttons, p, super::TAB_AURORA, true);
     if aurora.clicked() {
         set_all(s, Look::Aurora);
         changed = true;
@@ -284,8 +286,9 @@ fn look_choice(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, au
     })
 }
 
-pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
-    let mut c = hero(ui, p, s);
+/// `reset`: "Reset this section…" was clicked in the page's head.
+pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) -> bool {
+    let mut c = hero(ui, p, s, reset);
     ui.add_space(14.0);
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-appearance"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -432,7 +435,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                page(ui, &p, settings);
+                page(ui, &p, settings, &mut false);
             },
         );
         output.textures_delta.clear();

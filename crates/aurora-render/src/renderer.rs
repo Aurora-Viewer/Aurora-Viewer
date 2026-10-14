@@ -1094,6 +1094,22 @@ struct FrameGroups {
     refl: [wgpu::BindGroup; 7],
 }
 
+/// What a frame draws into: the swapchain image, presented, or a photo's
+/// own texture (`Capture::Snapshot`), read back and dropped.
+enum FrameTarget {
+    Surface(wgpu::SurfaceTexture),
+    Offscreen(wgpu::Texture),
+}
+
+impl FrameTarget {
+    fn texture(&self) -> &wgpu::Texture {
+        match self {
+            FrameTarget::Surface(t) => &t.texture,
+            FrameTarget::Offscreen(t) => t,
+        }
+    }
+}
+
 /// The passes of a frame and all they own. Lives on the render thread, or
 /// in the `Renderer` itself with AURORA_RENDER_THREAD=0.
 pub(crate) struct Backend {
@@ -1101,6 +1117,9 @@ pub(crate) struct Backend {
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    /// The window's size while a photo frame draws at its own size in
+    /// `config` (`Capture::Snapshot`); put back by `result`.
+    snapshot_window: Option<(u32, u32)>,
     surface_srgb: bool,
     egui: egui_wgpu::Renderer,
     ui_blur: Option<crate::ui_blur::Blur>,
@@ -2192,6 +2211,7 @@ impl Backend {
             queue,
             surface,
             config,
+            snapshot_window: None,
             surface_srgb,
             egui,
             ui_blur: None,
@@ -3591,6 +3611,7 @@ impl Backend {
     /// What a frame gives back: its statistics, the readbacks that have
     /// arrived, the packet's buffers.
     fn result(&mut self, index: u64, stats: RenderStats, captured: Option<(u32, u32, Vec<u8>)>, spent: Spent) -> FrameResult {
+        let snapshot = self.end_snapshot();
         FrameResult {
             index,
             stats,
@@ -3599,8 +3620,40 @@ impl Backend {
             drawn: self.drawn_pick.take_answers(),
             cull: self.cull.last,
             captured,
+            snapshot,
             spent,
         }
+    }
+
+    /// A photo frame draws every pass at the photo's size: the render size
+    /// (`config`, which every pass reads) takes it for this frame, the
+    /// swapchain keeps the window's (it is not reconfigured).
+    fn begin_snapshot(&mut self, s: SnapshotSpec) {
+        self.snapshot_window = Some((self.config.width, self.config.height));
+        self.config.width = s.width;
+        self.config.height = s.height;
+        self.rebuild_targets();
+    }
+
+    /// Back to the window's size after a photo frame, however it ended.
+    /// True when the frame was one.
+    fn end_snapshot(&mut self) -> bool {
+        let Some((w, h)) = self.snapshot_window.take() else {
+            return false;
+        };
+        // the video memory at the photo's peak (its targets still alive)
+        let live = self.device.get_internal_counters().hal;
+        log::info!(
+            "snapshot {} x {}: {} MB of textures, {} MB of buffers at its peak",
+            self.config.width,
+            self.config.height,
+            live.texture_memory.read().max(0) >> 20,
+            live.buffer_memory.read().max(0) >> 20
+        );
+        self.config.width = w;
+        self.config.height = h;
+        self.rebuild_targets();
+        true
     }
 
     /// End of a frame that cannot be drawn (no swapchain image, or its
@@ -3666,7 +3719,14 @@ impl Backend {
         if settings != self.settings {
             self.apply_settings(settings);
         }
-        if let Some((x, y)) = hover {
+        let snapshot = match wanted {
+            Some(Capture::Snapshot(s)) if s.width > 0 && s.height > 0 => Some(s),
+            _ => None,
+        };
+        if let Some(s) = snapshot {
+            self.begin_snapshot(s);
+        } else if let Some((x, y)) = hover {
+            // (window pixels: a photo frame has none of them)
             self.depth_pick.hover(x, y);
         }
 
@@ -3682,6 +3742,16 @@ impl Backend {
             }
             // applied: egui's debug builds refuse to drop a delta that is not
             ui.textures_delta.clear();
+        }
+        // a photo has the interface or not; with it, the window's interface
+        // scaled to the photo's height (laid out in points, it keeps its
+        // place when the photo has the window's proportions)
+        if let Some(s) = snapshot {
+            if !s.interface {
+                egui_frame = None;
+            } else if let (Some(ui), Some((_, window_h))) = (&mut egui_frame, self.snapshot_window) {
+                ui.pixels_per_point *= s.height as f32 / window_h.max(1) as f32;
+            }
         }
         // what the scene wrote for this frame, in the order it was recorded,
         // before the frame's own uniforms; then its streamed copies, first
@@ -3705,13 +3775,31 @@ impl Backend {
             );
         }
         let t_acquire = Instant::now();
-        let surface_tex = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(t),
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
-                None
+        let surface_tex = if snapshot.is_some() {
+            // a photo is drawn offscreen at its size, never presented
+            Some(FrameTarget::Offscreen(self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("snapshot"),
+                size: wgpu::Extent3d {
+                    width: self.config.width,
+                    height: self.config.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.config.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })))
+        } else {
+            match self.surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(FrameTarget::Surface(t)),
+                wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                    self.surface.configure(&self.device, &self.config);
+                    None
+                }
+                _ => None,
             }
-            _ => None,
         };
         let Some(surface_tex) = surface_tex else {
             let spent = Spent { writes, lists: draw_lists };
@@ -3729,7 +3817,7 @@ impl Backend {
         }
         prof.mark("tessellate");
         let (f, lists) = (&params, &draw_lists);
-        let present_view = surface_tex.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let present_view = surface_tex.texture().create_view(&wgpu::TextureViewDescriptor::default());
         // what the interface painted for the world comes first: it is drawn
         // before the HUD attachments, the rest after them
         let labels_end = ui.as_mut().map_or(0, |ui| crate::ui_world::take_end(&mut ui.primitives));
@@ -3847,7 +3935,12 @@ impl Backend {
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
-        let drawn_px = self.drawn_pick.begin((self.config.width, self.config.height), main_vp.inverse());
+        // (asked in window pixels: a photo frame answers none of them)
+        let drawn_px = if snapshot.is_none() {
+            self.drawn_pick.begin((self.config.width, self.config.height), main_vp.inverse())
+        } else {
+            None
+        };
         if let Some((x, y)) = drawn_px {
             let narrow = crate::drawn_pick::narrow(x, y, self.config.width, self.config.height);
             let mut u = main;
@@ -5182,7 +5275,7 @@ impl Backend {
             self.glow.encode(&mut encoder, post_bg);
         }
 
-        let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some();
+        let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some() && snapshot.is_none_or(|s| s.huds);
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
@@ -5246,8 +5339,8 @@ impl Backend {
         // scene only (no interface): copied before egui draws on top
         let mut capture = None;
         if wanted == Some(Capture::Scene) {
-            let source = self.ui_blur.as_ref().map_or(&surface_tex.texture, |blur| &blur.source);
-            capture = self.encode_capture(&mut encoder, source);
+            let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
+            capture = self.encode_capture(&mut encoder, source, false);
         }
 
         prof.mark("post");
@@ -5286,7 +5379,7 @@ impl Backend {
             }
             match (label_glass, &mut self.ui_glass) {
                 (Some(area), Some(glass)) => {
-                    let scene = self.ui_blur.as_ref().map_or(&surface_tex.texture, |blur| &blur.source);
+                    let scene = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
                     let texture = glass.encode_under(&self.device, &mut self.egui, &mut encoder, scene, area);
                     glass.resolve(labels, scale, texture);
                 }
@@ -5434,7 +5527,7 @@ impl Backend {
         // ---- egui: the rest of the interface, over the HUD attachments
         if let Some(ui) = &mut ui {
             if window_glass && let Some(glass) = &self.ui_glass {
-                let scene = self.ui_blur.as_ref().map_or(&surface_tex.texture, |blur| &blur.source);
+                let scene = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
                 glass.encode(&mut encoder, scene);
             }
             if let (Some(boundary), Some(blur)) = (blur_boundary, &self.ui_blur) {
@@ -5454,7 +5547,9 @@ impl Backend {
 
         prof.mark("egui");
         if wanted == Some(Capture::Full) {
-            capture = self.encode_capture(&mut encoder, &surface_tex.texture);
+            capture = self.encode_capture(&mut encoder, surface_tex.texture(), false);
+        } else if snapshot.is_some() {
+            capture = self.encode_capture(&mut encoder, surface_tex.texture(), true);
         }
         // finish() validates, tracks and encodes every command of its
         // encoder: the three run at once (wgpu-core only takes a shared
@@ -5516,8 +5611,10 @@ impl Backend {
         self.drawn_pick.after_submit();
         prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
-        self.queue.present(surface_tex);
-        stats.presented = true;
+        if let FrameTarget::Surface(t) = surface_tex {
+            self.queue.present(t);
+            stats.presented = true;
+        }
         let _ = self.device.poll(wgpu::PollType::Poll);
         // a click answered by now goes back with this frame's result
         self.depth_pick.harvest_clicks();
@@ -5564,8 +5661,15 @@ impl Backend {
     }
 
     /// Copy the swapchain image to a readback buffer (frame captures).
-    fn encode_capture(&self, encoder: &mut wgpu::CommandEncoder, texture: &wgpu::Texture) -> Option<(wgpu::Buffer, u32, u32, u32)> {
-        if !self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
+    /// `offscreen`: a texture of the renderer's own (a photo), always
+    /// copyable, unlike the swapchain.
+    fn encode_capture(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        texture: &wgpu::Texture,
+        offscreen: bool,
+    ) -> Option<(wgpu::Buffer, u32, u32, u32)> {
+        if !offscreen && !self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
             return None;
         }
         let w = self.config.width;

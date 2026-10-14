@@ -413,33 +413,31 @@ impl Session<'_> {
         });
     }
 
-    /// LLExperienceCache::requestExperiences: GetExperienceInfo with
-    /// public_id parameters.
+    /// LLExperienceCache::requestExperiences: GetExperienceInfo's `id/`
+    /// resource with public_id parameters (crate::experience::info_urls).
     fn request_experience_info(&mut self, ids: Vec<Uuid>) {
         let Some(base) = self.main_cap("GetExperienceInfo") else {
             return;
         };
-        let mut url = format!("{base}?page_size={}", ids.len().max(1));
-        for id in &ids {
-            url.push_str(&format!("&public_id={id}"));
-        }
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            match http.get(&url).header("Accept", "application/llsd+xml").send().await {
-                Ok(r) if r.status().is_success() => {
-                    if let Some(v) = r.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok()) {
-                        let list = v["experience_keys"]
-                            .as_array()
-                            .iter()
-                            .map(|e| (e["public_id"].as_uuid(), e["name"].to_string_value()))
-                            .filter(|(id, _)| !id.is_nil())
-                            .collect();
-                        let _ = events.send(NetEvent::Land(LandEvent::ExperienceInfo(list)));
+            for (url, _) in crate::experience::info_urls(&base, &ids) {
+                match http.get(&url).header("Accept", "application/llsd+xml").send().await {
+                    Ok(r) if r.status().is_success() => {
+                        if let Some(v) = r.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok()) {
+                            let list = v["experience_keys"]
+                                .as_array()
+                                .iter()
+                                .map(|e| (e["public_id"].as_uuid(), e["name"].to_string_value()))
+                                .filter(|(id, _)| !id.is_nil())
+                                .collect();
+                            let _ = events.send(NetEvent::Land(LandEvent::ExperienceInfo(list)));
+                        }
                     }
+                    Ok(r) => log::warn!("GetExperienceInfo: HTTP {}", r.status().as_u16()),
+                    Err(e) => log::warn!("GetExperienceInfo failed: {e}"),
                 }
-                Ok(r) => log::warn!("GetExperienceInfo: HTTP {}", r.status().as_u16()),
-                Err(e) => log::warn!("GetExperienceInfo failed: {e}"),
             }
         });
     }

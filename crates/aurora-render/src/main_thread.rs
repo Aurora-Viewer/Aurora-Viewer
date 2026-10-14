@@ -163,6 +163,12 @@ pub struct Renderer {
     pub capture_scene: bool,
     /// Last captured frame (width, height, RGBA8).
     pub captured: Option<(u32, u32, Vec<u8>)>,
+    /// A photo for the next frame: it is drawn offscreen at its own size
+    /// (see `frame_size`), waited for, and its image put in `snapshot`.
+    pub snapshot_request: Option<crate::SnapshotSpec>,
+    /// The answer to the last photo: its image (width, height, RGBA8), or
+    /// None when it could not be drawn.
+    pub snapshot: Option<Option<(u32, u32, Vec<u8>)>>,
 }
 
 impl Renderer {
@@ -365,6 +371,8 @@ impl Renderer {
             capture_request: false,
             capture_scene: false,
             captured: None,
+            snapshot_request: None,
+            snapshot: None,
         })
     }
 
@@ -492,6 +500,18 @@ impl Renderer {
 
     pub fn size(&self) -> (u32, u32) {
         self.size
+    }
+
+    /// The size the next frame is drawn at: the photo's when one is asked
+    /// (its projection, levels of detail and HUD are laid out for it), the
+    /// window's otherwise.
+    pub fn frame_size(&self) -> (u32, u32) {
+        self.snapshot_request.map_or(self.size, |s| (s.width, s.height))
+    }
+
+    /// The largest side a photo can be drawn at in one pass.
+    pub fn max_texture_dimension(&self) -> u32 {
+        self.device.limits().max_texture_dimension_2d
     }
 
     /// The window was resized: the swapchain and the render targets follow
@@ -642,7 +662,10 @@ impl Renderer {
             self.drawn_answers.drain(..self.drawn_answers.len() - KEPT);
         }
         self.cull.last = r.cull;
-        if let Some(c) = r.captured {
+        if r.snapshot {
+            self.snapshot_request = None;
+            self.snapshot = Some(r.captured);
+        } else if let Some(c) = r.captured {
             self.captured = Some(c);
             self.capture_request = false;
             self.capture_scene = false;
@@ -710,7 +733,11 @@ impl Renderer {
         let mut spent = self.spare.pop().unwrap_or_default();
         std::mem::swap(&mut self.writes, &mut spent.writes);
         spent.lists.copy_from(lists);
-        let capture = capture_for(self.capture_scene, self.capture_request, self.can_capture);
+        // a photo first: the other captures wait for the next frame
+        let capture = match self.snapshot_request {
+            Some(s) => Some(crate::packet::Capture::Snapshot(s)),
+            None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
+        };
         self.last_inv_vp = (params.proj * params.view).inverse();
         let index = self.frames;
         let packet = FramePacket {

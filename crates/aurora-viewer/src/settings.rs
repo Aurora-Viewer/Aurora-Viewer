@@ -2,7 +2,7 @@
 //! Passwords are never stored.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// How the Conversations window draws its lines: as a messenger, in bubbles
 /// (the default), or in the lines of Firestorm's conversations (the legacy
@@ -147,6 +147,8 @@ pub struct Settings {
     pub gestures: crate::ui::gestures::Settings,
     pub imports: crate::imports::Preferences,
     pub ao: crate::ao::Settings,
+    /// Photo window (Firestorm's snapshot floater settings).
+    pub snapshot: crate::snapshot::Settings,
     pub shape_show_hints: bool,
     pub shape_height_feet: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
@@ -276,6 +278,9 @@ pub struct Settings {
     pub chat_style: ChatStyle,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
+    /// What a double click on the ground does (Preferences › Controls, the
+    /// wolf menu › Me): nothing by default, as in Firestorm.
+    pub double_click: crate::autopilot::DoubleClick,
     /// Look-at: what we send of where we look, the crosshairs of where the
     /// avatars look, how our head follows the cursor (Preferences ›
     /// Privacy and Controls).
@@ -378,9 +383,27 @@ pub struct Settings {
     /// (missing in older files: 0).
     #[serde(default)]
     pub settings_version: u32,
+    /// The file as a newer Aurora wrote it, to write it back without losing
+    /// what this build does not know (`tolerant::merge_over_newer`).
+    #[serde(skip)]
+    pub(crate) newer_file: Option<std::sync::Arc<NewerFile>>,
+    /// No settings file existed: the graphics level is chosen for the
+    /// graphics card once it is known (`graphics_presets::for_machine`).
+    #[serde(skip)]
+    pub new_profile: bool,
 }
 
 const SETTINGS_VERSION: u32 = 11;
+
+/// `settings.json` from a newer build: the document, what this build loaded
+/// from it, and the top-level keys to leave as they were unless changed here
+/// (those this build could not read, and the version).
+#[derive(Debug)]
+pub(crate) struct NewerFile {
+    theirs: serde_json::Value,
+    loaded: serde_json::Value,
+    kept: Vec<String>,
+}
 
 /// RGBA color (sRGB, straight alpha).
 pub type Rgba = [u8; 4];
@@ -633,6 +656,7 @@ impl Default for Settings {
             show_appearance: false,
             show_ao: false,
             ao: Default::default(),
+            snapshot: Default::default(),
             loading_backdrop: true,
             mouse_sensitivity: 1.0,
             window_width: 1600,
@@ -664,6 +688,7 @@ impl Default for Settings {
             chat_style: ChatStyle::Bubbles,
             invert_mouse: false,
             arrows_strafe: false,
+            double_click: crate::autopilot::DoubleClick::Nothing,
             lookat: Default::default(),
             former_look_at: None,
             former_look_at_range: None,
@@ -706,6 +731,8 @@ impl Default for Settings {
             keybinds: Default::default(),
             legacy_hud_drag_key: None,
             settings_version: SETTINGS_VERSION,
+            newer_file: None,
+            new_profile: false,
         }
     }
 }
@@ -856,12 +883,23 @@ impl Settings {
     }
 
     pub fn load() -> Settings {
+        Self::load_from(&Self::path())
+    }
+
+    fn load_from(path: &Path) -> Settings {
         // what the file says of the window: nothing on a first launch
         let mut saved_window = (None, false);
-        let mut s = std::fs::read(Self::path())
-            .ok()
+        let mut newer = None;
+        let file = std::fs::read(path).ok();
+        let new_profile = file.is_none();
+        let mut s = file
             .and_then(|b| {
-                let value: serde_json::Value = serde_json::from_slice(&b).ok()?;
+                let Ok(value) = serde_json::from_slice::<serde_json::Value>(&b) else {
+                    // rewritten with the defaults at the next save: keep it
+                    log::warn!("settings.json is not readable JSON, defaults used");
+                    crate::tolerant::backup(path);
+                    return None;
+                };
                 saved_window = saved_window_state(&value);
                 // Select before serde fills missing fields: default auto-replies
                 // must use the saved locale too, without replacing custom text.
@@ -869,12 +907,54 @@ impl Settings {
                     value["language"].as_str().unwrap_or("default"),
                     crate::cli::get().language.as_deref(),
                 );
-                serde_json::from_value::<Settings>(value).ok()
+                let (s, from_newer) = Self::read_document(value, path)?;
+                newer = from_newer;
+                Some(s)
             })
             .unwrap_or_default();
         let forced = std::env::var_os("AURORA_CAPTURE").is_some();
         s.window_maximized = window_starts_maximized(saved_window.0, saved_window.1, forced);
-        s.sanitized()
+        s.new_profile = new_profile;
+        s.finished(newer)
+    }
+
+    /// Reads the parsed file, leaving out only what this build does not
+    /// understand; for a newer build's file, also what to keep of it on save.
+    fn read_document(value: serde_json::Value, path: &Path) -> Option<(Settings, Option<(serde_json::Value, Vec<String>)>)> {
+        let version = value["settings_version"].as_u64().unwrap_or(0);
+        let Some(read) = crate::tolerant::from_value::<Settings>(value.clone(), "settings.json") else {
+            crate::tolerant::backup(path);
+            return None;
+        };
+        let mut newer = None;
+        if version > SETTINGS_VERSION as u64 {
+            // No migration runs backwards: `sanitized` only migrates older
+            // versions, and the newer number is written back.
+            log::info!(
+                "settings.json comes from a newer Aurora (version {version}, this build {SETTINGS_VERSION}): \
+                 read without migration, its unknown values kept on save"
+            );
+            let mut kept: Vec<String> = read.dropped.iter().map(|p| crate::tolerant::top_key(p).to_owned()).collect();
+            kept.push("settings_version".into());
+            kept.sort();
+            kept.dedup();
+            newer = Some((value, kept));
+        }
+        if read.repaired() || newer.is_some() {
+            crate::tolerant::backup(path);
+        }
+        Some((read.value, newer))
+    }
+
+    /// Migrated and bounded, remembering a newer build's file to save over.
+    fn finished(self, newer: Option<(serde_json::Value, Vec<String>)>) -> Settings {
+        let mut s = self.sanitized();
+        if let Some((theirs, kept)) = newer
+            && let Ok(loaded) = serde_json::to_value(&s)
+        {
+            s.newer_file = Some(std::sync::Arc::new(NewerFile { theirs, loaded, kept }));
+        }
+        s
     }
 
     fn sanitized(mut self) -> Settings {
@@ -996,6 +1076,7 @@ impl Settings {
         }
         self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
         self.chat_commands.sanitize();
+        self.snapshot.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.sharpen = if self.sharpen.is_finite() {
             self.sharpen.clamp(0.0, 1.0)
@@ -1036,23 +1117,37 @@ impl Settings {
             window_x: old.window_x,
             window_y: old.window_y,
             window_maximized: old.window_maximized,
+            // a newer build's own values are not this build's to reset
+            newer_file: old.newer_file,
             ..Settings::default()
         };
     }
 
     pub fn save(&self) {
-        let mut copy = self.clone();
-        if !copy.remember_username {
-            copy.username.clear();
-        }
         let dir = config_dir();
         if let Err(e) = std::fs::create_dir_all(&dir) {
             log::warn!("cannot create config dir: {e}");
             return;
         }
-        match serde_json::to_vec_pretty(&copy) {
+        self.save_to(&Self::path());
+    }
+
+    fn save_to(&self, path: &Path) {
+        let mut copy = self.clone();
+        if !copy.remember_username {
+            copy.username.clear();
+        }
+        // Over a newer build's file, write ours over theirs: what this build
+        // does not know, and what it could not read and left unchanged, stay.
+        let bytes = match &copy.newer_file {
+            Some(newer) => serde_json::to_value(&copy)
+                .map(|ours| crate::tolerant::merge_over_newer(&newer.theirs, ours, &newer.loaded, &newer.kept))
+                .and_then(|merged| serde_json::to_vec_pretty(&merged)),
+            None => serde_json::to_vec_pretty(&copy),
+        };
+        match bytes {
             Ok(b) => {
-                if let Err(e) = crate::atomic_file::write(&Self::path(), &b) {
+                if let Err(e) = crate::atomic_file::write(path, &b) {
                     log::warn!("cannot save settings: {e}");
                 }
             }
@@ -1562,5 +1657,106 @@ mod tests {
         let file = serde_json::json!({ "look_at": true, "look_at_range": 64.0 });
         let s = serde_json::from_value::<Settings>(file).expect("read old settings").sanitized();
         assert_eq!(s.lookat, crate::world::lookat::Settings::default());
+    }
+
+    fn scratch_settings_file() -> PathBuf {
+        let dir = unit_test_root()
+            .expect("unit test root")
+            .join("forward-compat")
+            .join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&dir).expect("scratch folder");
+        dir.join("settings.json")
+    }
+
+    fn read_back(path: &Path) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(path).expect("saved settings")).expect("saved JSON")
+    }
+
+    /// The file an older build sees after a newer one: a shortcut, a choice
+    /// and an option it does not know, under a higher version.
+    fn file_from_a_newer_build() -> serde_json::Value {
+        let mut file = serde_json::to_value(Settings {
+            draw_distance: 200.0,
+            username: "Someone Resident".into(),
+            remember_username: true,
+            ..Settings::default()
+        })
+        .expect("synthetic settings");
+        file["settings_version"] = serde_json::json!(SETTINGS_VERSION + 5);
+        file["future_option"] = serde_json::json!({ "x": 1 });
+        file["chat_style"] = serde_json::json!("Cards");
+        file["keybinds"]["map"]
+            .as_array_mut()
+            .expect("shortcut table")
+            .push(serde_json::json!(["FutureAction", [null, null]]));
+        file
+    }
+
+    #[test]
+    fn a_newer_builds_file_keeps_everything_else_and_loses_nothing_on_save() {
+        let path = scratch_settings_file();
+        let file = file_from_a_newer_build();
+        std::fs::write(&path, serde_json::to_vec(&file).expect("serialize")).expect("write");
+        let (s, newer) = Settings::read_document(file, &path).expect("readable settings");
+        let s = s.finished(newer);
+        // only what is not understood falls back to its default
+        assert_eq!(s.draw_distance, 200.0);
+        assert_eq!(s.username, "Someone Resident");
+        assert_eq!(s.chat_style, ChatStyle::Bubbles);
+        assert_eq!(s.keybinds, Settings::default().keybinds);
+        assert!(crate::tolerant::backup_path(&path).exists(), "the newer file is kept aside");
+        // saved unchanged: the newer build finds its own values again
+        s.save_to(&path);
+        let written = read_back(&path);
+        assert_eq!(written["future_option"], serde_json::json!({ "x": 1 }));
+        assert_eq!(written["chat_style"], "Cards");
+        assert_eq!(written["settings_version"], SETTINGS_VERSION + 5);
+        assert!(
+            written["keybinds"]["map"]
+                .as_array()
+                .expect("map")
+                .iter()
+                .any(|e| e[0] == "FutureAction"),
+            "the newer shortcut is still saved"
+        );
+        assert_eq!(written["draw_distance"], 200.0);
+        // what is changed here is written, and the unknown option still stays
+        let mut changed = s.clone();
+        changed.draw_distance = 128.0;
+        changed.chat_style = ChatStyle::Legacy;
+        changed.save_to(&path);
+        let written = read_back(&path);
+        assert_eq!(written["draw_distance"], 128.0);
+        assert_eq!(written["chat_style"], "Legacy");
+        assert_eq!(written["future_option"], serde_json::json!({ "x": 1 }));
+        // read again here: the change stays, the newer values are still kept
+        let (again, newer) = Settings::read_document(written, &path).expect("readable settings");
+        assert_eq!(again.chat_style, ChatStyle::Legacy);
+        assert_eq!(again.draw_distance, 128.0);
+        assert!(newer.is_some());
+    }
+
+    #[test]
+    fn an_unreadable_value_in_a_current_file_costs_only_that_value() {
+        let path = scratch_settings_file();
+        let mut file = serde_json::to_value(Settings {
+            draw_distance: 180.0,
+            ..Settings::default()
+        })
+        .expect("synthetic settings");
+        file["chat_style"] = serde_json::json!(42);
+        file["former_key"] = serde_json::json!(true);
+        std::fs::write(&path, serde_json::to_vec(&file).expect("serialize")).expect("write");
+        let (s, newer) = Settings::read_document(file, &path).expect("readable settings");
+        assert!(newer.is_none(), "same version: nothing to keep on save");
+        let s = s.finished(newer);
+        assert_eq!(s.draw_distance, 180.0);
+        assert_eq!(s.chat_style, ChatStyle::Bubbles);
+        assert!(crate::tolerant::backup_path(&path).exists(), "the damaged file is kept aside");
+        s.save_to(&path);
+        let written = read_back(&path);
+        // a key no build writes any more is not carried forward
+        assert!(written.get("former_key").is_none());
+        assert_eq!(written["settings_version"], SETTINGS_VERSION);
     }
 }

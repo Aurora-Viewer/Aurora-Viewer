@@ -82,6 +82,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
+| `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
 
 The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
@@ -96,6 +97,12 @@ already saved are kept.
 (0 to 4000 m). Used to see what single precision does to the frame at
 height: between 2048 and 4096 m, a position only varies in steps of
 0.24 mm, about one pixel in a close-up.
+
+`AURORA_GRAPHICS_PRESET` writes the quality settings of a level of
+Preferences › Graphics › Presets (`graphics_presets.rs`) at start, as a
+click on it would, and they are saved with the profile; the single
+overrides of the table then still apply on top (`AURORA_AA=3` with a level
+reads as "Custom" in the page).
 
 `AURORA_AA`: 0 none, 1 FXAA, 2 to 4 MSAA 2x / 4x / 8x, 5 TAA, 6 SMAA. Without
 it, the demo keeps the setting saved in its profile: 6 (SMAA) for a new
@@ -128,6 +135,9 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size |
+| `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
+| `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 
 `AURORA_CAPTURE_LAYOUT`: a screenshot otherwise starts from the default
 layout, to be reproducible. With this variable it reloads that of the
@@ -135,6 +145,19 @@ previous session (without ever writing it): this is what is needed to see
 what a saved layout gives in a window of another size (the windows keep
 their edge). A layout is only written by a normal exit, for example
 `AURORA_DEMO_EXIT=quit` without `AURORA_CAPTURE`.
+
+`AURORA_DEMO_SNAPSHOT`: `open` shows the photo window at frame 600;
+`full` the full-frame view, `full-4x5` (or `full-16x9`, `full-9x16`…) with
+those proportions, to see the mask and the guide; `save:<W>x<H>[:png|jpg|bmp][:<folder>]`
+also takes a photo of that size at `AURORA_DEMO_SNAPSHOT_FRAME` and saves
+it (in the photo folder, or `<folder>`). The log gives `photo: <W> x <H>
+drawn in <n> part(s), <ms>`, `snapshot <W> x <H>: <MB> of textures … at its
+peak` (the video memory of the photo frame) and `photo saved: <file> (<KB>,
+written in <ms>)`. Open the file: its framing is the window's (cropped to
+its proportions), without the interface unless asked. With
+`AURORA_DEMO_SNAPSHOT_TILE=2048`, an 8K photo is drawn in 12 tiles: compare
+it with the same photo in one pass, the tiles must not show (the demo's
+particles and animations make a few levels of difference everywhere).
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
@@ -154,6 +177,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_KEY=<arrow>` | Holds an arrow key |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_MMO="x,y[,1\|2]"` | Steering the avatar with the mouse |
+| `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
 | `AURORA_DEMO_POINTER=<points>` | Moves the pointer over the interface |
@@ -240,6 +264,16 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_MMO="x,y[,1|2]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead,
   `2`: double right click (running).
+- **`AURORA_DEMO_DOUBLECLICK=walk|run|tp[,x,y]`**: the double-click action
+  of the session (the saved one is left alone), and a double click of the
+  left button at pixel (x, y) at frames 700 to 703 (ground ahead and to the
+  left of the avatar by default), through the same way in as the mouse.
+  With `AURORA_FPS_LIMIT=60`: capture frame 712 to see the destination
+  mark (a teal dot) and the body turning toward it, 780 for the arrival or
+  the teleport. The log says `demo double click: …` and `demo walk ended
+  (done|cancelled): …`. `menu` opens the wolf menu at frame 540, Me at 560
+  and its "Double-click on the ground" entry at 580 (`menu,y`: another
+  height in points): capture frame 620.
 - **`AURORA_DEMO_RCLICK`**: right click at (x, y) at frame 225, or with
   `tag` on the name plate of the nearest other avatar at frame 600.
 - **`AURORA_DEMO_PIE`**: `1` forces the pie menu, `0` forces the list, only
@@ -1231,6 +1265,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
 | `AURORA_DEMO_MATURITY=agree\|disagree\|fail` | Content rating changed, the server's answer |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
+| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
@@ -1441,7 +1476,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   element at once (conversations, name tags, look-at targets with
   `AURORA_DEMO_LOOKAT=own`, gaze under the cursor). `<section>:end` (other
   than `8`) opens the page scrolled to its end, for example `13:end` for the
-  Avatar plates group.
+  Avatar plates group. `<section>:reset` (other than `8`) opens the "Reset
+  this section" confirmation of that page, for example `0:reset` ("Reset
+  Graphics?"). `0` shows the Presets row at the top of the Graphics page:
+  with `AURORA_GRAPHICS_PRESET` its level is lit, otherwise (the defaults)
+  no segment is and "Custom" follows the row.
   With `AURORA_DEMO_LOGIN` (for example `empty` or `cards`) the preferences
   open over the login screen, as its top right cogwheel does: every page
   works before login, and Chat › Conversation logs says that the folder
@@ -1671,6 +1710,32 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Adult" and the notification list shows "Content rating not changed".
   `fail`: the request fails, the same notice at once. A teleport asked
   meanwhile waits for the answer and is dropped on a failure.
+- **`AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive`**: experiences
+  asking for permissions; the demo plays the simulator, GetExperienceInfo and
+  ExperiencePreferences. In SL a script may ask from any event (a click, a
+  collision, the arrival on the parcel, a timer): the viewer only sees the
+  ScriptQuestion, shown whatever the cause, even for an object out of view.
+  `1`: a violet "Club door" in front of the camera, above the avatar's head
+  (136, 128.5), with the touch cursor. A click asks "Experience: Aurora Club
+  Teleport": the object and its owner, the land-scope experience, "Teleport
+  you", Yes / No / Block object / Block experience, and an "Experience
+  profile" link that keeps the question. Yes teleports up to (150, 140, 60);
+  once allowed, the next clicks teleport without asking. No: the door says
+  it needs the permission. Block experience refuses and blocks: the next
+  clicks only print "you have blocked this experience". The profile (the
+  link) shows the rating, the scope, the location, the owner and the
+  permission, with Allow / Forget / Block; Forget lets the door ask again.
+  `auto` asks at frame 420 without a click (captures), `profile` also opens
+  the profile; `blocked` starts with the experience blocked.
+  `walk`: a translucent teal "Teleport pad" on the floor in front of the
+  avatar (135.5, 126), a phantom volume: walking forward into it (W / up
+  arrow) asks the same question (collision_start), once per entry; Yes
+  teleports.
+  `walk` and `arrive` place no door. `arrive`: the plaza's land-scope
+  experience "Aurora Plaza Welcome" asks at frame 420 from a "Plaza greeter"
+  the viewer has never seen (out of view, no click): "Animate your avatar"
+  and "Change your environment settings"; Yes says "welcome to the plaza" in
+  the chat.
 - **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy|exceeded|exceeded-continue|blocked`**:
   teleports received from Tess Touch (issue #280, parts B1 and B2). Each
   offer and request opens her conversation (unread) with its card and has

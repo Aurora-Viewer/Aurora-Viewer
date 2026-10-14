@@ -319,6 +319,11 @@ pub enum Action {
     ShowTransparency,
     /// "Force appearance update (rebake)" (Firestorm Ctrl+Alt+R).
     Rebake,
+    /// The photo window ("Snapshot", Firestorm Ctrl+Shift+S).
+    PhotoWindow,
+    /// "Snapshot to Disk" (Firestorm Ctrl+`): a photo with the settings of
+    /// the photo window, without it.
+    PhotoToDisk,
 }
 
 /// Held actions follow the key state; the others trigger on press.
@@ -416,6 +421,13 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
             (
                 aurora_i18n::tr!("common-appearance"),
                 vec![(Action::Rebake, aurora_i18n::tr!("ui-context-rebake"))],
+            ),
+            (
+                aurora_i18n::tr!("photo-title"),
+                vec![
+                    (Action::PhotoWindow, aurora_i18n::tr!("keybinds-photo-window")),
+                    (Action::PhotoToDisk, aurora_i18n::tr!("keybinds-photo-to-disk")),
+                ],
             ),
             (
                 aurora_i18n::tr!("keybinds-debug"),
@@ -561,6 +573,8 @@ impl KeyBindings {
                     None,
                 ],
             ),
+            (Action::PhotoWindow, [kmod(K::KeyS, true, true), None]),
+            (Action::PhotoToDisk, [kmod(K::Backquote, true, false), None]),
         ];
         KeyBindings { map: defaults }
     }
