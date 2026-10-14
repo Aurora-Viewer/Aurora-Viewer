@@ -1274,66 +1274,239 @@ fn rasterize_parcels(world: &World, center: (f64, f64), size: usize, tpm: f32, f
     img
 }
 
-/// 3D beacon of the tracked location (LLTracker::renderBeacon): a red
-/// column with its label and distance; tracking stops within 3 m.
-pub fn draw_beacon(ctx: &egui::Context, world: &World, proj: &super::hud::Projector) {
-    let Some(t) = &world.map.track else {
-        return;
-    };
-    let Some((ox, oy)) = world.main_origin() else {
-        return;
-    };
+/// Clickable part of the beacon last drawn, tied to that destination so a
+/// new map selection cannot be dismissed through the previous one's hit box.
+pub struct BeaconHit {
+    pub rect: Rect,
+    label_rect: Rect,
+    target: (f64, f64, f32),
+}
+
+impl BeaconHit {
+    pub fn contains(&self, at: Pos2, track: &crate::world::worldmap::Track) -> bool {
+        !track.pending
+            && !track.invalid
+            && self.target == (track.x, track.y, track.z)
+            && (self.rect.contains(at) || self.label_rect.contains(at))
+    }
+}
+
+/// LLTracker::renderBeacon / drawMarker (indra/newview/lltracker.cpp): a
+/// column and a clickable marker, including a direction arrow off screen.
+/// Aurora adds a contrasted pin and a glass label with a dismissal hint.
+pub fn draw_beacon(ctx: &egui::Context, p: &Palette, world: &World, proj: &super::hud::Projector, hovered: bool) -> Option<BeaconHit> {
+    let t = world.map.track.as_ref().filter(|t| !t.pending && !t.invalid)?;
+    let (ox, oy) = world.main_origin()?;
     let base = Vec3::new((t.x - ox as f64) as f32, (t.y - oy as f64) as f32, t.z);
-    // Firestorm draws the beacon before the HUD attachments
-    // (render_hud_elements, then render_hud_attachments)
     let painter = super::hud::world_painter(ctx);
-    let d = base.distance(world.agent.position);
-    let label = format!(
-        "{} ({:.0} m)",
-        if t.label.is_empty() {
-            aurora_i18n::tr!("ui-minimap-destination")
-        } else {
-            &t.label
-        },
-        d
+    let screen = ctx.content_rect();
+    let inner = screen.shrink2(vec2(40.0, 60.0));
+    let clip = proj.view_proj * base.extend(1.0);
+    let (at, on_screen, direction) = beacon_marker(clip, inner, proj)?;
+    // LLTracker::renderBeacon draws two colours: above the destination and
+    // below it down to altitude zero. Clip each column before perspective
+    // division so a summit or a foot outside the viewport keeps its beam.
+    for (end, color) in [(base + Vec3::Z * 200.0, p.danger), (Vec3::new(base.x, base.y, 0.0), p.violet_light)] {
+        if end != base
+            && let Some([a, b]) = beacon_segment(clip, proj.view_proj * end.extend(1.0), proj)
+        {
+            painter.line_segment([a, b], Stroke::new(16.0, color.gamma_multiply(0.12)));
+            painter.line_segment([a, b], Stroke::new(8.0, color.gamma_multiply(0.25)));
+            painter.line_segment([a, b], Stroke::new(3.0, color));
+            painter.line_segment([a, b], Stroke::new(1.0, p.on_accent.gamma_multiply(0.85)));
+        }
+    }
+    let icon_center = if on_screen { at - vec2(0.0, 19.0) } else { at };
+    let icon_rect = Rect::from_center_size(icon_center, vec2(32.0, 32.0));
+    let icon = if on_screen { "map-pin-filled" } else { "arrow-right" };
+    if let Some(texture) = super::icons::global(icon) {
+        for (size, offset, color) in [
+            (36.0, vec2(0.0, 1.0), p.bar),
+            (32.0, Vec2::ZERO, if hovered { p.on_accent } else { p.danger }),
+        ] {
+            let mut mesh = egui::Mesh::with_texture(texture.id());
+            mesh.add_rect_with_uv(
+                Rect::from_center_size(icon_center + offset, vec2(size, size)),
+                Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+                color,
+            );
+            if !on_screen {
+                mesh.rotate(egui::emath::Rot2::from_angle(direction.angle()), icon_center);
+            }
+            painter.add(mesh);
+        }
+    }
+    let name = if t.label.is_empty() {
+        aurora_i18n::tr!("ui-minimap-destination")
+    } else {
+        &t.label
+    };
+    let distance = aurora_i18n::tr!(
+        "ui-waypoint-distance",
+        distance = aurora_i18n::integer(base.distance(world.agent.position).round() as i64)
     );
-    let col = TRACK_COLOR;
-    match (proj.project(base), proj.project(base + Vec3::Z * 200.0)) {
-        (Some((a, _)), Some((b, _))) => {
-            painter.line_segment([a, b], Stroke::new(4.0, col.gamma_multiply(0.55)));
-            painter.line_segment([a, b], Stroke::new(1.5, col));
-            text_shadow(
-                &painter,
-                a + vec2(0.0, -14.0),
-                egui::Align2::CENTER_BOTTOM,
-                &label,
-                13.0,
-                Color32::WHITE,
-            );
+    let text = if hovered {
+        format!("{name}\n{distance} · {}", aurora_i18n::tr!("ui-waypoint-click-to-remove"))
+    } else {
+        format!("{name}\n{distance}")
+    };
+    let galley = painter.layout(
+        text,
+        egui::FontId::proportional(13.0),
+        p.ink,
+        (screen.width() - 32.0).clamp(80.0, 320.0),
+    );
+    let size = galley.size() + vec2(20.0, 12.0);
+    let center = if on_screen {
+        at - vec2(0.0, 45.0 + size.y * 0.5)
+    } else {
+        at - direction * (32.0 + (size.x * direction.x.abs() + size.y * direction.y.abs()) * 0.5)
+    };
+    let label_rect = Rect::from_center_size(center, size);
+    let label_rect = label_rect.translate(
+        label_rect
+            .min
+            .clamp(screen.min + vec2(8.0, 36.0), screen.max - size - vec2(8.0, 48.0))
+            - label_rect.min,
+    );
+    super::widgets::paint_world_label(&painter, p, label_rect);
+    painter.galley(label_rect.min + vec2(10.0, 6.0), galley, p.ink);
+    Some(BeaconHit {
+        rect: icon_rect.expand(5.0),
+        label_rect,
+        target: (t.x, t.y, t.z),
+    })
+}
+
+fn beacon_screen(c: glam::Vec4, proj: &super::hud::Projector) -> Pos2 {
+    pos2(
+        (c.x / c.w * 0.5 + 0.5) * proj.width / proj.ppp,
+        (0.5 - c.y / c.w * 0.5) * proj.height / proj.ppp,
+    )
+}
+
+/// Homogeneous clipping keeps a partially visible column, including one
+/// that crosses the camera plane, finite and inside the viewport.
+fn beacon_segment(a: glam::Vec4, b: glam::Vec4, proj: &super::hud::Projector) -> Option<[Pos2; 2]> {
+    if !a.is_finite() || !b.is_finite() {
+        return None;
+    }
+    let planes = |c: glam::Vec4| [c.w - 0.05, c.w + c.x, c.w - c.x, c.w + c.y, c.w - c.y];
+    let (mut lo, mut hi) = (0.0_f32, 1.0_f32);
+    for (x, y) in planes(a).into_iter().zip(planes(b)) {
+        if x < 0.0 && y < 0.0 {
+            return None;
         }
-        (Some((a, _)), None) | (None, Some((a, _))) => {
-            painter.circle_stroke(a, 8.0, Stroke::new(2.0, col));
-            text_shadow(
-                &painter,
-                a + vec2(0.0, -12.0),
-                egui::Align2::CENTER_BOTTOM,
-                &label,
-                13.0,
-                Color32::WHITE,
-            );
+        if x < 0.0 {
+            lo = lo.max(x / (x - y));
+        } else if y < 0.0 {
+            hi = hi.min(x / (x - y));
         }
-        (None, None) => {
-            // off screen or behind the camera: arrow at the screen border
-            let screen = ctx.content_rect();
-            let c = proj.view_proj * base.extend(1.0);
-            let mut v = vec2(c.x, -c.y);
-            if c.w < 0.0 {
-                v = -v;
+    }
+    (lo <= hi).then(|| [beacon_screen(a.lerp(b, lo), proj), beacon_screen(a.lerp(b, hi), proj)])
+}
+
+fn beacon_marker(clip: glam::Vec4, inner: Rect, proj: &super::hud::Projector) -> Option<(Pos2, bool, Vec2)> {
+    if !clip.is_finite() || !inner.is_positive() {
+        return None;
+    }
+    if clip.w > 0.05 {
+        let at = beacon_screen(clip, proj);
+        if inner.contains(at) {
+            return Some((at, true, Vec2::ZERO));
+        }
+    }
+    // Camera-space x keeps its sign behind the camera too: the arrow
+    // indicates which way to turn. Straight behind defaults to the bottom.
+    let v = vec2(clip.x * proj.width, -clip.y * proj.height);
+    let dir = if v.length_sq() > 1e-8 { v.normalized() } else { vec2(0.0, 1.0) };
+    let t = (inner.width() * 0.5 / dir.x.abs().max(1e-4)).min(inner.height() * 0.5 / dir.y.abs().max(1e-4));
+    Some((inner.center() + dir * t, false, dir))
+}
+
+#[cfg(test)]
+mod beacon_tests {
+    use super::*;
+    use glam::{Mat4, Vec4};
+
+    fn projector(ppp: f32) -> super::super::hud::Projector {
+        super::super::hud::Projector {
+            view_proj: Mat4::IDENTITY,
+            width: 1600.0,
+            height: 900.0,
+            ppp,
+        }
+    }
+
+    #[test]
+    fn column_keeps_its_visible_part_above_and_below_the_screen() {
+        for ppp in [1.0, 1.5, 2.0] {
+            for (end, edge_y) in [(Vec4::new(0.2, 4.0, 0.0, 1.0), 0.0), (Vec4::new(0.2, -4.0, 0.0, 1.0), 900.0)] {
+                let [base, edge] = beacon_segment(Vec4::new(0.2, -0.4, 0.0, 1.0), end, &projector(ppp)).expect("visible column");
+                assert!((base.x - 960.0 / ppp).abs() < 0.01);
+                assert!((base.y - 630.0 / ppp).abs() < 0.01);
+                assert!((edge.x - base.x).abs() < 0.01);
+                assert!((edge.y - edge_y / ppp).abs() < 0.01);
             }
-            if v.length() > 1e-4 {
-                let at = screen.center() + v.normalized() * screen.width() * 2.0;
-                draw_tracking(&painter, screen.shrink(40.0), at, col, 0.0, Some(&label));
-            }
         }
+    }
+
+    #[test]
+    fn column_clips_the_camera_plane_and_rejects_fully_hidden_segments() {
+        let p = projector(1.0);
+        let a = Vec4::new(0.0, 0.0, 0.0, 1.0);
+        let behind = Vec4::new(0.0, 0.5, 0.0, -1.0);
+        let screen = Rect::from_min_max(Pos2::ZERO, pos2(p.width, p.height)).expand(0.01);
+        for point in beacon_segment(a, behind, &p).expect("crossing column") {
+            assert!(point.x.is_finite() && point.y.is_finite() && screen.contains(point));
+        }
+        assert!(beacon_segment(behind, behind * 2.0, &p).is_none());
+        assert!(beacon_segment(Vec4::new(2.0, 0.0, 0.0, 1.0), Vec4::new(3.0, 0.0, 0.0, 1.0), &p).is_none());
+        assert!(beacon_segment(a, Vec4::splat(f32::NAN), &p).is_none());
+    }
+
+    #[test]
+    fn marker_stays_on_the_border_even_behind_the_camera() {
+        let p = projector(1.0);
+        let screen = Rect::from_min_max(Pos2::ZERO, pos2(p.width, p.height));
+        let inner = screen.shrink2(vec2(40.0, 60.0));
+        for clip in [Vec4::new(3.0, 0.0, 0.0, 1.0), Vec4::new(3.0, 0.0, 0.0, -1.0)] {
+            let (at, visible, dir) = beacon_marker(clip, inner, &p).expect("border marker");
+            assert!(!visible && at == inner.right_center() && dir.x > 0.0);
+        }
+        let (at, visible, _) = beacon_marker(Vec4::new(0.0, 0.0, 0.0, -1.0), inner, &p).expect("straight behind");
+        assert!(!visible && at == inner.center_bottom());
+        let (at, visible, _) = beacon_marker(Vec4::W, inner, &p).expect("visible marker");
+        assert!(visible && at == inner.center());
+    }
+
+    #[test]
+    fn beacon_hit_rejects_a_new_selection_and_the_gap_between_arrow_and_label() {
+        let mut track = crate::world::worldmap::Track {
+            x: 256010.0,
+            y: 256020.0,
+            z: 30.0,
+            label: String::new(),
+            tooltip: String::new(),
+            pending: false,
+            teleport: false,
+            invalid: false,
+        };
+        let hit = BeaconHit {
+            rect: Rect::from_min_max(pos2(10.0, 10.0), pos2(40.0, 40.0)),
+            label_rect: Rect::from_min_max(pos2(80.0, 10.0), pos2(180.0, 40.0)),
+            target: (track.x, track.y, track.z),
+        };
+        assert!(hit.contains(hit.rect.center(), &track));
+        assert!(hit.contains(hit.label_rect.center(), &track));
+        assert!(!hit.contains(pos2(60.0, 25.0), &track));
+        track.x += 1.0;
+        assert!(!hit.contains(hit.rect.center(), &track));
+        track.x -= 1.0;
+        track.pending = true;
+        assert!(!hit.contains(hit.rect.center(), &track));
+        track.pending = false;
+        track.invalid = true;
+        assert!(!hit.contains(hit.rect.center(), &track));
     }
 }
