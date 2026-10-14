@@ -129,6 +129,8 @@ impl Session<'_> {
             Kind::Texture => 0,
             Kind::Sound => 1,
             Kind::Animation => 19,
+            // IT_SNAPSHOT
+            Kind::Snapshot => 15,
             _ => return,
         };
         message.inventory_block.wearable_type = 255;

@@ -175,6 +175,50 @@ async fn paid_assets_negotiate_send_binary_and_use_authoritative_inventory() {
         Uuid::from_u128(2)
     );
 }
+/// LLSnapshotLivePreview::saveTexture: a texture asset of inventory type
+/// "snapshot" in the Photo Album, every right for the next owner, the
+/// group / everyone masks of the uploads.
+#[tokio::test]
+async fn a_photo_uploads_as_a_snapshot_texture_with_its_permissions() {
+    let asset = Uuid::from_u128(3);
+    let (base, task) = server(|base| {
+        vec![
+            (
+                200,
+                llsd_map! {"state"=>"upload","uploader"=>format!("{base}/binary"),"upload_price"=>10},
+            ),
+            (
+                200,
+                llsd_map! { "state"=>"complete","new_inventory_item"=>Uuid::from_u128(2),"new_asset"=>asset },
+            ),
+            (200, item(0, 15, asset)),
+        ]
+    })
+    .await;
+    let photo = Request {
+        kind: Kind::Snapshot,
+        name: "Snapshot : Place, Region (128, 128, 25) - General".into(),
+        description: "Taken by Resident at Place, Region (128, 128, 25) - General".into(),
+        permissions: Permissions {
+            next_owner: 0x7fff_ffff,
+            group: 0,
+            everyone: 0x0000_8000,
+        },
+        ..request()
+    };
+    let receipt = upload(&reqwest::Client::new(), &base, &format!("{base}/fetch"), Uuid::from_u128(4), photo)
+        .await
+        .expect("upload");
+    assert_eq!(receipt.item.inv_type, 15);
+    assert_eq!(receipt.cost, 10);
+    let requests = task.await.expect("server");
+    let body = aurora_llsd::from_xml(&requests[0].1).expect("LLSD");
+    assert_eq!(body["asset_type"].as_str(), "texture");
+    assert_eq!(body["inventory_type"].as_str(), "snapshot");
+    assert_eq!(body["next_owner_mask"].as_i32(), 0x7fff_ffff);
+    assert_eq!(body["everyone_mask"].as_i32(), 0x0000_8000);
+    assert_eq!(body["expected_upload_cost"].as_i32(), 10);
+}
 #[tokio::test]
 async fn changed_fee_prevents_binary_transfer_and_unknown_outcome_never_retries() {
     let (base, task) = server(|base| {

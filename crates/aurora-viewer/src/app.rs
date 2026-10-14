@@ -1438,6 +1438,10 @@ impl App {
             if !self.demo {
                 self.send(NetCommand::RequestBalance);
             }
+            if self.photo_owns_upload(request) {
+                self.photo_uploaded(result);
+                return;
+            }
             if let Some(item) = self.imports.uploaded(request, result) {
                 let id = item.id;
                 self.world.inventory.add_items(vec![item]);

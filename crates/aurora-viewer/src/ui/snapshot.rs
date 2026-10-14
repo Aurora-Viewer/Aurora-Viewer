@@ -6,6 +6,7 @@
 //! world outside the photo's proportions darkened, a composition guide.
 
 use super::widgets::{self, ActionKind, Floater};
+use crate::snapshot::inventory::TextureSize;
 use crate::snapshot::{Aspect, FileFormat, Guide, Resolution, Settings};
 use crate::theme::Palette;
 use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
@@ -23,6 +24,27 @@ pub struct SnapshotUi {
     pub full_frame: bool,
     /// The photo is taken and shown still until saved or released.
     pub freeze: bool,
+    /// Where "Take the photo" sends it (the disk each time the viewer
+    /// starts: a photo that costs L$ is never one by surprise).
+    pub destination: Destination,
+}
+
+/// Where a photo goes (Firestorm's snapshot panels; the profile feed
+/// comes later).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Destination {
+    #[default]
+    Disk,
+    Inventory,
+}
+
+/// A photo for the inventory: the texture it becomes and its price.
+pub struct InventoryView {
+    pub texture: (u32, u32),
+    /// The upload cost in L$; None while it is not known.
+    pub cost: Option<i32>,
+    /// Logged in (or in demo): the upload is possible.
+    pub connected: bool,
 }
 
 /// What the window shows besides the settings.
@@ -39,6 +61,10 @@ pub struct View<'a> {
     pub last_saved: Option<&'a Path>,
     pub gallery: &'a [(PathBuf, Option<egui::TextureHandle>)],
     pub folder: PathBuf,
+    /// The destination is the inventory.
+    pub inventory: Option<InventoryView>,
+    /// The message tells of a photo saved to the inventory ("Show").
+    pub item_saved: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,6 +81,12 @@ pub enum Action {
     Changed,
     /// The settings changed (saved, the preview unchanged).
     Saved,
+    /// Show the photo saved to the inventory.
+    ShowItem,
+    /// The upload's price was confirmed (true) or not.
+    Confirm(bool),
+    /// The "cannot afford" message was closed.
+    CloseAfford,
 }
 
 impl SnapshotUi {
@@ -126,36 +158,59 @@ impl SnapshotUi {
 
         ui.add_space(4.0);
         let busy = view.busy.is_some();
-        ui.horizontal(|ui| {
-            let take_w = ui.available_width() - 34.0;
-            ui.add_enabled_ui(!busy, |ui| {
-                if widgets::action_button(
+        ui.horizontal(|ui| match &view.inventory {
+            Some(inv) => {
+                let ready = !busy && inv.connected && inv.cost.is_some();
+                if widgets::action_button_if(
                     ui,
                     p,
-                    "camera-filled",
-                    aurora_i18n::tr!("photo-take"),
+                    "file-upload-filled",
+                    aurora_i18n::tr!("photo-save-inventory"),
                     ActionKind::Primary,
-                    Vec2::new(take_w, 32.0),
+                    Vec2::new(ui.available_width(), 32.0),
+                    ready,
                 )
                 .clicked()
                 {
                     out.push(Action::Take);
                 }
-                if widgets::action_button(ui, p, "folder-filled", "", ActionKind::Flat, Vec2::new(30.0, 32.0))
-                    .on_hover_text(aurora_i18n::tr!("photo-save-as"))
+            }
+            None => {
+                let take_w = ui.available_width() - 34.0;
+                ui.add_enabled_ui(!busy, |ui| {
+                    if widgets::action_button(
+                        ui,
+                        p,
+                        "camera-filled",
+                        aurora_i18n::tr!("photo-take"),
+                        ActionKind::Primary,
+                        Vec2::new(take_w, 32.0),
+                    )
                     .clicked()
-                {
-                    out.push(Action::SaveAs);
-                }
-            });
+                    {
+                        out.push(Action::Take);
+                    }
+                    if widgets::action_button(ui, p, "folder-filled", "", ActionKind::Flat, Vec2::new(30.0, 32.0))
+                        .on_hover_text(aurora_i18n::tr!("photo-save-as"))
+                        .clicked()
+                    {
+                        out.push(Action::SaveAs);
+                    }
+                });
+            }
         });
         if let Some((fraction, what)) = &view.busy {
             widgets::progress(ui, p, "photo_progress", *fraction, ui.available_width(), what, None);
         } else if let Some((text, error)) = view.message {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(text).size(12.0).color(if *error { p.danger } else { p.success }));
-                if !*error
-                    && let Some(path) = view.last_saved
+                if *error {
+                    // nothing to open
+                } else if view.item_saved {
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-show-in-inventory")).clicked() {
+                        out.push(Action::ShowItem);
+                    }
+                } else if let Some(path) = view.last_saved
                     && widgets::flat_button(ui, p, aurora_i18n::tr!("photo-open")).clicked()
                 {
                     out.push(Action::OpenPhoto(path.to_path_buf()));
@@ -168,6 +223,7 @@ impl SnapshotUi {
             let photo_changed = s.aspect != before.aspect
                 || s.resolution != before.resolution
                 || s.custom != before.custom
+                || s.inventory_size != before.inventory_size
                 || s.interface != before.interface
                 || s.huds != before.huds;
             out.push(if photo_changed { Action::Changed } else { Action::Saved });
@@ -198,78 +254,58 @@ impl SnapshotUi {
         });
 
         section(ui, p, "dimensions", aurora_i18n::tr!("photo-section-resolution"));
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
-            for r in Resolution::ALL {
-                let (label, sub) = match r {
-                    Resolution::Window => (aurora_i18n::tr!("photo-resolution-window"), None),
-                    Resolution::Custom => (aurora_i18n::tr!("photo-resolution-custom"), None),
-                    _ => (r.short().unwrap_or(""), r.long_side().map(|v| v.to_string())),
-                };
-                if chip(ui, p, label, sub.as_deref(), s.resolution == r, true).clicked() {
-                    if r == Resolution::Custom && s.resolution != Resolution::Custom {
-                        // the typed size starts from the photo of the moment
-                        let (w, h) = s.size(view.window);
-                        s.custom = [w, h];
-                    }
-                    s.resolution = r;
-                }
-            }
-        });
-        ui.horizontal(|ui| {
-            if s.resolution == Resolution::Custom {
-                let (mut w, mut h) = (s.custom[0], s.custom[1]);
-                let range = crate::snapshot::MIN_SIDE..=crate::snapshot::MAX_SIDE;
-                let wc = ui.add(egui::DragValue::new(&mut w).range(range.clone()).speed(4.0)).changed();
-                let lock = if s.keep_ratio { "lock-filled" } else { "lock-open" };
-                if widgets::icon_toggle(ui, p, lock, aurora_i18n::tr!("photo-keep-ratio"), s.keep_ratio) {
-                    s.keep_ratio = !s.keep_ratio;
-                }
-                let hc = ui.add(egui::DragValue::new(&mut h).range(range).speed(4.0)).changed();
-                if wc || hc {
-                    s.set_custom(wc.then_some(w), hc.then_some(h), view.window);
-                }
-            } else {
-                let (w, h) = view.photo;
-                ui.label(RichText::new(aurora_i18n::tr!("photo-size", width = w, height = h)).color(p.ink));
-            }
-            let passes = if view.tiles <= 1 {
-                aurora_i18n::tr!("photo-one-pass").to_string()
-            } else {
-                aurora_i18n::tr!("photo-tiles", count = view.tiles).to_string()
-            };
-            ui.label(RichText::new(passes).size(11.5).color(p.muted));
-        });
+        match &view.inventory {
+            Some(inv) => texture_sizes(ui, p, s, inv),
+            None => resolutions(ui, p, s, view),
+        }
 
         section(ui, p, "send-filled", aurora_i18n::tr!("photo-section-destination"));
-        let mut dest = 0;
-        widgets::segmented(
+        let mut dest = match self.destination {
+            Destination::Disk => 0,
+            Destination::Inventory => 1,
+        };
+        if widgets::segmented(
             ui,
             p,
             &mut dest,
             &[
                 (aurora_i18n::tr!("photo-destination-disk"), true),
                 (aurora_i18n::tr!("photo-destination-inventory"), true),
-                (aurora_i18n::tr!("photo-destination-profile"), true),
+                (aurora_i18n::tr!("photo-destination-profile"), false),
             ],
-        );
+        ) {
+            self.destination = if dest == 1 { Destination::Inventory } else { Destination::Disk };
+            out.push(Action::Changed);
+        }
         ui.label(RichText::new(aurora_i18n::tr!("photo-destination-soon")).size(11.5).color(p.muted));
-        row(ui, p, aurora_i18n::tr!("photo-file-format"), None, |ui| {
-            let mut i = FileFormat::ALL.iter().position(|f| *f == s.format).unwrap_or(0);
-            let options: Vec<(&str, bool)> = FileFormat::ALL.iter().map(|f| (f.label(), true)).collect();
-            if widgets::segmented(ui, p, &mut i, &options) {
-                s.format = FileFormat::ALL[i];
+        match &view.inventory {
+            Some(inv) => {
+                let cost = match (inv.connected, inv.cost) {
+                    (false, _) => aurora_i18n::tr!("photo-inventory-offline").to_string(),
+                    (true, Some(cost)) => aurora_i18n::tr!("photo-upload-cost", cost = cost).to_string(),
+                    (true, None) => aurora_i18n::tr!("photo-upload-cost-unknown").to_string(),
+                };
+                ui.label(RichText::new(cost).color(p.ink));
             }
-        });
-        if s.format == FileFormat::Jpeg {
-            row(ui, p, aurora_i18n::tr!("photo-jpeg-quality"), None, |ui| {
-                ui.spacing_mut().slider_width = 130.0;
-                ui.add(egui::Slider::new(&mut s.jpeg_quality, 1..=100));
-            });
+            None => {
+                row(ui, p, aurora_i18n::tr!("photo-file-format"), None, |ui| {
+                    let mut i = FileFormat::ALL.iter().position(|f| *f == s.format).unwrap_or(0);
+                    let options: Vec<(&str, bool)> = FileFormat::ALL.iter().map(|f| (f.label(), true)).collect();
+                    if widgets::segmented(ui, p, &mut i, &options) {
+                        s.format = FileFormat::ALL[i];
+                    }
+                });
+                if s.format == FileFormat::Jpeg {
+                    row(ui, p, aurora_i18n::tr!("photo-jpeg-quality"), None, |ui| {
+                        ui.spacing_mut().slider_width = 130.0;
+                        ui.add(egui::Slider::new(&mut s.jpeg_quality, 1..=100));
+                    });
+                }
+            }
         }
 
         section(ui, p, "adjustments-horizontal-filled", aurora_i18n::tr!("photo-section-in-image"));
-        let interface_possible = s.interface_possible(view.window);
+        let interface_possible = crate::snapshot::same_proportions(view.photo, view.window);
         row(
             ui,
             p,
@@ -341,6 +377,53 @@ impl SnapshotUi {
                 widgets::switch(ui, p, &mut s.sound);
             });
         });
+    }
+
+    /// The price to confirm before a paid upload (`confirm`), or the price
+    /// the balance cannot pay (`short`: LLPanelSnapshotInventory::onSend
+    /// and its ErrorPhotoCannotAfford).
+    pub fn dialogs(&self, ctx: &egui::Context, p: &Palette, confirm: Option<i32>, short: Option<i32>) -> Vec<Action> {
+        use widgets::{Modal, action_button};
+        let mut out = Vec::new();
+        let size = Vec2::new(0.0, 26.0);
+        if let Some(cost) = confirm {
+            let mut answer = None;
+            let response = Modal::new(egui::Id::new("photo_upload_confirm")).show(ctx, |ui| {
+                ui.set_width(350.0);
+                ui.label(RichText::new(aurora_i18n::tr!("photo-confirm-title")).size(17.0).color(p.ink));
+                ui.add_space(8.0);
+                ui.label(aurora_i18n::tr!("photo-confirm-text", cost = cost));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    let ok = aurora_i18n::tr!("photo-confirm-ok", cost = cost);
+                    if action_button(ui, p, "file-upload-filled", &ok, ActionKind::Primary, size).clicked() {
+                        answer = Some(true);
+                    }
+                    if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                        answer = Some(false);
+                    }
+                });
+            });
+            if answer.is_none() && response.should_close() {
+                answer = Some(false);
+            }
+            out.extend(answer.map(Action::Confirm));
+        }
+        if let Some(cost) = short {
+            let mut close = false;
+            let response = Modal::new(egui::Id::new("photo_cannot_afford")).show(ctx, |ui| {
+                ui.set_width(350.0);
+                ui.label(aurora_i18n::tr!("photo-cannot-afford", cost = cost));
+                ui.add_space(8.0);
+                if action_button(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size).clicked() {
+                    close = true;
+                }
+            });
+            if close || response.should_close() {
+                out.push(Action::CloseAfford);
+            }
+        }
+        out
     }
 
     /// The full-frame view (instead of the interface); `photo` the photo's
@@ -454,6 +537,75 @@ impl SnapshotUi {
     }
 }
 
+/// The disk's sizes: presets, the window's, or typed, with how the photo
+/// is drawn.
+fn resolutions(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, view: &View) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+        for r in Resolution::ALL {
+            let (label, sub) = match r {
+                Resolution::Window => (aurora_i18n::tr!("photo-resolution-window"), None),
+                Resolution::Custom => (aurora_i18n::tr!("photo-resolution-custom"), None),
+                _ => (r.short().unwrap_or(""), r.long_side().map(|v| v.to_string())),
+            };
+            if chip(ui, p, label, sub.as_deref(), s.resolution == r, true).clicked() {
+                if r == Resolution::Custom && s.resolution != Resolution::Custom {
+                    // the typed size starts from the photo of the moment
+                    let (w, h) = s.size(view.window);
+                    s.custom = [w, h];
+                }
+                s.resolution = r;
+            }
+        }
+    });
+    ui.horizontal(|ui| {
+        if s.resolution == Resolution::Custom {
+            let (mut w, mut h) = (s.custom[0], s.custom[1]);
+            let range = crate::snapshot::MIN_SIDE..=crate::snapshot::MAX_SIDE;
+            let wc = ui.add(egui::DragValue::new(&mut w).range(range.clone()).speed(4.0)).changed();
+            let lock = if s.keep_ratio { "lock-filled" } else { "lock-open" };
+            if widgets::icon_toggle(ui, p, lock, aurora_i18n::tr!("photo-keep-ratio"), s.keep_ratio) {
+                s.keep_ratio = !s.keep_ratio;
+            }
+            let hc = ui.add(egui::DragValue::new(&mut h).range(range).speed(4.0)).changed();
+            if wc || hc {
+                s.set_custom(wc.then_some(w), hc.then_some(h), view.window);
+            }
+        } else {
+            let (w, h) = view.photo;
+            ui.label(RichText::new(aurora_i18n::tr!("photo-size", width = w, height = h)).color(p.ink));
+        }
+        let passes = if view.tiles <= 1 {
+            aurora_i18n::tr!("photo-one-pass").to_string()
+        } else {
+            aurora_i18n::tr!("photo-tiles", count = view.tiles).to_string()
+        };
+        ui.label(RichText::new(passes).size(11.5).color(p.muted));
+    });
+}
+
+/// The inventory's sizes (panel_snapshot_inventory.xml's combo) and the
+/// texture the photo becomes.
+fn texture_sizes(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, inv: &InventoryView) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+        for t in TextureSize::ALL {
+            let label = match t.side() {
+                Some(side) => side.to_string(),
+                None => aurora_i18n::tr!("photo-resolution-window").to_string(),
+            };
+            if chip(ui, p, &label, None, s.inventory_size == t, true).clicked() {
+                s.inventory_size = t;
+            }
+        }
+    });
+    let (w, h) = inv.texture;
+    ui.label(RichText::new(aurora_i18n::tr!("photo-texture-size", width = w, height = h)).color(p.ink));
+    if w != h {
+        ui.label(RichText::new(aurora_i18n::tr!("photo-texture-hint")).size(11.5).color(p.muted));
+    }
+}
+
 /// The photo held by "Freeze frame", over the whole world, in its
 /// proportions.
 pub fn frozen(ctx: &egui::Context, p: &Palette, texture: &egui::TextureHandle) {
@@ -554,7 +706,10 @@ fn preview(ui: &mut egui::Ui, p: &Palette, s: &Settings, view: &View) -> bool {
     }
     guide_lines(ui.painter(), rect, s.guide, p.ink.gamma_multiply(0.55));
     // the size badge
-    let badge = format!("{} × {} · {}", view.photo.0, view.photo.1, s.format.label());
+    let badge = match &view.inventory {
+        Some(inv) => aurora_i18n::tr!("photo-texture-size", width = inv.texture.0, height = inv.texture.1).to_string(),
+        None => format!("{} × {} · {}", view.photo.0, view.photo.1, s.format.label()),
+    };
     let galley = ui.painter().layout_no_wrap(badge, egui::FontId::proportional(11.0), p.ink);
     let badge_rect = Rect::from_min_size(
         rect.right_bottom() - galley.size() - Vec2::new(14.0, 10.0),
