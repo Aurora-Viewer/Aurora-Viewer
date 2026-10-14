@@ -681,6 +681,82 @@ fn teleport_offer_scenario() -> bool {
     teleport_offer_scene().is_some()
 }
 
+/// AURORA_DEMO_LURE=offer|request|god|answers|reject: teleports received
+/// from Tess Touch (DEMO_NOVA in the demo's names), with the notification
+/// list open: an offer to the plaza, a request (Yes / No), a god's lure
+/// (accepted at once), the answers to our offers (declined in her open
+/// conversation, accepted while none is open), or an offer and a request
+/// while we reject teleports.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LureScene {
+    Offer,
+    Request,
+    God,
+    Answers,
+    Reject,
+}
+
+pub fn lure_scene() -> Option<LureScene> {
+    match std::env::var("AURORA_DEMO_LURE").ok()?.as_str() {
+        "offer" => Some(LureScene::Offer),
+        "request" => Some(LureScene::Request),
+        "god" => Some(LureScene::God),
+        "answers" => Some(LureScene::Answers),
+        "reject" => Some(LureScene::Reject),
+        _ => None,
+    }
+}
+
+/// The instant messages of `lure_scene`, from Tess Touch.
+pub fn lure_events(scene: LureScene, agent: Uuid) -> Vec<NetEvent> {
+    use crate::world::notifications::im as d;
+    let im = |dialog: u8, message: &str, bucket: &[u8]| {
+        NetEvent::InstantMessage(aurora_net::InstantMessage {
+            from_agent_id: DEMO_NOVA,
+            from_name: "Tess Touch".into(),
+            to_agent_id: agent,
+            dialog,
+            session_id: Uuid::from_u128(0x1A3E_0000_0000_0000_0000_0000_0000_0001),
+            message: message.into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: bucket.to_vec(),
+            timestamp: 0,
+        })
+    };
+    // the plaza, as a lure's bucket carries it (parse_lure_bucket)
+    let plaza = b"256000|256000|128|130|25|0|1|0|PG";
+    let invitation = format!(
+        "{}\r\nhttp://maps.secondlife.com/secondlife/Aurora%20Demo/128/130/25",
+        aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset")
+    );
+    match scene {
+        LureScene::Offer => vec![im(d::LURE_USER, &invitation, plaza)],
+        LureScene::Request => vec![im(d::TELEPORT_REQUEST, aurora_i18n::tr!("demo-can-i-join-you"), b"")],
+        LureScene::God => vec![im(d::GODLIKE_LURE_USER, &invitation, plaza)],
+        LureScene::Answers => vec![
+            im(0, aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"), b""),
+            im(d::LURE_DECLINED, "", b""),
+            NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: DEMO_TESS,
+                from_name: "Nova Example".into(),
+                to_agent_id: agent,
+                dialog: d::LURE_ACCEPTED,
+                session_id: Uuid::nil(),
+                message: String::new(),
+                offline: false,
+                from_group: false,
+                binary_bucket: Vec::new(),
+                timestamp: 0,
+            }),
+        ],
+        LureScene::Reject => vec![
+            im(d::LURE_USER, &invitation, plaza),
+            im(d::TELEPORT_REQUEST, aurora_i18n::tr!("demo-can-i-join-you"), b""),
+        ],
+    }
+}
+
 /// The message that opens the conversation of `teleport_offer_scenario`.
 pub fn teleport_offer_events(agent: Uuid) -> Vec<NetEvent> {
     vec![NetEvent::InstantMessage(aurora_net::InstantMessage {
@@ -896,6 +972,13 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     }
     use aurora_net::inventory::{FolderContents, InvItem};
     match cmd {
+        // a lure accepted offline: the teleport starts, then has nowhere to go
+        aurora_net::NetCommand::AcceptLure { .. } => vec![
+            NetEvent::TeleportStarted,
+            NetEvent::TeleportFailed {
+                reason: aurora_i18n::tr!("demo-no-teleport-offline").into(),
+            },
+        ],
         aurora_net::NetCommand::AgentAnimation { anim, start: false } if *anim == SEAT_ANIM => {
             vec![NetEvent::AvatarAnimations {
                 avatar: DEMO_AGENT,
@@ -3045,6 +3128,9 @@ pub fn events() -> Vec<NetEvent> {
     }
     if teleport_offer_scenario() {
         ev.extend(teleport_offer_events(agent));
+    }
+    if let Some(scene) = lure_scene() {
+        ev.extend(lure_events(scene, agent));
     }
     ev
 }

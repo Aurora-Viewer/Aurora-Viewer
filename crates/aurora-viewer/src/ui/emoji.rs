@@ -288,15 +288,16 @@ impl Emoji {
     /// the emoji are laid out blank (same size as in `inline`) and their
     /// images drawn over them: editing, cursor and selection stay egui's.
     /// `build` sets the field up (id, hint, width).
+    /// Return the editing state so callers can select a completed trigger.
     pub fn text_field(
         &mut self,
         ui: &mut egui::Ui,
         text: &mut String,
         build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>,
-    ) -> egui::Response {
+    ) -> egui::text_edit::TextEditOutput {
         // without emoji, egui's own layout
         if !text.chars().any(|c| self.has(c)) {
-            return ui.add(build(egui::TextEdit::singleline(text)));
+            return build(egui::TextEdit::singleline(text)).show(ui);
         }
         // what TextEdit uses when given no font nor colour
         let font = egui::FontSelection::default().resolve(ui.style());
@@ -360,7 +361,7 @@ impl Emoji {
                 }
             }
         }
-        out.response.response
+        out
     }
 
     /// Emoji picker grid; returns the chosen emoji.

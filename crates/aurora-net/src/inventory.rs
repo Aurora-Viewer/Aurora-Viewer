@@ -3,6 +3,8 @@
 
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
+#[cfg(test)]
+mod gesture_tests;
 pub mod mesh_upload;
 pub mod notecard;
 pub mod operations;

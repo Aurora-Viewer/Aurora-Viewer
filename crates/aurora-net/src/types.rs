@@ -749,6 +749,11 @@ pub enum NetEvent {
         asset: Uuid,
         result: Result<Vec<u8>, String>,
     },
+    GestureLoaded {
+        item: Uuid,
+        asset: Uuid,
+        result: Result<aurora_assets::gesture::Gesture, String>,
+    },
     TaskNotecardPreview {
         object: Uuid,
         item: Uuid,
@@ -1063,9 +1068,11 @@ pub enum NetCommand {
         message: String,
         bucket: Vec<u8>,
     },
-    /// Accept a teleport offer (TeleportLureRequest, via lure).
+    /// Accept a teleport offer (TeleportLureRequest, LLAgent::doTeleportViaLure):
+    /// a god's lure cannot be cancelled.
     AcceptLure {
         lure_id: Uuid,
+        godlike: bool,
     },
     AcceptFriendship {
         transaction: Uuid,
@@ -1357,6 +1364,19 @@ pub enum NetCommand {
         item: Uuid,
         asset_type: i32,
         data: Vec<u8>,
+    },
+    LoadGesture {
+        item: Uuid,
+        asset: Uuid,
+    },
+    SetGestureActive {
+        item: Uuid,
+        asset: Uuid,
+        active: bool,
+    },
+    GestureSound {
+        asset: Uuid,
+        position: Vec3,
     },
     CopyNotecardInventory {
         editor: Uuid,

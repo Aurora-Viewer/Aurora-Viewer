@@ -13,6 +13,7 @@
 //! worker threads.
 
 pub mod anim;
+pub mod gesture;
 pub mod import_animation;
 pub mod import_gltf;
 pub mod import_material;

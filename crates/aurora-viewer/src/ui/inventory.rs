@@ -51,6 +51,7 @@ pub fn show_document(
     let facts = Facts {
         agent: Uuid::nil(),
         worn: Default::default(),
+        active_gestures: Default::default(),
         worn_labels: Default::default(),
         points: Vec::new(),
         appearance_busy: false,
@@ -87,6 +88,7 @@ pub enum InvAction {
         resident: Uuid,
     },
     Preview(Uuid),
+    Gesture(crate::ui::gestures::Action),
     Embedded {
         editor: Uuid,
         notecard: Uuid,
@@ -113,6 +115,7 @@ pub enum InvAction {
 pub struct Facts {
     pub agent: Uuid,
     pub worn: HashSet<Uuid>,
+    pub active_gestures: std::collections::BTreeSet<Uuid>,
     pub worn_labels: std::collections::HashMap<Uuid, String>,
     pub points: Vec<(u8, bool, String)>,
     pub appearance_busy: bool,
@@ -143,6 +146,7 @@ impl Facts {
         Self {
             agent: world.agent_id,
             worn,
+            active_gestures: world.active_gestures.clone(),
             worn_labels,
             points,
             appearance_busy,
@@ -153,6 +157,9 @@ impl Facts {
 
     fn worn_label(&self, inv: &Inventory, id: Uuid) -> Option<&str> {
         let original = rules::original(inv, id)?;
+        if self.active_gestures.contains(&original) {
+            return Some(aurora_i18n::tr!("gesture-active"));
+        }
         self.worn.contains(&original).then(|| {
             self.worn_labels
                 .get(&original)
@@ -1570,6 +1577,7 @@ mod tests {
                 worn_labels: Default::default(),
                 points: vec![],
                 appearance_busy: false,
+                active_gestures: Default::default(),
                 touchable: Default::default(),
                 names: Default::default(),
             };
@@ -1676,6 +1684,7 @@ mod tests {
             worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
+            active_gestures: Default::default(),
             touchable: Default::default(),
             names: Default::default(),
         };
@@ -1739,6 +1748,7 @@ mod tests {
             worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
+            active_gestures: Default::default(),
             touchable: Default::default(),
             names: Default::default(),
         };
@@ -1802,6 +1812,7 @@ mod tests {
                 worn_labels: Default::default(),
                 points: vec![],
                 appearance_busy: false,
+                active_gestures: Default::default(),
                 touchable: Default::default(),
                 names: Default::default(),
             };
@@ -2034,6 +2045,7 @@ mod tests {
             worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
+            active_gestures: Default::default(),
             touchable: Default::default(),
             names: Default::default(),
         };
@@ -2108,6 +2120,7 @@ mod tests {
             worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
+            active_gestures: Default::default(),
             touchable: Default::default(),
             names: Default::default(),
         };
@@ -2227,6 +2240,7 @@ mod tests {
                         worn_labels: Default::default(),
                         points: Vec::new(),
                         appearance_busy: false,
+                        active_gestures: Default::default(),
                         touchable: Default::default(),
                         names: Default::default(),
                     },
@@ -2338,6 +2352,7 @@ mod tests {
                         worn_labels: Default::default(),
                         points: Vec::new(),
                         appearance_busy: false,
+                        active_gestures: Default::default(),
                         touchable: Default::default(),
                         names: Default::default(),
                     },
@@ -2446,6 +2461,7 @@ mod tests {
                         worn_labels: Default::default(),
                         points: Vec::new(),
                         appearance_busy: false,
+                        active_gestures: Default::default(),
                         touchable: Default::default(),
                         names: Default::default(),
                     },
@@ -2516,6 +2532,7 @@ mod tests {
                             worn_labels: Default::default(),
                             points: Vec::new(),
                             appearance_busy: false,
+                            active_gestures: Default::default(),
                             touchable: Default::default(),
                             names: Default::default(),
                         },

@@ -58,12 +58,31 @@ impl Projector {
             return None;
         }
         let ndc = c.truncate() / c.w;
-        if ndc.x.abs() > 1.2 || ndc.y.abs() > 1.2 {
+        self.screen_point(ndc.x, ndc.y).map(|point| (point, c.w))
+    }
+
+    /// Centre on the avatar's projected root; use its stable height only
+    /// for the vertical placement. Projecting the elevated anchor's x as
+    /// well makes perspective shift the tag sideways with a pitched camera.
+    /// Deliberate difference from LLVOAvatar::idleCalcNameTagPosition
+    /// (indra/newview/llvoavatar.cpp): head motion never sets the centre.
+    pub fn project_name_tag(&self, root: Vec3, anchor: Vec3) -> Option<Pos2> {
+        let root = self.view_proj * root.extend(1.0);
+        let anchor = self.view_proj * anchor.extend(1.0);
+        if root.w <= 0.05 || anchor.w <= 0.05 {
             return None;
         }
-        let x = (ndc.x * 0.5 + 0.5) * self.width / self.ppp;
-        let y = (0.5 - ndc.y * 0.5) * self.height / self.ppp;
-        Some((Pos2::new(x, y), c.w))
+        self.screen_point(root.x / root.w, anchor.y / anchor.w)
+    }
+
+    fn screen_point(&self, x: f32, y: f32) -> Option<Pos2> {
+        if x.abs() > 1.2 || y.abs() > 1.2 {
+            return None;
+        }
+        Some(Pos2::new(
+            (x * 0.5 + 0.5) * self.width / self.ppp,
+            (0.5 - y * 0.5) * self.height / self.ppp,
+        ))
     }
 }
 
@@ -261,7 +280,7 @@ pub fn draw(
                 continue;
             }
             let head = scene.name_tag_anchor(&o.full_id, pos);
-            let Some((sp, _)) = proj.project(head) else {
+            let Some(sp) = proj.project_name_tag(pos, head) else {
                 continue;
             };
             let at = tag_point(head, eye);
@@ -524,6 +543,62 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_tags_stay_centred_on_the_root_from_both_sides_and_at_any_height() {
+        let root = Vec3::new(0.0, 0.8, 1.0);
+        let mut old_offset: f32 = 0.0;
+        for side in [-1.0, 1.0] {
+            for distance in [3.0, 6.0, 12.0] {
+                let eye = Vec3::new(side * distance, 0.0, 2.2);
+                let view = glam::camera::rh::view::look_to_mat4(eye, Vec3::new(0.0, 0.0, 1.2) - eye, Vec3::Z);
+                let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
+                for ppp in [1.0, 1.5, 2.0] {
+                    let proj = Projector {
+                        view_proj: projection * view,
+                        width: 1280.0,
+                        height: 800.0,
+                        ppp,
+                    };
+                    let root_screen = proj.project(root).expect("visible root").0;
+                    for height in [0.5, 1.05, 1.6] {
+                        let anchor = root + Vec3::Z * height;
+                        let elevated = proj.project(anchor).expect("visible height").0;
+                        let tag = proj.project_name_tag(root, anchor).expect("visible tag");
+                        assert!((tag.x - root_screen.x).abs() < 1e-4);
+                        assert_eq!(tag.y, elevated.y);
+                        old_offset = old_offset.max((elevated.x - root_screen.x).abs());
+                    }
+                }
+            }
+        }
+        assert!(old_offset > 10.0, "the old projection must reproduce a visible horizontal drift");
+    }
+
+    #[test]
+    fn name_tag_visibility_uses_the_combined_screen_position() {
+        let proj = Projector {
+            view_proj: Mat4::IDENTITY,
+            width: 1280.0,
+            height: 800.0,
+            ppp: 1.5,
+        };
+        // The root may be below the view while the label above it is visible.
+        let root = Vec3::new(0.5, -2.0, 0.0);
+        let anchor = Vec3::new(2.0, 0.5, 0.0);
+        assert!(proj.project(root).is_none());
+        assert!(proj.project(anchor).is_none());
+        assert!(proj.project_name_tag(root, anchor).is_some());
+        assert!(proj.project_name_tag(Vec3::new(2.0, 0.0, 0.0), anchor).is_none());
+        assert!(proj.project_name_tag(root, Vec3::new(0.0, 2.0, 0.0)).is_none());
+
+        let perspective = Projector {
+            view_proj: glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1),
+            ..proj
+        };
+        assert!(perspective.project_name_tag(Vec3::Z, -Vec3::Z).is_none());
+        assert!(perspective.project_name_tag(-Vec3::Z, Vec3::Z).is_none());
+    }
 
     #[test]
     fn a_name_tag_stands_in_front_of_its_anchor_but_never_past_the_camera() {

@@ -25,7 +25,6 @@ pub const INVISIBLE_FILE: &str = "invisible.xml";
 
 /// IM_DO_NOT_DISTURB_AUTO_RESPONSE.
 pub const AUTO_RESPONSE: u8 = 20;
-const TELEPORT_REQUEST: u8 = 26;
 /// ANIM_AGENT_AWAY / ANIM_AGENT_DO_NOT_DISTURB (llanimationstates.cpp).
 pub const ANIM_AWAY: Uuid = Uuid::from_u128(0xfd037134_85d4_f241_72c6_4f42164fedee);
 pub const ANIM_DO_NOT_DISTURB: Uuid = Uuid::from_u128(0xefcf670c_2d18_8128_973a_034ebc806b67);
@@ -334,7 +333,7 @@ impl World {
         }
         let friend = self.is_friend(&from);
         match im.dialog {
-            d::LURE_USER | TELEPORT_REQUEST => {
+            d::LURE_USER | d::TELEPORT_REQUEST => {
                 let c = &self.status.cfg;
                 if c.reject_teleports && !(c.dont_reject_friends_teleports && friend) {
                     // send_rejecting_tp_offers_message: answered, offer dropped
