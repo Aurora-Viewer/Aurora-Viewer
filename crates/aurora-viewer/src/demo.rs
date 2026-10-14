@@ -63,6 +63,9 @@ pub mod place;
 /// Directory answers of the search window (AURORA_DEMO_SEARCH).
 #[path = "demo_search.rs"]
 pub mod search;
+/// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
+#[path = "demo_sky.rs"]
+pub mod sky;
 /// Streaming hitch test: objects and textures arriving in waves
 /// (AURORA_DEMO_STREAM).
 #[path = "demo_stream.rs"]
@@ -5061,6 +5064,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if let Some(bake) = bake_texture(id) {
         return Some(bake);
+    }
+    if let Some(sky) = sky::texture(id) {
+        return Some(sky);
     }
     const N: u32 = 64;
     let tau = std::f32::consts::TAU;

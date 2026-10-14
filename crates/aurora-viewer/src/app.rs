@@ -35,6 +35,7 @@ mod context_menu;
 mod cursor_hold;
 mod dof;
 mod double_click;
+mod env_day_editor;
 mod env_editor;
 mod gestures;
 mod hover_height;
@@ -476,6 +477,10 @@ pub struct App {
     env_editor: ui::env_editor::EnvEditorUi,
     /// A Windlight preset being read for "Import" (bytes and preset name).
     env_import: Option<std::sync::mpsc::Receiver<Option<(Vec<u8>, String)>>>,
+    /// Day cycle editor (LLFloaterEditExtDayCycle).
+    day_editor: ui::env_day_editor::DayEditorUi,
+    /// A sky, water or day item the day editor waits for, and what for.
+    day_fetch: Option<(uuid::Uuid, env_day_editor::DayFetch)>,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
     gesture_state: gestures::State,
@@ -843,6 +848,8 @@ impl App {
             lighting_was_open: false,
             env_editor: Default::default(),
             env_import: None,
+            day_editor: Default::default(),
+            day_fetch: None,
             demo: false,
             inventory_ui: Default::default(),
             gesture_state: Default::default(),
@@ -1577,6 +1584,8 @@ impl App {
         self.panels.personal_lighting = false;
         self.env_editor.close();
         self.env_import = None;
+        self.day_editor.close();
+        self.day_fetch = None;
         self.world.eep.clear_edit();
         self.world.save_inventory_cache();
         self.world.save_mute_cache();
@@ -1682,6 +1691,10 @@ impl App {
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
             if self.env_editor.saving == Some(request) {
                 self.env_editor_saved(result);
+                return;
+            }
+            if self.day_editor.saving == Some(request) {
+                self.day_editor_saved(result);
                 return;
             }
             if self.gesture_save_pending(request, item) {
@@ -4411,6 +4424,7 @@ impl App {
         images.extend(self.inventory_ui.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
+        images.extend(self.day_editor.wanted_images.drain());
         for note in self.task_notecards.values_mut() {
             images.extend(note.state.wanted_images.drain());
         }
@@ -5477,6 +5491,8 @@ impl App {
         env.sky.sun_texture = slots[1];
         env.sky.moon_texture = slots[2];
         env.water.normal_texture = slots[3];
+        env.sky.rainbow_texture = slots[4];
+        env.sky.halo_texture = slots[5];
         t_part = self.scene.parts.lap(Part::ParamsEnv, t_part);
         let mirror = if in_world && self.settings.mirrors > 0 {
             self.scene.find_mirror(&self.world, &cull, Instant::now())
@@ -6207,11 +6223,16 @@ impl App {
             for event in crate::demo::eep::events(self.frame_count) {
                 self.world.apply(event);
             }
+            for event in crate::demo::sky::events(self.frame_count) {
+                self.world.apply(event);
+            }
             if let Some(step) = crate::demo::env::step(self.frame_count) {
                 self.demo_env_step(step);
             }
             if let Some(scenario) = crate::demo::env::editor() {
-                if self.frame_count == 400 {
+                if scenario.starts_with("day") {
+                    self.demo_day_editor(scenario, self.frame_count);
+                } else if self.frame_count == 400 {
                     self.demo_env_editor(scenario);
                 } else if scenario == "item-save" {
                     self.demo_env_editor_step(self.frame_count);
@@ -8852,6 +8873,7 @@ impl App {
                     }
                 }
                 self.draw_env_editor(&ctx, &p);
+                self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
                 self.settings.show_chat = self.panels.chat;
                 self.settings.show_perf = self.panels.perf;
@@ -9809,6 +9831,14 @@ impl ApplicationHandler for App {
                 for ev in crate::demo::selection_cycle_events() {
                     self.world.apply(ev);
                 }
+            }
+            // AURORA_DEMO_SKY_OPTICS: from behind the avatar, up at the eastern sky
+            if let Some(dir) = crate::demo::sky::view_direction()
+                && std::env::var_os("AURORA_DEMO_CAM").is_none()
+            {
+                let eye = self.world.agent.position + Vec3::new(-3.0, 0.0, 2.5);
+                self.camera
+                    .set_view(eye, eye + dir * 30.0, &mut self.world.agent, &self.settings.camera);
             }
             if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                 let focus = Vec3::new(135.5, 125.0, crate::demo::floor_at(135.0, 125.0) + 1.3);

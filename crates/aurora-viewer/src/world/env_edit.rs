@@ -89,9 +89,13 @@ impl SettingsDoc {
         self.kind
     }
 
-    #[cfg(test)]
-    pub fn llsd(&self) -> &Llsd {
+    /// The settings map (a day cycle's frame).
+    pub fn llsd_ref(&self) -> &Llsd {
         &self.map
+    }
+
+    pub fn into_llsd(self) -> Llsd {
+        self.map
     }
 
     pub fn name(&self) -> &str {
@@ -505,7 +509,13 @@ impl Rights {
 
     /// The flags written into the settings (setFlag / clearFlag).
     pub fn apply(self, doc: &mut SettingsDoc) {
-        let mut f = doc.flags() & !(FLAG_NOCOPY | FLAG_NOMOD | FLAG_NOTRANS);
+        let f = self.flags(doc.flags());
+        doc.set_flags(f);
+    }
+
+    /// `flags` with the permission flags of these rights.
+    pub fn flags(self, flags: u32) -> u32 {
+        let mut f = flags & !(FLAG_NOCOPY | FLAG_NOMOD | FLAG_NOTRANS);
         if !self.copy {
             f |= FLAG_NOCOPY;
         }
@@ -515,7 +525,7 @@ impl Rights {
         if !self.transfer {
             f |= FLAG_NOTRANS;
         }
-        doc.set_flags(f);
+        f
     }
 }
 
@@ -555,7 +565,7 @@ mod tests {
         after.gamma = 1.8;
         after.haze_horizon = 0.7;
         assert!(doc.edit_sky(&before, &after));
-        let m = doc.llsd();
+        let m = doc.llsd_ref();
         assert!(m.has("rayleigh_config"), "untouched keys stay");
         assert!((m["gamma"].as_f32() - 1.8).abs() < 1e-6);
         // an edited haze value lives in legacy_haze
@@ -593,7 +603,7 @@ mod tests {
         let back = SettingsDoc::from_asset(&data).expect("readable");
         assert_eq!(back.name(), "Test");
         assert!((back.extra(MOISTURE_LEVEL) - 0.6).abs() < 1e-6);
-        assert!(back.llsd().has("rayleigh_config"));
+        assert!(back.llsd_ref().has("rayleigh_config"));
     }
 
     #[test]
