@@ -1107,7 +1107,9 @@ fn row(ui: &mut egui::Ui, p: &Palette, label: &str, hint: Option<&str>, control:
                 ui.add(egui::Label::new(RichText::new(h).size(11.0).color(p.muted)).wrap());
             }
         });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control);
+        // (a long hint: the control stays next to its label)
+        let align = if hint.is_some() { egui::Align::Min } else { egui::Align::Center };
+        ui.with_layout(egui::Layout::right_to_left(align), control);
     });
 }
 
