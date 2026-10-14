@@ -169,10 +169,7 @@ mod tests {
         assert!(matches!(&events[0], NetEvent::AvatarClassifieds { target, list }
             if *target == DEMO_AGENT && list.iter().any(|(id, _)| *id == new.id)));
         // saved again: no new payment, the price of the publication stays
-        let edit = NetCommand::ClassifiedUpdate(Box::new(ClassifiedInfo {
-            price: 0,
-            ..new.clone()
-        }));
+        let edit = NetCommand::ClassifiedUpdate(Box::new(ClassifiedInfo { price: 0, ..new.clone() }));
         assert_eq!(price_of_new(&edit), None);
         let events = reply(&edit).expect("an answer");
         assert!(matches!(&events[1], NetEvent::ClassifiedInfo(c) if c.price == 75));

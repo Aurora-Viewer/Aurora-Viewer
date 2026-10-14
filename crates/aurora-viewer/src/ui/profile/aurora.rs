@@ -13,8 +13,8 @@
 mod tabs;
 
 use super::{
-    Edit, PictureSlot, ProfileAction, TAB_CLASSIFIEDS, TAB_FEED, TAB_NOTES, TAB_PICKS, TAB_RL, TAB_SL, WebContext, Window,
-    has_unsaved, loading, rich, save_all,
+    Edit, PictureSlot, ProfileAction, TAB_CLASSIFIEDS, TAB_FEED, TAB_NOTES, TAB_PICKS, TAB_RL, TAB_SL, WebContext, Window, has_unsaved,
+    loading, rich, save_all,
 };
 use crate::theme::Palette;
 use crate::ui::context::{self, CtxAction};

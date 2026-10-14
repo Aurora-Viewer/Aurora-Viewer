@@ -193,6 +193,9 @@ struct Window {
     classifieds_opened: HashSet<Uuid>,
     /// The notes were just saved ("Saved" until the next change).
     notes_saved: bool,
+    /// Demo captures: our first classified in its form (false) or a new
+    /// one at its price (true), once the tab shows.
+    demo_classified: Option<bool>,
 }
 
 impl Window {
@@ -223,6 +226,7 @@ impl Window {
             publish: None,
             classifieds_opened: HashSet::new(),
             notes_saved: false,
+            demo_classified: None,
         }
     }
 
@@ -289,6 +293,8 @@ impl ProfileUi {
         for option in option.split(':') {
             match option {
                 "edit" => w.editing = true,
+                "form" => w.demo_classified = Some(false),
+                "publish" => w.demo_classified = Some(true),
                 "compact" => {
                     let size = Vec2::new(380.0, 640.0);
                     let pos = ctx.content_rect().center() - size * 0.5;
@@ -471,12 +477,7 @@ impl ProfileUi {
             // a snapshot goes into the edit, saved with it
             match self.picker_slot {
                 Some(PictureSlot::Pick(id)) => {
-                    if let Some((e, _)) = self
-                        .windows
-                        .iter_mut()
-                        .find(|w| w.id == id)
-                        .and_then(|w| w.pick_edit.as_mut())
-                    {
+                    if let Some((e, _)) = self.windows.iter_mut().find(|w| w.id == id).and_then(|w| w.pick_edit.as_mut()) {
                         e.snapshot = asset;
                     }
                 }

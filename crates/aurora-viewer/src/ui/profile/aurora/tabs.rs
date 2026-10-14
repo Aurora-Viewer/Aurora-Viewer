@@ -9,8 +9,8 @@
 //! `newview/llpanelprofile*.cpp`, originally LGPL 2.1).
 
 use super::super::{
-    ClassifiedEdit, PickEdit, PictureSlot, ProfileAction, Publish, Window, classified_of, loading, new_pick,
-    picks_limit, rich, web_username,
+    ClassifiedEdit, PickEdit, PictureSlot, ProfileAction, Publish, Window, classified_of, loading, new_pick, picks_limit, rich,
+    web_username,
 };
 use super::{Env, card, display_name, paint_icon, semibold};
 use crate::theme::Palette;
@@ -249,6 +249,11 @@ struct PickView {
 
 fn pick_view(env: &mut Env, w: &mut Window, id: Uuid) -> Option<PickView> {
     let world = env.world;
+    if w.pick_edit.as_ref().is_some_and(|(e, _)| e.id == id)
+        && let Some(i) = world.profiles.picks.get(&id).filter(|i| !i.parcel.is_nil())
+    {
+        w.ask(i.parcel, NetCommand::ParcelInfoRequest(i.parcel), env.actions);
+    }
     if let Some((e, _)) = w.pick_edit.as_ref().filter(|(e, _)| e.id == id) {
         let info = world.profiles.picks.get(&id);
         let parcel = info.and_then(|i| world.profiles.parcels.get(&i.parcel));
@@ -401,80 +406,85 @@ fn feature(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView, editi
     let p = env.p;
     let radius = ui.visuals().window_corner_radius;
     let width = ui.available_width();
-    egui::Frame::new()
-        .fill(p.bar)
-        .corner_radius(radius)
-        .show(ui, |ui| {
-            ui.set_width(width);
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            let image_size = if compact {
-                Vec2::new(width, 120.0)
-            } else {
-                Vec2::new(FEATURE_W.min(width * 0.45), FEATURE_H)
-            };
-            let body = |ui: &mut egui::Ui, env: &mut Env, w: &mut Window| {
-                egui::Frame::new()
-                    .inner_margin(egui::Margin::symmetric(14, 12))
-                    .show(ui, |ui| {
-                        ui.set_min_height(if compact { 0.0 } else { FEATURE_H - 24.0 });
-                        if editing {
-                            pick_form(ui, env, w, v);
-                        } else {
-                            pick_read(ui, env, v);
-                        }
-                    });
-            };
-            let layout = if compact {
-                egui::Layout::top_down(egui::Align::Min)
-            } else {
-                egui::Layout::left_to_right(egui::Align::Min)
-            };
-            ui.with_layout(layout, |ui| {
-                let (rect, _) = ui.allocate_exact_size(image_size, Sense::hover());
-                let corners = if compact {
-                    egui::CornerRadius {
-                        nw: radius.nw,
-                        ne: radius.ne,
-                        sw: 0,
-                        se: 0,
-                    }
-                } else {
-                    egui::CornerRadius {
-                        nw: radius.nw,
-                        sw: radius.sw,
-                        ne: 0,
-                        se: 0,
-                    }
-                };
-                snapshot(ui, env, v.snapshot, rect, corners, "map-pin-filled");
-                if let Some(m) = v.maturity {
-                    let badge = Rect::from_min_size(rect.min + Vec2::splat(8.0), Vec2::splat(15.0));
-                    widgets::paint_maturity_badge(ui.painter(), p, m, badge, widgets::inner_radius(ui.visuals()));
-                }
+    egui::Frame::new().fill(p.bar).corner_radius(radius).show(ui, |ui| {
+        ui.set_width(width);
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        let image_size = if compact {
+            Vec2::new(width, 120.0)
+        } else {
+            Vec2::new(FEATURE_W.min(width * 0.45), FEATURE_H)
+        };
+        let body = |ui: &mut egui::Ui, env: &mut Env, w: &mut Window| {
+            egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 12)).show(ui, |ui| {
+                ui.set_min_height(if compact { 0.0 } else { FEATURE_H - 24.0 });
                 if editing {
-                    let chip = Rect::from_min_size(rect.right_bottom() - Vec2::new(8.0 + 132.0, 8.0 + 24.0), Vec2::new(132.0, 24.0));
-                    let mut c = ui.new_child(egui::UiBuilder::new().max_rect(chip));
-                    if widgets::action_button(&mut c, p, "photo-filled", aurora_i18n::tr!("ui-profile-aurora-change-image"), ActionKind::Primary, chip.size())
-                        .clicked()
-                    {
-                        *env.pick_picture = Some((PictureSlot::Pick(w.id), v.snapshot));
-                    }
+                    pick_form(ui, env, w, v);
+                } else {
+                    pick_read(ui, env, v, compact);
                 }
-                ui.vertical(|ui| body(ui, env, w));
             });
+        };
+        let layout = if compact {
+            egui::Layout::top_down(egui::Align::Min)
+        } else {
+            egui::Layout::left_to_right(egui::Align::Min)
+        };
+        ui.with_layout(layout, |ui| {
+            let (rect, _) = ui.allocate_exact_size(image_size, Sense::hover());
+            let corners = if compact {
+                egui::CornerRadius {
+                    nw: radius.nw,
+                    ne: radius.ne,
+                    sw: 0,
+                    se: 0,
+                }
+            } else {
+                egui::CornerRadius {
+                    nw: radius.nw,
+                    sw: radius.sw,
+                    ne: 0,
+                    se: 0,
+                }
+            };
+            snapshot(ui, env, v.snapshot, rect, corners, "map-pin-filled");
+            if let Some(m) = v.maturity {
+                let badge = Rect::from_min_size(rect.min + Vec2::splat(8.0), Vec2::splat(15.0));
+                widgets::paint_maturity_badge(ui.painter(), p, m, badge, widgets::inner_radius(ui.visuals()));
+            }
+            if editing {
+                let chip = Rect::from_min_size(rect.right_bottom() - Vec2::new(8.0 + 132.0, 8.0 + 24.0), Vec2::new(132.0, 24.0));
+                let mut c = ui.new_child(egui::UiBuilder::new().max_rect(chip));
+                if widgets::action_button(
+                    &mut c,
+                    p,
+                    "photo-filled",
+                    aurora_i18n::tr!("ui-profile-aurora-change-image"),
+                    ActionKind::Primary,
+                    chip.size(),
+                )
+                .clicked()
+                {
+                    *env.pick_picture = Some((PictureSlot::Pick(w.id), v.snapshot));
+                }
+            }
+            ui.vertical(|ui| body(ui, env, w));
         });
+    });
 }
 
 /// The pick as others see it.
-fn pick_read(ui: &mut egui::Ui, env: &mut Env, v: &PickView) {
+fn pick_read(ui: &mut egui::Ui, env: &mut Env, v: &PickView, compact: bool) {
     let (p, world) = (env.p, env.world);
+    let top = ui.cursor().top();
     ui.spacing_mut().item_spacing.y = 6.0;
     ui.label(RichText::new(&v.name).font(semibold(ui, 16.0)).color(p.ink));
     place_row(ui, p, &v.place);
     if !v.desc.trim().is_empty() {
         rich(ui, p, env.emoji, world, env.want_names, &v.desc);
     }
-    ui.add_space((ui.available_height() - 30.0).max(4.0));
+    // the buttons at the bottom of the card, as high as the picture beside
+    let bottom = if compact { 0.0 } else { top + FEATURE_H - 24.0 - 28.0 };
+    ui.add_space((bottom - ui.cursor().top()).max(4.0));
     pick_buttons(ui, env, v.pos, &v.sim);
 }
 
@@ -499,8 +509,16 @@ fn pick_buttons(ui: &mut egui::Ui, env: &mut Env, pos: DVec3, region: &str) {
         ui.spacing_mut().item_spacing.x = 5.0;
         let has_pos = pos != DVec3::ZERO;
         let size = Vec2::new(0.0, 28.0);
-        if widgets::action_button_if(ui, p, "send-filled", aurora_i18n::tr!("ui-profile-aurora-teleport"), ActionKind::Primary, size, has_pos)
-            .clicked()
+        if widgets::action_button_if(
+            ui,
+            p,
+            "send-filled",
+            aurora_i18n::tr!("ui-profile-aurora-teleport"),
+            ActionKind::Primary,
+            size,
+            has_pos,
+        )
+        .clicked()
         {
             env.actions.push(ProfileAction::Teleport(pos));
         }
@@ -570,21 +588,49 @@ fn pick_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         let size = Vec2::new(0.0, 28.0);
-        if widgets::action_button(ui, p, "current-location-filled", aurora_i18n::tr!("ui-profile-aurora-here"), ActionKind::Flat, size).clicked() {
+        if widgets::action_button(
+            ui,
+            p,
+            "current-location-filled",
+            aurora_i18n::tr!("ui-profile-aurora-here"),
+            ActionKind::Flat,
+            size,
+        )
+        .clicked()
+        {
             // onClickSetLocation: our position, parcel and region now
             let here = new_pick(world);
             e.pos = here.pos;
             e.location = here.location;
         }
         let has_pos = e.pos != DVec3::ZERO;
-        if widgets::action_button_if(ui, p, "send-filled", aurora_i18n::tr!("ui-profile-aurora-teleport"), ActionKind::Flat, size, has_pos).clicked() {
+        if widgets::action_button_if(
+            ui,
+            p,
+            "send-filled",
+            aurora_i18n::tr!("ui-profile-aurora-teleport"),
+            ActionKind::Flat,
+            size,
+            has_pos,
+        )
+        .clicked()
+        {
             env.actions.push(ProfileAction::Teleport(e.pos));
         }
         if widgets::action_button_if(ui, p, "map", aurora_i18n::tr!("common-map"), ActionKind::Flat, size, has_pos).clicked() {
             env.actions.push(ProfileAction::ShowOnMap(e.pos));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if widgets::action_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), ActionKind::FlatDanger, size).clicked() {
+            if widgets::action_button(
+                ui,
+                p,
+                "trash-filled",
+                aurora_i18n::tr!("common-delete"),
+                ActionKind::FlatDanger,
+                size,
+            )
+            .clicked()
+            {
                 w.confirm_delete = true;
             }
         });
@@ -620,9 +666,23 @@ fn thumbs(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, items: &[(Uuid, Stri
                 widgets::paint_maturity_badge(ui.painter(), p, m, badge, widgets::inner_radius(ui.visuals()));
             }
             let title = v.as_ref().map_or(name.as_str(), |v| v.name.as_str());
-            widgets::paint_elided(ui, title, pos2(rect.left() + 8.0, img.bottom() + 13.0), col_w - 16.0, semibold(ui, 12.0), p.ink);
+            widgets::paint_elided(
+                ui,
+                title,
+                pos2(rect.left() + 8.0, img.bottom() + 13.0),
+                col_w - 16.0,
+                semibold(ui, 12.0),
+                p.ink,
+            );
             let place = v.as_ref().map_or("", |v| v.place.as_str());
-            widgets::paint_elided(ui, place, pos2(rect.left() + 8.0, img.bottom() + 29.0), col_w - 16.0, FontId::proportional(11.0), p.muted);
+            widgets::paint_elided(
+                ui,
+                place,
+                pos2(rect.left() + 8.0, img.bottom() + 29.0),
+                col_w - 16.0,
+                FontId::proportional(11.0),
+                p.muted,
+            );
             if w.pick_sel == Some(*id) {
                 ui.painter()
                     .rect_stroke(rect, radius, egui::Stroke::new(2.0, p.violet), egui::StrokeKind::Outside);
@@ -647,10 +707,9 @@ fn thumbs(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, items: &[(Uuid, Stri
             let gh = g.size().y;
             ui.painter().galley(pos2(c.x - g.size().x / 2.0, c.y - 8.0), g, p.violet_light);
             let n = aurora_i18n::tr!("ui-profile-aurora-picks-count", count = count as i64, limit = limit as i64);
-            let g = ui
-                .painter()
-                .layout(n, FontId::proportional(11.0), p.muted_dim, col_w - 16.0);
-            ui.painter().galley(pos2(c.x - g.size().x / 2.0, c.y - 8.0 + gh + 2.0), g, p.muted_dim);
+            let g = ui.painter().layout(n, FontId::proportional(11.0), p.muted_dim, col_w - 16.0);
+            ui.painter()
+                .galley(pos2(c.x - g.size().x / 2.0, c.y - 8.0 + gh + 2.0), g, p.muted_dim);
             if resp.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
@@ -751,10 +810,7 @@ pub(in super::super) fn classifieds(ui: &mut egui::Ui, env: &mut Env, w: &mut Wi
                 p,
                 "speakerphone",
                 aurora_i18n::tr!("ui-profile-aurora-classifieds-empty-own"),
-                &aurora_i18n::tr!(
-                    "ui-profile-aurora-classifieds-empty-own-text",
-                    price = MINIMUM_PRICE_FOR_LISTING
-                ),
+                &aurora_i18n::tr!("ui-profile-aurora-classifieds-empty-own-text", price = MINIMUM_PRICE_FOR_LISTING),
                 Some(("plus", aurora_i18n::tr!("ui-profile-aurora-new-classified"))),
                 None,
             )
@@ -777,6 +833,26 @@ pub(in super::super) fn classifieds(ui: &mut egui::Ui, env: &mut Env, w: &mut Wi
     }
     if w.classified_sel.is_none_or(|s| !ids.contains(&s)) {
         w.classified_sel = ids.first().copied();
+    }
+    // AURORA_DEMO_PROFILE=self:3:form / self:3:publish
+    match w.demo_classified {
+        Some(false) if own => {
+            if let Some(c) = ids.first().and_then(|id| world.profiles.classifieds.get(id)) {
+                let e = edit_of(c);
+                w.classified_edit = Some((e.clone(), e));
+                w.demo_classified = None;
+            }
+        }
+        Some(true) if own => {
+            let e = ClassifiedEdit {
+                name: aurora_i18n::tr!("ui-profile-aurora-new-classified").to_owned(),
+                ..new_classified(world)
+            };
+            w.classified_edit = Some((e, ClassifiedEdit::default()));
+            w.publish = Some(Publish::default());
+            w.demo_classified = None;
+        }
+        _ => {}
     }
     // each classified's details, statistics and profile click, once
     // (LLPanelProfileClassified::onOpen)
@@ -823,7 +899,16 @@ pub(in super::super) fn classifieds(ui: &mut egui::Ui, env: &mut Env, w: &mut Wi
     if own && !creating {
         ui.horizontal(|ui| {
             ui.add_space(0.0);
-            if widgets::action_button(ui, p, "plus", aurora_i18n::tr!("ui-profile-aurora-new-classified"), ActionKind::Flat, Vec2::new(0.0, 28.0)).clicked() {
+            if widgets::action_button(
+                ui,
+                p,
+                "plus",
+                aurora_i18n::tr!("ui-profile-aurora-new-classified"),
+                ActionKind::Flat,
+                Vec2::new(0.0, 28.0),
+            )
+            .clicked()
+            {
                 w.classified_edit = Some((new_classified(world), ClassifiedEdit::default()));
                 w.classified_sel = Some(Uuid::nil());
                 w.confirm_delete = false;
@@ -855,8 +940,15 @@ fn publish_strip(ui: &mut egui::Ui, p: &Palette, publish: &mut Publish, name: &s
                 ui.label(RichText::new("L$").font(semibold(ui, 12.0)).color(p.amber));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let size = Vec2::new(0.0, 24.0);
-                    if widgets::action_button(ui, p, "coin-filled", aurora_i18n::tr!("ui-profile-aurora-publish-button"), ActionKind::Primary, size)
-                        .clicked()
+                    if widgets::action_button(
+                        ui,
+                        p,
+                        "coin-filled",
+                        aurora_i18n::tr!("ui-profile-aurora-publish-button"),
+                        ActionKind::Primary,
+                        size,
+                    )
+                    .clicked()
                     {
                         answer = Some(true);
                     }
@@ -978,7 +1070,11 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
                 }
                 let (r, _) = ui.allocate_exact_size(Vec2::new(12.0, 16.0), Sense::hover());
                 paint_icon(ui, "map-pin-filled", r.center(), 11.0, p.muted);
-                ui.label(RichText::new(place_line(&c.parcel_name, &c.sim_name, c.pos_global)).size(11.5).color(p.muted));
+                ui.label(
+                    RichText::new(place_line(&c.parcel_name, &c.sim_name, c.pos_global))
+                        .size(11.5)
+                        .color(p.muted),
+                );
             });
             let date = profiles::slt_date(c.creation_date);
             let line = if c.flags & classified_flags::AUTO_RENEW != 0 {
@@ -993,8 +1089,16 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                ui.label(RichText::new(format!("L$ {}", aurora_i18n::integer(c.price as i64))).font(semibold(ui, 12.5)).color(p.amber));
-                ui.label(RichText::new(aurora_i18n::tr!("ui-profile-aurora-listing-cost")).size(11.0).color(p.muted_dim));
+                ui.label(
+                    RichText::new(format!("L$ {}", aurora_i18n::integer(c.price as i64)))
+                        .font(semibold(ui, 12.5))
+                        .color(p.amber),
+                );
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-profile-aurora-listing-cost"))
+                        .size(11.0)
+                        .color(p.muted_dim),
+                );
             });
         });
     };
@@ -1014,21 +1118,22 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
             ui.spacing_mut().item_spacing.x = 10.0;
             picture(ui, env, Vec2::new(120.0, 76.0));
             let price_w = 110.0;
-            ui.allocate_ui_with_layout(
-                Vec2::new(ui.available_width() - price_w - 10.0, 76.0),
-                egui::Layout::top_down(egui::Align::Min),
-                text,
-            );
-            ui.allocate_ui_with_layout(Vec2::new(price_w, 76.0), egui::Layout::right_to_left(egui::Align::Min), price);
+            let text_w = ui.available_width() - price_w - 10.0;
+            ui.allocate_ui_with_layout(Vec2::new(text_w, 76.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_width(text_w);
+                text(ui);
+            });
+            ui.allocate_ui_with_layout(Vec2::new(price_w, 76.0), egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                ui.set_width(price_w);
+                price(ui);
+            });
         });
     }
 }
 
 /// A small grey chip (the category).
 fn chip(ui: &mut egui::Ui, p: &Palette, text: &str) {
-    let g = ui
-        .painter()
-        .layout_no_wrap(text.to_owned(), semibold(ui, 11.0), p.muted);
+    let g = ui.painter().layout_no_wrap(text.to_owned(), semibold(ui, 11.0), p.muted);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(g.size().x + 14.0, 17.0), Sense::hover());
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     widgets::paint_ink_left(ui.painter(), g, pos2(rect.left() + 7.0, rect.center().y), p.muted);
@@ -1045,9 +1150,15 @@ fn classified_more(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, c: &Classif
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         let (rating, content) = if classified_flags::is_mature(c.flags) {
-            (aurora_i18n::text("common-moderate"), aurora_i18n::tr!("ui-profile-aurora-content-moderate"))
+            (
+                aurora_i18n::text("common-moderate"),
+                aurora_i18n::tr!("ui-profile-aurora-content-moderate"),
+            )
         } else {
-            (aurora_i18n::text("common-general"), aurora_i18n::tr!("ui-profile-aurora-content-general"))
+            (
+                aurora_i18n::text("common-general"),
+                aurora_i18n::tr!("ui-profile-aurora-content-general"),
+            )
         };
         widgets::maturity_badge(ui, p, rating, 14.0);
         ui.label(RichText::new(content).size(11.5).color(p.muted));
@@ -1059,8 +1170,16 @@ fn classified_more(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, c: &Classif
         ui.spacing_mut().item_spacing.x = 5.0;
         let size = Vec2::new(0.0, 28.0);
         let has_pos = c.pos_global != DVec3::ZERO;
-        if widgets::action_button_if(ui, p, "send-filled", aurora_i18n::tr!("ui-profile-aurora-teleport"), ActionKind::Primary, size, has_pos)
-            .clicked()
+        if widgets::action_button_if(
+            ui,
+            p,
+            "send-filled",
+            aurora_i18n::tr!("ui-profile-aurora-teleport"),
+            ActionKind::Primary,
+            size,
+            has_pos,
+        )
+        .clicked()
         {
             env.actions.push(ProfileAction::Net(NetCommand::ClassifiedClick {
                 kind: ClassifiedClick::Teleport,
@@ -1082,7 +1201,16 @@ fn classified_more(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, c: &Classif
                 w.confirm_delete = false;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if widgets::action_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), ActionKind::FlatDanger, size).clicked() {
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "trash-filled",
+                    aurora_i18n::tr!("common-delete"),
+                    ActionKind::FlatDanger,
+                    size,
+                )
+                .clicked()
+                {
                     w.confirm_delete = true;
                 }
             });
@@ -1099,7 +1227,10 @@ fn stats(ui: &mut egui::Ui, env: &Env, c: &ClassifiedInfo) {
             aurora_i18n::integer(s.teleport as i64),
             aurora_i18n::tr!("ui-profile-aurora-stat-teleports").to_owned(),
         ),
-        (aurora_i18n::integer(s.map as i64), aurora_i18n::tr!("ui-profile-aurora-stat-maps").to_owned()),
+        (
+            aurora_i18n::integer(s.map as i64),
+            aurora_i18n::tr!("ui-profile-aurora-stat-maps").to_owned(),
+        ),
         (
             aurora_i18n::integer(s.profile as i64),
             aurora_i18n::tr!("ui-profile-aurora-stat-profiles").to_owned(),
@@ -1123,7 +1254,14 @@ fn stats(ui: &mut egui::Ui, env: &Env, c: &ClassifiedInfo) {
                 semibold(ui, 15.0),
                 p.ink,
             );
-            widgets::paint_elided(ui, &label, pos2(rect.left() + 9.0, rect.bottom() - 10.0), cell_w - 18.0, FontId::proportional(11.0), p.muted);
+            widgets::paint_elided(
+                ui,
+                &label,
+                pos2(rect.left() + 9.0, rect.bottom() - 10.0),
+                cell_w - 18.0,
+                FontId::proportional(11.0),
+                p.muted,
+            );
         }
     });
 }
@@ -1150,7 +1288,16 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
         snapshot(ui, env, e.snapshot, rect, radius, "speakerphone");
         let chip = Rect::from_min_size(rect.right_bottom() - Vec2::new(8.0 + 84.0, 8.0 + 24.0), Vec2::new(84.0, 24.0));
         let mut c = ui.new_child(egui::UiBuilder::new().max_rect(chip));
-        if widgets::action_button(&mut c, p, "photo-filled", aurora_i18n::tr!("ui-profile-aurora-image"), ActionKind::Primary, chip.size()).clicked() {
+        if widgets::action_button(
+            &mut c,
+            p,
+            "photo-filled",
+            aurora_i18n::tr!("ui-profile-aurora-image"),
+            ActionKind::Primary,
+            chip.size(),
+        )
+        .clicked()
+        {
             *env.pick_picture = Some((PictureSlot::Classified(window), e.snapshot));
         }
     };
@@ -1158,12 +1305,14 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             field(ui, p, aurora_i18n::tr!("ui-profile-aurora-title"), |ui| {
-                ui.add(
+                let typed = ui.add(
                     egui::TextEdit::singleline(&mut e.name)
                         .desired_width(ui.available_width())
                         .font(semibold(ui, 12.5)),
                 );
-                clip_bytes(&mut e.name, CLASSIFIED_NAME_BYTES);
+                if typed.changed() {
+                    clip_bytes(&mut e.name, CLASSIFIED_NAME_BYTES);
+                }
                 counter(
                     ui,
                     p,
@@ -1260,10 +1409,7 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
     );
     e.category = category;
     e.mature = mature;
-    let place = e
-        .location
-        .clone()
-        .unwrap_or_else(|| place_line(&e.parcel_name, &e.sim_name, e.pos));
+    let place = e.location.clone().unwrap_or_else(|| place_line(&e.parcel_name, &e.sim_name, e.pos));
     let mut here = false;
     let mut renew = e.auto_renew;
     row(
@@ -1273,8 +1419,15 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
                 ui.horizontal(|ui| {
                     ui.add(egui::Label::new(RichText::new(&place).size(12.0).color(p.muted)).truncate());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        here = widgets::action_button(ui, p, "current-location-filled", aurora_i18n::tr!("ui-profile-aurora-here"), ActionKind::Flat, Vec2::new(0.0, 24.0))
-                            .clicked();
+                        here = widgets::action_button(
+                            ui,
+                            p,
+                            "current-location-filled",
+                            aurora_i18n::tr!("ui-profile-aurora-here"),
+                            ActionKind::Flat,
+                            Vec2::new(0.0, 24.0),
+                        )
+                        .clicked();
                     });
                 });
             });
@@ -1282,7 +1435,11 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
         &mut |ui| {
             field(ui, p, aurora_i18n::tr!("ui-profile-aurora-renewal"), |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(aurora_i18n::tr!("ui-profile-aurora-renew-weekly")).size(12.5).color(p.ink));
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-profile-aurora-renew-weekly"))
+                            .size(12.5)
+                            .color(p.ink),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         widgets::switch(ui, p, &mut renew);
                     });
@@ -1308,7 +1465,16 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
         ui.spacing_mut().item_spacing.x = 5.0;
         let size = Vec2::new(0.0, 28.0);
         if creating {
-            if widgets::action_button(ui, p, "coin-filled", aurora_i18n::tr!("ui-profile-aurora-publish-ellipsis"), ActionKind::Primary, size).clicked() {
+            if widgets::action_button(
+                ui,
+                p,
+                "coin-filled",
+                aurora_i18n::tr!("ui-profile-aurora-publish-ellipsis"),
+                ActionKind::Primary,
+                size,
+            )
+            .clicked()
+            {
                 publish_asked = true;
             }
             if widgets::action_button(ui, p, "", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
@@ -1316,14 +1482,32 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
             }
         } else {
             let has_pos = e.pos != DVec3::ZERO;
-            if widgets::action_button_if(ui, p, "send-filled", aurora_i18n::tr!("ui-profile-aurora-teleport"), ActionKind::Flat, size, has_pos).clicked() {
+            if widgets::action_button_if(
+                ui,
+                p,
+                "send-filled",
+                aurora_i18n::tr!("ui-profile-aurora-teleport"),
+                ActionKind::Flat,
+                size,
+                has_pos,
+            )
+            .clicked()
+            {
                 env.actions.push(ProfileAction::Teleport(e.pos));
             }
             if widgets::action_button_if(ui, p, "map", aurora_i18n::tr!("common-map"), ActionKind::Flat, size, has_pos).clicked() {
                 env.actions.push(ProfileAction::ShowOnMap(e.pos));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                delete = widgets::action_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), ActionKind::FlatDanger, size).clicked();
+                delete = widgets::action_button(
+                    ui,
+                    p,
+                    "trash-filled",
+                    aurora_i18n::tr!("common-delete"),
+                    ActionKind::FlatDanger,
+                    size,
+                )
+                .clicked();
             });
         }
     });
@@ -1386,7 +1570,13 @@ pub(in super::super) fn first_life(ui: &mut egui::Ui, env: &mut Env, w: &mut Win
         }
         return;
     }
-    let side = if compact { ui.available_width() } else if editing { 150.0 } else { 190.0 };
+    let side = if compact {
+        ui.available_width()
+    } else if editing {
+        150.0
+    } else {
+        190.0
+    };
     let photo = |ui: &mut egui::Ui, env: &mut Env| {
         let size = if compact { Vec2::new(side, 150.0) } else { Vec2::splat(side) };
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
@@ -1445,10 +1635,17 @@ pub(in super::super) fn first_life(ui: &mut egui::Ui, env: &mut Env, w: &mut Win
             });
         } else if !w.fl_about.text.trim().is_empty() {
             let fl = w.fl_about.text.clone();
-            card(ui, p, Some(("user-heart", aurora_i18n::tr!("ui-profile-aurora-tab-first-life"))), None, false, |ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                rich(ui, p, env.emoji, env.world, env.want_names, &fl);
-            });
+            card(
+                ui,
+                p,
+                Some(("user-heart", aurora_i18n::tr!("ui-profile-aurora-tab-first-life"))),
+                None,
+                false,
+                |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    rich(ui, p, env.emoji, env.world, env.want_names, &fl);
+                },
+            );
         }
     };
     if compact {
@@ -1477,7 +1674,8 @@ fn photo_menu(ui: &mut egui::Ui, env: &mut Env, rect: Rect, image: Uuid) {
     let c = rect.right_bottom() - Vec2::splat(22.0);
     let r = Rect::from_center_size(c, Vec2::splat(30.0));
     let resp = ui.interact(r, ui.id().with("first-life-camera"), Sense::click());
-    ui.painter().circle_filled(c, 15.0, if resp.hovered() { p.violet_light } else { p.violet });
+    ui.painter()
+        .circle_filled(c, 15.0, if resp.hovered() { p.violet_light } else { p.violet });
     paint_icon(ui, "camera-filled", c, 15.0, p.on_accent);
     let resp = resp.on_hover_text(aurora_i18n::tr!("ui-profile-change-image"));
     let mut choose = false;
@@ -1492,7 +1690,13 @@ fn photo_menu(ui: &mut egui::Ui, env: &mut Env, rect: Rect, image: Uuid) {
             aurora_i18n::tr!("ui-profile-coming-soon"),
         );
         choose = menu::item(ui, p, "photo-filled", aurora_i18n::tr!("ui-profile-aurora-choose-from-inventory"));
-        remove = menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("ui-profile-aurora-remove-photo"), !image.is_nil());
+        remove = menu::item_if(
+            ui,
+            p,
+            "trash-filled",
+            aurora_i18n::tr!("ui-profile-aurora-remove-photo"),
+            !image.is_nil(),
+        );
     });
     if choose {
         *env.pick_picture = Some((PictureSlot::FirstLife, image));
@@ -1548,8 +1752,15 @@ pub(in super::super) fn web(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
                 paint_icon(ui, "lock-filled", r.center(), 12.0, p.muted);
                 ui.add(egui::Label::new(RichText::new(&shown).size(12.0).color(p.muted)).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::action_button(ui, p, "external-link-filled", aurora_i18n::tr!("ui-profile-aurora-open-in-browser"), ActionKind::Flat, Vec2::new(0.0, 24.0))
-                        .clicked()
+                    if widgets::action_button(
+                        ui,
+                        p,
+                        "external-link-filled",
+                        aurora_i18n::tr!("ui-profile-aurora-open-in-browser"),
+                        ActionKind::Flat,
+                        Vec2::new(0.0, 24.0),
+                    )
+                    .clicked()
                     {
                         context::request(ui.ctx(), CtxAction::OpenUrl(page.clone()));
                     }
@@ -1663,7 +1874,10 @@ mod tests {
     fn a_classified_name_like_firestorm() {
         assert!(classified_name_error("").is_some());
         assert!(classified_name_error("« Atelier »").is_some(), "punctuation first");
-        assert!(classified_name_error("Écoles").is_some(), "isalnum of the first byte: A to Z or a digit");
+        assert!(
+            classified_name_error("Écoles").is_some(),
+            "isalnum of the first byte: A to Z or a digit"
+        );
         assert!(classified_name_error("Atelier ouvert").is_none());
         assert!(classified_name_error("3 chalets").is_none());
         // 30 bytes at most, never through a character
@@ -1689,7 +1903,10 @@ mod tests {
     #[test]
     fn a_place_line_like_the_mockup() {
         let pos = DVec3::new(256_000.0 + 140.2, 256_000.0 + 119.6, 25.4);
-        assert_eq!(place_line("Place d'Aurora", "Aurora Démo", pos), "Place d'Aurora · Aurora Démo (140, 120, 25)");
+        assert_eq!(
+            place_line("Place d'Aurora", "Aurora Démo", pos),
+            "Place d'Aurora · Aurora Démo (140, 120, 25)"
+        );
         assert_eq!(place_line("", "Sablière", pos), "Sablière (140, 120, 25)");
         assert_eq!(place_line("", "Sablière", DVec3::ZERO), "Sablière");
     }
