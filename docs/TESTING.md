@@ -154,6 +154,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_KEY=<arrow>` | Holds an arrow key |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_MMO="x,y[,1\|2]"` | Steering the avatar with the mouse |
+| `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
 | `AURORA_DEMO_POINTER=<points>` | Moves the pointer over the interface |
@@ -240,6 +241,16 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_MMO="x,y[,1|2]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead,
   `2`: double right click (running).
+- **`AURORA_DEMO_DOUBLECLICK=walk|run|tp[,x,y]`**: the double-click action
+  of the session (the saved one is left alone), and a double click of the
+  left button at pixel (x, y) at frames 700 to 703 (ground ahead and to the
+  left of the avatar by default), through the same way in as the mouse.
+  With `AURORA_FPS_LIMIT=60`: capture frame 712 to see the destination
+  mark (a teal dot) and the body turning toward it, 780 for the arrival or
+  the teleport. The log says `demo double click: …` and `demo walk ended
+  (done|cancelled): …`. `menu` opens the wolf menu at frame 540, Me at 560
+  and its "Double-click on the ground" entry at 580 (`menu,y`: another
+  height in points): capture frame 620.
 - **`AURORA_DEMO_RCLICK`**: right click at (x, y) at frame 225, or with
   `tag` on the name plate of the nearest other avatar at frame 600.
 - **`AURORA_DEMO_PIE`**: `1` forces the pie menu, `0` forces the list, only
