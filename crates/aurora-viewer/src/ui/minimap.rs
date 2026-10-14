@@ -1306,7 +1306,7 @@ pub fn draw_beacon(ctx: &egui::Context, p: &Palette, world: &World, proj: &super
     // LLTracker::renderBeacon draws two colours: above the destination and
     // below it down to altitude zero. Clip each column before perspective
     // division so a summit or a foot outside the viewport keeps its beam.
-    for (end, color) in [(base + Vec3::Z * 200.0, p.danger), (Vec3::new(base.x, base.y, 0.0), p.teal)] {
+    for (end, color) in [(base + Vec3::Z * 200.0, p.danger), (Vec3::new(base.x, base.y, 0.0), p.violet_light)] {
         if end != base
             && let Some([a, b]) = beacon_segment(clip, proj.view_proj * end.extend(1.0), proj)
         {
@@ -1335,12 +1335,6 @@ pub fn draw_beacon(ctx: &egui::Context, p: &Palette, world: &World, proj: &super
             }
             painter.add(mesh);
         }
-    }
-    if on_screen {
-        painter.circle_stroke(at, 10.0, Stroke::new(5.0, p.bar));
-        painter.circle_stroke(at, 10.0, Stroke::new(3.0, p.on_accent));
-        painter.circle_stroke(at, 9.0, Stroke::new(2.0, p.danger));
-        painter.circle_filled(at, 3.0, p.danger);
     }
     let name = if t.label.is_empty() {
         aurora_i18n::tr!("ui-minimap-destination")
@@ -1375,10 +1369,10 @@ pub fn draw_beacon(ctx: &egui::Context, p: &Palette, world: &World, proj: &super
             .clamp(screen.min + vec2(8.0, 36.0), screen.max - size - vec2(8.0, 48.0))
             - label_rect.min,
     );
-    painter.add(super::widgets::overlay_frame(ctx, p).paint(label_rect));
+    super::widgets::paint_world_label(&painter, p, label_rect);
     painter.galley(label_rect.min + vec2(10.0, 6.0), galley, p.ink);
     Some(BeaconHit {
-        rect: icon_rect.expand(5.0).union(Rect::from_center_size(at, vec2(28.0, 28.0))),
+        rect: icon_rect.expand(5.0),
         label_rect,
         target: (t.x, t.y, t.z),
     })

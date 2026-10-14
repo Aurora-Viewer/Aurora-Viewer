@@ -66,9 +66,11 @@ dragging a handle switch to `violet_light`, like any selection.
   menu), under a dark tint. A soft shadow and a thin border separate the
   surface from the world; the fields stay calm and readable. A skin with
   `panel_alpha = 255` keeps opaque surfaces without this blur. Outside a
-  window, a surface is drawn with `widgets::overlay` (or
-  `widgets::overlay_frame` with no world behind, as on the login screen),
-  never with a background, a border or a radius written by hand. The bars
+  window, a surface is drawn with `widgets::overlay`. An already positioned
+  scene label uses `widgets::paint_world_label`, with a lighter tint and
+  shaded scene blur to keep its text readable. With no world behind, as on
+  the login screen, use `widgets::overlay_frame`. Never write a background,
+  border or radius by hand. The bars
   keep the `bar` colour as their tint (`widgets::finish_bar_glass`); the
   minimap keeps Firestorm's opacity with the border and the shadow of the
   windows. Menus, submenus, right-click menus and drop-down lists get this

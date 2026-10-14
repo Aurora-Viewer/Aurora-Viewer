@@ -1781,8 +1781,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   bright upper column stays visible up to the screen edge, with a pin and a
   readable location / distance label. A second column descends from the
   destination to altitude zero, as in Firestorm; with the default skin it
-  is turquoise, while the upper column is red. Both use the same glow and
-  viewport clipping. Hover the pin or its label for
+  is mauve (`violet_light`), while the upper column is red. Both use the same
+  glow and viewport clipping. The pin has no extra circle; its information
+  card shows the frosted scene under the theme's tint, border and shadow,
+  including beside the off-screen arrow. Opaque skins keep an opaque card.
+  Hover the pin or its label for
   "Click to remove beacon"; click either to remove it from the scene
   and mini-map. `beacon-offscreen` puts the destination behind the camera:
   a clickable direction arrow and its label stay within the screen.
