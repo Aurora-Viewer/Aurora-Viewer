@@ -50,6 +50,7 @@ pub(crate) mod numeric_drag;
 pub mod object_actions;
 pub mod options;
 pub mod parcel_icons;
+pub mod pay;
 pub mod people;
 pub mod perf;
 pub mod place_details;

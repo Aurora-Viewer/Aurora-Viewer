@@ -1291,6 +1291,50 @@ pub fn action_button_if(
     resp
 }
 
+/// One button of `dialog_buttons`.
+#[derive(Clone, Copy, Debug)]
+pub struct DialogButton<'a> {
+    pub icon: &'a str,
+    pub label: &'a str,
+    pub kind: ActionKind,
+    pub enabled: bool,
+}
+
+/// The width `action_button` gives `label` with `icon` when it fits its content.
+fn action_button_fit(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
+    let text = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.5), Color32::PLACEHOLDER)
+        .size()
+        .x;
+    let lead = match (icon.is_empty(), label.is_empty()) {
+        (true, _) => 0.0,
+        (false, true) => 15.0,
+        (false, false) => 22.0,
+    };
+    lead + text + 24.0
+}
+
+/// The buttons that end a dialog, against the right edge in the order
+/// given, all as wide as the widest of them (Cancel as wide as "Pay L$
+/// 1,500"). Returns the index of the one clicked.
+pub fn dialog_buttons(ui: &mut egui::Ui, p: &Palette, buttons: &[DialogButton<'_>], height: f32) -> Option<usize> {
+    let width = buttons
+        .iter()
+        .map(|b| action_button_fit(ui, b.icon, b.label))
+        .fold(0.0_f32, f32::max);
+    let mut clicked = None;
+    let row = Vec2::new(ui.available_width(), height);
+    ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        for (i, b) in buttons.iter().enumerate().rev() {
+            if action_button_if(ui, p, b.icon, b.label, b.kind, Vec2::new(width, height), b.enabled).clicked() && b.enabled {
+                clicked = Some(i);
+            }
+        }
+    });
+    clicked
+}
+
 /// Primary action using the Aurora accent and the flat button geometry.
 pub fn primary_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
     ui.add_sized(

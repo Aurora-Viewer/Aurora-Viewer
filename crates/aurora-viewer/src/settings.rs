@@ -241,6 +241,11 @@ pub struct Settings {
     /// box "Do not show again" of the confirmation turns it off). Firestorm
     /// keeps one "ignore" per notification: one setting here for the three.
     pub confirm_teleports: bool,
+    /// Ask before a payment above `payment_confirm_threshold` L$
+    /// (FSConfirmPayments, on by default).
+    pub confirm_payments: bool,
+    /// FSPaymentConfirmationThreshold: 200 L$ by default.
+    pub payment_confirm_threshold: i32,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -318,6 +323,8 @@ pub struct Settings {
     /// instead of the header and cards of `ui/profile/aurora.rs`; group
     /// profiles in the classic window too (`ui/group_profile.rs`).
     pub classic_profiles: bool,
+    /// Firestorm's Pay window (floater_pay.xml) instead of `ui/pay.rs`.
+    pub classic_pay_window: bool,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
@@ -699,6 +706,8 @@ impl Default for Settings {
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             landmarks_by_date: true,
             confirm_teleports: true,
+            confirm_payments: true,
+            payment_confirm_threshold: 200,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -739,6 +748,7 @@ impl Default for Settings {
             name_tag_distance: 64.0,
             classic_name_tags: false,
             classic_profiles: false,
+            classic_pay_window: false,
             plates_friends_only_full: false,
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,

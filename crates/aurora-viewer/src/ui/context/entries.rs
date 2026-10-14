@@ -370,7 +370,7 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         ui.todo("player-eject-filled", aurora_i18n::tr!("ui-context-eject"));
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
-    ui.todo("coin-filled", aurora_i18n::tr!("common-pay"));
+    ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
     ui.separator();
     // Firestorm "Always Display Full Detail / Never Display Full Detail / Remove From Display Exceptions"
     if let Some((c, silhouette)) = f.complexity {
@@ -443,7 +443,8 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         );
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
-    ui.todo("coin-filled", aurora_i18n::tr!("common-pay"));
+    // Avatar.Pay: the wearer is paid
+    ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
     ui.separator();
     ui.todo("info-circle-filled", aurora_i18n::tr!("ui-context-object-profile"));
     ui.separator();
