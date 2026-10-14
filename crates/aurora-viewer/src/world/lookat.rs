@@ -79,8 +79,20 @@ pub struct Settings {
     /// FSStaticEyes: an animation that stops the random eye movements.
     pub static_eyes: bool,
     /// How the targets are drawn: Aurora's halo, or Firestorm's wire
-    /// crosshair (for the Aurora page of the preferences, still to come).
+    /// crosshair (Preferences › Aurora).
     pub style: Style,
+    /// Where the head looks while the cursor moves (Preferences › Aurora).
+    pub aim: Aim,
+}
+
+/// Where our head looks while the cursor moves (`cursor_look`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum Aim {
+    /// The very point under the cursor (LOOKAT_TARGET_HOVER), Aurora's own.
+    #[default]
+    Point,
+    /// Firestorm: only toward the cursor's side (FREELOOK).
+    Direction,
 }
 
 /// The look of the look-at targets (`ui::lookat_targets`).
@@ -108,6 +120,7 @@ impl Default for Settings {
             head_pitch: 90.0,
             static_eyes: false,
             style: Style::Aurora,
+            aim: Aim::Point,
         }
     }
 }
@@ -199,11 +212,11 @@ pub fn cursor_direction(forward: Vec3, x: f32, y: f32, yaw: f32, pitch: f32) -> 
 /// point of the ground (`hover`); over the sky, a window or ourselves, the
 /// direction of Firestorm. Its priority and its 1 s timeout are those of
 /// the attentions table: focus and selection still win, free look and
-/// idle give way.
-pub fn cursor_look(hover: Option<(Option<Uuid>, DVec3)>, me: Uuid, free: Vec3) -> (u8, Option<Uuid>, DVec3) {
-    match hover {
-        Some((object, offset)) => (HOVER, object, offset),
-        None => (FREELOOK, Some(me), free.as_dvec3()),
+/// idle give way. `Aim::Direction` keeps Firestorm's free look everywhere.
+pub fn cursor_look(aim: Aim, hover: Option<(Option<Uuid>, DVec3)>, me: Uuid, free: Vec3) -> (u8, Option<Uuid>, DVec3) {
+    match (aim, hover) {
+        (Aim::Point, Some((object, offset))) => (HOVER, object, offset),
+        _ => (FREELOOK, Some(me), free.as_dvec3()),
     }
 }
 
@@ -468,14 +481,29 @@ mod tests {
         let free = Vec3::new(0.0, 1.0, 0.0);
         // over an object: hover, on the object
         let on = (Some(prim), DVec3::new(0.2, 0.0, 0.5));
-        assert_eq!(cursor_look(Some(on), me, free), (HOVER, Some(prim), on.1));
+        assert_eq!(cursor_look(Aim::Point, Some(on), me, free), (HOVER, Some(prim), on.1));
         // over the ground: hover, a global point
         let ground = (None, DVec3::new(256.0 + 30.0, 40.0, 21.5));
-        assert_eq!(cursor_look(Some(ground), me, free), (HOVER, None, ground.1));
+        assert_eq!(cursor_look(Aim::Point, Some(ground), me, free), (HOVER, None, ground.1));
         // over the sky: Firestorm's free look
-        assert_eq!(cursor_look(None, me, free), (FREELOOK, Some(me), free.as_dvec3()));
+        assert_eq!(cursor_look(Aim::Point, None, me, free), (FREELOOK, Some(me), free.as_dvec3()));
         // a hover target is a point in the world: the distance limit applies
         assert!(clamped(HOVER) && !clamped(FREELOOK));
+    }
+
+    #[test]
+    fn firestorm_aim_only_turns_toward_the_cursor() {
+        let me = Uuid::from_u128(1);
+        let free = Vec3::new(0.0, 1.0, 0.0);
+        let on = (Some(Uuid::from_u128(7)), DVec3::new(0.2, 0.0, 0.5));
+        // over an object as over the sky: the direction, never the point
+        for hover in [Some(on), Some((None, DVec3::new(30.0, 40.0, 21.5))), None] {
+            assert_eq!(cursor_look(Aim::Direction, hover, me, free), (FREELOOK, Some(me), free.as_dvec3()));
+        }
+        // Aurora's point by default, also in a file saved before the setting
+        assert_eq!(Settings::default().aim, Aim::Point);
+        let old: Settings = serde_json::from_str(r#"{"show_targets":true}"#).expect("former look-at settings");
+        assert_eq!(old.aim, Aim::Point);
     }
 
     #[test]

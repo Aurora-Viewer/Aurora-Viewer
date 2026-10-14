@@ -1429,6 +1429,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   for example `8:Ctrl` for assigned keys or `8:HUD` for a category;
   `8:zzzz` shows the empty result. The field stays above the scrolling list,
   and its clear button restores all actions. Search follows the selected language.
+  `13` opens the Aurora page: the aurora entry at the top of the list, the
+  page head with "All in Firestorm version" / "All in Aurora version", then
+  the Appearance, Gaze and Avatar plates groups; each choice changes its
+  element at once (conversations, name tags, look-at targets with
+  `AURORA_DEMO_LOOKAT=own`, gaze under the cursor). `<section>:end` (other
+  than `8`) opens the page scrolled to its end, for example `13:end` for the
+  Avatar plates group.
   With `AURORA_DEMO_LOGIN` (for example `empty` or `cards`) the preferences
   open over the login screen, as its top right cogwheel does: every page
   works before login, and Chat › Conversation logs says that the folder
@@ -2113,7 +2120,7 @@ What the inventory must show with these scenarios:
     the right are whole. `AURORA_LABEL_OCCLUSION=0` gives the image without
     the cut. To look at in `AURORA_AA=3`, `5` and `6` (with 5, the cut must
     not shimmer from one frame to the next).
-  - With `AURORA_DEMO_FRIEND_PLATES=1` (the setting Preferences › Interface ›
+  - With `AURORA_DEMO_FRIEND_PLATES=1` (the setting Preferences › Aurora ›
     "Full plates for friends only" for this run, not saved): only Orion, the
     friend, and our own plate are complete; Nova, Tess, Lune and La Brume are
     compact pills however near; the far pills do not change.

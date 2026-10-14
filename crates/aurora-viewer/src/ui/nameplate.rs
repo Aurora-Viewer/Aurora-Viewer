@@ -611,9 +611,9 @@ pub struct Plates {
     levels: Vec<Level>,
     glass: Vec<bool>,
     waiting: Vec<Uuid>,
-    /// Preferences › Interface › "Full plates for friends only".
+    /// Preferences › Aurora › "Full plates for friends only".
     pub friends_only_full: bool,
-    /// Preferences › Interface › "Expand a plate on hover".
+    /// Preferences › Aurora › "Expand a plate on hover".
     pub expand_on_hover: bool,
     /// The avatar whose plate is under the pointer this frame (set by the
     /// viewer from the plates of the last frame, outside the windows).

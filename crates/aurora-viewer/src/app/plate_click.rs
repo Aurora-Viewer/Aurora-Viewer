@@ -1,7 +1,7 @@
 //! What the pointer does with a name plate (the human's requests of
 //! 2026-10-14): the plate under it shows full ("Expand a plate on hover"),
 //! and a left click on another avatar's plate runs the action chosen in
-//! Preferences › Interface › "Click on a plate", one of the entries of the
+//! Preferences › Aurora › "Click on a plate", one of the entries of the
 //! avatar's menu, with the hand cursor of a clickable object. Firestorm has
 //! neither: a click on a name tag is a click on its avatar.
 use super::*;

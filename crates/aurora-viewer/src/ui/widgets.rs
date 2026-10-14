@@ -726,12 +726,15 @@ pub fn inner_radius(visuals: &egui::Visuals) -> CornerRadius {
 /// into a pill.
 pub const TRACK_RADIUS: f32 = 2.0;
 
+/// Size of a `switch`.
+pub const SWITCH_SIZE: Vec2 = Vec2::new(34.0, 18.0);
+
 /// Flat on/off switch: a track with the corners of the theme, and a square
 /// knob that slides in it.
 pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     // a whole number of pixels around the knob keeps its edges crisp
     const KNOB: f32 = 14.0;
-    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(34.0, 18.0), Sense::click());
+    let (rect, mut resp) = ui.allocate_exact_size(SWITCH_SIZE, Sense::click());
     if resp.clicked() {
         *on = !*on;
         resp.mark_changed();
@@ -964,6 +967,67 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
             }
         }
     });
+    changed
+}
+
+/// Height of a `segmented` choice, room around its segments, and room
+/// around a segment's label.
+const SEGMENT_H: f32 = 26.0;
+const SEGMENT_PAD: f32 = 2.0;
+const SEGMENT_PAD_X: f32 = 20.0;
+
+fn segment_galleys(ui: &egui::Ui, options: &[(&str, bool)]) -> Vec<std::sync::Arc<egui::Galley>> {
+    options
+        .iter()
+        .map(|(label, _)| {
+            ui.painter()
+                .layout_no_wrap((*label).to_owned(), egui::FontId::proportional(12.0), Color32::PLACEHOLDER)
+        })
+        .collect()
+}
+
+/// The room a `segmented` choice takes, to lay it out before drawing it.
+pub fn segmented_size(ui: &egui::Ui, options: &[(&str, bool)]) -> Vec2 {
+    let labels: f32 = segment_galleys(ui, options).iter().map(|g| g.size().x + SEGMENT_PAD_X).sum();
+    Vec2::new(labels + SEGMENT_PAD * 2.0, SEGMENT_H)
+}
+
+/// Choice between a few options side by side, in one track: the chosen
+/// segment is lit, in the accent when its option is `accent` (Aurora's own
+/// look), in `raised` otherwise (a legacy look). Returns true when the
+/// selection changed.
+pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)]) -> bool {
+    let galleys = segment_galleys(ui, options);
+    let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + SEGMENT_PAD_X).collect();
+    let (track, _) = ui.allocate_exact_size(segmented_size(ui, options), Sense::hover());
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    ui.painter().rect_filled(track, radius, p.bar);
+    let mut changed = false;
+    let mut x = track.left() + SEGMENT_PAD;
+    for (i, ((label, accent), galley)) in options.iter().zip(galleys).enumerate() {
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(x, track.top() + SEGMENT_PAD),
+            Vec2::new(widths[i], track.height() - SEGMENT_PAD * 2.0),
+        );
+        x += widths[i];
+        let resp = ui.interact(rect, ui.id().with(("segmented", i, *label)), Sense::click());
+        let sel = *selected == i;
+        let (face, text) = match (sel, *accent) {
+            (true, true) => (Some(p.violet), p.on_accent),
+            (true, false) => (Some(p.raised), p.ink),
+            (false, _) if resp.hovered() => (Some(p.raised.gamma_multiply(0.5)), p.ink),
+            (false, _) => (None, p.muted),
+        };
+        if let Some(face) = face {
+            ui.painter().rect_filled(rect, inner_radius(ui.visuals()), face);
+        }
+        ui.painter().galley(rect.center() - galley.size() / 2.0, galley, text);
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, sel, *label));
+        if resp.clicked() && !sel {
+            *selected = i;
+            changed = true;
+        }
+    }
     changed
 }
 
