@@ -3,9 +3,11 @@
 //! sendGroupRoleDataRequest, sendGroupRoleMembersRequest,
 //! sendGroupTitlesRequest, sendGroupTitleUpdate, sendGroupMemberJoin,
 //! sendGroupMemberInvites), LLPanelGroupNotices' GroupNoticesListRequest,
-//! sent reliably to the agent's region, and their replies.
+//! LLPanelGroupLandMoney's land and accounts (group_money.rs), sent
+//! reliably to the agent's region, and their replies.
 
 use super::{Session, emit};
+use crate::group_money;
 use crate::groups;
 use crate::types::{NetCommand, NetEvent};
 use aurora_msg::msgs::*;
@@ -65,7 +67,21 @@ impl Session<'_> {
                     self.send_main(&m, true);
                 }
             }
-            NetCommand::GroupBans { group, action, ids } => self.group_bans(*group, *action, ids.clone()),
+            NetCommand::GroupBans {
+                group,
+                action,
+                ids,
+                refresh,
+            } => self.group_bans(*group, *action, ids.clone(), *refresh),
+            NetCommand::GroupRoleUpdate { group, updates } => {
+                for m in groups::role_update_messages(self.agent_id(), self.session_id(), *group, updates) {
+                    self.send_main(&m, true);
+                }
+            }
+            NetCommand::UpdateGroupInfo { group, info } => {
+                let m = groups::group_info_message(self.agent_id(), self.session_id(), *group, info);
+                self.send_main(&m, true);
+            }
             NetCommand::GroupNoticeRequest(notice) => {
                 // LLPanelGroupNotices::onSelectNotice
                 let mut m = GroupNoticeRequest::default();
@@ -86,6 +102,19 @@ impl Session<'_> {
                     self.send_main(&m, true);
                 }
             }
+            NetCommand::GroupLandQuery { group, transaction } => {
+                let m = group_money::places_query(self.agent_id(), self.session_id(), *group, *transaction);
+                self.send_main(&m, true);
+            }
+            NetCommand::SetGroupContribution { group, contribution } => {
+                let m = group_money::contribution_message(self.agent_id(), self.session_id(), *group, *contribution);
+                self.send_main(&m, true);
+            }
+            NetCommand::GroupAccount(r) => match group_money::account_message(self.agent_id(), self.session_id(), r) {
+                group_money::AccountMessage::Summary(m) => self.send_main(&m, true),
+                group_money::AccountMessage::Details(m) => self.send_main(&m, true),
+                group_money::AccountMessage::Sales(m) => self.send_main(&m, true),
+            },
             _ => return false,
         }
         true
@@ -125,7 +154,7 @@ impl Session<'_> {
 
     /// LLGroupMgr::sendGroupBanRequest: the GroupAPIv1 capability, with the
     /// group in the query; a POST answers the list when it changed it.
-    fn group_bans(&mut self, group: uuid::Uuid, action: Option<i32>, ids: Vec<uuid::Uuid>) {
+    fn group_bans(&mut self, group: uuid::Uuid, action: Option<i32>, ids: Vec<uuid::Uuid>, refresh: bool) {
         let Some(cap) = self.main_cap("GroupAPIv1") else {
             log::info!("group bans: no GroupAPIv1 capability");
             return;
@@ -134,10 +163,14 @@ impl Session<'_> {
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            let reply = match action {
+            let mut reply = match action {
                 Some(action) => crate::caps::post_llsd(&http, &url, &groups::ban_body(action, &ids)).await,
                 None => crate::caps::get_llsd(&http, &url).await,
             };
+            // postGroupBanRequestCoro: with BAN_UPDATE, the list again
+            if refresh && reply.is_ok() {
+                reply = crate::caps::get_llsd(&http, &url).await;
+            }
             match reply {
                 Ok(v) => {
                     if let Some((g, bans)) = groups::ban_list(&v) {
@@ -216,6 +249,19 @@ impl Session<'_> {
                     },
                 );
             }
+        } else if id == PlacesReply::ID {
+            let m: PlacesReply = pkt.decode()?;
+            let (to, reply) = group_money::places_reply(&m);
+            self.on_group_land(to, reply);
+        } else if id == GroupAccountSummaryReply::ID {
+            let (to, reply) = group_money::summary_reply(&pkt.decode()?);
+            self.on_group_account(to, reply);
+        } else if id == GroupAccountDetailsReply::ID {
+            let (to, reply) = group_money::details_reply(&pkt.decode()?);
+            self.on_group_account(to, reply);
+        } else if id == GroupAccountTransactionsReply::ID {
+            let (to, reply) = group_money::transactions_reply(&pkt.decode()?);
+            self.on_group_account(to, reply);
         } else if id == LeaveGroupReply::ID {
             let m: LeaveGroupReply = pkt.decode()?;
             if m.agent_data.agent_id == me {
@@ -231,5 +277,38 @@ impl Session<'_> {
             return Ok(false);
         }
         Ok(true)
+    }
+
+    /// Event-queue messages of this module (PlacesReply, UDPDeprecated);
+    /// false when not one of them.
+    pub(super) fn on_groups_eq(&mut self, message: &str, b: &aurora_llsd::Llsd) -> bool {
+        if message != "PlacesReply" {
+            return false;
+        }
+        let (to, reply) = group_money::places_reply_llsd(b);
+        self.on_group_land(to, reply);
+        true
+    }
+
+    /// process_places_reply: a nil query id is the land holdings' (not
+    /// ported), any other the group panel's of that group.
+    fn on_group_land(&mut self, to: uuid::Uuid, reply: group_money::GroupLandReply) {
+        if to != self.agent_id() {
+            log::warn!("PlacesReply for another agent");
+        } else if reply.group.is_nil() {
+            log::debug!("PlacesReply for the land holdings: not shown");
+        } else {
+            emit(self.sh, NetEvent::GroupLand(Box::new(reply)));
+        }
+    }
+
+    /// processGroupAccount…Reply: "Got group L$ history reply for another
+    /// agent!" is dropped.
+    fn on_group_account(&mut self, to: uuid::Uuid, reply: group_money::AccountReply) {
+        if to == self.agent_id() {
+            emit(self.sh, NetEvent::GroupAccount(Box::new(reply)));
+        } else {
+            log::warn!("group L$ reply for another agent");
+        }
     }
 }

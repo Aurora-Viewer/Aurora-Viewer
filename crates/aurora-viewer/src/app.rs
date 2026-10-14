@@ -5483,8 +5483,11 @@ impl App {
         self.world.eep.set_manual_transition(self.settings.env_manual_transition);
         let (sky_frame, water_frame) = self.world.environment_frames(&mut self.panels.time_of_day);
         self.world.sky_directions = (sky_frame.sun_direction(), sky_frame.moon_direction());
-        // cloud scroll (LLEnvironment::updateCloudScroll: rate / 100 per second)
-        self.world.cloud_scroll += sky_frame.cloud_scroll_rate * dt / 100.0;
+        // cloud scroll (LLEnvironment::updateCloudScroll: rate / 100 per
+        // second), held still by the photo's light (pauseCloudScroll)
+        if !self.photo_clouds_paused() {
+            self.world.cloud_scroll += sky_frame.cloud_scroll_rate * dt / 100.0;
+        }
         self.world.cloud_scroll = glam::Vec2::new(
             self.world.cloud_scroll.x.rem_euclid(1024.0),
             self.world.cloud_scroll.y.rem_euclid(1024.0),
@@ -5581,7 +5584,7 @@ impl App {
             ground_color: env.ground,
             fog_color: env.fog_color,
             fog_density: env.fog_density,
-            exposure: self.settings.exposure,
+            exposure: self.photo_exposure(),
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,
             water_height: self.world.main_water_height(),
@@ -7353,6 +7356,23 @@ impl App {
         }
     }
 
+    /// LLPanelGroupBulkBan::submit's reasons: who was not banned, and why.
+    fn tell_bulk_ban(&mut self, done: &crate::world::group_data::BulkBan) {
+        let names =
+            |ids: &[uuid::Uuid], world: &crate::world::World| ids.iter().map(|id| world.social.name_of(id)).collect::<Vec<_>>().join(", ");
+        if !done.already.is_empty() {
+            let text = aurora_i18n::tr!("ui-group-admin-already-banned", names = names(&done.already, &self.world));
+            self.world.system_message(text);
+        }
+        if done.myself {
+            self.world.system_message(aurora_i18n::tr!("ui-group-admin-cannot-ban-yourself"));
+        }
+        if !done.over_limit.is_empty() {
+            let text = aurora_i18n::tr!("ui-group-admin-ban-limit", names = names(&done.over_limit, &self.world));
+            self.world.system_message(text);
+        }
+    }
+
     /// sendEjectNotifications: "You ejected X from the group Y", for each.
     fn notify_ejected(&mut self, group: uuid::Uuid, members: &[uuid::Uuid]) {
         let group_name = self.world.search.groups.get(&group).map(|g| g.name.clone()).unwrap_or_default();
@@ -7375,6 +7395,7 @@ impl App {
                 GroupAction::Refresh { group, member } => {
                     self.send(NetCommand::GroupProfileRequest(group));
                     self.world.group_data.refresh(group, member);
+                    self.world.group_money.refresh(group);
                 }
                 GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
                 GroupAction::Eject { group, members } | GroupAction::Ban { group, members } if members.is_empty() => {
@@ -7389,6 +7410,19 @@ impl App {
                     self.world.group_data.ban(group, members, self.world.agent_id);
                 }
                 GroupAction::ChangeRoles { group, changes } => self.world.group_data.change_roles(group, changes),
+                GroupAction::UpdateRoles { group, updates } => self.world.group_data.update_roles(group, updates),
+                GroupAction::UpdateInfo { group, info } => {
+                    self.world.group_data.update_info(group, info);
+                    // the profile again, to show what the server kept
+                    self.send(NetCommand::GroupProfileRequest(group));
+                }
+                GroupAction::RequestBans(group) => self.world.group_data.request_bans(group),
+                GroupAction::Unban { group, ids } => self.world.group_data.unban(group, ids),
+                GroupAction::BanResidents { group, ids } => {
+                    let me = self.world.agent_id;
+                    let done = self.world.group_data.ban_residents(group, ids, me);
+                    self.tell_bulk_ban(&done);
+                }
                 GroupAction::RefreshNotices(group) => self.world.group_data.request_notices(group),
                 GroupAction::OpenNotice { group, notice } => {
                     log::info!("group notice asked: {notice}");
@@ -7430,6 +7464,28 @@ impl App {
                     self.panels.people = true;
                     self.panels.people_tab = 2;
                     self.people_ui.filter = name;
+                }
+                GroupAction::LoadLand { group, ledger } => {
+                    // the land types name the parcels' "Type" column
+                    self.world.search.want_land_types();
+                    self.world.group_money.open(group, ledger);
+                }
+                GroupAction::LandPage { group, ledger } => self.world.group_money.request(group, ledger),
+                GroupAction::LandStep { group, ledger, earlier } => self.world.group_money.step(group, ledger, earlier),
+                GroupAction::SetContribution { group, contribution } => {
+                    if !self.world.groups.set_contribution(group, contribution) {
+                        self.world.system_message(aurora_i18n::tr!("ui-group-land-contribution-error"));
+                    }
+                }
+                // onMapButton: "use the agent's z-height"
+                GroupAction::ShowOnMap { x, y } => {
+                    let z = self.world.agent_global().map_or(0.0, |g| g.z as f32);
+                    self.world.map.track_location(x, y, z, false);
+                    self.panels.world_map = true;
+                }
+                GroupAction::AboutLand { x, y } => {
+                    ui::land::LandUi::select_at_global(&mut self.world, x, y);
+                    self.panels.about_land = true;
                 }
             }
         }
@@ -8787,7 +8843,8 @@ impl App {
                 self.panels.search = open;
                 self.apply_search_actions(&ctx, search_acts);
                 self.apply_group_actions(&ctx, group_acts);
-                self.group_profile_ui.dialogs(&ctx, &p, &mut self.world);
+                let wanted = self.group_profile_ui.dialogs(&ctx, &p, &mut self.world, &self.ui_images);
+                self.place_images.extend(wanted);
                 if let Some(id) = ui::group_profile::take_open_request(&ctx) {
                     self.group_profile_ui.open(&mut self.world, id);
                 }
@@ -8922,7 +8979,8 @@ impl App {
                 self.settings.show_inventory = self.panels.inventory;
                 self.settings.show_appearance = self.panels.appearance;
                 self.settings.show_ao = self.panels.ao;
-                if self.panels.time_of_day != self.settings.time_of_day {
+                // (not the photo's time of day, which is never saved)
+                if self.panels.time_of_day != self.settings.time_of_day && !self.photo_time_held() {
                     self.settings.time_of_day = self.panels.time_of_day;
                 }
                 if let Some(msg) = self.world.alerts.pop_front() {
@@ -9540,6 +9598,17 @@ impl ApplicationHandler for App {
                 if let Some((group, read, compose)) = crate::demo::group::notices_tab() {
                     self.world.group_data.set_read(group, read);
                     self.group_profile_ui.show_notices(compose);
+                }
+                if crate::demo::group::admin_tab() {
+                    self.group_profile_ui.show_admin();
+                }
+                if let Some(ledger) = crate::demo::group::land_tab() {
+                    // the land we hold, for the most we may give
+                    self.world.apply(NetEvent::LandHoldings {
+                        credit: crate::demo::group::LAND_CREDIT,
+                        committed: crate::demo::group::LAND_COMMITTED,
+                    });
+                    self.group_profile_ui.show_land(ledger);
                 }
                 if let Some(invitees) = crate::demo::group::invitees() {
                     self.group_profile_ui.invite.open(crate::demo::group::shown_group(), invitees);

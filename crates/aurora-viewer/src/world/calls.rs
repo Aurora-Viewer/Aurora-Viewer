@@ -180,6 +180,9 @@ pub struct Calls {
     /// Conferences we are starting, by temporary session id: the residents
     /// asked, for the start by message after a refusal.
     pub conferences: std::collections::HashMap<Uuid, Vec<Uuid>>,
+    /// Residents we invited into a conference and who have not joined yet
+    /// (FSFloaterIM::mInvitedParticipants), by session.
+    pub invited: std::collections::HashMap<Uuid, Vec<Uuid>>,
     /// Voice is enabled and working: invitations are shown only then
     /// (LLViewerChatterBoxInvitation::post).
     pub voice_enabled: bool,
@@ -509,6 +512,8 @@ impl World {
             let agents: Vec<Uuid> = agents.into_iter().filter(|a| !present.contains(a)).collect();
             if !agents.is_empty() {
                 log::info!("conference: inviting {} residents", agents.len());
+                // remembered, to tell the others when they join
+                self.calls.invited.entry(conversation).or_default().extend(agents.iter().copied());
                 self.call_request(CallMethod::Invite { agents }, conversation);
             }
             return AddOutcome::Invited;
@@ -529,12 +534,57 @@ impl World {
         let voice = self.call_of(&other).is_some();
         self.conversation_closed(&other);
         let mut residents = vec![other];
-        residents.extend(added);
+        residents.extend(added.iter().copied());
         if voice {
             self.start_conference(residents);
         } else {
             self.start_text_conference(residents);
         }
+        // the new ones are the invited of the new conference (mInitialInvitedIDs)
+        if let Some(session) = self.social.focus_im.filter(|s| self.calls.conferences.contains_key(s)) {
+            self.calls.invited.insert(session, added);
+        }
+    }
+
+    /// Residents joined a conference (ChatterBoxSessionAgentListUpdates,
+    /// "ENTER" transitions): those we invited are announced to everyone in
+    /// it by a message of ours, "<names> was / were invited to the
+    /// conversation." (FSFloaterIM::processAgentListUpdates,
+    /// sendParticipantsAddedNotification), and forgotten.
+    pub(super) fn conference_joined(&mut self, session: Uuid, agents: &[aurora_net::SessionAgent]) {
+        let Some(invited) = self.calls.invited.get_mut(&session) else {
+            return;
+        };
+        let joined: Vec<Uuid> = agents.iter().filter(|a| a.entered).map(|a| a.agent).collect();
+        let arrived: Vec<Uuid> = invited.iter().copied().filter(|id| joined.contains(id)).collect();
+        invited.retain(|id| !joined.contains(id));
+        if invited.is_empty() {
+            self.calls.invited.remove(&session);
+        }
+        if arrived.is_empty() {
+            return;
+        }
+        // LLAvatarActions::buildResidentsString: the complete names known,
+        // in the order of their usernames
+        let names = &self.social.avatar_names;
+        let mut known: Vec<(String, String)> = arrived
+            .iter()
+            .filter_map(|id| {
+                let n = names.get(id)?;
+                Some((n.username.clone(), names.complete(id)?))
+            })
+            .collect();
+        if known.is_empty() {
+            return;
+        }
+        known.sort();
+        let list = known.into_iter().map(|(_, name)| name).collect::<Vec<_>>().join(", ");
+        let text = if arrived.len() > 1 {
+            aurora_i18n::tr!("world-calls-participants-added", names = list.as_str())
+        } else {
+            aurora_i18n::tr!("world-calls-participant-added", name = list.as_str())
+        };
+        self.send_session_im(session, &text);
     }
 
     /// Hang up (LLIMMgr::endCall → LLVoiceChannel::deactivate): back to the
@@ -591,6 +641,9 @@ impl World {
         // a conference we started: its conversation follows it to its id
         if self.calls.conferences.remove(&temp).is_some() && success && !session.is_nil() && session != temp {
             self.social.focus_im = Some(session);
+            if let Some(invited) = self.calls.invited.remove(&temp) {
+                self.calls.invited.insert(session, invited);
+            }
         }
         let Some(c) = self
             .calls
@@ -1266,6 +1319,60 @@ mod tests {
             calls_sent(&mut w),
             vec![(CallMethod::StartConference { agents: vec![a, b] }, session)]
         );
+    }
+
+    #[test]
+    fn the_invited_who_join_are_announced_to_the_conference() {
+        let mut w = world();
+        let (a, b, c) = (Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4));
+        w.social.avatar_names.on_legacy(a, "Tess", "Touch");
+        w.social.avatar_names.on_legacy(b, "Nova", "Example");
+        let session = Uuid::from_u128(50);
+        w.info_mut(session, "Conference").participants.insert(c);
+        w.invite_to_conversation(session, vec![a, b]);
+        w.groups.out.clear();
+        let agent = |id: Uuid, entered: bool| aurora_net::SessionAgent {
+            agent: id,
+            present: Some(true),
+            entered,
+            ..Default::default()
+        };
+        let said = |w: &mut World| -> Vec<String> {
+            std::mem::take(&mut w.groups.out)
+                .into_iter()
+                .filter_map(|c| match c {
+                    NetCommand::SendImDialog { dialog: 17, message, .. } => Some(message),
+                    _ => None,
+                })
+                .collect()
+        };
+        // a full list is no arrival; someone not invited is no news
+        w.apply(NetEvent::SessionAgents {
+            session,
+            agents: vec![agent(a, false), agent(c, true)],
+        });
+        assert!(said(&mut w).is_empty());
+        // both arrive: one message, names in the order of their usernames
+        w.apply(NetEvent::SessionAgents {
+            session,
+            agents: vec![agent(a, true), agent(b, true)],
+        });
+        let names = format!(
+            "{}, {}",
+            w.social.avatar_names.complete(&b).expect("name"),
+            w.social.avatar_names.complete(&a).expect("name")
+        );
+        assert_eq!(
+            said(&mut w),
+            vec![aurora_i18n::tr!("world-calls-participants-added", names = names.as_str())]
+        );
+        // told once
+        w.apply(NetEvent::SessionAgents {
+            session,
+            agents: vec![agent(a, true)],
+        });
+        assert!(said(&mut w).is_empty());
+        assert!(!w.calls.invited.contains_key(&session));
     }
 
     #[test]

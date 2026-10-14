@@ -10,6 +10,7 @@
 
 pub mod gallery;
 pub mod inventory;
+pub mod light;
 pub mod profile;
 pub mod quality;
 pub mod save;

@@ -159,6 +159,18 @@ impl GroupChats {
         });
     }
 
+    /// LLAgent::setGroupContribution: our copy follows at once, then
+    /// SetGroupContribution (the simulator does not answer). False when we
+    /// are not in the group.
+    pub fn set_contribution(&mut self, group: Uuid, contribution: i32) -> bool {
+        let Some(g) = self.groups.iter_mut().find(|g| g.id == group) else {
+            return false;
+        };
+        g.contribution = contribution;
+        self.out.push(NetCommand::SetGroupContribution { group, contribution });
+        true
+    }
+
     fn im(&mut self, to: Uuid, dialog: u8, session: Uuid, message: String) {
         self.out.push(NetCommand::SendImDialog {
             to,
@@ -466,6 +478,8 @@ impl World {
                 if let Some(s) = self.groups.sessions.get_mut(&session) {
                     apply_agents(s, &agents);
                 }
+                // the residents we invited who joined are announced
+                self.conference_joined(session, &agents);
                 let me = self.agent_id;
                 if let Some(a) = agents.iter().find(|a| a.agent == me)
                     && let (Some(muted), Some(s)) = (a.text_muted, self.groups.sessions.get_mut(&session))

@@ -568,7 +568,8 @@ fn more_menu(resp: &egui::Response, c: &mut Ctx, v: &View, actions: &mut Vec<Gro
     });
 }
 
-/// One tab of the row: its icon, its name, a count after it.
+/// One tab of the row: its icon, its name, a count after it. A tab we may
+/// not open is greyed, `Err` saying why.
 fn tab_button(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -577,8 +578,10 @@ fn tab_button(
     count: Option<String>,
     accent: bool,
     selected: bool,
-    enabled: bool,
+    enabled: Result<(), &str>,
 ) -> egui::Response {
+    let why = enabled.err();
+    let enabled = why.is_none();
     let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
     let ink = if !enabled {
         p.muted_dim
@@ -626,16 +629,24 @@ fn tab_button(
         ui.painter().galley(pos.round(), g, count_ink);
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label));
-    if enabled {
-        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-    } else {
-        resp.on_hover_text(menu::not_yet())
+    match why {
+        None => resp.on_hover_cursor(egui::CursorIcon::PointingHand),
+        Some(why) => resp.on_hover_text(why),
     }
 }
 
-/// Home, Members and the tabs still to port (greyed: notices, land and
-/// L$, experiences).
+/// Home, Members, Notices, Land and L$ and the tab still to port
+/// (Experiences, greyed).
 fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) {
+    // LLPanelGroupNotices / LLPanelGroupLandMoney::isVisibleByAgent: the
+    // tabs a guest does not see are greyed with the reason
+    let members_only = |visible: bool| {
+        if visible {
+            Ok(())
+        } else {
+            Err(aurora_i18n::tr!("ui-group-profile-members-only"))
+        }
+    };
     ui.add_space(12.0);
     ui.horizontal(|ui| {
         ui.add_space(4.0);
@@ -648,7 +659,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             None,
             false,
             *tab == Tab::Home,
-            true,
+            Ok(()),
         )
         .clicked()
         {
@@ -663,7 +674,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             count,
             false,
             *tab == Tab::Members,
-            true,
+            Ok(()),
         )
         .clicked()
         {
@@ -679,13 +690,26 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             unread,
             true,
             *tab == Tab::Notices,
-            super::notices::visible(v),
+            members_only(super::notices::visible(v)),
         )
         .clicked()
         {
             *tab = Tab::Notices;
         }
-        tab_button(ui, p, "map-2", aurora_i18n::tr!("ui-group-profile-land"), None, false, false, false);
+        if tab_button(
+            ui,
+            p,
+            "map-2",
+            aurora_i18n::tr!("ui-group-profile-land"),
+            None,
+            false,
+            *tab == Tab::Land,
+            members_only(super::land::visible(v)),
+        )
+        .clicked()
+        {
+            *tab = Tab::Land;
+        }
         tab_button(
             ui,
             p,
@@ -694,10 +718,45 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             None,
             false,
             false,
-            false,
+            Err(menu::not_yet()),
         );
+        // Administration at the right, in amber, with an admin ability
+        if super::administration::visible(v) {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if admin_tab(ui, p, *tab == Tab::Admin).clicked() {
+                    *tab = Tab::Admin;
+                }
+            });
+        }
     });
     ui.add_space(8.0);
+}
+
+/// The Administration tab: amber, on an amber wash when chosen.
+fn admin_tab(ui: &mut egui::Ui, p: &Palette, selected: bool) -> egui::Response {
+    let label = aurora_i18n::tr!("ui-group-admin-tab");
+    let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, p.amber);
+    let size = Vec2::new(12.0 + 15.0 + 5.0 + galley.size().x + 12.0, 28.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    if selected {
+        ui.painter().rect_filled(rect, radius, p.amber.gamma_multiply(0.14));
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, radius, p.amber.gamma_multiply(0.08));
+    }
+    if let Some(t) = crate::ui::icons::global("shield-filled") {
+        let r = Rect::from_center_size(Pos2::new(rect.left() + 19.5, rect.center().y), Vec2::splat(15.0));
+        ui.painter()
+            .image(t.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), p.amber);
+    }
+    ui.painter().galley(
+        Pos2::new(rect.left() + 32.0, rect.center().y - galley.size().y / 2.0).round(),
+        galley,
+        p.amber,
+    );
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// A card of the tabs: its title in small capitals with an icon, a link at
@@ -712,7 +771,36 @@ pub fn card<R>(
     body: impl FnOnce(&mut egui::Ui) -> R,
 ) -> (R, bool) {
     let mut clicked = false;
-    let inner = egui::Frame::new()
+    let inner = card_with(
+        ui,
+        p,
+        icon,
+        icon_color,
+        title,
+        |ui| {
+            if let Some(link) = link {
+                let r = ui.add(egui::Label::new(egui::RichText::new(link).size(11.5).color(p.violet_light)).sense(Sense::click()));
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    clicked = true;
+                }
+            }
+        },
+        body,
+    );
+    (inner, clicked)
+}
+
+/// A card whose title row ends with `right` (laid out from the right).
+pub fn card_with<R>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    icon_color: Color32,
+    title: &str,
+    right: impl FnOnce(&mut egui::Ui),
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    egui::Frame::new()
         .fill(p.field)
         .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(egui::Margin::symmetric(12, 10))
@@ -726,19 +814,12 @@ pub fn card<R>(
                 format.extra_letter_spacing = 0.4;
                 job.append(&title.to_uppercase(), 0.0, format);
                 ui.label(job);
-                if let Some(link) = link {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let r = ui.add(egui::Label::new(egui::RichText::new(link).size(11.5).color(p.violet_light)).sense(Sense::click()));
-                        if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            clicked = true;
-                        }
-                    });
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
             });
             ui.add_space(2.0);
             body(ui)
-        });
-    (inner.inner, clicked)
+        })
+        .inner
 }
 
 /// A role chip: the owners' in amber, the officers' in violet, the others

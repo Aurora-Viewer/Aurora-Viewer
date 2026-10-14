@@ -431,3 +431,149 @@ fn ejects_bans_and_role_ticks_follow_firestorm() {
     assert!(csv.starts_with("Group membership record for Aurora Builders"));
     assert_eq!(csv.trim_end().lines().count(), 1 + d.members.len());
 }
+
+#[test]
+fn role_changes_follow_set_role_data() {
+    use super::administration::{self, MAX_ROLES};
+    use aurora_net::groups::role_change;
+    let world = world(true, MEMBER);
+    let d = world.group_data.get(&DEMO_GROUP1).expect("data");
+    let owners = d.roles.values().find(|r| r.name == "Owners").map(|r| r.id).expect("owners");
+    let builders = d.roles.values().find(|r| r.name == "Builders").cloned().expect("builders");
+    let mut changes = std::collections::BTreeMap::new();
+    // a title: a data change; the abilities too: both; back: no change
+    let mut r = builders.clone();
+    r.title = "Maker".into();
+    administration::set_role(d, &mut changes, r.clone());
+    assert_eq!(changes[&builders.id].kind, role_change::DATA);
+    r.powers |= powers::MEMBER_INVITE;
+    administration::set_role(d, &mut changes, r);
+    assert_eq!(changes[&builders.id].kind, role_change::ALL);
+    administration::set_role(d, &mut changes, builders.clone());
+    assert!(changes.is_empty(), "back to the saved role");
+    // a new role and its copy, up to MAX_ROLES
+    let new = administration::create_role(d, &mut changes, owners, None).expect("room");
+    assert_eq!(changes[&new].kind, role_change::CREATE);
+    assert_eq!(changes[&new].name, "New Role");
+    let copy = administration::create_role(d, &mut changes, owners, Some(&builders)).expect("room");
+    assert_eq!(changes[&copy].name, "Builders(Copy)");
+    while administration::create_role(d, &mut changes, owners, None).is_some() {}
+    assert_eq!(administration::roles_now(d, &changes, owners).len(), MAX_ROLES);
+    // an edit of a new role stays a creation; deleting it forgets it
+    let mut n = administration::role_now(d, &changes, &new).expect("new");
+    n.title = "T".into();
+    administration::set_role(d, &mut changes, n);
+    assert_eq!(changes[&new].kind, role_change::CREATE);
+    assert!(administration::delete_role(d, &mut changes, owners, new));
+    assert!(!changes.contains_key(&new));
+    // everyone and the owners stay; another is deleted
+    assert!(!administration::delete_role(d, &mut changes, owners, Uuid::nil()));
+    assert!(!administration::delete_role(d, &mut changes, owners, owners));
+    assert!(administration::delete_role(d, &mut changes, owners, builders.id));
+    assert_eq!(changes[&builders.id].kind, role_change::DELETE);
+    // the ban ability brings eject and remove-from-roles
+    let p = administration::set_power(0, powers::GROUP_BAN_ACCESS.trailing_zeros(), true);
+    assert!(p & powers::MEMBER_EJECT != 0 && p & powers::ROLE_REMOVE_MEMBER != 0);
+}
+
+#[test]
+fn bans_by_name_skip_ourselves_the_banned_and_the_full_list() {
+    let mut world = world(true, MEMBER);
+    world.apply(NetEvent::GroupBanList {
+        group: DEMO_GROUP1,
+        bans: vec![(Uuid::from_u128(77), 0.0)],
+    });
+    let done = world
+        .group_data
+        .ban_residents(DEMO_GROUP1, vec![DEMO_AGENT, Uuid::from_u128(77), Uuid::from_u128(78)], DEMO_AGENT);
+    assert!(done.myself);
+    assert_eq!(done.already, vec![Uuid::from_u128(77)]);
+    assert_eq!(done.banned, vec![Uuid::from_u128(78)]);
+    let cmds = world.group_data.take_commands();
+    assert!(cmds.iter().any(|c| matches!(
+        c,
+        aurora_net::NetCommand::GroupBans {
+            action: Some(1),
+            refresh: true,
+            ..
+        }
+    )));
+    assert!(cmds.iter().any(|c| matches!(c, aurora_net::NetCommand::EjectGroupMembers { .. })));
+}
+
+/// What the "Land and L$" tab asked, answered by the demo group server.
+fn answer_land(world: &mut World, actions: &[GroupAction]) {
+    for a in actions {
+        match a {
+            GroupAction::LoadLand { group, ledger } => world.group_money.open(*group, *ledger),
+            GroupAction::LandPage { group, ledger } => world.group_money.request(*group, *ledger),
+            _ => {}
+        }
+    }
+    for cmd in world.group_money.take_commands() {
+        for ev in crate::demo::group::reply(&cmd).unwrap_or_default() {
+            world.apply(ev);
+        }
+    }
+}
+
+#[test]
+fn the_land_tab_shows_the_totals_the_parcels_and_this_week() {
+    use aurora_net::group_money::Ledger;
+    let mut world = world(true, MEMBER);
+    world.apply(NetEvent::LandHoldings {
+        credit: 4096,
+        committed: 3584,
+    });
+    let mut st = opened(&mut world);
+    st.show_land(Ledger::Planning);
+    let (texts, actions) = texts(&mut st, &world, false);
+    assert!(has(&texts, "common-loading-2"), "{texts:?}");
+    let loads = actions.iter().filter(|a| matches!(a, GroupAction::LoadLand { .. })).count();
+    assert_eq!(loads, 1, "asked once when the tab shows");
+    answer_land(&mut world, &actions);
+    let (texts, actions) = self::texts(&mut st, &world, false);
+    assert!(
+        !actions.iter().any(|a| matches!(a, GroupAction::LoadLand { .. })),
+        "not again while it shows"
+    );
+    let area = |n: i64| aurora_i18n::tr!("ui-group-profile-area", area = aurora_i18n::integer(n));
+    for want in [
+        area(4608),
+        area(5120),
+        aurora_i18n::tr!("demo-group-land-sandbox").to_owned(),
+        aurora_i18n::tr!("demo-group-land-workshop").to_owned(),
+        land::lindens(1250),
+        land::lindens(-300),
+        // our contribution (0 here) and the 512 m² we hold and give to nobody
+        aurora_i18n::tr!("ui-group-land-of-max", max = aurora_i18n::integer(512)),
+    ] {
+        assert!(texts.iter().any(|t| t.contains(&want)), "{want} in {texts:?}");
+    }
+    assert!(has(&texts, "ui-group-land-money"));
+    assert!(has(&texts, "ui-group-land-balance"));
+
+    // the sales page: both packets of this week
+    st.land.ledger = Ledger::Sales;
+    answer_land(
+        &mut world,
+        &[GroupAction::LandPage {
+            group: DEMO_GROUP1,
+            ledger: Ledger::Sales,
+        }],
+    );
+    let (texts, _) = self::texts(&mut st, &world, false);
+    let lune = format!("Lune {}", aurora_i18n::tr!("demo-example"));
+    assert!(texts.iter().any(|t| t.contains(&lune)), "the second packet in {texts:?}");
+    assert!(texts.iter().any(|t| t.contains(aurora_i18n::tr!("demo-group-notice-workshop-kit"))));
+}
+
+#[test]
+fn a_guest_has_no_land_tab() {
+    let mut world = world(false, 0);
+    let mut st = opened(&mut world);
+    st.show_land(aurora_net::group_money::Ledger::Planning);
+    let (texts, actions) = texts(&mut st, &world, false);
+    assert!(!actions.iter().any(|a| matches!(a, GroupAction::LoadLand { .. })));
+    assert!(!has(&texts, "ui-group-land-money"));
+}
