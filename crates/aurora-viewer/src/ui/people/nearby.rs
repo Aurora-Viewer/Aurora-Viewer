@@ -713,7 +713,7 @@ fn paint_badges(
 fn quick_actions(world: &World, row: &Row) -> Vec<(&'static str, &'static str)> {
     let mut buttons = vec![
         ("user-filled", aurora_i18n::tr!("common-view-profile")),
-        ("message-filled", aurora_i18n::tr!("ui-context-send-im")),
+        ("message-circle-filled", aurora_i18n::tr!("ui-context-send-im")),
     ];
     if !row.friend && row.id != world.agent_id {
         buttons.push(("user-plus", aurora_i18n::tr!("radar-add-friend")));
@@ -921,7 +921,7 @@ fn hover_actions(
         let resp = resp.on_hover_text(*tip).on_hover_cursor(egui::CursorIcon::PointingHand);
         match *icon {
             "user-filled" if resp.clicked() => actions.push(PeopleAction::Profile(row.id)),
-            "message-filled" if resp.clicked() => actions.push(PeopleAction::OpenIm(row.id)),
+            "message-circle-filled" if resp.clicked() => actions.push(PeopleAction::OpenIm(row.id)),
             "user-plus" if resp.clicked() => context::request(ui.ctx(), CtxAction::AddFriend(row.id)),
             "dots-filled" => {
                 menu_open = menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {

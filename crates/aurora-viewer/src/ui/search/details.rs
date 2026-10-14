@@ -281,7 +281,7 @@ fn person(
         Btn::new("send-filled", aurora_i18n::tr!("ui-profile-offer-teleport")).enabled(!own),
         Btn::new("user-plus", aurora_i18n::tr!("ui-profile-add-friend")).enabled(friend.is_none() && !own),
         Btn::new("coin-filled", aurora_i18n::tr!("common-pay")).enabled(!own),
-        Btn::new("message-filled", aurora_i18n::tr!("ui-profile-instant-message")).enabled(!own),
+        Btn::new("message-circle-filled", aurora_i18n::tr!("ui-profile-instant-message")).enabled(!own),
         Btn::new("ban", block).enabled(!own),
         Btn::new("settings-filled", aurora_i18n::tr!("ui-profile-more")).menu(&gear),
         Btn::new("user-filled", aurora_i18n::tr!("search-show-profile")).primary(),

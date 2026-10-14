@@ -307,7 +307,7 @@ fn status_menu(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Sta
         c |= flip(ui, p, "message-off", ignore, &mut m.ignore_adhoc, true);
         let enabled = m.ignore_adhoc;
         let report = aurora_i18n::tr!("ui-bars-report-ignored-residents-in-nearby-chat");
-        c |= flip(ui, p, "message-circle-filled", report, &mut m.report_ignored_adhoc, enabled);
+        c |= flip(ui, p, "message-filled", report, &mut m.report_ignored_adhoc, enabled);
         let friends = aurora_i18n::tr!("ui-bars-do-not-ignore-my-friends");
         c |= flip(ui, p, "users", friends, &mut m.adhoc_from_friends, enabled);
     });

@@ -44,7 +44,7 @@ fn identity(world: &World, st: &ChatUi) -> Identity {
             title: aurora_i18n::tr!("common-nearby-chat").to_owned(),
             subtitle: Some(world.region_name()).filter(|r| !r.is_empty()),
             avatar: None,
-            icon: Some("world-filled"),
+            icon: Some("message-filled"),
         },
         Some(other) if world.is_group_session(&other) => {
             let n = world.groups.sessions.get(&other).map(|s| s.participants.len()).unwrap_or(0);

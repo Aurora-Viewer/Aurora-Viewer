@@ -92,7 +92,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let buttons: Option<Vec<(&str, &str)>> = hot.then(|| {
         let mut b = vec![
             ("user-filled", aurora_i18n::tr!("common-view-profile")),
-            ("message-filled", aurora_i18n::tr!("ui-context-send-im")),
+            ("message-circle-filled", aurora_i18n::tr!("ui-context-send-im")),
         ];
         if !friend {
             b.push(("user-plus", aurora_i18n::tr!("radar-add-friend")));
@@ -131,7 +131,7 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, id: Uuid, sl
     for ((icon, _), resp) in buttons.iter().zip(rows::actions(ui, p, slot, buttons, ("people-recent-act", id))) {
         match *icon {
             "user-filled" if resp.clicked() => c.actions.push(PeopleAction::Profile(id)),
-            "message-filled" if resp.clicked() => c.actions.push(PeopleAction::OpenIm(id)),
+            "message-circle-filled" if resp.clicked() => c.actions.push(PeopleAction::OpenIm(id)),
             "user-plus" if resp.clicked() => context::request(ui.ctx(), CtxAction::AddFriend(id)),
             "dots-filled" => {
                 menu_open = menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
