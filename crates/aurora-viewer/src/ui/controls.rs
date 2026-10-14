@@ -89,28 +89,30 @@ impl ControlsUi {
     /// The Aurora window (`camera` / `movement`: the toolbar's View and
     /// Movement, the World menu's entries; either opens it on its tab), or
     /// Firestorm's two windows when `classic`.
-    pub fn show(
-        &mut self,
-        ctx: &egui::Context,
-        p: &Palette,
-        camera: &mut bool,
-        movement: &mut bool,
-        classic: bool,
-        view: &View,
-    ) -> Output {
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, camera: &mut bool, movement: &mut bool, classic: bool, view: &View) -> Output {
         let mut out = Output::default();
         if classic {
             if *camera {
                 let size = Vec2::new(250.0, 210.0);
-                Floater::new(CLASSIC_CAMERA, aurora_i18n::tr!("controls-camera-title"), Pos2::new(60.0, 160.0), size)
-                    .auto_height()
-                    .show(ctx, p, camera, |ui| classic_camera(ui, p, view, &mut out));
+                Floater::new(
+                    CLASSIC_CAMERA,
+                    aurora_i18n::tr!("controls-camera-title"),
+                    Pos2::new(60.0, 160.0),
+                    size,
+                )
+                .auto_height()
+                .show(ctx, p, camera, |ui| classic_camera(ui, p, view, &mut out));
             }
             if *movement {
                 let size = Vec2::new(230.0, 140.0);
-                Floater::new(CLASSIC_MOVEMENT, aurora_i18n::tr!("controls-tab-movement"), Pos2::new(60.0, 400.0), size)
-                    .auto_height()
-                    .show(ctx, p, movement, |ui| classic_movement(ui, p, view, &mut out));
+                Floater::new(
+                    CLASSIC_MOVEMENT,
+                    aurora_i18n::tr!("controls-tab-movement"),
+                    Pos2::new(60.0, 400.0),
+                    size,
+                )
+                .auto_height()
+                .show(ctx, p, movement, |ui| classic_movement(ui, p, view, &mut out));
             }
             self.was = (*camera, *movement);
             return out;
@@ -225,7 +227,10 @@ impl ControlsUi {
                 (Some(alt(false, false)), aurora_i18n::tr!("controls-drag-zoom")),
                 (Some(alt(true, false)), aurora_i18n::tr!("controls-drag-orbit")),
                 (Some(alt(true, true)), aurora_i18n::tr!("controls-drag-pan")),
-                (pad_binding(view.keys, Action::ResetCamera), aurora_i18n::tr!("keybinds-return-to-avatar")),
+                (
+                    pad_binding(view.keys, Action::ResetCamera),
+                    aurora_i18n::tr!("keybinds-return-to-avatar"),
+                ),
             ],
         );
     }
@@ -334,7 +339,11 @@ fn movement_tab(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
         } else {
             aurora_i18n::tr!("common-fly")
         };
-        let icon = if view.flying { "plane-departure-filled" } else { "plane-tilt-filled" };
+        let icon = if view.flying {
+            "plane-departure-filled"
+        } else {
+            "plane-tilt-filled"
+        };
         if widgets::action_button(ui, p, icon, fly, widgets::ActionKind::Flat, Vec2::new(0.0, 26.0))
             .on_hover_text(key_tip(view.keys, Action::Fly))
             .clicked()
@@ -438,7 +447,10 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output)
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
         for preset in [CameraPreset::Front, CameraPreset::Side, CameraPreset::Rear, CameraPreset::Shoulder] {
-            if widgets::flat_button(ui, p, short_view(preset)).on_hover_text(preset.label()).clicked() {
+            if widgets::flat_button(ui, p, short_view(preset))
+                .on_hover_text(preset.label())
+                .clicked()
+            {
                 out.actions.push(ControlAction::Preset(preset));
             }
         }
@@ -478,8 +490,18 @@ fn classic_movement(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Outpu
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         for (icon, tip, on, action) in [
-            ("walk", aurora_i18n::tr!("controls-walk"), !view.flying && !view.always_run, ControlAction::Walk),
-            ("run", aurora_i18n::tr!("controls-run"), !view.flying && view.always_run, ControlAction::Run),
+            (
+                "walk",
+                aurora_i18n::tr!("controls-walk"),
+                !view.flying && !view.always_run,
+                ControlAction::Walk,
+            ),
+            (
+                "run",
+                aurora_i18n::tr!("controls-run"),
+                !view.flying && view.always_run,
+                ControlAction::Run,
+            ),
             ("plane-tilt-filled", aurora_i18n::tr!("common-fly"), view.flying, ControlAction::Fly),
         ] {
             if widgets::icon_toggle(ui, p, icon, tip, on) {
@@ -536,15 +558,15 @@ fn joystick(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> Stick {
         && let Some(pos) = resp.interact_pointer_pos()
     {
         let pulled = pos - center;
-        let offset = if pulled.length() > reach { pulled.normalized() * reach } else { pulled };
+        let offset = if pulled.length() > reach {
+            pulled.normalized() * reach
+        } else {
+            pulled
+        };
         knob = center + offset;
         out.dir = Vec2::new(offset.x, -offset.y) / reach;
     }
-    if resp.clicked()
-        && resp
-            .interact_pointer_pos()
-            .is_some_and(|pos| pos.distance(center) < KNOB / 2.0)
-    {
+    if resp.clicked() && resp.interact_pointer_pos().is_some_and(|pos| pos.distance(center) < KNOB / 2.0) {
         out.center = true;
     }
     let painter = ui.painter();
@@ -637,7 +659,13 @@ fn pad_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, binding: Op
         p.raised
     };
     ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
-    paint_icon(ui, icon, rect.center() - Vec2::new(0.0, 3.0), 18.0, if held { p.on_accent } else { p.ink });
+    paint_icon(
+        ui,
+        icon,
+        rect.center() - Vec2::new(0.0, 3.0),
+        18.0,
+        if held { p.on_accent } else { p.ink },
+    );
     if let Some(b) = binding {
         // (Shift as an arrow before the key: its name would not fit)
         let plain = Binding { shift: false, ..b.clone() };
@@ -657,7 +685,8 @@ fn pad_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, binding: Op
 fn paint_icon(ui: &egui::Ui, icon: &str, center: Pos2, size: f32, tint: egui::Color32) {
     if let Some(t) = super::icons::global(icon) {
         let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-        ui.painter().image(t.id(), Rect::from_center_size(center, Vec2::splat(size)), uv, tint);
+        ui.painter()
+            .image(t.id(), Rect::from_center_size(center, Vec2::splat(size)), uv, tint);
     }
 }
 
@@ -671,7 +700,9 @@ fn mode_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: bool
     };
     ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
     let color = if on { p.on_accent } else { p.muted };
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.0), color);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.0), color);
     let total = 16.0 + 5.0 + galley.size().x;
     let left = rect.center().x - total / 2.0;
     paint_icon(ui, icon, egui::pos2(left + 8.0, rect.center().y), 15.0, color);
@@ -747,10 +778,7 @@ fn keys_list(ui: &mut egui::Ui, p: &Palette, keys: &KeyBindings, rows: &[(Action
 
 /// Keycaps and what they do, one row each (the mockup's list).
 fn caps_rows(ui: &mut egui::Ui, p: &Palette, rows: &[(Option<Binding>, &str)]) {
-    let caps: Vec<_> = rows
-        .iter()
-        .map(|(b, _)| b.as_ref().map(|b| keycap::caps(ui, b, p.panel)))
-        .collect();
+    let caps: Vec<_> = rows.iter().map(|(b, _)| b.as_ref().map(|b| keycap::caps(ui, b, p.panel))).collect();
     let column = caps.iter().flatten().map(|c| keycap::row_width(c)).fold(0.0f32, f32::max);
     for ((_, label), caps) in rows.iter().zip(caps) {
         let Some(caps) = caps else {
