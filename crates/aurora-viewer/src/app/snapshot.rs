@@ -1087,12 +1087,21 @@ impl App {
                 self.settings.photo_held = Some(held);
             }
             (Some(_), false) => {
-                if let Some(held) = self.settings.photo_held.take() {
+                if let Some(mut held) = self.settings.photo_held.take() {
+                    held.sync(&self.settings);
                     held.restore(&mut self.settings);
                 }
                 log::info!("photo quality: off, the user's settings back");
             }
-            _ => {}
+            (Some(_), true) => {
+                // what the user changes meanwhile (Preferences) is theirs
+                let mut held = self.settings.photo_held.take();
+                if let Some(h) = held.as_mut() {
+                    h.sync(&self.settings);
+                }
+                self.settings.photo_held = held;
+            }
+            (None, false) => {}
         }
     }
 

@@ -1204,7 +1204,9 @@ impl Settings {
     /// the photo quality raises them, no user name unless remembered.
     pub(crate) fn to_saved(&self) -> Settings {
         let mut copy = self.clone();
-        if let Some(held) = copy.photo_held.take() {
+        if let Some(mut held) = copy.photo_held.take() {
+            // a setting changed since the last frame is the user's too
+            held.sync(&copy);
             held.restore(&mut copy);
         }
         if !copy.remember_username {
