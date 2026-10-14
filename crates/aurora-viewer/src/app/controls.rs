@@ -97,7 +97,8 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_CONTROLS=camera | movement | classic: the window open.
+    /// AURORA_DEMO_CONTROLS=camera | movement | compact | classic: the
+    /// window open (minimized for `compact`).
     fn controls_demo(&mut self) {
         if !self.demo || self.frame_count != 600 {
             return;
@@ -105,6 +106,10 @@ impl App {
         match std::env::var("AURORA_DEMO_CONTROLS").as_deref() {
             Ok("camera") => self.panels.camera_controls = true,
             Ok("movement") => self.panels.movement_controls = true,
+            Ok("compact") => {
+                self.panels.camera_controls = true;
+                crate::ui::widgets::minimize_floater(&self.egui_ctx, crate::ui::controls::WINDOW);
+            }
             Ok("classic") => {
                 self.settings.classic_controls = true;
                 self.panels.camera_controls = true;

@@ -20,12 +20,25 @@ pub const CLASSIC_CAMERA: &str = "camera_controls";
 pub const CLASSIC_MOVEMENT: &str = "movement_controls";
 
 const WIDTH: f32 = 300.0;
+/// The body's width inside the window's margins (`widgets::Floater`).
+const INNER: f32 = WIDTH - 24.0;
+/// The minimized window's body: the joysticks and the zoom.
+const COMPACT_WIDTH: f32 = 2.0 * STICK + ZOOM_W + 3.0 * 12.0;
 const STICK: f32 = 88.0;
 const KNOB: f32 = 30.0;
 /// A joystick pulled less than this (of its reach) does nothing
 /// (lljoystickbutton.cpp's "slop" around the press).
 const DEAD_ZONE: f32 = 0.25;
 const PAD_BUTTON: f32 = 40.0;
+/// The joysticks' names under them.
+const CAPTION_H: f32 = 16.0;
+/// The zoom's column between the joysticks: its + and − and the slider.
+const ZOOM_W: f32 = 24.0;
+/// The zoom's + and −.
+const ZOOM_BUTTON: f32 = 18.0;
+/// Room between two items of a row of buttons.
+const ROW_GAP: f32 = 4.0;
+const BUTTON_H: f32 = 26.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
@@ -129,7 +142,16 @@ impl ControlsUi {
             )
             .fixed()
             .auto_height()
-            .show(ctx, p, &mut open, |ui| self.body(ui, p, view, &mut out));
+            .compact_when_minimized(COMPACT_WIDTH + 20.0)
+            .show(ctx, p, &mut open, |ui| {
+                // minimized: the joysticks and the zoom only (the mockup's
+                // compact window)
+                if widgets::floater_minimized(ui.ctx(), WINDOW) {
+                    sticks(ui, p, view, &mut out, COMPACT_WIDTH);
+                } else {
+                    self.body(ui, p, view, &mut out);
+                }
+            });
         }
         if open {
             *camera = self.tab == Tab::Camera;
@@ -143,16 +165,20 @@ impl ControlsUi {
     }
 
     fn body(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
-        ui.set_width(WIDTH - 24.0);
+        ui.set_width(INNER);
         ui.spacing_mut().item_spacing.y = 8.0;
-        let mut tab = self.tab as usize;
-        let labels = [
-            (aurora_i18n::tr!("controls-tab-camera"), true),
-            (aurora_i18n::tr!("controls-tab-movement"), true),
-        ];
-        if widgets::tabs(ui, p, &mut tab, &labels) {
-            self.tab = if tab == 0 { Tab::Camera } else { Tab::Movement };
-        }
+        // the two tabs in pills, each half of the width
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            for (tab, icon, label) in [
+                (Tab::Camera, "video-filled", aurora_i18n::tr!("controls-tab-camera")),
+                (Tab::Movement, "walk", aurora_i18n::tr!("controls-tab-movement")),
+            ] {
+                if widgets::pills::pill_tab_wide(ui, p, icon, label, self.tab == tab, INNER / 2.0).clicked() {
+                    self.tab = tab;
+                }
+            }
+        });
         match self.tab {
             Tab::Camera => self.camera_tab(ui, p, view, out),
             Tab::Movement => movement_tab(ui, p, view, out),
@@ -160,11 +186,11 @@ impl ControlsUi {
     }
 
     fn camera_tab(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
-        sticks(ui, p, view, out);
+        sticks(ui, p, view, out, INNER);
         // the four views of Preferences › Camera, in one click
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let w = (ui.available_width() - 12.0) / 4.0;
+            ui.spacing_mut().item_spacing.x = ROW_GAP;
+            let w = (INNER - 3.0 * ROW_GAP) / 4.0;
             for (preset, icon) in [
                 (CameraPreset::Rear, "user"),
                 (CameraPreset::Front, "user-circle"),
@@ -177,10 +203,11 @@ impl ControlsUi {
                 }
             }
         });
+        // two equal buttons and the reset; the saved positions below on the
+        // same columns
+        let grid = ButtonGrid::new(INNER);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            // two equal buttons and the reset at the end of the row
-            let w = ((ui.available_width() - 28.0) / 2.0).floor();
+            ui.spacing_mut().item_spacing.x = ROW_GAP;
             let object = widgets::action_button(
                 ui,
                 p,
@@ -191,28 +218,30 @@ impl ControlsUi {
                 } else {
                     widgets::ActionKind::Flat
                 },
-                Vec2::new(w, 26.0),
+                Vec2::new(grid.button, BUTTON_H),
             )
             .on_hover_text(aurora_i18n::tr!("controls-object-view-tip"));
             if object.clicked() {
                 out.actions.push(ControlAction::ObjectView);
             }
-            let mouselook = widgets::action_button(
+            let mouselook = widgets::action_button_keyed(
                 ui,
                 p,
                 "eye-filled",
                 aurora_i18n::tr!("common-mouselook"),
                 widgets::ActionKind::Flat,
-                Vec2::new(w, 26.0),
+                Vec2::new(grid.button, BUTTON_H),
+                true,
+                pad_binding(view.keys, Action::Mouselook).as_ref(),
             );
-            if mouselook.on_hover_text(key_tip(view.keys, Action::Mouselook)).clicked() {
+            if mouselook.clicked() {
                 out.actions.push(ControlAction::Mouselook);
             }
-            if widgets::icon_button(ui, p, "restore", aurora_i18n::tr!("controls-reset-camera"), true) {
+            if square_button(ui, p, "restore", aurora_i18n::tr!("controls-reset-camera")) {
                 out.actions.push(ControlAction::ResetCamera);
             }
         });
-        self.shots(ui, p, view, out);
+        self.shots(ui, p, view, out, &grid);
         // the alt-camera (LLToolCamera): Alt, Ctrl+Alt, Ctrl+Alt+Shift with a drag
         let alt = |ctrl: bool, shift: bool| Binding {
             input: crate::keybinds::Input::key(winit::keyboard::KeyCode::AltLeft),
@@ -224,66 +253,114 @@ impl ControlsUi {
             ui,
             p,
             &[
-                (Some(alt(false, false)), aurora_i18n::tr!("controls-drag-zoom")),
-                (Some(alt(true, false)), aurora_i18n::tr!("controls-drag-orbit")),
-                (Some(alt(true, true)), aurora_i18n::tr!("controls-drag-pan")),
+                (vec![alt(false, false)], aurora_i18n::tr!("controls-drag-zoom")),
+                (vec![alt(true, false)], aurora_i18n::tr!("controls-drag-orbit")),
+                (vec![alt(true, true)], aurora_i18n::tr!("controls-drag-pan")),
                 (
-                    pad_binding(view.keys, Action::ResetCamera),
+                    pad_binding(view.keys, Action::ResetCamera).into_iter().collect(),
                     aurora_i18n::tr!("keybinds-return-to-avatar"),
                 ),
             ],
         );
     }
 
-    /// The saved camera positions (Firestorm's camera presets).
-    fn shots(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
+    /// The saved camera positions (Firestorm's camera presets): a field as
+    /// wide as the two buttons above, the save button under the reset.
+    fn shots(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output, grid: &ButtonGrid) {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.x = ROW_GAP;
             if self.naming {
-                let edit = ui.add(
-                    egui::TextEdit::singleline(&mut self.shot_name)
-                        .hint_text(aurora_i18n::tr!("controls-shot-name"))
-                        .desired_width(ui.available_width() - 52.0),
+                let edit = ui.add_sized(
+                    Vec2::new(grid.field, BUTTON_H),
+                    egui::TextEdit::singleline(&mut self.shot_name).hint_text(aurora_i18n::tr!("controls-shot-name")),
                 );
                 edit.request_focus();
                 let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let name = self.shot_name.trim().to_owned();
-                if (widgets::icon_button(ui, p, "check", aurora_i18n::tr!("controls-shot-save"), !name.is_empty()) || enter)
-                    && !name.is_empty()
-                {
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    self.naming = false;
+                }
+                if (square_button(ui, p, "check", aurora_i18n::tr!("controls-shot-save")) || enter) && !name.is_empty() {
                     out.actions.push(ControlAction::SaveShot(name));
                     self.naming = false;
                     self.shot_name.clear();
                 }
-                if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), true) {
-                    self.naming = false;
-                }
                 return;
             }
             let text = if view.shots.is_empty() {
-                aurora_i18n::tr!("controls-shots-none").to_owned()
+                aurora_i18n::tr!("controls-shots-none")
             } else {
-                aurora_i18n::tr!("controls-shots").to_owned()
+                aurora_i18n::tr!("controls-shots")
             };
-            egui::ComboBox::from_id_salt("camera_shots")
-                .width(ui.available_width() - 52.0)
-                .selected_text(text)
-                .show_ui(ui, |ui| {
-                    for (i, shot) in view.shots.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            if ui.selectable_label(false, &shot.name).clicked() {
-                                out.actions.push(ControlAction::UseShot(i));
-                            }
-                            if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("controls-shot-delete"), true) {
-                                out.actions.push(ControlAction::DeleteShot(i));
-                            }
-                        });
-                    }
-                });
-            if widgets::icon_button(ui, p, "device-floppy-filled", aurora_i18n::tr!("controls-shot-save-tip"), true) {
+            let field = widgets::action_button(
+                ui,
+                p,
+                "bookmark-filled",
+                text,
+                widgets::ActionKind::Flat,
+                Vec2::new(grid.field, BUTTON_H),
+            );
+            egui::Popup::menu(&field).show(|ui| {
+                ui.set_min_width(grid.field);
+                for (i, shot) in view.shots.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if super::menu::item(ui, p, "bookmark-filled", &shot.name) {
+                            out.actions.push(ControlAction::UseShot(i));
+                        }
+                        if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("controls-shot-delete"), true) {
+                            out.actions.push(ControlAction::DeleteShot(i));
+                        }
+                    });
+                }
+            });
+            if square_button(ui, p, "device-floppy-filled", aurora_i18n::tr!("controls-shot-save-tip")) {
                 self.naming = true;
             }
         });
+    }
+}
+
+/// The columns of the camera tab's button rows, from the body's width:
+/// two equal buttons and a square one at the end; the saved positions'
+/// field spans the two buttons, its button sits under the square one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ButtonGrid {
+    pub button: f32,
+    pub field: f32,
+    /// Left edge of the square button, from the row's left.
+    pub square_left: f32,
+}
+
+impl ButtonGrid {
+    pub fn new(width: f32) -> ButtonGrid {
+        let button = (width - BUTTON_H - 2.0 * ROW_GAP) / 2.0;
+        ButtonGrid {
+            button,
+            field: 2.0 * button + ROW_GAP,
+            square_left: 2.0 * (button + ROW_GAP),
+        }
+    }
+}
+
+/// Where the joysticks and the zoom sit in their row, from its width: the
+/// three spread evenly (the same room at both ends and between them), on
+/// one horizontal line.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SticksRow {
+    pub orbit: Rect,
+    pub zoom: Rect,
+    pub pan: Rect,
+}
+
+impl SticksRow {
+    pub fn new(row: Rect) -> SticksRow {
+        let gap = (row.width() - 2.0 * STICK - ZOOM_W) / 4.0;
+        let y = row.center().y;
+        let at = |left: f32, w: f32| Rect::from_center_size(egui::pos2(left + w / 2.0, y), Vec2::new(w, STICK));
+        let orbit = at(row.left() + gap, STICK);
+        let zoom = at(orbit.right() + gap, ZOOM_W);
+        let pan = at(zoom.right() + gap, STICK);
+        SticksRow { orbit, zoom, pan }
     }
 }
 
@@ -296,81 +373,106 @@ fn sync_tab(ui: &mut ControlsUi, camera: &mut bool, movement: &mut bool) {
     }
 }
 
-/// The two joysticks and the zoom between them (floater_camera.xml).
-fn sticks(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
-    ui.horizontal(|ui| {
-        let side = (ui.available_width() - 2.0 * STICK - 40.0) / 2.0;
-        ui.add_space(side.max(0.0));
-        let orbit = joystick(ui, p, "rotate-360", aurora_i18n::tr!("controls-orbit-tip"));
-        if orbit.center {
-            out.actions.push(ControlAction::ResetOrbit);
-        }
-        out.held.extend(orbit_actions(orbit.dir));
-        ui.vertical(|ui| {
-            ui.set_width(40.0);
-            ui.spacing_mut().item_spacing.y = 2.0;
-            ui.vertical_centered(|ui| {
-                if hold_icon(ui, p, "zoom-in-filled", &key_tip(view.keys, Action::CamZoomIn), Vec2::splat(22.0)) {
-                    out.held.push(Action::CamZoomIn);
-                }
-                let mut zoom = view.zoom;
-                ui.spacing_mut().slider_width = STICK - 40.0;
-                let slider = ui.add(egui::Slider::new(&mut zoom, 0.0..=1.0).vertical().show_value(false));
-                if slider.changed() {
-                    out.actions.push(ControlAction::Zoom(zoom));
-                }
-                if hold_icon(ui, p, "zoom-out-filled", &key_tip(view.keys, Action::CamZoomOut), Vec2::splat(22.0)) {
-                    out.held.push(Action::CamZoomOut);
-                }
-            });
-        });
-        let pan = joystick(ui, p, "arrows-move", aurora_i18n::tr!("controls-pan-tip"));
-        out.held.extend(pan_actions(pan.dir));
-    });
+/// The two joysticks and the zoom between them (floater_camera.xml), on
+/// one line across `width`.
+fn sticks(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output, width: f32) {
+    // (drawn in place, then the row is taken: the slider's own ui must not
+    // move the parent's cursor)
+    let row = Rect::from_min_size(ui.cursor().min, Vec2::new(width, STICK));
+    let at = SticksRow::new(row);
+    let orbit = joystick(ui, p, at.orbit, "rotate-360", aurora_i18n::tr!("controls-orbit-tip"));
+    if orbit.center {
+        out.actions.push(ControlAction::ResetOrbit);
+    }
+    out.held.extend(orbit_actions(orbit.dir));
+    let pan = joystick(ui, p, at.pan, "arrows-move", aurora_i18n::tr!("controls-pan-tip"));
+    out.held.extend(pan_actions(pan.dir));
+    // the zoom: + at the top, the slider, − at the bottom, centred on the line
+    let z = at.zoom;
+    let plus = Rect::from_center_size(egui::pos2(z.center().x, z.top() + ZOOM_BUTTON / 2.0), Vec2::splat(ZOOM_BUTTON));
+    let minus = Rect::from_center_size(egui::pos2(z.center().x, z.bottom() - ZOOM_BUTTON / 2.0), Vec2::splat(ZOOM_BUTTON));
+    if hold_icon(ui, p, plus, "zoom-in-filled", &key_tip(view.keys, Action::CamZoomIn)) {
+        out.held.push(Action::CamZoomIn);
+    }
+    if hold_icon(ui, p, minus, "zoom-out-filled", &key_tip(view.keys, Action::CamZoomOut)) {
+        out.held.push(Action::CamZoomOut);
+    }
+    let rail = Rect::from_min_max(egui::pos2(z.left(), plus.bottom() + 2.0), egui::pos2(z.right(), minus.top() - 2.0));
+    let mut zoom = view.zoom;
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rail)
+            .layout(egui::Layout::top_down(egui::Align::Center)),
+    );
+    child.spacing_mut().slider_width = rail.height();
+    let slider = child.add(egui::Slider::new(&mut zoom, 0.0..=1.0).vertical().show_value(false));
+    if slider.changed() {
+        out.actions.push(ControlAction::Zoom(zoom));
+    }
+    // their names under the joysticks
+    for (stick, name) in [
+        (at.orbit, aurora_i18n::tr!("controls-orbit")),
+        (at.pan, aurora_i18n::tr!("controls-pan")),
+    ] {
+        ui.painter().text(
+            egui::pos2(stick.center().x, row.bottom() + CAPTION_H / 2.0),
+            egui::Align2::CENTER_CENTER,
+            name,
+            egui::FontId::proportional(11.0),
+            p.muted,
+        );
+    }
+    ui.allocate_rect(Rect::from_min_size(row.min, Vec2::new(width, STICK + CAPTION_H)), Sense::hover());
 }
 
 fn movement_tab(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
     pad(ui, p, view, out);
     modes(ui, p, view, out);
+    // Stop flying and Stand up stay in place, greyed when they do not apply
+    // (panel_stand_stop_flying shows them only then), so the window keeps
+    // its layout
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let fly = if view.flying {
-            aurora_i18n::tr!("ui-bars-stop-flying")
-        } else {
-            aurora_i18n::tr!("common-fly")
-        };
-        let icon = if view.flying {
-            "plane-departure-filled"
-        } else {
-            "plane-tilt-filled"
-        };
-        if widgets::action_button(ui, p, icon, fly, widgets::ActionKind::Flat, Vec2::new(0.0, 26.0))
-            .on_hover_text(key_tip(view.keys, Action::Fly))
-            .clicked()
-        {
+        ui.spacing_mut().item_spacing.x = ROW_GAP;
+        let w = (INNER - ROW_GAP) / 2.0;
+        let stop = widgets::action_button_keyed(
+            ui,
+            p,
+            "plane-departure-filled",
+            aurora_i18n::tr!("ui-bars-stop-flying"),
+            widgets::ActionKind::Flat,
+            Vec2::new(w, BUTTON_H),
+            view.flying,
+            pad_binding(view.keys, Action::Fly).as_ref(),
+        );
+        if stop.clicked() && view.flying {
             out.actions.push(ControlAction::Fly);
         }
-        if view.seated
-            && widgets::action_button(
-                ui,
-                p,
-                "man-filled",
-                aurora_i18n::tr!("common-stand-up"),
-                widgets::ActionKind::Flat,
-                Vec2::new(0.0, 26.0),
-            )
-            .clicked()
-        {
+        let stand = widgets::action_button_if(
+            ui,
+            p,
+            "man-filled",
+            aurora_i18n::tr!("common-stand-up"),
+            widgets::ActionKind::Flat,
+            Vec2::new(w, BUTTON_H),
+            view.seated,
+        );
+        if stand.clicked() && view.seated {
             out.actions.push(ControlAction::StandUp);
         }
     });
-    keys_list(
+    let first = |a: Action| view.keys.get(a)[0].clone();
+    caps_rows(
         ui,
         p,
-        view.keys,
         &[
-            (Action::AlwaysRun, aurora_i18n::tr!("keybinds-always-run")),
-            (Action::Fly, aurora_i18n::tr!("extra-fly-land")),
+            (
+                pad_binding(view.keys, Action::AlwaysRun).into_iter().collect(),
+                aurora_i18n::tr!("keybinds-always-run"),
+            ),
+            (
+                first(Action::Up).into_iter().chain(first(Action::Down)).collect(),
+                aurora_i18n::tr!("controls-up-down"),
+            ),
         ],
     );
 }
@@ -464,7 +566,7 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output)
             out.actions.push(ControlAction::ResetOrbit);
         }
     });
-    sticks(ui, p, view, out);
+    sticks(ui, p, view, out, ui.available_width());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         egui::ComboBox::from_id_salt("camera_shots_classic")
@@ -547,8 +649,8 @@ struct Stick {
 /// lljoystickbutton.cpp's joysticks: pressed and pulled, the knob follows
 /// the pointer and the camera moves while it is held; a click on the centre
 /// without pulling resets.
-fn joystick(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> Stick {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(STICK), Sense::click_and_drag());
+fn joystick(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, tip: &str) -> Stick {
+    let resp = ui.interact(rect, ui.id().with(icon), Sense::click_and_drag());
     let resp = resp.on_hover_text(tip);
     let center = rect.center();
     let reach = (STICK - KNOB) / 2.0;
@@ -626,9 +728,9 @@ pub fn pan_actions(dir: Vec2) -> Vec<Action> {
     v
 }
 
-/// An icon button that counts while held (the zoom's + and −).
-fn hold_icon(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, size: Vec2) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
+/// An icon button that counts while held (the zoom's + and −), at `rect`.
+fn hold_icon(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, tip: &str) -> bool {
+    let resp = ui.interact(rect, ui.id().with(icon), Sense::click_and_drag());
     let held = resp.is_pointer_button_down_on();
     let resp = resp.on_hover_text(tip);
     let fill = if held {
@@ -643,6 +745,13 @@ fn hold_icon(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, size: Vec2) 
     }
     paint_icon(ui, icon, rect.center(), 15.0, if held { p.on_accent } else { p.muted });
     held
+}
+
+/// A square icon button as tall as the row's buttons (the reset, the save).
+fn square_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> bool {
+    widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, Vec2::splat(BUTTON_H))
+        .on_hover_text(tip)
+        .clicked()
 }
 
 /// One of the movement buttons: its icon, its key in the corner, lit while
@@ -692,7 +801,7 @@ fn paint_icon(ui: &egui::Ui, icon: &str, center: Pos2, size: f32, tint: egui::Co
 
 /// A movement mode: its icon and its name, the accent's face when chosen.
 fn mode_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: bool, width: f32) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 28.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, BUTTON_H + 2.0), Sense::click());
     let fill = match (on, resp.hovered()) {
         (true, _) => p.violet,
         (false, true) => p.raised.gamma_multiply(1.3),
@@ -770,15 +879,13 @@ fn key_tip(keys: &KeyBindings, action: Action) -> String {
     }
 }
 
-/// A few actions with their keycaps, under the controls.
-fn keys_list(ui: &mut egui::Ui, p: &Palette, keys: &KeyBindings, rows: &[(Action, &str)]) {
-    let rows: Vec<(Option<Binding>, &str)> = rows.iter().map(|(a, l)| (pad_binding(keys, *a), *l)).collect();
-    caps_rows(ui, p, &rows);
-}
-
-/// Keycaps and what they do, one row each (the mockup's list).
-fn caps_rows(ui: &mut egui::Ui, p: &Palette, rows: &[(Option<Binding>, &str)]) {
-    let caps: Vec<_> = rows.iter().map(|(b, _)| b.as_ref().map(|b| keycap::caps(ui, b, p.panel))).collect();
+/// Keycaps and what they do, one row each (the mockup's list); a row
+/// without a key is left out.
+fn caps_rows(ui: &mut egui::Ui, p: &Palette, rows: &[(Vec<Binding>, &str)]) {
+    let caps: Vec<_> = rows
+        .iter()
+        .map(|(bs, _)| (!bs.is_empty()).then(|| bs.iter().flat_map(|b| keycap::caps(ui, b, p.panel)).collect::<Vec<_>>()))
+        .collect();
     let column = caps.iter().flatten().map(|c| keycap::row_width(c)).fold(0.0f32, f32::max);
     for ((_, label), caps) in rows.iter().zip(caps) {
         let Some(caps) = caps else {
@@ -820,6 +927,33 @@ mod tests {
         camera = true;
         sync_tab(&mut ui, &mut camera, &mut movement);
         assert_eq!(ui.tab, Tab::Camera);
+    }
+
+    /// The joysticks and the zoom on one line, the same room around each,
+    /// the whole centred; the saved positions on the buttons' columns.
+    #[test]
+    fn the_camera_tab_is_laid_out_on_its_grid() {
+        let close = |a: f32, b: f32| (a - b).abs() <= 1.0;
+        for width in [INNER, COMPACT_WIDTH, 320.0] {
+            let row = Rect::from_min_size(egui::pos2(10.0, 50.0), Vec2::new(width, STICK));
+            let s = SticksRow::new(row);
+            let y = row.center().y;
+            assert!(close(s.orbit.center().y, y) && close(s.zoom.center().y, y) && close(s.pan.center().y, y));
+            let left = s.orbit.left() - row.left();
+            let gap1 = s.zoom.left() - s.orbit.right();
+            let gap2 = s.pan.left() - s.zoom.right();
+            let right = row.right() - s.pan.right();
+            assert!(close(gap1, gap2), "{gap1} {gap2}");
+            assert!(close(left, right), "centred: {left} {right}");
+        }
+        let g = ButtonGrid::new(INNER);
+        // the two buttons, the gaps and the square fill the row
+        assert!(close(2.0 * g.button + 2.0 * ROW_GAP + BUTTON_H, INNER));
+        // the field ends where the second button ends, the save button is
+        // in the square's column
+        assert!(close(g.field, 2.0 * g.button + ROW_GAP));
+        assert!(close(g.field + ROW_GAP, g.square_left));
+        assert!(close(g.square_left + BUTTON_H, INNER));
     }
 
     #[test]

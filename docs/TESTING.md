@@ -144,7 +144,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
-| `AURORA_DEMO_CONTROLS=camera\|movement\|classic` | The Controls window open on a tab, or Firestorm's two windows |
+| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic` | The Controls window open on a tab, or Firestorm's two windows |
 
 `AURORA_CAPTURE_LAYOUT`: a screenshot otherwise starts from the default
 layout, to be reproducible. With this variable it reloads that of the
@@ -201,6 +201,7 @@ middle, Refresh and the controls on the left, the preview on the right.
 its Camera tab (joysticks, zoom, the four views, object view, mouselook,
 reset, saved positions, the alt-camera keys), `movement` on its Movement tab
 (the eight buttons with the keys of the keyboard's layout, walk / run / fly),
+`compact` the window minimized (its joysticks and zoom only),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
 not saved).
 
