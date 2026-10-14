@@ -695,13 +695,16 @@ fn text_area(
     if editable {
         egui::ScrollArea::vertical()
             .id_salt(id)
+            .max_width(size.x)
             .max_height(size.y)
             .min_scrolled_height(size.y)
             .show(ui, |ui| {
+                // beside the scroll bar's strip once the text is longer
+                let width = ui.available_width();
                 ui.add_sized(
-                    [size.x, size.y],
+                    [width, size.y],
                     egui::TextEdit::multiline(&mut edit.text)
-                        .desired_width(size.x)
+                        .desired_width(width)
                         .char_limit(max)
                         .font(egui::FontId::proportional(12.5)),
                 );
@@ -1386,12 +1389,13 @@ fn side_list(ui: &mut egui::Ui, p: &Palette, items: &[(Uuid, String)], selected:
         ui.set_width(150.0);
         ui.set_min_height(height);
         egui::ScrollArea::vertical().id_salt(salt).max_height(height).show(ui, |ui| {
-            ui.set_width(150.0);
+            // the 150 of the column, less the scroll bar's strip when it shows
+            ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 for (id, name) in items {
                     let sel = *selected == Some(*id);
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(150.0, 22.0), egui::Sense::click());
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), egui::Sense::click());
                     let fill = if sel {
                         p.violet.gamma_multiply(0.6)
                     } else if resp.hovered() {
@@ -1640,8 +1644,11 @@ fn pick_detail(
     if let (true, Some((e, _))) = (own, w.pick_edit.as_mut()) {
         egui::ScrollArea::vertical()
             .id_salt(("pick_desc", sel))
+            .max_width(width)
             .max_height(desc_h)
             .show(ui, |ui| {
+                // beside the scroll bar's strip once the text is longer
+                let width = ui.available_width();
                 ui.add_sized(
                     [width, desc_h],
                     egui::TextEdit::multiline(&mut e.desc).desired_width(width).char_limit(1023),
@@ -2002,14 +2009,15 @@ fn notes_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, profile: Option<&Ava
     let size = Vec2::new(ui.available_width() - 8.0, (ui.available_height() - 44.0).max(60.0));
     egui::ScrollArea::vertical()
         .id_salt(("notes", w.id))
+        .max_width(size.x)
         .max_height(size.y)
         .min_scrolled_height(size.y)
         .show(ui, |ui| {
+            // beside the scroll bar's strip once the notes are longer
+            let width = ui.available_width();
             ui.add_sized(
-                [size.x, size.y],
-                egui::TextEdit::multiline(&mut w.notes.text)
-                    .desired_width(size.x)
-                    .char_limit(65_530),
+                [width, size.y],
+                egui::TextEdit::multiline(&mut w.notes.text).desired_width(width).char_limit(65_530),
             );
         });
     ui.add_space(4.0);

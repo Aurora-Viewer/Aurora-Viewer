@@ -835,8 +835,12 @@ fn results(ui: &mut egui::Ui, c: &mut Ctx, list: &List, actions: &mut Vec<Search
     };
     let font = egui::FontId::proportional(12.0);
     // header
+    // the columns over those of the rows, left of the list's scroll bar
+    let rows_list = ui.id().with(("search-rows", tab.index()));
+    let columns = widgets::header_width(ui, rows_list);
     let (head, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
     ui.painter().rect_filled(head, radius, p.field);
+    let head = head.with_max_x(head.left() + columns);
     let titles: Vec<&str> = std::iter::once(aurora_i18n::tr!("common-name"))
         .chain(cols.iter().map(|c| c.0))
         .collect();
@@ -863,7 +867,7 @@ fn results(ui: &mut egui::Ui, c: &mut Ctx, list: &List, actions: &mut Vec<Search
     let footer_h = 30.0;
     let rows_h = (ui.available_height() - footer_h).max(60.0);
     let rows = list.sorted();
-    egui::ScrollArea::vertical()
+    let out = egui::ScrollArea::vertical()
         .id_salt(("search-rows", tab.index()))
         .auto_shrink([false, false])
         .max_height(rows_h)
@@ -905,6 +909,7 @@ fn results(ui: &mut egui::Ui, c: &mut Ctx, list: &List, actions: &mut Vec<Search
                 }
             }
         });
+    widgets::remember_scroll_bar(ui, rows_list, &out);
     // count on the left, pages on the right
     ui.add_space(4.0);
     ui.horizontal(|ui| {

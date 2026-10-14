@@ -713,7 +713,29 @@ pub fn reserved_scroll_style() -> egui::style::ScrollStyle {
 /// header sits above it), which would otherwise run under the bar's strip
 /// and be clipped.
 pub fn scrolled_width(ui: &egui::Ui) -> f32 {
-    (ui.available_width() - ui.spacing().scroll.allocated_width()).max(0.0)
+    (ui.available_width() - scroll_strip(ui)).max(0.0)
+}
+
+/// The width of a header of columns drawn above the rows of a vertical
+/// scroll area: less the bar's strip while the list showed its bar (as
+/// `remember_scroll_bar` noted under the same `list` id), so the columns of
+/// the header stay over those of the rows.
+pub fn header_width(ui: &egui::Ui, list: egui::Id) -> f32 {
+    let shown = ui.ctx().data(|d| d.get_temp::<bool>(list)).unwrap_or(false);
+    ui.available_width() - if shown { scroll_strip(ui) } else { 0.0 }
+}
+
+/// Note whether the scroll area of `out` showed its vertical bar, for the
+/// `header_width` of its list next frame.
+pub fn remember_scroll_bar<R>(ui: &egui::Ui, list: egui::Id, out: &egui::scroll_area::ScrollAreaOutput<R>) {
+    let shown = out.content_size.y > out.inner_rect.height() + 0.5;
+    ui.ctx().data_mut(|d| d.insert_temp(list, shown));
+}
+
+/// Width of the strip a scroll bar takes at the right of what scrolls:
+/// what rows of a known width give up to stay clear of it.
+pub fn scroll_strip(ui: &egui::Ui) -> f32 {
+    ui.spacing().scroll.allocated_width()
 }
 
 /// Stroke of every divider of the interface: a thin line of a neutral
