@@ -1496,7 +1496,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_REGION=overview[:role][:preview][:compact]` | "Region / Estate" as estate owner, manager or resident |
+| `AURORA_DEMO_REGION=overview\|manage[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
@@ -2293,7 +2293,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_REGION=overview[:owner|:manager|:resident][:preview][:compact]`**:
+- **`AURORA_DEMO_REGION=overview|manage[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain][:pending][:ask-…]`**:
   the Region / Estate window opens on the demo region, whose simulator
   answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
   at most, estate 104 123, no terraforming, pushing limited, voice, resale
@@ -2310,7 +2310,20 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `resident` gets neither: no People tab, no "View as", no managers nor
   interventions. `preview` opens on "View as" Resident; `compact` opens
   the window 480 px wide (no map, one column, the action buttons as
-  icons). Manage and People are greyed until the next steps.
+  icons). People is greyed until a next step. `manage` opens on Manage
+  (who can come, region rules, terrain and water; the other sections of
+  the navigation are greyed): `access`, `rules` or `terrain` scrolls to
+  that section, `pending` makes two changes there and scrolls to the bar
+  "2 changes not sent yet" (Cancel / Apply), and `ask-override`,
+  `ask-linden`, `ask-bonus`, `ask-maturity`, `ask-heights` or `ask-bake`
+  opens that question (EstateParcelAccessOverride, ChangeLindenEstate,
+  ChangeObjectBonusFactor, RegionMaturityChange, ConfirmTextureHeights,
+  ConfirmBakeTerrain). The demo simulator keeps what Apply sends and
+  answers it in the next RegionInfo / `estateupdateinfo`; the terrain's
+  textures and elevations, which a real simulator sends back in a new
+  RegionHandshake, stay shown as sent. A manager sees the bake greyed
+  with the amber "estate owner" lock, a resident (or `preview`) the amber
+  banner and a sentence instead of the estate's access.
 - **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members

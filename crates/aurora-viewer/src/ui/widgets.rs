@@ -1552,7 +1552,7 @@ pub struct DialogButton<'a> {
 }
 
 /// The width `action_button` gives `label` with `icon` when it fits its content.
-fn action_button_fit(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
+pub fn action_button_fit(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
     let text = ui
         .painter()
         .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.5), Color32::PLACEHOLDER)

@@ -4528,6 +4528,7 @@ impl App {
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
         images.extend(self.place_images.drain());
         images.extend(self.land_ui.wanted_images.drain());
+        images.extend(self.region_ui.wanted_images.drain());
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.people_ui.wanted_images.drain());
@@ -8873,8 +8874,18 @@ impl App {
                     .then_some(self.world.main_region)
                     .flatten()
                     .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
-                self.region_ui
-                    .show(&ctx, &p, &mut self.world, &self.avatar_pics, region_map.as_ref(), &mut open);
+                if self.region_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.world,
+                    &self.avatar_pics,
+                    &self.ui_images,
+                    region_map.as_ref(),
+                    &mut self.settings,
+                    &mut open,
+                ) {
+                    self.settings.save();
+                }
                 self.panels.region_estate = open;
                 match self.region_ui.action.take() {
                     Some(ui::region::RegionAction::AboutLand) => self.panels.about_land = true,
@@ -9895,7 +9906,7 @@ impl ApplicationHandler for App {
             // AURORA_DEMO_REGION=overview[:owner|:manager|:resident]: Region /
             // Estate on that page
             if let Some(scenario) = crate::demo::region::scenario() {
-                self.region_ui.demo(scenario.page, scenario.preview);
+                self.region_ui.demo(scenario.page, scenario.preview, scenario.manage);
                 if scenario.compact {
                     let pos = egui::pos2(560.0, 80.0);
                     ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(480.0, 720.0));
