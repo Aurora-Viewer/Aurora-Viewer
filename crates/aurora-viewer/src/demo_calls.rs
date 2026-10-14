@@ -10,7 +10,11 @@
 //!   conference", then the call once the session has its id);
 //! - `incoming`: Tess calls us (the card with Accept / Decline / Reply by
 //!   text);
-//! - `incoming-group`: Nova starts a call in Aurora Builders.
+//! - `incoming-group`: Nova starts a call in Aurora Builders;
+//! - `conference-legacy`: the conference of `conference`, refused by the
+//!   capability (400): it starts by message (IM_SESSION_CONFERENCE_START).
+//!
+//! Residents invited into a conference ("invite") join it at once.
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
 use crate::world::World;
@@ -25,6 +29,7 @@ pub enum Mode {
     Hangup,
     Group,
     Conference,
+    ConferenceLegacy,
     Incoming,
     IncomingGroup,
 }
@@ -35,6 +40,7 @@ pub fn mode() -> Option<Mode> {
         "hangup" => Some(Mode::Hangup),
         "group" => Some(Mode::Group),
         "conference" => Some(Mode::Conference),
+        "conference-legacy" => Some(Mode::ConferenceLegacy),
         "incoming" => Some(Mode::Incoming),
         "incoming-group" => Some(Mode::IncomingGroup),
         _ => None,
@@ -59,35 +65,79 @@ pub struct CallDemo {
     started: bool,
 }
 
+fn present(agent: Uuid) -> aurora_net::SessionAgent {
+    aurora_net::SessionAgent {
+        agent,
+        present: Some(true),
+        moderator: None,
+        text_muted: None,
+    }
+}
+
+/// The start reply of a conference: its real id, and who is in it.
+fn conference_started(temp: Uuid, agents: &[Uuid]) -> NetEvent {
+    NetEvent::SessionStarted {
+        temp_session: temp,
+        session: Uuid::from_u128(temp.as_u128() ^ 0xC0F),
+        success: true,
+        error: String::new(),
+        agents: std::iter::once(DEMO_AGENT).chain(agents.iter().copied()).map(present).collect(),
+    }
+}
+
+/// A conference started by message (IM_SESSION_CONFERENCE_START): the
+/// residents are the ids of the binary bucket.
+pub fn legacy_conference(temp: Uuid, bucket: &[u8]) -> Vec<NetEvent> {
+    let agents: Vec<Uuid> = bucket.as_chunks::<16>().0.iter().map(|c| Uuid::from_bytes(*c)).collect();
+    vec![conference_started(temp, &agents)]
+}
+
 /// The answers of ChatSessionRequest: a P2P session always starts and every
 /// session gets a channel.
 pub fn reply(method: CallMethod, session: Uuid) -> Vec<NetEvent> {
-    // a conference gets its real id in the session's start reply
-    if let CallMethod::StartConference { agents } = &method {
-        let real = Uuid::from_u128(session.as_u128() ^ 0xC0F);
-        let present = |agent: Uuid| aurora_net::SessionAgent {
-            agent,
-            present: Some(true),
-            moderator: None,
-            text_muted: None,
-        };
-        return vec![
-            NetEvent::CallReply {
-                method: method.clone(),
+    let ok = aurora_llsd::Llsd::Undef;
+    match &method {
+        // `conference-legacy`: the capability refuses (startConferenceCoro)
+        CallMethod::StartConference { .. } if mode() == Some(Mode::ConferenceLegacy) => {
+            return vec![NetEvent::CallReply {
+                method,
                 session,
-                result: Ok(aurora_llsd::Llsd::Undef),
-            },
-            NetEvent::SessionStarted {
-                temp_session: session,
-                session: real,
-                success: true,
-                error: String::new(),
-                agents: std::iter::once(DEMO_AGENT).chain(agents.iter().copied()).map(present).collect(),
-            },
-        ];
+                result: Err(400),
+            }];
+        }
+        // a conference gets its real id in the session's start reply
+        CallMethod::StartConference { agents } => {
+            let started = conference_started(session, agents);
+            return vec![
+                NetEvent::CallReply {
+                    method,
+                    session,
+                    result: Ok(ok),
+                },
+                started,
+            ];
+        }
+        // the invited join the conference
+        CallMethod::Invite { agents } => {
+            let joined = NetEvent::SessionAgents {
+                session,
+                agents: agents.iter().copied().map(present).collect(),
+            };
+            return vec![
+                NetEvent::CallReply {
+                    method,
+                    session,
+                    result: Ok(ok),
+                },
+                joined,
+            ];
+        }
+        _ => {}
     }
     let result = match method {
-        CallMethod::StartP2p { .. } | CallMethod::DeclineP2p | CallMethod::StartConference { .. } => Ok(aurora_llsd::Llsd::Undef),
+        CallMethod::StartP2p { .. } | CallMethod::DeclineP2p | CallMethod::StartConference { .. } | CallMethod::Invite { .. } => {
+            Ok(aurora_llsd::Llsd::Undef)
+        }
         CallMethod::Call => Ok(aurora_llsd::llsd_map! {
             "voice_credentials" => aurora_llsd::llsd_map! {
                 "channel_uri" => format!("demo-{session}"),
@@ -144,7 +194,7 @@ impl CallDemo {
         match mode {
             Mode::P2p | Mode::Hangup => world.start_call(DEMO_NOVA),
             Mode::Group => world.start_call(DEMO_GROUP1),
-            Mode::Conference => world.start_conference(vec![DEMO_NOVA, DEMO_TESS]),
+            Mode::Conference | Mode::ConferenceLegacy => world.start_conference(vec![DEMO_NOVA, DEMO_TESS]),
             Mode::Incoming => return vec![NetEvent::VoiceInvite(invite(false))],
             Mode::IncomingGroup => return vec![NetEvent::VoiceInvite(invite(true))],
         }

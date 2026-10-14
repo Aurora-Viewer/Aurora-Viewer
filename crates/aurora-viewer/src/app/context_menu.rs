@@ -486,6 +486,18 @@ impl App {
             }
             CtxAction::AddFriend(id) => self.contacts_ui.ask_friendship(id),
             CtxAction::RemoveFriend(id) => self.contacts_ui.ask_remove_friend(id),
+            CtxAction::RemoveFriends(ids) => self.contacts_ui.ask_remove_friends(ids),
+            CtxAction::Conference(ids) => {
+                self.world.start_text_conference(ids);
+                self.panels.chat = true;
+            }
+            CtxAction::ConferenceCall(ids) => {
+                if self.settings.audio.voice_enabled {
+                    self.world.start_conference(ids);
+                    self.panels.chat = true;
+                }
+            }
+            CtxAction::OfferTeleports(ids) => self.contacts_ui.ask_teleport_offer(ids, &self.world.region_name()),
             CtxAction::RequestTeleport(id) => self.contacts_ui.ask_teleport_request(id, self.world.status.cfg.reject_teleports),
             CtxAction::ActivateGroup(id) => self.send(NetCommand::ActivateGroup(id)),
             CtxAction::PinGroup(id) => self.world.groups.toggle_favorite(id),

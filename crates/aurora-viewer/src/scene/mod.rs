@@ -661,7 +661,7 @@ pub struct Scene {
     /// Camera vertical field of view (LOD scaling).
     pub fov_y: f32,
     /// Sky / water textures: (id, slot).
-    env_tex: [(Uuid, u32); 4],
+    env_tex: [(Uuid, u32); 6],
     /// Index of the agent avatar (always drawn).
     pub agent_idx: Option<usize>,
     pub lists: DrawLists,
@@ -996,7 +996,7 @@ impl Scene {
             max_avatars: 16,
             reflections: true,
             fov_y: 1.0,
-            env_tex: [(Uuid::nil(), 0); 4],
+            env_tex: [(Uuid::nil(), 0); 6],
             agent_idx: None,
             lists: DrawLists::default(),
             stats: SceneStats::default(),
@@ -1551,8 +1551,8 @@ impl Scene {
     }
 
     /// Keep the sky / water textures resident; returns their slots (0 until loaded).
-    pub fn env_textures(&mut self, renderer: &mut Renderer, ids: [Uuid; 4]) -> [u32; 4] {
-        let mut out = [0u32; 4];
+    pub fn env_textures(&mut self, renderer: &mut Renderer, ids: [Uuid; 6]) -> [u32; 6] {
+        let mut out = [0u32; 6];
         for (i, id) in ids.iter().enumerate() {
             if self.env_tex[i].0 != *id {
                 let old = self.env_tex[i].0;
@@ -1568,7 +1568,7 @@ impl Scene {
             }
             if !id.is_nil() {
                 self.textures.note_usage_fixed(id, 2048.0);
-                if self.textures.is_loaded(id) {
+                if self.textures.is_loaded(id) || self.textures.is_local(id) {
                     out[i] = self.env_tex[i].1;
                 }
             }

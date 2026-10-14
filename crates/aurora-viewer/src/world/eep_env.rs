@@ -308,6 +308,17 @@ impl EnvSelector {
         self.edit = Some((sky, water));
     }
 
+    /// The day cycle editor: the day at its time cursor.
+    pub fn set_edit(&mut self, sky: SkyFrame, water: WaterFrame) {
+        self.edit = Some((sky, water));
+    }
+
+    /// "Apply only to myself" of the day cycle editor (setEnvironment(
+    /// ENV_LOCAL, day)): a local day without an asset.
+    pub fn apply_local_day(&mut self, day: DayCycle) {
+        self.apply_settings(Uuid::nil(), &Settings::Day(day), None, None);
+    }
+
     pub fn set_edit_water(&mut self, water: WaterFrame) {
         let sky = self.edit.map_or_else(|| self.current().0, |e| e.0);
         self.edit = Some((sky, water));
