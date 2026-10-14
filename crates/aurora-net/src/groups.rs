@@ -7,8 +7,8 @@
 //! replies repeat: a reply to an older request is dropped by the viewer.
 
 use aurora_llsd::{Llsd, llsd_map};
-use aurora_msg::field_str;
 use aurora_msg::msgs;
+use aurora_msg::{field_str, str_field};
 use uuid::Uuid;
 
 /// Group abilities (roles_constants.h GP_*), the bits of a role's or a
@@ -449,6 +449,83 @@ pub fn role_change_messages(agent: Uuid, session: Uuid, group: Uuid, changes: &[
         .collect()
 }
 
+/// LLRoleChangeType: how a role changed (GroupRoleUpdate's UpdateType).
+pub mod role_change {
+    pub const DATA: u8 = 1;
+    pub const POWERS: u8 = 2;
+    pub const ALL: u8 = 3;
+    pub const CREATE: u8 = 4;
+    pub const DELETE: u8 = 5;
+}
+
+/// One role changed (LLRoleData with its mChangeType).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoleUpdate {
+    pub role: Uuid,
+    pub name: String,
+    pub title: String,
+    pub description: String,
+    pub powers: u64,
+    pub kind: u8,
+}
+
+/// Roles per GroupRoleUpdate (Firestorm starts a new message when one is
+/// full; this keeps each one under a packet with long descriptions).
+const ROLE_UPDATES_PER_MESSAGE: usize = 3;
+
+/// packRoleUpdateMessageBlock for each changed role.
+pub fn role_update_messages(agent: Uuid, session: Uuid, group: Uuid, updates: &[RoleUpdate]) -> Vec<msgs::GroupRoleUpdate> {
+    updates
+        .chunks(ROLE_UPDATES_PER_MESSAGE)
+        .map(|chunk| {
+            let mut m = msgs::GroupRoleUpdate::default();
+            m.agent_data.agent_id = agent;
+            m.agent_data.session_id = session;
+            m.agent_data.group_id = group;
+            m.role_data = chunk
+                .iter()
+                .map(|u| msgs::group_role_update::RoleData {
+                    role_id: u.role,
+                    name: str_field(&u.name),
+                    description: str_field(&u.description),
+                    title: str_field(&u.title),
+                    powers: u.powers,
+                    update_type: u.kind,
+                })
+                .collect();
+            m
+        })
+        .collect()
+}
+
+/// What UpdateGroupInfo sends (LLGroupMgr::sendUpdateGroupInfo).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GroupInfo {
+    pub charter: String,
+    pub show_in_list: bool,
+    pub insignia: Uuid,
+    pub membership_fee: i32,
+    pub open_enrollment: bool,
+    pub allow_publish: bool,
+    pub mature_publish: bool,
+}
+
+pub fn group_info_message(agent: Uuid, session: Uuid, group: Uuid, info: &GroupInfo) -> msgs::UpdateGroupInfo {
+    let mut m = msgs::UpdateGroupInfo::default();
+    m.agent_data.agent_id = agent;
+    m.agent_data.session_id = session;
+    let d = &mut m.group_data;
+    d.group_id = group;
+    d.charter = str_field(&info.charter);
+    d.show_in_list = info.show_in_list;
+    d.insignia_id = info.insignia;
+    d.membership_fee = info.membership_fee;
+    d.open_enrollment = info.open_enrollment;
+    d.allow_publish = info.allow_publish;
+    d.mature_publish = info.mature_publish;
+    m
+}
+
 /// The ban actions of the GroupAPIv1 capability (LLGroupMgr::EBanAction).
 pub mod ban {
     pub const CREATE: i32 = 1;
@@ -724,6 +801,43 @@ mod tests {
         let (g, bans) = ban_list(&llsd_map! { "group_id" => Uuid::from_u128(9), "ban_list" => list }).expect("list");
         assert_eq!(g, Uuid::from_u128(9));
         assert_eq!(bans, vec![(Uuid::from_u128(10), 0.0)]);
+    }
+
+    #[test]
+    fn role_updates_and_group_info() {
+        let u = |i: u128, kind| RoleUpdate {
+            role: Uuid::from_u128(i),
+            name: format!("Role {i}"),
+            title: "T".into(),
+            description: "D".into(),
+            powers: 1 << 4,
+            kind,
+        };
+        let v = role_update_messages(
+            Uuid::from_u128(1),
+            Uuid::nil(),
+            Uuid::from_u128(9),
+            &[
+                u(1, role_change::CREATE),
+                u(2, role_change::DATA),
+                u(3, role_change::POWERS),
+                u(4, role_change::DELETE),
+            ],
+        );
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].agent_data.group_id, Uuid::from_u128(9));
+        assert_eq!(v[0].role_data[0].update_type, role_change::CREATE);
+        assert_eq!(field_str(&v[0].role_data[0].name), "Role 1");
+        assert_eq!(v[1].role_data[0].update_type, role_change::DELETE);
+        let info = GroupInfo {
+            charter: "Hello".into(),
+            open_enrollment: true,
+            membership_fee: 50,
+            ..Default::default()
+        };
+        let m = group_info_message(Uuid::from_u128(1), Uuid::nil(), Uuid::from_u128(9), &info);
+        assert_eq!(field_str(&m.group_data.charter), "Hello");
+        assert!(m.group_data.open_enrollment && m.group_data.membership_fee == 50);
     }
 
     #[test]

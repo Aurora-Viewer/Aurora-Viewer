@@ -696,8 +696,43 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             false,
             false,
         );
+        // Administration at the right, in amber, with an admin ability
+        if super::administration::visible(v) {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if admin_tab(ui, p, *tab == Tab::Admin).clicked() {
+                    *tab = Tab::Admin;
+                }
+            });
+        }
     });
     ui.add_space(8.0);
+}
+
+/// The Administration tab: amber, on an amber wash when chosen.
+fn admin_tab(ui: &mut egui::Ui, p: &Palette, selected: bool) -> egui::Response {
+    let label = aurora_i18n::tr!("ui-group-admin-tab");
+    let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, p.amber);
+    let size = Vec2::new(12.0 + 15.0 + 5.0 + galley.size().x + 12.0, 28.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    if selected {
+        ui.painter().rect_filled(rect, radius, p.amber.gamma_multiply(0.14));
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, radius, p.amber.gamma_multiply(0.08));
+    }
+    if let Some(t) = crate::ui::icons::global("shield-filled") {
+        let r = Rect::from_center_size(Pos2::new(rect.left() + 19.5, rect.center().y), Vec2::splat(15.0));
+        ui.painter()
+            .image(t.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), p.amber);
+    }
+    ui.painter().galley(
+        Pos2::new(rect.left() + 32.0, rect.center().y - galley.size().y / 2.0).round(),
+        galley,
+        p.amber,
+    );
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// A card of the tabs: its title in small capitals with an icon, a link at

@@ -43,6 +43,11 @@ pub fn scenario() -> Scenario {
     }
 }
 
+/// `<scenario>:admin`: the window opens on the Administration tab.
+pub fn admin_tab() -> bool {
+    std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').nth(1) == Some("admin"))
+}
+
 /// `<scenario>:members`: the window opens on the Members tab, a builder
 /// selected.
 pub fn members_tab() -> Option<Uuid> {
@@ -96,6 +101,9 @@ pub fn my_powers() -> u64 {
         _ => DEFAULT_MEMBER,
     }
 }
+
+/// The demo group's ban list during the run.
+static BANS: Mutex<Vec<(Uuid, f64)>> = Mutex::new(Vec::new());
 
 /// Groups joined and left during the run: the group list follows them.
 static JOINED: Mutex<Vec<GroupMembership>> = Mutex::new(Vec::new());
@@ -452,12 +460,36 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
                 success: true,
             }]
         }
-        NetCommand::GroupBans { group, action, ids } => {
+        NetCommand::GroupBans { group, action, ids, .. } => {
             log::info!("demo group: ban action {action:?} for {} resident(s)", ids.len());
-            vec![NetEvent::GroupBanList {
-                group: *group,
-                bans: ids.iter().map(|id| (*id, 1_790_000_000.0)).collect(),
-            }]
+            let mut list = BANS.lock().map(|b| b.clone()).unwrap_or_default();
+            if list.is_empty() {
+                list = vec![
+                    (Uuid::from_u128(MEMBER | 9000), 1_788_000_000.0),
+                    (Uuid::from_u128(MEMBER | 9001), 1_789_500_000.0),
+                ];
+            }
+            match action {
+                Some(a) if *a == aurora_net::groups::ban::CREATE => list.extend(ids.iter().map(|id| (*id, 1_790_000_000.0))),
+                Some(a) if *a == aurora_net::groups::ban::DELETE => list.retain(|(id, _)| !ids.contains(id)),
+                _ => {}
+            }
+            if let Ok(mut b) = BANS.lock() {
+                b.clone_from(&list);
+            }
+            vec![NetEvent::GroupBanList { group: *group, bans: list }]
+        }
+        NetCommand::GroupRoleUpdate { updates, .. } => {
+            log::info!("demo group: {} role update(s)", updates.len());
+            Vec::new()
+        }
+        NetCommand::UpdateGroupInfo { info, .. } => {
+            log::info!(
+                "demo group: identity saved (open enrollment {}, fee {})",
+                info.open_enrollment,
+                info.membership_fee
+            );
+            Vec::new()
         }
         NetCommand::GroupRoleChanges { changes, .. } => {
             log::info!("demo group: {} role change(s)", changes.len());
