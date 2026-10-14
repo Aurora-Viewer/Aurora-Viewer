@@ -98,10 +98,11 @@ impl GroupMgr {
     /// createGroupData, the least recently opened group dropped past
     /// MAX_CACHED_GROUPS (LLGroupMgr::addGroup).
     fn data(&mut self, group: Uuid) -> &mut GroupData {
-        if !self.groups.contains_key(&group) && self.groups.len() >= MAX_CACHED_GROUPS {
-            if let Some(oldest) = self.groups.iter().min_by_key(|(_, g)| g.accessed).map(|(id, _)| *id) {
-                self.groups.remove(&oldest);
-            }
+        if !self.groups.contains_key(&group)
+            && self.groups.len() >= MAX_CACHED_GROUPS
+            && let Some(oldest) = self.groups.iter().min_by_key(|(_, g)| g.accessed).map(|(id, _)| *id)
+        {
+            self.groups.remove(&oldest);
         }
         self.clock += 1;
         let clock = self.clock;

@@ -148,7 +148,7 @@ fn a_guest_can_join_an_open_group_and_has_no_settings() {
     let mut st = opened(&mut world);
     let (texts, actions) = texts(&mut st, &world, false);
     let join = aurora_i18n::tr!("ui-group-profile-join-fee", fee = aurora_i18n::integer(250));
-    assert!(texts.iter().any(|t| *t == join), "{join} in {texts:?}");
+    assert!(texts.contains(&join), "{join} in {texts:?}");
     for key in [
         "common-chat",
         "ui-group-profile-leave",
@@ -165,7 +165,7 @@ fn a_guest_can_join_an_open_group_and_has_no_settings() {
         g.open_enrollment = false;
     }
     let (texts, _) = self::texts(&mut st, &closed, false);
-    assert!(!texts.iter().any(|t| *t == join));
+    assert!(!texts.contains(&join));
     assert!(has(&texts, "ui-group-profile-invitation-only"));
 }
 

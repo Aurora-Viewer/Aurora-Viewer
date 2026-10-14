@@ -456,24 +456,26 @@ mod tests {
         }];
         assert_eq!(role_members_reply(&p).pairs, vec![(Uuid::from_u128(5), Uuid::from_u128(10))]);
 
-        let mut t = msgs::GroupTitlesReply::default();
-        t.group_data = vec![
-            group_titles_reply::GroupData {
-                title: str_field("Member"),
-                role_id: Uuid::nil(),
-                selected: false,
-            },
-            group_titles_reply::GroupData {
-                title: str_field(""),
-                role_id: Uuid::from_u128(6),
-                selected: false,
-            },
-            group_titles_reply::GroupData {
-                title: str_field("Founder"),
-                role_id: Uuid::from_u128(5),
-                selected: true,
-            },
-        ];
+        let t = msgs::GroupTitlesReply {
+            group_data: vec![
+                group_titles_reply::GroupData {
+                    title: str_field("Member"),
+                    role_id: Uuid::nil(),
+                    selected: false,
+                },
+                group_titles_reply::GroupData {
+                    title: str_field(""),
+                    role_id: Uuid::from_u128(6),
+                    selected: false,
+                },
+                group_titles_reply::GroupData {
+                    title: str_field("Founder"),
+                    role_id: Uuid::from_u128(5),
+                    selected: true,
+                },
+            ],
+            ..Default::default()
+        };
         let titles = titles_reply(&t);
         assert_eq!(titles.len(), 2, "an empty title is not offered");
         assert!(titles[1].selected && titles[1].role == Uuid::from_u128(5));
@@ -481,8 +483,10 @@ mod tests {
 
     #[test]
     fn notice_list_with_the_dummy_entry_is_empty() {
-        let mut m = msgs::GroupNoticesListReply::default();
-        m.data = vec![group_notices_list_reply::Data::default()];
+        let mut m = msgs::GroupNoticesListReply {
+            data: vec![group_notices_list_reply::Data::default()],
+            ..Default::default()
+        };
         assert!(notices_reply(&m).is_empty());
         m.data = vec![group_notices_list_reply::Data {
             notice_id: Uuid::from_u128(1),
