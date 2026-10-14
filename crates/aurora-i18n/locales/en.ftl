@@ -2021,6 +2021,13 @@ ui-environment-intensity-of-lighting-effects-such-as-realistic-bright-skies = In
 ui-options-first-click-interaction = First-click interaction
 build-ui-floaters-interact-on-first-click = Interact on first click
 demo-land-interactions-general = Interactions (General)
+demo-land-script-door = Sliding door
+demo-land-script-radio = Radio
+demo-land-script-sign = Shop sign
+demo-land-script-hud = Combat HUD
+demo-land-script-ao = Animation overrider
+demo-land-beach-games = Beach games
+demo-land-night-club = Night club
 common-interface = Interface
 build-ui-floaters-intersections-up-to-meters = Intersections up to (meters)
 media-plugins-missing = Not installed
@@ -3979,6 +3986,9 @@ fetch-redirect-failed = Redirect failed
 world-mod-declined = declined
 fetch-request-failed = Request failed
 session-land-unreadable-response = unreadable response
+session-land-no-land-resources = The region does not provide the LandResources capability.
+session-land-script-info-failed = The script information could not be retrieved.
+session-land-no-attachment-resources = The region does not provide the AttachmentResources capability.
 ui-options-theme-json-layout-json-icons-reloaded-automatically = theme.json · layout.json · icons/ — reloaded automatically
 login-too-many-redirects = Too many redirects
 build-ui-floaters-transfer = transfer
@@ -4943,6 +4953,10 @@ ui-options-aurora-photo-window = Photo window
 ui-options-aurora-photo-window-help = The photographer's panel anchored on the right, or Firestorm's floating window with its controls beside the preview.
 ui-options-aurora-photo-panel = Aurora panel
 ui-options-aurora-photo-classic = Classic window (Firestorm)
+ui-options-aurora-about-land = About Land
+ui-options-aurora-about-land-help = An overview and settings grouped by what you want to do, or Firestorm's 9 tabs.
+ui-options-aurora-about-land-aurora = Aurora
+ui-options-aurora-about-land-classic = Classic window (Firestorm)
 ui-options-aurora-gaze = Gaze
 ui-options-aurora-aim = Where your gaze goes
 ui-options-aurora-aim-help = Your avatar looks at the exact point under the cursor, or turns its head toward the cursor's side like Firestorm.
@@ -5237,6 +5251,256 @@ ui-land-mod-objects-over-capacity = { $count ->
     [one] { $count } object over the capacity, which will be returned
    *[other] { $count } objects over the capacity, which will be returned
     }
+ui-land-overview-tab = Overview
+ui-land-overview-manage-tab = Manage
+ui-land-overview-people-tab = People and objects
+ui-land-overview-change-picture = Change the picture
+ui-land-overview-public-land = Public land
+ui-land-overview-group-owner = Owned by the group
+ui-land-overview-group-word = group
+ui-land-overview-objects-free = { $n ->
+    [one] { $count } free
+   *[other] { $count } free
+    }
+ui-land-overview-access = Access
+ui-land-overview-arrival = Arrival
+ui-land-overview-open-to-all = Open to all
+ui-land-overview-group-and-list = Group and list
+ui-land-overview-list-only = List only
+ui-land-overview-arrival-blocked = Blocked
+ui-land-overview-arrival-fixed = Landing point
+ui-land-overview-arrival-fixed-at = Landing point ({ $position })
+ui-land-overview-arrival-anywhere = Anywhere
+ui-land-overview-build = Build
+ui-land-overview-build-group = Build: group
+ui-land-overview-no-build = No building
+ui-land-overview-scripts = Scripts
+ui-land-overview-scripts-group = Scripts: group
+ui-land-overview-no-scripts = No scripts
+ui-land-overview-fly = Fly
+ui-land-overview-no-fly = No flying
+ui-land-overview-push = Pushing
+ui-land-overview-no-push = No pushing
+ui-land-overview-safe = No damage
+ui-land-overview-damage = Damage
+ui-land-overview-damage-tip = Damage allowed: you can be hurt here
+ui-land-overview-voice = Voice
+ui-land-overview-no-voice = No voice
+ui-land-overview-object-entry = Object entry
+ui-land-overview-object-entry-group = Object entry: group
+ui-land-overview-no-object-entry = No object entry
+ui-land-overview-no-object-entry-tip = Objects from other parcels cannot enter this one
+ui-land-overview-go-to-landing-point = Go to the landing point
+ui-land-overview-go-to-parcel = Go to the parcel
+ui-land-overview-slurl = SLURL
+ui-land-overview-landmark-here = Stand on this parcel to create its landmark.
+ui-land-overview-buy = Buy…
+ui-land-overview-report = Report
+ui-land-overview-more = More actions
+ui-land-overview-copy-land-id = Copy the land ID
+ui-land-overview-description = Description
+ui-land-overview-no-description = No description.
+ui-land-overview-covenant = Estate covenant
+ui-land-overview-read-all = Read all ›
+ui-land-overview-read-less = Show less ‹
+ui-land-overview-resell = { $allowed ->
+    [yes] Resale: yes
+   *[no] Resale: no
+    }
+ui-land-overview-join-subdivide = { $allowed ->
+    [yes] Join / subdivide: yes
+   *[no] Join / subdivide: no
+    }
+ui-land-overview-modified-on = Modified on { $date }
+ui-land-overview-never-modified = Never modified
+ui-land-overview-date = { $month } { $day }, { $year }
+ui-land-overview-info = Info
+ui-land-overview-estate = Estate
+ui-land-overview-region = Region
+ui-land-overview-in-search = In search
+ui-land-overview-traffic = Traffic
+ui-land-overview-acquired = Acquired on
+ui-land-overview-sale = Sale
+ui-land-overview-for-sale-price = For sale: L$ { $price }
+ui-land-overview-land-id = Land ID
+ui-land-overview-click-to-copy = Click to copy
+ui-land-overview-media-and-sound = Media and sound
+ui-land-overview-media = Media
+ui-land-overview-none = None
+ui-land-overview-no-page = no page
+ui-land-overview-visitor = Visitor
+ui-land-overview-officer = Officer
+ui-land-overview-view-as = View as
+ui-land-overview-view-as-tip = See the parcel as a visitor sees it: nothing can be changed while this is on
+ui-land-manage-access = Who can come
+ui-land-manage-rules = What visitors can do
+ui-land-manage-objects = Objects and prims
+ui-land-manage-visibility = Visibility and search
+ui-land-manage-media = Media and sound
+ui-land-manage-environment = Environment
+ui-land-manage-experiences = Experiences
+ui-land-manage-sale = Sale and ownership
+ui-land-manage-build = Build
+ui-land-manage-group = Group
+ui-land-manage-apparent-time = Apparent time of day
+ui-land-manage-home-page = Home page
+ui-land-manage-replace-texture = Replaced texture
+ui-land-manage-avatar-sounds = Avatar sounds
+ui-land-manage-size = Size
+ui-land-manage-type = Type
+ui-land-manage-xp-allowed = Allowed experiences
+ui-land-manage-xp-blocked = Blocked experiences
+ui-land-manage-sold-to = to { $who }
+ui-land-scripts-parcel-tab = This land
+ui-land-scripts-mine-tab = My attachments
+ui-land-scripts-waiting = Requesting the information…
+ui-land-scripts-no-parcel = No parcel selected.
+ui-land-scripts-wrong-region = Script information is only available for the region you are in.
+ui-land-scripts-error = The script information could not be retrieved.
+ui-land-scripts-memory = Memory used: { $used } KB of { $max } KB; { $available } KB available
+ui-land-scripts-memory-simple = Memory used: { $used } KB
+ui-land-scripts-urls = URLs used: { $used } of { $max }; { $available } available
+ui-land-scripts-parcels-listed = { $count ->
+    [one] { $count } parcel listed
+   *[other] { $count } parcels listed
+    }
+ui-land-scripts-size = SIZE (KB)
+ui-land-scripts-urls-head = URLS
+ui-land-scripts-parcel = Parcel
+ui-land-scripts-location = Location
+ui-land-scripts-attachment = Attachment point
+ui-land-scripts-highlight = Highlight
+ui-land-scripts-highlight-tip = Put a beacon on the selected object
+ui-land-manage-choose = Choose…
+ui-land-manage-env-custom-tip = "From inventory" opens the settings picker; a custom day needs the day cycle editor, not available in Aurora yet.
+ui-land-picker-experience-title = Choose an experience
+ui-land-picker-experience-hint = Experience name
+ui-land-picker-experience-rating = Up to
+ui-land-picker-experience-start = Type a name, then Search.
+ui-land-picker-experience-failed = The search failed. Try again later.
+ui-land-picker-experience-untitled = (untitled experience)
+ui-land-picker-environment-title = Choose an environment
+ui-land-picker-environment-none = No settings item of this kind in the inventory.
+ui-land-picker-environment-apply = Apply
+ui-land-power-options = Manage parcel options
+ui-land-power-manage-allowed = Manage the access list
+ui-land-power-manage-banned = Manage the ban list
+ui-land-power-landing-point = Set the landing point
+ui-land-power-edit = Edit the land
+ui-land-power-find-places = Show the parcel in search
+ui-land-power-identity = Change the name, description and picture
+ui-land-power-media = Change music and media
+ui-land-power-environment = Change the environment
+ui-land-power-sale = Set land for sale
+ui-land-power-deed = Deed land
+ui-land-power-release = Abandon land
+ui-land-power-return = Return objects
+ui-land-manage-lock-preview = You are looking at the parcel as a visitor: nothing can be changed. Switch "View as" back to change the settings.
+ui-land-manage-lock-public = You see the settings without being able to change them: public land is managed by Linden Lab.
+ui-land-manage-lock-group = You see the settings without being able to change them: only the officers of { $group } with the matching powers can.
+ui-land-manage-lock-owner = You see the settings without being able to change them: only the parcel's owner can.
+ui-land-manage-missing-power = Read only: this needs the group power "{ $power }".
+ui-land-manage-access-why = Choose who may enter. Without "Everyone", red lines appear around the parcel for the others.
+ui-land-manage-access-estate = The estate does not let parcels restrict their access.
+ui-land-manage-set-by-estate = Required by the estate.
+ui-land-manage-age = Must be 18 or over
+ui-land-manage-age-desc = An estate setting too: the estate owner can require it.
+ui-land-manage-payment = Payment info on file
+ui-land-manage-group-enters = The group { $group } enters without restriction
+ui-land-manage-passes = Sell passes
+ui-land-manage-passes-desc = A pass gives temporary access to those who are not on the list.
+ui-land-manage-routing = Teleport routing
+ui-land-manage-routing-desc = Where those who teleport here arrive.
+ui-land-manage-landing-point = Landing point
+ui-land-manage-landing-point-at = ({ $position }), facing { $heading }°. You must be on the parcel to set it.
+ui-land-manage-landing-point-none = None. You must be on the parcel to set it.
+ui-land-manage-clear = Clear
+ui-land-manage-set-here = Set here
+ui-land-manage-lists-elsewhere = Access and ban lists: in "People and objects"
+ui-land-manage-rules-why = "Everyone" includes the group. The estate can impose some settings (damage, pushing).
+ui-land-manage-everyone-head = EVERYONE
+ui-land-manage-group-head = GROUP
+ui-land-manage-object-entry = Bring objects in
+ui-land-manage-run-scripts = Run scripts
+ui-land-manage-use-with-care = use with care
+ui-land-manage-safe = No damage (safe)
+ui-land-manage-safe-desc = Fights take no health here.
+ui-land-manage-push-desc = Other people's scripts cannot push you.
+ui-land-manage-push-region = The region's rules take precedence.
+ui-land-manage-see-avatars = See and talk from the neighbouring parcels
+ui-land-manage-others = Others
+ui-land-manage-impact = Impact { $impact } / { $capacity } on the parcel · region { $used } / { $max }
+ui-land-manage-selected-sat = Selected or sat upon: { $count }
+ui-land-manage-auto-return = Auto-return of other residents' objects
+ui-land-manage-auto-return-desc = After this delay, objects left by non-members go back to their owner. 0 = never.
+ui-land-manage-return = Return objects
+ui-land-manage-return-desc = By category; one owner at a time in "People and objects".
+ui-land-manage-return-others = Others'
+ui-land-manage-return-group = The group's
+ui-land-manage-return-owner = The owner's
+ui-land-manage-show-tip = Highlight these objects in the world
+ui-land-people-show-tip = Highlight this owner's objects in the world
+ui-land-manage-search-desc = L$ { $fee } a week. Category, rating, picture and description are used for the results.
+ui-land-manage-category-rating = Category and rating
+ui-land-manage-visibility-advanced = Advanced: name, description, picture (also in the header)
+ui-land-manage-name = Name
+ui-land-manage-picture-desc = Shown in search and in the header.
+ui-land-manage-show = Show
+ui-land-manage-hide = Hide
+ui-land-manage-media-why = Music (URL, favourites), the parcel's media (type, page, replaced texture, size, loop), gesture and object sounds, avatar sounds (everyone / group), voice (on, limited to the parcel), hide MOAP.
+ui-land-manage-parcel-media = Parcel media
+ui-land-manage-env-region = The region's
+ui-land-manage-env-inventory = From inventory
+ui-land-manage-env-custom = Custom
+ui-land-manage-environment-why = The sky, water and day cycle seen on the parcel.
+ui-land-manage-environment-advanced = Advanced: day length and offset, sky altitudes
+ui-land-manage-ground-water = Ground and water
+ui-land-manage-experiences-count = { $allowed ->
+    [one] { $allowed } allowed
+   *[other] { $allowed } allowed
+    } · { $blocked ->
+    [one] { $blocked } blocked
+   *[other] { $blocked } blocked
+    }
+ui-land-manage-sale-why = Sell (price, to whom, with the objects), cancel a sale, choose the group, deed to the group and contribution, abandon, reclaim, script info.
+ui-land-manage-ownership = Ownership
+ui-land-manage-acquired-on = Acquired on { $date }
+ui-land-people-allowed = Always allowed
+ui-land-people-banned = Banned
+ui-land-people-ban = Ban
+ui-land-people-left = { $left } left
+ui-land-people-allowed-hint = They come in even when access is restricted.
+ui-land-people-banned-hint = Banned residents can neither enter nor fly over.
+ui-land-people-selected = { $count ->
+    [one] { $count } selected
+   *[other] { $count } selected
+    }
+ui-land-people-remove = Remove
+ui-land-people-duration = Duration…
+ui-land-people-owners = Objects by owner
+ui-land-people-owners-count = { $objects ->
+    [one] { $objects } object
+   *[other] { $objects } objects
+    } · { $owners ->
+    [one] { $owners } owner
+   *[other] { $owners } owners
+    }
+ui-land-people-owners-idle = Refresh to list the owners of the parcel's objects.
+ui-land-people-refresh = Refresh
+ui-land-people-return-selection = Return the selection
+ui-land-people-return = Return
+ui-land-people-owner-head = OWNER
+ui-land-people-objects-head = OBJECTS
+ui-land-people-newest-head = NEWEST
+ui-land-people-you = you
+ui-land-people-group-tag = group
+ui-land-people-today = today { $time }
+ui-land-people-yesterday = yesterday
+ui-land-dialogs-return-objects-of-owners = { $owners ->
+    [one] Return the { $count } objects of this owner to them?
+   *[other] Return the { $count } objects of these { $owners } owners to them?
+    }
+ui-land-dialogs-objects-of-owners-returned = The objects of the selected owners have been returned.
 ui-group-profile-title = Group Profile
 ui-group-profile-view = View the group's profile
 ui-group-profile-members-and-roles = Members and roles

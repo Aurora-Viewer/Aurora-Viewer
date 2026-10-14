@@ -22,6 +22,12 @@ with the language selector. Remove the argument to check the immediate
 change and the choice saved at the next launch. The details of the
 catalogues, dates and plurals are in [TRANSLATING.md](TRANSLATING.md).
 
+**Unit tests**: always on the whole workspace, filtered by name if needed:
+`cargo test --workspace render_thread`, never `cargo test -p <crate>`. A
+single crate resolves the features of its dependencies on its own, so Cargo
+builds a second copy of them (`cargo test -p aurora-render` alone: 67 s of
+dependencies, then again for the next `--workspace` build).
+
 **To add a variable**: one short line in the table of its topic (the name
 alone in the first column, one sentence in the second); if it takes more
 than one sentence, or if there are several modes, a "Details" paragraph
@@ -1319,7 +1325,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
-| `AURORA_DEMO_LAND=<tab>[:owner]` | "About Land" on a tab |
+| `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
@@ -1467,7 +1473,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   are matched by suffix; the source files stay intact.
   The result is aggregated, without personal names or paths. Native
   animations keep their bytes and their poses are sampled.
-  Run `cargo test -p aurora-viewer local_asset_directory -- --ignored --nocapture`.
+  Run `cargo test --workspace local_asset_directory -- --ignored --nocapture`.
 
 - **Walkthrough of the window redesign**: open the inventory and select
   a folder in the tree, then an item; check search, permissions,
@@ -1979,11 +1985,34 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   - compact: `wolf:compact` (icons in a row, the tabs in a drop-down list).
 - **`AURORA_DEMO_FEED=<url>`**: the user name and `/?feed_only=true`
   are appended to the address; a `data:` URL can put them in a comment.
-- **`AURORA_DEMO_LAND=<tab>[:owner]`**: tabs `general`, `covenant`,
-  `objects`, `options`, `media`, `sound`, `access`, `experiences`,
-  `environment`, or their index; `:owner` makes the avatar the owner of the
-  parcel (controls enabled), otherwise it belongs to a group without
-  powers.
+- **`AURORA_DEMO_LAND=<tab>[:role][:classic]`**: the pages of Aurora's
+  window `overview`, `manage`, `people`, or the tabs of the classic window
+  `general`, `covenant`, `objects`, `options`, `media`, `sound`, `access`,
+  `experiences`, `environment` (or their index); Aurora's window opens a
+  tab's section of "Manage", scrolled to and unfolded (`options` on "What
+  visitors can do", `general` on "Sale and ownership", `covenant` on the
+  overview); `people` asks for the object owners as Refresh does, `owners`
+  also scrolls down to them; `environment-picker` and `experience-picker`
+  open the settings picker (the demo library's skies, waters and days, also
+  listed without `AURORA_DEMO_ENV_SELECT`) and the experience picker with
+  its results (a grid-wide one hidden, those already listed hidden). The
+  demo simulator applies an environment, a reset, a deed, a release, a
+  reclaim and the returns, and answers with the parcel changed;
+  `show-objects` asks the simulator to highlight the owner's objects (the
+  plaza's pillars and orbs outlined in yellow), `scripts` opens Script
+  info (four scripted objects, then two attachments in "My attachments"). Roles: `owner` makes
+  the avatar the owner of the parcel (everything editable); `officer`
+  leaves the parcel to the group "Aurora Builders" and gives the avatar
+  its land powers except sale, deed, release and terraforming (the
+  camera over the picture shows, "Edit the land" stays greyed with the
+  power it needs, "View as" offers Officer / Visitor); `visitor`
+  gives the parcel to another resident and to a group the avatar is not
+  in (no camera, "Buy a pass" follows the parcel); without a role the
+  parcel belongs to the group and the avatar has no powers in it.
+  `:classic` shows Firestorm's nine tabs for the session without saving
+  the choice of Preferences › Aurora. The demo parcel is residential, with
+  a fixed landing point and building and object entry for its group, like
+  the mockup; `AURORA_DEMO_LAND_PRIMS=10500` gives its objects gauge.
 - **`AURORA_DEMO_LAND_PRIMS=<used>[,<step>]`**: with `AURORA_DEMO_LAND`,
   the objects of the owner's land in the region (out of 15,000); the
   gauge of the header is violet, orange when 20% or less is left

@@ -13,10 +13,10 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 /// PARCEL_DIRECTORY_FEE (L$ per week).
-const DIRECTORY_FEE: i32 = 30;
+pub(super) const DIRECTORY_FEE: i32 = 30;
 
 /// Categories of the combo, in its order (LLParcel::ECategory, French skin).
-fn categories() -> [(i32, &'static str); 13] {
+pub(super) fn categories() -> [(i32, &'static str); 13] {
     [
         (0, aurora_i18n::tr!("ui-land-options-all-categories")),
         (1, aurora_i18n::tr!("ui-land-options-linden-owned")),
@@ -34,6 +34,11 @@ fn categories() -> [(i32, &'static str); 13] {
     ]
 }
 
+/// The name of a category, none for "any category" (C_NONE).
+pub(super) fn category_name(category: i32) -> Option<&'static str> {
+    categories().into_iter().find(|c| c.0 == category && c.0 != 0).map(|c| c.1)
+}
+
 /// Teleport routing (LLParcel::ELandingType).
 fn landing_types() -> [&'static str; 3] {
     [
@@ -45,25 +50,90 @@ fn landing_types() -> [&'static str; 3] {
 
 /// The options as the panel shows them: group boxes are checked when
 /// "everyone" is (refresh), and onCommitAny derives the flags back.
-#[derive(Clone, Copy)]
-struct Shown {
-    edit_objects: bool,
-    edit_group: bool,
-    all_entry: bool,
-    group_entry: bool,
-    terraform: bool,
-    safe: bool,
-    fly: bool,
-    group_scripts: bool,
-    other_scripts: bool,
-    push: bool,
-    see_avs: bool,
-    directory: bool,
-    mature: bool,
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct Shown {
+    pub edit_objects: bool,
+    pub edit_group: bool,
+    pub all_entry: bool,
+    pub group_entry: bool,
+    pub terraform: bool,
+    pub safe: bool,
+    pub fly: bool,
+    pub group_scripts: bool,
+    pub other_scripts: bool,
+    pub push: bool,
+    pub see_avs: bool,
+    pub directory: bool,
+    pub mature: bool,
+}
+
+/// What the maturity box shows for the region's rating: never for General,
+/// by choice for Moderate, always for Adult.
+pub(super) fn mature_value(parcel: &ParcelInfo, sim_access: u8) -> bool {
+    match sim_access {
+        21 => parcel.flags & pf::MATURE_PUBLISH != 0,
+        42 => true,
+        _ => false,
+    }
+}
+
+/// refreshSearch: small parcels stay out of search unless already listed;
+/// whether the search box is enabled and its tooltip.
+pub(super) fn search_state(v: &View, parcel: &ParcelInfo, listed: bool) -> (bool, &'static str) {
+    let can_search = v.can(powers::LAND_FIND_PLACES) && !v.region_flag(rf::BLOCK_PARCEL_SEARCH);
+    let large = parcel.area >= MIN_PARCEL_AREA;
+    match (large, can_search) {
+        (true, true) => (
+            true,
+            aurora_i18n::tr!("ui-land-options-let-other-residents-find-this-parcel-in-search-results"),
+        ),
+        (false, true) if listed => (
+            true,
+            aurora_i18n::tr!("ui-land-options-let-other-residents-find-this-parcel-in-search-results"),
+        ),
+        (false, true) => (
+            false,
+            aurora_i18n::tr!("ui-land-options-this-option-is-disabled-because-the-parcel-is-128"),
+        ),
+        _ => (
+            false,
+            aurora_i18n::tr!("ui-land-options-this-option-is-disabled-because-you-cannot-change-this"),
+        ),
+    }
+}
+
+/// A change of the parcel besides its flags (category, routing).
+pub(super) type Extra = Option<Box<dyn FnOnce(&mut aurora_net::land::ParcelUpdate)>>;
+
+/// onCommitAny: send what changed, unless scripts would be turned off in a
+/// region that allows damage (the panel refuses it with a message).
+pub(super) fn commit(s: &mut LandUi, v: &View, world: &mut World, parcel: &ParcelInfo, before: Shown, now: Shown, extra: Extra) {
+    let changed = before.flags(parcel.flags) != now.flags(parcel.flags) || before.see_avs != now.see_avs;
+    if !changed && extra.is_none() {
+        return;
+    }
+    let region_damage = v.region_flag(rf::ALLOW_DAMAGE);
+    let scripts_off = (!now.other_scripts && parcel.flags & pf::ALLOW_OTHER_SCRIPTS != 0)
+        || (!(now.group_scripts || now.other_scripts) && parcel.flags & pf::ALLOW_GROUP_SCRIPTS != 0);
+    if region_damage && scripts_off {
+        s.dialog = Some(Dialog::Message(
+            aurora_i18n::tr!("ui-land-options-cannot-disable-scripts-damage-is-enabled-throughout-the-region").into(),
+        ));
+        return;
+    }
+    let flags = now.flags(parcel.flags);
+    let see = now.see_avs;
+    world.land.update(|u| {
+        u.flags = flags;
+        u.see_avs = see;
+        if let Some(f) = extra {
+            f(u);
+        }
+    });
 }
 
 impl Shown {
-    fn of(p: &ParcelInfo, region_push: bool, mature: bool) -> Shown {
+    pub(super) fn of(p: &ParcelInfo, region_push: bool, mature: bool) -> Shown {
         let f = |b| p.flags & b != 0;
         Shown {
             edit_objects: f(pf::CREATE_OBJECTS),
@@ -84,7 +154,7 @@ impl Shown {
     }
 
     /// onCommitAny: the parcel flags of what is shown.
-    fn flags(&self, old: u32) -> u32 {
+    pub(super) fn flags(&self, old: u32) -> u32 {
         let mut f = old;
         f = set(f, pf::CREATE_OBJECTS, self.edit_objects);
         f = set(f, pf::CREATE_GROUP_OBJECTS, self.edit_group || self.edit_objects);
@@ -121,14 +191,9 @@ pub(super) fn show(
     let can_identity = v.can(powers::LAND_CHANGE_IDENTITY);
     let can_landing = v.can(powers::LAND_SET_LANDING_POINT);
     let sim_access = v.region.as_ref().map_or(0, |r| r.sim_access);
-    let mature_value = match sim_access {
-        21 => parcel.flags & pf::MATURE_PUBLISH != 0,
-        42 => true,
-        _ => false,
-    };
-    let before = Shown::of(&parcel, parcel.region_push_override, mature_value);
+    let before = Shown::of(&parcel, parcel.region_push_override, mature_value(&parcel, sim_access));
     let mut now = before;
-    let mut extra: Option<Box<dyn FnOnce(&mut aurora_net::land::ParcelUpdate)>> = None;
+    let mut extra: Extra = None;
 
     ui.label(
         RichText::new(aurora_i18n::tr!("ui-land-options-allow-other-residents-to"))
@@ -226,27 +291,7 @@ pub(super) fn show(
         now.group_scripts = on;
     });
     crate::ui::widgets::divider(ui, p);
-    // refreshSearch: small parcels stay out of search unless already listed
-    let can_search = v.can(powers::LAND_FIND_PLACES) && !v.region_flag(rf::BLOCK_PARCEL_SEARCH);
-    let large = parcel.area >= MIN_PARCEL_AREA;
-    let (search_on, search_tip) = match (large, can_search) {
-        (true, true) => (
-            true,
-            aurora_i18n::tr!("ui-land-options-let-other-residents-find-this-parcel-in-search-results"),
-        ),
-        (false, true) if before.directory => (
-            true,
-            aurora_i18n::tr!("ui-land-options-let-other-residents-find-this-parcel-in-search-results"),
-        ),
-        (false, true) => (
-            false,
-            aurora_i18n::tr!("ui-land-options-this-option-is-disabled-because-the-parcel-is-128"),
-        ),
-        _ => (
-            false,
-            aurora_i18n::tr!("ui-land-options-this-option-is-disabled-because-you-cannot-change-this"),
-        ),
-    };
+    let (search_on, search_tip) = search_state(v, &parcel, before.directory);
     ui.columns(2, |cols| {
         let ui = &mut cols[0];
         let (r, on) = check(ui, p, can_options, now.safe, aurora_i18n::tr!("ui-land-options-safe-no-damage"));
@@ -469,28 +514,7 @@ pub(super) fn show(
         });
     });
 
-    let changed = before.flags(parcel.flags) != now.flags(parcel.flags) || before.see_avs != now.see_avs;
-    if changed || extra.is_some() {
-        // the region allows damage: scripts cannot be turned off
-        let region_damage = v.region_flag(rf::ALLOW_DAMAGE);
-        let scripts_off = (!now.other_scripts && parcel.flags & pf::ALLOW_OTHER_SCRIPTS != 0)
-            || (!(now.group_scripts || now.other_scripts) && parcel.flags & pf::ALLOW_GROUP_SCRIPTS != 0);
-        if region_damage && scripts_off {
-            s.dialog = Some(Dialog::Message(
-                aurora_i18n::tr!("ui-land-options-cannot-disable-scripts-damage-is-enabled-throughout-the-region").into(),
-            ));
-            return;
-        }
-        let flags = now.flags(parcel.flags);
-        let see = now.see_avs;
-        world.land.update(|u| {
-            u.flags = flags;
-            u.see_avs = see;
-            if let Some(f) = extra {
-                f(u);
-            }
-        });
-    }
+    commit(s, v, world, &parcel, before, now, extra);
 }
 
 #[cfg(test)]

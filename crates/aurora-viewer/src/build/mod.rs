@@ -129,6 +129,39 @@ pub struct BuildSettings {
 #[cfg(test)]
 mod worn_tests;
 
+/// LLSelectMgr::highlightObjectAndFamily for the objects of ForceObjectSelect:
+/// each one's linkset, its root first.
+fn land_highlighted(world: &World) -> Vec<(usize, bool)> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for (region, local_id) in &world.land.highlight {
+        let key = crate::world::objects::ObjKey {
+            region: *region,
+            local_id: *local_id,
+        };
+        let Some(idx) = world.objects.index_of(&key) else {
+            continue;
+        };
+        let root_key = match world.objects.get(idx) {
+            Some(o) if o.parent_id != 0 => crate::world::objects::ObjKey {
+                region: *region,
+                local_id: o.parent_id,
+            },
+            _ => key,
+        };
+        let root = world.objects.index_of(&root_key).unwrap_or(idx);
+        if seen.insert(root) {
+            out.push((root, true));
+        }
+        for child in world.objects.children_of(&root_key) {
+            if seen.insert(*child) {
+                out.push((*child, false));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod hud_tests {
     use super::*;
@@ -1630,23 +1663,34 @@ impl BuildTool {
         }
     }
 
+    /// The outlined prims: the selection while the tools show it, and the
+    /// objects About Land's "Show" highlights (LLSelectMgr's highlighted
+    /// objects, drawn whether the tools are open or not).
+    fn outlined(&self, world: &World, s: &BuildSettings) -> Vec<(usize, bool)> {
+        let mut prims = if self.face_mode() || !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
+            Vec::new()
+        } else {
+            self.color_highlighted(world)
+        };
+        for p in land_highlighted(world) {
+            if !prims.iter().any(|(i, _)| *i == p.0) {
+                prims.push(p);
+            }
+        }
+        prims
+    }
+
     /// Selected mesh / sculpted prims the renderer outlines as wireframes
     /// (object index -> root color); the others get their edges drawn here.
     pub fn wire_selection(&self, world: &World, s: &BuildSettings) -> HashMap<usize, bool> {
-        if self.face_mode() || !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
-            return HashMap::new();
-        }
-        self.color_highlighted(world)
+        self.outlined(world, s)
             .into_iter()
             .filter(|(i, _)| world.objects.get(*i).is_some_and(|o| o.volume.sculpt.is_some()))
             .collect()
     }
 
     pub fn silhouette_selection(&self, world: &World, s: &BuildSettings) -> HashSet<usize> {
-        if self.face_mode() || !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
-            return HashSet::new();
-        }
-        self.color_highlighted(world)
+        self.outlined(world, s)
             .into_iter()
             .filter_map(|(i, _)| world.objects.get(i).is_some_and(|o| o.is_flexible()).then_some(i))
             .collect()
@@ -1684,16 +1728,19 @@ impl BuildTool {
         s: &BuildSettings,
         mods: Mods,
     ) {
-        if !self.open && !self.menu_selection {
+        if !self.open && !self.menu_selection && world.land.highlight.is_empty() {
             return;
         }
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("build_overlay")));
         let cam = self.cam;
         let mut p = draw::Painter3d::new(painter, &cam, *pal);
         let now = Instant::now();
-        if s.show_highlight && !self.face_mode() && !self.manip.dragging() {
-            let prims = self.color_highlighted(world);
+        let prims = self.outlined(world, s);
+        if !prims.is_empty() {
             self.silhouettes.draw(&p, world, scene, &prims);
+        }
+        if !self.open && !self.menu_selection {
+            return;
         }
         if !self.open || self.replacement_active() || self.ui.color_picker.pipette {
             return;

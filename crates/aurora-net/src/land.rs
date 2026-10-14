@@ -228,6 +228,27 @@ pub enum LandCommand {
         return_type: u32,
         owners: Vec<Uuid>,
     },
+    /// send_parcel_select_objects: ask the simulator to show the objects of
+    /// a category (RT_*) or of the `owners` with RT_LIST; it answers with
+    /// ForceObjectSelect.
+    SelectObjects {
+        handle: RegionHandle,
+        local_id: i32,
+        return_type: u32,
+        owners: Vec<Uuid>,
+    },
+    /// LLPanelScriptLimitsRegionMemory::returnObjectsFromParcel: some
+    /// objects of a parcel by their IDs (RT_LIST with TaskIDs).
+    ReturnTasks {
+        handle: RegionHandle,
+        local_id: i32,
+        tasks: Vec<Uuid>,
+    },
+    /// getLandScriptResourcesCoro: POST the parcel UUID to LandResources,
+    /// then GET the summary and details URLs it gives.
+    ScriptResources { parcel_id: Uuid },
+    /// LLFloaterMyScripts::getAttachmentLimitsCoro: GET AttachmentResources.
+    AttachmentScripts,
     /// send_other_clean_time_message: auto-return delay in minutes.
     SetOtherCleanTime { handle: RegionHandle, local_id: i32, minutes: i32 },
     /// sendParcelRelease (Abandon Land).
@@ -278,6 +299,21 @@ pub enum LandCommand {
     EnvironmentUpdate { local_id: i32, day_length: i32, day_offset: i32 },
     /// resetParcel: back to the region environment.
     EnvironmentReset { local_id: i32 },
+    /// LLPanelEnvironmentInfo::onPickerCommitted: updateParcel with the
+    /// settings asset of an inventory item, for the whole day (`track`
+    /// None, with the day length / offset) or one track (`trackno`).
+    EnvironmentApply {
+        local_id: i32,
+        track: Option<i32>,
+        asset: Uuid,
+        name: String,
+        /// LLSettingsBase FLAG_NOMOD / FLAG_NOTRANS of the item.
+        flags: u32,
+        day_length: i32,
+        day_offset: i32,
+    },
+    /// LLExperienceCache::findExperienceByName (the experience picker).
+    ExperienceSearch { query: String, page: i32 },
     /// Names of experiences (GetExperienceInfo capability).
     ExperienceInfo(Vec<Uuid>),
     /// Group names (UUIDGroupNameRequest, LLCacheName::getGroupName).
@@ -309,6 +345,13 @@ pub enum LandEvent {
     Dwell { local_id: i32, dwell: f32 },
     /// ParcelObjectOwnersReply.
     ObjectOwners(Vec<ObjectOwner>),
+    /// ForceObjectSelect: objects of a region to highlight (`reset`: drop
+    /// the ones shown before).
+    Highlight {
+        handle: RegionHandle,
+        reset: bool,
+        local_ids: Vec<u32>,
+    },
     /// EstateCovenantReply.
     Covenant {
         handle: RegionHandle,
@@ -331,6 +374,181 @@ pub enum LandEvent {
     AvatarSearch { query: String, results: Option<Vec<FoundAvatar>> },
     /// MIME type of a media URL ("none/none" when it could not be found).
     MediaType { url: String, mime: String },
+    /// The memory and URLs of the parcels' scripts (ScriptResourceSummary).
+    ScriptSummary(Result<ScriptSummary, String>),
+    /// The scripted objects by parcel (ScriptResourceDetails).
+    ScriptDetails(Result<Vec<ScriptParcel>, String>),
+    /// The scripts of my attachments (AttachmentResources).
+    AttachmentScripts(Result<(ScriptSummary, Vec<ScriptAttachment>), String>),
+    /// FindExperienceByName results for `query`, None when the search failed.
+    ExperienceSearch {
+        query: String,
+        results: Option<Vec<FoundExperience>>,
+    },
+}
+
+/// One experience found by the experience picker (an `experience_keys`
+/// entry).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoundExperience {
+    pub id: Uuid,
+    pub name: String,
+    pub owner: Uuid,
+    /// SIM_ACCESS_* rating.
+    pub maturity: u8,
+    /// LLExperienceCache PROPERTY_* bits.
+    pub properties: i32,
+}
+
+/// The `summary` of a script resource answer: memory in bytes and URLs,
+/// used and available (None when the answer has no such entry).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ScriptSummary {
+    pub memory: Option<(i64, i64)>,
+    pub urls: Option<(i64, i64)>,
+}
+
+/// One scripted object of a parcel or an attachment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptObject {
+    pub id: Uuid,
+    pub name: String,
+    pub owner: Uuid,
+    pub group_owned: bool,
+    /// Bytes.
+    pub memory: i64,
+    pub urls: i64,
+    /// Region coordinates, when the server gives them.
+    pub location: Option<Vec3>,
+}
+
+/// A parcel of ScriptResourceDetails.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptParcel {
+    pub name: String,
+    pub local_id: Option<i32>,
+    pub objects: Vec<ScriptObject>,
+}
+
+/// An attachment point of AttachmentResources.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptAttachment {
+    /// The attachment point's name (an LLTrans key).
+    pub location: String,
+    pub objects: Vec<ScriptObject>,
+}
+
+/// setRegionSummary / setAttachmentSummary: each kind found by its `type`
+/// in `used`, its maximum at the same place in `available`.
+pub fn parse_script_summary(v: &Llsd) -> ScriptSummary {
+    let used = v["summary"]["used"].as_array();
+    let available = &v["summary"]["available"];
+    let find = |kind: &str| {
+        used.iter()
+            .position(|e| e["type"].to_string_value() == kind)
+            .map(|i| (i64::from(used[i]["amount"].as_i32()), i64::from(available.at(i)["amount"].as_i32())))
+    };
+    ScriptSummary {
+        memory: find("memory"),
+        urls: find("urls"),
+    }
+}
+
+fn script_object(o: &Llsd) -> ScriptObject {
+    let loc = &o["location"];
+    ScriptObject {
+        id: o["id"].as_uuid(),
+        name: o["name"].to_string_value(),
+        owner: o["owner_id"].as_uuid(),
+        group_owned: o["is_group_owned"].as_bool(),
+        memory: i64::from(o["resources"]["memory"].as_i32()),
+        urls: i64::from(o["resources"]["urls"].as_i32()),
+        location: loc
+            .is_array()
+            .then(|| Vec3::new(loc.at(0).as_f32(), loc.at(1).as_f32(), loc.at(2).as_f32())),
+    }
+}
+
+/// setRegionDetails: the parcels and their objects.
+pub fn parse_script_details(v: &Llsd) -> Vec<ScriptParcel> {
+    v["parcels"]
+        .as_array()
+        .iter()
+        .map(|p| ScriptParcel {
+            name: p["name"].to_string_value(),
+            local_id: p.has("local_id").then(|| p["local_id"].as_i32()),
+            objects: p["objects"].as_array().iter().map(script_object).collect(),
+        })
+        .collect()
+}
+
+/// setAttachmentDetails: the attachment points and their objects.
+pub fn parse_attachment_scripts(v: &Llsd) -> Vec<ScriptAttachment> {
+    v["attachments"]
+        .as_array()
+        .iter()
+        .map(|a| ScriptAttachment {
+            location: a["location"].to_string_value(),
+            objects: a["objects"].as_array().iter().map(script_object).collect(),
+        })
+        .collect()
+}
+
+/// LLExperienceCache::PROPERTY_PRIVILEGED / PROPERTY_GRID.
+pub const XP_PROPERTY_PRIVILEGED: i32 = 1 << 3;
+pub const XP_PROPERTY_GRID: i32 = 1 << 4;
+
+impl FoundExperience {
+    pub fn from_llsd(e: &Llsd) -> FoundExperience {
+        FoundExperience {
+            id: e["public_id"].as_uuid(),
+            name: e["name"].to_string_value(),
+            owner: e["agent_id"].as_uuid(),
+            maturity: e["maturity"].as_i32().clamp(0, 255) as u8,
+            properties: e["properties"].as_i32(),
+        }
+    }
+}
+
+/// LLURI::escape: everything but the unreserved characters percent-encoded.
+pub fn uri_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// findExperienceByNameCoro's URL (SEARCH_PAGE_SIZE 30).
+pub fn experience_search_url(base: &str, query: &str, page: i32) -> String {
+    format!("{base}?page={page}&page_size=30&query={}", uri_escape(query))
+}
+
+/// Body of the ExtEnvironment PUT applying a settings asset
+/// (coroUpdateEnvironment with an UpdateInfo of an asset): the day length
+/// and offset only for the whole day, then day_asset, day_name and flags.
+pub fn environment_apply_body(whole_day: bool, asset: Uuid, name: &str, flags: u32, day_length: i32, day_offset: i32) -> Llsd {
+    let mut env = Llsd::new_map();
+    if whole_day {
+        if day_length > 0 {
+            env.insert("day_length", day_length);
+        }
+        if day_offset > 0 {
+            env.insert("day_offset", day_offset);
+        }
+    }
+    env.insert("day_asset", asset);
+    if !name.is_empty() {
+        env.insert("day_name", name);
+    }
+    env.insert("flags", flags as i32);
+    let mut body = Llsd::new_map();
+    body.insert("environment", env);
+    body
 }
 
 /// One resident found by the avatar picker.
@@ -612,6 +830,68 @@ pub fn parse_remote_parcel_reply(v: &Llsd) -> Result<Uuid, RemoteParcelError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn script_resources_like_the_script_limits_floater() {
+        let xml = r#"<llsd><map><key>summary</key><map>
+            <key>used</key><array><map><key>type</key><string>urls</string><key>amount</key><integer>3</integer></map>
+            <map><key>type</key><string>memory</string><key>amount</key><integer>2097152</integer></map></array>
+            <key>available</key><array><map><key>type</key><string>urls</string><key>amount</key><integer>750</integer></map>
+            <map><key>type</key><string>memory</string><key>amount</key><integer>8388608</integer></map></array></map>
+            <key>parcels</key><array><map><key>name</key><string>Plaza</string><key>local_id</key><integer>1</integer>
+            <key>objects</key><array><map><key>id</key><uuid>00000000-0000-0000-0000-000000000005</uuid>
+            <key>name</key><string>Door</string><key>owner_id</key><uuid>00000000-0000-0000-0000-000000000007</uuid>
+            <key>resources</key><map><key>memory</key><integer>65536</integer><key>urls</key><integer>1</integer></map>
+            <key>location</key><array><real>140</real><real>130</real><real>25</real></array></map></array></map></array>
+            </map></llsd>"#;
+        let v = aurora_llsd::from_xml(xml.as_bytes()).expect("llsd");
+        let s = parse_script_summary(&v);
+        assert_eq!(s.memory, Some((2_097_152, 8_388_608)), "found by type, not by place");
+        assert_eq!(s.urls, Some((3, 750)));
+        let parcels = parse_script_details(&v);
+        assert_eq!(parcels.len(), 1);
+        assert_eq!(parcels[0].local_id, Some(1));
+        let o = &parcels[0].objects[0];
+        assert_eq!((o.name.as_str(), o.memory, o.urls), ("Door", 65_536, 1));
+        assert_eq!(o.location, Some(Vec3::new(140.0, 130.0, 25.0)));
+        assert!(parse_attachment_scripts(&v).is_empty());
+    }
+
+    #[test]
+    fn environment_apply_like_coro_update_environment() {
+        let asset = Uuid::from_u128(7);
+        let whole = environment_apply_body(true, asset, "Dusk", 2, 14400, 57600);
+        let env = &whole["environment"];
+        assert_eq!(env["day_length"].as_i32(), 14400);
+        assert_eq!(env["day_offset"].as_i32(), 57600);
+        assert_eq!(env["day_asset"].as_uuid(), asset);
+        assert_eq!(env["day_name"].to_string_value(), "Dusk");
+        assert_eq!(env["flags"].as_i32(), 2);
+        // one track: no day length nor offset; unknown values are not sent
+        let track = environment_apply_body(false, asset, "", 0, 14400, -1);
+        assert!(!track["environment"].has("day_length") && !track["environment"].has("day_name"));
+        let none = environment_apply_body(true, asset, "x", 0, -1, -1);
+        assert!(!none["environment"].has("day_length") && !none["environment"].has("day_offset"));
+    }
+
+    #[test]
+    fn experience_search_url_escapes_the_query() {
+        assert_eq!(uri_escape("Beach games/é"), "Beach%20games%2F%C3%A9");
+        assert_eq!(
+            experience_search_url("https://sim/cap", "a b", 1),
+            "https://sim/cap?page=1&page_size=30&query=a%20b"
+        );
+        let mut e = Llsd::new_map();
+        e.insert("public_id", Uuid::from_u128(5));
+        e.insert("name", "Club");
+        e.insert("maturity", 42);
+        e.insert("properties", XP_PROPERTY_GRID);
+        let found = FoundExperience::from_llsd(&e);
+        assert_eq!(
+            (found.id, found.maturity, found.properties),
+            (Uuid::from_u128(5), 42, XP_PROPERTY_GRID)
+        );
+    }
+
     use super::*;
 
     fn props() -> Llsd {
