@@ -15,7 +15,7 @@ use crate::theme::Palette;
 use crate::ui::context::{CtxAction, request};
 use crate::ui::widgets;
 use crate::world::ChatLine;
-use crate::world::teleport_invites::{Answer, Invite, InviteKind};
+use crate::world::teleport_invites::{Answer, Invite, InviteKind, Place};
 use egui::{RichText, Vec2};
 
 /// Width of a card at most.
@@ -27,6 +27,7 @@ const ICON: &str = "plane-departure-filled";
 /// What a card says, from its invitation.
 struct Texts {
     title: String,
+    /// The place as a SLURL, shown as its link.
     place: Option<String>,
     message: String,
     /// The question of a request ("Offer a teleport?").
@@ -40,8 +41,8 @@ fn texts(env: &LineEnv, line: &ChatLine, v: &Invite) -> Texts {
     match &v.kind {
         InviteKind::Offer { place, .. } => Texts {
             title: aurora_i18n::tr!("world-mod-offers-you-a-teleport", from = name),
-            place: place.as_ref().and_then(|p| p.label()),
-            message: v.message.clone(),
+            place: place.as_ref().and_then(|p| Some(crate::slurl::make(p.region.as_deref()?, p.pos))),
+            message: without_own_place(&v.message, place.as_ref()).to_owned(),
             question: None,
             buttons: (
                 aurora_i18n::tr!("common-teleport-3").into(),
@@ -55,6 +56,27 @@ fn texts(env: &LineEnv, line: &ChatLine, v: &Invite) -> Texts {
             question: Some(aurora_i18n::tr!("world-teleport-invites-offer-a-teleport").into()),
             buttons: (aurora_i18n::tr!("common-yes").into(), aurora_i18n::tr!("common-no").into()),
         },
+    }
+}
+
+/// The sender's message without its last line when that line is the SLURL
+/// of the invitation's own place (send_lures adds where the sender stands):
+/// the card already shows the place at its head. A SLURL of another place
+/// stays; the transcript keeps the whole message.
+fn without_own_place<'a>(message: &'a str, place: Option<&Place>) -> &'a str {
+    let Some((place, region)) = place.and_then(|p| Some((p, p.region.as_deref()?))) else {
+        return message;
+    };
+    let trimmed = message.trim_end();
+    let (head, last) = trimmed.rsplit_once('\n').unwrap_or(("", trimmed));
+    let last = last.trim();
+    let lower = last.to_lowercase();
+    if !["http://", "https://", "secondlife:"].iter().any(|s| lower.starts_with(s)) {
+        return message;
+    }
+    match crate::slurl::parse(last) {
+        Some(at) if at.region.eq_ignore_ascii_case(region) && (at.pos - place.pos).abs().max_element() <= 1.5 => head.trim_end(),
+        _ => message,
     }
 }
 
@@ -124,7 +146,8 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
                         ui.add(egui::Label::new(RichText::new(&t.title).size(13.0).strong().color(ink)).wrap());
                     });
                     if let Some(place) = &t.place {
-                        ui.label(RichText::new(place).size(12.0).color(muted));
+                        let world = env.world;
+                        chat_text_marked(ui, p, env.emoji, world, env.want_names, place, 12.0, muted, false, None);
                     }
                     if !t.message.is_empty() {
                         let world = env.world;
@@ -175,7 +198,7 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
     let done = answer_label(v.answer);
     let mut text = t.title.clone();
     if let Some(place) = &t.place {
-        text = format!("{text} ({place})");
+        text = format!("{text} {place}");
     }
     if !t.message.is_empty() {
         text = format!("{text} : {}", t.message.replace('\n', " "));
@@ -212,4 +235,43 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine) {
         true,
         None,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::Vec3;
+
+    fn place(region: Option<&str>) -> Place {
+        Place {
+            grid: (1000, 1000),
+            pos: Vec3::new(128.0, 130.0, 25.0),
+            region: region.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn the_slurl_of_the_offer_s_own_place_leaves_the_message() {
+        let ahern = place(Some("Ahern"));
+        let sent = "Join me in Ahern\r\nhttp://maps.secondlife.com/secondlife/Ahern/128/130/25";
+        // as received (send_lures), and once the carriage returns are gone
+        assert_eq!(without_own_place(sent, Some(&ahern)), "Join me in Ahern");
+        assert_eq!(without_own_place(&sent.replace('\r', ""), Some(&ahern)), "Join me in Ahern");
+        // only the SLURL: nothing left to show
+        assert_eq!(
+            without_own_place("http://maps.secondlife.com/secondlife/Ahern/128/130/25", Some(&ahern)),
+            ""
+        );
+        // another place, another region, plain text, or a place still unknown: kept
+        for kept in [
+            "Join me\nhttp://maps.secondlife.com/secondlife/Ahern/12/30/25",
+            "Join me\nhttp://maps.secondlife.com/secondlife/Bonifacio/128/130/25",
+            "Join me\nAhern/128/130/25",
+            "Come over!",
+        ] {
+            assert_eq!(without_own_place(kept, Some(&ahern)), kept);
+        }
+        assert_eq!(without_own_place(sent, Some(&place(None))), sent);
+        assert_eq!(without_own_place(sent, None), sent);
+    }
 }

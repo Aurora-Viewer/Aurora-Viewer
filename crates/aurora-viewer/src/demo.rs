@@ -748,9 +748,11 @@ pub fn lure_events(scene: LureScene, agent: Uuid) -> Vec<NetEvent> {
     };
     // the plaza, as a lure's bucket carries it (parse_lure_bucket)
     let plaza = b"256000|256000|128|130|25|0|1|0|PG";
+    // as send_lures writes it: the text, then the sender's place
     let invitation = format!(
-        "{}\r\nhttp://maps.secondlife.com/secondlife/Aurora%20Demo/128/130/25",
-        aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset")
+        "{}\r\n{}",
+        aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"),
+        crate::slurl::make(aurora_i18n::tr!("common-aurora-demo"), glam::Vec3::new(128.0, 130.0, 25.0))
     );
     match scene {
         LureScene::Offer | LureScene::OfferCard | LureScene::CardAnswered | LureScene::NotificationAnswered | LureScene::Legacy => {
