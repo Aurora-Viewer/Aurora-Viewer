@@ -51,6 +51,9 @@ pub enum BarAction {
     /// World › Environment › Use shared environments
     /// (setSharedEnvironment: drops every local choice).
     SharedEnvironment,
+    /// World › Environment › New sky / water / day cycle (World.EnvPreset
+    /// new_sky, new_water, new_day_cycle).
+    NewEnvironment(crate::world::env_select::SettingsKind),
     /// World › Teleport history (ToggleTeleportHistory, Alt+H).
     TeleportHistory,
     /// The balance, or Me › Buy L$ (LLStatusBar::onClickBuyCurrency).
@@ -581,6 +584,18 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             }
             if menu::item(ui, p, "adjustments-filled", aurora_i18n::tr!("common-personal-lighting")) {
                 panels.personal_lighting = true;
+            }
+            // Firestorm's Phototools "New preset" buttons (World.EnvPreset)
+            menu::separator(ui, p);
+            use crate::world::env_select::SettingsKind;
+            for (kind, icon, label) in [
+                (SettingsKind::Sky, "sun-filled", aurora_i18n::tr!("ui-bars-new-sky")),
+                (SettingsKind::Water, "droplet-filled", aurora_i18n::tr!("ui-bars-new-water")),
+                (SettingsKind::Day, "sunset-2-filled", aurora_i18n::tr!("ui-bars-new-day-cycle")),
+            ] {
+                if menu::item(ui, p, icon, label) {
+                    *action = BarAction::NewEnvironment(kind);
+                }
             }
         });
         menu::separator(ui, p);

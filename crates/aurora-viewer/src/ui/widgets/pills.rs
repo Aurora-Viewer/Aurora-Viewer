@@ -6,7 +6,8 @@ use egui::{FontId, Pos2, Rect, Sense, Vec2};
 
 /// One tab of a row of tabs in pills: an optional Tabler icon, its name, a
 /// count after it (in a violet pill when `accent`, an unread count). The
-/// selected tab sits on `raised`.
+/// selected tab sits on `raised`; a tab that may not be opened is greyed,
+/// `Err` saying why.
 #[allow(clippy::too_many_arguments)]
 pub fn pill_tab(
     ui: &mut egui::Ui,
@@ -16,7 +17,7 @@ pub fn pill_tab(
     count: Option<String>,
     accent: bool,
     selected: bool,
-    enabled: bool,
+    enabled: Result<(), &str>,
 ) -> egui::Response {
     tab(ui, p, icon, label, count, accent, selected, enabled, None)
 }
@@ -24,7 +25,7 @@ pub fn pill_tab(
 /// A `pill_tab` of the given width, its icon and name in the middle (the
 /// two halves of the Controls window).
 pub fn pill_tab_wide(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool, width: f32) -> egui::Response {
-    tab(ui, p, icon, label, None, false, selected, true, Some(width))
+    tab(ui, p, icon, label, None, false, selected, Ok(()), Some(width))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -36,9 +37,11 @@ fn tab(
     count: Option<String>,
     accent: bool,
     selected: bool,
-    enabled: bool,
+    enabled: Result<(), &str>,
     width: Option<f32>,
 ) -> egui::Response {
+    let why = enabled.err();
+    let enabled = why.is_none();
     let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
     let ink = if !enabled {
         p.muted_dim
@@ -92,9 +95,8 @@ fn tab(
         ui.painter().galley(pos.round(), g, count_ink);
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label));
-    if enabled {
-        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-    } else {
-        resp.on_hover_text(crate::ui::menu::not_yet())
+    match why {
+        None => resp.on_hover_cursor(egui::CursorIcon::PointingHand),
+        Some(why) => resp.on_hover_text(why),
     }
 }

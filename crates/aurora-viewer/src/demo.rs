@@ -1487,6 +1487,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             let mut groups = vec![
                 aurora_net::GroupMembership {
                     powers: group::my_powers(),
+                    contribution: group::MY_CONTRIBUTION,
                     ..g(DEMO_GROUP1, "Aurora Builders", true)
                 },
                 g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),
@@ -2408,7 +2409,8 @@ pub fn events() -> Vec<NetEvent> {
             size_y: 256,
             is_main: true,
             owner: DEMO_LOUP,
-            is_estate_manager: false,
+            // AURORA_DEMO_ENV_EDITOR=region: the avatar manages the estate
+            is_estate_manager: env::estate_manager(),
             product_name: "Estate / Full Region".into(),
             billable_factor: 1.0,
         })),
@@ -3390,7 +3392,8 @@ pub fn events() -> Vec<NetEvent> {
             local_id: 1,
             name: aurora_i18n::tr!("common-aurora-plaza").into(),
             desc: aurora_i18n::tr!("demo-aurora-viewer-s-offline-demo-parcel").into(),
-            owner_id: u(100),
+            // the environment editors' parcel scenarios: the avatar's own
+            owner_id: if env::parcel_scenario() { DEMO_AGENT } else { u(100) },
             area: 16384,
             bitmap,
             max_prims: 3750,

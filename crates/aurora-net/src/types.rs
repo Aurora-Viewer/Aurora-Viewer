@@ -757,6 +757,10 @@ pub enum NetEvent {
         group: Uuid,
         bans: Vec<(Uuid, f64)>,
     },
+    /// The group's parcels and land totals (PlacesReply), one packet.
+    GroupLand(Box<crate::group_money::GroupLandReply>),
+    /// A page of the group's accounts (GroupAccount…Reply), one packet.
+    GroupAccount(Box<crate::group_money::AccountReply>),
     /// Land types of the grid, (ProductSKU, description) (ProductInfoRequest).
     ProductInfo(Vec<(String, String)>),
     /// RegionIDAndHandleReply (LLLandmark::processRegionIDAndHandle).
@@ -1474,6 +1478,21 @@ pub enum NetCommand {
     /// GroupNoticeRequest: one notice, answered by an IM_GROUP_NOTICE_REQUESTED
     /// instant message.
     GroupNoticeRequest(Uuid),
+    /// The parcels the group owns (PlacesQuery, DFQ_GROUP_OWNED), answered
+    /// by NetEvent::GroupLand.
+    GroupLandQuery {
+        group: Uuid,
+        transaction: Uuid,
+    },
+    /// SetGroupContribution: our land given to the group, in m².
+    SetGroupContribution {
+        group: Uuid,
+        contribution: i32,
+    },
+    /// A page of the group's accounts (GroupAccountSummaryRequest,
+    /// GroupAccountDetailsRequest, GroupAccountTransactionsRequest),
+    /// answered by NetEvent::GroupAccount.
+    GroupAccount(crate::group_money::AccountRequest),
     /// Join a group (JoinGroupRequest).
     JoinGroup(Uuid),
     /// Invite residents into a group, each into a role (InviteGroupRequest,

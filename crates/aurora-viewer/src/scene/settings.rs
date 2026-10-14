@@ -5,10 +5,13 @@
 //! (newview/llsettingsvo.cpp, originally LGPL 2.1).
 //!
 //! Used for Firestorm's default day and the environment selector's sky,
-//! water and day cycle items.
+//! water and day cycle items. The decoded settings map is kept with the
+//! parsed settings: the day cycle editor starts a new day from the default
+//! day's (setEditDefaultDayCycle).
 
 use super::jobs::{JobResult, Jobs};
 use crate::world::eep::Settings;
+use aurora_llsd::Llsd;
 use aurora_net::{FetchRequest, FetchResult, Fetcher};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -29,6 +32,14 @@ pub enum SettingsState {
     Failed,
 }
 
+/// Where the settings map of an asset stands.
+#[derive(Debug, Clone)]
+pub enum MapState {
+    Pending,
+    Ready(Arc<Llsd>),
+    Failed,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Step {
     New,
@@ -42,12 +53,20 @@ enum Step {
 
 struct Entry {
     settings: Option<Arc<Settings>>,
+    /// The settings map the asset decoded to.
+    map: Option<Arc<Llsd>>,
     step: Step,
     retry_at: Option<Instant>,
     failures: u32,
 }
 
-type Parsed = (Uuid, Option<Settings>, bool);
+type Parsed = (Uuid, Option<(Settings, Llsd)>, bool);
+
+/// Decode and parse an asset, keeping its settings map.
+fn parse(data: &[u8]) -> Option<(Settings, Llsd)> {
+    let map = Settings::decode_asset(data)?;
+    Some((Settings::from_llsd(&map)?, map))
+}
 
 pub struct SettingsStreamer {
     entries: HashMap<Uuid, Entry>,
@@ -76,14 +95,19 @@ impl SettingsStreamer {
         self.cache_dir.join("settings").join(format!("{id}.settings"))
     }
 
-    /// The asset, requesting it on first use.
-    pub fn get(&mut self, id: Uuid) -> SettingsState {
-        let e = self.entries.entry(id).or_insert(Entry {
+    fn entry(&mut self, id: Uuid) -> &mut Entry {
+        self.entries.entry(id).or_insert(Entry {
             settings: None,
+            map: None,
             step: Step::New,
             retry_at: None,
             failures: 0,
-        });
+        })
+    }
+
+    /// The asset, requesting it on first use.
+    pub fn get(&mut self, id: Uuid) -> SettingsState {
+        let e = self.entry(id);
         match (&e.settings, e.step) {
             (Some(s), _) => SettingsState::Ready(s.clone()),
             (None, Step::Failed) => SettingsState::Failed,
@@ -91,13 +115,24 @@ impl SettingsStreamer {
         }
     }
 
+    /// The asset's settings map, requesting it on first use.
+    pub fn map(&mut self, id: Uuid) -> MapState {
+        let e = self.entry(id);
+        match (&e.map, e.step) {
+            (Some(m), _) => MapState::Ready(m.clone()),
+            (None, Step::Failed) => MapState::Failed,
+            _ => MapState::Pending,
+        }
+    }
+
     /// A settings asset known without fetching it (the offline demo's
-    /// library).
-    pub fn insert_local(&mut self, id: Uuid, settings: Settings) {
+    /// library, saved settings), with its map when known.
+    pub fn insert_local(&mut self, id: Uuid, settings: Settings, map: Option<Llsd>) {
         self.entries.insert(
             id,
             Entry {
                 settings: Some(Arc::new(settings)),
+                map: map.map(Arc::new),
                 step: Step::Ready,
                 retry_at: None,
                 failures: 0,
@@ -121,8 +156,9 @@ impl SettingsStreamer {
                 continue;
             };
             match settings {
-                Some(s) => {
+                Some((s, map)) => {
                     e.settings = Some(Arc::new(s));
+                    e.map = Some(Arc::new(map));
                     e.step = Step::Ready;
                 }
                 None if from_cache => e.step = Step::Retry,
@@ -145,7 +181,7 @@ impl SettingsStreamer {
                     let tx = self.tx.clone();
                     let id = *id;
                     jobs.spawn(move || {
-                        let s = crate::cache::read_touch(&path).ok().and_then(|d| Settings::from_asset(&d));
+                        let s = crate::cache::read_touch(&path).ok().and_then(|d| parse(&d));
                         let _ = tx.send((id, s, true));
                         JobResult::Done
                     });
@@ -184,7 +220,7 @@ impl SettingsStreamer {
                 let path = self.path(&id);
                 let tx = self.tx.clone();
                 jobs.spawn(move || {
-                    let s = Settings::from_asset(&d);
+                    let s = parse(&d);
                     if s.is_some() {
                         let _ = crate::cache::write(path, &d);
                     }

@@ -568,9 +568,18 @@ fn more_menu(resp: &egui::Response, c: &mut Ctx, v: &View, actions: &mut Vec<Gro
     });
 }
 
-/// Home, Members and the tabs still to port (greyed: notices, land and
-/// L$, experiences).
+/// Home, Members, Notices, Land and L$ and the tab still to port
+/// (Experiences, greyed).
 fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) {
+    // LLPanelGroupNotices / LLPanelGroupLandMoney::isVisibleByAgent: the
+    // tabs a guest does not see are greyed with the reason
+    let members_only = |visible: bool| {
+        if visible {
+            Ok(())
+        } else {
+            Err(aurora_i18n::tr!("ui-group-profile-members-only"))
+        }
+    };
     ui.add_space(12.0);
     ui.horizontal(|ui| {
         ui.add_space(4.0);
@@ -583,7 +592,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             None,
             false,
             *tab == Tab::Home,
-            true,
+            Ok(()),
         )
         .clicked()
         {
@@ -598,7 +607,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             count,
             false,
             *tab == Tab::Members,
-            true,
+            Ok(()),
         )
         .clicked()
         {
@@ -614,13 +623,26 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             unread,
             true,
             *tab == Tab::Notices,
-            super::notices::visible(v),
+            members_only(super::notices::visible(v)),
         )
         .clicked()
         {
             *tab = Tab::Notices;
         }
-        crate::ui::widgets::pills::pill_tab(ui, p, "map-2", aurora_i18n::tr!("ui-group-profile-land"), None, false, false, false);
+        if crate::ui::widgets::pills::pill_tab(
+            ui,
+            p,
+            "map-2",
+            aurora_i18n::tr!("ui-group-profile-land"),
+            None,
+            false,
+            *tab == Tab::Land,
+            members_only(super::land::visible(v)),
+        )
+        .clicked()
+        {
+            *tab = Tab::Land;
+        }
         crate::ui::widgets::pills::pill_tab(
             ui,
             p,
@@ -629,7 +651,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             None,
             false,
             false,
-            false,
+            Err(menu::not_yet()),
         );
         // Administration at the right, in amber, with an admin ability
         if super::administration::visible(v) {
@@ -682,7 +704,36 @@ pub fn card<R>(
     body: impl FnOnce(&mut egui::Ui) -> R,
 ) -> (R, bool) {
     let mut clicked = false;
-    let inner = egui::Frame::new()
+    let inner = card_with(
+        ui,
+        p,
+        icon,
+        icon_color,
+        title,
+        |ui| {
+            if let Some(link) = link {
+                let r = ui.add(egui::Label::new(egui::RichText::new(link).size(11.5).color(p.violet_light)).sense(Sense::click()));
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    clicked = true;
+                }
+            }
+        },
+        body,
+    );
+    (inner, clicked)
+}
+
+/// A card whose title row ends with `right` (laid out from the right).
+pub fn card_with<R>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    icon_color: Color32,
+    title: &str,
+    right: impl FnOnce(&mut egui::Ui),
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    egui::Frame::new()
         .fill(p.field)
         .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(egui::Margin::symmetric(12, 10))
@@ -696,19 +747,12 @@ pub fn card<R>(
                 format.extra_letter_spacing = 0.4;
                 job.append(&title.to_uppercase(), 0.0, format);
                 ui.label(job);
-                if let Some(link) = link {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let r = ui.add(egui::Label::new(egui::RichText::new(link).size(11.5).color(p.violet_light)).sense(Sense::click()));
-                        if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            clicked = true;
-                        }
-                    });
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
             });
             ui.add_space(2.0);
             body(ui)
-        });
-    (inner.inner, clicked)
+        })
+        .inner
 }
 
 /// A role chip: the owners' in amber, the officers' in violet, the others

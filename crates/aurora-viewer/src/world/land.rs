@@ -202,12 +202,16 @@ pub struct EnvSummary {
     /// Tracks of the day cycle that have frames.
     pub tracks_set: [bool; 5],
     pub has_day: bool,
+    /// The day cycle's settings map (EnvironmentInfo::mDayCycle), what
+    /// "Custom" edits.
+    pub day_cycle: Option<Arc<Llsd>>,
 }
 
 impl EnvSummary {
     pub fn from_llsd(env: &Llsd) -> EnvSummary {
         let has_day = env.has("day_cycle");
         let mut s = EnvSummary {
+            day_cycle: has_day.then(|| Arc::new(env["day_cycle"].clone())),
             day_length: if has_day && env.has("day_length") {
                 env["day_length"].as_i32() as i64
             } else {

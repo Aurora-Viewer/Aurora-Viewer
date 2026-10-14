@@ -13,12 +13,18 @@
 //! `:members` after the scenario opens the Members tab, a builder selected;
 //! `:invite` the invitation window with three residents (one already in);
 //! `:notices` the Notices tab, its two latest notices unread (`:compose`
-//! with a new notice open).
+//! with a new notice open); `:land` the "Land and L$" tab (`:land-details`,
+//! `:land-sales` on those pages): two parcels, our 512 m² given out of the
+//! 1 024 we may give, and eight weeks of accounts.
 //!
 //! The other demo groups get generated members and the three roles every
 //! group has.
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
+use aurora_net::group_money::{
+    AccountBody, AccountLine, AccountReply, AccountRequest, AccountSummary, GroupLandReply, GroupParcel, LandTotals, Ledger, Transaction,
+    trans,
+};
 use aurora_net::groups::{GroupMember, GroupRole, GroupTitle, LastSeen, MembersPage, NoticeSummary, RoleMembersPage, RolesPage, powers};
 use aurora_net::{GroupMembership, NetCommand, NetEvent};
 use std::collections::HashSet;
@@ -46,6 +52,18 @@ pub fn scenario() -> Scenario {
 /// `<scenario>:admin`: the window opens on the Administration tab.
 pub fn admin_tab() -> bool {
     std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').nth(1) == Some("admin"))
+}
+
+/// `<scenario>:land`: the window opens on the "Land and L$" tab, on the
+/// planning page (`:land-details`, `:land-sales` on the others).
+pub fn land_tab() -> Option<Ledger> {
+    let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
+    match v.split(':').nth(1)? {
+        "land" => Some(Ledger::Planning),
+        "land-details" => Some(Ledger::Details),
+        "land-sales" => Some(Ledger::Sales),
+        _ => None,
+    }
 }
 
 /// `<scenario>:members`: the window opens on the Members tab, a builder
@@ -217,7 +235,14 @@ fn spec(group: &Uuid) -> Option<Spec> {
             Scenario::Officer => (officer_title, false),
             _ => (builder_title, false),
         };
-        members.push(member(DEMO_AGENT, my_title, LastSeen::Online, my_powers(), my_owner, 1024));
+        members.push(member(
+            DEMO_AGENT,
+            my_title,
+            LastSeen::Online,
+            my_powers(),
+            my_owner,
+            MY_CONTRIBUTION,
+        ));
         pairs.push((BUILDERS, DEMO_AGENT));
         match scenario() {
             Scenario::Owner => pairs.extend([(OWNERS, DEMO_AGENT), (OFFICERS, DEMO_AGENT)]),
@@ -383,6 +408,176 @@ pub fn notices_tab() -> Option<(Uuid, Vec<Uuid>, bool)> {
     matches!(mode, "notices" | "compose").then(|| (DEMO_GROUP1, notices().iter().skip(2).map(|n| n.id).collect(), mode == "compose"))
 }
 
+/// Our land given to "Aurora Builders" (AgentGroupDataUpdate), in m².
+pub const MY_CONTRIBUTION: i32 = 512;
+/// The land the demo account may hold and holds (MoneyBalanceReply): 512
+/// m² left, so 1 024 m² we may give to the group.
+pub const LAND_CREDIT: i32 = 4096;
+pub const LAND_COMMITTED: i32 = 3584;
+
+/// PlacesReply of "Aurora Builders": the totals block, then the sandbox of
+/// the plaza and a workshop in the sandbox region (sent in two packets, as
+/// a long list is).
+fn group_land(group: Uuid, transaction: Uuid) -> Vec<NetEvent> {
+    let parcel = |name: &str, sim: &str, (x, y): (f32, f32), area: i32| GroupParcel {
+        name: name.into(),
+        desc: String::new(),
+        actual_area: area,
+        billable_area: area,
+        global_x: x,
+        global_y: y,
+        global_z: 24.0,
+        sim_name: sim.into(),
+        sku: "023".into(),
+    };
+    if group != DEMO_GROUP1 {
+        return vec![NetEvent::GroupLand(Box::new(GroupLandReply {
+            group,
+            transaction,
+            totals: Some(LandTotals::default()),
+            parcels: Vec::new(),
+        }))];
+    }
+    let sandbox = parcel(
+        aurora_i18n::tr!("demo-group-land-sandbox"),
+        aurora_i18n::tr!("common-aurora-demo"),
+        (256_000.0 + 64.0, 256_000.0 + 200.0),
+        4096,
+    );
+    let workshop = parcel(
+        aurora_i18n::tr!("demo-group-land-workshop"),
+        aurora_i18n::tr!("common-sandbox"),
+        (255_744.0 + 30.0, 255_744.0 + 80.0),
+        512,
+    );
+    let totals = LandTotals {
+        in_use: sandbox.billable_area + workshop.billable_area,
+        contributed: 5120,
+    };
+    vec![
+        NetEvent::GroupLand(Box::new(GroupLandReply {
+            group,
+            transaction,
+            totals: Some(totals),
+            parcels: vec![sandbox],
+        })),
+        NetEvent::GroupLand(Box::new(GroupLandReply {
+            group,
+            transaction,
+            totals: None,
+            parcels: vec![workshop],
+        })),
+    ]
+}
+
+/// Days since 1970, in SLT.
+fn today() -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    (now - 8 * 3600).div_euclid(86_400)
+}
+
+/// Days since 1970 (SLT) of the Monday `weeks` back.
+fn week_start(weeks: i32) -> i64 {
+    let today = today();
+    // 1970-01-01 was a Thursday
+    today - (today + 3).rem_euclid(7) - 7 * i64::from(weeks)
+}
+
+fn date(days: i64) -> String {
+    let (y, m, d) = aurora_net::profile::civil_from_days(days);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The accounts of "Aurora Builders", by week: the plaza's sales and the
+/// members' gifts, less the land fees; nothing older than six weeks.
+fn group_account(r: &AccountRequest) -> Vec<NetEvent> {
+    let weeks = if r.ledger == Ledger::Planning { 0 } else { r.interval };
+    let start = week_start(weeks);
+    let reply = |body: AccountBody| {
+        NetEvent::GroupAccount(Box::new(AccountReply {
+            group: r.group,
+            request: r.request,
+            interval_days: aurora_net::group_money::INTERVAL_DAYS,
+            interval: weeks,
+            start_date: date(start),
+            body,
+        }))
+    };
+    let mine = r.group == DEMO_GROUP1;
+    let w = weeks.max(0);
+    let sales = if mine && w < 6 { 1050 - 150 * w } else { 0 };
+    let gifts = if mine && w % 2 == 0 && w < 6 { 500 } else { 0 };
+    let fee = if mine { -300 } else { 0 };
+    match r.ledger {
+        Ledger::Planning => vec![reply(AccountBody::Summary(AccountSummary {
+            start_date: date(start),
+            balance: if mine { 1250 } else { 0 },
+            total_credits: sales + gifts,
+            total_debits: fee,
+            next_stipend: date(start + 7),
+        }))],
+        Ledger::Details => {
+            let line = |key: &str, amount: i32| AccountLine {
+                description: key.into(),
+                amount,
+            };
+            vec![reply(AccountBody::Details(vec![
+                line(aurora_i18n::tr!("demo-group-money-sales"), sales),
+                line(aurora_i18n::tr!("demo-group-money-gifts"), gifts),
+                line(aurora_i18n::tr!("demo-group-money-land-fee"), fee),
+            ]))]
+        }
+        Ledger::Sales => {
+            // this week's sales are not later than today
+            let at = |day: i64, time: &str| format!("{} {time}", date((start + day).min(today())));
+            let sale = |time: String, user: String, kind: i32, item: &str, amount: i32| Transaction {
+                time,
+                user,
+                kind,
+                item: item.into(),
+                amount,
+            };
+            let example = aurora_i18n::tr!("demo-example");
+            let mut list = Vec::new();
+            if sales > 0 {
+                list.push(sale(
+                    at(1, "14:22"),
+                    format!("Nova {example}"),
+                    trans::OBJECT_SALE,
+                    aurora_i18n::tr!("demo-group-notice-workshop-kit"),
+                    250,
+                ));
+                list.push(sale(
+                    at(2, "09:05"),
+                    "tesstouch Resident".into(),
+                    trans::PAY_OBJECT,
+                    aurora_i18n::tr!("demo-group-money-tip-jar"),
+                    sales - 300,
+                ));
+                list.push(sale(
+                    at(3, "21:40"),
+                    format!("Iris {example}"),
+                    trans::LAND_PASS_SALE,
+                    aurora_i18n::tr!("demo-group-land-sandbox"),
+                    50,
+                ));
+            }
+            if gifts > 0 {
+                list.push(sale(at(4, "18:12"), format!("Lune {example}"), trans::GIFT, "", gifts));
+            }
+            // two packets, the second appended to the first
+            let second = list.split_off(list.len().min(2));
+            let mut events = vec![reply(AccountBody::Sales(list))];
+            if !second.is_empty() {
+                events.push(reply(AccountBody::Sales(second)));
+            }
+            events
+        }
+    }
+}
+
 /// The charter of "Aurora Builders", with a place link.
 fn charter() -> String {
     format!(
@@ -520,6 +715,13 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
         // a notice's attachment saved: the item lands in the folder
         NetCommand::SendImDialog { dialog: 33, .. } => {
             log::info!("demo group: notice attachment accepted");
+            Vec::new()
+        }
+        NetCommand::GroupLandQuery { group, transaction } => group_land(*group, *transaction),
+        NetCommand::GroupAccount(r) => group_account(r),
+        // the dataserver keeps it and answers nothing
+        NetCommand::SetGroupContribution { contribution, .. } => {
+            log::info!("demo group: land contribution set to {contribution} m²");
             Vec::new()
         }
         NetCommand::GroupNoticesListRequest(group) => vec![NetEvent::GroupNotices {
