@@ -5,7 +5,7 @@
 //! below keep the cards and controls of the other pages.
 
 use super::{group, toggle};
-use crate::settings::{ChatStyle, PlateClick, Settings};
+use crate::settings::{ChatStyle, NotificationsStyle, PlateClick, Settings};
 use crate::theme::Palette;
 use crate::ui::widgets::{self, ActionKind};
 use crate::world::lookat::{Aim, Style};
@@ -27,6 +27,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
     s.lookat.aim = if aurora { Aim::Point } else { Aim::Direction };
+    s.notifications_style = if aurora { NotificationsStyle::Aurora } else { NotificationsStyle::Legacy };
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -329,6 +330,24 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             s.lookat.style = if legacy { Style::Legacy } else { Style::Aurora };
             c = true;
         }
+        between(ui, p);
+        let mut legacy = s.notifications_style == NotificationsStyle::Legacy;
+        if look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-notifications"),
+            aurora_i18n::tr!("ui-options-aurora-notifications-help"),
+            aurora_i18n::tr!("ui-options-aurora-animated-bell"),
+            aurora_i18n::tr!("ui-options-aurora-toasts"),
+            &mut legacy,
+        ) {
+            s.notifications_style = if legacy {
+                NotificationsStyle::Legacy
+            } else {
+                NotificationsStyle::Aurora
+            };
+            c = true;
+        }
     });
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-gaze"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -407,6 +426,7 @@ mod tests {
         assert!(s.classic_name_tags);
         assert_eq!(s.lookat.style, Style::Legacy);
         assert_eq!(s.lookat.aim, Aim::Direction);
+        assert_eq!(s.notifications_style, NotificationsStyle::Legacy);
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
         set_all(&mut s, Look::Aurora);
         let fresh = Settings::default();
@@ -414,6 +434,8 @@ mod tests {
         assert_eq!(s.classic_name_tags, fresh.classic_name_tags);
         assert_eq!(s.lookat.style, fresh.lookat.style);
         assert_eq!(s.lookat.aim, fresh.lookat.aim);
+        assert_eq!(s.notifications_style, NotificationsStyle::Aurora);
+        assert_eq!(fresh.notifications_style, NotificationsStyle::Aurora);
         assert!(s.plates_friends_only_full);
     }
 
@@ -464,6 +486,7 @@ mod tests {
             "ui-options-aurora-conversations",
             "ui-options-aurora-name-tags",
             "ui-options-aurora-look-at",
+            "ui-options-aurora-notifications",
             "ui-options-aurora-gaze",
             "ui-options-aurora-aim",
             "ui-options-aurora-avatar-plates",
@@ -484,6 +507,7 @@ mod tests {
             "ui-options-aurora-plates",
             "ui-options-aurora-halo",
             "ui-options-aurora-aim-point",
+            "ui-options-aurora-animated-bell",
         ] {
             assert!(texts.iter().any(|t| t == aurora_i18n::text(choice)), "{choice}");
         }
