@@ -105,6 +105,7 @@ only on release or an explicit action, and an empty override stays empty.
 
 `scene/auto_hover.rs` estimates ground contact after body attachments change. It snapshots the shaped rest skeleton and attachment geometry, decodes high-LOD meshes and blends only vertices selected by nonzero foot weights on the background pool. HUDs are excluded; stale estimates are discarded after further outfit changes. The Hover Height floater exposes the saved automatic option (enabled by default), using the existing per-account height persistence and AgentPreferences write queue.
 `demo_auto_hover.rs` supplies rigid foot linksets and a rigged shoe asset for the `AURORA_DEMO_HOVER_HEIGHT=auto-*` scenarios.
+`AURORA_TEST_NEUTRAL_POSE=1` adds a process-only Hover Height diagnostic: `Scene::update_poses` still evaluates live motions but replaces only our rendered palette with auto hover's shaped neutral skeleton. Attachment anchors use that same palette; switching off restores the current animated pose without changing server signals.
 
 `ui/hover_height.rs` exposes the avatar's -3..3 m hover adjustment and the
 shared camera preference. `world/hover_height.rs` owns local preview, the

@@ -534,6 +534,10 @@ pub struct SceneStats {
 
 pub struct Scene {
     auto_hover: auto_hover::AutoHover,
+    /// Optional local-only diagnostic toggle, exposed in Hover Height by
+    /// AURORA_TEST_NEUTRAL_POSE. Keep evaluating the real motion controller
+    /// while displaying the exact shaped rest skeleton used by auto hover.
+    pub neutral_pose_test: Option<bool>,
     pub jobs: Jobs,
     job_rx: crossbeam_channel::Receiver<JobResult>,
     geoms: HashMap<GeomKey, GeomEntry>,
@@ -1032,6 +1036,7 @@ impl Scene {
             motions: HashMap::new(),
             skin_binds: Default::default(),
             auto_hover: Default::default(),
+            neutral_pose_test: (std::env::var("AURORA_TEST_NEUTRAL_POSE").as_deref() == Ok("1")).then_some(true),
         }
     }
 
@@ -3824,12 +3829,19 @@ impl Scene {
             .iter_mut()
             .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
             .collect();
-        frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, _, pose_now))| {
+        let neutral_owner = (self.neutral_pose_test == Some(true)).then_some(world.agent_id);
+        frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now))| {
             // (the anchors after the joints are the sync's)
             for m in chunk.iter_mut().take(anim::ANCHOR_BASE).skip(rig.len()) {
                 *m = Mat4::IDENTITY.to_cols_array_2d();
             }
             motions.evaluate(&rig, *pose_now, Some(base), chunk);
+            if neutral_owner == Some(*owner) {
+                let neutral = rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale);
+                for (dst, matrix) in chunk.iter_mut().zip(neutral) {
+                    *dst = matrix.to_cols_array_2d();
+                }
+            }
         });
         for (_, motions, _, owner, _) in work {
             self.motions.insert(owner, motions);
@@ -4573,6 +4585,87 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn local_neutral_test_matches_auto_hover_rest_and_preserves_live_animations() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let rig = lib.rig.clone();
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        world.apply(NetEvent::MainRegionChanged { handle: 1 });
+        let mut other = crate::demo::action_avatar(false);
+        other.local_id = 9001;
+        other.full_id = crate::demo::DEMO_LOUP;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::action_avatar(false), other],
+        });
+        let animation_id = Uuid::from_u128(0xaaaa1234);
+        let mut animation = crate::demo::deform::animation(&rig);
+        animation.joints = vec![aurora_assets::anim::JointMotion {
+            joint_name: "mPelvis".into(),
+            priority: 4,
+            rot_keys: Vec::new(),
+            pos_keys: vec![aurora_assets::anim::PosKey {
+                time: 0.0,
+                position: Vec3::Z * 0.1,
+            }],
+        }];
+        animation.looping = true;
+        animation.ease_in = 0.0;
+        let mut scene = Scene::new(std::path::PathBuf::new(), lib);
+        scene.neutral_pose_test = Some(false);
+        scene.anims.insert(animation_id, Arc::new(anim::BoundAnim::bind(animation, &rig)));
+        for avatar in [world.agent_id, crate::demo::DEMO_LOUP] {
+            scene.palette_base(avatar);
+            world.apply(NetEvent::AvatarAnimations {
+                sources: Vec::new(),
+                avatar,
+                anims: vec![(animation_id, 1)],
+            });
+        }
+        let now = Instant::now();
+        scene.update_poses(&mut world, Vec3::ZERO, now);
+        let own_before = world.avatar_poses[&world.agent_id].clone();
+        let other_before = world.avatar_poses[&crate::demo::DEMO_LOUP].clone();
+        let signals_before = world.animations_of(&world.agent_id).to_vec();
+        scene.neutral_pose_test = Some(true);
+        assert!(
+            scene
+                .update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(300))
+                .is_empty()
+        );
+        let base = &scene.skeletons[&world.agent_id].base;
+        let neutral = rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale);
+        let foot = rig.names["mFootLeft"];
+        let rest_foot = rig.default_world_inv[foot].inverse().w_axis.truncate();
+        let neutral_foot = world.avatar_poses[&world.agent_id][foot].transform_point3(rest_foot);
+        let animated_foot = own_before[foot].transform_point3(rest_foot);
+        assert!(
+            (animated_foot.z - neutral_foot.z - 0.1).abs() < 1e-5,
+            "10 cm posed offset must disappear in the local neutral view"
+        );
+        for (actual, expected) in world.avatar_poses[&world.agent_id]
+            .iter()
+            .zip(neutral.iter().zip(&rig.default_world_inv))
+        {
+            assert!(
+                actual.abs_diff_eq(*expected.0 * *expected.1, 1e-6),
+                "exact shaped rest skeleton used by auto hover"
+            );
+        }
+        assert!(
+            world.avatar_poses[&crate::demo::DEMO_LOUP][foot].abs_diff_eq(other_before[foot], 1e-6),
+            "other avatars retain their animated feet"
+        );
+        assert_eq!(world.animations_of(&world.agent_id), signals_before);
+        scene.neutral_pose_test = Some(false);
+        scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(600));
+        assert!(
+            world.avatar_poses[&world.agent_id][foot].abs_diff_eq(own_before[foot], 1e-6),
+            "restore without resetting or stopping motions"
+        );
+    }
 
     #[test]
     fn seat_root_skips_body_height_and_cache_changes_immediately_on_standing() {

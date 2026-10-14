@@ -18,6 +18,7 @@ impl HoverHeightUi {
         height: &mut HoverHeight,
         enabled: bool,
         preferences: (&mut bool, &mut bool),
+        neutral_pose_test: &mut Option<bool>,
     ) -> bool {
         let (camera, automatic) = preferences;
         let enabled = enabled && height.ready();
@@ -26,7 +27,7 @@ impl HoverHeightUi {
             "hover_height",
             aurora_i18n::tr!("ui-context-hover-height"),
             egui::pos2(480.0, 100.0),
-            egui::vec2(440.0, 180.0),
+            egui::vec2(440.0, if neutral_pose_test.is_some() { 216.0 } else { 180.0 }),
         )
         .fixed()
         .show(ctx, p, &mut self.open, |ui| {
@@ -62,6 +63,10 @@ impl HoverHeightUi {
             ui.add_space(4.0);
             camera_changed |= widgets::switch_labeled(ui, p, automatic, aurora_i18n::tr!("hover-height-automatic")).changed();
             camera_changed |= widgets::switch_labeled(ui, p, camera, aurora_i18n::tr!("hover-height-affect-camera")).changed();
+            if let Some(neutral) = neutral_pose_test {
+                widgets::switch_labeled(ui, p, neutral, aurora_i18n::tr!("hover-height-neutral-pose-test"))
+                    .on_hover_text(aurora_i18n::tr!("hover-height-neutral-pose-test-tip"));
+            }
             if !enabled {
                 ui.label(egui::RichText::new(aurora_i18n::tr!("hover-height-unavailable")).color(p.muted));
             } else if height.failed {

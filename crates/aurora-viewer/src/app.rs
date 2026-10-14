@@ -8772,6 +8772,7 @@ impl App {
                     &mut self.world.hover_height,
                     hover_enabled,
                     (&mut self.settings.camera.hover_affects_camera, &mut self.settings.auto_hover_height),
+                    &mut self.scene.neutral_pose_test,
                 ) {
                     self.settings.save();
                 }

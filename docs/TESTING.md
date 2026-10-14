@@ -85,6 +85,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
+| `AURORA_TEST_NEUTRAL_POSE=1` | Local neutral-pose comparison in the online or demo Hover Height floater |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
@@ -94,6 +95,16 @@ The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 `AURORA_DEMO_DIALOG` adds only the requested dialog;
 `AURORA_DEMO_INVENTORY=offer|offer-reject` adds only the received item.
+
+`AURORA_TEST_NEUTRAL_POSE=1`: starts our avatar in the exact shaped neutral
+skeleton used by automatic hover height, including worn-mesh joint offsets.
+Appearance › Hover Height exposes "Neutral pose — local test" to switch
+between that pose and the normal animated pose. Rigged meshes and rigid
+attachments follow the same neutral palette. This is local only, not saved:
+the motion controller and server animation signals continue normally, and
+other avatars are unchanged. Use it online to compare the reported roughly
+10 cm grounding discrepancy with/without the normal pose. The option is
+absent from an ordinary launch.
 
 The frames-per-second limiter is enabled at **120 fps by default**. It can
 be disabled or adjusted in Preferences › Graphics › Smoothness; preferences
