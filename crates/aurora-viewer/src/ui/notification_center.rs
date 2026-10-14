@@ -18,8 +18,12 @@ use crate::world::notifications::{Data, Notification, Notifications, Response};
 use crate::world::worldmap::RegionRatings;
 use egui::{Rect, RichText, Vec2};
 
-/// Width of the panel under the bell (the mockup's 360 px).
+/// Width of the panel under the bell (the mockup's 360 px), with
+/// Firestorm's bars; the islands give it theirs (`NotifUi::column`).
 pub const WIDTH: f32 = 360.0;
+/// What the panel's overlay adds around its content: 6 px of margin and the
+/// 1 px border on each side.
+const PANEL_FRAME: f32 = 14.0;
 /// Seconds a card stays rolled out: information / waiting for an answer.
 pub const SHOW_INFO: f64 = 6.0;
 pub const SHOW_ANSWER: f64 = 12.0;
@@ -79,6 +83,8 @@ pub struct CenterUi {
     presence_sizes: std::collections::HashMap<u64, Vec2>,
     /// The panel's height last time it was fully unrolled.
     unrolled_height: f32,
+    /// The width of the panel's content this frame.
+    inner_width: f32,
 }
 
 /// What the frame tells the center besides its notifications.
@@ -302,6 +308,8 @@ pub fn show(
     let mut answers = Vec::new();
     let mut asks = Vec::new();
     let now = ctx.input(|i| i.time);
+    // published by the islands this frame (Firestorm's bars have none)
+    let column = nui.column.take();
     let hovered = nui
         .center
         .panel
@@ -326,10 +334,20 @@ pub fn show(
     let Some(bell) = nui.bell else {
         return (answers, asks);
     };
-    presence_toasts(ctx, p, list, nui, env, now, &mut answers);
+    presence_toasts(ctx, p, list, nui, env, column, now, &mut answers);
     let screen = ctx.content_rect();
-    let x = (bell.right() + 4.0).min(screen.right() - 6.0) - WIDTH;
-    let pos = egui::pos2(x.max(screen.left() + 6.0), bell.bottom() + 6.0);
+    // with the islands, exactly under the system and bell islands, the
+    // overlay's margins and border within that width; with Firestorm's bars
+    // its own width, ending under the bell
+    let (x, inner) = match column {
+        Some(c) => (c.left(), c.width() - PANEL_FRAME),
+        None => (
+            ((bell.right() + 4.0).min(screen.right() - 6.0) - WIDTH).max(screen.left() + 6.0),
+            WIDTH - 12.0,
+        ),
+    };
+    nui.center.inner_width = inner;
+    let pos = egui::pos2(x, bell.bottom() + 6.0);
     let unroll = ctx.animate_bool_with_time_and_easing(
         egui::Id::new("notification_center_unroll"),
         nui.open || !nui.center.peek.is_empty(),
@@ -356,12 +374,12 @@ pub fn show(
         .show(ctx, |ui| {
             // unroll from the bell: the panel is revealed from its top
             if unroll < 1.0 {
-                let clip = Rect::from_min_size(pos, Vec2::new(WIDTH + 2.0, (height * unroll).max(1.0)));
+                let clip = Rect::from_min_size(pos, Vec2::new(inner + PANEL_FRAME, (height * unroll).max(1.0)));
                 ui.set_clip_rect(clip.intersect(ui.clip_rect()));
                 ui.multiply_opacity(unroll);
             }
             super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
-                ui.set_width(WIDTH - 12.0);
+                ui.set_width(inner);
                 if nui.open {
                     full_list(ui, p, icons, ratings, list, hist, nui, env, dnd, &mut answers, &mut asks);
                 } else {
@@ -431,9 +449,10 @@ fn rolled_out(
         let full_h = nui.center.heights.get(&peek.id).copied().unwrap_or(0.0);
         let keep = 1.0 - fold;
         let top = ui.cursor().min;
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(top, Vec2::new(WIDTH - 12.0, 4000.0))));
+        let width = nui.center.inner_width;
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(top, Vec2::new(width, 4000.0))));
         if fold > 0.0 {
-            child.set_clip_rect(Rect::from_min_size(top, Vec2::new(WIDTH, full_h * keep)).intersect(ui.clip_rect()));
+            child.set_clip_rect(Rect::from_min_size(top, Vec2::new(width + 12.0, full_h * keep)).intersect(ui.clip_rect()));
             child.multiply_opacity(keep);
         }
         let r = center_card(&mut child, p, icons, ratings, env, &mut nui.wanted_pics, n);
@@ -703,13 +722,17 @@ fn chat_lines(ctx: &egui::Context) -> Option<Rect> {
 }
 
 /// The friends' online / offline toasts at their place in the room the
-/// bars leave (`presence`); clicking one opens an IM.
+/// bars leave (`presence`); clicking one opens an IM. At the top right with
+/// the islands they take the center's width under the system and bell
+/// islands (`column`), their text cut short if it does not fit.
+#[allow(clippy::too_many_arguments)]
 fn presence_toasts(
     ctx: &egui::Context,
     p: &Palette,
     list: &Notifications,
     nui: &mut NotifUi,
     env: &mut ToastEnv<'_>,
+    column: Option<Rect>,
     now: f64,
     answers: &mut Vec<(u64, Response)>,
 ) {
@@ -717,10 +740,17 @@ fn presence_toasts(
     if shown.is_empty() || env.hidden {
         return;
     }
-    let room = presence::room(super::layout::work_area(ctx), env.classic_bars);
+    let mut room = presence::room(super::layout::work_area(ctx), env.classic_bars);
+    let fixed = column.filter(|_| env.presence_at == PresencePosition::TopRight);
+    if let Some(c) = fixed {
+        room.max.x = c.right();
+    }
     let sizes: Vec<(Vec2, bool)> = shown
         .iter()
-        .map(|(id, _)| presence::size_of(&nui.center.presence_sizes, *id))
+        .map(|(id, _)| {
+            let (size, measured) = presence::size_of(&nui.center.presence_sizes, *id);
+            (fixed.map_or(size, |c| Vec2::new(c.width(), size.y)), measured)
+        })
         .collect();
     let avoid: Vec<Rect> = chat_lines(ctx).into_iter().collect();
     let only: Vec<Vec2> = sizes.iter().map(|(s, _)| *s).collect();
@@ -750,6 +780,9 @@ fn presence_toasts(
                         }
                         ui.multiply_opacity(1.0 - fade);
                         super::widgets::overlay(ui, p, egui::Margin::symmetric(12, 8), |ui| {
+                            if fixed.is_some() {
+                                ui.set_width(ui.available_width());
+                            }
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 9.0;
                                 let (pic, _) = ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::hover());
@@ -763,7 +796,7 @@ fn presence_toasts(
                                     super::presence::Status::Offline
                                 };
                                 super::presence::paint_dot(ui.painter(), p, pic, status, p.panel);
-                                ui.label(RichText::new(&n.title).size(12.5).color(p.ink));
+                                ui.add(egui::Label::new(RichText::new(&n.title).size(12.5).color(p.ink)).truncate());
                             });
                         })
                         .response

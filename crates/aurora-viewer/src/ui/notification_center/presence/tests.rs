@@ -171,12 +171,31 @@ struct Frame {
     bars: Vec<Rect>,
     chat: Option<Rect>,
     toasts: Option<Rect>,
+    /// The system and bell islands, and the center's panel (its list or
+    /// its cards).
+    system: Option<Rect>,
+    bell: Option<Rect>,
+    panel: Option<Rect>,
+}
+
+/// What the center shows besides the friends' toasts.
+#[derive(Clone, Copy, PartialEq)]
+enum Center {
+    Nothing,
+    /// A card rolled out under the bell.
+    Card,
+    /// The bell's list open.
+    List,
 }
 
 /// A few frames of the viewer's chrome as `App` draws it (the bars, the
 /// room they leave, the nearby chat lines, the center) with three friends'
 /// toasts, in a window `size` large.
 fn frames(size: Vec2, classic: bool, at: PresencePosition) -> Frame {
+    frames_with(size, classic, at, Center::Nothing)
+}
+
+fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) -> Frame {
     let ctx = egui::Context::default();
     let p = crate::theme::Theme::default().palette();
     let icons = Icons::default();
@@ -203,10 +222,19 @@ fn frames(size: Vec2, classic: bool, at: PresencePosition) -> Frame {
         ));
     }
     let st = status(classic);
+    if center == Center::Card {
+        list.push(
+            crate::world::notifications::Kind::Info,
+            "Lune paid you L$50",
+            "",
+            crate::world::notifications::Data::None,
+        );
+    }
+    notif.open = center == Center::List;
     for i in 0..3u128 {
         list.push_presence(Uuid::from_u128(100 + i), format!("Friend {i} is online."), true);
     }
-    for frame in 0..4 {
+    for frame in 0..8 {
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
             time: Some(0.1 * f64::from(frame)),
@@ -292,6 +320,9 @@ fn frames(size: Vec2, classic: bool, at: PresencePosition) -> Frame {
         bars,
         chat: visible(LayerId::new(egui::Order::Background, Id::new("chat_toasts"))),
         toasts: visible(LayerId::new(egui::Order::Foreground, Id::new("notification_presence"))),
+        system: visible(LayerId::new(egui::Order::Middle, Id::new(("bars_island", "system")))),
+        bell: visible(LayerId::new(egui::Order::Middle, Id::new(("bars_island", "bell")))),
+        panel: visible(LayerId::new(egui::Order::Foreground, Id::new("notification_center"))),
     }
 }
 
@@ -457,4 +488,34 @@ fn a_click_on_an_online_toast_opens_an_im() {
     c.notif.open = false;
     let rect = c.toasts(at).expect("shown once the list is closed");
     assert!(opens_im(&c.click(at, rect.center()), id));
+}
+
+/// With the islands, the center's open list, its cards and the friends'
+/// toasts at the top right stand exactly under the system and bell islands:
+/// from the system island's left edge to the bell island's right edge,
+/// within half a pixel, at the three widths of the mockup.
+#[test]
+fn the_center_lines_up_with_the_system_and_bell_islands() {
+    let close = |a: f32, b: f32| (a - b).abs() <= 0.5;
+    for size in [Vec2::new(1280.0, 720.0), Vec2::new(1536.0, 864.0), Vec2::new(1920.0, 1080.0)] {
+        for center in [Center::List, Center::Card] {
+            let f = frames_with(size, false, PresencePosition::TopRight, center);
+            let (system, bell) = (f.system.expect("system island"), f.bell.expect("bell island"));
+            let panel = f.panel.unwrap_or_else(|| panic!("{size:?}: no panel"));
+            assert!(close(panel.left(), system.left()), "{size:?}: panel {panel:?}, system {system:?}");
+            assert!(close(panel.right(), bell.right()), "{size:?}: panel {panel:?}, bell {bell:?}");
+        }
+        let f = frames(size, false, PresencePosition::TopRight);
+        let (system, bell) = (f.system.expect("system island"), f.bell.expect("bell island"));
+        let toasts = f.toasts.unwrap_or_else(|| panic!("{size:?}: no toast"));
+        assert!(
+            close(toasts.left(), system.left()),
+            "{size:?}: toasts {toasts:?}, system {system:?}"
+        );
+        assert!(close(toasts.right(), bell.right()), "{size:?}: toasts {toasts:?}, bell {bell:?}");
+        // elsewhere they keep their own width
+        let f = frames(size, false, PresencePosition::TopLeft);
+        let toasts = f.toasts.expect("toasts at the top left");
+        assert!(toasts.width() < system.width() + bell.width(), "{size:?}: {toasts:?}");
+    }
 }

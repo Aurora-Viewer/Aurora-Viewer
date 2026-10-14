@@ -37,6 +37,11 @@ pub struct NotifUi {
     pub wanted_pics: HashSet<Uuid>,
     /// The bell's rectangle (Aurora's center unrolls under it).
     pub bell: Option<egui::Rect>,
+    /// With the islands, from the system island's left edge to the bell
+    /// island's right edge, as drawn this frame: Aurora's center (its list,
+    /// its cards, the friends' toasts at the top right) stands exactly under
+    /// it. `None` with Firestorm's bars.
+    pub column: Option<egui::Rect>,
     /// Aurora's center (`ui::notification_center`).
     pub center: super::notification_center::CenterUi,
 }
@@ -590,6 +595,9 @@ pub fn show(
     let mut answers = Vec::new();
     let mut asks = Vec::new();
     let now = ctx.input(|i| i.time);
+    // Firestorm's toasts keep their own place: the islands' column is for
+    // Aurora's center only (not kept for a later frame of it)
+    nui.column = None;
     update_toasts(list, nui, now, env.message_seconds, env.hidden);
 
     let anchor = nui.anchor.unwrap_or(egui::pos2(8.0, 60.0));
