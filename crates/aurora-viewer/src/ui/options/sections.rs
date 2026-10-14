@@ -89,7 +89,7 @@ sections! {
     ],
     TAB_AURORA => [
         chat_style, classic_name_tags, lookat.style, lookat.aim, plates_hover_expand, plates_friends_only_full,
-        plate_click,
+        plate_click, notifications_style,
     ],
 }
 

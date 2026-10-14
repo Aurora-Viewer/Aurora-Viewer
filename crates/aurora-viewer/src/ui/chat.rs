@@ -1182,8 +1182,8 @@ pub fn show(
     };
     let own_name = world.own_name();
     let mut tear_off = false;
-    let mut floater = super::widgets::Floater::new("conversations", title, default.min, default.size())
-        .attention(world.chat_unread + world.social.total_unread() > 0);
+    let mut floater =
+        super::widgets::Floater::new("conversations", title, default.min, default.size()).attention(conversations_waiting(world));
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
@@ -1526,6 +1526,13 @@ pub fn show(
         actions.push(ConvAction::Contacts(super::contacts::ContactsAction::ToggleTornOff));
     }
     actions
+}
+
+/// The violet outline of the Conversations floater (#293) waits for what the
+/// pill of its bottom-bar button counts: IMs, group chats and conferences,
+/// never the nearby chat alone (`World::conversations_badge`).
+pub fn conversations_waiting(world: &World) -> bool {
+    world.conversations_badge() > 0
 }
 
 /// The open Conversations floater shows the local chat: its tab is selected

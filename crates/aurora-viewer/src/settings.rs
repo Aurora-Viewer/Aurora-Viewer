@@ -14,6 +14,17 @@ pub enum ChatStyle {
     Legacy,
 }
 
+/// How notifications arrive (Preferences › Aurora): unrolled from the bell
+/// at the right end of the navigation bar and folded back into it (the
+/// default, `ui/notification_center.rs`), or as Firestorm's toasts stacked
+/// apart from the bell (`ui/notifications.rs`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NotificationsStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
 /// What a left click on another avatar's name plate does (Preferences ›
 /// Interface; the human's request of 2026-10-14). Each one is an entry of
 /// the avatar's menu; nothing, the default, leaves the click to the world.
@@ -284,6 +295,8 @@ pub struct Settings {
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
+    /// The notification center's style (Preferences › Aurora).
+    pub notifications_style: NotificationsStyle,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// What a double click on the ground does (Preferences › Controls, the
@@ -698,6 +711,7 @@ impl Default for Settings {
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,
             chat_style: ChatStyle::Bubbles,
+            notifications_style: NotificationsStyle::Aurora,
             invert_mouse: false,
             arrows_strafe: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
