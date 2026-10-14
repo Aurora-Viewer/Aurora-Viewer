@@ -459,6 +459,9 @@ pub struct Land {
     pub avatar_search: Option<(String, Option<Vec<FoundAvatar>>)>,
     /// MIME type found for a media URL being set (url, type).
     pub media_type: Option<(String, Option<String>)>,
+    /// "Buy Land" asked for the selection (LLViewerParcelMgr::startBuyLand),
+    /// true for the active group; the app opens the window.
+    pub buy_request: Option<bool>,
     out: Vec<NetCommand>,
 }
 
@@ -487,6 +490,19 @@ impl Land {
             north,
             snap: true,
         });
+    }
+
+    /// LLViewerParcelMgr::startBuyLand: the Buy Land window on the
+    /// selection, for the agent or for the active group.
+    pub fn request_buy(&mut self, for_group: bool) {
+        self.buy_request = Some(for_group);
+    }
+
+    /// EstateCovenantRequest for `handle`, sent at once (the Buy Land
+    /// window asks each time its parcel changes, updateCovenantInfo).
+    pub fn request_covenant(&mut self, handle: RegionHandle) {
+        self.covenant_asked = Some((handle, Instant::now()));
+        self.send(LandCommand::CovenantRequest { handle });
     }
 
     /// The selection is a parcel of `handle`: objects coming and going there

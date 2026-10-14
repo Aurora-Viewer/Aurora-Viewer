@@ -132,13 +132,7 @@ pub(crate) fn parse_buy(result: &Llsd) -> Result<(), CurrencyError> {
 /// One XML-RPC exchange with the helper's `page` (`currency.php`,
 /// `landtool.php`). Sent once: a purchase is never retried. Neither the
 /// parameters (session, password) nor the answer are logged.
-pub(crate) async fn call(
-    http: &reqwest::Client,
-    helper: &str,
-    page: &str,
-    method: &str,
-    params: Llsd,
-) -> Result<Llsd, CurrencyError> {
+pub(crate) async fn call(http: &reqwest::Client, helper: &str, page: &str, method: &str, params: Llsd) -> Result<Llsd, CurrencyError> {
     let failed = |detail: String| {
         log::warn!("{method}: {detail}");
         CurrencyError {

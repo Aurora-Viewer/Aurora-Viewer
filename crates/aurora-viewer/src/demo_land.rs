@@ -34,6 +34,15 @@ pub fn scenario() -> Option<(String, bool)> {
     Some((tab.to_owned(), owner))
 }
 
+/// AURORA_DEMO_BUY_LAND=<mode>: the plaza parcel for sale by Violet Wolf
+/// (rich, short, upgrade, other, error; see docs/TESTING.md).
+pub fn buy_scenario() -> Option<String> {
+    std::env::var("AURORA_DEMO_BUY_LAND").ok().map(|m| m.trim().to_lowercase())
+}
+
+/// Price of the plaza parcel in AURORA_DEMO_BUY_LAND.
+const SALE_PRICE: i32 = 4500;
+
 fn now() -> i32 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -103,9 +112,29 @@ fn initial(owner: bool) -> ParcelInfo {
     }
 }
 
+/// The plaza parcel on sale by a resident, with its objects; "other": set
+/// to sell to Nova only.
+fn for_sale(mut p: ParcelInfo, mode: &str) -> ParcelInfo {
+    p.owner_id = DEMO_LOUP;
+    p.is_group_owned = false;
+    p.flags |= pf::FOR_SALE | pf::SELL_PARCEL_OBJECTS;
+    p.sale_price = SALE_PRICE;
+    if mode == "other" {
+        p.auth_buyer = DEMO_NOVA;
+    }
+    p
+}
+
 pub(super) fn parcel() -> ParcelInfo {
     let mut g = PARCEL.lock();
-    g.get_or_insert_with(|| initial(scenario().is_some_and(|s| s.1))).clone()
+    g.get_or_insert_with(|| {
+        let p = initial(scenario().is_some_and(|s| s.1));
+        match buy_scenario() {
+            Some(mode) => for_sale(p, &mode),
+            None => p,
+        }
+    })
+    .clone()
 }
 
 /// AURORA_DEMO_LAND_PRIMS=<used>[,<step>]: objects on the owner's land in
@@ -195,6 +224,18 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                 }));
             }
             out
+        }
+        LandCommand::Buy { for_group, group, .. } => {
+            // the sale goes through: the parcel changes hands
+            let mut p = parcel();
+            p.owner_id = if *for_group { *group } else { DEMO_AGENT };
+            p.is_group_owned = *for_group;
+            p.flags &= !(pf::FOR_SALE | pf::SELL_PARCEL_OBJECTS);
+            p.sale_price = 0;
+            p.auth_buyer = Uuid::nil();
+            p.claim_date = now();
+            *PARCEL.lock() = Some(p);
+            vec![selected()]
         }
         LandCommand::DwellRequest { .. } => vec![ev(LandEvent::Dwell { local_id: 1, dwell: 145.0 })],
         LandCommand::ObjectOwnersRequest { .. } => {
