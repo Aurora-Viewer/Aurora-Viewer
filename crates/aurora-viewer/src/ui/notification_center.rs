@@ -535,14 +535,17 @@ fn full_list(
                 empty(ui, p, aurora_i18n::tr!("ui-notifications-nothing-to-do"));
                 return;
             }
-            egui::ScrollArea::vertical().max_height(max_h).min_scrolled_height(max_h).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                for n in list.list.iter_mut().rev().filter(|n| !n.transient) {
-                    if let Some(r) = center_card(ui, p, icons, ratings, env, &mut nui.wanted_pics, n) {
-                        answers.push((n.id, r));
+            egui::ScrollArea::vertical()
+                .max_height(max_h)
+                .min_scrolled_height(max_h)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    for n in list.list.iter_mut().rev().filter(|n| !n.transient) {
+                        if let Some(r) = center_card(ui, p, icons, ratings, env, &mut nui.wanted_pics, n) {
+                            answers.push((n.id, r));
+                        }
                     }
-                }
-            });
+                });
         }
         Tab::History => {
             ui.add(
@@ -560,26 +563,29 @@ fn full_list(
                 return;
             }
             let today = history::now_secs();
-            egui::ScrollArea::vertical().max_height(max_h).min_scrolled_height(max_h).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                let mut last_day = None;
-                for (index, e) in found {
-                    let day = day_label(e.time, today);
-                    if last_day.as_ref() != Some(&day) {
-                        ui.label(RichText::new(day.to_uppercase()).size(10.5).strong().color(p.muted_dim));
-                        last_day = Some(day);
-                    }
-                    if let Some(follow) = history_card(ui, p, icons, &e) {
-                        if follow == Follow::Restore {
-                            if let Some(e) = hist.take(index) {
+            egui::ScrollArea::vertical()
+                .max_height(max_h)
+                .min_scrolled_height(max_h)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    let mut last_day = None;
+                    for (index, e) in found {
+                        let day = day_label(e.time, today);
+                        if last_day.as_ref() != Some(&day) {
+                            ui.label(RichText::new(day.to_uppercase()).size(10.5).strong().color(p.muted_dim));
+                            last_day = Some(day);
+                        }
+                        if let Some(follow) = history_card(ui, p, icons, &e) {
+                            if follow == Follow::Restore {
+                                if let Some(e) = hist.take(index) {
+                                    asks.push(Ask::Follow(e));
+                                }
+                            } else {
                                 asks.push(Ask::Follow(e));
                             }
-                        } else {
-                            asks.push(Ask::Follow(e));
                         }
                     }
-                }
-            });
+                });
         }
     }
 }
