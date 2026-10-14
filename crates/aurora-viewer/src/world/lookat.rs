@@ -78,6 +78,19 @@ pub struct Settings {
     pub head_pitch: f32,
     /// FSStaticEyes: an animation that stops the random eye movements.
     pub static_eyes: bool,
+    /// How the targets are drawn: Aurora's halo, or Firestorm's wire
+    /// crosshair (for the Aurora page of the preferences, still to come).
+    pub style: Style,
+}
+
+/// The look of the look-at targets (`ui::lookat_targets`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum Style {
+    /// A dot with a soft halo, theme colours, the name in a pill.
+    #[default]
+    Aurora,
+    /// LLHUDEffectLookAt::render: wire crosshair, attention colours.
+    Legacy,
 }
 
 impl Default for Settings {
@@ -94,6 +107,7 @@ impl Default for Settings {
             head_yaw: 90.0,
             head_pitch: 90.0,
             static_eyes: false,
+            style: Style::Aurora,
         }
     }
 }
@@ -163,25 +177,6 @@ pub fn within(head: DVec3, target: DVec3, range: f64) -> DVec3 {
     }
 }
 
-/// Color of a crosshair by its type (BOY_ATTS / GIRL_ATTS, the same for
-/// both), in 0..1.
-pub fn color(kind: u8) -> [f32; 3] {
-    const COLORS: [[f32; 3]; NUM as usize] = [
-        [0.3, 0.3, 0.3],
-        [0.5, 0.5, 0.5],
-        [0.5, 0.5, 0.5],
-        [0.5, 0.5, 0.9],
-        [0.0, 0.0, 0.0],
-        [0.5, 0.9, 0.5],
-        [0.1, 0.1, 0.5],
-        [0.9, 0.5, 0.5],
-        [0.9, 0.5, 0.9],
-        [0.9, 0.9, 0.5],
-        [1.0, 1.0, 1.0],
-    ];
-    COLORS[kind.min(NUM - 1) as usize]
-}
-
 /// Where the head looks when the cursor moves (LLAgentCamera::updateLookAt,
 /// third person): the camera's view turned by the cursor's offset from the
 /// middle of the window (`x` from -0.5 on the left to 0.5 on the right, `y`
@@ -217,6 +212,25 @@ pub fn cursor_look(hover: Option<(Option<Uuid>, DVec3)>, me: Uuid, free: Vec3) -
 /// back with the object).
 pub fn local_offset(point: Vec3, at: Vec3, rot: Quat) -> DVec3 {
     (rot.inverse() * (point - at)).as_dvec3()
+}
+
+/// Colour of a type in Firestorm's look (BOY_ATTS / GIRL_ATTS, the same
+/// for both), in 0..1.
+pub fn legacy_color(kind: u8) -> [f32; 3] {
+    const COLORS: [[f32; 3]; NUM as usize] = [
+        [0.3, 0.3, 0.3],
+        [0.5, 0.5, 0.5],
+        [0.5, 0.5, 0.5],
+        [0.5, 0.5, 0.9],
+        [0.0, 0.0, 0.0],
+        [0.5, 0.9, 0.5],
+        [0.1, 0.1, 0.5],
+        [0.9, 0.5, 0.5],
+        [0.9, 0.5, 0.9],
+        [0.9, 0.9, 0.5],
+        [1.0, 1.0, 1.0],
+    ];
+    COLORS[kind.min(NUM - 1) as usize]
 }
 
 /// Types whose crosshair gets a line to its avatar (ExodusLookAtLines).
@@ -502,5 +516,18 @@ mod tests {
         assert!(!s.show_targets && s.show_names == 1 && s.hide_own && !s.lines);
         assert!(!s.private && !s.private_local && !s.limit_distance);
         assert_eq!((s.max_distance, s.head_yaw, s.head_pitch, s.static_eyes), (1.0, 90.0, 90.0, false));
+        // Aurora's look, Firestorm's kept as the legacy one
+        assert_eq!(s.style, Style::Aurora);
+        let legacy = Settings {
+            style: Style::Legacy,
+            ..Settings::default()
+        };
+        let saved = serde_json::to_value(legacy).expect("serialize");
+        assert_eq!(saved["style"], "Legacy");
+        let read: Settings = serde_json::from_value(saved).expect("read");
+        assert_eq!(read.style, Style::Legacy);
+        // a file without it: Aurora's
+        let read: Settings = serde_json::from_value(serde_json::json!({ "lines": true })).expect("read");
+        assert_eq!(read.style, Style::Aurora);
     }
 }

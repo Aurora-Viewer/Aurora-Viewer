@@ -1,10 +1,17 @@
 //! Where the avatars look, shown in the world (Preferences › Privacy ›
-//! "Show look-at targets"), port of LLHUDEffectLookAt::render
+//! "Show look-at targets"), after LLHUDEffectLookAt::render
 //! (indra/newview/llhudeffectlookat.cpp, Linden Research and Firestorm,
-//! originally LGPL 2.1): a crosshair at each target in the colour of its
-//! type, the avatar's name over it (DebugLookAtShowNames) and a line back to
-//! the avatar (ExodusLookAtLines, FIRE-16912). The line leaves from
-//! between the eyes rather than the avatar's root.
+//! originally LGPL 2.1): a mark at each target in the colour of its type,
+//! the avatar's name over it (DebugLookAtShowNames) and a line back to the
+//! avatar (ExodusLookAtLines, FIRE-16912).
+//!
+//! Aurora's look, chosen by the human: a dot with a soft halo in the theme
+//! colour of the type, the name in a small pill like the name plates, a
+//! line that fades in from the avatar toward its target, all fading in when
+//! a target appears. Firestorm's (`lookat::Style::Legacy`): a wire
+//! crosshair in the colours of its attention sets, the name as text, a
+//! solid line. In both the line leaves from between the eyes, where
+//! Firestorm's leaves the avatar's root.
 //!
 //! Firestorm draws them in the world with the depth test and without
 //! writing depth. Here they are painted on the world layer like the name
@@ -15,28 +22,30 @@ use super::hud::{Projector, world_painter};
 use crate::scene::Scene;
 use crate::theme::Palette;
 use crate::world::World;
-use crate::world::lookat::{self, Settings, Target};
+use crate::world::lookat::{self, Settings, Style, Target};
 use egui::{Align2, Color32, FontId, Stroke, vec2};
 use glam::Vec3;
 use std::collections::HashMap;
 use std::time::Instant;
 use uuid::Uuid;
 
-/// Half the size of a crosshair (m): Firestorm's lines of ±1 scaled by 0.1.
-const ARM: f32 = 0.1;
-/// The name stands this far above the crosshair (m).
-const NAME_ABOVE: f32 = 0.3;
 /// How far a piece stands toward the camera when the scene is asked what
 /// hides it: a target lies on the surface looked at, which must not cut it.
 const PULL: f32 = 0.15;
-/// Length (m) of the pieces a line is cut into, each hidden on its own.
+/// A line is cut into pieces of about this many points on screen, each
+/// hidden on its own: a far line, short on screen, is one or two pieces.
+const SCREEN_PIECE: f32 = 60.0;
+/// The same in metres, for a line one end of which is off screen.
 const PIECE: f32 = 0.5;
-const MAX_PIECES: usize = 24;
-/// Dots and gaps of the ring style's line (m), and how many at most.
-const DOT: f32 = 0.08;
-const MAX_DOTS: usize = 60;
+const MAX_PIECES: usize = 16;
+/// Fade-in of a target that appears or changes kind or object (s).
+const FADE: f32 = 0.25;
+/// Legacy look: half the size of the crosshair (m, Firestorm's lines of ±1
+/// scaled by 0.1) and the height of the name above it (m).
+const ARM: f32 = 0.1;
+const NAME_ABOVE: f32 = 0.3;
 
-/// The name over a crosshair, in the format of DebugLookAtShowNames (1
+/// The name over a target, in the format of DebugLookAtShowNames (1
 /// complete, 2 display, 3 legacy "Firstname Lastname", 4 username); none
 /// for 0 or a name not known yet.
 fn name(world: &World, id: &Uuid, format: u8) -> Option<String> {
@@ -52,9 +61,24 @@ fn name(world: &World, id: &Uuid, format: u8) -> Option<String> {
     })
 }
 
-/// The colour of a type (the attention sets of Firestorm).
-fn color(kind: u8) -> Color32 {
-    let [r, g, b] = lookat::color(kind);
+/// The colour of a type: the palette of the theme, one hue per kind of
+/// attention (Firestorm gives each its own colour too).
+fn color(p: &Palette, kind: u8) -> Color32 {
+    match kind {
+        lookat::IDLE | lookat::AUTO_LISTEN | lookat::NONE => p.muted,
+        lookat::FREELOOK => p.indigo_light,
+        lookat::RESPOND | lookat::CONVERSATION => p.violet_pale,
+        lookat::HOVER => p.teal,
+        lookat::SELECT => p.rose,
+        lookat::FOCUS => p.violet_light,
+        lookat::MOUSELOOK => p.amber,
+        _ => p.ink,
+    }
+}
+
+/// The colour of a type in Firestorm's look.
+fn legacy_color(kind: u8) -> Color32 {
+    let [r, g, b] = lookat::legacy_color(kind);
     Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
 
@@ -83,59 +107,22 @@ pub fn sources(world: &World, s: &Settings) -> Vec<(Uuid, Target)> {
     out
 }
 
-/// Cut `a`–`b` into pieces of about `len` metres, at most `max`.
-fn pieces(a: Vec3, b: Vec3, len: f32, max: usize) -> impl Iterator<Item = (Vec3, Vec3)> {
-    let n = ((a.distance(b) / len).ceil() as usize).clamp(1, max);
+/// How many pieces a line gets: one per `SCREEN_PIECE` points of its length
+/// on screen (`screen`), or per `PIECE` metres when an end is off screen.
+fn piece_count(screen: Option<f32>, metres: f32) -> usize {
+    let n = match screen {
+        Some(points) => points / SCREEN_PIECE,
+        None => metres / PIECE,
+    };
+    (n.ceil() as usize).clamp(1, MAX_PIECES)
+}
+
+/// Cut `a`–`b` into `n` pieces.
+fn pieces(a: Vec3, b: Vec3, n: usize) -> impl Iterator<Item = (Vec3, Vec3)> {
     (0..n).map(move |i| (a.lerp(b, i as f32 / n as f32), a.lerp(b, (i + 1) as f32 / n as f32)))
 }
 
-/// How the targets look, while the human chooses
-/// (`AURORA_LOOKAT_STYLE`): Firestorm's wire crosshair, or one of two
-/// Aurora proposals.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Style {
-    /// LLHUDEffectLookAt::render: wire crosshair, attention colours, text
-    /// name, solid line.
-    Cross,
-    /// A glowing dot with a soft halo, a line that fades in from the head,
-    /// the name in a small pill.
-    Halo,
-    /// A thin ring around a dot, a dotted line, the name in light text.
-    Ring,
-}
-
-impl Style {
-    /// AURORA_LOOKAT_STYLE=cross|halo|ring (cross by default).
-    pub fn from_env() -> Style {
-        static STYLE: std::sync::OnceLock<Style> = std::sync::OnceLock::new();
-        *STYLE.get_or_init(|| match std::env::var("AURORA_LOOKAT_STYLE").as_deref() {
-            Ok("halo") => Style::Halo,
-            Ok("ring") => Style::Ring,
-            _ => Style::Cross,
-        })
-    }
-}
-
-/// The colour of a type in the Aurora styles: the palette of the theme,
-/// one hue per kind of attention.
-fn theme_color(p: &Palette, kind: u8) -> Color32 {
-    match kind {
-        lookat::IDLE | lookat::AUTO_LISTEN | lookat::NONE => p.muted,
-        lookat::FREELOOK => p.indigo_light,
-        lookat::RESPOND | lookat::CONVERSATION => p.violet_pale,
-        lookat::HOVER => p.teal,
-        lookat::SELECT => p.rose,
-        lookat::FOCUS => p.violet_light,
-        lookat::MOUSELOOK => p.amber,
-        _ => p.ink,
-    }
-}
-
-/// Fade-in of a target that appears or changes kind or object (s).
-const FADE: f32 = 0.25;
-
-/// What each avatar's target was, and since when: the Aurora styles fade
-/// in a new one.
+/// What each avatar's target was, and since when: a new one fades in.
 #[derive(Default)]
 pub struct Fades(HashMap<Uuid, (u8, Option<Uuid>, Instant)>);
 
@@ -156,119 +143,78 @@ pub fn draw(ctx: &egui::Context, p: &Palette, world: &World, scene: &Scene, proj
         fades.0.clear();
         return;
     }
-    let style = Style::from_env();
     let painter = world_painter(ctx);
     let now = Instant::now();
-    let seg = |a: Vec3, b: Vec3, color: Color32, width: f32| {
-        if let (Some((pa, _)), Some((pb, _))) = (proj.project(a), proj.project(b)) {
-            painter.line_segment([pa, pb], Stroke::new(width, color));
-        }
-    };
+    let legacy = s.style == Style::Legacy;
     let shown = sources(world, s);
     fades.0.retain(|id, _| shown.iter().any(|(s, _)| s == id));
     for (id, t) in shown {
         let Some(target) = scene.look_target_pos(world, id, &t, now) else {
             continue;
         };
-        let alpha = match style {
-            Style::Cross => 1.0,
-            _ => fades.alpha(id, &t, now),
+        let (alpha, color) = if legacy {
+            (1.0, legacy_color(t.kind))
+        } else {
+            let alpha = fades.alpha(id, &t, now);
+            (alpha, color(p, t.kind).gamma_multiply(alpha))
         };
-        let color = match style {
-            Style::Cross => color(t.kind),
-            _ => theme_color(p, t.kind),
-        }
-        .gamma_multiply(alpha);
-        // the line leaves from between the animated eyes (Firestorm's
-        // leaves the avatar's root, a little above it)
+        let center = proj.project(target).map(|(c, _)| c);
+        // the line, from between the animated eyes, fading in toward the
+        // target
         if s.lines
             && lookat::has_line(t.kind)
-            && let Some(head) = scene.eyes_world(world, &id, now)
+            && let Some(eyes) = scene.eyes_world(world, &id, now)
         {
-            // the dots of the ring style are short, whatever the length
-            let (len, max) = if style == Style::Ring {
-                (DOT, MAX_DOTS)
-            } else {
-                (PIECE, MAX_PIECES)
-            };
-            let all: Vec<_> = pieces(head, target, len, max).collect();
-            let n = all.len() as f32;
-            for (i, (a, b)) in all.into_iter().enumerate() {
-                let (c, width) = match style {
-                    Style::Cross => (color, 1.5),
-                    // fades in from the head toward the target
-                    Style::Halo => (color.gamma_multiply(0.15 + 0.7 * (i as f32 + 1.0) / n), 1.5),
-                    // dotted
-                    Style::Ring if i % 2 == 1 => continue,
-                    Style::Ring => (color.gamma_multiply(0.8), 1.25),
+            let from = proj.project(eyes).map(|(c, _)| c);
+            let screen = from.zip(center).map(|(a, b)| a.distance(b));
+            let n = piece_count(screen, eyes.distance(target));
+            for (i, (a, b)) in pieces(eyes, target, n).enumerate() {
+                let (Some((pa, _)), Some((pb, _))) = (proj.project(a), proj.project(b)) else {
+                    continue;
                 };
                 aurora_render::world_label_at(ctx, Some(toward((a + b) * 0.5, eye)));
-                seg(a, b, c, width);
+                let fade = if legacy { 1.0 } else { 0.15 + 0.7 * (i as f32 + 1.0) / n as f32 };
+                painter.line_segment([pa, pb], Stroke::new(1.5, color.gamma_multiply(fade)));
             }
         }
-        aurora_render::world_label_at(ctx, Some(toward(target, eye)));
-        let center = proj.project(target).map(|(c, _)| c);
-        match (style, center) {
-            (Style::Cross, _) => {
-                for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
-                    seg(target - axis * ARM, target + axis * ARM, color, 1.5);
+        if legacy {
+            aurora_render::world_label_at(ctx, Some(toward(target, eye)));
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                if let (Some((a, _)), Some((b, _))) = (proj.project(target - axis * ARM), proj.project(target + axis * ARM)) {
+                    painter.line_segment([a, b], Stroke::new(1.5, color));
                 }
             }
-            (Style::Halo, Some(c)) => {
-                for (r, a) in [(13.0, 0.06), (9.5, 0.12), (6.5, 0.25)] {
-                    painter.circle_filled(c, r, color.gamma_multiply(a));
-                }
-                // a dark edge keeps the dot readable on a light background
-                painter.circle_filled(c, 4.5, p.navy.gamma_multiply(0.7 * alpha));
-                painter.circle_filled(c, 3.5, color);
+            let at = target + Vec3::Z * NAME_ABOVE;
+            if let (Some(text), Some((pos, _))) = (name(world, &id, s.show_names), proj.project(at)) {
+                aurora_render::world_label_at(ctx, Some(toward(at, eye)));
+                let font = FontId::proportional(11.0);
+                // Firestorm's drop shadow
+                // theme-guard: content — the drop shadow of world text
+                let shadow = Color32::from_black_alpha(200);
+                painter.text(pos + vec2(1.0, 1.0), Align2::CENTER_BOTTOM, &text, font.clone(), shadow);
+                painter.text(pos, Align2::CENTER_BOTTOM, &text, font, color);
             }
-            (Style::Ring, Some(c)) => {
-                painter.circle_stroke(c, 7.5, Stroke::new(1.0, p.navy.gamma_multiply(0.6 * alpha)));
-                painter.circle_stroke(c, 6.0, Stroke::new(2.0, color));
-                painter.circle_filled(c, 1.75, color);
-            }
-            _ => {}
+            continue;
         }
-        let Some(text) = name(world, &id, s.show_names) else {
+        let Some(c) = center else {
             continue;
         };
-        match style {
-            Style::Cross => {
-                let at = target + Vec3::Z * NAME_ABOVE;
-                if let Some((p, _)) = proj.project(at) {
-                    aurora_render::world_label_at(ctx, Some(toward(at, eye)));
-                    let font = FontId::proportional(11.0);
-                    // Firestorm's drop shadow
-                    // theme-guard: content — the drop shadow of world text
-                    let shadow = Color32::from_black_alpha(200);
-                    painter.text(p + vec2(1.0, 1.0), Align2::CENTER_BOTTOM, &text, font.clone(), shadow);
-                    painter.text(p, Align2::CENTER_BOTTOM, &text, font, color);
-                }
-            }
-            Style::Halo => {
-                // a small pill above the dot, like a name plate
-                let Some(c) = center else { continue };
-                let galley = painter.layout_no_wrap(text, FontId::proportional(11.0), p.ink.gamma_multiply(alpha));
-                let size = galley.size() + vec2(14.0, 4.0);
-                let rect = egui::Rect::from_center_size(c - vec2(0.0, 16.0 + size.y * 0.5), size);
-                let round = size.y * 0.5;
-                painter.rect_filled(rect, round, p.panel.gamma_multiply(0.85 * alpha));
-                painter.rect_stroke(rect, round, Stroke::new(1.0, color.gamma_multiply(0.6)), egui::StrokeKind::Inside);
-                painter.galley(rect.center() - galley.size() * 0.5, galley, p.ink);
-            }
-            Style::Ring => {
-                let Some(c) = center else { continue };
-                let font = FontId::proportional(10.5);
-                let at = c - vec2(0.0, 12.0);
-                painter.text(
-                    at + vec2(0.0, 1.0),
-                    Align2::CENTER_BOTTOM,
-                    &text,
-                    font.clone(),
-                    p.navy.gamma_multiply(0.8 * alpha),
-                );
-                painter.text(at, Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.9 * alpha));
-            }
+        aurora_render::world_label_at(ctx, Some(toward(target, eye)));
+        // a soft halo, then the dot on a dark edge that keeps it readable
+        // on a light background
+        painter.circle_filled(c, 11.0, color.gamma_multiply(0.08));
+        painter.circle_filled(c, 7.0, color.gamma_multiply(0.2));
+        painter.circle_filled(c, 4.5, p.navy.gamma_multiply(0.7 * alpha));
+        painter.circle_filled(c, 3.5, color);
+        // the name in a small pill above the dot, like a name plate
+        if let Some(text) = name(world, &id, s.show_names) {
+            let galley = painter.layout_no_wrap(text, FontId::proportional(11.0), p.ink.gamma_multiply(alpha));
+            let size = galley.size() + vec2(14.0, 4.0);
+            let rect = egui::Rect::from_center_size(c - vec2(0.0, 16.0 + size.y * 0.5), size);
+            let round = size.y * 0.5;
+            painter.rect_filled(rect, round, p.panel.gamma_multiply(0.85 * alpha));
+            painter.rect_stroke(rect, round, Stroke::new(1.0, color.gamma_multiply(0.6)), egui::StrokeKind::Inside);
+            painter.galley(rect.center() - galley.size() * 0.5, galley, p.ink);
         }
     }
     aurora_render::world_label_at(ctx, None);
@@ -281,13 +227,23 @@ mod tests {
     #[test]
     fn a_line_is_cut_into_pieces_that_join() {
         let (a, b) = (Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0));
-        let p: Vec<_> = pieces(a, b, PIECE, MAX_PIECES).collect();
+        let p: Vec<_> = pieces(a, b, 4).collect();
         assert_eq!(p.len(), 4);
         assert_eq!(p[0].0, a);
         assert_eq!(p[3].1, b);
         assert!(p.windows(2).all(|w| w[0].1 == w[1].0));
-        assert_eq!(pieces(a, Vec3::new(500.0, 0.0, 0.0), PIECE, MAX_PIECES).count(), MAX_PIECES);
-        assert_eq!(pieces(a, a, PIECE, MAX_PIECES).count(), 1);
+    }
+
+    #[test]
+    fn a_line_short_on_screen_gets_few_pieces() {
+        // a far line: 20 m long, 50 points on screen
+        assert_eq!(piece_count(Some(50.0), 20.0), 1);
+        assert_eq!(piece_count(Some(300.0), 3.0), 5);
+        assert_eq!(piece_count(Some(5000.0), 3.0), MAX_PIECES);
+        // an end off screen: by its length in the world
+        assert_eq!(piece_count(None, 2.0), 4);
+        assert_eq!(piece_count(None, 500.0), MAX_PIECES);
+        assert_eq!(piece_count(Some(0.0), 0.0), 1);
     }
 
     #[test]
