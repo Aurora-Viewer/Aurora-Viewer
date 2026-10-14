@@ -15,9 +15,11 @@ pub(crate) mod elide_tests;
 pub(crate) mod keycap;
 pub(crate) mod pills;
 mod resize;
+mod unread;
 mod workspace;
 pub use color::color_button;
 pub use pills::{dot_pill, dot_pill_width, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide, search_box};
+pub use unread::{CountSize, UnreadCount, unread_count};
 pub use workspace::{Modal, collapsing, collapsing_forced, glyph, navigation, navigation_wrapped, section_header, stat, surface};
 pub(crate) use workspace::{
     finish_bar_glass, inventory_item_label, inventory_spacing, island_shape, overlay, overlay_frame, paint_world_label,

@@ -1116,23 +1116,22 @@ fn list_entry(
     }
     let slot = trailing_slot(rect);
     let dot = slot.center();
-    // the unread count, a pill ending on the slot's right edge
+    // the unread count, the interface's one counter ending on the slot's
+    // right edge
     let count = (unread > 0).then(|| {
-        let text = if unread > 99 { "99+".to_owned() } else { unread.to_string() };
-        let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(10.5), p.on_accent);
-        let w = (galley.size().x + 8.0).max(SLOT_SIDE - 2.0);
-        let pill = egui::Rect::from_min_max(
-            egui::pos2(slot.right() - 1.0 - w, dot.y - 7.5),
-            egui::pos2(slot.right() - 1.0, dot.y + 7.5),
-        );
-        (galley, pill)
+        super::widgets::UnreadCount::new(unread, super::widgets::CountSize::List).place(
+            ui.ctx(),
+            p,
+            egui::pos2(slot.right() - 1.0, dot.y),
+            egui::Align2::RIGHT_CENTER,
+        )
     });
     // the name stops before the slot of an entry that can be closed (its
     // button comes and goes with the pointer), before the unread count of
     // another, else before the entry's edge
     let text_right = match (&count, close.is_some()) {
         (_, true) => slot.left() - 4.0,
-        (Some((_, pill)), false) => pill.left() - 4.0,
+        (Some(count), false) => count.rect.left() - 4.0,
         (None, false) => rect.right() - 6.0,
     };
     let cut = super::widgets::paint_elided(
@@ -1164,9 +1163,8 @@ fn list_entry(
             closed = button.on_hover_text(tip).clicked();
         }
         _ => {
-            if let Some((galley, pill)) = count {
-                ui.painter().rect_filled(pill, ui.visuals().window_corner_radius, p.violet);
-                ui.painter().galley(pill.center() - galley.size() * 0.5, galley, p.on_accent);
+            if let Some(count) = count {
+                count.paint(ui.painter());
             }
         }
     }
@@ -2496,7 +2494,7 @@ mod tests {
         let counts: Vec<egui::Rect> = shapes
             .iter()
             .filter_map(|s| match s {
-                egui::Shape::Rect(r) if r.fill == p.violet => Some(r.rect),
+                egui::Shape::Rect(r) if r.fill == p.danger_dim => Some(r.rect),
                 _ => None,
             })
             .collect();
