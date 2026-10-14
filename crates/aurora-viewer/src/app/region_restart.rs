@@ -282,7 +282,8 @@ impl App {
         if self.demo {
             self.demo_region_restart();
         }
-        if let Some(handle) = self.world.main_region {
+        let counting = self.world.region_restart.alert.as_ref().is_some_and(|a| a.phase == Phase::Live);
+        if let Some(handle) = self.world.main_region.filter(|_| counting) {
             let arrival = self.world.region_name();
             let before = self.world.region_restart.alert.as_ref().map(|a| a.phase.clone());
             self.world.region_restart.region_changed(handle, &arrival);

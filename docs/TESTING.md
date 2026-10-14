@@ -1374,6 +1374,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
+| `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
@@ -1632,6 +1633,28 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `history`. A script menu (`AURORA_DEMO_DIALOG=12`) stays rolled out
   until answered. Hover the cards to see them pause. The history is kept in
   memory in demo; on the grid it is saved per account.
+- **`AURORA_DEMO_RESTART=<seconds>[:options]`**: at frame 600 the demo
+  region announces that it restarts in `<seconds>` (AlertInfo
+  RegionRestartSeconds): the alert card drops in at the top third of the
+  view and trembles, the restart sound plays, the taskbar icon flashes 5 s,
+  a line goes to the nearby chat and the card is pinned in the bell
+  without a toast. The count runs in real time; it turns orange at 1:00,
+  red at 0:30 (second shake, sound) and becomes the final count at 10.
+  Options, joined with `:`: `fast` plays the mockup's fast mode (5 minutes
+  in about 18 s); `still` stops the count and freezes the border's breath
+  at its mockup value, for screenshots (the bar then empties over 5
+  minutes, as in the mockup's states); `manager` adds the managers' line
+  ("Cancel the restart" with its confirmation: the demo's simulator
+  cancels at once, the card turns green then leaves); `min` reduces it to
+  its pill, `closed` closes it (it comes back as a pill at 30 s), `lm` opens
+  the landmark menu, `bell` opens the bell's list, `toast` makes an IM
+  arrive, `dnd` turns do not disturb on (a pill only), `opensim` plays
+  OpenSim's notice (`/RESTART_X_SECONDS`, its sound), `legacy` shows
+  Firestorm's yellow box with the view shake. Capture with
+  `AURORA_FPS_LIMIT=60` at frame 700 (the drop and the shake are over).
+  Preferences › Interface › Region restart (alert, shake: the alert / the
+  view / none, the channel announcement) and "Reduce animations" change it
+  live.
 - **`AURORA_DEMO_TOASTS=1|click|minimized`**: a friend goes offline at
   frame 700 and comes back at 760 (two presence toasts, round picture with
   its status dot), two IMs from the same resident arrive at 820 and 880 (one
