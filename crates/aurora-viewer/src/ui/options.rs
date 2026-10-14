@@ -36,6 +36,10 @@ pub struct OptionsUi {
     /// Media plugins folder found (empty: none) and plugins running.
     pub media_plugins: String,
     pub media_running: usize,
+    /// Aurora's media plugins pack (set by the app), and its "Retry" button
+    /// (cleared by the app).
+    pub media_pack: crate::media::pack::PackState,
+    pub media_pack_retry: bool,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
     capture_modifier: Option<winit::keyboard::KeyCode>,
@@ -247,6 +251,17 @@ fn row(ui: &mut egui::Ui, p: &Palette, label: &str, hint: &str, control: impl Fn
         changed = control(ui);
     });
     changed
+}
+
+/// Why Aurora's media plugins pack is not there yet.
+fn media_pack_error(failure: aurora_updater::Failure) -> &'static str {
+    use aurora_updater::Failure;
+    match failure {
+        Failure::Network | Failure::Busy | Failure::Startup => aurora_i18n::tr!("media-plugins-error-network"),
+        Failure::Integrity | Failure::Package => aurora_i18n::tr!("media-plugins-error-integrity"),
+        Failure::Filesystem => aurora_i18n::tr!("media-plugins-error-filesystem"),
+        Failure::Unsupported => aurora_i18n::tr!("media-plugins-error-unsupported"),
+    }
 }
 
 const SLIDER_W: f32 = 230.0;
@@ -2223,26 +2238,53 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
             ui,
             p,
             aurora_i18n::tr!("ui-options-plugins-folder"),
-            aurora_i18n::tr!("ui-options-folder-containing-slplugin-and-llplugin-blank-the-viewer-then"),
+            aurora_i18n::tr!("ui-options-folder-containing-llplugin-blank-aurora-s-own-plugins"),
             |ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut m.plugin_dir)
                         .desired_width(SLIDER_W)
-                        .hint_text("automatique"),
+                        .hint_text(aurora_i18n::tr!("ui-options-plugins-folder-automatic")),
                 )
                 .changed()
             },
         );
-        let status = if st.media_plugins.is_empty() {
-            aurora_i18n::tr!("ui-options-not-found-install-firestorm-or-copy-its-llplugin-folder").to_string()
-        } else {
-            aurora_i18n::tr!(
+        use crate::media::pack::PackState;
+        let megabytes = |bytes: u64| aurora_i18n::integer((bytes / (1024 * 1024)) as i64);
+        // plugins found: their folder; otherwise where Aurora's pack stands
+        let (status, download, retry) = if !st.media_plugins.is_empty() {
+            let text = aurora_i18n::tr!(
                 "status-active-player-s",
                 value0 = st.media_plugins.to_string(),
                 value1 = format!("{}", st.media_running)
-            )
+            );
+            (text, None, false)
+        } else {
+            match st.media_pack {
+                PackState::Downloading(d) if !d.preparing => {
+                    let text = aurora_i18n::tr!(
+                        "media-plugins-downloading",
+                        received = megabytes(d.received),
+                        total = megabytes(d.total)
+                    );
+                    (text, Some(d.received as f32 / d.total.max(1) as f32), false)
+                }
+                PackState::Downloading(_) => (aurora_i18n::tr!("media-plugins-installing").to_string(), Some(1.0), false),
+                PackState::Failed(failure) => (media_pack_error(failure).to_string(), None, true),
+                PackState::Idle | PackState::Ready => (aurora_i18n::tr!("media-plugins-missing").to_string(), None, false),
+            }
         };
         row(ui, p, aurora_i18n::tr!("ui-options-plugins"), "", |ui| {
+            if let Some(fraction) = download {
+                super::widgets::progress(ui, p, "media_pack", fraction, SLIDER_W, &status, None);
+                return false;
+            }
+            if retry
+                && ui
+                    .button(RichText::new(aurora_i18n::tr!("media-plugins-retry")).size(12.0))
+                    .clicked()
+            {
+                st.media_pack_retry = true;
+            }
             // the path of a folder, of any length: cut to the row (whole on
             // hover), it made the window wider on this tab
             let room = ui.available_width();

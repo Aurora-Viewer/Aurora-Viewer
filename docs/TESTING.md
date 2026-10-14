@@ -190,7 +190,8 @@ when unfocused") is ignored during a screenshot.
   fixed camera, to compare consecutive screenshots); `drift`: the same
   close-up, then a very slow orbit (one fiftieth of a mouse pixel per frame)
   until frame 1200; press on our own name plate then drag (steering);
-  entering / leaving mouselook; wheel; pulling back in flight; sitting on a
+  entering / leaving mouselook (frame 650 shows "Press Esc to return to
+  world view" above the bottom bar); wheel; pulling back in flight; sitting on a
   seat that rotates, with a seat camera and an animation started by a linked
   prim (frame 300), then standing up and a request to stop it (frame 700;
   `camera/demo.rs`).
@@ -1887,8 +1888,10 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_PARCEL_MEDIA=<url>` or `1` | Parcel media |
 | `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2]"` | Clicks on the media |
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Starting frame of these clicks |
+| `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
+| `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
-| `AURORA_DEMO_SOUND=1` | World and interface sounds audible |
+| `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 
@@ -1951,11 +1954,34 @@ What the inventory must show with these scenarios:
   after, then "aurora" is typed. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
   the starting frame to let the plugin load; also works with
   `AURORA_DEMO_HUDS=media`.
+- **Media plugins.** The media scenarios need Aurora's media plugins pack
+  (SLPlugin, CEF, LibVLC). A viewer that finds no plugins downloads it once
+  from the Aurora release `media-plugins-<n>` into
+  `%LOCALAPPDATA%\Aurora\AuroraViewer\data\media-plugins\<n>`, in demo mode
+  too; every later run and every worktree reuses it. The media wait for it
+  and start by themselves; the log says `media: downloading the plugins
+  pack` then `media: plugins in …`. An installed Firestorm is no longer
+  used, unless its folder is set in Preferences › Sound and voice › Media.
+- **`AURORA_DEMO_MEDIA_PACK`**, with `AURORA_DEMO=1`: shows a state of that
+  download without the network, whatever is installed (the media then have
+  no plugins). `downloading` is at 45 %, `installing` is the extraction,
+  `failed` shows the error and its "Retry" button. To look at with
+  `AURORA_DEMO_OPTIONS`, in the Media group of the "Sound and voice" tab,
+  and in the "Feed" tab of a profile, which shows the same progress
+  instead of the page.
+- **`AURORA_MEDIA_PACK_FEED`**: to try a pack before it is published (the
+  artifact of a "Media plugins" workflow run). The viewer asks
+  `<feed origin>/download/media-plugins-<n>/Aurora-Media-Plugins-<n>-windows-x64.zip`
+  instead of the GitHub release; only a loopback address is accepted, and
+  the archive must still have the size and the SHA-256 written in
+  `crates/aurora-updater/src/media_pack.rs`. A pack installed that way is
+  replaced when these two values change.
 - **`AURORA_DEMO_MUSIC`**: `1` designates an unreachable dummy address; the
   music waits for the radio button.
 - **`AURORA_DEMO_SOUND=1`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
-  tick per sound).
+  tick per sound). Without it the media play muted too: the viewer sends
+  them a volume of 0, so a video in the demo is silent unless this is set.
 
 ## Forced settings and diagnostics
 

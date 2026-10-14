@@ -731,6 +731,22 @@ pub fn cache_dir() -> PathBuf {
     )
 }
 
+/// Where Aurora's media plugins pack is installed: next to the logs, outside
+/// the cache (it survives a cache clear and the viewer's updates) and shared
+/// by the offline demo and the real sessions, several hundred MB being
+/// downloaded once.
+pub fn media_plugins_dir() -> PathBuf {
+    if let Some(root) = unit_test_root() {
+        return root.join("media-plugins");
+    }
+    if let Some(test) = aurora_updater::test_environment() {
+        return test.root.join("media-plugins");
+    }
+    directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
+        .map(|d| d.data_local_dir().join("media-plugins"))
+        .unwrap_or_else(|| PathBuf::from("media-plugins"))
+}
+
 /// What a settings file says of the viewer window: (its maximized state,
 /// whether it gives a size).
 fn saved_window_state(file: &serde_json::Value) -> (Option<bool>, bool) {

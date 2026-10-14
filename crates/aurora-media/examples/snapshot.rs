@@ -1,5 +1,6 @@
-//! Render a URL with the installed media plugins and save one frame:
-//! `cargo run -p aurora-media --example snapshot -- <url> <out.png> [seconds]`
+//! Render a URL with the media plugins of a folder (the one that holds
+//! `llplugin\`) and save one frame:
+//! `cargo run -p aurora-media --example snapshot -- <url> <out.png> [seconds] <plugins folder>`
 
 use aurora_media::{BrowserSettings, MediaEvent, MediaPlugin, PluginPaths, mime_from_scheme, plugin_for_mime};
 use std::time::{Duration, Instant};
@@ -10,7 +11,8 @@ fn main() {
     let url = args.get(1).cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "data:text/html,<body style='background:%23302040;color:white;font:64px sans-serif'><h1>Aurora media</h1><p>CEF via SLPlugin</p></body>".into());
     let out = args.get(2).cloned().unwrap_or_else(|| "media_snapshot.png".into());
     let secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(8);
-    let paths = PluginPaths::discover(None).expect("no SLPlugin / llplugin found");
+    let folder = args.get(4).map(std::path::Path::new);
+    let paths = PluginPaths::discover(folder, None).expect("no SLPlugin / llplugin found");
     println!("plugins: {paths:?}");
     let mime = mime_from_scheme(&url).unwrap_or_else(|| "text/html".into());
     let plugin = plugin_for_mime(&mime);

@@ -7,11 +7,34 @@
 //! (`WebView::private`): its cache, history and log go to a profile of its
 //! own that is deleted with the browser (`media/private_profile.rs`).
 
+use crate::media::pack::PackState;
 use crate::media::private_profile::PrivateProfile;
 use aurora_media::{BrowserSettings, Cookie, MediaEvent, MediaPlugin, Modifiers, MouseEvent, PluginPaths};
 use egui::{Color32, Vec2};
 use std::path::PathBuf;
 use std::time::Instant;
+
+const PLUGINS_STATUS: &str = "media_plugins_pack_state";
+
+/// State of Aurora's media plugins pack, published once per frame by the app
+/// for the pages opened before the pack is installed.
+pub fn set_plugins_status(ctx: &egui::Context, state: PackState) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(PLUGINS_STATUS), state));
+}
+
+/// What a page without plugins shows while the pack is on its way; `None`
+/// when no pack is coming.
+fn waiting_for_plugins(ctx: &egui::Context) -> Option<String> {
+    match ctx.data(|d| d.get_temp::<PackState>(egui::Id::new(PLUGINS_STATUS)))? {
+        PackState::Downloading(p) if p.preparing => Some(aurora_i18n::tr!("media-plugins-installing").to_owned()),
+        PackState::Downloading(p) => Some(aurora_i18n::tr!(
+            "media-plugins-page-waiting",
+            percent = (p.received * 100 / p.total.max(1)).to_string()
+        )),
+        PackState::Failed(aurora_updater::Failure::Unsupported) | PackState::Idle | PackState::Ready => None,
+        PackState::Failed(_) => Some(aurora_i18n::tr!("media-plugins-page-failed").to_owned()),
+    }
+}
 
 #[derive(Default)]
 pub struct WebView {
@@ -117,6 +140,22 @@ impl WebView {
         let ppp = ui.ctx().pixels_per_point();
         let px = ((size.x * ppp).round().max(16.0) as i32, (size.y * ppp).round().max(16.0) as i32);
         ui.painter().rect_filled(rect, 0.0, pal.field);
+        if self.plugin.is_none()
+            && self.failed.is_none()
+            && paths.is_none()
+            && let Some(text) = waiting_for_plugins(ui.ctx())
+        {
+            // the page starts by itself once the pack is installed
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::FontId::proportional(12.0),
+                pal.muted,
+            );
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+            return resp;
+        }
         if self.plugin.is_none() && self.failed.is_none() && !self.url.is_empty() {
             // a private browser never falls back on the shared cache
             let private = match &self.private_root {
