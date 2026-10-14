@@ -109,6 +109,17 @@ impl Social {
             .unwrap_or_else(|| "…".into())
     }
 
+    /// The display name alone (LLAvatarName::getDisplayName), for the rows
+    /// that show the username elsewhere or not at all.
+    pub fn display_name_of(&self, id: &Uuid) -> String {
+        let names = &self.avatar_names;
+        names
+            .get(id)
+            .map(|n| n.display(&names.options))
+            .or_else(|| self.names.get(id).cloned())
+            .unwrap_or_else(|| "…".into())
+    }
+
     /// Friends going on / off line; their notices wait for the names.
     pub fn set_online(&mut self, ids: &[Uuid], online: bool) {
         let now = std::time::Instant::now();

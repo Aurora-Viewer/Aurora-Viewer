@@ -1,6 +1,7 @@
 //! Aurora Viewer network layer: login, UDP circuits, capabilities, event
 //! queue and HTTP asset fetching, running on a dedicated tokio runtime.
 
+pub mod abuse_report;
 mod agent_update;
 pub mod build;
 pub mod caps;
@@ -8,8 +9,10 @@ pub mod circuit;
 pub mod currency;
 pub mod experience;
 pub mod fetch;
+pub mod groups;
 pub mod inventory;
 pub mod land;
+pub mod land_tool;
 pub mod login;
 pub mod objcache;
 pub mod objects;

@@ -144,6 +144,21 @@ impl GroupChats {
         });
     }
 
+    /// Both flags of LLAgent::setUserGroupFlags at once (the group
+    /// profile's "Receive notices" and "Show in my profile").
+    pub fn set_flags(&mut self, group: Uuid, accept_notices: bool, list_in_profile: bool) {
+        let Some(g) = self.groups.iter_mut().find(|g| g.id == group) else {
+            return;
+        };
+        g.accept_notices = accept_notices;
+        g.list_in_profile = list_in_profile;
+        self.out.push(NetCommand::SetGroupFlags {
+            group,
+            accept_notices,
+            list_in_profile,
+        });
+    }
+
     fn im(&mut self, to: Uuid, dialog: u8, session: Uuid, message: String) {
         self.out.push(NetCommand::SendImDialog {
             to,

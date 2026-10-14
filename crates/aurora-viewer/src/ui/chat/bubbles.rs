@@ -11,7 +11,7 @@
 //! - Same texts as the classic lines (`draw_line`): links, mentions, emoji,
 //!   find highlights, history greyed and looked up for nothing.
 
-use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, name_menu, presence, view};
+use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, presence, view};
 use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
 use crate::world::{ChatKind, Origin};
@@ -194,7 +194,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                     .sense(egui::Sense::click()),
             );
             if !avatar.is_nil() {
-                name_menu(&r, p, world, avatar);
+                line_name_menu(&r, p, world, avatar, line);
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                     .clicked()
@@ -274,7 +274,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             sender_picture(ui, env, line, pic, &name, avatar, object, logged);
             if !avatar.is_nil() {
                 let resp = ui.interact(pic, ui.id().with("sender"), egui::Sense::click());
-                name_menu(&resp, p, world, avatar);
+                line_name_menu(&resp, p, world, avatar, line);
                 if resp
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(name.as_str())

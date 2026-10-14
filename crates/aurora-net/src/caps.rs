@@ -6,6 +6,8 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub const REQUESTED_CAPS: &[&str] = &[
+    // the categories of an abuse report, in the viewer's language (LLFloaterReporter)
+    "AbuseCategories",
     // offline friendship offers and group invitations are answered through
     // these (session_offline.rs)
     "AcceptFriendship",
@@ -62,6 +64,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // the clicks of a classified (LLPanelProfileClassified)
     "SearchStatRequest",
     "SearchStatTracking",
+    // abuse reports, with or without their screenshot (sendReportViaCaps)
+    "SendUserReport",
+    "SendUserReportWithScreenshot",
     "SetDisplayName",
     "SimulatorFeatures",
     "UpdateAvatarAppearance",
