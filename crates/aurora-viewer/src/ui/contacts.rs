@@ -200,6 +200,13 @@ impl ContactsUi {
         self.dialog = Some(Dialog::RemoveFriends(vec![id]));
     }
 
+    /// Several friends, one confirmation (removeFriendsDialog).
+    pub fn ask_remove_friends(&mut self, ids: Vec<Uuid>) {
+        if !ids.is_empty() {
+            self.dialog = Some(Dialog::RemoveFriends(ids));
+        }
+    }
+
     /// "Request teleport" of any menu (LLAvatarActions::teleportRequest):
     /// refused with a warning while we reject teleport offers and requests
     /// ourselves (FSRejectTeleportOffersMode).
@@ -265,7 +272,7 @@ pub struct Pics<'a> {
 
 /// Selection after a click (LLScrollListCtrl: Ctrl toggles, Shift extends
 /// from the last clicked row), at most MAX_SELECT rows.
-fn click_select(sel: &mut Vec<Uuid>, anchor: &mut Option<Uuid>, order: &[Uuid], id: Uuid, mods: egui::Modifiers) {
+pub(crate) fn click_select(sel: &mut Vec<Uuid>, anchor: &mut Option<Uuid>, order: &[Uuid], id: Uuid, mods: egui::Modifiers) {
     if mods.command {
         if let Some(i) = sel.iter().position(|s| *s == id) {
             sel.remove(i);
@@ -791,7 +798,9 @@ fn friend_table(
                     ui.label(RichText::new(aurora_i18n::tr!("ui-contacts-no-friends")).size(12.0).color(p.muted));
                 }
                 for r in rows {
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click());
+                    // dragged onto a conversation, a friend joins it
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click_and_drag());
+                    resp.dnd_set_drag_payload(super::call_invite::PersonDrag(r.id));
                     if !ui.is_rect_visible(rect) {
                         continue;
                     }
