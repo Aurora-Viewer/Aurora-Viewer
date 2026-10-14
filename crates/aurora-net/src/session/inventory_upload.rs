@@ -87,7 +87,9 @@ impl Session<'_> {
     }
     pub(super) fn legacy_import(&mut self, request: Uuid, mut upload: crate::inventory::upload::Request) {
         use crate::inventory::upload::{Error, Kind};
-        if !matches!(upload.kind, Kind::Texture | Kind::Sound | Kind::Animation) || self.inventory_uploads.assets.len() >= 8 {
+        if !matches!(upload.kind, Kind::Texture | Kind::Snapshot | Kind::Sound | Kind::Animation)
+            || self.inventory_uploads.assets.len() >= 8
+        {
             emit(
                 self.sh,
                 NetEvent::AssetUploaded {

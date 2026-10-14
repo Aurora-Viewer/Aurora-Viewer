@@ -50,13 +50,13 @@ fn typed_sizes_keep_the_proportions_when_asked() {
 fn the_interface_needs_the_windows_proportions() {
     let win = (1920, 1080);
     let mut s = Settings::default();
-    assert!(s.interface_possible(win));
+    assert!(same_proportions(s.size(win), win));
     s.resolution = Resolution::K8;
-    assert!(s.interface_possible(win));
+    assert!(same_proportions(s.size(win), win));
     s.aspect = Aspect::R16x9;
-    assert!(s.interface_possible(win));
+    assert!(same_proportions(s.size(win), win));
     s.aspect = Aspect::R4x5;
-    assert!(!s.interface_possible(win));
+    assert!(!same_proportions(s.size(win), win));
 }
 
 #[test]
@@ -264,4 +264,53 @@ fn loaded_settings_are_brought_back_into_range() {
     assert_eq!(s.custom, [MIN_SIDE, MAX_SIDE]);
     assert_eq!(s.jpeg_quality, 100);
     assert_eq!(s.base_name, "Snapshot");
+}
+
+#[test]
+fn inventory_photos_become_power_of_two_textures_like_firestorm() {
+    use inventory::{TextureSize, capture_size, texture_size};
+    let win = (1600, 900);
+    // the square presets of panel_snapshot_inventory.xml
+    assert_eq!(capture_size(Aspect::R1x1, TextureSize::S512, win), (512, 512));
+    assert_eq!(texture_size((512, 512)), (512, 512));
+    assert_eq!(texture_size(capture_size(Aspect::R1x1, TextureSize::S2048, win)), (2048, 2048));
+    // other proportions: each side biased down unless over 1.75 times the
+    // lower power of two (LLImageRaw::biasedDimToPowerOfTwo)
+    assert_eq!(capture_size(Aspect::R16x9, TextureSize::S1024, win), (1024, 576));
+    assert_eq!(texture_size((1024, 576)), (1024, 512));
+    assert_eq!(texture_size((1600, 900)), (1024, 1024));
+    // "Current Window": its size, never over 2048
+    assert_eq!(capture_size(Aspect::Window, TextureSize::Window, win), (1600, 900));
+    assert_eq!(capture_size(Aspect::Window, TextureSize::Window, (3840, 2160)), (2048, 1152));
+    assert_eq!(texture_size((2048, 1152)), (2048, 1024));
+}
+
+#[test]
+fn inventory_photos_are_named_after_the_place() {
+    use inventory::{item_description, item_name, location};
+    let place = location("Place", "Region", glam::Vec3::new(128.4, 64.6, 25.0), "General");
+    assert_eq!(place, "Place, Region (128, 65, 25) - General");
+    assert_eq!(location(" ", "Region", glam::Vec3::ZERO, ""), "Region (0, 0, 0)");
+    assert_eq!(item_name(&place), "Snapshot : Place, Region (128, 65, 25) - General");
+    assert_eq!(
+        item_description("Resident", &place),
+        "Taken by Resident at Place, Region (128, 65, 25) - General"
+    );
+    // the server's limits, cut on a character
+    let long = location(&"é".repeat(80), "Region", glam::Vec3::ZERO, "");
+    assert!(item_name(&long).len() <= 63);
+    assert!(item_description("Resident", &long).len() <= 127);
+    assert!(item_name(&long).is_char_boundary(item_name(&long).len()));
+}
+
+#[test]
+fn inventory_photos_encode_to_a_texture_of_their_size() {
+    let (w, h) = (300u32, 170u32);
+    let rgba: Vec<u8> = (0..w * h).flat_map(|i| [(i % 256) as u8, 90, 200, 255]).collect();
+    let texture = inventory::texture_size((w, h));
+    assert_eq!(texture, (256, 128));
+    let data = inventory::encode(w, h, &rgba, texture).expect("encode");
+    let info = aurora_assets::j2k_info(&data).expect("J2K");
+    assert_eq!((info.width, info.height), texture);
+    assert!(inventory::encode(w, h, &rgba[..10], texture).is_err());
 }

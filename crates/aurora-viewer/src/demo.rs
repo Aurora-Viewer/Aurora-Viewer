@@ -386,6 +386,9 @@ pub fn outfit_attachment(item: &aurora_net::AttachRequest) -> ObjectUpdate {
     o
 }
 
+/// The Photo Album (FT_SNAPSHOT_CATEGORY), empty until a photo is saved.
+const PHOTO_ALBUM_FOLDER: u128 = 31;
+
 fn demo_raw() -> Llsd {
     use aurora_llsd::llsd_map;
     let folder = |id: u128, parent: u128, name: &str, t: i32| {
@@ -411,6 +414,7 @@ fn demo_raw() -> Llsd {
     {
         skel.push(folder(10 + i as u128, 1, name, *t));
     }
+    skel.push(folder(PHOTO_ALBUM_FOLDER, 1, aurora_i18n::tr!("demo-photo-album"), 15));
     skel.push(folder(
         place::SHOPS_FOLDER,
         place::LANDMARKS_FOLDER,
@@ -1226,7 +1230,11 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     owner_id: *owner,
                     version: 2,
                     folders: subfolders,
-                    items: if *f == u(1) { Vec::new() } else { items },
+                    items: if *f == u(1) || *f == u(PHOTO_ALBUM_FOLDER) {
+                        Vec::new()
+                    } else {
+                        items
+                    },
                 });
             }
             vec![NetEvent::InventoryContents(out)]

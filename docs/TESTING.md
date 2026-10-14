@@ -135,7 +135,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
-| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size or sent to the inventory |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 
@@ -158,6 +158,14 @@ its proportions), without the interface unless asked. With
 `AURORA_DEMO_SNAPSHOT_TILE=2048`, an 8K photo is drawn in 12 tiles: compare
 it with the same photo in one pass, the tiles must not show (the demo's
 particles and animations make a few levels of difference everywhere).
+`inventory[:<side>|window]` opens the window on the Inventory destination
+(512 by default), asks the price at `AURORA_DEMO_SNAPSHOT_FRAME` and
+confirms it 60 frames later: the texture is encoded, the demo answers the
+upload, the inventory opens on the photo in the Photo Album and the balance
+loses L$ 10 (the log gives `photo: texture <W> x <H> encoded in <ms>` and
+`photo: saved to the inventory`). `inventory-ask` leaves the price's
+confirmation on screen; `inventory-poor` sets the balance to L$ 5 and shows
+the "cannot afford" message instead.
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
