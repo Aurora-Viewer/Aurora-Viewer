@@ -498,6 +498,9 @@ pub enum NetEvent {
     TeleportFinished {
         handle: RegionHandle,
     },
+    /// The answer to `SetMaturityPreference`: the preference the server
+    /// kept, or None when the request failed.
+    MaturityPreference(Option<u8>),
     TeleportFailed {
         reason: String,
     },
@@ -1043,6 +1046,10 @@ pub enum NetCommand {
         local_ids: Vec<u32>,
     },
     TeleportHome,
+    /// The content rating the agent wants (UpdateAgentInformation,
+    /// LLAgent::sendMaturityPreferenceToServer); answered by
+    /// `NetEvent::MaturityPreference`.
+    SetMaturityPreference(u8),
     TeleportTo {
         handle: RegionHandle,
         position: Vec3,

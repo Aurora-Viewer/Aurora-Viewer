@@ -17,6 +17,7 @@ pub mod land;
 pub mod landmarks;
 pub mod lookat;
 pub mod lslbridge;
+pub mod maturity;
 pub mod motion;
 pub mod mutes;
 pub mod names;
@@ -266,6 +267,9 @@ pub struct World {
     pub notifications: notifications::Notifications,
     /// Teleport offers and requests from other residents, and their answers.
     pub teleport_invites: teleport_invites::TeleportInvites,
+    /// The content rating chosen during the session and its sync with the
+    /// server.
+    pub maturity: maturity::MaturityPreference,
     /// Teleport history (navigation bar back / forward).
     pub tp_history: tphistory::TeleportHistory,
     /// Dated history of the Places window (teleport_history.txt).
@@ -413,6 +417,7 @@ impl World {
             search: Default::default(),
             notifications: notifications::Notifications::default(),
             teleport_invites: teleport_invites::TeleportInvites::default(),
+            maturity: maturity::MaturityPreference::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
             offline_im_requested: false,
@@ -626,14 +631,54 @@ impl World {
     }
 
     /// The content the agent may and wants to see (LLAgentAccess), from
-    /// the login reply.
+    /// the login reply, with the preference chosen during the session.
     pub fn agent_access(&self) -> aurora_net::search::AgentAccess {
-        self.login.as_ref().map_or_else(Default::default, |l| {
+        let mut access = self.login.as_ref().map_or_else(Default::default, |l| {
             aurora_net::search::AgentAccess::from_login(
                 &l.raw["agent_access_max"].to_string_value(),
                 &l.raw["agent_region_access"].to_string_value(),
             )
-        })
+        });
+        if let Some(preferred) = self.maturity.preferred {
+            access.preferred = preferred.min(access.max);
+        }
+        access
+    }
+
+    /// Change the content rating the agent wants (the Preferences' choice,
+    /// LLAgent::handleMaturity): sent to the server, which may keep another.
+    pub fn set_maturity_preference(&mut self, maturity: u8) {
+        let current = self.agent_access().preferred;
+        if maturity == current && self.maturity.synced() {
+            return;
+        }
+        log::info!("maturity: asking for {}", aurora_net::search::access_short_string(maturity));
+        self.maturity.request(maturity, current);
+    }
+
+    /// The server's answer about the preference: on a failure the teleport
+    /// waiting for it ends and MaturityChangeError says what the server
+    /// kept (reportPreferredMaturityError).
+    fn on_maturity_answer(&mut self, result: Option<u8>) {
+        let held = self.maturity.holds_teleport();
+        if let maturity::Outcome::Failed { preferred, actual } = self.maturity.answer(result) {
+            log::warn!(
+                "maturity: the server keeps {} instead of {}",
+                aurora_net::search::access_short_string(actual),
+                aurora_net::search::access_short_string(preferred)
+            );
+            if held {
+                self.teleporting = false;
+                self.tp_show_progress = false;
+            }
+            let name = |m: u8| crate::ui::bars::maturity_name(m).to_lowercase();
+            self.notifications.push(
+                notifications::Kind::Alert,
+                aurora_i18n::tr!("world-maturity-change-error-title"),
+                aurora_i18n::tr!("world-maturity-change-error", preferred = name(preferred), actual = name(actual)),
+                notifications::Data::None,
+            );
+        }
     }
 
     /// Every classified category of the grid, (id, name) by id.
@@ -1164,6 +1209,10 @@ impl World {
             }
             NetEvent::HoverHeightUpdated { region, request, success } => {
                 self.hover_height.reply(request, region, success);
+                None
+            }
+            NetEvent::MaturityPreference(result) => {
+                self.on_maturity_answer(result);
                 None
             }
             NetEvent::AgentMovementComplete { handle, position, look_at } => {

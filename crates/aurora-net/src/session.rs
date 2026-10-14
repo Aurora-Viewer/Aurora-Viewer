@@ -1071,6 +1071,7 @@ impl Session<'_> {
         match c {
             NetCommand::UpdateAgentLanguage => self.update_agent_language(),
             NetCommand::SetHoverHeight { region, request, value } => self.set_hover_height(region, request, value),
+            NetCommand::SetMaturityPreference(maturity) => self.set_maturity_preference(maturity),
             NetCommand::Login(_) => log::warn!("already logged in"),
             NetCommand::Logout => {
                 if self.logout_started.is_none() {
@@ -2267,6 +2268,28 @@ impl Session<'_> {
 
     fn main_cap(&self, name: &str) -> Option<String> {
         self.main.and_then(|a| self.sims.get(&a)).and_then(|s| s.caps.get(name).cloned())
+    }
+
+    /// LLAgent::sendMaturityPreferenceToServer: always answered, a missing
+    /// capability or a failed request as None (handlePreferredMaturityError).
+    fn set_maturity_preference(&self, maturity: u8) {
+        let url = self.main_cap("UpdateAgentInformation");
+        let body = caps::maturity_preference_body(maturity);
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let result = match url {
+                Some(url) => caps::post_llsd(&http, &url, &body)
+                    .await
+                    .ok()
+                    .map(|reply| caps::maturity_preference_reply(&reply)),
+                None => None,
+            };
+            if result.is_none() {
+                log::warn!("Could not update the maturity preference");
+            }
+            let _ = events.send(NetEvent::MaturityPreference(result));
+        });
     }
 
     /// LLVOAvatarSelf::sendHoverHeight. A delayed command must never write

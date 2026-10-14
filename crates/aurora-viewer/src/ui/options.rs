@@ -20,6 +20,9 @@ pub enum Capture {
 #[derive(Default)]
 pub struct OptionsUi {
     pub tab: usize,
+    /// The account's content ceiling and the rating it wants, while logged
+    /// in (set by the app).
+    pub maturity: Option<aurora_net::search::AgentAccess>,
     system_fonts: Option<Vec<SystemFont>>,
     font_filter: String,
     pub shortcut_filter: String,
@@ -107,6 +110,8 @@ pub struct OptionsResult {
     pub open_chat_logs: bool,
     /// Erase the conversation transcripts of the account (confirmed).
     pub erase_chat_logs: bool,
+    /// The content rating chosen (SIM_ACCESS_*), to send to the server.
+    pub maturity: Option<u8>,
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
@@ -554,6 +559,46 @@ fn debug_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
     });
     d.keep_one_view(&before);
     c
+}
+
+/// The content ratings an account may choose (LLFloaterPreference: the
+/// list without "Adult" for an account that is not adult; no choice at all
+/// below Moderate), most open first.
+pub fn maturity_choices(access: aurora_net::search::AgentAccess) -> Vec<(u8, &'static str)> {
+    use aurora_net::search::{SIM_ACCESS_ADULT, SIM_ACCESS_MATURE, SIM_ACCESS_PG};
+    let all = [
+        (SIM_ACCESS_ADULT, aurora_i18n::tr!("search-maturity-gma")),
+        (SIM_ACCESS_MATURE, aurora_i18n::tr!("search-maturity-gm")),
+        (SIM_ACCESS_PG, aurora_i18n::tr!("ui-options-content-general")),
+    ];
+    if access.max < SIM_ACCESS_MATURE {
+        return Vec::new();
+    }
+    all.into_iter().filter(|(m, _)| *m <= access.max).collect()
+}
+
+/// "I want to access content rated" (maturity_desired_combobox): a list,
+/// or the rating as text when the account has no choice.
+fn maturity_choice(ui: &mut egui::Ui, access: aurora_net::search::AgentAccess) -> Option<u8> {
+    let choices = maturity_choices(access);
+    let label = |m: u8| match m {
+        aurora_net::search::SIM_ACCESS_ADULT => aurora_i18n::tr!("search-maturity-gma"),
+        aurora_net::search::SIM_ACCESS_MATURE => aurora_i18n::tr!("search-maturity-gm"),
+        _ => aurora_i18n::tr!("ui-options-content-general"),
+    };
+    if choices.is_empty() {
+        ui.label(label(access.preferred));
+        return None;
+    }
+    let mut picked = access.preferred;
+    egui::ComboBox::from_id_salt("ui-maturity")
+        .selected_text(label(access.preferred))
+        .show_ui(ui, |ui| {
+            for (m, name) in &choices {
+                ui.selectable_value(&mut picked, *m, *name);
+            }
+        });
+    (picked != access.preferred).then_some(picked)
 }
 
 /// A label and a multi-line response text under it.
@@ -1403,6 +1448,22 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     |ui| toggle(ui, p, &mut s.language_is_public),
                 );
             });
+            if let Some(access) = st.maturity {
+                group(ui, p, aurora_i18n::tr!("ui-options-content"), |ui| {
+                    row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-content-rated"),
+                        aurora_i18n::tr!("ui-options-content-rated-help"),
+                        |ui| {
+                            if let Some(m) = maturity_choice(ui, access) {
+                                r.maturity = Some(m);
+                            }
+                            false
+                        },
+                    );
+                });
+            }
             group(ui, p, aurora_i18n::tr!("update-settings"), |ui| {
                 c |= row(
                     ui,
@@ -2694,6 +2755,21 @@ mod tests {
     use super::*;
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn the_content_ratings_follow_the_account() {
+        use aurora_net::search::{AgentAccess, SIM_ACCESS_ADULT, SIM_ACCESS_MATURE, SIM_ACCESS_PG};
+        let ratings = |max| {
+            maturity_choices(AgentAccess { max, preferred: max })
+                .into_iter()
+                .map(|(m, _)| m)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ratings(SIM_ACCESS_ADULT), [SIM_ACCESS_ADULT, SIM_ACCESS_MATURE, SIM_ACCESS_PG]);
+        // not adult: no "Adult"; below Moderate: no choice at all
+        assert_eq!(ratings(SIM_ACCESS_MATURE), [SIM_ACCESS_MATURE, SIM_ACCESS_PG]);
+        assert!(ratings(SIM_ACCESS_PG).is_empty());
+    }
 
     #[test]
     fn shortcut_search_follows_rebinding_and_keeps_unbound_actions_searchable() {
