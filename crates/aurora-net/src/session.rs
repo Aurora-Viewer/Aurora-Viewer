@@ -3,6 +3,7 @@
 //!
 //! Message flow follows `newview/llstartup.cpp` and `llviewermessage.cpp`.
 
+mod abuse_reports;
 mod asset_imports;
 mod build_cmds;
 mod currency;
@@ -1252,6 +1253,9 @@ impl Session<'_> {
                     self.send(addr, &m, true);
                 }
             }
+            NetCommand::RequestReportObjectProperties { handle, object } => self.request_report_object(handle, object),
+            NetCommand::RequestAbuseCategories { language } => self.request_abuse_categories(&language),
+            NetCommand::SendAbuseReport(report) => self.send_abuse_report(*report),
             NetCommand::RequestPayPrice { handle, object } => {
                 if let Some(addr) = self.sim_for_handle(handle) {
                     let mut m = RequestPayPrice::default();

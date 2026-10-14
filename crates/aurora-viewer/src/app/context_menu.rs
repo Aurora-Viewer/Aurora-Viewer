@@ -13,45 +13,47 @@ impl App {
 
     /// What `open_context_menu` does, run by `click`: again from the start
     /// when the depth under the cursor has come back (app/click_pick.rs).
-    pub(super) fn world_menu(&mut self) {
-        if self.gfx.is_none() {
-            return;
-        }
+    /// What a right click designates under the cursor: the object (an
+    /// avatar's name tag counts as the avatar) and the point clicked; None
+    /// while the depth is asked for (the click is run again), or on the sky.
+    pub(super) fn menu_pick(&mut self) -> Option<(Option<usize>, Vec3)> {
         let (x, y) = self.cursor_pos;
         let now = Instant::now();
         // an avatar name tag opens its avatar's menu, as a click on the
         // avatar; its point is the avatar, not the air at the tag ("Zoom"
         // frames the avatar, like handle_look_at_selection)
-        let (picked, point) = if let Some((idx, point, _)) = self.scene.hud_edit_pick(&self.world, (x, y)) {
+        if let Some((idx, point, _)) = self.scene.hud_edit_pick(&self.world, (x, y)) {
             // (a HUD does not need the depth of the world behind it)
-            (Some(idx), point)
-        } else {
-            let Some(picked) = self.click_pick() else {
-                return;
-            };
-            let (ray, depth) = (picked.ray, picked.depth);
-            let (hit, target) = self
-                .scene
-                .selection_pick(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
-            match self.pick_name_tag(hit, ray) {
-                Some((idx, p)) => (
-                    Some(idx),
-                    Scene::object_transform(&self.world, idx, now, 0).map_or(p, |(pos, _, _)| pos),
-                ),
-                // what is shown under the pixel: a rigged mesh where the GPU
-                // poses it, an attachment in front of its wearer
-                // (LLToolPie::handleRightMouseDown picks rigged meshes and
-                // transparent faces)
-                None => match self.designate(crate::scene::drawn::Gesture::Menu, &picked, hit) {
-                    Some(d) => (Some(d.idx), d.hit.point),
-                    None => {
-                        let Some(p) = hit else {
-                            return;
-                        };
-                        (target, p)
-                    }
-                },
-            }
+            return Some((Some(idx), point));
+        }
+        let picked = self.click_pick()?;
+        let (ray, depth) = (picked.ray, picked.depth);
+        let (hit, target) = self
+            .scene
+            .selection_pick(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
+        match self.pick_name_tag(hit, ray) {
+            Some((idx, p)) => Some((
+                Some(idx),
+                Scene::object_transform(&self.world, idx, now, 0).map_or(p, |(pos, _, _)| pos),
+            )),
+            // what is shown under the pixel: a rigged mesh where the GPU
+            // poses it, an attachment in front of its wearer
+            // (LLToolPie::handleRightMouseDown picks rigged meshes and
+            // transparent faces)
+            None => match self.designate(crate::scene::drawn::Gesture::Menu, &picked, hit) {
+                Some(d) => Some((Some(d.idx), d.hit.point)),
+                None => hit.map(|p| (target, p)),
+            },
+        }
+    }
+
+    pub(super) fn world_menu(&mut self) {
+        if self.gfx.is_none() {
+            return;
+        }
+        let now = Instant::now();
+        let Some((picked, point)) = self.menu_pick() else {
+            return;
         };
         // the previous menu's selection goes, as deselectUnused would
         self.build.release_menu_selection(&self.world);
@@ -282,6 +284,7 @@ impl App {
             }
             CtxAction::DisplayName => self.display_name_ui.open(),
             CtxAction::HoverHeight => self.hover_height_ui.open = true,
+            CtxAction::ReportAbuse(target) => self.open_report_abuse(target),
             CtxAction::OpenAppearance { tab, editing } => {
                 self.panels.appearance = true;
                 self.appearance_ui.open(tab, editing);

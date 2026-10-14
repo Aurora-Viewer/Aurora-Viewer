@@ -1633,6 +1633,20 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 ..Default::default()
             }])]
         }
+        // Report Abuse: the region's categories, the reported object (owned
+        // by Nova) and a report the demo keeps to itself
+        aurora_net::NetCommand::RequestAbuseCategories { .. } => {
+            vec![NetEvent::AbuseCategories(crate::report_abuse::default_categories())]
+        }
+        aurora_net::NetCommand::RequestReportObjectProperties { object, .. } => {
+            vec![NetEvent::ObjectProperties(vec![aurora_net::build::ObjectProps {
+                object_id: *object,
+                owner_id: DEMO_NOVA,
+                name: aurora_i18n::tr!("common-demo-object").into(),
+                ..Default::default()
+            }])]
+        }
+        aurora_net::NetCommand::SendAbuseReport(_) => vec![NetEvent::AbuseReportSent(Ok(()))],
         aurora_net::NetCommand::RequestPayPrice { object, .. } if *object == action_id(972) => {
             let (default, buttons) = match std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default().as_str() {
                 "pay-layout" => (1956, vec![1956, 3913, 5870, 7826]),

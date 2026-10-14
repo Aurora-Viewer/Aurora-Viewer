@@ -542,6 +542,12 @@ fn segments(text: &str) -> Vec<Seg<'_>> {
     out
 }
 
+/// Right click on the sender of a chat line: the name menu, its report on
+/// the line.
+fn line_name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, line: &crate::world::ChatLine) {
+    super::menu::context_menu(r, p, |ui| super::context::chat_sender_menu(ui, p, world, id, line));
+}
+
 /// Right click on an avatar name in a conversation (menu_url_agent.xml).
 fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
     super::menu::context_menu(r, p, |ui| {
@@ -913,7 +919,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                         (false, false) => line.source,
                     };
                     if !object && !avatar.is_nil() {
-                        name_menu(&r, p, world, avatar);
+                        line_name_menu(&r, p, world, avatar, line);
                     }
                     if !object
                         && !avatar.is_nil()
