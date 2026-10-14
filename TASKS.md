@@ -660,7 +660,8 @@ What limits the frame rate, the smoothness, the memory and the loading time in a
 - ⬜ Appearance, continued: editor of the shape parameters and of the clothing textures / colours, creation of clothing / body parts and taking a photo, activation of gestures, asset modify permissions and RLVa.
 - ⬜ Search, photos, gestures (activation of the COF's gestures)
 - ⬜ Debug, later: collision boxes (physics shape: the object's physics properties are needed, ObjectPhysicsProperties), objects rejected by occlusion (GPU readback per draw), invisiprim objects in green like Firestorm, tooltip of the object under the cursor (id, LOD, triangles, textures)
-- 🔧 "Reset everything" of the preferences is a real button (#291, alpha report of 2026-10-13): it was a line of grey text at the bottom of the categories; it is now a flat action button with the restore icon, the width of the column, that turns red on hover (like "Erase the chat logs"), and still opens the confirmation whose "Reset" button is the red one. Firestorm has the same confirmation ("Reset All Settings", Preferences › Advanced, `FirestormClearSettingsPrompt`)
+- ✅ "Reset everything" of the preferences is a real button (#291, alpha report of 2026-10-13; validated by the human in demo on 2026-10-14): it was a line of grey text at the bottom of the categories; it is now a flat action button with the restore icon, the width of the column, that turns red on hover (like "Erase the chat logs"), and still opens the confirmation whose "Reset" button is the red one. Firestorm has the same confirmation ("Reset All Settings", Preferences › Advanced, `FirestormClearSettingsPrompt`)
+  - ⬜ later, idea: an "Advanced" section of the preferences grouping the settings to think twice about (suggested in #291; Firestorm has one)
 
 ## Audio and voice
 
