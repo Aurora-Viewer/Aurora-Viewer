@@ -5,7 +5,7 @@
 //! below keep the cards and controls of the other pages.
 
 use super::{group, toggle};
-use crate::settings::{ChatStyle, Settings};
+use crate::settings::{ChatStyle, PlateClick, Settings};
 use crate::theme::Palette;
 use crate::ui::widgets::{self, ActionKind};
 use crate::world::lookat::{Aim, Style};
@@ -119,11 +119,8 @@ pub fn nav_entry(ui: &mut egui::Ui, p: &Palette, label: &str, icon: &str, select
         job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
     }
     let galley = ui.painter().layout_job(job);
-    ui.painter().galley(
-        rect.left_center() + Vec2::new(34.0, -galley.size().y / 2.0),
-        galley,
-        p.ink,
-    );
+    ui.painter()
+        .galley(rect.left_center() + Vec2::new(34.0, -galley.size().y / 2.0), galley, p.ink);
     response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
     response.on_hover_text(label)
 }
@@ -230,9 +227,12 @@ fn item(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, control: 
     const GAP: f32 = 16.0;
     let width = ui.available_width();
     let text_w = (width - control.x - GAP).max(120.0);
-    let name_g = ui
-        .painter()
-        .layout(name.to_owned(), FontId::new(13.0, crate::ui::fonts::semibold(ui.ctx())), p.ink, text_w);
+    let name_g = ui.painter().layout(
+        name.to_owned(),
+        FontId::new(13.0, crate::ui::fonts::semibold(ui.ctx())),
+        p.ink,
+        text_w,
+    );
     let desc_g = ui
         .painter()
         .layout(description.to_owned(), FontId::proportional(12.0), p.muted, text_w);
@@ -250,7 +250,26 @@ fn item(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, control: 
 /// The faint line between two settings of a card.
 fn between(ui: &mut egui::Ui, p: &Palette) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0, p.raised.gamma_multiply(0.5)));
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        egui::Stroke::new(1.0, p.raised.gamma_multiply(0.5)),
+    );
+}
+
+/// Width of the drop-down list of the plate click.
+const PLATE_CLICK_W: f32 = 200.0;
+
+/// The name of a plate click action in its drop-down list: the names of
+/// the avatar menu's entries they run.
+fn plate_click_label(action: PlateClick) -> &'static str {
+    match action {
+        PlateClick::Nothing => aurora_i18n::tr!("ui-options-plate-click-nothing"),
+        PlateClick::Profile => aurora_i18n::tr!("common-view-profile"),
+        PlateClick::InstantMessage => aurora_i18n::tr!("ui-context-send-im"),
+        PlateClick::OfferTeleport => aurora_i18n::tr!("common-offer-teleport"),
+        PlateClick::Menu => aurora_i18n::tr!("ui-options-plate-click-menu"),
+    }
 }
 
 /// A choice between Aurora's look (first, in the accent) and Firestorm's.
@@ -331,10 +350,39 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
             c |= item(
                 ui,
                 p,
+                aurora_i18n::tr!("ui-options-plates-hover-expand"),
+                aurora_i18n::tr!("ui-options-plates-hover-expand-help"),
+                widgets::SWITCH_SIZE,
+                |ui| toggle(ui, p, &mut s.plates_hover_expand),
+            );
+            between(ui, p);
+            c |= item(
+                ui,
+                p,
                 aurora_i18n::tr!("ui-options-full-plates-friends-only"),
                 aurora_i18n::tr!("ui-options-full-plates-friends-only-help"),
                 widgets::SWITCH_SIZE,
                 |ui| toggle(ui, p, &mut s.plates_friends_only_full),
+            );
+            between(ui, p);
+            c |= item(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-options-plate-click"),
+                aurora_i18n::tr!("ui-options-plate-click-help"),
+                Vec2::new(PLATE_CLICK_W, 26.0),
+                |ui| {
+                    let mut changed = false;
+                    egui::ComboBox::from_id_salt("plate-click")
+                        .width(PLATE_CLICK_W)
+                        .selected_text(plate_click_label(s.plate_click))
+                        .show_ui(ui, |ui| {
+                            for action in PlateClick::ALL {
+                                changed |= ui.selectable_value(&mut s.plate_click, action, plate_click_label(action)).changed();
+                            }
+                        });
+                    changed
+                },
             );
         });
     });
@@ -347,8 +395,10 @@ mod tests {
 
     #[test]
     fn the_two_buttons_set_every_look_and_leave_the_plates_alone() {
-        let mut s = Settings::default();
-        s.plates_friends_only_full = true;
+        let mut s = Settings {
+            plates_friends_only_full: true,
+            ..Settings::default()
+        };
         set_all(&mut s, Look::Firestorm);
         assert_eq!(s.chat_style, ChatStyle::Legacy);
         assert!(s.classic_name_tags);
@@ -414,7 +464,9 @@ mod tests {
             "ui-options-aurora-gaze",
             "ui-options-aurora-aim",
             "ui-options-aurora-avatar-plates",
+            "ui-options-plates-hover-expand",
             "ui-options-full-plates-friends-only",
+            "ui-options-plate-click",
         ]
         .map(aurora_i18n::text);
         let mut at = 0;
@@ -424,7 +476,12 @@ mod tests {
             at += found.unwrap_or(0) + 1;
         }
         // the four choices start on Aurora's look
-        for choice in ["ui-options-aurora-bubbles", "ui-options-aurora-plates", "ui-options-aurora-halo", "ui-options-aurora-aim-point"] {
+        for choice in [
+            "ui-options-aurora-bubbles",
+            "ui-options-aurora-plates",
+            "ui-options-aurora-halo",
+            "ui-options-aurora-aim-point",
+        ] {
             assert!(texts.iter().any(|t| t == aurora_i18n::text(choice)), "{choice}");
         }
     }
@@ -436,6 +493,8 @@ mod tests {
         let aurora = include_str!("aurora.rs");
         for (key, field) in [
             ("ui-options-full-plates-friends-only\"", "&mut s.plates_friends_only_full"),
+            ("ui-options-plates-hover-expand\"", "&mut s.plates_hover_expand"),
+            ("ui-options-plate-click\"", "&mut s.plate_click"),
             ("ui-options-aurora-name-tags\"", "&mut s.classic_name_tags"),
         ] {
             assert!(aurora.contains(key) && aurora.contains(field), "{key} is on the Aurora page");

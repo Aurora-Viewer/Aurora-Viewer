@@ -988,10 +988,7 @@ fn segment_galleys(ui: &egui::Ui, options: &[(&str, bool)]) -> Vec<std::sync::Ar
 
 /// The room a `segmented` choice takes, to lay it out before drawing it.
 pub fn segmented_size(ui: &egui::Ui, options: &[(&str, bool)]) -> Vec2 {
-    let labels: f32 = segment_galleys(ui, options)
-        .iter()
-        .map(|g| g.size().x + SEGMENT_PAD_X)
-        .sum();
+    let labels: f32 = segment_galleys(ui, options).iter().map(|g| g.size().x + SEGMENT_PAD_X).sum();
     Vec2::new(labels + SEGMENT_PAD * 2.0, SEGMENT_H)
 }
 

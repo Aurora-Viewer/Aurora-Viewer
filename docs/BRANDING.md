@@ -76,6 +76,16 @@ dragging a handle switch to `violet_light`, like any selection.
   world): a new menu has nothing to do to get it.
   Gradients are reserved for brand elements (login background, auroras,
   fill of the progress bar).
+- **Preferences › Aurora.** The page of what Aurora does differently from
+  Firestorm carries the brand in two places only: its entry in the
+  category list (edge mark and name in the aurora gradient, from `success`
+  through `teal`, `indigo_light` and `violet_light` to `rose`) and the head
+  of the page (the aurora over the `navy` sky, a hairline of the same
+  gradient along its bottom edge). The settings below keep the cards and
+  controls of the other pages; the choices between Aurora's look and
+  Firestorm's are a `widgets::segmented` track, Aurora's segment lit in the
+  accent and Firestorm's in `raised`. It is not a precedent for the other
+  pages (human's choice, 2026-10-14).
 - **Login screen.** It is the viewer's showcase. The window blur only
   knows the 3D scene, which is absent here: each card (`login::card`)
   therefore redraws under its tint the sky it covers, out of focus

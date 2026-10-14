@@ -97,6 +97,23 @@ pub fn friends_level(level: Level, c: &Content, friends_only: bool) -> Level {
     }
 }
 
+/// Seconds a plate stays full after the pointer has left it: along its edge
+/// the pointer goes in and out without the plate blinking.
+pub const HOVER_LINGER: f64 = 0.3;
+
+/// "Expand a plate on hover" (on by default, the human's request of
+/// 2026-10-14): the plate under the pointer is full whatever its distance,
+/// the crowd or "full plates for friends only".
+pub fn hover_level(level: Level, hovered: bool, expand_on_hover: bool) -> Level {
+    if expand_on_hover && hovered { Level::Full } else { level }
+}
+
+/// Whether the plate last under the pointer at `seen` still counts as
+/// hovered at `now`.
+pub fn hover_holds(seen: f64, now: f64) -> bool {
+    now - seen <= HOVER_LINGER
+}
+
 /// Level of a plate among the others: `level` is what its distance gives,
 /// `rank` its place among the plates near enough to be complete (0 for the
 /// nearest), `was_full` whether it was complete in the last frame.
@@ -596,6 +613,13 @@ pub struct Plates {
     waiting: Vec<Uuid>,
     /// Preferences › Aurora › "Full plates for friends only".
     pub friends_only_full: bool,
+    /// Preferences › Aurora › "Expand a plate on hover".
+    pub expand_on_hover: bool,
+    /// The avatar whose plate is under the pointer this frame (set by the
+    /// viewer from the plates of the last frame, outside the windows).
+    pub hovered: Option<Uuid>,
+    /// The last plate under the pointer, and when: it lingers a moment.
+    hover_seen: Option<(Uuid, f64)>,
 }
 
 impl Plates {
@@ -620,6 +644,10 @@ impl Plates {
         let mut levels = std::mem::take(&mut self.levels);
         levels.clear();
         levels.resize(tags.len(), Level::Far);
+        if let Some(id) = self.hovered {
+            self.hover_seen = Some((id, now));
+        }
+        let hover = self.hover_seen.filter(|&(_, seen)| hover_holds(seen, now)).map(|(id, _)| id);
         let mut rank = 0;
         for (i, tag) in tags.iter().enumerate().rev() {
             let previous = self.entries.get(&tag.id).map(|e| e.level);
@@ -628,6 +656,7 @@ impl Plates {
                 level = crowd_level(level, rank, previous == Some(Level::Full));
                 rank += 1;
             }
+            level = hover_level(level, hover == Some(tag.id), self.expand_on_hover);
             levels[i] = level;
             if level != Level::Far && glass_left > 0 {
                 glass_left -= 1;
