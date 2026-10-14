@@ -67,7 +67,8 @@ sections! {
     ],
     2 => [font, font_scale],
     TAB_CHAT => [
-        chat_timestamps, chat_toast_seconds, warn_external_links, show_chat, log_im, log_nearby,
+        chat_timestamps, chat_toast_seconds, toast_friends_online, toast_im, toast_group_im, im_toast_seconds,
+        warn_external_links, show_chat, log_im, log_nearby,
         log_show_history, log_dated_names, autoresponse, mute_all_groups, mute_groups_without_notices,
         report_blocks,
     ],
