@@ -8,7 +8,8 @@ use egui::{Color32, Vec2};
 
 /// Height of a keycap, and of the square of Tabler's key icons.
 pub(crate) const HEIGHT: f32 = 14.0;
-const GAP: f32 = 3.0;
+/// Room between two caps of a row.
+pub(crate) const GAP: f32 = 3.0;
 
 /// Width taken by the mouse icon of a mouse button's cap.
 const MOUSE: f32 = 12.0;
@@ -70,7 +71,10 @@ pub(crate) fn caps(ui: &egui::Ui, binding: &crate::keybinds::Binding, behind: Co
             Some(texture) => Keycap::Icon(texture),
             None => Keycap::Text(
                 cap.mouse.then(|| crate::ui::icons::global("mouse-filled")).flatten(),
-                ui.painter().layout_no_wrap(cap.label, egui::FontId::proportional(10.5), behind),
+                // semibold, like the mockups' keys: a regular 10.5 px cut-out
+                // loses thin strokes, the accent of "Échap" first
+                ui.painter()
+                    .layout_no_wrap(cap.label, egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())), behind),
             ),
         })
         .collect()

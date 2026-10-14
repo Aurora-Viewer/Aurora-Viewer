@@ -172,6 +172,10 @@ pub struct Settings {
     pub build: crate::build::BuildSettings,
     /// Camera (Firestorm "Move & View › View").
     pub camera: crate::camera::CameraSettings,
+    /// Ground foot geometry after wearing/detaching a body attachment.
+    pub auto_hover_height: bool,
+    /// Fixed adjustment added to each automatic grounding estimate (metres).
+    pub auto_hover_offset: f32,
     /// Contacts window (Friends / Groups / Contact sets).
     pub contacts: crate::ui::contacts::ContactsSettings,
     /// Radar of the People window.
@@ -332,6 +336,16 @@ pub struct Settings {
     pub classic_profiles: bool,
     /// Firestorm's Pay window (floater_pay.xml) instead of `ui/pay.rs`.
     pub classic_pay_window: bool,
+    /// The full-width top and bottom bars of Firestorm instead of the glass
+    /// islands of `ui/bars/islands.rs`.
+    pub classic_bars: bool,
+    /// The place island stretches to the islands on its right (on by
+    /// default); off, it is as wide as its content.
+    pub place_bar_stretch: bool,
+    /// The parcel rights of the place island are named next to their icons
+    /// when there is room (off by default: icons alone, named in their
+    /// tooltips).
+    pub place_bar_rights_text: bool,
     /// People › Near you as Firestorm's radar table (`ui/people/radar.rs`)
     /// instead of the rows grouped by range and the sheet of
     /// `ui/people/nearby.rs`.
@@ -714,6 +728,8 @@ impl Default for Settings {
             debug: DebugView::default(),
             build: Default::default(),
             camera: Default::default(),
+            auto_hover_height: true,
+            auto_hover_offset: 0.0,
             contacts: Default::default(),
             radar: Default::default(),
             friends_list: Default::default(),
@@ -803,6 +819,9 @@ impl Default for Settings {
             classic_name_tags: false,
             classic_profiles: false,
             classic_pay_window: false,
+            classic_bars: false,
+            place_bar_stretch: true,
+            place_bar_rights_text: false,
             classic_people: false,
             classic_restart_alert: false,
             region_restart: Default::default(),

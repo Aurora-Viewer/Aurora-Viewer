@@ -157,8 +157,9 @@ pub struct ContactsUi {
     group_filter: String,
     /// Selected group (nil = "none").
     group_sel: Option<Uuid>,
-    /// Contact set shown (None = the first one, else "All").
-    set_choice: Option<String>,
+    /// Contact set shown (None = the first one, else "All"); People's
+    /// contact sets tab shows the same one.
+    pub(crate) set_choice: Option<String>,
     set_filter: String,
     set_sel: Vec<Uuid>,
     set_anchor: Option<Uuid>,
@@ -247,11 +248,79 @@ impl ContactsUi {
     pub fn ask_modify_rights(&mut self, friend: Uuid, rights: i32, grant: bool) {
         self.dialog = Some(Dialog::ModifyRights { friend, rights, grant });
     }
+
+    /// "Add..." of a contact set: the resident picker, several at once.
+    pub fn pick_for_set(&mut self, set: &str) {
+        self.pick_for = Some(PickFor::Set(set.to_owned()));
+        self.picker.open(PICKER_ID, true);
+    }
+
+    /// Residents taken out of a set, confirmed first (RemoveContactSetMember).
+    pub fn ask_remove_from_set(&mut self, set: &str, ids: Vec<Uuid>) {
+        if !ids.is_empty() {
+            self.dialog = Some(Dialog::RemoveFromSet { set: set.to_owned(), ids });
+        }
+    }
+
+    /// A new contact set, its name asked first.
+    pub fn ask_new_set(&mut self) {
+        self.dialog = Some(Dialog::AddSet(aurora_i18n::tr!("ui-contacts-new-contact-set-2").into()));
+    }
+
+    /// Delete a contact set, confirmed first.
+    pub fn ask_remove_set(&mut self, set: &str) {
+        self.dialog = Some(Dialog::RemoveSet(set.to_owned()));
+    }
+
+    /// FSFloaterContactSetConfiguration on `set`: name, color, sorting.
+    pub fn configure_set(&mut self, set: &str) {
+        self.rename = set.to_owned();
+        self.config = Some(set.to_owned());
+    }
+}
+
+/// A change of the contact sets or nicknames chosen in a menu or a sheet
+/// (FSPanelContactSets' buttons), applied to the world by the app.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SetEdit {
+    Add { set: String, ids: Vec<Uuid> },
+    Move { from: String, to: String, ids: Vec<Uuid> },
+    Nickname { ids: Vec<Uuid>, alias: String },
+    ClearNickname(Vec<Uuid>),
+    RemoveDisplayName(Vec<Uuid>),
+}
+
+/// Apply `edit` to the contact sets (non-friends become extra avatars, as
+/// LGGContactSets does).
+pub fn apply_set_edit(world: &mut World, edit: SetEdit) {
+    let social = &world.social;
+    let is_friend = |id: &Uuid| social.is_friend(id);
+    let sets = &mut world.contact_sets;
+    match edit {
+        SetEdit::Add { set, ids } => sets.add_to_set(&ids, &set, is_friend),
+        SetEdit::Move { from, to, ids } => sets.move_to_set(&ids, &from, &to, is_friend),
+        SetEdit::Nickname { ids, alias } => {
+            if alias.trim().is_empty() {
+                sets.clear_pseudonym(&ids, is_friend);
+            } else {
+                sets.set_pseudonym(&ids, alias.trim(), is_friend);
+            }
+        }
+        SetEdit::ClearNickname(ids) => sets.clear_pseudonym(&ids, is_friend),
+        SetEdit::RemoveDisplayName(ids) => sets.remove_display_name(&ids, is_friend),
+    }
 }
 
 /// The confirmations and prompts, shown whether the contact list is open
-/// or not (they are also asked from the other right-click menus).
-pub fn dialog_windows(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut ContactsUi) -> Vec<ContactsAction> {
+/// or not (they are also asked from the other right-click menus and from
+/// People), and the configuration window of a contact set.
+pub fn dialog_windows(
+    ctx: &egui::Context,
+    p: &Palette,
+    world: &mut World,
+    st: &mut ContactsUi,
+    settings: &mut ContactsSettings,
+) -> Vec<ContactsAction> {
     let mut actions = Vec::new();
     // the resident picker shared with About Land (LLFloaterAvatarPicker),
     // also opened by the friends tab of the People window
@@ -260,7 +329,11 @@ pub fn dialog_windows(ctx: &egui::Context, p: &Palette, world: &mut World, st: &
     {
         picked(world, st, what, ids);
     }
+    if let Some((set, ids)) = st.add_to_set.take() {
+        picked(world, st, PickFor::Set(set), ids);
+    }
     dialogs(ctx, p, world, st, &mut actions);
+    set_config_window(ctx, p, world, st, settings);
     actions
 }
 
@@ -304,7 +377,7 @@ pub(crate) fn rights_after(current: i32, bit: i32, on: bool) -> i32 {
 }
 
 /// FSFloaterContacts::getFullName.
-fn full_name(n: &AvatarName, o: &NameOptions, display_first: bool) -> String {
+pub(crate) fn full_name(n: &AvatarName, o: &NameOptions, display_first: bool) -> String {
     let user = n.user_name_for_display(o);
     if n.is_default || !o.use_display_names {
         user
@@ -315,7 +388,8 @@ fn full_name(n: &AvatarName, o: &NameOptions, display_first: bool) -> String {
     }
 }
 
-fn color32(c: [f32; 4]) -> Color32 {
+/// A contact set's color (0..1 RGBA) on screen.
+pub(crate) fn color32(c: [f32; 4]) -> Color32 {
     Color32::from_rgba_unmultiplied(
         (c[0] * 255.0) as u8,
         (c[1] * 255.0) as u8,
@@ -515,10 +589,6 @@ pub fn panel(
         1 => groups_tab(ui, p, world, st, pics, &mut actions),
         _ => sets_tab(ui, p, world, st, settings, pics, &mut actions),
     }
-    if let Some((set, ids)) = st.add_to_set.take() {
-        picked(world, st, PickFor::Set(set), ids);
-    }
-    set_config_window(ui.ctx(), p, world, st, settings);
     actions
 }
 
@@ -948,7 +1018,7 @@ fn friend_menu(
     }
     menu::separator(ui, p);
     menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("ui-contacts-options"), true, |ui| {
-        options_menu(ui, p, settings)
+        options_menu(ui, p, settings, true)
     });
     if let Some(f) = friend {
         menu::separator(ui, p);
@@ -972,7 +1042,8 @@ fn friend_menu(
 
 /// "Options..." of the friend list menu: columns, sort, name format,
 /// search filter (onColumnDisplayModeChanged keeps one name column).
-fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSettings) {
+/// People's friends tab has its sort in pills: `sort` false leaves it out.
+pub(crate) fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSettings, sort: bool) {
     let before = (s.column_username, s.column_display_name, s.column_full_name);
     menu::toggle(
         ui,
@@ -1006,27 +1077,29 @@ fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSettings) {
         &mut s.column_permissions,
     );
     menu::separator(ui, p);
-    if menu::check(
-        ui,
-        p,
-        "sort-ascending-letters",
-        aurora_i18n::tr!("ui-contacts-sort-by-username"),
-        !s.sort_by_display_name,
-        true,
-    ) {
-        s.sort_by_display_name = false;
+    if sort {
+        if menu::check(
+            ui,
+            p,
+            "sort-ascending-letters",
+            aurora_i18n::tr!("ui-contacts-sort-by-username"),
+            !s.sort_by_display_name,
+            true,
+        ) {
+            s.sort_by_display_name = false;
+        }
+        if menu::check(
+            ui,
+            p,
+            "sort-ascending-letters",
+            aurora_i18n::tr!("ui-contacts-sort-by-display-name"),
+            s.sort_by_display_name,
+            true,
+        ) {
+            s.sort_by_display_name = true;
+        }
+        menu::separator(ui, p);
     }
-    if menu::check(
-        ui,
-        p,
-        "sort-ascending-letters",
-        aurora_i18n::tr!("ui-contacts-sort-by-display-name"),
-        s.sort_by_display_name,
-        true,
-    ) {
-        s.sort_by_display_name = true;
-    }
-    menu::separator(ui, p);
     if menu::check(
         ui,
         p,
@@ -1390,7 +1463,14 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
         st.dialog = Some(Dialog::LeaveGroup(sel));
     }
     ui.add_space(6.0);
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-create-2"), soon, false);
+    // FSFloaterContacts: under the group limit only
+    let can_create = super::group_profile::create::can_join_groups(world);
+    if side_button_resp(ui, p, aurora_i18n::tr!("ui-contacts-create-2"), can_create)
+        .on_disabled_hover_text(aurora_i18n::tr!("ui-group-profile-too-many-groups"))
+        .clicked()
+    {
+        super::group_profile::request_create(ui.ctx());
+    }
     side_button(ui, p, aurora_i18n::tr!("ui-contacts-search"), soon, false);
     side_button(ui, p, aurora_i18n::tr!("ui-contacts-invite"), soon, false);
 }
@@ -1398,7 +1478,7 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
 // ------------------------------------------------------------- contact sets
 
 /// Label of a combo choice (internal names are translated).
-fn set_label(choice: &str) -> String {
+pub(crate) fn set_label(choice: &str) -> String {
     match choice {
         contact_sets::ALL_SETS => aurora_i18n::tr!("common-all").into(),
         contact_sets::NO_SETS => aurora_i18n::tr!("ui-contacts-no-contact-set").into(),

@@ -220,6 +220,15 @@ pub struct Env<'a> {
 }
 
 impl GroupProfileUi {
+    /// "Invite" of a group's sheet in People (LLGroupActions::invite): the
+    /// profile on that group, its invitation open.
+    pub fn open_with_invite(&mut self, world: &mut World, id: Uuid) {
+        self.open(world, id);
+        if self.group == Some(id) {
+            self.open_invite(id);
+        }
+    }
+
     /// LLGroupActions::show: the window on this group, brought to the front,
     /// its profile asked again.
     pub fn open(&mut self, world: &mut World, id: Uuid) {

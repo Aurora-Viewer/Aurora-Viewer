@@ -4,12 +4,13 @@
 
 use super::App;
 use crate::theme::Palette;
-use crate::ui::controls::{ControlAction, View};
+use crate::ui::controls::{ControlAction, FreeView, View};
 use aurora_net::{NetCommand, control};
 
 impl App {
     pub(super) fn controls_window(&mut self, ctx: &egui::Context, p: &Palette) {
         self.controls_demo();
+        let flight = self.snapshots.ui.free;
         let view = View {
             zoom: self.camera.zoom_fraction(),
             preset: self.settings.camera.preset,
@@ -20,6 +21,10 @@ impl App {
             mouselook: self.camera.mouselook(),
             object_view: self.object_view,
             keys: &self.settings.keybinds,
+            free: self.camera.free().map(|_| FreeView {
+                speed: flight.speed,
+                no_collisions: flight.no_collisions,
+            }),
         };
         let out = self.controls_ui.show(
             ctx,
@@ -30,6 +35,7 @@ impl App {
             &view,
         );
         self.controls_held = out.held;
+        self.controls_free = (out.free_move, out.free_look);
         // the object view ends with the window (LLFloaterCamera::onClose)
         if !self.panels.camera_controls && !self.panels.movement_controls {
             self.object_view = false;
@@ -41,6 +47,12 @@ impl App {
 
     fn control_action(&mut self, action: ControlAction) {
         match action {
+            ControlAction::FreeSpeed(speed) => self.snapshots.ui.free.speed = speed,
+            ControlAction::FreeCollisions(on) => self.snapshots.ui.free.no_collisions = on,
+            ControlAction::FreeExit => {
+                self.snapshots.ui.free.on = false;
+                self.photo_free_camera();
+            }
             ControlAction::Preset(preset) => {
                 // LLFloaterCamera::switchToPreset: the view, from behind
                 self.settings.camera.apply_preset(preset);
@@ -97,13 +109,37 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_CONTROLS=camera | movement | compact | classic: the
-    /// window open (minimized for `compact`).
+    /// AURORA_DEMO_CONTROLS=camera | movement | compact | classic | free |
+    /// free-compact: the window open (minimized for `compact`); `free` the
+    /// photo window's free camera on, which opens it, `free-compact` the
+    /// same minimized; 40 frames later the free camera has flown 2 m to the
+    /// left and 1 m up and turned toward the avatar, which stayed.
     fn controls_demo(&mut self) {
-        if !self.demo || self.frame_count != 600 {
+        if !self.demo {
+            return;
+        }
+        if self.frame_count == 640
+            && std::env::var("AURORA_DEMO_CONTROLS").is_ok_and(|m| m.starts_with("free"))
+            && let Some(cam) = self.camera.free_mut()
+        {
+            let left = glam::Vec3::new(-cam.yaw.sin(), cam.yaw.cos(), 0.0);
+            cam.position += left * 2.0 + glam::Vec3::Z;
+            cam.turn(-0.35, -0.15);
+            log::info!("demo free camera: flown to {:.1?}", cam.position);
+        }
+        if self.frame_count != 600 {
             return;
         }
         match std::env::var("AURORA_DEMO_CONTROLS").as_deref() {
+            Ok(mode @ ("free" | "free-compact")) => {
+                self.panels.snapshot = true;
+                self.panels.chat = false;
+                self.panels.people = false;
+                self.snapshots.ui.free.on = true;
+                if mode == "free-compact" {
+                    crate::ui::widgets::minimize_floater(&self.egui_ctx, crate::ui::controls::WINDOW);
+                }
+            }
             Ok("camera") => self.panels.camera_controls = true,
             Ok("movement") => self.panels.movement_controls = true,
             Ok("compact") => {
