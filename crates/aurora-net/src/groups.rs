@@ -392,6 +392,89 @@ pub fn notice_to_send(subject: &str, message: &str, item: Option<(Uuid, Uuid)>) 
     (text, bucket)
 }
 
+/// Ejections per EjectGroupMemberRequest and role changes per
+/// GroupRoleChanges: Firestorm starts a new message when one is full
+/// (isSendFull); these keep each one well under a packet.
+const EJECTS_PER_MESSAGE: usize = 50;
+const ROLE_CHANGES_PER_MESSAGE: usize = 30;
+
+/// LLGroupMgr::sendGroupMemberEjects: the members, by messages. Our own id
+/// is left out ("Can't use 'eject' to leave a group").
+pub fn eject_messages(agent: Uuid, session: Uuid, group: Uuid, members: &[Uuid]) -> Vec<msgs::EjectGroupMemberRequest> {
+    let members: Vec<Uuid> = members.iter().copied().filter(|m| *m != agent && !m.is_nil()).collect();
+    members
+        .chunks(EJECTS_PER_MESSAGE)
+        .map(|chunk| {
+            let mut m = msgs::EjectGroupMemberRequest::default();
+            m.agent_data.agent_id = agent;
+            m.agent_data.session_id = session;
+            m.group_data.group_id = group;
+            m.eject_data = chunk
+                .iter()
+                .map(|id| msgs::eject_group_member_request::EjectData { ejectee_id: *id })
+                .collect();
+            m
+        })
+        .collect()
+}
+
+/// A member added to or removed from a role (LLRoleMemberChange: RMC_ADD 0,
+/// RMC_REMOVE 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RoleChange {
+    pub role: Uuid,
+    pub member: Uuid,
+    pub add: bool,
+}
+
+/// LLGroupMgr::sendGroupRoleMemberChanges.
+pub fn role_change_messages(agent: Uuid, session: Uuid, group: Uuid, changes: &[RoleChange]) -> Vec<msgs::GroupRoleChanges> {
+    changes
+        .chunks(ROLE_CHANGES_PER_MESSAGE)
+        .map(|chunk| {
+            let mut m = msgs::GroupRoleChanges::default();
+            m.agent_data.agent_id = agent;
+            m.agent_data.session_id = session;
+            m.agent_data.group_id = group;
+            m.role_change = chunk
+                .iter()
+                .map(|c| msgs::group_role_changes::RoleChange {
+                    role_id: c.role,
+                    member_id: c.member,
+                    change: if c.add { 0 } else { 1 },
+                })
+                .collect();
+            m
+        })
+        .collect()
+}
+
+/// The ban actions of the GroupAPIv1 capability (LLGroupMgr::EBanAction).
+pub mod ban {
+    pub const CREATE: i32 = 1;
+    pub const DELETE: i32 = 2;
+}
+
+/// The body of a ban POST (postGroupBanRequestCoro).
+pub fn ban_body(action: i32, ids: &[Uuid]) -> Llsd {
+    llsd_map! {
+        "ban_action" => action,
+        "ban_ids" => Llsd::Array(ids.iter().map(|id| Llsd::from(*id)).collect()),
+    }
+}
+
+/// processGroupBanRequest: the group and its banned residents with the date
+/// of each ban (Unix time, 0 when not given).
+pub fn ban_list(v: &Llsd) -> Option<(Uuid, Vec<(Uuid, f64)>)> {
+    let group = v["group_id"].as_uuid();
+    let list = v["ban_list"].as_map()?;
+    let bans = list
+        .iter()
+        .filter_map(|(id, entry)| Some((Uuid::parse_str(id).ok()?, entry["ban_date"].as_f64())))
+        .collect();
+    Some((group, bans))
+}
+
 /// Invitations per InviteGroupRequest (MAX_GROUP_INVITES, the server's cap).
 pub const MAX_GROUP_INVITES: usize = 100;
 
@@ -590,7 +673,7 @@ mod tests {
         let group = Uuid::from_u128(9);
         let mut b = vec![1u8, 6];
         b.extend_from_slice(group.as_bytes());
-        b.extend_from_slice(b"Texture kit ");
+        b.extend_from_slice(b"Texture kit\0");
         let n = notice_bucket(&b).expect("bucket");
         assert!(n.has_inventory);
         assert_eq!((n.asset_type, n.group, n.item_name.as_str()), (6, group, "Texture kit"));
@@ -606,6 +689,33 @@ mod tests {
         let v = aurora_llsd::from_xml(&bucket).expect("llsd");
         assert_eq!(v["item_id"].as_uuid(), Uuid::from_u128(1));
         assert_eq!(v["owner_id"].as_uuid(), Uuid::from_u128(2));
+    }
+
+    #[test]
+    fn ejects_role_changes_and_bans() {
+        let me = Uuid::from_u128(1000);
+        let ids: Vec<Uuid> = (1..=60u128).map(Uuid::from_u128).chain([me]).collect();
+        let v = eject_messages(me, Uuid::from_u128(1001), Uuid::from_u128(9), &ids);
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].eject_data.len() + v[1].eject_data.len(), 60, "not ourselves");
+        assert!(v.iter().all(|m| m.group_data.group_id == Uuid::from_u128(9)));
+
+        let changes = [
+            RoleChange { role: Uuid::from_u128(5), member: Uuid::from_u128(10), add: true },
+            RoleChange { role: Uuid::from_u128(6), member: Uuid::from_u128(10), add: false },
+        ];
+        let m = &role_change_messages(me, Uuid::nil(), Uuid::from_u128(9), &changes)[0];
+        assert_eq!(m.role_change.iter().map(|c| c.change).collect::<Vec<_>>(), [0, 1]);
+        assert_eq!(m.agent_data.group_id, Uuid::from_u128(9));
+
+        let body = ban_body(ban::CREATE, &[Uuid::from_u128(10)]);
+        assert_eq!(body["ban_action"].as_i32(), 1);
+        assert_eq!(body["ban_ids"].as_array()[0].as_uuid(), Uuid::from_u128(10));
+        let mut list = aurora_llsd::Map::new();
+        list.insert(Uuid::from_u128(10).to_string(), llsd_map! {});
+        let (g, bans) = ban_list(&llsd_map! { "group_id" => Uuid::from_u128(9), "ban_list" => list }).expect("list");
+        assert_eq!(g, Uuid::from_u128(9));
+        assert_eq!(bans, vec![(Uuid::from_u128(10), 0.0)]);
     }
 
     #[test]

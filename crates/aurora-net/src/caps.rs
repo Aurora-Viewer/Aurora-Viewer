@@ -172,6 +172,25 @@ pub async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd) -> Result
     request_llsd(http, url, body, false).await
 }
 
+/// GET of an LLSD XML document (getAndSuspend).
+pub async fn get_llsd(http: &reqwest::Client, url: &str) -> Result<Llsd, CapsError> {
+    let resp = http
+        .get(url)
+        .header("Accept", "application/llsd+xml")
+        .send()
+        .await
+        .map_err(|e| CapsError::Http(e.to_string()))?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(CapsError::Status(status.as_u16()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| CapsError::Http(e.to_string()))?;
+    if bytes.is_empty() {
+        return Ok(Llsd::Undef);
+    }
+    Ok(from_xml(&bytes)?)
+}
+
 /// POST, or PUT (RenderMaterials writes, LLMaterialMgr::processPutQueue), of LLSD XML.
 pub async fn request_llsd(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> Result<Llsd, CapsError> {
     let req = if put { http.put(url) } else { http.post(url) };

@@ -55,6 +55,17 @@ impl Session<'_> {
                 m.data.group_id = *group;
                 self.send_main(&m, true);
             }
+            NetCommand::EjectGroupMembers { group, members } => {
+                for m in groups::eject_messages(self.agent_id(), self.session_id(), *group, members) {
+                    self.send_main(&m, true);
+                }
+            }
+            NetCommand::GroupRoleChanges { group, changes } => {
+                for m in groups::role_change_messages(self.agent_id(), self.session_id(), *group, changes) {
+                    self.send_main(&m, true);
+                }
+            }
+            NetCommand::GroupBans { group, action, ids } => self.group_bans(*group, *action, ids.clone()),
             NetCommand::GroupNoticeRequest(notice) => {
                 // LLPanelGroupNotices::onSelectNotice
                 let mut m = GroupNoticeRequest::default();
@@ -112,6 +123,33 @@ impl Session<'_> {
         });
     }
 
+    /// LLGroupMgr::sendGroupBanRequest: the GroupAPIv1 capability, with the
+    /// group in the query; a POST answers the list when it changed it.
+    fn group_bans(&mut self, group: uuid::Uuid, action: Option<i32>, ids: Vec<uuid::Uuid>) {
+        let Some(cap) = self.main_cap("GroupAPIv1") else {
+            log::info!("group bans: no GroupAPIv1 capability");
+            return;
+        };
+        let url = format!("{cap}?group_id={group}");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let reply = match action {
+                Some(action) => crate::caps::post_llsd(&http, &url, &groups::ban_body(action, &ids)).await,
+                None => crate::caps::get_llsd(&http, &url).await,
+            };
+            match reply {
+                Ok(v) => {
+                    if let Some((g, bans)) = groups::ban_list(&v) {
+                        let group = if g.is_nil() { group } else { g };
+                        let _ = events.send(NetEvent::GroupBanList { group, bans });
+                    }
+                }
+                Err(e) => log::warn!("group bans: {e}"),
+            }
+        });
+    }
+
     /// Replies of this module; false when the packet is not one of them. As
     /// in LLGroupMgr, a reply addressed to another agent is dropped.
     pub(super) fn dispatch_groups(&mut self, pkt: &IncomingPacket) -> Result<bool, aurora_msg::DecodeError> {
@@ -163,6 +201,18 @@ impl Session<'_> {
                     NetEvent::GroupJoined {
                         group: m.group_data.group_id,
                         success: m.group_data.success,
+                    },
+                );
+            }
+        } else if id == EjectGroupMemberReply::ID {
+            // processEjectGroupMemberReply: a failure refreshes the group
+            let m: EjectGroupMemberReply = pkt.decode()?;
+            if m.agent_data.agent_id == me {
+                emit(
+                    self.sh,
+                    NetEvent::GroupEjected {
+                        group: m.group_data.group_id,
+                        success: m.eject_data.success,
                     },
                 );
             }

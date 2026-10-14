@@ -2153,6 +2153,9 @@ impl Session<'_> {
             | NetCommand::GroupTitleUpdate { .. }
             | NetCommand::GroupNoticesListRequest(_)
             | NetCommand::GroupNoticeRequest(_)
+            | NetCommand::EjectGroupMembers { .. }
+            | NetCommand::GroupRoleChanges { .. }
+            | NetCommand::GroupBans { .. }
             | NetCommand::JoinGroup(_)
             | NetCommand::InviteToGroup { .. } => {}
             // handled by on_search_command
