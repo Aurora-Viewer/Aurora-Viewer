@@ -402,6 +402,7 @@ impl HistoryUi {
             wanted: &mut no_pictures,
             own_name: &own_name,
             plain_history: true,
+            bubbles: None,
         };
         let wash = find::wash(p);
         let (lines, clock, view) = (&self.lines, self.clock, &mut self.view);

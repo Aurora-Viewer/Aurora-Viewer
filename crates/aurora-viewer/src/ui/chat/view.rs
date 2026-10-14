@@ -28,11 +28,24 @@ const GAP: f32 = 2.0;
 const MEASURE_BUDGET: Duration = Duration::from_micros(300);
 
 /// What precedes a line's text: the day when it changes, the sender's
-/// header when the sender or the moment does.
+/// header when the sender or the moment does. `tail`: the last line of its
+/// sender's group, which the bubbles end with the picture and the time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Look {
     pub marker: Option<(i64, i64, i64)>,
     pub header: bool,
+    pub tail: bool,
+}
+
+/// Mark the last line of each group: the one before a new header, a day
+/// marker, a system line, or the end.
+fn mark_tails(looks: &mut [Look], system: impl Fn(usize) -> bool) {
+    for i in 0..looks.len() {
+        looks[i].tail = match looks.get(i + 1) {
+            None => true,
+            Some(next) => next.header || next.marker.is_some() || system(i + 1),
+        };
+    }
 }
 
 /// One shown line.
@@ -234,12 +247,14 @@ impl View {
         self.hits.clear();
         self.unmeasured = 0;
         let mut grouping = Grouping::new(today);
+        let shown: Vec<usize> = (0..s.lines.len())
+            .filter(|&i| s.filter.is_empty() || matches(&s.lines[i], s.filter))
+            .collect();
+        let mut looks: Vec<Look> = shown.iter().map(|&i| grouping.look(&s.lines[i])).collect();
+        mark_tails(&mut looks, |k| s.lines[shown[k]].kind == crate::world::ChatKind::System);
         let mut y = 0.0;
-        for (i, line) in s.lines.iter().enumerate() {
-            if !s.filter.is_empty() && !matches(line, s.filter) {
-                continue;
-            }
-            let look = grouping.look(line);
+        for (&i, look) in shown.iter().zip(looks) {
+            let line = &s.lines[i];
             let seq = first + i as u64;
             let (h, measured) = match self.heights.get(&seq) {
                 Some(&(h, l)) if l == look => (h, true),
@@ -498,6 +513,28 @@ mod tests {
     }
 
     #[test]
+    fn a_group_ends_before_a_header_a_day_or_a_system_line() {
+        let day = 86_400;
+        let mut sys = line("", "notice", 70);
+        sys.kind = ChatKind::System;
+        let lines = [
+            line("Jane", "one", 0),
+            line("Jane", "two", 60),
+            sys,
+            line("Jane", "three", 80),
+            line("Bob", "hi", 90),
+            line("Bob", "next day", day),
+        ];
+        let mut g = Grouping::new(Slt::of(lines[5].time));
+        let mut looks: Vec<Look> = lines.iter().map(|l| g.look(l)).collect();
+        mark_tails(&mut looks, |k| lines[k].kind == ChatKind::System);
+        let tails: Vec<bool> = looks.iter().map(|l| l.tail).collect();
+        assert_eq!(tails, [false, true, true, true, true, true]);
+        // after the system line the same sender starts a new group
+        assert!(looks[3].header);
+    }
+
+    #[test]
     fn rows_follow_the_conversation_and_keep_their_heights() {
         let mut lines: VecDeque<ChatLine> = (0..100).map(|i| line("Jane", &format!("line {i}"), i)).collect();
         let mut clock = LineClock::default();
@@ -533,9 +570,10 @@ mod tests {
         clock.popped_front();
         assert!(sync(&mut view, &lines, clock, "", ""));
         assert_eq!(view.rows.len(), 100);
-        // the new first line gets a marker and a header it did not have
-        assert_eq!(view.unmeasured, 2);
-        assert!(view.rows[1..99].iter().all(|r| r.measured && r.h == 20.0));
+        // the new first line gets a marker and a header it did not have, the
+        // line before the new one is no longer the end of its group
+        assert_eq!(view.unmeasured, 3);
+        assert!(view.rows[1..98].iter().all(|r| r.measured && r.h == 20.0));
         // history put before the first line
         for i in 0..3 {
             let mut l = line("Jane", &format!("old {i}"), 0);
@@ -545,7 +583,8 @@ mod tests {
         clock.pushed_front(3);
         assert!(sync(&mut view, &lines, clock, "", ""));
         assert_eq!(view.rows.len(), 103);
-        assert!(view.rows[4..102].iter().all(|r| r.measured));
+        // (the last two still wait for their first measure)
+        assert!(view.rows[4..101].iter().all(|r| r.measured));
         // the find text marks its rows, the filter keeps only its lines
         assert!(sync(&mut view, &lines, clock, "", "line 4"));
         assert_eq!(view.hits().len(), 11);

@@ -2372,6 +2372,13 @@ impl World {
         self.conversation_push(to, line, false);
     }
 
+    /// Add a line said at its own time to a conversation, opening it (the
+    /// demo's conversations over several days).
+    pub fn conversation_line(&mut self, session: Uuid, line: ChatLine) {
+        self.social.session_mut(session);
+        self.conversation_push(session, line, false);
+    }
+
     /// Turn the drawn bodies of the standing avatars toward where they face
     /// or travel (LLVOAvatar::updateRootPositionAndRotation). Returns our
     /// own avatar's turn (+1 left, -1 right, 0) for the control flags.

@@ -8051,6 +8051,14 @@ impl ApplicationHandler for App {
                 self.chat_ui
                     .open(crate::demo::many_conversation(crate::demo::MANY_CONVERSATIONS - 1));
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
+            } else if let Some(view) = crate::demo::bubbles_scenario() {
+                // =bubbles[:busy|:group|:local|:classic]: the window as a
+                // messenger (its lines are added once the login is in)
+                self.panels.chat = true;
+                self.panels.perf = false;
+                self.chat_ui.selected = crate::demo::bubbles_conversation(view);
+                self.chat_ui.local_bubbles = view == crate::demo::Bubbles::Local;
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 300.0), egui::vec2(700.0, 460.0));
             } else if std::env::var_os("AURORA_DEMO_CONV").is_some() {
                 self.panels.chat = true;
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
@@ -8087,6 +8095,9 @@ impl ApplicationHandler for App {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
+            }
+            if let Some(view) = crate::demo::bubbles_scenario() {
+                crate::demo::bubbles_lines(&mut self.world, view);
             }
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces")) {
                 let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
