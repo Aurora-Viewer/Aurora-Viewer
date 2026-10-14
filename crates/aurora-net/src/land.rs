@@ -361,6 +361,10 @@ pub fn parse_parcel_properties(b: &Llsd) -> ParcelInfo {
         rent_price: pd["RentPrice"].as_i32(),
         aabb_min: vec3(&pd["AABBMin"]),
         aabb_max: vec3(&pd["AABBMax"]),
+        bitmap: match &pd["Bitmap"] {
+            Llsd::Binary(v) => v.clone(),
+            _ => Vec::new(),
+        },
         max_prims: pd["MaxPrims"].as_i32(),
         total_prims: pd["TotalPrims"].as_i32(),
         owner_prims: pd["OwnerPrims"].as_i32(),

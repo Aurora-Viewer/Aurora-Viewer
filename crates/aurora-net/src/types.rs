@@ -71,6 +71,10 @@ pub struct ParcelInfo {
     /// Bounding box in region coordinates (z unused).
     pub aabb_min: Vec3,
     pub aabb_max: Vec3,
+    /// The parcel's cells: one bit per 4 m cell of the region, x + y * cells
+    /// (Bitmap; LLViewerParcelMgr keeps the agent parcel's as
+    /// mAgentParcelOverlay for inAgentParcel).
+    pub bitmap: Vec<u8>,
     /// Parcel prim capacity (with bonus) and usage.
     pub max_prims: i32,
     pub total_prims: i32,
