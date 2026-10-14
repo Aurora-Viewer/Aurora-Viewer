@@ -1347,6 +1347,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WINDOWS=<mode>` | Collapse, move and restore of the inventory title bar |
 | `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: guide, snap, grouped move, resize |
+| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner dragged |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
@@ -1592,6 +1593,18 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   bottom edge of Conversations to 4 px from the bottom line of People: the
   edge snaps to it under the pointer, with its guide line. Take screenshots at
   `800,960,1060,1160` with `AURORA_FPS_LIMIT=60`.
+- **`AURORA_DEMO_RESIZE=corner|edge|drag[,<window>]`**: from frame 600,
+  the pointer rests 6 points inside the bottom-right corner of a real
+  window (`corner`), 1 point inside its right edge, halfway down
+  (`edge`), or presses that corner and holds it 40 × 30 further out until
+  frame 1000 (`drag`). The window is Conversations by default, or the id
+  of another open floater (`about_land_aurora` with `AURORA_DEMO_LAND=manage`)
+  or `minimap`. At rest the corner carries a short arc of the frame in
+  `muted_dim`; hovered or dragged, the arc grows and turns `violet_light`
+  and the outline of the edges that move lights up in `violet_light`
+  (the bottom and right ones for the corner, the right one alone for the
+  edge), with the system resize cursor. Capture with
+  `AURORA_FPS_LIMIT=60` at frame 780.
 - **`AURORA_DEMO_NOTIF=1`**: the "Aurora lantern" offer is from a
   resident: the object is already in the inventory (Objects folder) when
   the offer arrives. "Keep", or closing the offer in the list, leaves it
