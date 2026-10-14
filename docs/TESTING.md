@@ -1323,7 +1323,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
-| `AURORA_DEMO_PEOPLE=rows`, `crowd`, `sheet` or `legacy` | People › Near you with the mock-up's residents: rich rows, compact crowd, a person's sheet, Firestorm's table |
+| `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet` or `legacy` | People › Near you with the mock-up's residents: rich rows, compact crowd, a person's sheet, Firestorm's table |
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
@@ -1974,7 +1974,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   mock-up's 860 × 600 with Nova's sheet (the rights she has and the ones
   we grant her, what the radar knows); a click on a row of a narrower
   window widens it by the sheet, and its cross gives the width back.
-  `crowd`: forty residents in the compact density. `legacy`: the same
+  `crowd`: forty residents in the compact density. `hover` and
+  `crowd-hover`: `rows` and `crowd` with a friend under the pointer
+  carrying every badge: the quick actions take the place of the time and
+  the range, beside the badges, never over them. `legacy`: the same
   residents in Firestorm's table, for this run only (the preference is
   not changed). Capture `crowd` at frame 900 or later: the profiles
   (payment info, notes) arrive four a second.

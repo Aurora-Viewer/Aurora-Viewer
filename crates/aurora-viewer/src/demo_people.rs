@@ -3,7 +3,8 @@
 //! start position, at its ranges and in its states. `rows`: the rich rows
 //! grouped by range; `sheet`: the same with the sheet of a friend open (the
 //! window grows for it); `crowd`: forty residents in the compact density;
-//! `legacy`: the same residents in Firestorm's radar table.
+//! `legacy`: the same residents in Firestorm's radar table; `hover` and
+//! `crowd-hover`: a friend with every badge under the pointer.
 //!
 //! The residents behind us are drawn (typing, sitting, away and do not
 //! disturb come from their animations, as on the grid); the farther ones
@@ -23,7 +24,11 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Rows,
+    /// `rows`, the wolf under the pointer with every badge.
+    Hover,
     Crowd,
+    /// `crowd`, Aria under the pointer with every badge.
+    CrowdHover,
     Sheet,
     Legacy,
 }
@@ -31,11 +36,28 @@ pub enum Mode {
 pub fn mode() -> Option<Mode> {
     static MODE: std::sync::OnceLock<Option<Mode>> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("AURORA_DEMO_PEOPLE").ok()?.trim() {
+        "hover" => Some(Mode::Hover),
         "crowd" | "foule" => Some(Mode::Crowd),
+        "crowd-hover" => Some(Mode::CrowdHover),
         "sheet" | "fiche" => Some(Mode::Sheet),
         "legacy" => Some(Mode::Legacy),
         _ => Some(Mode::Rows),
     })
+}
+
+/// The crowd's density: `crowd` and `crowd-hover`.
+pub fn compact() -> bool {
+    matches!(mode(), Some(Mode::Crowd | Mode::CrowdHover))
+}
+
+/// Every badge a friend can carry: voice, typing, sitting, payment info,
+/// note (and the friend's heart).
+fn every_badge(state: &mut State) {
+    state.voice = Some(true);
+    state.typing = true;
+    state.sitting = true;
+    state.pays = true;
+    state.note = true;
 }
 
 /// `legacy`: Firestorm's table for this run, whatever the preference says.
@@ -248,10 +270,20 @@ fn crowd() -> Vec<Resident> {
 /// The residents of the scenario (asked every frame by the voice levels).
 fn residents() -> &'static [Resident] {
     static RESIDENTS: std::sync::OnceLock<Vec<Resident>> = std::sync::OnceLock::new();
-    RESIDENTS.get_or_init(|| match mode() {
-        Some(Mode::Crowd) => crowd(),
-        Some(_) => rich(),
-        None => Vec::new(),
+    RESIDENTS.get_or_init(|| {
+        let mut list = match mode() {
+            None => Vec::new(),
+            Some(_) if compact() => crowd(),
+            Some(_) => rich(),
+        };
+        // the row under the pointer carries every badge
+        if let Some(r) = hovered()
+            .filter(|_| matches!(mode(), Some(Mode::Hover | Mode::CrowdHover)))
+            .and_then(|h| list.iter_mut().find(|r| r.id == h))
+        {
+            every_badge(&mut r.state);
+        }
+        list
     })
 }
 
@@ -259,7 +291,7 @@ fn residents() -> &'static [Resident] {
 pub fn friends() -> Vec<(Uuid, i32, i32)> {
     match mode() {
         None => Vec::new(),
-        Some(Mode::Crowd) => [100, 110, 120].into_iter().map(|n| (id(n), 3, 1)).collect(),
+        Some(_) if compact() => [100, 110, 120].into_iter().map(|n| (id(n), 3, 1)).collect(),
         // Nova: online status and map granted, her map and objects received
         Some(_) => vec![(NOVA, 3, 7), (DEMO_LOUP, 7, 3)],
     }
@@ -273,7 +305,12 @@ pub fn sheet() -> Option<Uuid> {
 /// The row shown selected and under the pointer with `rows`, as in the
 /// mock-up: Tess.
 pub fn hovered() -> Option<Uuid> {
-    (mode() == Some(Mode::Rows)).then_some(id(2))
+    match mode()? {
+        Mode::Rows => Some(id(2)),
+        Mode::Hover => Some(DEMO_LOUP),
+        Mode::CrowdHover => Some(id(100)),
+        _ => None,
+    }
 }
 
 /// Names of the scenario's residents: (first, last, chosen display name).
@@ -435,7 +472,7 @@ pub fn state_events(time: f64, sent: &mut bool) -> Vec<NetEvent> {
         online: true,
     });
     // the crowd is the mock-up's forty: the wolf of the plaza leaves
-    if mode() == Some(Mode::Crowd) {
+    if compact() {
         events.push(NetEvent::ObjectsKilled {
             handle: HANDLE,
             local_ids: vec![WOLF_LOCAL_ID],

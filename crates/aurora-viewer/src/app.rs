@@ -9470,13 +9470,13 @@ impl ApplicationHandler for App {
             }
             // AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy: Near you with the
             // residents of the People mock-up, alone on screen
-            if let Some(mode) = crate::demo::people::mode() {
+            if crate::demo::people::mode().is_some() {
                 for ev in crate::demo::people::events() {
                     self.world.apply(ev);
                 }
                 // the density is the list's own toggle; the look is forced
                 // for the run only (`demo::people::legacy`), not saved
-                self.settings.radar.compact = mode == crate::demo::people::Mode::Crowd;
+                self.settings.radar.compact = crate::demo::people::compact();
                 if let Some(id) = crate::demo::people::sheet() {
                     self.people_ui.radar_selected = vec![id];
                     self.people_ui.open_sheet(id);
