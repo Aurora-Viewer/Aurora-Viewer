@@ -185,7 +185,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     let max_bubble = ((w - lead) * MAX_SHARE).max(80.0);
 
     if (names || object) && look.header && !own {
-        ui.add_space(4.0);
+        // at the top of the list, the name keeps off its edge by the same
+        // inset as the bubbles off the sides (as far as a day's text)
+        ui.add_space(if look.first { inset } else { 4.0 });
         // a top-aligned row as tall as the name, like the time's: `horizontal`
         // would make it as tall as a button (`interact_size.y`) and leave the
         // name floating a third of a line above its bubble. Under it, half
@@ -399,10 +401,16 @@ mod tests {
         assert_eq!(day_label(second, &today, &yesterday), DayLabel::Today);
     }
 
-    /// The empty pixels between the lowest ink of a sender's name (the
-    /// descender of its "p") and the top of the bubble under it, at scale 1
-    /// in `font`.
-    fn name_gap(font: &str, kind: ChatKind) -> f32 {
+    /// Where a line's bubble lands, at scale 1 in `font`: the top of the
+    /// list, the ink of each text (text, top, bottom) and the top of the
+    /// bubble.
+    struct Drawn {
+        list_top: f32,
+        texts: Vec<(String, f32, f32)>,
+        bubble_top: f32,
+    }
+
+    fn drawn(font: &str, kind: ChatKind, look: view::Look) -> Drawn {
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
         crate::ui::fonts::apply(&ctx, font);
@@ -420,17 +428,14 @@ mod tests {
             source: uuid::Uuid::from_u128(7),
             origin: Origin::Live,
         };
-        let look = view::Look {
-            marker: None,
-            header: true,
-            tail: true,
-        };
+        let mut list_top = 0.0;
         let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0))),
                 ..Default::default()
             },
             |ui| {
+                list_top = ui.cursor().top();
                 let mut env = LineEnv {
                     p: &p,
                     icons: &icons,
@@ -448,51 +453,112 @@ mod tests {
         );
         output.textures_delta.clear();
         let shapes: Vec<&egui::Shape> = output.shapes.iter().map(|c| &c.shape).collect();
-        // the name's ink, glyph by glyph as the tessellator places them
-        let ink_bottom = shapes
+        // the ink of each text, glyph by glyph as the tessellator places them
+        let texts = shapes
             .iter()
-            .find_map(|s| match s {
-                egui::Shape::Text(t) if t.galley.text() == line.from => Some(t),
+            .filter_map(|s| match s {
+                egui::Shape::Text(t) => Some(t),
                 _ => None,
             })
             .map(|t| {
-                t.galley
+                let (top, bottom) = t
+                    .galley
                     .rows
                     .iter()
                     .flat_map(|row| row.row.glyphs.iter().map(move |g| (row.pos.y, g)))
                     .filter(|(_, g)| !g.uv_rect.is_nothing())
-                    .map(|(row_y, g)| t.pos.y + row_y + (g.pos.y + g.uv_rect.offset.y).round() + g.uv_rect.size.y)
-                    .fold(f32::MIN, f32::max)
+                    .map(|(row_y, g)| {
+                        let top = t.pos.y + row_y + (g.pos.y + g.uv_rect.offset.y).round();
+                        (top, top + g.uv_rect.size.y)
+                    })
+                    .fold((f32::MAX, f32::MIN), |(a, b), (top, bottom)| (a.min(top), b.max(bottom)));
+                (t.galley.text().to_owned(), top, bottom)
             })
-            .expect("the sender's name is drawn");
+            .collect();
         let bubble_top = shapes
             .iter()
             .filter_map(|s| match s {
-                egui::Shape::Rect(r) if r.fill == p.raised && r.rect.top() > 0.0 => Some(r.rect.top()),
+                egui::Shape::Rect(r) if r.fill == p.raised && r.rect.top() > list_top => Some(r.rect.top()),
                 _ => None,
             })
             .fold(f32::MAX, f32::min);
         assert!(bubble_top < f32::MAX, "the bubble is drawn");
-        bubble_top - ink_bottom
+        Drawn {
+            list_top,
+            texts,
+            bubble_top,
+        }
     }
+
+    const NAMED: view::Look = view::Look {
+        marker: None,
+        header: true,
+        tail: true,
+        first: false,
+    };
 
     /// The sender's name sits just above its bubble, close enough to read as
     /// its title, without touching it (human request of 2026-10-15: it used
     /// to float 9 px above it), in the built-in fonts, for a resident as for
-    /// an object.
+    /// an object: 2 to 3 empty pixels under its lowest ink (the "p").
     #[test]
     fn the_sender_name_sits_just_above_its_bubble() {
         use crate::ui::fonts::{INTER, NOTO, ROBOTO};
         let object = ChatKind::Object(aurora_net::ChatType::Normal);
-        let gaps: Vec<(&str, ChatKind, f32)> = [NOTO, INTER, ROBOTO]
-            .into_iter()
-            .flat_map(|font| [ChatKind::Local(ChatType::Normal), object].map(|kind| (font, kind, name_gap(font, kind))))
-            .collect();
-        for (font, kind, gap) in gaps {
-            assert!(
-                (2.0..=3.0).contains(&gap),
-                "{font} {kind:?}: {gap} px between the name and its bubble"
-            );
+        for font in [NOTO, INTER, ROBOTO] {
+            for kind in [ChatKind::Local(ChatType::Normal), object] {
+                let d = drawn(font, kind, NAMED);
+                let (_, _, ink_bottom) = d.texts.iter().find(|t| t.0 == "Orion Exemple").expect("the sender's name is drawn");
+                let gap = d.bubble_top - ink_bottom;
+                assert!(
+                    (2.0..=3.0).contains(&gap),
+                    "{font} {kind:?}: {gap} px between the name and its bubble"
+                );
+            }
         }
+    }
+
+    /// A list that starts with a sender's name keeps it as far from its top
+    /// edge as a list that starts with a day keeps the day's text (human
+    /// request of 2026-10-15: the name stood 5 px from the edge).
+    #[test]
+    fn a_name_at_the_top_of_the_list_keeps_off_its_edge() {
+        let kind = ChatKind::Local(ChatType::Normal);
+        let named = drawn(crate::ui::fonts::NOTO, kind, view::Look { first: true, ..NAMED });
+        let name_top = named
+            .texts
+            .iter()
+            .find(|t| t.0 == "Orion Exemple")
+            .expect("the sender's name is drawn")
+            .1
+            - named.list_top;
+        let day = drawn(
+            crate::ui::fonts::NOTO,
+            kind,
+            view::Look {
+                marker: Some((2020, 1, 1)),
+                first: true,
+                ..NAMED
+            },
+        );
+        // the day comes first, the name under it
+        let day_top = day.texts.iter().map(|t| t.1).fold(f32::MAX, f32::min) - day.list_top;
+        assert!(
+            (name_top - day_top).abs() <= 1.0 && name_top >= 8.0,
+            "the name's ink starts {name_top} px under the top, a day's {day_top} px"
+        );
+        // further down the list, groups stay as close as before
+        let below = drawn(crate::ui::fonts::NOTO, kind, NAMED);
+        let below_top = below
+            .texts
+            .iter()
+            .find(|t| t.0 == "Orion Exemple")
+            .expect("the sender's name is drawn")
+            .1
+            - below.list_top;
+        assert!(
+            below_top < name_top,
+            "{below_top} px under the previous line, {name_top} px under the top"
+        );
     }
 }
