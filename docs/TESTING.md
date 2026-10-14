@@ -1892,6 +1892,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
+| `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 
@@ -1982,6 +1983,12 @@ What the inventory must show with these scenarios:
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.
+- **`AURORA_DEMO_VOLUME`**: `open` keeps the volume panel of the speaker
+  open as if the pointer were on it (the panel normally opens on hover and
+  closes 0.35 s after the pointer leaves it); `muted` also draws the speaker
+  struck through, as after a click on it. Display only: the volumes and the
+  mutes of the settings do not change. Look at the panel: only Music,
+  Multimedia and Voice have an enable box.
 
 ## Forced settings and diagnostics
 

@@ -3442,7 +3442,6 @@ hover-height-send-failed = Le simulateur n'a pas accepté la hauteur. Réessayez
 hover-height-retry = Réessayer
 ui-media-volume-for-this-media = Volume de ce média
 ui-options-volumes = Volumes
-ui-audio-volumes-click = Volumes (clic)
 ui-perf-your-complexity = Votre complexité
 ui-options-your-complexity-below-your-name = Votre complexité sous votre nom
 ui-display-name-your-display-name-must-contain-characters-other-than-punctuation = Votre nom d'affichage doit contenir des lettres autres que des signes de ponctuation.

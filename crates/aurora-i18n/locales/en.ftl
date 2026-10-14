@@ -3439,7 +3439,6 @@ hover-height-send-failed = The simulator did not accept the height. Retry to sha
 hover-height-retry = Retry
 ui-media-volume-for-this-media = Volume for this media
 ui-options-volumes = Volumes
-ui-audio-volumes-click = Volumes (click)
 ui-perf-your-complexity = Your complexity
 ui-options-your-complexity-below-your-name = Your complexity below your name
 ui-display-name-your-display-name-must-contain-characters-other-than-punctuation = Your display name must contain characters other than punctuation.
