@@ -517,15 +517,21 @@ fn roles(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &
                     ui.spacing_mut().item_spacing.y = 6.0;
                     // handleRoleSelect: the owners' and everyone's names are fixed
                     let name_ok = props && !is_owner_role && !role.id.is_nil();
-                    changed |= field(
-                        ui,
-                        p,
-                        aurora_i18n::tr!("ui-group-admin-role-name"),
-                        &mut edited.name,
-                        name_ok,
-                        20,
-                        false,
-                    );
+                    // the built-in roles show their translated names (read only)
+                    if name_ok {
+                        changed |= field(
+                            ui,
+                            p,
+                            aurora_i18n::tr!("ui-group-admin-role-name"),
+                            &mut edited.name,
+                            true,
+                            20,
+                            false,
+                        );
+                    } else {
+                        let mut shown = role_name(&edited.name);
+                        field(ui, p, aurora_i18n::tr!("ui-group-admin-role-name"), &mut shown, false, 20, false);
+                    }
                     changed |= field(
                         ui,
                         p,

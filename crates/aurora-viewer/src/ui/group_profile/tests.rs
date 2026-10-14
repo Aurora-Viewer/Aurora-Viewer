@@ -431,3 +431,72 @@ fn ejects_bans_and_role_ticks_follow_firestorm() {
     assert!(csv.starts_with("Group membership record for Aurora Builders"));
     assert_eq!(csv.trim_end().lines().count(), 1 + d.members.len());
 }
+
+#[test]
+fn role_changes_follow_set_role_data() {
+    use super::administration::{self, MAX_ROLES};
+    use aurora_net::groups::role_change;
+    let world = world(true, MEMBER);
+    let d = world.group_data.get(&DEMO_GROUP1).expect("data");
+    let owners = d.roles.values().find(|r| r.name == "Owners").map(|r| r.id).expect("owners");
+    let builders = d.roles.values().find(|r| r.name == "Builders").cloned().expect("builders");
+    let mut changes = std::collections::BTreeMap::new();
+    // a title: a data change; the abilities too: both; back: no change
+    let mut r = builders.clone();
+    r.title = "Maker".into();
+    administration::set_role(d, &mut changes, r.clone());
+    assert_eq!(changes[&builders.id].kind, role_change::DATA);
+    r.powers |= powers::MEMBER_INVITE;
+    administration::set_role(d, &mut changes, r);
+    assert_eq!(changes[&builders.id].kind, role_change::ALL);
+    administration::set_role(d, &mut changes, builders.clone());
+    assert!(changes.is_empty(), "back to the saved role");
+    // a new role and its copy, up to MAX_ROLES
+    let new = administration::create_role(d, &mut changes, owners, None).expect("room");
+    assert_eq!(changes[&new].kind, role_change::CREATE);
+    assert_eq!(changes[&new].name, "New Role");
+    let copy = administration::create_role(d, &mut changes, owners, Some(&builders)).expect("room");
+    assert_eq!(changes[&copy].name, "Builders(Copy)");
+    while administration::create_role(d, &mut changes, owners, None).is_some() {}
+    assert_eq!(administration::roles_now(d, &changes, owners).len(), MAX_ROLES);
+    // an edit of a new role stays a creation; deleting it forgets it
+    let mut n = administration::role_now(d, &changes, &new).expect("new");
+    n.title = "T".into();
+    administration::set_role(d, &mut changes, n);
+    assert_eq!(changes[&new].kind, role_change::CREATE);
+    assert!(administration::delete_role(d, &mut changes, owners, new));
+    assert!(!changes.contains_key(&new));
+    // everyone and the owners stay; another is deleted
+    assert!(!administration::delete_role(d, &mut changes, owners, Uuid::nil()));
+    assert!(!administration::delete_role(d, &mut changes, owners, owners));
+    assert!(administration::delete_role(d, &mut changes, owners, builders.id));
+    assert_eq!(changes[&builders.id].kind, role_change::DELETE);
+    // the ban ability brings eject and remove-from-roles
+    let p = administration::set_power(0, powers::GROUP_BAN_ACCESS.trailing_zeros(), true);
+    assert!(p & powers::MEMBER_EJECT != 0 && p & powers::ROLE_REMOVE_MEMBER != 0);
+}
+
+#[test]
+fn bans_by_name_skip_ourselves_the_banned_and_the_full_list() {
+    let mut world = world(true, MEMBER);
+    world.apply(NetEvent::GroupBanList {
+        group: DEMO_GROUP1,
+        bans: vec![(Uuid::from_u128(77), 0.0)],
+    });
+    let done = world
+        .group_data
+        .ban_residents(DEMO_GROUP1, vec![DEMO_AGENT, Uuid::from_u128(77), Uuid::from_u128(78)], DEMO_AGENT);
+    assert!(done.myself);
+    assert_eq!(done.already, vec![Uuid::from_u128(77)]);
+    assert_eq!(done.banned, vec![Uuid::from_u128(78)]);
+    let cmds = world.group_data.take_commands();
+    assert!(cmds.iter().any(|c| matches!(
+        c,
+        aurora_net::NetCommand::GroupBans {
+            action: Some(1),
+            refresh: true,
+            ..
+        }
+    )));
+    assert!(cmds.iter().any(|c| matches!(c, aurora_net::NetCommand::EjectGroupMembers { .. })));
+}

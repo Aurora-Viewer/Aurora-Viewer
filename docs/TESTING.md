@@ -1346,7 +1346,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -2059,7 +2059,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -2084,6 +2084,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   to confirm, `demo group: N role change(s)`); "What they can do" lists
   the abilities of the chosen by set; the download icon exports the list
   to a CSV file.
+  `owner:admin` (or `officer:admin`) opens the Administration tab: Roles
+  (New, Copy, Delete within 10 roles, name, title, description, members
+  visible, abilities by set, the dangerous abilities asking first; Save
+  logs `demo group: N role update(s)`), Group identity (insignia from the
+  texture picker, charter, show in search, moderate content, open
+  enrollment and fee; Save logs `demo group: identity saved`), Abilities
+  (who has the ability chosen), Banned residents (two at start; Unban,
+  Ban residents by name), Invitations.
   `:notices` opens the Notices tab with the two latest notices unread
   (the tab's count): the first one is read at once (GroupNoticeRequest,
   answered by an IM_GROUP_NOTICE_REQUESTED instant message), its
