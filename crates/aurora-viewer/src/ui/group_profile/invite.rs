@@ -253,13 +253,14 @@ impl InviteUi {
         if self.confirm_owner {
             self.owner_dialog(ctx, p, &mut send);
         }
-        if send && let Some(pairs) = self.submit(v) {
-            if !pairs.is_empty() {
-                actions.push(GroupAction::Invite {
-                    group: v.id,
-                    invites: pairs,
-                });
-            }
+        if send
+            && let Some(pairs) = self.submit(v)
+            && !pairs.is_empty()
+        {
+            actions.push(GroupAction::Invite {
+                group: v.id,
+                invites: pairs,
+            });
         }
     }
 
