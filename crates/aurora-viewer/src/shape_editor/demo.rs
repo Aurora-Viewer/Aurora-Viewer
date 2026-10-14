@@ -18,10 +18,16 @@ pub struct MeshAsset {
 
 /// Called on a worker: compression and decoding never run in a frame.
 pub fn asset(library: &AvatarLibrary, rigged: bool) -> Result<MeshAsset, String> {
+    build(library, rigged, false)
+}
+pub fn layered_asset(library: &AvatarLibrary) -> Result<MeshAsset, String> {
+    build(library, true, true)
+}
+fn build(library: &AvatarLibrary, rigged: bool, layered: bool) -> Result<MeshAsset, String> {
     let part = library.parts.iter().find(|p| p.name == "head").ok_or("missing head fixture")?;
     let joint = *library.rig.names.get("mHead").ok_or("missing head joint")?;
     let inverse = library.rig.default_world_inv[joint];
-    let model = codec::Model {
+    let mut model = codec::Model {
         name: "shape-head-fixture".into(),
         submodel: 0,
         faces: vec![codec::Face {
@@ -55,6 +61,16 @@ pub fn asset(library: &AvatarLibrary, rigged: bool) -> Result<MeshAsset, String>
         center: Vec3::ZERO,
         size: Vec3::ONE,
     };
+    if layered {
+        // Many mesh heads place cosmetic/cut layers just above the skin.
+        // A transparent built-in texture must not become an opaque shell.
+        let mut shell = model.faces[0].clone();
+        shell.material = 1;
+        for vertex in &mut shell.vertices {
+            vertex.position = (Vec3::from_array(vertex.position) + Vec3::from_array(vertex.normal) * 0.003).to_array();
+        }
+        model.faces.push(shell);
+    }
     let data = encode::asset(
         &[None, None, None, Some(model)],
         None,
@@ -78,6 +94,15 @@ pub fn asset(library: &AvatarLibrary, rigged: bool) -> Result<MeshAsset, String>
         header,
         skin,
     })
+}
+
+pub fn layered_object(world: &World) -> Option<aurora_net::objects::ObjectUpdate> {
+    let mut object = object(world)?;
+    let te = Arc::make_mut(object.texture_entry.as_mut()?);
+    te.faces[0].color = [1.0; 4];
+    te.faces[1].texture = aurora_prim::te::TRANSPARENT_TEXTURE;
+    te.faces[1].color = [1.0; 4];
+    Some(object)
 }
 
 pub fn object(world: &World) -> Option<aurora_net::objects::ObjectUpdate> {

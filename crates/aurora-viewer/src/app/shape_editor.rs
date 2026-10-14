@@ -34,7 +34,12 @@ impl App {
                 self.scene
                     .meshes
                     .insert_local(crate::shape_editor::demo::ASSET, asset.data, asset.header, asset.skin);
-                if let Some(mut object) = crate::shape_editor::demo::object(&self.world) {
+                let object = if std::env::var("AURORA_DEMO_SHAPE").as_deref() == Ok("layered-head") {
+                    crate::shape_editor::demo::layered_object(&self.world)
+                } else {
+                    crate::shape_editor::demo::object(&self.world)
+                };
+                if let Some(mut object) = object {
                     if std::env::var("AURORA_DEMO_SHAPE").as_deref() == Ok("pbr-head") {
                         let id = uuid::Uuid::from_u128(0xA0E0_5A9E_0000_0000_0000_0000_0000_0003);
                         self.scene.materials.resolve(&id);
@@ -186,7 +191,7 @@ impl App {
         self.panels.minimap = false;
         self.open_shape_editor(item);
         self.shape_ui.group = match mode.as_str() {
-            "head" | "mesh-head" | "static-head" | "mesh-drag" | "pbr-head" => 1,
+            "head" | "mesh-head" | "static-head" | "mesh-drag" | "pbr-head" | "layered-head" => 1,
             "eyes" => 2,
             "ears" => 3,
             "nose" => 4,
@@ -213,12 +218,20 @@ impl App {
         if mode == "mesh-drag" {
             self.shape_ui.demo_drag = Some(std::time::Instant::now());
         }
-        if matches!(mode.as_str(), "mesh-head" | "static-head" | "mesh-drag" | "pbr-head") {
+        if matches!(
+            mode.as_str(),
+            "mesh-head" | "static-head" | "mesh-drag" | "pbr-head" | "layered-head"
+        ) {
             let (tx, rx) = std::sync::mpsc::channel();
             self.shape_ui.demo_mesh = Some(rx);
             let library = self.world.avatar_lib.clone();
             self.scene.jobs.run(move || {
-                let _ = tx.send(crate::shape_editor::demo::asset(&library, mode != "static-head"));
+                let result = if mode == "layered-head" {
+                    crate::shape_editor::demo::layered_asset(&library)
+                } else {
+                    crate::shape_editor::demo::asset(&library, mode != "static-head")
+                };
+                let _ = tx.send(result);
             });
         }
     }

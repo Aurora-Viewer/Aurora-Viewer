@@ -1677,7 +1677,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_RESTRICTED=1`**: red parcel icons, damage
   enabled, health at 72%.
 
-**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|mesh-head|static-head|pbr-head|mesh-drag`**
+**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|mesh-head|static-head|pbr-head|mesh-drag|layered-head`**
 opens the editor with a synthetic worn shape, without reading a real inventory or
 connecting to a grid. Category modes select the corresponding controls; `male`
 selects the male shape, `readonly` removes Modify, `nocopy` removes Copy, `dirty`
@@ -1691,6 +1691,11 @@ Shape opens this editor. Asset arrivals and AO cycles must keep ready hint image
 visible, with no repeated "Preparing preview" placeholders.
 `pbr-head` uses a PBR skin material over a conflicting blue texture-entry tint;
 the head must retain its textured skin color in the world and in the hints.
+`layered-head` adds a cosmetic shell above a rigged, BOM-textured mesh head.
+The shell uses the built-in transparent texture, which has no cached asset.
+The hints must retain the skin color, as the world does; a white face means
+the reserved transparent pixels were lost. Blended layers must not write depth
+over the skin, regardless of their order in the mesh.
 `mesh-drag` sweeps Head Size for six seconds, starting two seconds after opening:
 the live head changes smoothly, existing comparison images remain visible and
 the log has no hint dispatch during the sweep (one refresh after release).

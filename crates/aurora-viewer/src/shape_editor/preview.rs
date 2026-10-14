@@ -529,6 +529,76 @@ mod tests {
     }
 
     #[test]
+    fn reserved_transparent_shell_keeps_the_mesh_head_skin_visible() {
+        let library = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(library.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let object = super::super::demo::layered_object(&world).expect("layered head");
+        world.objects.upsert(world.main_region.expect("region"), object);
+        let mut scene = scene(library.clone());
+        let asset = super::super::demo::layered_asset(&library).expect("layered mesh");
+        scene
+            .meshes
+            .insert_local(super::super::demo::ASSET, asset.data, asset.header, asset.skin);
+        let mut input = Input::capture(&world, &scene);
+        for source in input.textures.values_mut() {
+            source.procedural = true;
+        }
+        let skin_id = Uuid::from_u128(143);
+        input.body.insert(8, skin_id);
+        input.meshes[0].appearance[0].textures[0] = skin_id;
+        let mut source = scene.textures.preview_source(&skin_id);
+        source.bytes =
+            Arc::new(aurora_assets::j2k::encode_texture_j2k(64, 64, 4, &[190, 120, 80, 255].repeat(64 * 64), true).expect("skin jpeg"));
+        input.textures.insert(skin_id, source);
+        let snapshot = input.prepare(None);
+        let model = snapshot.model(&library, &[], &BTreeMap::new(), 1, 0.0);
+        let skin = &model.parts[model.parts.len() - 2];
+        let shell = model.parts.last().expect("shell");
+        let texture = skin.textures[0].as_ref().expect("mesh skin pixels");
+        assert!(
+            texture
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[0] != pixel[1] && pixel[3] > 0)
+        );
+        assert_eq!(
+            shell.textures[0].as_ref().expect("reserved transparent pixels").rgba.as_ref(),
+            &[0; 4]
+        );
+        assert_eq!(shell.material.alpha_mode, 2, "transparent texels must be discarded");
+    }
+
+    #[test]
+    fn builtins_and_ready_progressive_resolution_need_no_additional_download() {
+        let scene = scene(Arc::new(AvatarLibrary::load()));
+        let transparent = scene
+            .textures
+            .preview_source(&aurora_prim::te::TRANSPARENT_TEXTURE)
+            .image(aurora_prim::te::TRANSPARENT_TEXTURE)
+            .expect("reserved pixels");
+        assert_eq!(transparent.size, [1, 1]);
+        assert_eq!(transparent.rgba.as_ref(), &[0; 4]);
+        let blank = scene
+            .textures
+            .preview_source(&aurora_prim::te::BLANK_TEXTURE)
+            .image(aurora_prim::te::BLANK_TEXTURE)
+            .expect("reserved pixels");
+        assert_eq!(blank.rgba.as_ref(), &[255; 4]);
+        let id = Uuid::from_u128(142);
+        let mut source = scene.textures.preview_source(&id);
+        source.bytes =
+            Arc::new(aurora_assets::j2k::encode_texture_j2k(64, 64, 4, &[200, 100, 50, 255].repeat(64 * 64), true).expect("jpeg"));
+        source.decoded = Some(3);
+        let pixels = source.image(id).expect("same resolution as world");
+        assert_eq!(pixels.size, [8, 8]);
+    }
+
+    #[test]
     fn texture_hints_read_progressive_jpeg_and_cache_only_bc7_pixels() {
         let scene = scene(Arc::new(AvatarLibrary::load()));
         let id = Uuid::from_u128(111);

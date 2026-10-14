@@ -148,6 +148,10 @@ Decoded geometry is shared across texture updates; temporarily missing source
 bytes retain the same asset's ready geometry/pixels.
 Texture sources include progressive JPEG2000, cache-only BC7 and procedural
 demo pixels, with small decodes on workers and no frame-thread disk access.
+Reserved blank/transparent textures carry the world's exact one-pixel values
+without requiring a cached asset. Progressive JPEG2000 hints respect the level
+already decoded by the streamer. The preview pass draws opaque/masked parts
+before blended layers, whose pipeline does not write depth over the skin.
 `shape_editor/material.rs` resolves texture entries, legacy normal/alpha settings,
 PBR materials and face overrides, with BOM redirection and per-map UV transforms.
 Dragging updates the live avatar immediately; hints coalesce after release and

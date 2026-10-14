@@ -875,6 +875,15 @@ impl PreviewSource {
                 rgba: rgba.into(),
             })
         };
+        // Reserved world textures have GPU texels but no fetched asset or
+        // cache file. A missing transparent map would expose a white shell
+        // over the skin of a layered mesh head.
+        if id == aurora_prim::te::TRANSPARENT_TEXTURE {
+            return Some(image(1, 1, vec![0; 4]));
+        }
+        if id == aurora_prim::te::BLANK_TEXTURE {
+            return Some(image(1, 1, vec![255; 4]));
+        }
         if self.procedural
             && let Some((pixels, w, h)) = crate::demo::local_texture(&id)
         {
@@ -897,7 +906,10 @@ impl PreviewSource {
             self.bytes
         };
         let info = aurora_assets::j2k_info(&bytes)?;
-        let pixels = aurora_assets::decode_j2k(&bytes, texture_cache::preview_discard(info.width, info.height)).ok()?;
+        // A progressive stream may only hold the coarser level already
+        // visible in the world. Never ask these bytes for a finer decode.
+        let discard = texture_cache::preview_discard(info.width, info.height).max(self.decoded.unwrap_or(0));
+        let pixels = aurora_assets::decode_j2k(&bytes, discard).ok()?;
         Some(image(
             pixels.width,
             pixels.height,
