@@ -312,6 +312,9 @@ pub(super) fn window_icon(id: &str) -> &'static str {
     if id == super::super::marketplace_listings::WINDOW || id == "marketplace_validation" {
         return "tag-filled";
     }
+    if id == super::super::region::WINDOW {
+        return "building-castle";
+    }
     if id.contains("place") || id.contains("land") {
         return "map-pin-filled";
     }

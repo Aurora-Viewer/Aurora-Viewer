@@ -200,6 +200,43 @@ pub fn cover_uv(w: usize, h: usize, size: Vec2) -> Rect {
     Rect::from_min_max(egui::pos2(0.5, 0.5) - half, egui::pos2(0.5, 0.5) + half)
 }
 
+/// The bottom `height` of `rect` fading into a card's face (an excerpt
+/// cut before its "Read all").
+pub fn fade(ui: &egui::Ui, p: &Palette, rect: Rect, height: f32) {
+    let top = rect.bottom() - height;
+    let clear = p.field.gamma_multiply(0.0);
+    let v = |x: f32, y: f32, color: Color32| egui::epaint::Vertex {
+        pos: egui::pos2(x, y),
+        uv: egui::epaint::WHITE_UV,
+        color,
+    };
+    let mut m = egui::epaint::Mesh::default();
+    m.vertices.extend([
+        v(rect.left(), top, clear),
+        v(rect.right(), top, clear),
+        v(rect.right(), rect.bottom(), p.field),
+        v(rect.left(), rect.bottom(), p.field),
+    ]);
+    m.add_triangle(0, 1, 2);
+    m.add_triangle(0, 2, 3);
+    ui.painter().add(Shape::mesh(m));
+}
+
+/// A long text of a card (a covenant) cut at `max_h` with a fade unless
+/// `open`. True when it is longer than that (its "Read all" link).
+pub fn excerpt(ui: &mut egui::Ui, p: &Palette, text: &str, open: bool, max_h: f32) -> bool {
+    let width = ui.available_width();
+    let galley = ui.painter().layout(text.to_owned(), FontId::proportional(12.5), p.muted, width);
+    let long = galley.size().y > max_h + 1.0;
+    let shown = if long && !open { max_h } else { galley.size().y };
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, shown), Sense::hover());
+    ui.painter_at(rect).galley(rect.min, galley, p.muted);
+    if long && !open {
+        fade(ui, p, rect, 30.0);
+    }
+    long
+}
+
 /// A header on the field's face, 12 px inside: `body` lays out its parts
 /// left to right, 14 px apart (the picture, then a column of texts).
 pub fn hero(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::Ui)) {
@@ -245,15 +282,24 @@ pub struct PageTab<'a, P> {
     pub disabled: Option<&'a str>,
 }
 
+/// "View as": the name of the agent's own rights, of someone without
+/// rights, what the choice does (its tooltip), and whether the lit choice
+/// takes the accent.
+pub struct ViewAs<'a> {
+    pub mine: &'a str,
+    pub other: &'a str,
+    pub tip: &'a str,
+    pub accent: bool,
+}
+
 /// The page tabs: a lit face for the open one; at the right end, for who
-/// may change something, "View as" themselves (`role`: the name of their
-/// own rights) or `visitor` (the name of who has none).
+/// may change something, "View as" themselves or someone without rights.
 pub fn page_tabs<P: Copy + PartialEq>(
     ui: &mut egui::Ui,
     p: &Palette,
     tabs: &[PageTab<'_, P>],
     page: &mut P,
-    role: Option<(&str, &str)>,
+    role: Option<ViewAs<'_>>,
     as_visitor: &mut bool,
 ) {
     ui.horizontal(|ui| {
@@ -292,11 +338,11 @@ pub fn page_tabs<P: Copy + PartialEq>(
                 *page = it.page;
             }
         }
-        if let Some((role, visitor)) = role {
+        if let Some(r) = role {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 let mut choice = usize::from(*as_visitor);
-                let options = [(role, false), (visitor, false)];
+                let options = [(r.mine, r.accent), (r.other, r.accent)];
                 if widgets::segmented(ui, p, &mut choice, &options) {
                     *as_visitor = choice == 1;
                 }
@@ -305,7 +351,7 @@ pub fn page_tabs<P: Copy + PartialEq>(
                         .size(12.0)
                         .color(p.muted),
                 )
-                .on_hover_text(aurora_i18n::tr!("ui-land-overview-view-as-tip"));
+                .on_hover_text(r.tip);
             });
         }
     });

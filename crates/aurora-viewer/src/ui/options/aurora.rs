@@ -41,6 +41,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
         PhotoWindowStyle::Legacy
     };
     s.classic_about_land = !aurora;
+    s.classic_region_estate = !aurora;
     s.classic_pay_window = !aurora;
     s.classic_controls = !aurora;
 }
@@ -426,6 +427,23 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             &mut s.classic_about_land,
         );
         between(ui, p);
+        // Firestorm's eight tabs are not ported yet: the choice is kept and
+        // says what opens meanwhile
+        let help = if s.classic_region_estate {
+            aurora_i18n::tr!("ui-options-aurora-region-estate-soon")
+        } else {
+            aurora_i18n::tr!("ui-options-aurora-region-estate-help")
+        };
+        c |= look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("region-title"),
+            help,
+            aurora_i18n::tr!("ui-options-aurora-about-land-aurora"),
+            aurora_i18n::tr!("ui-options-aurora-about-land-classic"),
+            &mut s.classic_region_estate,
+        );
+        between(ui, p);
         c |= look_choice(
             ui,
             p,
@@ -529,6 +547,7 @@ mod tests {
         assert!(s.classic_profiles);
         assert_eq!(s.photo_window, PhotoWindowStyle::Legacy);
         assert!(s.classic_about_land, "About Land opens Firestorm's nine tabs");
+        assert!(s.classic_region_estate);
         assert!(s.classic_pay_window);
         assert!(s.classic_controls, "Firestorm's two control windows");
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
@@ -550,6 +569,7 @@ mod tests {
         assert_eq!(fresh.photo_window, PhotoWindowStyle::Aurora);
         assert_eq!(s.classic_about_land, fresh.classic_about_land);
         assert!(!fresh.classic_about_land, "the Aurora About Land is the default");
+        assert!(!s.classic_region_estate && !fresh.classic_region_estate);
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
         assert!(!s.classic_controls && !fresh.classic_controls);
         assert!(s.plates_friends_only_full);

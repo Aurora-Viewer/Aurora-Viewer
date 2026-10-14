@@ -1416,6 +1416,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
+| `AURORA_DEMO_REGION=overview[:role][:preview][:compact]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
@@ -2160,6 +2161,24 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
+- **`AURORA_DEMO_REGION=overview[:owner|:manager|:resident][:preview][:compact]`**:
+  the Region / Estate window opens on the demo region, whose simulator
+  answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
+  at most, estate 104 123, no terraforming, pushing limited, voice, resale
+  but no join / subdivide), SimStats (12 avatars, 10,500 objects of
+  15,000, dilation 0.99, 45 frames, 4.2 ms of scripts for 312 scripts,
+  9.8 ms spare of 22), the server version, the covenant, the region's day
+  cycle ("Nordic Dawn", 4 h), its experiences (1 trusted, 2 allowed) and
+  its restart schedule (Sunday at 06:00 UTC). `owner` (the default) makes
+  the avatar the estate owner; `manager` gives the estate to another
+  resident and makes the avatar its manager (RegionHandshake
+  IsEstateManager); both get `estateupdateinfo` and the estate's lists
+  (the header names the managers, shows the estate's access and voice and
+  the greyed interventions, "View as" offers the role / Resident).
+  `resident` gets neither: no People tab, no "View as", no managers nor
+  interventions. `preview` opens on "View as" Resident; `compact` opens
+  the window 480 px wide (no map, one column, the action buttons as
+  icons). Manage and People are greyed until the next steps.
 - **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members

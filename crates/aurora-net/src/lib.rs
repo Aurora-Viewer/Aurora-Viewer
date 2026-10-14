@@ -7,6 +7,7 @@ pub mod build;
 pub mod caps;
 pub mod circuit;
 pub mod currency;
+pub mod estate;
 pub mod experience;
 pub mod fetch;
 pub mod group_money;

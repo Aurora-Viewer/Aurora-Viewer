@@ -61,6 +61,7 @@ pub mod place_details;
 pub mod places;
 pub mod presence;
 pub mod profile;
+pub mod region;
 pub mod report_abuse;
 pub mod scripts;
 pub mod search;
@@ -108,6 +109,8 @@ pub struct Panels {
     pub contacts: bool,
     /// "About Land" (navigation bar info icon).
     pub about_land: bool,
+    /// "Region / Estate" (World menu, Alt+R).
+    pub region_estate: bool,
     /// "Places" (favorites, landmarks, teleport history, place profiles).
     pub places: bool,
     /// "Search" (Firestorm's legacy search floater, Ctrl+F).
@@ -146,6 +149,7 @@ impl Panels {
             people_tab: settings.people_tab.min(1),
             contacts: false,
             about_land: false,
+            region_estate: false,
             places: false,
             search: false,
             camera_controls: false,

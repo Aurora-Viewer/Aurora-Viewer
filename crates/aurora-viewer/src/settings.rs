@@ -359,6 +359,9 @@ pub struct Settings {
     /// About Land as Firestorm's nine tabs (`ui/land`) instead of the
     /// overview and the settings grouped by intent (`ui/land/aurora`).
     pub classic_about_land: bool,
+    /// Region / Estate as Firestorm's eight tabs (not ported yet: the
+    /// Aurora window opens meanwhile) instead of Aurora's (`ui/region`).
+    pub classic_region_estate: bool,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// What a double click on the ground does (Preferences › Controls, the
@@ -804,6 +807,7 @@ impl Default for Settings {
             photo_window: PhotoWindowStyle::Aurora,
             photo_held: None,
             classic_about_land: false,
+            classic_region_estate: false,
             invert_mouse: false,
             arrows_strafe: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
