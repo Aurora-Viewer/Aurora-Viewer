@@ -231,6 +231,8 @@ pub struct Settings {
     pub profile_size: profile::ProfileSize,
     /// The place in the profile post (SnapshotToProfileIncludeLocation).
     pub profile_location: bool,
+    /// The window's depth of field (the Preferences' own is left alone).
+    pub dof: crate::dof::PhotoDof,
 }
 
 impl Default for Settings {
@@ -254,6 +256,7 @@ impl Default for Settings {
             inventory_size: inventory::TextureSize::S512,
             profile_size: profile::ProfileSize::S640,
             profile_location: true,
+            dof: Default::default(),
         }
     }
 }
@@ -267,6 +270,7 @@ impl Settings {
             self.base_name = "Snapshot".into();
         }
         // FSRememberSnapshotPathSessions off: the folder lasts one session
+        self.dof.sanitize();
         if !self.remember_folder {
             self.folder = None;
         }

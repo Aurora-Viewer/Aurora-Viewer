@@ -83,6 +83,77 @@ impl Settings {
     }
 }
 
+/// Where the photo window's lens focuses (the mockup's Click / Pointer /
+/// Manual).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PhotoFocus {
+    /// The point last clicked in the world.
+    Click,
+    /// The point under the pointer.
+    Pointer,
+    /// A distance set by hand.
+    Manual,
+}
+
+/// The photo window's depth of field: its own aperture and focus, applied
+/// to the view only while the window is open and the switch is on, so the
+/// preview, the photos and the view agree. The Preferences' setting is
+/// never changed: the window closed, the view follows it again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PhotoDof {
+    pub enabled: bool,
+    /// f-number (f/2.8, a photographer's portrait aperture).
+    pub f_number: f32,
+    pub focus: PhotoFocus,
+    /// Manual focus distance (m).
+    pub distance: f32,
+}
+
+impl Default for PhotoDof {
+    fn default() -> Self {
+        PhotoDof {
+            enabled: false,
+            f_number: 2.8,
+            focus: PhotoFocus::Click,
+            distance: 5.0,
+        }
+    }
+}
+
+impl PhotoDof {
+    pub fn sanitize(&mut self) {
+        let d = PhotoDof::default();
+        self.f_number = if self.f_number.is_finite() {
+            self.f_number.clamp(1.0, 22.0)
+        } else {
+            d.f_number
+        };
+        self.distance = if self.distance.is_finite() {
+            self.distance.clamp(0.3, 200.0)
+        } else {
+            d.distance
+        };
+    }
+
+    /// The Preferences' lens with the photo's aperture and focus: on, also
+    /// while editing (the window says so), and a manual distance when asked.
+    pub fn applied(&self, global: &Settings) -> (Settings, Option<f32>) {
+        let s = Settings {
+            enabled: true,
+            in_edit: true,
+            f_number: self.f_number,
+            focus: match self.focus {
+                PhotoFocus::Click => FocusMode::Click,
+                PhotoFocus::Pointer => FocusMode::Pointer,
+                PhotoFocus::Manual => FocusMode::Locked,
+            },
+            ..global.clone()
+        };
+        (s, (self.focus == PhotoFocus::Manual).then_some(self.distance))
+    }
+}
+
 /// The lens's focal length (mm) at the vertical field of view `fov_y`
 /// (radians): renderDoF keeps the image's height of the reference lens
 /// (dv = 2 f tan(fov0 / 2)), so a wider view is a shorter lens.
@@ -255,6 +326,47 @@ mod tests {
         let eye = glam::Vec3::ZERO;
         let at = glam::Vec3::new(2.0, 0.0, 0.0);
         assert!((distance_along(eye, at, glam::Vec3::new(5.0, 3.0, 1.0)) - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_photo_lens_overrides_the_view_without_changing_the_preferences() {
+        let global = Settings::default();
+        let photo = PhotoDof {
+            enabled: true,
+            f_number: 1.4,
+            focus: PhotoFocus::Manual,
+            distance: 3.0,
+        };
+        let (s, distance) = photo.applied(&global);
+        assert!(s.enabled && s.in_edit);
+        assert_eq!((s.f_number, distance), (1.4, Some(3.0)));
+        // the rest of the lens is the Preferences'
+        assert_eq!(
+            (s.focal_length, s.max_coc, s.quality),
+            (global.focal_length, global.max_coc, global.quality)
+        );
+        assert!(!global.enabled);
+        let click = PhotoDof {
+            focus: PhotoFocus::Click,
+            ..photo.clone()
+        };
+        assert_eq!(
+            click.applied(&global),
+            (
+                Settings {
+                    focus: FocusMode::Click,
+                    ..s.clone()
+                },
+                None
+            )
+        );
+        let mut wild = PhotoDof {
+            f_number: 99.0,
+            distance: f32::NAN,
+            ..photo
+        };
+        wild.sanitize();
+        assert_eq!((wild.f_number, wild.distance), (22.0, 5.0));
     }
 
     #[test]

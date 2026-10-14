@@ -268,6 +268,7 @@ impl SnapshotUi {
                 || s.custom != before.custom
                 || s.inventory_size != before.inventory_size
                 || s.profile_size != before.profile_size
+                || s.dof != before.dof
                 || s.interface != before.interface
                 || s.huds != before.huds;
             out.push(if photo_changed { Action::Changed } else { Action::Saved });
@@ -417,6 +418,9 @@ impl SnapshotUi {
         if focal(ui, p, fov, default_fov) {
             out.push(Action::Saved);
         }
+
+        section(ui, p, "focus-centered", aurora_i18n::tr!("photo-section-dof"));
+        dof_rows(ui, p, &mut s.dof);
 
         ui.add_space(2.0);
         widgets::collapsing(ui, p, "photo_file", aurora_i18n::tr!("photo-section-file"), false, |ui| {
@@ -584,6 +588,8 @@ impl SnapshotUi {
                             out.push(Action::Saved);
                         }
                         ui.add_space(4.0);
+                        strip_aperture(ui, p, &mut s.dof);
+                        ui.add_space(4.0);
                         if widgets::icon_button(ui, p, "minimize", aurora_i18n::tr!("photo-exit-full-frame"), true) {
                             self.full_frame = false;
                         }
@@ -594,7 +600,7 @@ impl SnapshotUi {
             self.full_frame = false;
         }
         if *s != before {
-            out.push(if s.aspect != before.aspect {
+            out.push(if s.aspect != before.aspect || s.dof != before.dof {
                 Action::Changed
             } else {
                 Action::Saved
@@ -648,6 +654,80 @@ fn resolutions(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, view: &View) {
             aurora_i18n::tr!("photo-tiles", count = view.tiles).to_string()
         };
         ui.label(RichText::new(passes).size(11.5).color(p.muted));
+    });
+}
+
+/// The window's depth of field (the mockup's card): on, aperture, focus by
+/// click, pointer or a distance set by hand. It drives the view's effect
+/// while the window is open; Preferences › Graphics keeps its own.
+fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
+    use crate::dof::PhotoFocus;
+    row(
+        ui,
+        p,
+        aurora_i18n::tr!("photo-dof-enable"),
+        Some(aurora_i18n::tr!("photo-dof-enable-hint")),
+        |ui| {
+            widgets::switch(ui, p, &mut d.enabled);
+        },
+    );
+    ui.add_enabled_ui(d.enabled, |ui| {
+        row(ui, p, aurora_i18n::tr!("photo-dof-aperture"), None, |ui| {
+            // the slider, then its value, like the focal length's
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.spacing_mut().slider_width = (ui.available_width() - 72.0).max(60.0);
+                ui.add(
+                    egui::Slider::new(&mut d.f_number, 1.0..=22.0)
+                        .logarithmic(true)
+                        .prefix("f/")
+                        .fixed_decimals(1)
+                        .custom_parser(aurora_i18n::parse_number),
+                );
+            });
+        });
+        row(ui, p, aurora_i18n::tr!("photo-dof-focus"), None, |ui| {
+            let modes = [PhotoFocus::Click, PhotoFocus::Pointer, PhotoFocus::Manual];
+            let mut i = modes.iter().position(|m| *m == d.focus).unwrap_or(0);
+            let options = [
+                (aurora_i18n::tr!("photo-dof-focus-click"), true),
+                (aurora_i18n::tr!("photo-dof-focus-pointer"), true),
+                (aurora_i18n::tr!("photo-dof-focus-manual"), true),
+            ];
+            if widgets::segmented(ui, p, &mut i, &options) {
+                d.focus = modes[i];
+            }
+        });
+        if d.focus == PhotoFocus::Manual {
+            row(ui, p, aurora_i18n::tr!("photo-dof-distance"), None, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.spacing_mut().slider_width = (ui.available_width() - 72.0).max(60.0);
+                    ui.add(
+                        egui::Slider::new(&mut d.distance, 0.3..=200.0)
+                            .logarithmic(true)
+                            .suffix(" m")
+                            .fixed_decimals(1)
+                            .custom_parser(aurora_i18n::parse_number),
+                    );
+                });
+            });
+        }
+    });
+}
+
+/// The full-frame strip's depth of field: its switch and the aperture.
+fn strip_aperture(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
+    if widgets::icon_toggle(ui, p, "focus-centered", aurora_i18n::tr!("photo-section-dof"), d.enabled) {
+        d.enabled = !d.enabled;
+    }
+    ui.add_enabled_ui(d.enabled, |ui| {
+        ui.label(RichText::new(aurora_i18n::tr!("photo-dof-aperture")).size(12.0).color(p.muted));
+        ui.add(
+            egui::DragValue::new(&mut d.f_number)
+                .range(1.0..=22.0)
+                .speed(0.05)
+                .prefix("f/")
+                .fixed_decimals(1),
+        );
     });
 }
 
