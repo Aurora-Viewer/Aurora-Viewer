@@ -2494,7 +2494,8 @@ What the inventory must show with these scenarios:
   `incoming-group` makes Nova start a call in Aurora Builders. Voice must be
   enabled (Preferences › Sound and voice), as on the grid. Residents added to
   a conference ("Add" of the call strip, or dragged from Contacts › Friends
-  or People › Nearby onto the conversation) join it at once.
+  or People › Nearby onto the conversation) join it at once, and our
+  message "<names> was / were invited to the conversation." follows in it.
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),

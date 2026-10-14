@@ -466,6 +466,8 @@ impl World {
                 if let Some(s) = self.groups.sessions.get_mut(&session) {
                     apply_agents(s, &agents);
                 }
+                // the residents we invited who joined are announced
+                self.conference_joined(session, &agents);
                 let me = self.agent_id;
                 if let Some(a) = agents.iter().find(|a| a.agent == me)
                     && let (Some(muted), Some(s)) = (a.text_muted, self.groups.sessions.get_mut(&session))

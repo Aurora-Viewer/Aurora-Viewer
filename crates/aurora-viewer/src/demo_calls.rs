@@ -71,6 +71,7 @@ fn present(agent: Uuid) -> aurora_net::SessionAgent {
         present: Some(true),
         moderator: None,
         text_muted: None,
+        entered: false,
     }
 }
 
@@ -119,9 +120,16 @@ pub fn reply(method: CallMethod, session: Uuid) -> Vec<NetEvent> {
         }
         // the invited join the conference
         CallMethod::Invite { agents } => {
+            // ENTER transitions, as the server sends them
             let joined = NetEvent::SessionAgents {
                 session,
-                agents: agents.iter().copied().map(present).collect(),
+                agents: agents
+                    .iter()
+                    .map(|a| aurora_net::SessionAgent {
+                        entered: true,
+                        ..present(*a)
+                    })
+                    .collect(),
             };
             return vec![
                 NetEvent::CallReply {
