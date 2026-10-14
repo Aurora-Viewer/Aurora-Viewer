@@ -83,6 +83,18 @@ pub enum BarAction {
     ShowBugButton(bool),
     /// A click in the favourites (`favorites.rs`).
     Favorite(favorites::FavAction),
+    /// The system island's right click: what it shows, the traffic
+    /// indicator, a graphics or camera preset, the windows it opens.
+    SystemIsland(crate::settings::SystemIsland),
+    NetStats(bool),
+    GraphicsPreset(crate::graphics_presets::Preset),
+    CameraPreset(crate::camera::CameraPreset),
+    GraphicsPreferences,
+    CameraControls,
+    /// Performance on its Network section (`perf::show_network`).
+    NetworkGraph,
+    /// The toolbar's "Toolbar buttons" window.
+    CustomizeBars,
 }
 
 /// How the islands of Aurora's top bar are set (Preferences › Interface).
@@ -151,6 +163,15 @@ pub struct StatusInfo<'a> {
     pub recent: Vec<RecentPlace>,
     /// The favourites and where they live.
     pub favorites: &'a favorites::View,
+    /// What the system island shows, the traffic indicator, the
+    /// network's samples and the share of packets lost last second.
+    pub system_island: crate::settings::SystemIsland,
+    pub net_stats: bool,
+    pub perf: &'a super::perf::PerfData,
+    pub net_loss: f32,
+    /// The graphics and camera presets in use (None: custom).
+    pub graphics_preset: Option<crate::graphics_presets::Preset>,
+    pub camera_preset: crate::camera::CameraPreset,
 }
 
 /// The navigation bar's star (LLLocationInputCtrl's add landmark button).

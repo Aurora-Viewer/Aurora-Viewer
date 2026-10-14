@@ -3,7 +3,9 @@
 //! the left: the Aurora menu, the bug report (when shown), the place
 //! (stretched to the account island,
 //! `place.rs`), the account (picture with the online status, balance), the
-//! system (SLT clock, latency, frame rate, media and volume) and the bell.
+//! system (SLT clock, latency, frame rate, Firestorm's traffic indicator,
+//! media and volume, as its right click chooses; a detailed tooltip) and the
+//! bell.
 //! The islands keep the windows' blur, sampled within their rectangles
 //! (`widgets::island_shape`): no extra GPU pass. Preferences › Aurora ›
 //! Appearance › "Top and bottom bars" brings Firestorm's bars back
@@ -14,7 +16,7 @@ use crate::theme::Palette;
 use crate::ui::Panels;
 use crate::ui::icons::Icons;
 use crate::ui::menu;
-use egui::{Color32, FontId, Id, Pos2, Rect, Sense, Vec2};
+use egui::{Color32, FontId, Id, Pos2, Rect, Sense, Stroke, Vec2};
 
 /// Gap between the islands and to the screen's edges.
 pub const MARGIN: f32 = 8.0;
@@ -225,9 +227,19 @@ pub fn top(
             notif.open = !notif.open;
         }
     });
-    let audio_action = area(&ctx, p, "system", sys_rect, |ui| {
-        system(ui, p, icons, panels, st, audio, audio_ui, media, sys_rect)
+    let (audio_action, readouts_hovered) = area(&ctx, p, "system", sys_rect, |ui| {
+        system(ui, p, icons, panels, st, audio, audio_ui, media, sys_rect, &mut action)
     });
+    system_tip(
+        &ctx,
+        p,
+        icons,
+        st,
+        media,
+        sys_rect,
+        readouts_hovered && !audio_ui.panel_open,
+        &mut action,
+    );
     area(&ctx, p, "account", acc_rect, |ui| account(ui, p, st, acc_rect, &mut action));
     area(&ctx, p, "menu", menu_rect, |ui| {
         // a right click on the island or its buttons: show the bug button
@@ -388,19 +400,90 @@ fn readouts(st: &StatusInfo) -> (String, String, String) {
 const READOUT: f32 = 12.0;
 /// The speaker, radio and media buttons: three slots, 2 apart (`ui::audio`).
 const AUDIO_W: f32 = SLOT * 3.0 + 2.0 * 2.0;
+/// The traffic indicator's curve.
+const NET_W: f32 = 36.0;
 
-fn system_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
-    let (time, ping, fps) = readouts(st);
-    let readouts: f32 = [time, ping, fps]
-        .iter()
-        .map(|t| readout_width(steady_width(ui, t, READOUT)) + GAP)
-        .sum();
-    PAD + readouts + AUDIO_W + PAD
+/// What the system island shows, left to right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Item {
+    Clock,
+    Ping,
+    Fps,
+    /// Firestorm's traffic indicator (ShowNetStats).
+    Net,
+    /// Media, music and volume.
+    Media,
 }
 
-/// The system island: SLT clock with its seconds, region latency, frame
-/// rate (a click opens Performance), then media, music and volume. Returns
-/// the audio controls' action.
+/// The items shown, in their order, as the island's right click (and
+/// Preferences › Interface for the traffic indicator) set them; the clock
+/// when a settings file hides them all, the menu keeping the last one.
+fn items(st: &StatusInfo) -> Vec<Item> {
+    let s = st.system_island;
+    let mut shown: Vec<Item> = [
+        (Item::Clock, s.clock),
+        (Item::Ping, s.ping),
+        (Item::Fps, s.fps),
+        (Item::Net, st.net_stats),
+        (Item::Media, s.media),
+    ]
+    .into_iter()
+    .filter_map(|(item, on)| on.then_some(item))
+    .collect();
+    if shown.is_empty() {
+        shown.push(Item::Clock);
+    }
+    shown
+}
+
+fn item_width(ui: &egui::Ui, texts: &(String, String, String), item: Item) -> f32 {
+    match item {
+        Item::Clock => readout_width(steady_width(ui, &texts.0, READOUT)),
+        Item::Ping => readout_width(steady_width(ui, &texts.1, READOUT)),
+        Item::Fps => readout_width(steady_width(ui, &texts.2, READOUT)),
+        Item::Net => readout_width(NET_W),
+        Item::Media => AUDIO_W,
+    }
+}
+
+/// The island's width: its items 2 px apart, no hole where one is hidden.
+fn system_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
+    let texts = readouts(st);
+    let items = items(st);
+    let slots: f32 = items.iter().map(|item| item_width(ui, &texts, *item)).sum();
+    PAD + slots + GAP * items.len().saturating_sub(1) as f32 + PAD
+}
+
+/// The frame rate's colour: teal from 50 images a second, amber from 25.
+fn fps_color(p: &Palette, fps: f32) -> Color32 {
+    if fps >= 50.0 {
+        p.teal
+    } else if fps >= 25.0 {
+        p.amber
+    } else {
+        p.danger
+    }
+}
+
+/// The colour of the packets lost, at the thresholds of Firestorm's
+/// traffic indicator (LLStatGraph of the status bar): under 1.25 %, from
+/// 1.25 % and from 3 %.
+pub(super) fn loss_color(p: &Palette, loss: f32) -> Color32 {
+    if loss < 1.25 {
+        p.teal
+    } else if loss < 3.0 {
+        p.amber
+    } else {
+        p.danger
+    }
+}
+
+/// The system island: as its right click chooses, the SLT clock with its
+/// seconds, region latency, frame rate (a click opens Performance),
+/// Firestorm's traffic indicator, then media, music and volume. A right
+/// click anywhere on it, its buttons too, opens its menu. Returns the audio
+/// controls' action and whether the pointer is over the readouts (the
+/// detailed tooltip, `system_tip`).
 #[allow(clippy::too_many_arguments)]
 fn system(
     ui: &mut egui::Ui,
@@ -412,83 +495,472 @@ fn system(
     audio_ui: &mut crate::ui::audio::AudioUi,
     media: crate::ui::audio::MediaState,
     island: Rect,
-) -> crate::ui::audio::AudioAction {
+    action: &mut BarAction,
+) -> (crate::ui::audio::AudioAction, bool) {
     const SIZE: f32 = READOUT;
     let top = island.center().y - SLOT / 2.0;
-    // media, music and volume: the audio controls in island slots
-    let controls = Rect::from_min_max(
-        Pos2::new(island.right() - PAD - AUDIO_W, top),
-        Pos2::new(island.right() - PAD, top + SLOT),
-    );
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(controls)
-            .layout(egui::Layout::right_to_left(egui::Align::Center)),
-    );
-    let audio_action = crate::ui::audio::top_controls(&mut child, p, icons, audio, audio_ui, media, Vec2::splat(SLOT));
-    let mut x = controls.left() - GAP;
-    let (time, ping_text, fps_text) = readouts(st);
-
-    // frame rate, latency, clock, from the right
-    let fps_col = if st.fps >= 50.0 {
-        p.teal
-    } else if st.fps >= 25.0 {
-        p.amber
-    } else {
-        p.danger
-    };
-    let fps_w = readout_width(steady_width(ui, &fps_text, SIZE));
-    let fps_rect = Rect::from_min_size(Pos2::new(x - fps_w, top), Vec2::new(fps_w, SLOT));
-    let fps = readout(
-        ui,
-        p,
-        icons,
-        fps_rect,
-        Id::new("bars_island_fps"),
-        "gauge-filled",
-        text(ui, fps_text, SIZE, fps_col),
-        fps_col,
-        true,
-    );
-    if fps
-        .on_hover_text(aurora_i18n::tr!("ui-bars-frames-per-second-click-for-performance-details"))
-        .clicked()
-    {
-        panels.perf = !panels.perf;
+    // under the readouts, for the right click
+    let back = ui.interact(island, Id::new("bars_island_system_back"), Sense::click());
+    let texts = readouts(st);
+    let mut audio_action = crate::ui::audio::AudioAction::None;
+    let mut readouts_zone = Rect::NOTHING;
+    let mut x = island.left() + PAD;
+    for item in items(st) {
+        let w = item_width(ui, &texts, item);
+        let rect = Rect::from_min_size(Pos2::new(x, top), Vec2::new(w, SLOT));
+        x = rect.right() + GAP;
+        match item {
+            Item::Clock => {
+                readout(
+                    ui,
+                    p,
+                    icons,
+                    rect,
+                    Id::new("bars_island_time"),
+                    "clock-filled",
+                    text(ui, texts.0.clone(), SIZE, p.muted),
+                    p.muted,
+                    false,
+                );
+            }
+            Item::Ping => {
+                readout(
+                    ui,
+                    p,
+                    icons,
+                    rect,
+                    Id::new("bars_island_ping"),
+                    "antenna-bars-5",
+                    text(ui, texts.1.clone(), SIZE, p.muted),
+                    p.muted,
+                    false,
+                );
+            }
+            Item::Fps => {
+                let color = fps_color(p, st.fps);
+                let fps = readout(
+                    ui,
+                    p,
+                    icons,
+                    rect,
+                    Id::new("bars_island_fps"),
+                    "gauge-filled",
+                    text(ui, texts.2.clone(), SIZE, color),
+                    color,
+                    true,
+                );
+                if fps.clicked() {
+                    crate::ui::perf::place_under(ui.ctx(), island);
+                    panels.perf = !panels.perf;
+                }
+            }
+            Item::Net => {
+                if traffic(ui, p, icons, st, rect).clicked() {
+                    crate::ui::perf::place_under(ui.ctx(), island);
+                    *action = BarAction::NetworkGraph;
+                }
+            }
+            Item::Media => {
+                // the audio controls in island slots
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(rect)
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                );
+                audio_action = crate::ui::audio::top_controls(&mut child, p, icons, audio, audio_ui, media, Vec2::splat(SLOT));
+                continue;
+            }
+        }
+        readouts_zone = readouts_zone.union(rect);
     }
-    x = fps_rect.left() - GAP;
+    // a right click on a button of the island (they take it) opens the
+    // island's menu too, where it was made
+    let ctx = ui.ctx().clone();
+    let on_button = ctx
+        .input(|i| i.pointer.secondary_clicked().then_some(i.pointer.interact_pos()).flatten())
+        .is_some_and(|pos| !back.secondary_clicked() && island.contains(pos) && ctx.layer_id_at(pos) == Some(ui.layer_id()));
+    menu::context_menu_also(&back, p, on_button, |ui| system_menu(ui, p, panels, st, island, action));
+    // the demo cannot right-click: the same menu where the pointer would be
+    if super::demo::get().open == Some(super::demo::Open::System) && ctx.cumulative_frame_nr() >= 300 {
+        let id = Id::new("bars_system_demo_menu");
+        let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
+        // under the island at its right end, as the mockup draws it
+        let at = Pos2::new(island.right() - 270.0, island.bottom() + MARGIN);
+        menu::popup_at(&ctx, id, at, &mut open, p, |ui| system_menu(ui, p, panels, st, island, action));
+        ctx.data_mut(|d| d.insert_temp(id, open));
+    }
+    // the demo cannot click: Performance opened from the island at frame
+    // 300, by its frame rate or its network
+    let demo = super::demo::get().perf;
+    if demo.is_some() && ctx.cumulative_frame_nr() == 300 && !panels.perf {
+        crate::ui::perf::place_under(&ctx, island);
+        if demo == Some(super::demo::Perf::Network) {
+            *action = BarAction::NetworkGraph;
+        } else {
+            panels.perf = true;
+        }
+    }
+    // gone under a menu or the volume panel
+    let hovered = readouts_zone.is_positive() && ui.rect_contains_pointer(readouts_zone);
+    (audio_action, hovered)
+}
 
-    let ping_w = readout_width(steady_width(ui, &ping_text, SIZE));
-    let ping_rect = Rect::from_min_size(Pos2::new(x - ping_w, top), Vec2::new(ping_w, SLOT));
-    readout(
+/// Firestorm's traffic indicator (ShowNetStats, off by default): the
+/// network's last minute as the Performance window draws it
+/// (`perf::net_curve`, the same data), its icon in the colour of the
+/// packets lost at Firestorm's thresholds; a click opens Performance on its
+/// Network section. Firestorm draws two instant gauges (bandwidth, losses):
+/// the curve tells the same over a minute.
+fn traffic(ui: &mut egui::Ui, p: &Palette, icons: &Icons, st: &StatusInfo, rect: Rect) -> egui::Response {
+    let resp = ui.interact(rect, Id::new("bars_island_net"), Sense::click());
+    let hot = resp.hovered();
+    slot_face(ui, p, rect, hot, false);
+    let icon_rect = Rect::from_center_size(
+        Pos2::new(rect.left() + SLOT_PAD + SYSTEM_ICON / 2.0, rect.center().y),
+        Vec2::splat(SYSTEM_ICON),
+    );
+    paint_icon(ui, icons, "arrows-down-up", icon_rect, SYSTEM_ICON, loss_color(p, st.net_loss));
+    let curve = Rect::from_min_max(
+        Pos2::new(icon_rect.right() + SLOT_PAD, rect.top() + 7.0),
+        Pos2::new(rect.right() - SLOT_PAD, rect.bottom() - 7.0),
+    );
+    crate::ui::perf::net_curve(&ui.painter().with_clip_rect(curve.expand(1.0)), p, curve, 0.0, st.perf);
+    if hot {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
+}
+
+/// The system island's right click (the mockup's): Firestorm's graphics
+/// and camera presets of the status bar (LLPanelPresetsPulldown,
+/// LLPanelPresetsCameraPulldown), what the island shows (its status bar's
+/// menu, menu_hide_navbar.xml, the last item shown staying), hiding the
+/// interface, the bars' buttons.
+fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, island: Rect, action: &mut BarAction) {
+    use crate::camera::CameraPreset;
+    use crate::graphics_presets::Preset;
+    menu::submenu(ui, p, "photo-filled", aurora_i18n::tr!("ui-bars-graphics-presets"), true, |ui| {
+        for preset in Preset::ALL {
+            if menu::check(
+                ui,
+                p,
+                "device-desktop-filled",
+                preset.label(),
+                st.graphics_preset == Some(preset),
+                true,
+            ) {
+                *action = BarAction::GraphicsPreset(preset);
+            }
+        }
+        menu::separator(ui, p);
+        if menu::item(ui, p, "adjustments-filled", aurora_i18n::tr!("ui-bars-open-graphics-preferences")) {
+            *action = BarAction::GraphicsPreferences;
+        }
+        if menu::item(ui, p, "gauge-filled", aurora_i18n::tr!("ui-bars-performance-window")) {
+            crate::ui::perf::place_under(ui.ctx(), island);
+            crate::ui::widgets::open_floater(ui.ctx(), "perf", &mut panels.perf);
+        }
+        if menu::item(ui, p, "chart-area-line-filled", aurora_i18n::tr!("ui-bars-network-window")) {
+            crate::ui::perf::place_under(ui.ctx(), island);
+            *action = BarAction::NetworkGraph;
+        }
+    });
+    menu::submenu(ui, p, "camera-filled", aurora_i18n::tr!("ui-bars-camera-presets"), true, |ui| {
+        for preset in CameraPreset::ALL.into_iter().filter(|c| *c != CameraPreset::Custom) {
+            if menu::check(ui, p, "camera-filled", preset.label(), st.camera_preset == preset, true) {
+                *action = BarAction::CameraPreset(preset);
+            }
+        }
+        menu::separator(ui, p);
+        if menu::item(ui, p, "video-filled", aurora_i18n::tr!("ui-bars-camera-controls")) {
+            *action = BarAction::CameraControls;
+        }
+    });
+    menu::separator(ui, p);
+    menu::section(ui, p, aurora_i18n::tr!("ui-bars-show-in-island"));
+    let s = st.system_island;
+    let shown = [s.clock, s.ping, s.fps, s.media, st.net_stats].into_iter().filter(|on| *on).count();
+    // the last item shown stays: the island keeps something to right-click
+    let can = |on: bool| !on || shown > 1;
+    let checks: [(&str, &str, bool, crate::settings::SystemIsland); 4] = [
+        (
+            "clock-filled",
+            aurora_i18n::tr!("ui-bars-show-clock"),
+            s.clock,
+            crate::settings::SystemIsland { clock: !s.clock, ..s },
+        ),
+        (
+            "antenna-bars-5",
+            aurora_i18n::tr!("ui-bars-show-latency"),
+            s.ping,
+            crate::settings::SystemIsland { ping: !s.ping, ..s },
+        ),
+        (
+            "gauge-filled",
+            aurora_i18n::tr!("ui-bars-show-fps"),
+            s.fps,
+            crate::settings::SystemIsland { fps: !s.fps, ..s },
+        ),
+        (
+            "volume",
+            aurora_i18n::tr!("ui-bars-show-media"),
+            s.media,
+            crate::settings::SystemIsland { media: !s.media, ..s },
+        ),
+    ];
+    for (icon, label, on, next) in checks {
+        if menu::check(ui, p, icon, label, on, can(on)) {
+            *action = BarAction::SystemIsland(next);
+        }
+    }
+    if menu::check(
+        ui,
+        p,
+        "chart-area-line-filled",
+        aurora_i18n::tr!("ui-bars-network-graph"),
+        st.net_stats,
+        can(st.net_stats),
+    ) {
+        *action = BarAction::NetStats(!st.net_stats);
+    }
+    menu::separator(ui, p);
+    // Alt+Shift+U, the next part of the bars
+    menu::todo(ui, p, "eye-off", aurora_i18n::tr!("ui-bars-hide-interface"));
+    if menu::item(ui, p, "layout-bottombar-filled", aurora_i18n::tr!("ui-bars-customize-bars")) {
+        *action = BarAction::CustomizeBars;
+    }
+}
+
+/// Width of the system island's detailed tooltip (the mockup's).
+const TIP_W: f32 = 330.0;
+/// Height of its rows (12 px text at a line height of 1.5).
+const TIP_ROW: f32 = 18.0;
+/// Height of the network's curve under its row.
+const TIP_CURVE: f32 = 28.0;
+
+/// The system island's detailed tooltip (the mockup's hover state), under
+/// the island at its right end: SLT time, date, latency, frame rate, losses
+/// and bandwidth with the network's last minute (`perf::net_curve`, the
+/// Performance window's data), parcel music, what the clicks do. It shows
+/// after egui's tooltip delay over the readouts and stays while the
+/// pointer goes down into it, whose network row opens Performance on its
+/// Network section; a menu or the volume panel closes it.
+#[allow(clippy::too_many_arguments)]
+fn system_tip(
+    ctx: &egui::Context,
+    p: &Palette,
+    icons: &Icons,
+    st: &StatusInfo,
+    media: crate::ui::audio::MediaState,
+    island: Rect,
+    hovered: bool,
+    action: &mut BarAction,
+) {
+    let id = Id::new("bars_system_tip");
+    let (open_id, since_id) = (id.with("open"), id.with("since"));
+    let now = ctx.input(|i| i.time);
+    let was_open = ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    // from the readouts down into the tooltip, over the 8 px between them
+    let keep = was_open
+        && ctx.memory(|m| m.area_rect(id)).is_some_and(|tip| {
+            let bridge = Rect::from_min_max(Pos2::new(tip.left(), island.center().y), Pos2::new(tip.right(), tip.top() + 1.0));
+            ctx.pointer_latest_pos()
+                .is_some_and(|pos| tip.contains(pos) || bridge.contains(pos))
+        });
+    let blocked = egui::Popup::is_any_open(ctx);
+    let open = if super::demo::get().tip {
+        true
+    } else if blocked {
+        false
+    } else if hovered || keep {
+        let since = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(since_id, || now));
+        let delay = f64::from(ctx.global_style().interaction.tooltip_delay);
+        if was_open || now - since >= delay {
+            true
+        } else {
+            ctx.request_repaint_after_secs((delay - (now - since)) as f32);
+            false
+        }
+    } else {
+        false
+    };
+    if !open && !hovered {
+        ctx.data_mut(|d| d.remove_temp::<f64>(since_id));
+    }
+    ctx.data_mut(|d| d.insert_temp(open_id, open));
+    if !open {
+        return;
+    }
+    egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(Pos2::new(island.right() - TIP_W, island.bottom() + MARGIN))
+        .constrain(true)
+        .fade_in(false)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(p.panel)
+                .stroke(Stroke::new(1.0, p.raised))
+                .corner_radius(ui.visuals().window_corner_radius)
+                .inner_margin(egui::Margin::symmetric(9, 6))
+                .shadow(ui.visuals().popup_shadow)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    ui.set_width(TIP_W - 2.0 - 18.0);
+                    tip_body(ui, p, icons, st, media, island, action);
+                });
+        });
+}
+
+/// The rows of the system island's tooltip.
+fn tip_body(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    st: &StatusInfo,
+    media: crate::ui::audio::MediaState,
+    island: Rect,
+    action: &mut BarAction,
+) {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let (_, month, day, weekday, ..) = crate::ui::land::slt_parts(secs);
+    let date = aurora_i18n::tr!(
+        "ui-bars-slt-date",
+        weekday = crate::ui::land::weekdays()[weekday],
+        day = day.to_string(),
+        month = crate::ui::land::months()[month - 1]
+    );
+    let (time, ping, fps) = readouts(st);
+    tip_row(ui, p, icons, "clock-filled", aurora_i18n::tr!("ui-bars-tip-slt"), &time, p.ink);
+    tip_row(ui, p, icons, "calendar-filled", aurora_i18n::tr!("ui-bars-tip-date"), &date, p.ink);
+    tip_row(
         ui,
         p,
         icons,
-        ping_rect,
-        Id::new("bars_island_ping"),
         "antenna-bars-5",
-        text(ui, ping_text, SIZE, p.muted),
-        p.muted,
-        false,
-    )
-    .on_hover_text(aurora_i18n::tr!("ui-bars-region-latency"));
-    x = ping_rect.left() - GAP;
-
-    let time_w = readout_width(steady_width(ui, &time, SIZE));
-    let time_rect = Rect::from_min_size(Pos2::new(x - time_w, top), Vec2::new(time_w, SLOT));
-    readout(
+        aurora_i18n::tr!("ui-bars-region-latency"),
+        &ping,
+        p.ink,
+    );
+    tip_row(
         ui,
         p,
         icons,
-        time_rect,
-        Id::new("bars_island_time"),
-        "clock-filled",
-        text(ui, time, SIZE, p.muted),
+        "gauge-filled",
+        aurora_i18n::tr!("ui-bars-tip-fps"),
+        &fps,
+        fps_color(p, st.fps),
+    );
+
+    // the network: its row and the Performance window's curve, one button
+    let (rate_in, _) = crate::ui::perf::last_rates(st.perf);
+    let network = format!("{} · {}", loss_text(st.net_loss), rate_text(rate_in));
+    let w = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, TIP_ROW + 2.0 + TIP_CURVE + 3.0), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(
+            rect.expand2(Vec2::new(4.0, 0.0)),
+            ui.visuals().window_corner_radius,
+            p.violet.gamma_multiply(0.18),
+        );
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let row_rect = Rect::from_min_size(rect.min, Vec2::new(w, TIP_ROW));
+    // in the losses' colour once they pass Firestorm's first threshold
+    let color = if st.net_loss < 1.25 { p.ink } else { loss_color(p, st.net_loss) };
+    paint_tip_row(
+        ui,
+        p,
+        icons,
+        row_rect,
+        "arrows-down-up",
+        aurora_i18n::tr!("ui-bars-tip-network"),
+        &network,
+        color,
+        12.0,
+    );
+    let curve = Rect::from_min_size(Pos2::new(rect.left(), row_rect.bottom() + 2.0), Vec2::new(w, TIP_CURVE));
+    crate::ui::perf::net_curve(&ui.painter().with_clip_rect(curve.expand(1.0)), p, curve, 2.0, st.perf);
+    if resp.clicked() {
+        crate::ui::perf::place_under(ui.ctx(), island);
+        *action = BarAction::NetworkGraph;
+    }
+
+    let music = if !media.music_available {
+        aurora_i18n::tr!("ui-bars-tip-music-none")
+    } else if media.music_playing {
+        aurora_i18n::tr!("ui-bars-tip-music-playing")
+    } else {
+        aurora_i18n::tr!("ui-bars-tip-music-stopped")
+    };
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, TIP_ROW), Sense::hover());
+    paint_tip_row(
+        ui,
+        p,
+        icons,
+        rect,
+        "radio",
+        aurora_i18n::tr!("ui-bars-tip-music"),
+        music,
         p.muted,
-        false,
-    )
-    .on_hover_text(aurora_i18n::tr!("ui-bars-second-life-time-pacific"));
-    audio_action
+        11.5,
+    );
+
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 11.0), Sense::hover());
+    ui.painter()
+        .hline(rect.x_range(), rect.center().y, crate::ui::widgets::divider_stroke(p));
+    let hints = ui.painter().layout(
+        aurora_i18n::tr!("ui-bars-tip-hints").to_owned(),
+        FontId::proportional(11.5),
+        p.muted,
+        w,
+    );
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, hints.size().y), Sense::hover());
+    ui.painter().galley(rect.min, hints, p.muted);
+}
+
+/// A row of the tooltip: icon, label, the value in semibold at the right.
+#[allow(clippy::too_many_arguments)]
+fn tip_row(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, label: &str, value: &str, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), TIP_ROW), Sense::hover());
+    paint_tip_row(ui, p, icons, rect, icon, label, value, color, 12.0);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_tip_row(ui: &egui::Ui, p: &Palette, icons: &Icons, rect: Rect, icon: &str, label: &str, value: &str, color: Color32, size: f32) {
+    const ICON: f32 = 14.0;
+    let icon_rect = Rect::from_center_size(Pos2::new(rect.left() + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
+    paint_icon(ui, icons, icon, icon_rect, ICON, p.muted);
+    let label = text(ui, label.to_owned(), 12.0, p.ink);
+    let at = Pos2::new(icon_rect.right() + 8.0, rect.center().y - label.size().y / 2.0);
+    ui.painter().galley(at.round(), label, p.ink);
+    let value = ui
+        .painter()
+        .layout_no_wrap(value.to_owned(), FontId::new(size, crate::ui::fonts::semibold(ui.ctx())), color);
+    let at = Pos2::new(rect.right() - value.size().x, rect.center().y - value.size().y / 2.0);
+    ui.painter().galley(at.round(), value, color);
+}
+
+/// The share of packets lost as the tooltip reads it: "0 %", else one
+/// decimal.
+fn loss_text(loss: f32) -> String {
+    if loss <= 0.0 {
+        "0 %".to_owned()
+    } else {
+        format!("{} %", aurora_i18n::number(f64::from(loss), 1))
+    }
+}
+
+/// A rate as Performance writes it (`perf::fmt_rate`), with the language's
+/// decimal separator.
+fn rate_text(kbps: f32) -> String {
+    let rate = crate::ui::perf::fmt_rate(kbps);
+    match rate.split_once(' ') {
+        Some((number, unit)) => format!("{} {unit}", aurora_i18n::number_text(number)),
+        None => rate,
+    }
 }
 
 #[cfg(test)]
@@ -530,6 +1002,12 @@ mod tests {
             own_pic: None,
             recent: Vec::new(),
             favorites: Box::leak(Box::default()),
+            system_island: Default::default(),
+            net_stats: false,
+            perf: Box::leak(Box::default()),
+            net_loss: 0.0,
+            graphics_preset: None,
+            camera_preset: Default::default(),
         }
     }
 
@@ -680,5 +1158,400 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// One frame of the islands at 1536 px wide, at `time`, the pointer's
+    /// `events`; the bar's action.
+    fn frame_at(ctx: &egui::Context, st: &StatusInfo, time: f64, events: Vec<egui::Event>) -> BarAction {
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let settings = crate::settings::Settings::default();
+        let mut panels = Panels::from_settings(&settings);
+        let mut audio = settings.audio.clone();
+        let mut audio_ui = crate::ui::audio::AudioUi::default();
+        let mut notif = crate::ui::notifications::NotifUi::default();
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1536.0, 864.0))),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        let mut action = BarAction::None;
+        let mut out = ctx.run_ui(input, |ui| {
+            action = top(
+                ui,
+                &p,
+                &icons,
+                &mut panels,
+                st,
+                &mut audio,
+                &mut audio_ui,
+                Default::default(),
+                &mut notif,
+                BellState::default(),
+            )
+            .0;
+        });
+        out.textures_delta.clear();
+        action
+    }
+
+    fn press(pos: Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: Default::default(),
+        }
+    }
+
+    fn system_rect(ctx: &egui::Context) -> Rect {
+        ctx.memory(|m| m.area_rect(Id::new(("bars_island", "system"))))
+            .expect("the system island")
+    }
+
+    /// The system island shows what its right click keeps, 2 px apart with
+    /// no hole where an item was, and stays 8 px from the account and the
+    /// bell; the traffic indicator comes in before the audio controls.
+    #[test]
+    fn the_system_island_shows_what_its_menu_keeps() {
+        let ctx = egui::Context::default();
+        let mut st = status(true, true);
+        frame_at(&ctx, &st, 0.0, vec![]);
+        frame_at(&ctx, &st, 0.1, vec![]);
+        let full = system_rect(&ctx).width();
+        let texts = readouts(&st);
+        let ui_width = |st: &StatusInfo| {
+            let mut w = 0.0;
+            let mut out = ctx.run_ui(Default::default(), |ui| w = system_width(ui, st));
+            out.textures_delta.clear();
+            w
+        };
+        assert_eq!(ui_width(&st), full);
+        let mut fps_w = 0.0;
+        let mut out = ctx.run_ui(Default::default(), |ui| fps_w = item_width(ui, &texts, Item::Fps));
+        out.textures_delta.clear();
+        st.system_island.fps = false;
+        assert_eq!(ui_width(&st), full - fps_w - GAP);
+        st.net_stats = true;
+        assert_eq!(ui_width(&st), full - fps_w + readout_width(NET_W));
+        assert_eq!(items(&st), vec![Item::Clock, Item::Ping, Item::Net, Item::Media]);
+        frame_at(&ctx, &st, 0.2, vec![]);
+        frame_at(&ctx, &st, 0.3, vec![]);
+        let (system, account, bell) = (
+            system_rect(&ctx),
+            ctx.memory(|m| m.area_rect(Id::new(("bars_island", "account")))).unwrap(),
+            ctx.memory(|m| m.area_rect(Id::new(("bars_island", "bell")))).unwrap(),
+        );
+        assert_eq!(system.width(), full - fps_w + readout_width(NET_W));
+        assert_eq!((system.left() - account.right(), bell.left() - system.right()), (MARGIN, MARGIN));
+        // everything hidden by a settings file: the clock stays
+        st.system_island = crate::settings::SystemIsland {
+            clock: false,
+            ping: false,
+            fps: false,
+            media: false,
+        };
+        st.net_stats = false;
+        assert_eq!(items(&st), vec![Item::Clock]);
+    }
+
+    /// Firestorm's thresholds of the traffic indicator: under 1.25 % of
+    /// packets lost, up to 3 %, beyond.
+    #[test]
+    fn the_losses_take_firestorms_colours() {
+        let p = crate::theme::Theme::default().palette();
+        assert_eq!(loss_color(&p, 0.0), p.teal);
+        assert_eq!(loss_color(&p, 1.2), p.teal);
+        assert_eq!(loss_color(&p, 1.25), p.amber);
+        assert_eq!(loss_color(&p, 2.9), p.amber);
+        assert_eq!(loss_color(&p, 3.0), p.danger);
+        assert_eq!(loss_text(0.0), "0 %");
+    }
+
+    /// The detailed tooltip opens after egui's delay over the readouts,
+    /// under the island at its right end, stays while the pointer goes down
+    /// into it, and its network row opens Performance on its Network
+    /// section; a right click on the island's buttons opens its menu.
+    #[test]
+    fn the_system_tooltip_and_menu_answer_the_pointer() {
+        let ctx = egui::Context::default();
+        let st = status(true, true);
+        frame_at(&ctx, &st, 0.0, vec![]);
+        frame_at(&ctx, &st, 0.1, vec![]);
+        let system = system_rect(&ctx);
+        let tip = || ctx.memory(|m| m.area_rect(Id::new("bars_system_tip")));
+        let open = || {
+            ctx.data(|d| d.get_temp::<bool>(Id::new("bars_system_tip").with("open")))
+                .unwrap_or(false)
+        };
+        let clock = Pos2::new(system.left() + PAD + 20.0, system.center().y);
+        frame_at(&ctx, &st, 0.2, vec![egui::Event::PointerMoved(clock)]);
+        assert!(!open(), "not before the delay");
+        frame_at(&ctx, &st, 0.8, vec![egui::Event::PointerMoved(clock)]);
+        frame_at(&ctx, &st, 0.85, vec![egui::Event::PointerMoved(clock)]);
+        assert!(open(), "after the delay");
+        let rect = tip().expect("the tooltip's area");
+        assert_eq!(
+            (rect.right(), rect.top(), rect.width()),
+            (system.right(), system.bottom() + MARGIN, TIP_W)
+        );
+        // the network row: the fifth row and its curve
+        let network = Pos2::new(rect.center().x, rect.top() + 6.0 + TIP_ROW * 4.0 + TIP_ROW);
+        frame_at(&ctx, &st, 0.9, vec![egui::Event::PointerMoved(network)]);
+        assert!(open(), "kept while the pointer goes into it");
+        frame_at(&ctx, &st, 0.95, vec![press(network, egui::PointerButton::Primary, true)]);
+        let action = frame_at(&ctx, &st, 1.0, vec![press(network, egui::PointerButton::Primary, false)]);
+        assert!(matches!(action, BarAction::NetworkGraph), "the network row opens Performance");
+        // away: closed
+        frame_at(&ctx, &st, 1.1, vec![egui::Event::PointerMoved(Pos2::new(700.0, 500.0))]);
+        assert!(!open(), "closed once the pointer left");
+        // the speaker takes its clicks, its right click opens the island's menu
+        let speaker = Pos2::new(system.right() - PAD - SLOT / 2.0, system.center().y);
+        frame_at(&ctx, &st, 1.2, vec![egui::Event::PointerMoved(speaker)]);
+        frame_at(&ctx, &st, 1.25, vec![press(speaker, egui::PointerButton::Secondary, true)]);
+        frame_at(&ctx, &st, 1.3, vec![press(speaker, egui::PointerButton::Secondary, false)]);
+        frame_at(&ctx, &st, 1.35, vec![]);
+        assert!(egui::Popup::is_any_open(&ctx), "the island's menu");
+        assert!(!open(), "no tooltip under the menu");
+    }
+
+    /// One frame of the islands and of Performance (`open`), at `width` ×
+    /// 9/16, the work area under the islands and 60 px above the bottom
+    /// (the dock), at `time`, the pointer's `events`.
+    fn perf_frame(ctx: &egui::Context, width: f32, open: &mut bool, time: f64, events: Vec<egui::Event>) {
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let settings = crate::settings::Settings::default();
+        let mut panels = Panels::from_settings(&settings);
+        let mut audio = settings.audio.clone();
+        let mut audio_ui = crate::ui::audio::AudioUi::default();
+        let mut notif = crate::ui::notifications::NotifUi::default();
+        let st = status(true, true);
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(width, width * 9.0 / 16.0));
+        let data = crate::ui::perf::PerfData::default();
+        let gpu = aurora_render::GpuInfo {
+            name: String::new(),
+            backend: String::new(),
+            driver: String::new(),
+            bindless: false,
+            timestamps: false,
+            max_textures: 0,
+            vram_mb: None,
+            integrated: false,
+        };
+        let (render, net, scene, tex) = Default::default();
+        let (period, totals) = Default::default();
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| {
+            top(
+                ui,
+                &p,
+                &icons,
+                &mut panels,
+                &st,
+                &mut audio,
+                &mut audio_ui,
+                Default::default(),
+                &mut notif,
+                BellState::default(),
+            );
+            crate::ui::layout::set_work_area(ui.ctx(), work_area(screen, screen.bottom() - 60.0));
+            let view = crate::ui::perf::PerfView {
+                data: &data,
+                render: &render,
+                gpu: &gpu,
+                net: &net,
+                link: (&period, &totals),
+                scene: &scene,
+                tex: &tex,
+                meshes_fetching: 0,
+                regions: 1,
+                draw_distance: 128.0,
+                probes: (0, 0),
+                sounds: 0,
+                complexity: (None, 0),
+            };
+            crate::ui::perf::show(ui.ctx(), &p, &view, open);
+        });
+        out.textures_delta.clear();
+    }
+
+    fn perf_rect(ctx: &egui::Context) -> Rect {
+        ctx.memory(|m| m.area_rect(Id::new("perf"))).expect("the Performance window")
+    }
+
+    /// Performance opened from the system island: its full view stands 8 px
+    /// under the island, its left and right edges on the island's (within
+    /// half a pixel), down to the bottom of the work area at most, at the
+    /// three widths; its sides do not resize it, its bottom does, never
+    /// past the work area. The compact view keeps its own width and place.
+    #[test]
+    fn performance_opens_under_the_system_island() {
+        for width in [1280.0, 1536.0, 1920.0] {
+            let ctx = egui::Context::default();
+            let mut open = false;
+            let mut t = 0.0;
+            let mut frame = |ctx: &egui::Context, open: &mut bool, events: Vec<egui::Event>| {
+                t += 0.05;
+                perf_frame(ctx, width, open, t, events);
+            };
+            frame(&ctx, &mut open, vec![]);
+            frame(&ctx, &mut open, vec![]);
+            let island = system_rect(&ctx);
+            let work = crate::ui::layout::work_area(&ctx);
+
+            // full, the window's first opening: under the island
+            crate::ui::perf::set_full(&ctx, true);
+            crate::ui::perf::place_under(&ctx, island);
+            open = true;
+            for _ in 0..4 {
+                frame(&ctx, &mut open, vec![]);
+            }
+            let full = perf_rect(&ctx);
+            let case = format!("{width}: {full:?} under {island:?}");
+            assert!((full.left() - island.left()).abs() <= 0.5, "{case}");
+            assert!((full.right() - island.right()).abs() <= 0.5, "{case}");
+            assert!((full.top() - (island.bottom() + MARGIN)).abs() <= 0.5, "{case}");
+            assert!(full.bottom() <= work.bottom() + 0.5, "{case}: within the work area {work:?}");
+            assert!(full.bottom() >= work.bottom() - 1.0, "{case}: down to the dock");
+
+            // the right side does not resize it
+            let drag = |ctx: &egui::Context,
+                        open: &mut bool,
+                        from: Pos2,
+                        by: Vec2,
+                        frame: &mut dyn FnMut(&egui::Context, &mut bool, Vec<egui::Event>)| {
+                frame(ctx, open, vec![egui::Event::PointerMoved(from)]);
+                frame(ctx, open, vec![press(from, egui::PointerButton::Primary, true)]);
+                for k in 1..=4 {
+                    frame(ctx, open, vec![egui::Event::PointerMoved(from + by * k as f32 / 4.0)]);
+                }
+                frame(ctx, open, vec![press(from + by, egui::PointerButton::Primary, false)]);
+                frame(ctx, open, vec![]);
+            };
+            drag(
+                &ctx,
+                &mut open,
+                Pos2::new(full.right() - 1.0, full.center().y),
+                Vec2::new(60.0, 0.0),
+                &mut frame,
+            );
+            drag(
+                &ctx,
+                &mut open,
+                Pos2::new(full.left() + 1.0, full.center().y),
+                Vec2::new(-60.0, 0.0),
+                &mut frame,
+            );
+            let after = perf_rect(&ctx);
+            assert!(
+                (after.width() - full.width()).abs() <= 0.5,
+                "{width}: no horizontal handle, {after:?}"
+            );
+            // its bottom does, within the work area
+            drag(
+                &ctx,
+                &mut open,
+                Pos2::new(full.center().x, full.bottom() - 1.0),
+                Vec2::new(0.0, -120.0),
+                &mut frame,
+            );
+            let shorter = perf_rect(&ctx);
+            assert!(
+                shorter.height() < full.height() - 60.0,
+                "{width}: the bottom resizes it, {shorter:?}"
+            );
+            drag(
+                &ctx,
+                &mut open,
+                Pos2::new(shorter.center().x, shorter.bottom() - 1.0),
+                Vec2::new(0.0, 400.0),
+                &mut frame,
+            );
+            let taller = perf_rect(&ctx);
+            assert!(taller.bottom() <= work.bottom() + 0.5, "{width}: {taller:?} within {work:?}");
+            assert!((taller.width() - full.width()).abs() <= 0.5, "{width}: same width, {taller:?}");
+
+            // compact: its own width, wherever it stands
+            open = false;
+            frame(&ctx, &mut open, vec![]);
+            crate::ui::perf::set_full(&ctx, false);
+            crate::ui::perf::place_under(&ctx, island);
+            open = true;
+            for _ in 0..3 {
+                frame(&ctx, &mut open, vec![]);
+            }
+            let compact = perf_rect(&ctx);
+            assert_eq!(
+                compact.width(),
+                crate::ui::perf::COMPACT_W + crate::ui::perf::SIDES,
+                "{width}: compact"
+            );
+            assert!(
+                (compact.right() - island.right()).abs() > 0.5,
+                "{width}: the compact view stands where it stood"
+            );
+        }
+    }
+
+    /// A network opening (the tooltip's network row, the traffic indicator,
+    /// "Network graph…") shows the full view for itself alone: closed, the
+    /// frame rate's click opens the view chosen with ⤢, compact by default,
+    /// and the choice saved stays as it was.
+    #[test]
+    fn a_network_opening_does_not_change_the_view_chosen() {
+        let ctx = egui::Context::default();
+        let mut open = false;
+        let mut t = 0.0;
+        let mut frame = |ctx: &egui::Context, open: &mut bool| {
+            t += 0.05;
+            perf_frame(ctx, 1536.0, open, t, vec![]);
+        };
+        frame(&ctx, &mut open);
+        frame(&ctx, &mut open);
+        let island = system_rect(&ctx);
+        let compact_w = crate::ui::perf::COMPACT_W + crate::ui::perf::SIDES;
+        let saved = |ctx: &egui::Context| ctx.data_mut(|d| d.get_persisted::<bool>(Id::new(("perf", "full"))));
+        // the network: full, under the island
+        crate::ui::perf::place_under(&ctx, island);
+        crate::ui::perf::show_network(&ctx);
+        open = true;
+        for _ in 0..3 {
+            frame(&ctx, &mut open);
+        }
+        assert!(
+            (perf_rect(&ctx).width() - island.width()).abs() <= 0.5,
+            "the full view under the island"
+        );
+        // closed during that full view
+        open = false;
+        frame(&ctx, &mut open);
+        assert_ne!(saved(&ctx), Some(true), "the network opening saved the full view");
+        // the frame rate's click: compact
+        crate::ui::perf::place_under(&ctx, island);
+        open = true;
+        for _ in 0..3 {
+            frame(&ctx, &mut open);
+        }
+        assert_eq!(perf_rect(&ctx).width(), compact_w, "the frame rate opens the compact view");
+        // with the full view chosen, the frame rate opens it, and a network
+        // opening leaves the choice as it was
+        open = false;
+        frame(&ctx, &mut open);
+        crate::ui::perf::set_full(&ctx, true);
+        crate::ui::perf::show_network(&ctx);
+        open = true;
+        for _ in 0..3 {
+            frame(&ctx, &mut open);
+        }
+        open = false;
+        frame(&ctx, &mut open);
+        assert_eq!(saved(&ctx), Some(true), "the choice kept");
     }
 }

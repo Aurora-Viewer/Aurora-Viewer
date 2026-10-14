@@ -163,6 +163,12 @@ fn status(classic: bool) -> StatusInfo<'static> {
         own_pic: None,
         recent: Vec::new(),
         favorites: Box::leak(Box::default()),
+        system_island: Default::default(),
+        net_stats: false,
+        perf: Box::leak(Box::default()),
+        net_loss: 0.0,
+        graphics_preset: None,
+        camera_preset: Default::default(),
     }
 }
 

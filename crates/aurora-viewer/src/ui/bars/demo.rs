@@ -12,7 +12,12 @@
 //! they live: `row` (the row under the islands, `folded`: folded to its
 //! tab, `rowdrag`: a pill dragged at frame 650), `dock` (the dock's
 //! button; `favorites` then opens its grid); `chatname`: a resident's name
-//! of the chat pills clicked at frame 700. `normal` or nothing else: the
+//! of the chat pills clicked at frame 700. The system island: `systip`
+//! (its detailed tooltip shown), `sysmenu` (its right click),
+//! `netgraph` (Firestorm's traffic indicator shown), `sysperf` /
+//! `sysnet` (Performance opened from the island at frame 300, by its frame
+//! rate / its network, under the island). `normal` or nothing
+//! else: the
 //! islands as set. With any word the voice light is the mockup's
 //! (connected).
 
@@ -27,6 +32,8 @@ pub enum Open {
     Star,
     Status,
     Emoji,
+    /// The system island's right click.
+    System,
 }
 
 /// What `AURORA_DEMO_BARS` asks for (nothing without it).
@@ -51,6 +58,21 @@ pub struct DemoBars {
     pub row_drag: bool,
     /// A resident's name of the chat pills clicked at frame 700.
     pub click_name: bool,
+    /// The system island's detailed tooltip shown.
+    pub tip: bool,
+    /// The traffic indicator shown or hidden, whatever is saved.
+    pub net_stats: Option<bool>,
+    /// Performance opened from the system island.
+    pub perf: Option<Perf>,
+}
+
+/// How the demo opens Performance from the system island.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Perf {
+    /// Its frame rate.
+    Fps,
+    /// Its network (Performance on its Network section).
+    Network,
 }
 
 /// The favourites the demo's Favorites folder holds.
@@ -98,6 +120,11 @@ pub fn parse(value: &str) -> DemoBars {
                 d.folded = Some(true);
             }
             "chatname" => d.click_name = true,
+            "systip" => d.tip = true,
+            "sysmenu" => d.open = Some(Open::System),
+            "netgraph" => d.net_stats = Some(true),
+            "sysperf" => d.perf = Some(Perf::Fps),
+            "sysnet" => d.perf = Some(Perf::Network),
             "rowdrag" => {
                 d.access = Some(crate::settings::FavoritesAccess::Row);
                 d.row_drag = true;
@@ -114,7 +141,10 @@ pub fn parse(value: &str) -> DemoBars {
         || d.read
         || d.favorites.is_some()
         || d.access.is_some()
-        || d.click_name;
+        || d.click_name
+        || d.tip
+        || d.net_stats.is_some()
+        || d.perf.is_some();
     if d.classic.is_none() && (islands_only || d.chat_width.is_some()) {
         d.classic = Some(false);
     }

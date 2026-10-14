@@ -74,6 +74,22 @@ impl Edge {
         }
     }
 
+    /// The edges a window resized in height only offers: the top and the
+    /// bottom, along the whole width (no corner).
+    fn moves_height_only(self) -> bool {
+        matches!(self, Self::Top | Self::Bottom)
+    }
+
+    /// Where this edge of the window `rect` (its outline) is grabbed; along
+    /// the whole side for a window resized in height only.
+    fn hit_rect_of(self, rect: Rect, height_only: bool) -> Rect {
+        match self {
+            Self::Top if height_only => Rect::from_x_y_ranges(rect.x_range(), rect.top() - SIDE_OUT..=rect.top() + SIDE_IN),
+            Self::Bottom if height_only => Rect::from_x_y_ranges(rect.x_range(), rect.bottom() - SIDE_IN..=rect.bottom() + SIDE_OUT),
+            _ => self.hit_rect(rect),
+        }
+    }
+
     /// Where this edge of the window `rect` (its outline) is grabbed.
     fn hit_rect(self, rect: Rect) -> Rect {
         // `out` points away from the window
@@ -208,6 +224,12 @@ impl Drag {
 /// `violet_light` meanwhile (as egui's own windows light theirs,
 /// `paint_frame_interaction`), both faded in and out.
 pub(super) fn handles(ctx: &Context, p: &Palette, response: &egui::Response) {
+    handles_of(ctx, p, response, false);
+}
+
+/// [`handles`]; `height_only`: the top and bottom edges alone, without the
+/// corner's mark (a window whose width is set by what it lines up with).
+pub(super) fn handles_of(ctx: &Context, p: &Palette, response: &egui::Response, height_only: bool) {
     let window = response.layer_id.id;
     let mut ui = Ui::new(
         ctx.clone(),
@@ -217,10 +239,10 @@ pub(super) fn handles(ctx: &Context, p: &Palette, response: &egui::Response) {
     ui.set_clip_rect(ctx.content_rect());
     ui.set_min_size(response.rect.size());
     let (mut hovered, mut dragged, mut corner) = ([false; 4], [false; 4], false);
-    for edge in Edge::ALL {
+    for edge in Edge::ALL.into_iter().filter(|edge| !height_only || edge.moves_height_only()) {
         let response = ui
             .interact_opt(
-                edge.hit_rect(response.rect),
+                edge.hit_rect_of(response.rect, height_only),
                 edge.id(window),
                 Sense::DRAG,
                 egui::InteractOptions { move_to_top: true },
@@ -246,12 +268,14 @@ pub(super) fn handles(ctx: &Context, p: &Palette, response: &egui::Response) {
     let lit = std::array::from_fn(|side| strength * ctx.animate_bool(window.with(("floater_edge_lit", side)), lit[side]));
     let painter = ui.painter();
     outline(painter, p, response.rect, lit);
-    corner_arc(
-        painter,
-        p,
-        response.rect,
-        ctx.animate_bool(window.with("floater_corner_lit"), corner),
-    );
+    if !height_only {
+        corner_arc(
+            painter,
+            p,
+            response.rect,
+            ctx.animate_bool(window.with("floater_corner_lit"), corner),
+        );
+    }
 }
 
 /// The outline of the window `rect` along the sides lit (left, right, top,

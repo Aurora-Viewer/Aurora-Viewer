@@ -26,6 +26,30 @@ pub enum FavoritesAccess {
     Dock,
 }
 
+/// What the system island shows (its right click, "Show in the island"),
+/// as Firestorm's status bar menu shows or hides its parts
+/// (menu_hide_navbar.xml); all shown by default.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SystemIsland {
+    pub clock: bool,
+    pub ping: bool,
+    pub fps: bool,
+    /// Media, music and volume.
+    pub media: bool,
+}
+
+impl Default for SystemIsland {
+    fn default() -> Self {
+        SystemIsland {
+            clock: true,
+            ping: true,
+            fps: true,
+            media: true,
+        }
+    }
+}
+
 /// How notifications arrive (Preferences › Aurora): unrolled from the bell
 /// at the right end of the navigation bar and folded back into it (the
 /// default, `ui/notification_center.rs`), or as Firestorm's toasts stacked
@@ -429,6 +453,11 @@ pub struct Settings {
     pub favorites_access: FavoritesAccess,
     /// The row of favourites (`FavoritesAccess::Row`) folded to its tab.
     pub favorites_row_folded: bool,
+    /// What the system island shows.
+    pub system_island: SystemIsland,
+    /// Firestorm's traffic indicator (ShowNetStats, off by default): a
+    /// small curve of the network in the system island.
+    pub show_net_stats: bool,
     /// People › Near you as Firestorm's radar table (`ui/people/radar.rs`)
     /// instead of the rows grouped by range and the sheet of
     /// `ui/people/nearby.rs`.
@@ -913,6 +942,8 @@ impl Default for Settings {
             place_bar_rights_text: false,
             favorites_access: FavoritesAccess::Menu,
             favorites_row_folded: false,
+            system_island: SystemIsland::default(),
+            show_net_stats: false,
             classic_people: false,
             classic_restart_alert: false,
             region_restart: Default::default(),
