@@ -687,6 +687,7 @@ ui-appearance-refresh = Refresh
 ui-options-refresh-list = Refresh list
 ui-land-objects-refresh-object-list = Refresh object list
 ui-context-refresh-textures = Refresh textures
+ui-context-rebake = Force appearance update (rebake)
 ui-login-news = News
 ui-login-aditi-beta = Aditi (beta)
 common-adult = Adult

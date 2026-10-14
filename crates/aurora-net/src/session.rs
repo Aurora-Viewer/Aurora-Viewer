@@ -1428,6 +1428,17 @@ impl Session<'_> {
                     .push(lookat_effect(self.agent_id(), effect, target, offset, kind, duration));
                 self.send_main(&m, false);
             }
+            NetCommand::ResetSkeleton {
+                effect,
+                target,
+                animations,
+            } => {
+                let mut m = ViewerEffect::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.effect.push(reset_skeleton_effect(self.agent_id(), effect, target, animations));
+                self.send_main(&m, false);
+            }
             NetCommand::SetAlwaysRun(run) => {
                 let mut m = SetAlwaysRun::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -1957,6 +1968,8 @@ impl Session<'_> {
                 });
             }
             NetCommand::RequestServerAppearance { cof_version } => self.request_server_appearance(cof_version),
+            NetCommand::IncrementCofVersion => self.increment_cof_version(),
+            NetCommand::AvatarTexturesRequest(id) => self.send_generic("avatartexturesrequest", &[id.to_string()]),
             NetCommand::DummyWearablesUpdate => {
                 // the 4 standard placeholder ids LL's viewer sends
                 let mut m = AgentIsNowWearing::default();
@@ -1990,6 +2003,9 @@ impl Session<'_> {
             | NetCommand::SetGroupFlags { .. }
             | NetCommand::TerminateFriendship(_)
             | NetCommand::AgentAnimation { .. }
+            | NetCommand::AgentAnimations { .. }
+            | NetCommand::AnimationStateReset
+            | NetCommand::RevokePermissions { .. }
             | NetCommand::ObjectGrab { .. }
             | NetCommand::ObjectGrabUpdate { .. }
             | NetCommand::ObjectRelease { .. }
@@ -2430,6 +2446,56 @@ impl Session<'_> {
                 success,
                 expected,
             });
+        });
+    }
+
+    /// LLAppearanceMgr::syncCofVersionAndRefreshCoro: GET the capability,
+    /// which steps the Current Outfit folder's version on the server and
+    /// answers it ({"version": n}); retried as Firestorm does (BAKE_RETRY_*:
+    /// five more times, 1, 3, 7, 15 then 31 s apart).
+    fn increment_cof_version(&mut self) {
+        /// BAKE_RETRY_MAX_COUNT (llappearancemgr.cpp).
+        const BAKE_RETRY_MAX: u32 = 5;
+        let Some(url) = self.main_cap("IncrementCOFVersion") else {
+            log::warn!("no IncrementCOFVersion capability: COF version not stepped");
+            emit(self.sh, NetEvent::CofVersionIncremented(None));
+            return;
+        };
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let mut retries = 0u32;
+            let version = loop {
+                let result = http.get(&url).header("Accept", "application/llsd+xml").send().await;
+                let reply = match result {
+                    Ok(resp) if resp.status().is_success() => {
+                        let doc = resp.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok());
+                        match doc {
+                            Some(d) if d.has("version") => Ok(d["version"].as_i32()),
+                            _ => Err("malformed response".to_string()),
+                        }
+                    }
+                    Ok(resp) => Err(format!("HTTP {}", resp.status().as_u16())),
+                    Err(e) => Err(e.to_string()),
+                };
+                match reply {
+                    Ok(v) => {
+                        log::info!("Current Outfit folder version stepped to {v}");
+                        break Some(v);
+                    }
+                    Err(e) if retries < BAKE_RETRY_MAX => {
+                        retries += 1;
+                        let wait = 2u64.pow(retries) - 1;
+                        log::warn!("COF version increment failed: {e}; retry {retries} in {wait} s");
+                        tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+                    }
+                    Err(e) => {
+                        log::warn!("COF version increment failed: {e}; giving up");
+                        break None;
+                    }
+                }
+            };
+            let _ = events.send(NetEvent::CofVersionIncremented(version));
         });
     }
 
@@ -3575,6 +3641,15 @@ impl Session<'_> {
                             duration: e.duration,
                         },
                     );
+                } else if let Some((target, animations)) = parse_reset_skeleton(e) {
+                    emit(
+                        self.sh,
+                        NetEvent::ResetSkeleton {
+                            source: e.agent_id,
+                            target,
+                            animations,
+                        },
+                    );
                 }
             }
         } else if id == SoundTrigger::ID {
@@ -3838,6 +3913,70 @@ fn parse_lookat(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, uuid::Uu
         *v = f64::from_le_bytes(b);
     }
     Some((source, target, offset, d[56]))
+}
+
+/// LLHUDObject::LL_HUD_EFFECT_RESET_SKELETON.
+const HUD_EFFECT_RESET_SKELETON: u8 = 19;
+/// LLHUDEffectResetSkeleton type data: target object (16), then a byte of
+/// which only bit 0 is read (reset the animations too).
+const RESET_SKELETON_PKT_SIZE: usize = 17;
+
+/// LLHUDEffectResetSkeleton::packData, with LLHUDEffect's defaults: a 1 s
+/// duration and an unused colour (LLColor4U(): opaque black).
+fn reset_skeleton_effect(agent: uuid::Uuid, effect: uuid::Uuid, target: uuid::Uuid, animations: bool) -> msgs::viewer_effect::Effect {
+    let mut d = Vec::with_capacity(RESET_SKELETON_PKT_SIZE);
+    d.extend_from_slice(target.as_bytes());
+    d.push(u8::from(animations));
+    msgs::viewer_effect::Effect {
+        id: effect,
+        agent_id: agent,
+        type_: HUD_EFFECT_RESET_SKELETON,
+        duration: 1.0,
+        color: vec![0, 0, 0, 255],
+        type_data: d,
+    }
+}
+
+/// LLHUDEffectResetSkeleton::unpackData: (target, reset the animations); a
+/// nil target is the sender itself, a packet of another size is dropped.
+fn parse_reset_skeleton(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, bool)> {
+    if e.type_ != HUD_EFFECT_RESET_SKELETON || e.type_data.len() != RESET_SKELETON_PKT_SIZE {
+        return None;
+    }
+    let target = uuid::Uuid::from_slice(&e.type_data[0..16]).ok()?;
+    let target = if target.is_nil() { e.agent_id } else { target };
+    Some((target, e.type_data[16] & 1 != 0))
+}
+
+#[cfg(test)]
+mod reset_skeleton_tests {
+    use super::*;
+
+    #[test]
+    fn reset_skeleton_effect_round_trips_like_firestorm() {
+        let (me, effect) = (uuid::Uuid::from_u128(7), uuid::Uuid::from_u128(9));
+        let e = reset_skeleton_effect(me, effect, me, true);
+        assert_eq!(e.type_, 19);
+        assert_eq!(e.type_data.len(), 17);
+        assert_eq!(&e.type_data[..16], me.as_bytes());
+        assert_eq!(e.type_data[16], 1);
+        assert_eq!(parse_reset_skeleton(&e), Some((me, true)));
+        let e = reset_skeleton_effect(me, effect, me, false);
+        assert_eq!(parse_reset_skeleton(&e), Some((me, false)));
+    }
+
+    #[test]
+    fn a_nil_target_is_the_sender_and_only_bit_0_counts() {
+        let sender = uuid::Uuid::from_u128(5);
+        let mut e = reset_skeleton_effect(sender, uuid::Uuid::from_u128(1), uuid::Uuid::nil(), false);
+        e.type_data[16] = 0b10;
+        assert_eq!(parse_reset_skeleton(&e), Some((sender, false)));
+        // wrong size or type: not a reset
+        e.type_data.push(0);
+        assert_eq!(parse_reset_skeleton(&e), None);
+        let look = lookat_effect(sender, uuid::Uuid::from_u128(1), sender, [0.0; 3], 0, 1.0);
+        assert_eq!(parse_reset_skeleton(&look), None);
+    }
 }
 
 impl Session<'_> {

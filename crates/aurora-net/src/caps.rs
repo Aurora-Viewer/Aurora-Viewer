@@ -35,6 +35,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetObjectCost",
     "GetObjectPhysicsData",
     "GetTexture",
+    // rebake (LLAppearanceMgr::syncCofVersionAndRefresh, Firestorm's
+    // buildCapabilityNames)
+    "IncrementCOFVersion",
     "InventoryAPIv3",
     "InventoryThumbnailUpload",
     "NewFileAgentInventory",

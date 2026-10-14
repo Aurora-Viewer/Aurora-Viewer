@@ -4068,6 +4068,19 @@ impl Scene {
         (base, shape_dz)
     }
 
+    /// "Reset skeleton" of an avatar or an animated object
+    /// (LLVOAvatar::resetSkeleton): the rest skeleton is built again from
+    /// the shape and the worn meshes on the next frame, and the pose held
+    /// from finished motions goes; `animations` also restarts the motions
+    /// (`anim::Controller::reset_pose`). Local only: what the others see of
+    /// our avatar goes through the ViewerEffect (app/reset_skeleton.rs).
+    pub fn reset_skeleton(&mut self, owner: Uuid, animations: bool) {
+        self.skeletons.remove(&owner);
+        if let Some(motions) = self.motions.get_mut(&owner) {
+            motions.reset_pose(animations);
+        }
+    }
+
     /// Note which objects a skeleton is made of (its previous members that
     /// left are forgotten).
     fn note_skeleton_members(&mut self, owner: Uuid, members: &[usize]) {

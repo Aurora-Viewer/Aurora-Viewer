@@ -423,6 +423,14 @@ pub enum NetEvent {
         kind: u8,
         duration: f32,
     },
+    /// An avatar asks the others to reset its skeleton (ViewerEffect,
+    /// LLHUDEffectResetSkeleton::unpackData): `source` is the sender, `target`
+    /// the object to reset (the sender itself when the packet names none).
+    ResetSkeleton {
+        source: Uuid,
+        target: Uuid,
+        animations: bool,
+    },
     /// TeleportLocal (a teleport inside the current region), sent just before
     /// its AgentMovementComplete: whether the simulator says we are flying.
     TeleportLocal {
@@ -837,6 +845,9 @@ pub enum NetEvent {
         success: bool,
         expected: Option<i32>,
     },
+    /// Answer to `IncrementCofVersion`: the folder's new version, None when
+    /// the region has no such capability or every attempt failed.
+    CofVersionIncremented(Option<i32>),
     /// ObjectProperties / ObjectPropertiesFamily (build tools: selection).
     ObjectProperties(Vec<crate::build::ObjectProps>),
     /// llSetPayPrice values for the clicked object.
@@ -1029,6 +1040,21 @@ pub enum NetCommand {
         anim: Uuid,
         start: bool,
     },
+    /// Start / stop several animations in one AgentAnimation
+    /// (LLAgent::sendAnimationRequests); nothing is sent without any.
+    AgentAnimations {
+        anims: Vec<Uuid>,
+        start: bool,
+    },
+    /// Clear the region's animation state overrides of our avatar
+    /// (LLAgent::sendAnimationStateReset: a nil animation, stopped).
+    AnimationStateReset,
+    /// Revoke script permissions in the scripts of an object, or of the whole
+    /// region when `target` is its id (LLAgent::sendRevokePermissions).
+    RevokePermissions {
+        target: Uuid,
+        permissions: u32,
+    },
     /// Accept / decline a session invitation or fetch its history (ChatSessionRequest).
     ChatSession {
         method: crate::social::SessionMethod,
@@ -1070,6 +1096,13 @@ pub enum NetCommand {
         offset: [f64; 3],
         kind: u8,
         duration: f32,
+    },
+    /// Ask the other viewers to reset our skeleton (ViewerEffect,
+    /// LLHUDEffectResetSkeleton::packData), and our animations with it.
+    ResetSkeleton {
+        effect: Uuid,
+        target: Uuid,
+        animations: bool,
     },
     /// Raw IM with a given dialog (offer answers: accepted / declined...).
     SendImDialog {
@@ -1422,6 +1455,14 @@ pub enum NetCommand {
     RequestServerAppearance {
         cof_version: i32,
     },
+    /// Rebake: ask the server to step our Current Outfit folder's version
+    /// (IncrementCOFVersion capability, LLAppearanceMgr::
+    /// syncCofVersionAndRefresh), answered by `CofVersionIncremented`.
+    IncrementCofVersion,
+    /// Have the simulator send an avatar's appearance again (generic
+    /// "avatartexturesrequest", LLAvatarPropertiesProcessor::
+    /// sendAvatarTexturesRequest).
+    AvatarTexturesRequest(Uuid),
     /// Legacy wearables message the SL servers expect after login
     /// (LLAgentWearables::sendDummyAgentWearablesUpdate).
     DummyWearablesUpdate,

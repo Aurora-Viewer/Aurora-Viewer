@@ -207,7 +207,11 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         ui.item(icon, label, CtxAction::ToggleBlockObject { id, name: o.name.clone() });
     });
     ui.separator();
-    ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
+    ui.item(
+        "refresh",
+        aurora_i18n::tr!("ui-context-refresh-textures"),
+        CtxAction::RefreshTextures(id),
+    );
     ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender"));
     ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
     ui.todo("arrow-back-up", aurora_i18n::tr!("ui-context-return"));
@@ -287,7 +291,11 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         f.flying || !f.seated,
         CtxAction::ToggleFly,
     );
-    ui.todo("player-stop-filled", aurora_i18n::tr!("ui-context-stop-animations"));
+    ui.item(
+        "player-stop-filled",
+        aurora_i18n::tr!("ui-context-stop-animations"),
+        CtxAction::StopAnimations,
+    );
     ui.separator();
     community_submenu(ui, f.me);
     ui.todo("info-circle-filled", aurora_i18n::tr!("ui-context-object-profile"));
@@ -301,7 +309,12 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
     ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
-    ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
+    ui.item_if(
+        "refresh",
+        aurora_i18n::tr!("ui-context-refresh-textures"),
+        !f.object.id.is_nil(),
+        CtxAction::RefreshTextures(f.object.id),
+    );
     ui.separator();
     // "Delete" drops the attachment on the ground (Attachment.Drop)
     ui.todo("trash-filled", aurora_i18n::tr!("common-delete"));
@@ -331,8 +344,7 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     ui.separator();
     ui.todo("eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
     ui.separator();
-    ui.todo("bone-filled", aurora_i18n::tr!("ui-context-reset-skeleton"));
-    ui.todo("run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));
+    reset_skeleton_items(ui, id);
     ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
     ui.separator();
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
@@ -374,7 +386,11 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
     ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
-    ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
+    ui.item(
+        "refresh",
+        aurora_i18n::tr!("ui-context-refresh-textures"),
+        CtxAction::RefreshAvatarTextures(id),
+    );
     ui.separator();
     ui.todo("sparkles-filled", aurora_i18n::tr!("common-block-particles"));
 }
@@ -399,8 +415,7 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
     ui.todo("users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
     ui.todo("eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
     ui.separator();
-    ui.todo("bone-filled", aurora_i18n::tr!("ui-context-reset-skeleton"));
-    ui.todo("run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));
+    reset_skeleton_items(ui, id);
     ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
     ui.separator();
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
@@ -448,7 +463,12 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
     ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
     ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
-    ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
+    // the attachment's textures (Object.TexRefresh), not the avatar's bakes
+    ui.item(
+        "refresh",
+        aurora_i18n::tr!("ui-context-refresh-textures"),
+        CtxAction::RefreshTextures(attachment),
+    );
     save_as_submenu(ui);
 }
 
@@ -484,7 +504,11 @@ fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
     ui.item("camera-filled", aurora_i18n::tr!("ui-context-reset-camera"), CtxAction::ResetCamera);
     ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
-    ui.todo("refresh", aurora_i18n::tr!("ui-context-refresh-textures"));
+    ui.item(
+        "refresh",
+        aurora_i18n::tr!("ui-context-refresh-textures"),
+        CtxAction::RefreshAvatarTextures(id),
+    );
 }
 
 /// "Sit" (on the ground, Self.SitDown) and "Stand up".
@@ -532,10 +556,27 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
             CtxAction::HoverHeight,
         );
         ui.separator();
-        ui.todo("bone-filled", aurora_i18n::tr!("ui-context-reset-skeleton"));
-        ui.todo("run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"));
+        reset_skeleton_items(ui, f.me);
         ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod"));
+        // Avatar › Avatar Health › "Force Appearance Update (Rebake)" in
+        // Firestorm's menu bar, next to the resets here (Ctrl+Alt+R)
+        ui.item("reload", aurora_i18n::tr!("ui-context-rebake"), CtxAction::Rebake);
     });
+}
+
+/// Avatar.ResetSkeleton / Avatar.ResetSkeletonAndAnimations: enabled for
+/// any avatar (LLAvatarEnableResetSkeleton), ours included.
+fn reset_skeleton_items(ui: &mut Builder, avatar: Uuid) {
+    ui.item(
+        "bone-filled",
+        aurora_i18n::tr!("ui-context-reset-skeleton"),
+        CtxAction::ResetSkeleton { avatar, animations: false },
+    );
+    ui.item(
+        "run",
+        aurora_i18n::tr!("ui-context-reset-skeleton-and-animations"),
+        CtxAction::ResetSkeleton { avatar, animations: true },
+    );
 }
 
 fn community_submenu(ui: &mut Builder, me: Uuid) {

@@ -187,6 +187,15 @@ pub enum CtxAction {
     Profile(Uuid),
     /// Rendering exception of an avatar (LLRenderMuteList).
     SetRender(Uuid, u8),
+    /// "Reset skeleton" / "Reset skeleton and animations" of an avatar,
+    /// ours included (Avatar.ResetSkeleton, Avatar.ResetSkeletonAndAnimations).
+    ResetSkeleton {
+        avatar: Uuid,
+        animations: bool,
+    },
+    /// "Stop animations" of our avatar (Tools.StopAllAnimations:
+    /// LLAgent::stopCurrentAnimations).
+    StopAnimations,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
     /// Block / unblock an object (LLMute::OBJECT).
@@ -198,6 +207,13 @@ pub enum CtxAction {
     Edit(Uuid),
     /// "Inspect": the window of the object's prims (Floater.Show "inspect").
     Inspect(Uuid),
+    /// "Refresh textures" of an object or of something worn: every texture
+    /// of its linkset is downloaded again (Object.TexRefresh).
+    RefreshTextures(Uuid),
+    /// "Refresh textures" of an avatar: its bakes (Avatar.TexRefresh).
+    RefreshAvatarTextures(Uuid),
+    /// "Force appearance update (rebake)" (Advanced.RebakeTextures).
+    Rebake,
     /// Take / take a copy into the inventory (derez_objects).
     Take(Uuid),
     TakeCopy(Uuid),

@@ -340,8 +340,22 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
+| `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
 
 ### Details
+
+`AURORA_DEMO_TEXREFRESH=1|auto`: a panel right of the avatar wears a texture
+whose file in the disk cache is stale, a grey picture crossed in red written
+as its `.j2c` before the panel arrives (frame 300), while a local asset
+server (the one of `AURORA_DEMO_STREAM`'s `net=`, 150 ms a request) holds
+the right one, violet and teal stripes. The panel shows the cross, read from
+the disk. "Refresh textures" in its menu (right click), or `auto` at frame
+900, forgets the texture, removes its files (`.j2c`, `.part`, `.bc7`) and
+downloads it again: the stripes replace the cross (`refreshing 1 textures:
+downloaded again` in the log). Capture before with `AURORA_FPS_LIMIT=60`
+and `AURORA_CAPTURE_FRAMES=800`, after with `auto` and frame 1300. The
+region's `ViewerAsset` is that server for the whole session: the few demo
+textures that never had data are answered 404 (`fetch failed` in the log).
 
 `AURORA_DEMO_COLOR_PICKER=1|left|follow|link|toggle|dock|lsl|hex|invalid|drag|cancel|no-apply|palette|pipette`
 opens the colour picker of the selection, with
@@ -843,6 +857,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
+| `AURORA_DEMO_DEFORM=1`, `reset`, `reset-anim`, `self` or `self-reset` | An avatar deformed by a finished pose, and "Reset skeleton" |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
@@ -894,6 +909,17 @@ To check with these scenarios:
   close-up; with `AURORA_DEMO_POS="133.6,127.9"`, `AURORA_DEMO_CAMERA=ml`
   and frame 660: the wolf from the front (a grey silhouette, it is over the
   complexity limit of the demo, but with its build).
+- **`AURORA_DEMO_DEFORM`** (issue #272): at frame 240, a one-second pose
+  that moves the neck up and the shoulders out plays once on the avatar in
+  front of the start position ("Orion"), then stops. As on the grid, the
+  joints keep the positions it gave them: the neck stays stretched, the
+  shoulders wide and the plate higher. Right click on the avatar, "Reset
+  skeleton": it gets its shape back at once. `reset` / `reset-anim` choose
+  "Reset skeleton" / "Reset skeleton and animations" by themselves at
+  frame 700; `self` deforms our own avatar instead, `self-reset` resets it
+  at frame 700 (the log shows `skeleton reset: <id>`). Screenshots with
+  `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=650` (deformed) or
+  `780` (reset).
 
 ## Rendering and environment
 

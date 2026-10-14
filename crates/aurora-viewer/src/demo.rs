@@ -20,6 +20,9 @@ pub mod asset_server;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_chatlog.rs"]
 pub mod chatlog;
+/// A deformed avatar to reset (AURORA_DEMO_DEFORM).
+#[path = "demo_deform.rs"]
+pub mod deform;
 #[path = "demo_eep.rs"]
 pub mod eep;
 /// Environment selector library and script (AURORA_DEMO_ENV_SELECT).
@@ -50,6 +53,10 @@ pub mod stream;
 /// Name plates in every state and at each distance (AURORA_DEMO_TAGS).
 #[path = "demo_tags.rs"]
 pub mod tags;
+/// "Refresh textures" on a panel whose disk cache file is stale
+/// (AURORA_DEMO_TEXREFRESH).
+#[path = "demo_tex_refresh.rs"]
+pub mod tex_refresh;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;
@@ -1491,6 +1498,13 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 anims: vec![(anim, 1)],
             }]
         }
+        // "Stop animations": the simulator answers with the stand restarted
+        // (LLAgent::stopCurrentAnimations sends it right after)
+        aurora_net::NetCommand::AnimationStateReset => vec![NetEvent::AvatarAnimations {
+            sources: Vec::new(),
+            avatar: DEMO_AGENT,
+            anims: vec![(IDLE_ANIM, 1)],
+        }],
         aurora_net::NetCommand::RequestObjectProperties { object, .. } if (970..=982).any(|id| action_id(id) == *object) => {
             let mode = std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default();
             vec![NetEvent::ObjectProperties(vec![aurora_net::build::ObjectProps {

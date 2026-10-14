@@ -72,6 +72,11 @@ pub struct OutfitRestore {
     requested: HashSet<Uuid>,
     bake_requested: Option<i32>,
     bake_retries: u32,
+    /// Rebake: the COF version the server answered last, taken as received
+    /// (syncCofVersionAndRefreshCoro slams mLastUpdateReceivedCOFVersion),
+    /// and an IncrementCOFVersion request waiting for its answer.
+    stepped_cof_version: i32,
+    stepping: bool,
     pub commands: Vec<NetCommand>,
 }
 
@@ -85,6 +90,8 @@ impl Default for OutfitRestore {
             requested: HashSet::new(),
             bake_requested: None,
             bake_retries: 0,
+            stepped_cof_version: -1,
+            stepping: false,
             commands: Vec::new(),
         }
     }
@@ -296,9 +303,63 @@ impl OutfitRestore {
         self.commands.push(NetCommand::RezAttachments(list));
     }
 
+    /// "Force appearance update (rebake)", the server side of
+    /// handle_rebake_textures (llviewermenu.cpp): with the IncrementCOFVersion
+    /// capability, the server steps the Current Outfit folder's version
+    /// (syncCofVersionAndRefresh) and the bake request follows its answer
+    /// (`on_cof_stepped`); without it, a bake request for the folder's
+    /// version as it is (requestServerAppearanceUpdate), skipped when the
+    /// server already sent an appearance for it, as there.
+    pub fn rebake(&mut self, inv: &Inventory, step_capability: bool, received: i32) {
+        if step_capability {
+            if !self.stepping {
+                self.stepping = true;
+                self.commands.push(NetCommand::IncrementCofVersion);
+            }
+        } else {
+            self.follow_cof(inv);
+            self.request_bake(received);
+        }
+    }
+
+    /// The server answered the IncrementCOFVersion request: its version is
+    /// the folder's and counts as received (the viewer's own tends to be
+    /// ahead), then a bake is requested even when it failed, as
+    /// syncCofVersionAndRefreshCoro does.
+    pub fn on_cof_stepped(&mut self, version: Option<i32>, inv: &mut Inventory, received: i32) {
+        self.stepping = false;
+        self.follow_cof(inv);
+        if let Some(v) = version {
+            if let Some(f) = inv.folders.get_mut(&self.cof) {
+                f.info.version = v;
+            }
+            self.cof_version = v;
+            self.stepped_cof_version = v;
+            self.bake_requested = Some(v);
+        }
+        self.request_bake(received);
+    }
+
+    /// The Current Outfit folder and its version as the inventory has them
+    /// now: the outfit may have changed since the login restore.
+    fn follow_cof(&mut self, inv: &Inventory) {
+        if self.cof.is_nil()
+            && let Some(f) = inv
+                .folders
+                .values()
+                .find(|f| f.info.type_default == FT_CURRENT_OUTFIT && !f.library)
+        {
+            self.cof = f.info.id;
+        }
+        if let Some(f) = inv.folders.get(&self.cof) {
+            self.cof_version = f.info.version;
+        }
+    }
+
     /// LLAppearanceMgr::requestServerAppearanceUpdate (skipped when the
     /// server already sent an appearance for this COF version).
     fn request_bake(&mut self, received: i32) {
+        let received = received.max(self.stepped_cof_version);
         if self.cof_version < 0 || self.cof_version <= received || self.bake_requested.is_some_and(|v| v >= self.cof_version) {
             return;
         }
@@ -425,6 +486,65 @@ mod tests {
         r.update(inputs(&mut inv, &[200, 201]), t0 + SETTLE + RETRY_AFTER * 2);
         assert!(r.is_done());
         assert!(r.commands.is_empty());
+    }
+
+    /// An inventory holding only the Current Outfit folder (11), at `version`.
+    fn cof_inventory(version: i32) -> Inventory {
+        let mut inv = Inventory::default();
+        inv.folders.insert(
+            Uuid::from_u128(11),
+            super::super::inventory::Folder {
+                info: InvFolder {
+                    id: Uuid::from_u128(11),
+                    parent: Uuid::nil(),
+                    name: "COF".into(),
+                    type_default: FT_CURRENT_OUTFIT,
+                    version,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        inv
+    }
+
+    #[test]
+    fn rebake_steps_the_cof_version_then_takes_the_servers() {
+        let mut inv = cof_inventory(8);
+        let mut r = OutfitRestore::default();
+        r.rebake(&inv, true, 8);
+        // a second rebake while the first is answered asks nothing more
+        r.rebake(&inv, true, 8);
+        assert!(matches!(&r.commands[..], [NetCommand::IncrementCofVersion]));
+        r.commands.clear();
+        r.on_cof_stepped(Some(9), &mut inv, 8);
+        assert_eq!(inv.folders[&Uuid::from_u128(11)].info.version, 9);
+        // the stepped version counts as received: the server bakes it
+        // without a request (requestServerAppearanceUpdate returns early)
+        assert!(r.commands.is_empty());
+        r.rebake(&inv, true, 8);
+        assert!(matches!(&r.commands[..], [NetCommand::IncrementCofVersion]));
+    }
+
+    #[test]
+    fn rebake_without_the_capability_asks_for_the_current_version() {
+        let inv = cof_inventory(8);
+        let mut r = OutfitRestore::default();
+        // the server already sent an appearance for it: nothing to ask
+        r.rebake(&inv, false, 8);
+        assert!(r.commands.is_empty());
+        r.rebake(&inv, false, 7);
+        assert!(matches!(&r.commands[..], [NetCommand::RequestServerAppearance { cof_version: 8 }]));
+        // and a failed step still asks, with the folder's version
+        let mut inv = cof_inventory(10);
+        let mut r = OutfitRestore::default();
+        r.rebake(&inv, true, 9);
+        r.commands.clear();
+        r.on_cof_stepped(None, &mut inv, 9);
+        assert!(matches!(&r.commands[..], [NetCommand::RequestServerAppearance { cof_version: 10 }]));
     }
 
     #[test]
