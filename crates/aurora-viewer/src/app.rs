@@ -5127,6 +5127,13 @@ impl App {
             self.update_ao(now);
             // poses first: attachments follow their bone in the same frame
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, now);
+            self.scene.update_auto_hover(
+                &mut self.world,
+                self.settings.auto_hover_height,
+                self.settings.auto_hover_offset,
+                !self.hover_height_ui.previewing_offset(),
+                now,
+            );
             for anim in completed {
                 self.ao_runtime.finished(anim);
                 // LLAgent::requestStopMotion: stop the finished non-looping
@@ -8889,12 +8896,19 @@ impl App {
                 self.controls_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
+                let automatic_base = self.scene.automatic_hover_base(&self.world);
                 if self.hover_height_ui.show(
                     &ctx,
                     &p,
                     &mut self.world.hover_height,
                     hover_enabled,
-                    &mut self.settings.camera.hover_affects_camera,
+                    ui::hover_height::HoverHeightOptions {
+                        camera: &mut self.settings.camera.hover_affects_camera,
+                        automatic: &mut self.settings.auto_hover_height,
+                        offset: &mut self.settings.auto_hover_offset,
+                        automatic_base,
+                        neutral_pose_test: &mut self.scene.neutral_pose_test,
+                    },
                 ) {
                     self.settings.save();
                 }

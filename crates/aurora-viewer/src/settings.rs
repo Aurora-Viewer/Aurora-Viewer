@@ -172,6 +172,10 @@ pub struct Settings {
     pub build: crate::build::BuildSettings,
     /// Camera (Firestorm "Move & View › View").
     pub camera: crate::camera::CameraSettings,
+    /// Ground foot geometry after wearing/detaching a body attachment.
+    pub auto_hover_height: bool,
+    /// Fixed adjustment added to each automatic grounding estimate (metres).
+    pub auto_hover_offset: f32,
     /// Contacts window (Friends / Groups / Contact sets).
     pub contacts: crate::ui::contacts::ContactsSettings,
     /// Radar of the People window.
@@ -724,6 +728,8 @@ impl Default for Settings {
             debug: DebugView::default(),
             build: Default::default(),
             camera: Default::default(),
+            auto_hover_height: true,
+            auto_hover_offset: 0.0,
             contacts: Default::default(),
             radar: Default::default(),
             friends_list: Default::default(),

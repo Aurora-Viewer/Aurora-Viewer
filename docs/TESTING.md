@@ -85,6 +85,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
+| `AURORA_TEST_NEUTRAL_POSE=1` | Local neutral-pose comparison in the online or demo Hover Height floater |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
@@ -94,6 +95,44 @@ The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 `AURORA_DEMO_DIALOG` adds only the requested dialog;
 `AURORA_DEMO_INVENTORY=offer|offer-reject` adds only the received item.
+
+`AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
+Appearance › Hover Height, initially off. Our avatar starts with normal
+animations; enable the switch to display the exact shaped neutral skeleton
+used by automatic hover height, including worn-mesh joint offsets.
+Rigged meshes and rigid attachments follow the same neutral palette.
+This is local only, not saved:
+the motion controller and server animation signals continue normally, and
+other avatars are unchanged. Use it online to compare the reported roughly
+10 cm grounding discrepancy with/without the normal pose. The option is
+absent from an ordinary launch.
+Hover Height exposes a saved "Automatic height offset" in every launch
+(default 0 m). Positive values raise the result, negative values lower it;
+the offset applies again after each body attachment change, including removal
+of the last foot attachment. Millimetre numeric entry and -3..3 m adjustment
+match the height control. Dragging previews immediately from the cached
+estimate without another vertex scan; release saves the preference and commits
+the total height. With automatic mode disabled the offset slider is inactive.
+The technical measurements and recalculation button have been removed.
+Use the neutral-pose test switch when comparing shoes with the ground.
+The sliders share Aurora's contrasting track, zero marker, accent fill and
+solid rectangular handle over the normal blurred floater. While auto is on,
+the manual slider/value and Lower/Reset/Raise buttons are grey but remain
+interactive. Any manual change switches auto off immediately; Reset does so
+even when the height already equals zero. The saved automatic offset stays
+available when auto is enabled again. Merely displaying a computed height
+must not round it or switch modes.
+Two shared Aurora dividers separate manual height, automatic adjustment and
+the common camera/pose switches. The automatic section also has
+Lower/Reset/Raise buttons: they change the saved offset, retain automatic
+mode and apply the cached estimate immediately. Reset restores zero offset;
+steps match the manual buttons (1 cm, Alt 10 cm, Ctrl/Shift 1 mm).
+The scene compares an attachment/skeleton signature each frame, but mesh
+decoding and vertex scans run only after changes settle for 200 ms. HUD,
+animation and ordinary movement changes do not trigger ongoing recalculation.
+Body attachment, shape, physical-size and newly available asset changes can
+invalidate the estimate; an initial size-only estimate is upgraded once a
+usable contact plane arrives. Changing the offset reuses the cached result.
 
 The frames-per-second limiter is enabled at **120 fps by default**. It can
 be disabled or adjusted in Preferences › Graphics › Smoothness; preferences
@@ -225,7 +264,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details) |
-| `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Avatar hover-height adjustment and camera toggle |
+| `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
@@ -244,7 +283,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure`**:
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-cycle`**:
   opens the hover-height floater at frame 600. A number sets the height;
   `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
   repeats the cycle with "Affect camera view" enabled; otherwise the camera
@@ -259,6 +298,31 @@ when unfocused") is ignored during a screenshot.
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
   switch for the manual check. On the grid, also verify other viewers see
   the committed adjustment, then teleport and reconnect to check persistence.
+  `auto-static` adds two rigid soles with a linked heel at frame 620;
+  the `auto-*` scenarios frame the feet at 600, after the login camera reset.
+  Their avatar reports a 1.68 m physics height, matching the offline
+  simulation's 0.84 m centre clearance; the generic fixture's 1.9 m size
+  does not match that simulation. Grounding uses the simulator-reported
+  contact distance when available, otherwise the physical height, not the
+  independently computed shaped skeleton height.
+  `auto-static-off` repeats it with automatic adjustment disabled for comparison;
+  `auto-rigged` adds a rigged shoe mesh on the spine with an unrelated low
+  triangle whose foot weights are zero (it must not lift the avatar).
+  `auto-contact` uses those shoes with a reported 1.48 m physical height and
+  a contact plane at the actual ground: the 0.84 m centre clearance includes
+  a 10 cm margin over half that size. It must give the same grounded result
+  as `auto-rigged`, not raise the shoes by those extra 10 cm. Enable
+  `AURORA_TEST_NEUTRAL_POSE=1` to compare the exact neutral pose.
+  `auto-offset` uses that same contact-plane fixture: +0.05 m offset at 700
+  gives +0.316 m total height; -0.03 m at 860 gives +0.236 m. Removing the
+  shoes at 940 leaves the fixed -0.03 m offset. Capture 660, 840, 920 and 1100.
+  `auto-cycle` adds the rigid shoes at 620 and removes them at 940; capture
+  580, 840 and 1100 to compare barefoot / soles on the ground / barefoot.
+  Automatic adjustment is enabled by default in Hover Height. Manual edits
+  last until the next body attachment change; HUD changes must leave the
+  height intact. Updates during sitting/flying wait until standing on the
+  ground. On the grid: add/remove rigged shoes/body, rigid foot linksets and
+  HUDs, including delayed mesh loading and attachments worn while seated.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).

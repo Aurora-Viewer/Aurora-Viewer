@@ -1206,6 +1206,105 @@ fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) 
     }
 }
 
+/// Signed height adjustment: keep egui's pointer/keyboard behaviour, with a
+/// visible Aurora rail, zero marker, accent fill and solid rectangular knob.
+/// The surrounding floater supplies the shared glass, no opaque card here.
+pub fn height_slider(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    subdued: bool,
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        let aspect = 0.6;
+        let slider = ui
+            .scope(|ui| {
+                // Paint only the slider ourselves; the numeric field keeps the
+                // theme's normal input face. The stock slider still owns input.
+                let widgets = &mut ui.visuals_mut().widgets;
+                widgets.inactive.bg_fill = Color32::TRANSPARENT;
+                widgets.inactive.fg_stroke = Stroke::NONE;
+                widgets.hovered.bg_fill = Color32::TRANSPARENT;
+                widgets.hovered.fg_stroke = Stroke::NONE;
+                widgets.active.bg_fill = Color32::TRANSPARENT;
+                widgets.active.fg_stroke = Stroke::NONE;
+                ui.add(
+                    egui::Slider::new(&mut *value, range.clone())
+                        .step_by(0.001)
+                        .clamping(egui::SliderClamping::Edits)
+                        .smart_aim(false)
+                        .show_value(false)
+                        .trailing_fill(false)
+                        .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: aspect }),
+                )
+            })
+            .inner;
+        let rect = slider.rect;
+        let half_width = rect.height() / 2.5 * aspect; // egui Slider::position_range
+        let left = rect.left() + half_width;
+        let right = rect.right() - half_width;
+        let at = |v: f32| egui::lerp(left..=right, ((v - range.start()) / (range.end() - range.start())).clamp(0.0, 1.0));
+        let x = at(*value);
+        let zero = at(0.0);
+        let fade = if ui.is_enabled() { 1.0 } else { 0.45 };
+        let rail = egui::Rect::from_center_size(rect.center(), Vec2::new(rect.width(), 8.0));
+        let painter = ui.painter();
+        painter.rect(
+            rail,
+            TRACK_RADIUS,
+            p.muted_dim.lerp_to_gamma(p.raised, 0.25).gamma_multiply(fade),
+            Stroke::new(1.0, p.muted.gamma_multiply(0.5 * fade)),
+            egui::StrokeKind::Inside,
+        );
+        let fill = egui::Rect::from_min_max(egui::pos2(zero.min(x), rail.top()), egui::pos2(zero.max(x), rail.bottom()));
+        if fill.width() > 0.5 {
+            painter.rect_filled(
+                fill,
+                TRACK_RADIUS,
+                (if subdued { p.muted_dim } else { p.violet }).gamma_multiply(fade),
+            );
+        }
+        painter.line_segment(
+            [egui::pos2(zero, rail.top() - 2.0), egui::pos2(zero, rail.bottom() + 2.0)],
+            Stroke::new(1.0, p.muted.gamma_multiply(fade)),
+        );
+        let hot = slider.hovered() || slider.dragged() || slider.has_focus();
+        let knob = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), Vec2::new(half_width * 2.0, rect.height() / 1.25));
+        painter.rect(
+            knob,
+            inner_radius(ui.visuals()),
+            (if subdued {
+                p.muted
+            } else if hot {
+                p.on_accent
+            } else {
+                p.violet_light
+            })
+            .gamma_multiply(fade),
+            Stroke::new(1.0, p.on_accent.gamma_multiply(0.75 * fade)),
+            egui::StrokeKind::Inside,
+        );
+        let numeric = ui.add_sized(
+            Vec2::new(78.0, rect.height()),
+            egui::DragValue::new(value)
+                .range(range)
+                .clamp_existing_to_range(false)
+                .speed(0.001)
+                .fixed_decimals(3)
+                .suffix(" m")
+                .custom_formatter(|value, _| aurora_i18n::number(value, 3))
+                .custom_parser(|text| aurora_i18n::parse_number(text).filter(|v| v.is_finite())),
+        );
+        if numeric.gained_focus() || numeric.has_focus() || numeric.lost_focus() {
+            numeric.union(slider)
+        } else {
+            slider.union(numeric)
+        }
+    })
+    .inner
+}
+
 /// Progress bar of the interface: a flat track filled with the brand
 /// gradient (or `tint`), which glides to its value instead of jumping.
 /// `text` is written under it; `{}` in it is replaced by the percentage
