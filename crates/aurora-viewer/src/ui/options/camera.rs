@@ -252,6 +252,13 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset_view:
             aurora_i18n::tr!("ui-options-camera-scroll-toward-yourself-to-leave-mouselook"),
             |ui| toggle(ui, p, &mut c.wheel_exits_mouselook),
         );
+        changed |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-camera-show-how-to-leave"),
+            aurora_i18n::tr!("ui-options-camera-show-how-to-leave-tip"),
+            |ui| toggle(ui, p, &mut c.show_mouselook_instructions),
+        );
     });
     changed
 }
