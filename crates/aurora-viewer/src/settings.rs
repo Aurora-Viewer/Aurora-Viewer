@@ -334,6 +334,11 @@ pub struct Settings {
     pub world_map_style: WorldMapStyle,
     /// The photo window's layout (Preferences › Aurora).
     pub photo_window: PhotoWindowStyle,
+    /// The user's graphics values while the photo window's "Photo quality"
+    /// raises them (`snapshot::quality`): never saved, they are what is
+    /// written in their place.
+    #[serde(skip)]
+    pub photo_held: Option<crate::snapshot::quality::Held>,
     /// About Land as Firestorm's nine tabs (`ui/land`) instead of the
     /// overview and the settings grouped by intent (`ui/land/aurora`).
     pub classic_about_land: bool,
@@ -767,6 +772,7 @@ impl Default for Settings {
             notifications_style: NotificationsStyle::Aurora,
             world_map_style: WorldMapStyle::Aurora,
             photo_window: PhotoWindowStyle::Aurora,
+            photo_held: None,
             classic_about_land: false,
             invert_mouse: false,
             arrows_strafe: false,
@@ -1216,11 +1222,23 @@ impl Settings {
         self.save_to(&Self::path());
     }
 
-    fn save_to(&self, path: &Path) {
+    /// What is written to the file: the user's own graphics values while
+    /// the photo quality raises them, no user name unless remembered.
+    pub(crate) fn to_saved(&self) -> Settings {
         let mut copy = self.clone();
+        if let Some(mut held) = copy.photo_held.take() {
+            // a setting changed since the last frame is the user's too
+            held.sync(&copy);
+            held.restore(&mut copy);
+        }
         if !copy.remember_username {
             copy.username.clear();
         }
+        copy
+    }
+
+    fn save_to(&self, path: &Path) {
+        let copy = self.to_saved();
         // Over a newer build's file, write ours over theirs: what this build
         // does not know, and what it could not read and left unchanged, stay.
         let bytes = match &copy.newer_file {

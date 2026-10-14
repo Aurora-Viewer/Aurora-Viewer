@@ -3647,11 +3647,12 @@ impl Backend {
         // the video memory at the photo's peak (its targets still alive)
         let live = self.device.get_internal_counters().hal;
         log::info!(
-            "snapshot {} x {}: {} MB of textures, {} MB of buffers at its peak",
+            "snapshot {} x {}: {} MB of textures, {} MB of buffers at its peak, {} sample(s) per pixel",
             self.config.width,
             self.config.height,
             live.texture_memory.read().max(0) >> 20,
-            live.buffer_memory.read().max(0) >> 20
+            live.buffer_memory.read().max(0) >> 20,
+            self.msaa_samples
         );
         self.config.width = w;
         self.config.height = h;

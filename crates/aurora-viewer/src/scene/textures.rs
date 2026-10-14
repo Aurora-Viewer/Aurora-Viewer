@@ -858,6 +858,12 @@ pub struct TextureStreamer {
     /// Bytes the textures would hold one pressure step below, from the
     /// last pass.
     bytes_below: u64,
+    /// The photo quality: the textures in view at full resolution.
+    pub full_resolution: bool,
+    /// Textures in view still loading, from the last pass.
+    pending_in_view: usize,
+    /// The last `update` had somewhere to download textures from.
+    can_fetch: bool,
     /// Textures the demo draws itself, see [`DemoSource`].
     pub demo_source: Option<DemoSource>,
     /// Textures also wanted as egui images (profile pictures...): small CPU copies.
@@ -1004,6 +1010,9 @@ impl TextureStreamer {
             passes_at_step: 0,
             reductions: Vec::new(),
             bytes_below: 0,
+            full_resolution: false,
+            pending_in_view: 0,
+            can_fetch: false,
             demo_source: None,
             ui_wanted: Default::default(),
             ui_ready: HashMap::new(),
@@ -1520,6 +1529,10 @@ impl TextureStreamer {
         let step = self.pressure.step();
         let dropped = texture_budget::dropped(step);
         let below = texture_budget::dropped(step.saturating_sub(1));
+        // the photo quality: every texture in view at full resolution, while
+        // the memory allows it (under pressure the budget decides, as always)
+        let full = self.full_resolution && step == 0;
+        let can_fetch = self.can_fetch;
         let TextureStreamer {
             entries,
             reductions,
@@ -1530,6 +1543,7 @@ impl TextureStreamer {
         } = self;
         reductions.clear();
         let mut bytes_below = 0;
+        let mut pending = 0;
         for (id, e) in entries.iter_mut() {
             if e.keep_pixels {
                 e.want = 0;
@@ -1537,13 +1551,27 @@ impl TextureStreamer {
                 Self::settle(todo, counts, *id, e);
                 continue;
             }
-            let full = full_size(e).map_or(512, |(w, h)| w.max(h)) as f32;
+            let full_px = full_size(e).map_or(512, |(w, h)| w.max(h)) as f32;
             let levels = e.info.map(|i| i.levels);
-            let (want, keep) = wanted(full, levels, e, dropped);
-            e.want = want;
+            let (want, keep) = wanted(full_px, levels, e, dropped);
+            let in_view = e.need_px > 0.0 || e.fixed_px > 0.0;
+            e.want = if full && in_view && e.source == TexSource::Asset { 0 } else { want };
+            // (still on its way: there is somewhere to download it from, or
+            // what is held of it has more to give)
+            let reachable = can_fetch || e.fetching || e.decoding || !e.data.is_empty() || e.cache_state < 2;
+            if in_view
+                && e.refs > 0
+                && e.source == TexSource::Asset
+                && e.decoded.is_none_or(|d| d > e.want)
+                && !e.gone
+                && e.failures <= 3
+                && reachable
+            {
+                pending += 1;
+            }
             e.seen_px = e.fixed_px.max(e.need_px / dropped.0);
             if step > 0 {
-                let (want_below, keep_below) = wanted(full, levels, e, below);
+                let (want_below, keep_below) = wanted(full_px, levels, e, below);
                 // (there it would be lowered to `keep`, or loaded up to `want`)
                 bytes_below += bytes_at(e, e.decoded.map_or(want_below, |d| d.clamp(keep_below, want_below)));
                 // (bakes and interface images are left alone, as Firestorm's
@@ -1569,7 +1597,14 @@ impl TextureStreamer {
         // the table has no order of its own)
         reductions.sort_unstable_by_key(|&(id, _, bytes)| (bytes, id));
         self.bytes_below = bytes_below;
+        self.pending_in_view = pending;
         self.passes_at_step = self.passes_at_step.saturating_add(1);
+    }
+
+    /// Textures in view still loading towards the level they want (the
+    /// photo quality waits for them, `app::snapshot`).
+    pub fn pending_in_view(&self) -> usize {
+        self.pending_in_view
     }
 
     fn bytes_needed(e: &Entry) -> usize {
@@ -1595,6 +1630,7 @@ impl TextureStreamer {
     /// lookup each. A texture is visited at each frame while it waits for a
     /// retry delay, a decode slot or its upload, as it was before the list.
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>) {
+        self.can_fetch = viewer_asset.is_some();
         let now = Instant::now();
         let mode = todo_mode();
         if mode == TodoMode::Check {

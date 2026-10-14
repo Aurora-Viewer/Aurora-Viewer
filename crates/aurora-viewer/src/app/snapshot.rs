@@ -24,13 +24,15 @@ use uuid::Uuid;
 const PREVIEW_SIDE: u32 = 720;
 /// The preview follows the camera once it has been still this long.
 const SETTLE: Duration = Duration::from_millis(250);
-/// Bytes of video memory a pixel of a photo takes while it is drawn: its
-/// render targets and readback. Measured on 2026-10-14 (demo, MSAA 4x):
-/// +289 MB for 3840 x 2160, +1182 MB for 7680 x 4320, about 36 bytes; with
-/// room for MSAA 8x. The photo is tiled when the free memory cannot hold it.
-const TARGET_BYTES_PER_PIXEL: u64 = 48;
-/// Pixels drawn in one pass when the driver does not report its memory.
-const DEFAULT_MAX_PIXELS: u64 = 34_000_000;
+/// Bytes of video memory a pixel of a photo takes while it is drawn (its
+/// render targets and readback), besides those per MSAA sample. Measured on
+/// 2026-10-14 (demo, full-resolution reflections): about 54 bytes with MSAA
+/// 4x, 150 with MSAA 8x; with some room. The photo is tiled when the free
+/// memory cannot hold it.
+const TARGET_BYTES_PER_PIXEL: u64 = 16;
+const TARGET_BYTES_PER_SAMPLE: u64 = 18;
+/// Bytes a photo may take when the driver does not report its memory.
+const DEFAULT_TARGET_BYTES: u64 = 1_600_000_000;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Purpose {
@@ -79,6 +81,9 @@ struct Job {
     interface: bool,
     huds: bool,
     started: Instant,
+    /// Drawn at this many times the photo's size, reduced once complete
+    /// (the photo quality's supersampling).
+    supersample: u32,
 }
 
 /// A held photo (freeze frame) and what shows it.
@@ -133,6 +138,14 @@ pub(super) struct Snapshots {
     message_item: Option<Uuid>,
     /// The message tells of a post to the profile feed ("View").
     message_profile: bool,
+    /// The photo quality waits since then for the textures in view.
+    detail_wait: Option<Instant>,
+    /// The wait is over: the next "Take" goes ahead.
+    detail_ready: bool,
+    /// The photo quality raised or restored the settings: applied like a
+    /// change made in Preferences (renderer, draw distance sent to the
+    /// region…).
+    pub(super) settings_changed: bool,
     /// The web profile's session cookie, for the OpenID cookie it was
     /// asked with (getOpenIDCookieCoro gives it once per login).
     web_auth: std::sync::Arc<parking_lot::Mutex<Option<(String, String)>>>,
@@ -157,6 +170,8 @@ struct DemoPhoto {
     /// AURORA_DEMO_SNAPSHOT=classic: Firestorm's floater for this run, the
     /// setting itself left alone.
     classic: bool,
+    /// AURORA_DEMO_SNAPSHOT=quality: the window with its photo quality on.
+    quality: bool,
 }
 
 /// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
@@ -194,6 +209,9 @@ impl Default for Snapshots {
             upload: None,
             message_item: None,
             message_profile: false,
+            detail_wait: None,
+            detail_ready: false,
+            settings_changed: false,
             web_auth: Default::default(),
             demo_profile: None,
             demo: None,
@@ -275,7 +293,7 @@ impl App {
         if job.next < job.tiles.len() {
             return;
         }
-        let Some(job) = self.snapshots.job.take() else {
+        let Some(mut job) = self.snapshots.job.take() else {
             return;
         };
         let render_ms = job.started.elapsed().as_millis();
@@ -286,6 +304,15 @@ impl App {
                 job.size.1,
                 job.tiles.len()
             );
+        }
+        if job.supersample > 1 {
+            // back to the photo's size: each pixel the mean of the ones drawn
+            let t0 = Instant::now();
+            let (w, h) = (job.size.0 / job.supersample, job.size.1 / job.supersample);
+            let (_, _, px) = save::downscale(job.size.0, job.size.1, &job.pixels, w.max(h));
+            job.size = (w, h);
+            job.pixels = px;
+            log::info!("photo: reduced to {w} x {h} in {} ms", t0.elapsed().as_millis());
         }
         match job.purpose {
             Purpose::Preview => {
@@ -440,11 +467,14 @@ impl App {
         } else {
             full
         };
-        let max_pixels = renderer.video_memory.read(&renderer.device).map_or(DEFAULT_MAX_PIXELS, |m| {
-            // half of what is free, besides what the window's frame holds
-            m.budget.saturating_sub(m.usage) / 2 / TARGET_BYTES_PER_PIXEL
-        });
-        let tiles = snapshot::plan(size, self.photo_max_side(renderer), max_pixels);
+        // the photo quality draws a photo (not its preview) at twice its size
+        let supersample = if purpose != Purpose::Preview && self.settings.photo_held.is_some() {
+            snapshot::quality::supersample(size)
+        } else {
+            1
+        };
+        let size = (size.0 * supersample, size.1 * supersample);
+        let tiles = snapshot::plan(size, self.photo_max_side(renderer), self.photo_max_pixels(renderer));
         let interface = s.interface && snapshot::same_proportions(full, window);
         self.snapshots.job = Some(Job {
             purpose,
@@ -456,6 +486,7 @@ impl App {
             interface,
             huds: s.huds,
             started: Instant::now(),
+            supersample,
         });
     }
 
@@ -467,6 +498,26 @@ impl App {
             .then(|| std::env::var("AURORA_DEMO_SNAPSHOT_TILE").ok()?.parse::<u32>().ok())
             .flatten();
         forced.unwrap_or_else(|| renderer.max_texture_dimension())
+    }
+
+    /// MSAA samples the frames are drawn with (the renderer takes the most
+    /// the GPU supports up to the setting's).
+    fn msaa_samples(&self, renderer: &Renderer) -> u32 {
+        match self.settings.render_settings().aa {
+            aurora_render::AntiAliasing::Msaa(n) => renderer.msaa_supported().iter().copied().filter(|&m| m <= n).max().unwrap_or(1),
+            _ => 1,
+        }
+    }
+
+    /// The most pixels drawn in one pass: half of the free video memory,
+    /// besides what the window's frame holds.
+    fn photo_max_pixels(&self, renderer: &Renderer) -> u64 {
+        let per_pixel = TARGET_BYTES_PER_PIXEL + TARGET_BYTES_PER_SAMPLE * u64::from(self.msaa_samples(renderer));
+        let free = renderer
+            .video_memory
+            .read(&renderer.device)
+            .map_or(DEFAULT_TARGET_BYTES, |m| m.budget.saturating_sub(m.usage) / 2);
+        free / per_pixel
     }
 
     fn photo_shutter(&mut self) {
@@ -500,7 +551,7 @@ impl App {
     /// A photo is being taken, saved or uploaded.
     fn photo_busy(&self) -> bool {
         let s = &self.snapshots;
-        s.saving.is_some() || s.upload.is_some() || s.job.as_ref().is_some_and(|j| j.purpose != Purpose::Preview)
+        s.saving.is_some() || s.upload.is_some() || s.detail_wait.is_some() || s.job.as_ref().is_some_and(|j| j.purpose != Purpose::Preview)
     }
 
     /// Upload prices: the account's benefits (texture_upload_cost, by area
@@ -727,6 +778,20 @@ impl App {
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
     pub(super) fn photo_update(&mut self, renderer: &Renderer) {
         self.photo_demo(renderer);
+        self.photo_quality(renderer);
+        if let Some(t) = self.snapshots.detail_wait {
+            let pending = self.scene.textures.pending_in_view();
+            if pending == 0 || t.elapsed() >= snapshot::quality::DETAIL_WAIT || self.settings.photo_held.is_none() {
+                log::info!(
+                    "photo quality: details loaded in {} ms ({pending} textures left)",
+                    t.elapsed().as_millis()
+                );
+                self.snapshots.detail_wait = None;
+                self.snapshots.detail_ready = true;
+                self.photo_action(Action::Take, renderer);
+                self.snapshots.detail_ready = false;
+            }
+        }
         // the texture encoded on its worker: its upload
         if let Some(Upload::Encoding { rx, cost }) = &self.snapshots.upload
             && let Ok(encoded) = rx.try_recv()
@@ -879,6 +944,19 @@ impl App {
             Action::Refresh => self.snapshots.preview_wanted = true,
             Action::Take => {
                 self.snapshots.quiet = false;
+                // the photo quality waits for the textures in view to load
+                // at full resolution (photo_update takes it then, or after
+                // quality::DETAIL_WAIT)
+                if self.settings.photo_held.is_some()
+                    && !std::mem::take(&mut self.snapshots.detail_ready)
+                    && self.scene.textures.pending_in_view() > 0
+                {
+                    if self.snapshots.detail_wait.is_none() && !self.photo_busy() {
+                        log::info!("photo quality: waiting for {} textures", self.scene.textures.pending_in_view());
+                        self.snapshots.detail_wait = Some(Instant::now());
+                    }
+                    return;
+                }
                 match self.snapshots.ui.destination {
                     Destination::Disk => self.photo_take(renderer, None),
                     Destination::Inventory => self.photo_to_inventory(renderer),
@@ -975,12 +1053,15 @@ impl App {
             let inventory = (self.snapshots.ui.destination == Destination::Inventory).then(|| self.photo_inventory_view(window));
             let profile = (self.snapshots.ui.destination == Destination::Profile).then(|| self.photo_profile_view(window));
             let mut state = std::mem::take(&mut self.snapshots.ui);
-            let max_pixels = renderer.video_memory.read(&renderer.device).map_or(DEFAULT_MAX_PIXELS, |m| {
-                m.budget.saturating_sub(m.usage) / 2 / TARGET_BYTES_PER_PIXEL
-            });
-            let tiles = snapshot::plan(photo, self.photo_max_side(renderer), max_pixels).len();
+            let tiles = snapshot::plan(photo, self.photo_max_side(renderer), self.photo_max_pixels(renderer)).len();
             let s = &self.snapshots;
-            let busy = if let Some(saving) = &s.saving {
+            let busy = if let Some(t) = s.detail_wait {
+                let wait = snapshot::quality::DETAIL_WAIT.as_secs_f32();
+                Some((
+                    (t.elapsed().as_secs_f32() / wait).min(1.0) * 0.5,
+                    aurora_i18n::tr!("photo-quality-loading", count = self.scene.textures.pending_in_view()).to_owned(),
+                ))
+            } else if let Some(saving) = &s.saving {
                 Some((0.5 + 0.5 * saving.fraction(), aurora_i18n::tr!("photo-saving").to_owned()))
             } else if let Some(upload) = &s.upload {
                 Some(match upload {
@@ -1067,6 +1148,46 @@ impl App {
         false
     }
 
+    /// "Photo quality": raised while the window is open and the switch on,
+    /// the user's values back as soon as either is off (they are also what
+    /// a save in the meantime writes, `Settings::to_saved`).
+    fn photo_quality(&mut self, renderer: &Renderer) {
+        let want = self.panels.snapshot && self.settings.snapshot.quality;
+        match (&self.settings.photo_held, want) {
+            (None, true) => {
+                let held = snapshot::quality::boost(&mut self.settings);
+                let samples = self.msaa_samples(renderer);
+                log::info!(
+                    "photo quality: on (draw distance {} m, shadows {}, LOD {}, MSAA {samples}x{})",
+                    self.settings.draw_distance,
+                    self.settings.shadow_quality,
+                    self.settings.lod_factor,
+                    if samples < 8 { ", the most this GPU supports" } else { "" }
+                );
+                self.settings.photo_held = Some(held);
+                self.snapshots.settings_changed = true;
+            }
+            (Some(_), false) => {
+                if let Some(mut held) = self.settings.photo_held.take() {
+                    held.sync(&self.settings);
+                    held.restore(&mut self.settings);
+                }
+                log::info!("photo quality: off, the user's settings back");
+                self.snapshots.settings_changed = true;
+            }
+            (Some(_), true) => {
+                // what the user changes meanwhile (Preferences) is theirs
+                let mut held = self.settings.photo_held.take();
+                if let Some(h) = held.as_mut() {
+                    h.sync(&self.settings);
+                }
+                self.settings.photo_held = held;
+            }
+            (None, false) => {}
+        }
+        self.scene.textures.full_resolution = self.settings.photo_held.is_some();
+    }
+
     /// AURORA_DEMO_SNAPSHOT=open | full[-<W>x<H> proportions, e.g. full-4x5] |
     /// save:<W>x<H>[:png|jpg|bmp][:<folder>] | inventory… | profile[-fail] |
     /// dof | full-dof | classic
@@ -1086,7 +1207,8 @@ impl App {
                 .unwrap_or(700);
             let mut parts = mode.split(':');
             let kind = parts.next().unwrap_or("open");
-            let save = (kind == "save").then(|| {
+            // save-quality: the same with the photo quality on
+            let save = kind.starts_with("save").then(|| {
                 let size = parts
                     .next()
                     .and_then(|s| s.split_once('x'))
@@ -1132,6 +1254,7 @@ impl App {
                 profile: kind.starts_with("profile"),
                 dof: kind.ends_with("dof"),
                 classic: kind == "classic",
+                quality: kind.ends_with("quality"),
             });
         }
         let Some(demo) = self.snapshots.demo.as_ref() else {
@@ -1152,6 +1275,9 @@ impl App {
                 if inv.poor {
                     self.world.balance = Some(5);
                 }
+            }
+            if demo.quality {
+                self.settings.snapshot.quality = true;
             }
             if demo.dof {
                 self.settings.snapshot.dof = crate::dof::PhotoDof {
@@ -1195,8 +1321,8 @@ impl App {
             if let Some(folder) = folder {
                 s.folder = Some(folder);
             }
-            self.snapshots.quiet = false;
-            self.photo_take(renderer, None);
+            self.snapshots.ui.destination = Destination::Disk;
+            self.photo_action(Action::Take, renderer);
         }
     }
 }
