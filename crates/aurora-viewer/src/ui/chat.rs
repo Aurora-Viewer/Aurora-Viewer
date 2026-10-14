@@ -378,7 +378,8 @@ fn line_job(
         _ => ("", ": ", &line.text[..]),
     };
     // in a pill the body follows the name 4 px away instead of a colon
-    let name_gap = if pill.is_some() && after.is_empty() && !line.kind.is_notice() { 4.0 } else { 0.0 };
+    // (an emote's body starts with its own space)
+    let name_gap = if pill.is_some() && after.is_empty() && !emote && !line.kind.is_notice() { 4.0 } else { 0.0 };
     let mut sender = None;
     if !line.kind.is_notice() {
         job.append(before, 0.0, name_fmt.clone());

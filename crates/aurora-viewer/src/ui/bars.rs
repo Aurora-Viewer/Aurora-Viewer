@@ -1932,7 +1932,6 @@ pub fn bottom_bar(
             mic,
         );
     }
-    let _ = emoji;
     let mut out = None;
     let mut action = BarAction::None;
     let mut width_committed = false;

@@ -138,8 +138,10 @@ pub fn bottom(
             dock: true,
         };
         let rects = toolbar_row(&mut child, p, icons, buttons, look, toolbar, panels, mic, row, &mut action);
-        // a button dropped a little past either end still lands in the dock
-        let drop = ui.interact(geo.dock.expand2(Vec2::new(geo.button, 4.0)), Id::new("dock_drop"), Sense::hover());
+        // a button dropped a little past either end still lands in the dock;
+        // the marker spans the buttons' row less 2 px at each end, the
+        // mockup's 28 px `.dropguide`
+        let drop = ui.interact(inner.expand2(Vec2::new(geo.button + PAD, 0.0)), Id::new("dock_drop"), Sense::hover());
         toolbar.drop_bar(&drop, &rects, p, row.locked);
     });
     (out, action, screen.bottom() - RESERVED, committed)
@@ -156,7 +158,7 @@ fn chat_island(
     panels: &mut Panels,
     chat: &mut crate::ui::chat::ChatUi,
     gestures: &crate::gestures::Manager,
-    emoji: Option<&mut crate::ui::emoji::Emoji>,
+    mut emoji: Option<&mut crate::ui::emoji::Emoji>,
     geo: Geometry,
     chat_width: &mut f32,
     committed: &mut bool,
@@ -187,11 +189,10 @@ fn chat_island(
         Pos2::new(field.left() + FIELD_PAD, field.top()),
         Pos2::new(smile.left() - 6.0, field.bottom()),
     );
-    let hint = RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.5).color(p.muted_dim);
+    let hint = RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.5);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text).layout(egui::Layout::left_to_right(egui::Align::Center)));
     // egui paints a placeholder in the weak text colour, whatever its own
     child.visuals_mut().weak_text_color = Some(p.muted_dim);
-    let mut emoji = emoji;
     let out = crate::ui::chat::bar_input(&mut child, chat, gestures, emoji.as_deref_mut(), |edit| {
         edit.frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
@@ -202,7 +203,7 @@ fn chat_island(
             .vertical_align(egui::Align::Center)
     });
     if chat.bar_emoji_open {
-        emoji_picker(ui, p, icons, chat, emoji, smile);
+        emoji_picker(ui, p, icons, chat, emoji, smile, Pos2::new(field.right(), island.top() - 6.0));
     }
 
     // the local chat in the Conversations window, as Firestorm's nearby
@@ -244,16 +245,18 @@ fn chat_island(
     out
 }
 
-/// The emoji picker of the chat field, above its button (the one of the
-/// Conversations window); a pick goes at the end of the field, Shift keeps
-/// the picker open.
+/// The emoji picker of the chat field (the one of the Conversations
+/// window), its bottom right corner at `corner`, above the island; a pick
+/// goes at the end of the field, Shift keeps the picker open, a click away
+/// from it and from its `button` closes it.
 fn emoji_picker(
     ui: &egui::Ui,
     p: &Palette,
     icons: &Icons,
     chat: &mut crate::ui::chat::ChatUi,
     emoji: Option<&mut crate::ui::emoji::Emoji>,
-    anchor: Rect,
+    button: Rect,
+    corner: Pos2,
 ) {
     let Some(emoji) = emoji else {
         chat.bar_emoji_open = false;
@@ -264,7 +267,7 @@ fn emoji_picker(
         .fade_in(false)
         .order(egui::Order::Foreground)
         .pivot(egui::Align2::RIGHT_BOTTOM)
-        .fixed_pos(Pos2::new(anchor.right() + FIELD_PAD, anchor.top() - (CHAT_H - EMOJI_ICON) / 2.0 - GAP * 3.0))
+        .fixed_pos(corner)
         .show(ui.ctx(), |ui| {
             crate::ui::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.set_width(300.0);
@@ -274,7 +277,7 @@ fn emoji_picker(
                 }
             });
         });
-    let away = shown.response.clicked_elsewhere() && !ui.rect_contains_pointer(anchor.expand(4.0));
+    let away = shown.response.clicked_elsewhere() && !ui.rect_contains_pointer(button.expand(4.0));
     if close || away || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         chat.bar_emoji_open = false;
         chat.focus_request = true;

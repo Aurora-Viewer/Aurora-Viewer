@@ -134,11 +134,24 @@ fn readout(
     );
     paint_icon(ui, icons, icon, icon_rect, SYSTEM_ICON, slot_ink(p, hot, true));
     let x = icon_rect.right() + SLOT_PAD;
-    crate::ui::widgets::paint_ink_left(ui.painter(), galley, Pos2::new(x, rect.center().y), color);
+    paint_readout_text(ui, galley, Pos2::new(x, rect.center().y), color);
     if clickable && resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     resp
+}
+
+/// A readout's text, its left at `left_center.x` and its digits' ink
+/// centred on `left_center.y`, so that every readout of the island shares
+/// one baseline: centring each text's own ink lifted the frame rate, whose
+/// comma hangs below the line ("120,0" stood 2 px above "0 ms").
+fn paint_readout_text(ui: &egui::Ui, galley: std::sync::Arc<egui::Galley>, left_center: Pos2, color: Color32) {
+    let font = galley.job.sections.first().map(|s| s.format.font_id.clone()).unwrap_or_default();
+    let digit = ui.painter().layout_no_wrap("0".to_owned(), font, color);
+    let digits = crate::ui::widgets::ink_rect(&digit);
+    let ink = crate::ui::widgets::ink_rect(&galley);
+    let pos = Pos2::new(left_center.x - ink.left(), left_center.y - digits.center().y);
+    ui.painter().galley(pos.round(), galley, color);
 }
 
 /// The width of a readout whose text is `text_w` wide.
@@ -495,8 +508,9 @@ mod tests {
     }
 
     /// Two frames of the islands in a screen `width` wide (16:9), the
-    /// pointer at `pointer`; the areas' rectangles by name.
-    fn frames(width: f32, stretch: bool, bug: bool, pointer: Pos2) -> (egui::Context, impl Fn(&str) -> Rect) {
+    /// pointer at `pointer`; the areas' rectangles by name, and what the
+    /// last frame painted.
+    fn frames(width: f32, stretch: bool, bug: bool, pointer: Pos2) -> (egui::Context, impl Fn(&str) -> Rect, Vec<egui::epaint::ClippedShape>) {
         let ctx = egui::Context::default();
         let p = crate::theme::Theme::default().palette();
         let icons = Icons::default();
@@ -506,6 +520,7 @@ mod tests {
         let mut audio_ui = crate::ui::audio::AudioUi::default();
         let mut notif = crate::ui::notifications::NotifUi::default();
         let st = status(stretch, bug);
+        let mut shapes = Vec::new();
         for _ in 0..2 {
             let input = egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, width * 9.0 / 16.0))),
@@ -527,13 +542,14 @@ mod tests {
                 );
             });
             out.textures_delta.clear();
+            shapes = out.shapes;
         }
         let c = ctx.clone();
         let rect = move |name: &str| {
             c.memory(|m| m.area_rect(Id::new(("bars_island", name))))
                 .unwrap_or_else(|| panic!("no {name} island"))
         };
-        (ctx, rect)
+        (ctx, rect, shapes)
     }
 
     /// The islands stand 8 px from the edges and from each other, with or
@@ -545,7 +561,7 @@ mod tests {
         for width in [1280.0, 1536.0, 1920.0] {
             for bug in [true, false] {
                 for stretch in [true, false] {
-                    let (_, rect) = frames(width, stretch, bug, Pos2::new(700.0, 400.0));
+                    let (_, rect, _) = frames(width, stretch, bug, Pos2::new(700.0, 400.0));
                     let (menu, place, account, system, bell) = (rect("menu"), rect("place"), rect("account"), rect("system"), rect("bell"));
                     let case = format!("{width} bug {bug} stretch {stretch}");
                     assert_eq!((menu.left(), menu.top(), menu.height()), (MARGIN, MARGIN, HEIGHT), "{case}");
@@ -575,11 +591,52 @@ mod tests {
     /// islands (the place not stretched), over the world.
     #[test]
     fn an_island_takes_the_pointer_the_gap_between_them_does_not() {
-        let (ctx, rect) = frames(1536.0, true, true, Pos2::new(20.0, 20.0));
+        let (ctx, rect, _) = frames(1536.0, true, true, Pos2::new(20.0, 20.0));
         assert!(ctx.is_pointer_over_egui(), "the menu island");
         let account = rect("account");
-        let (ctx, rect) = frames(1536.0, false, true, Pos2::new(account.left() - 30.0, 20.0));
+        let (ctx, rect, _) = frames(1536.0, false, true, Pos2::new(account.left() - 30.0, 20.0));
         assert!(rect("place").right() < account.left() - 30.0);
         assert!(!ctx.is_pointer_over_egui(), "between the place and the account");
+    }
+    /// The texts of the system island (clock, latency, frame rate) share
+    /// one baseline: their digits' ink is centred on the island's middle,
+    /// within half a pixel, at the three widths, whatever hangs below the
+    /// line (the frame rate's comma).
+    #[test]
+    fn the_system_readouts_share_one_baseline() {
+        fn texts(shape: &egui::Shape, out: &mut Vec<(String, Pos2)>) {
+            match shape {
+                egui::Shape::Text(t) => {
+                    let mut ink = Rect::NOTHING;
+                    for row in &t.galley.rows {
+                        for g in row.row.glyphs.iter().filter(|g| g.chr.is_ascii_digit()) {
+                            let min = t.pos + row.pos.to_vec2() + g.pos.to_vec2() + g.uv_rect.offset;
+                            ink = ink.union(Rect::from_min_size(min, g.uv_rect.size));
+                        }
+                    }
+                    if ink.is_positive() {
+                        out.push((t.galley.text().to_owned(), ink.center()));
+                    }
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        for width in [1280.0, 1536.0, 1920.0] {
+            let (_, rect, shapes) = frames(width, true, true, Pos2::new(700.0, 400.0));
+            let system = rect("system");
+            let mut found = Vec::new();
+            for clipped in &shapes {
+                texts(&clipped.shape, &mut found);
+            }
+            let found: Vec<_> = found
+                .into_iter()
+                .filter(|(_, at)| system.contains(*at))
+                .collect();
+            assert!(found.len() >= 3, "{width}: {found:?}");
+            for (text, at) in &found {
+                assert!((at.y - system.center().y).abs() <= 0.5, "{width}: {text:?} at {}, island centre {}", at.y, system.center().y);
+            }
+        }
     }
 }
