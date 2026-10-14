@@ -26,7 +26,7 @@ const ARROW_PX: f32 = 50.0;
 const SELECTED_ARROW_SCALE: f32 = 1.3;
 const HOTSPOT_START: f32 = 0.2;
 const HOTSPOT_END: f32 = 1.2;
-/// Aurora: the plane handles are squares between the two arrows of their
+/// Aurora: the plane handles are squares between the two axes of their
 /// plane, next to the pivot (center and half side, in arrow lengths; the hit
 /// test takes them a little larger). LL puts two triangles at 1.8 arrow
 /// lengths, away from the handles they belong to.
@@ -551,7 +551,7 @@ impl Manip {
     }
 
     /// Aurora look of LLManipTranslate::renderTranslationHandles: pale axes
-    /// with heads in the color of their axis, square plane handles in the
+    /// with one positive arrow per axis, square plane handles in the
     /// color of their normal, and the accent of the theme under the cursor.
     fn draw_translate(&self, p: &mut Painter3d, s: &BuildSettings, f: &Frame, drag: Option<&Drag>) {
         let cam = p.cam;
@@ -592,29 +592,21 @@ impl Manip {
                 p.line(q[k], q[(k + 1) % 4], color, if hl { 3.5 } else { 2.5 });
             }
         }
-        // arrows, farthest first; the heads point away from the pivot
-        let mut arrows: Vec<(f32, usize, f32)> = Vec::new();
-        for i in 0..3 {
-            for sgn in [1.0f32, -1.0] {
-                let tip = piv + g * unit(i) * len * sgn;
-                arrows.push((cam.depth(tip), i, sgn));
-            }
-        }
+        // Only positive ends have handles; guidelines show the full axes.
+        let mut arrows: [(f32, usize); 3] = std::array::from_fn(|i| (cam.depth(piv + g * unit(i) * len), i));
         arrows.sort_by(|a, b| b.0.total_cmp(&a.0));
         let (head_h, head_r) = (len * ARROW_HEAD.0, len * ARROW_HEAD.1);
-        for (_, i, sgn) in arrows {
+        for (_, i) in arrows {
             let selected = active == Some(Part::Arrow(i)) || self.hover == Some(Part::Arrow(i));
             if active.is_some() && !selected {
                 continue;
             }
-            // the negative side is the same handle, quieter
-            let side = if sgn > 0.0 { 1.0 } else { 0.6 };
             let (shaft, head, width) = if selected {
                 (pal.violet_light, pal.violet_light, STROKE_PX.1)
             } else {
-                (fade(pal.ink, 0.85 * side), fade(axis_color(&pal, i), side), STROKE_PX.0)
+                (fade(pal.ink, 0.85), axis_color(&pal, i), STROKE_PX.0)
             };
-            let a = g * unit(i) * sgn;
+            let a = g * unit(i);
             let sc = self.arrow_scale[i].max(1.0);
             let base = piv + a * (len - head_h * 0.5 * sc);
             p.line_cased(piv, base, shaft, width);
@@ -1029,14 +1021,11 @@ fn pick_translate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
         }
     }
     // (depth of the end, part, start, end)
-    let mut segs: Vec<(f32, Part, Vec3, Vec3)> = Vec::new();
-    for i in 0..3 {
+    let mut segs: [(f32, Part, Vec3, Vec3); 3] = std::array::from_fn(|i| {
         let a = g * unit(i);
-        for sgn in [1.0f32, -1.0] {
-            let (s0, s1) = (piv + a * len * HOTSPOT_START * sgn, piv + a * len * HOTSPOT_END * sgn);
-            segs.push((cam.depth(s1), Part::Arrow(i), s0, s1));
-        }
-    }
+        let (s0, s1) = (piv + a * len * HOTSPOT_START, piv + a * len * HOTSPOT_END);
+        (cam.depth(s1), Part::Arrow(i), s0, s1)
+    });
     segs.sort_by(|a, b| a.0.total_cmp(&b.0));
     for (_, part, s0, s1) in segs {
         let (Some(a), Some(b)) = (cam.project(s0), cam.project(s1)) else {
@@ -1740,15 +1729,15 @@ mod tests {
         let at = cam.at;
         let signs = Vec3::new(at.x.signum(), at.y.signum(), at.z.signum());
         for i in 0..3 {
-            // the middle of each square, between the two arrows of its plane
+            // the middle of each square, between the two axes of its plane
             let q = plane_quad(piv, Quat::IDENTITY, len, signs, i, 1.0);
             let middle = cam.project((q[0] + q[2]) * 0.5).unwrap();
             assert_eq!(pick_translate(&cam, &f, middle), Some(Part::Plane(i)));
-            // an arrow keeps its whole hot spot, on both sides of the pivot
-            for sgn in [1.0, -1.0] {
-                let on_arrow = cam.project(piv + unit(i) * len * 0.9 * sgn).unwrap();
-                assert_eq!(pick_translate(&cam, &f, on_arrow), Some(Part::Arrow(i)));
-            }
+            let on_arrow = cam.project(piv + unit(i) * len * 0.9).unwrap();
+            assert_eq!(pick_translate(&cam, &f, on_arrow), Some(Part::Arrow(i)));
+            // The negative guideline must not retain an invisible arrow handle.
+            let on_guide = cam.project(piv - unit(i) * len * 0.9).unwrap();
+            assert_ne!(pick_translate(&cam, &f, on_guide), Some(Part::Arrow(i)));
         }
     }
 
