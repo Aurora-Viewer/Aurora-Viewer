@@ -313,6 +313,11 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, cache
     surface.emit(env.painter, rect.min.to_vec2(), alpha);
 }
 
+/// Width of a friend's ring, in mockup pixels: the human asked for a ring
+/// that shows (2026-10-14), 5 reads better than 3.5 on zoomed captures; the
+/// plain ring stays at 2.
+const FRIEND_RING_PX: f32 = 5.0;
+
 const WHOLE: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
 
 /// Part of a picture that fills a square without stretching it.
@@ -330,8 +335,6 @@ pub(super) fn cover(size: [usize; 2]) -> Rect {
 fn badge_icon(p: &Palette, badge: Badge) -> Option<(&'static str, Color32)> {
     Some(match badge {
         Badge::Voice => ("microphone-filled", p.success),
-        // as the classic tag's (`ui::hud`)
-        Badge::NoVoice => ("microphone-off", p.danger),
         Badge::TooComplex => ("alert-triangle-filled", p.amber),
         Badge::Blocked => ("forbid-filled", p.danger),
         Badge::Typing => return None,
@@ -350,12 +353,11 @@ fn marks(env: &Env<'_>, key: &MarksKey) -> Mesh {
         if key.placeholder {
             disc.dot(&mut mesh, p.raised);
         }
-        let ring = if key.friend_ring {
-            p.violet_light
+        if key.friend_ring {
+            disc.stroke(&mut mesh, FRIEND_RING_PX * s, p.violet_light);
         } else {
-            p.ink.gamma_multiply(0.22)
-        };
-        disc.stroke(&mut mesh, 2.0 * s, ring);
+            disc.stroke(&mut mesh, 2.0 * s, p.ink.gamma_multiply(0.22));
+        }
     }
     if let (Some(dot), Some(presence)) = (l.dot, key.dot) {
         let color = match presence {

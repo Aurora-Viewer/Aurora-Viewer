@@ -228,6 +228,9 @@ pub struct Settings {
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
     /// lines of text on a flat tag, in the tag colors of the preferences.
     pub classic_name_tags: bool,
+    /// Complete name plates for friends only: the others stop at the
+    /// compact pill (off by default).
+    pub plates_friends_only_full: bool,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// Our avatar's head and eyes follow the cursor and what we point at,
@@ -607,6 +610,7 @@ impl Default for Settings {
             chat_commands: Default::default(),
             name_tag_distance: 64.0,
             classic_name_tags: false,
+            plates_friends_only_full: false,
             invert_mouse: false,
             arrows_strafe: false,
             look_at: false,

@@ -1467,6 +1467,16 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         changed
                     },
                 );
+                if !s.classic_name_tags {
+                    // a row like its neighbours: the switch of the page's other settings
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-full-plates-friends-only"),
+                        aurora_i18n::tr!("ui-options-full-plates-friends-only-help"),
+                        |ui| toggle(ui, p, &mut s.plates_friends_only_full),
+                    );
+                }
                 c |= row(
                     ui,
                     p,

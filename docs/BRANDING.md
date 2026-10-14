@@ -140,7 +140,8 @@ dragging a handle switch to `violet_light`, like any selection.
   - *Status*: dot at the bottom right of the picture, `success` (present),
     `amber` (away), `danger` (do not disturb); none for a blocked
     resident.
-  - *Friend*: a thin `violet_light` ring around the picture (no badge).
+  - *Friend*: a `violet_light` ring around the picture, wider than the
+    plain one (no badge).
   - *Badges*: `success` microphone (in the voice channel), three animated
     dots (typing), `amber` triangle (avatar too complex, shown as a
     silhouette), `danger` no-entry sign (blocked).
