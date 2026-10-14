@@ -14,31 +14,10 @@ use std::time::{Duration, Instant};
 
 const SETTLE: Duration = Duration::from_millis(200);
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum HoverStatus {
-    Disabled,
-    Unavailable,
-    #[default]
-    WaitingAvatar,
-    WaitingGround,
-    WaitingAssets,
-    Calculating,
-    Failed,
-    Ready,
-}
-
-pub struct HoverDiagnostics {
-    pub status: HoverStatus,
-    pub gap: Option<f32>,
-    pub clearance: Option<f32>,
-    pub half_height: Option<f32>,
-    pub estimate: Option<f32>,
-    pub contact: bool,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Measurement {
     height: f32,
+    #[cfg(test)]
     lowest: Option<f32>,
 }
 
@@ -65,7 +44,7 @@ pub(super) struct AutoHover {
     rx: Receiver<(u64, Option<Measurement>, bool)>,
     measurement: Option<Measurement>,
     used_contact: bool,
-    status: HoverStatus,
+    offset: Option<f32>,
     base: Option<Arc<anim::SkeletonBase>>,
     base_hash: u64,
     matrices: Vec<Mat4>,
@@ -83,7 +62,7 @@ impl Default for AutoHover {
             rx,
             measurement: None,
             used_contact: false,
-            status: HoverStatus::default(),
+            offset: None,
             base: None,
             base_hash: 0,
             matrices: Vec::new(),
@@ -138,70 +117,43 @@ fn bits(values: &[f32], hash: &mut impl Hasher) {
 }
 
 impl Scene {
-    pub fn remeasure_auto_hover(&mut self) {
-        self.auto_hover.observed = None;
-        self.auto_hover.finished = None;
-    }
-
-    /// Test-only readout reuses the worker's neutral mesh minimum. No vertex
-    /// scan or GPU wait in the UI; the gap includes the LIVE displayed hover.
-    pub fn auto_hover_diagnostics(&self, world: &World, now: Instant) -> HoverDiagnostics {
-        let owner = world.objects.index_of_uuid(&world.agent_id);
-        let object = owner.and_then(|i| world.objects.get(i));
-        let half_height = object.map(|o| 0.5 * o.scale.z);
-        let raw = owner.and_then(|i| Self::object_transform_unshifted(world, i, now));
-        let local = raw
-            .zip(object)
-            .and_then(|(xf, o)| world.region_offset(o.key.region).map(|off| xf.0 - off));
-        let contact = local.zip(object).and_then(|(p, o)| contact_clearance(p, o.foot_plane));
-        let clearance = contact.or(half_height);
-        let state = &self.auto_hover;
-        let measurement = (state.observed.is_some() && state.finished == state.observed)
-            .then_some(state.measurement)
-            .flatten();
-        let gap = measurement
-            .and_then(|m| m.lowest)
-            .zip(clearance)
-            .zip(self.skeletons.get(&world.agent_id))
-            .map(|((lowest, clearance), skeleton)| {
-                clearance + skeleton.shape_dz + world.appearance_hover(&world.agent_id) - self.avatar_lib.pelvis.z + lowest
-            });
-        HoverDiagnostics {
-            status: state.status,
-            gap,
-            clearance,
-            half_height,
-            estimate: measurement.map(|m| m.height),
-            contact: contact.is_some(),
+    /// Keep the raw estimate for immediate offset previews, without decoding
+    /// or skinning the attachments again. Unfinished outfits have no baseline.
+    pub fn automatic_hover_base(&self, world: &World) -> Option<f32> {
+        let owner = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get(i))?;
+        if owner.parent_id != 0 || world.agent.flying || !world.hover_height_available() || !world.hover_height.ready() {
+            return None;
         }
+        let state = &self.auto_hover;
+        (state.observed.is_some() && state.finished == state.observed)
+            .then_some(state.measurement)
+            .flatten()
+            .map(|m| m.height)
     }
 
     /// Called after the rest skeleton has been refreshed, before scene sync.
     /// Snapshots contain only Arc handles and transforms; decoding, skinning
     /// and vertex scans use the scene's low-priority pool. Old jobs are ignored
     /// after another wear/detach, a HUD update cannot trigger a recalibration.
-    pub fn update_auto_hover(&mut self, world: &mut World, enabled: bool, now: Instant) {
+    pub fn update_auto_hover(&mut self, world: &mut World, enabled: bool, offset: f32, commit: bool, now: Instant) {
         if !enabled {
-            self.auto_hover.status = HoverStatus::Disabled;
             self.auto_hover.observed = None;
             self.auto_hover.finished = None;
+            self.auto_hover.offset = None;
             while self.auto_hover.rx.try_recv().is_ok() {
                 self.auto_hover.pending = false;
             }
             return;
         }
         if !world.hover_height_available() || !world.hover_height.ready() {
-            self.auto_hover.status = HoverStatus::Unavailable;
             return;
         }
-        self.auto_hover.status = HoverStatus::WaitingAvatar;
         let Some(owner) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get(i)) else {
             return;
         };
         // A seated or flying pose has no useful ground contact. Re-evaluate
         // the pending outfit when back on the ground instead of moving a seat.
         if owner.parent_id != 0 || world.agent.flying {
-            self.auto_hover.status = HoverStatus::WaitingGround;
             return;
         }
         if !owner.scale.z.is_finite() || owner.scale.z <= 0.0 {
@@ -214,7 +166,6 @@ impl Scene {
         // A cleared plane is an explicit airborne report. An absent block
         // (offline demo / first full update) can still use the physical size.
         if owner.foot_plane.is_some() && contact.is_none() {
-            self.auto_hover.status = HoverStatus::WaitingGround;
             return;
         }
         let rig = &self.avatar_lib.rig;
@@ -325,6 +276,19 @@ impl Scene {
         if state.finished == Some(signature) && !state.used_contact && contact.is_some() {
             state.finished = None;
         }
+        let offset = crate::world::hover_height::bounded(offset).unwrap_or(0.0);
+        let offset_changed = state.offset != Some(offset);
+        state.offset = Some(offset);
+        if ready
+            && offset_changed
+            && state.finished == Some(signature)
+            && let Some(measurement) = state.measurement
+        {
+            world.hover_height.preview(measurement.height + offset);
+            if commit {
+                world.hover_height.commit();
+            }
+        }
         while let Ok((stamp, result, used_contact)) = state.rx.try_recv() {
             state.pending = false;
             if ready && state.observed == Some(stamp) {
@@ -332,23 +296,14 @@ impl Scene {
                 state.measurement = result;
                 state.used_contact = used_contact;
                 if let Some(Measurement { height: value, .. }) = result {
-                    log::info!("auto hover height: {value:.3} m");
-                    world.hover_height.preview(value);
-                    world.hover_height.commit();
+                    world.hover_height.preview(value + offset);
+                    log::info!("auto hover height: {:.3} m", world.hover_height.value());
+                    if commit {
+                        world.hover_height.commit();
+                    }
                 }
             }
         }
-        state.status = if !ready {
-            HoverStatus::WaitingAssets
-        } else if state.finished == Some(signature) {
-            if state.measurement.is_some() {
-                HoverStatus::Ready
-            } else {
-                HoverStatus::Failed
-            }
-        } else {
-            HoverStatus::Calculating
-        };
         if !ready || state.pending || state.finished == Some(signature) || now.duration_since(state.changed) < SETTLE {
             return;
         }
@@ -514,7 +469,14 @@ impl Estimate {
                 },
             )
             .ok()?;
-        crate::world::hover_height::bounded(min.map_or(0.0, |z| self.ground - z)).map(|height| Measurement { height, lowest: min })
+        // Apply the user offset before the final server bounds, otherwise a
+        // large raw estimate followed by a negative offset clamps too early.
+        let height = min.map_or(0.0, |z| self.ground - z);
+        height.is_finite().then_some(Measurement {
+            height,
+            #[cfg(test)]
+            lowest: min,
+        })
     }
 }
 
@@ -645,16 +607,109 @@ mod tests {
     }
 
     fn settle(scene: &mut Scene, world: &mut World, now: Instant) {
+        settle_offset(scene, world, now, 0.0);
+    }
+
+    fn settle_offset(scene: &mut Scene, world: &mut World, now: Instant, offset: f32) {
         rest(scene, world, now);
-        scene.update_auto_hover(world, true, now);
+        scene.update_auto_hover(world, true, offset, true, now);
         for _ in 0..1000 {
-            scene.update_auto_hover(world, true, now + SETTLE);
+            scene.update_auto_hover(world, true, offset, true, now + SETTLE);
             if scene.auto_hover.finished == scene.auto_hover.observed {
                 return;
             }
             std::thread::sleep(Duration::from_millis(1));
         }
         panic!("grounding job did not finish");
+    }
+
+    #[test]
+    fn fixed_offset_previews_cached_height_and_survives_outfit_changes() {
+        let (mut world, mut scene, now) = fixture();
+        crate::demo::auto_hover::install_mesh(&world.avatar_lib, &mut scene).unwrap();
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::auto_hover::rigged_object()],
+        });
+        settle_offset(&mut scene, &mut world, now, 0.05);
+        let base = scene.automatic_hover_base(&world).unwrap();
+        assert!((world.hover_height.value() - base - 0.05).abs() < 1e-5);
+        let stamp = scene.auto_hover.finished;
+        let Some(aurora_net::NetCommand::SetHoverHeight { request, .. }) = world.hover_height.next_update(Some(1)) else {
+            panic!("initial committed auto height");
+        };
+        world.hover_height.reply(request, 1, true);
+        scene.update_auto_hover(&mut world, true, 0.1, false, now + Duration::from_secs(1));
+        assert!((world.hover_height.value() - base - 0.1).abs() < 1e-5);
+        assert_eq!(scene.auto_hover.finished, stamp);
+        assert!(!scene.auto_hover.pending, "offset changes must reuse the estimate");
+        assert!(world.hover_height.next_update(Some(1)).is_none(), "a held drag must only preview");
+        world.hover_height.commit(); // slider release
+        let Some(aurora_net::NetCommand::SetHoverHeight { request, value, .. }) = world.hover_height.next_update(Some(1)) else {
+            panic!("released offset must commit the preview");
+        };
+        assert!((value - base - 0.1).abs() < 1e-5);
+        world.hover_height.reply(request, 1, true);
+        scene.update_auto_hover(&mut world, true, -0.03, true, now + Duration::from_secs(2));
+        assert!((world.hover_height.value() - base + 0.03).abs() < 1e-5);
+        for _ in 0..10 {
+            scene.update_auto_hover(&mut world, true, -0.03, true, now + Duration::from_secs(3));
+        }
+        assert!(
+            (world.hover_height.value() - base + 0.03).abs() < 1e-5,
+            "offset cannot accumulate across frames"
+        );
+        world.hover_height.preview(0.35);
+        world.hover_height.commit();
+        scene.update_auto_hover(&mut world, false, 0.5, true, now + Duration::from_secs(4));
+        assert_eq!(world.hover_height.value(), 0.35);
+        assert!(scene.automatic_hover_base(&world).is_none());
+        world.apply(NetEvent::ObjectsKilled {
+            handle: 1,
+            local_ids: vec![crate::demo::auto_hover::LEFT],
+        });
+        settle_offset(&mut scene, &mut world, now + Duration::from_secs(5), -0.03);
+        assert_eq!(world.hover_height.value(), -0.03, "barefoot auto height keeps the fixed offset");
+    }
+
+    #[test]
+    fn fixed_offset_is_added_before_the_final_hover_limit() {
+        use aurora_assets::import_mesh::{encode, process::Physics};
+        let (mut world, mut scene, now) = fixture();
+        let mut model = crate::demo::auto_hover::rigged_model(&world.avatar_lib);
+        for vertex in model.faces.iter_mut().flat_map(|f| &mut f.vertices) {
+            vertex.position[2] -= 3.0;
+        }
+        model.normalize().unwrap();
+        let data = encode::asset(
+            &[None, None, None, Some(model)],
+            None,
+            &Physics::default(),
+            encode::Options {
+                skin: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let header = aurora_assets::parse_mesh_header(&data).unwrap();
+        let skin = header
+            .skin
+            .map(|range| Arc::new(aurora_assets::decode_skin(aurora_assets::mesh::section_bytes(&data, range).unwrap()).unwrap()));
+        scene
+            .meshes
+            .insert_local(crate::demo::auto_hover::MESH, Arc::new(data), header, skin);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::auto_hover::rigged_object()],
+        });
+        settle_offset(&mut scene, &mut world, now, -0.5);
+        let base = scene.automatic_hover_base(&world).unwrap();
+        assert!(base > crate::world::hover_height::MAX);
+        assert!((world.hover_height.value() - (base - 0.5)).abs() < 1e-5);
+        scene.update_auto_hover(&mut world, true, 0.5, true, now + Duration::from_secs(1));
+        assert_eq!(world.hover_height.value(), crate::world::hover_height::MAX);
+        scene.update_auto_hover(&mut world, true, f32::NAN, true, now + Duration::from_secs(2));
+        assert_eq!(world.hover_height.value(), crate::world::hover_height::MAX);
     }
 
     #[test]
@@ -703,7 +758,7 @@ mod tests {
             .avatar_poses
             .insert(world.agent_id, vec![Mat4::from_translation(Vec3::Z * 12.0); lib.rig.len()]);
         rest(&mut scene, &world, now + SETTLE);
-        scene.update_auto_hover(&mut world, true, now + SETTLE);
+        scene.update_auto_hover(&mut world, true, 0.0, true, now + SETTLE);
         assert_eq!(world.hover_height.value(), 0.35);
         assert_eq!(scene.auto_hover.finished, scene.auto_hover.observed);
         world.apply(NetEvent::ObjectsKilled {
@@ -757,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    fn contact_plane_removes_collision_clearance_and_reports_manual_gap() {
+    fn contact_plane_removes_collision_clearance_and_preserves_manual_gap() {
         let (mut world, mut scene, now) = fixture();
         let lib = world.avatar_lib.clone();
         crate::demo::auto_hover::install_mesh(&lib, &mut scene).unwrap();
@@ -778,35 +833,32 @@ mod tests {
         let previous = world.hover_height.value();
         // Full updates may precede the first terse collision plane.
         world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, floor));
-        let before = scene.auto_hover_diagnostics(&world, now);
-        assert!(before.contact);
-        assert!((before.gap.unwrap() - 0.1).abs() < 1e-5);
-        assert!((before.clearance.unwrap() - before.half_height.unwrap() - 0.1).abs() < 1e-5);
+        let gap = |scene: &Scene, world: &World| {
+            Scene::object_transform(world, owner, now, 0).unwrap().0.z - lib.pelvis.z
+                + scene.auto_hover.measurement.unwrap().lowest.unwrap()
+                - floor
+        };
+        assert!((gap(&scene, &world) - 0.1).abs() < 1e-5);
         settle(&mut scene, &mut world, now + Duration::from_secs(1));
         let grounded = world.hover_height.value();
         assert!((grounded - previous + 0.1).abs() < 1e-5);
-        let after = scene.auto_hover_diagnostics(&world, now);
-        assert_eq!(after.status, HoverStatus::Ready);
-        assert!(after.gap.unwrap().abs() < 1e-5);
+        assert!(gap(&scene, &world).abs() < 1e-5);
         let root = Scene::object_transform(&world, owner, now, 0).unwrap().0;
         let lowest = scene.auto_hover.measurement.unwrap().lowest.unwrap();
         assert!((root.z - lib.pelvis.z + lowest - floor).abs() < 1e-5);
 
         world.hover_height.preview(grounded + 0.1);
         world.hover_height.commit();
-        assert!((scene.auto_hover_diagnostics(&world, now).gap.unwrap() - 0.1).abs() < 1e-5);
+        assert!((gap(&scene, &world) - 0.1).abs() < 1e-5);
         world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::ZERO);
-        scene.update_auto_hover(&mut world, true, now + Duration::from_secs(2));
-        assert_eq!(scene.auto_hover.status, HoverStatus::WaitingGround);
+        scene.update_auto_hover(&mut world, true, 0.0, true, now + Duration::from_secs(2));
+        assert!((world.hover_height.value() - grounded - 0.1).abs() < 1e-5);
         world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, floor));
-        scene.update_auto_hover(&mut world, true, now + Duration::from_secs(3));
+        scene.update_auto_hover(&mut world, true, 0.0, true, now + Duration::from_secs(3));
         assert!(
             (world.hover_height.value() - grounded - 0.1).abs() < 1e-5,
             "landing preserves a manual edit"
         );
-        scene.remeasure_auto_hover();
-        settle(&mut scene, &mut world, now + Duration::from_secs(4));
-        assert!((world.hover_height.value() - grounded).abs() < 1e-5);
     }
 
     #[test]
@@ -842,9 +894,9 @@ mod tests {
             objects: vec![crate::demo::auto_hover::rigged_object()],
         });
         rest(&mut scene, &world, now);
-        scene.update_auto_hover(&mut world, true, now);
+        scene.update_auto_hover(&mut world, true, 0.0, true, now);
         let old = scene.auto_hover.observed.unwrap();
-        scene.update_auto_hover(&mut world, true, now + SETTLE);
+        scene.update_auto_hover(&mut world, true, 0.0, true, now + SETTLE);
         assert!(!scene.auto_hover.pending, "wait for missing mesh");
         scene
             .auto_hover
@@ -863,14 +915,14 @@ mod tests {
             local_ids: vec![crate::demo::auto_hover::LEFT],
         });
         rest(&mut scene, &world, now);
-        scene.update_auto_hover(&mut world, true, now);
+        scene.update_auto_hover(&mut world, true, 0.0, true, now);
         assert_eq!(world.hover_height.value(), 0.42, "discard detached outfit result");
         let owner = world.objects.index_of_uuid(&world.agent_id).unwrap();
         world.objects.get_mut(owner).unwrap().parent_id = 999;
-        scene.update_auto_hover(&mut world, true, now + SETTLE);
+        scene.update_auto_hover(&mut world, true, 0.0, true, now + SETTLE);
         assert_eq!(world.hover_height.value(), 0.42);
         world.objects.get_mut(owner).unwrap().parent_id = 0;
-        scene.update_auto_hover(&mut world, false, now + SETTLE);
+        scene.update_auto_hover(&mut world, false, 0.0, true, now + SETTLE);
         assert_eq!(world.hover_height.value(), 0.42);
         settle(&mut scene, &mut world, now + Duration::from_secs(1));
         assert_eq!(world.hover_height.value(), 0.0);
@@ -887,8 +939,8 @@ mod tests {
             objects: crate::demo::auto_hover::rigid_objects(),
         });
         rest(&mut scene, &world, now);
-        scene.update_auto_hover(&mut world, true, now);
-        scene.update_auto_hover(&mut world, true, now + SETTLE);
+        scene.update_auto_hover(&mut world, true, 0.0, true, now);
+        scene.update_auto_hover(&mut world, true, 0.0, true, now + SETTLE);
         assert!(!scene.auto_hover.pending);
         assert_eq!(world.hover_height.value(), 0.4);
         for id in [
@@ -974,7 +1026,12 @@ mod tests {
     fn persisted_auto_option_defaults_on_and_can_be_disabled() {
         let settings: crate::settings::Settings = serde_json::from_str("{}").unwrap();
         assert!(settings.auto_hover_height);
-        let disabled: crate::settings::Settings = serde_json::from_str("{\"auto_hover_height\":false}").unwrap();
+        assert_eq!(settings.auto_hover_offset, 0.0);
+        let disabled: crate::settings::Settings =
+            serde_json::from_str("{\"auto_hover_height\":false,\"auto_hover_offset\":-0.05}").unwrap();
         assert!(!disabled.auto_hover_height);
+        assert_eq!(disabled.auto_hover_offset, -0.05);
+        let reloaded: crate::settings::Settings = serde_json::from_str(&serde_json::to_string(&disabled).unwrap()).unwrap();
+        assert_eq!(reloaded.auto_hover_offset, -0.05);
     }
 }

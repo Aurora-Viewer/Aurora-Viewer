@@ -5107,7 +5107,13 @@ impl App {
             self.update_ao(now);
             // poses first: attachments follow their bone in the same frame
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, now);
-            self.scene.update_auto_hover(&mut self.world, self.settings.auto_hover_height, now);
+            self.scene.update_auto_hover(
+                &mut self.world,
+                self.settings.auto_hover_height,
+                self.settings.auto_hover_offset,
+                !self.hover_height_ui.previewing_offset(),
+                now,
+            );
             for anim in completed {
                 self.ao_runtime.finished(anim);
                 // LLAgent::requestStopMotion: stop the finished non-looping
@@ -8766,29 +8772,21 @@ impl App {
                 self.controls_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
-                let hover_diagnostics = self
-                    .scene
-                    .neutral_pose_test
-                    .is_some()
-                    .then(|| self.scene.auto_hover_diagnostics(&self.world, std::time::Instant::now()));
-                let hover_test = self
-                    .scene
-                    .neutral_pose_test
-                    .as_mut()
-                    .zip(hover_diagnostics)
-                    .map(|(neutral, diagnostics)| ui::hover_height::HoverHeightTest { neutral, diagnostics });
+                let automatic_base = self.scene.automatic_hover_base(&self.world);
                 if self.hover_height_ui.show(
                     &ctx,
                     &p,
                     &mut self.world.hover_height,
                     hover_enabled,
-                    (&mut self.settings.camera.hover_affects_camera, &mut self.settings.auto_hover_height),
-                    hover_test,
+                    ui::hover_height::HoverHeightOptions {
+                        camera: &mut self.settings.camera.hover_affects_camera,
+                        automatic: &mut self.settings.auto_hover_height,
+                        offset: &mut self.settings.auto_hover_offset,
+                        automatic_base,
+                        neutral_pose_test: &mut self.scene.neutral_pose_test,
+                    },
                 ) {
                     self.settings.save();
-                }
-                if std::mem::take(&mut self.hover_height_ui.measure_requested) {
-                    self.scene.remeasure_auto_hover();
                 }
                 if self.inspect_ui.open {
                     let (rows, totals) = self.inspect_rows();

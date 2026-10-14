@@ -5,7 +5,6 @@ pub mod anchors;
 pub mod anim;
 pub mod animesh;
 mod auto_hover;
-pub use auto_hover::{HoverDiagnostics, HoverStatus};
 pub mod avatar;
 pub mod banlines;
 pub mod complexity;

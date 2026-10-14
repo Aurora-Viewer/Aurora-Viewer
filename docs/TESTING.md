@@ -105,15 +105,15 @@ the motion controller and server animation signals continue normally, and
 other avatars are unchanged. Use it online to compare the reported roughly
 10 cm grounding discrepancy with/without the normal pose. The option is
 absent from an ordinary launch.
-The test floater also shows calculation status, ground source, centre-to-ground
-distance, half the reported physical height, calculated hover and the live
-neutral shoe/ground gap (positive means too high). "Recalculate and measure"
-reruns the worker and applies the result when automatic adjustment is enabled.
-Use neutral pose while comparing the gap with the view. The simulator contact
-plane is intersected vertically without Firestorm's historical 5 cm Havok
-compensation (that lowered the shoes by 5 cm in the online test). Without a
-contact block the readout explicitly labels the size-based floor as estimated. No vertex scan
-or GPU readback runs in the UI.
+Hover Height exposes a saved "Automatic height offset" in every launch
+(default 0 m). Positive values raise the result, negative values lower it;
+the offset applies again after each body attachment change, including removal
+of the last foot attachment. Millimetre numeric entry and -3..3 m adjustment
+match the height control. Dragging previews immediately from the cached
+estimate without another vertex scan; release saves the preference and commits
+the total height. With automatic mode disabled the offset slider is inactive.
+The technical measurements and recalculation button have been removed.
+Use the neutral-pose test switch when comparing shoes with the ground.
 
 The frames-per-second limiter is enabled at **120 fps by default**. It can
 be disabled or adjusted in Preferences › Graphics › Smoothness; preferences
@@ -255,7 +255,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-cycle`**:
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-cycle`**:
   opens the hover-height floater at frame 600. A number sets the height;
   `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
   repeats the cycle with "Affect camera view" enabled; otherwise the camera
@@ -284,7 +284,10 @@ when unfocused") is ignored during a screenshot.
   a contact plane at the actual ground: the 0.84 m centre clearance includes
   a 10 cm margin over half that size. It must give the same grounded result
   as `auto-rigged`, not raise the shoes by those extra 10 cm. Enable
-  `AURORA_TEST_NEUTRAL_POSE=1` to inspect the gap and both clearance values.
+  `AURORA_TEST_NEUTRAL_POSE=1` to compare the exact neutral pose.
+  `auto-offset` uses that same contact-plane fixture: +0.05 m offset at 700
+  gives +0.316 m total height; -0.03 m at 860 gives +0.236 m. Removing the
+  shoes at 940 leaves the fixed -0.03 m offset. Capture 660, 840, 920 and 1100.
   `auto-cycle` adds the rigid shoes at 620 and removes them at 940; capture
   580, 840 and 1100 to compare barefoot / soles on the ground / barefoot.
   Automatic adjustment is enabled by default in Hover Height. Manual edits

@@ -142,9 +142,13 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
     {
         // Match AgentState::simulate_locally's 0.84 m centre clearance.
         // The generic avatar fixture reports 1.9 m despite this physics.
-        avatar.scale.z = if mode == "auto-contact" { 1.48 } else { 1.68 };
+        avatar.scale.z = if matches!(mode, "auto-contact" | "auto-offset") {
+            1.48
+        } else {
+            1.68
+        };
     }
-    if frame >= 600 && mode == "auto-contact" {
+    if frame >= 600 && matches!(mode, "auto-contact" | "auto-offset") {
         // A 10 cm collision margin: physical half-height is 0.74 m while
         // the simulated centre actually stands 0.84 m above the ground.
         // The demo stands on its plaza platform, above the terrain below.
@@ -157,7 +161,7 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
         }
     }
     if frame == 620 {
-        let objects = if matches!(mode, "auto-rigged" | "auto-contact") {
+        let objects = if matches!(mode, "auto-rigged" | "auto-contact" | "auto-offset") {
             if let Err(error) = install_mesh(&world.avatar_lib, scene) {
                 log::warn!("demo auto hover: {error}");
                 return;
@@ -168,7 +172,7 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
         };
         world.apply(NetEvent::ObjectUpdates { handle: HANDLE, objects });
     }
-    if frame == 940 && mode == "auto-cycle" {
+    if frame == 940 && matches!(mode, "auto-cycle" | "auto-offset") {
         world.apply(NetEvent::ObjectsKilled {
             handle: HANDLE,
             local_ids: vec![LEFT, RIGHT],
