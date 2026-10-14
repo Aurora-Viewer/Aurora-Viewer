@@ -2,11 +2,11 @@
 //! and the object owners list (ParcelObjectOwnersRequest).
 
 use super::dialogs::Confirm;
-use super::{Dialog, LandUi, View, button, not_yet, row, text};
+use super::{Dialog, LandUi, View, button, row, text};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::land::{OwnerList, PrimUsage, powers};
-use aurora_net::land::{LandCommand, ObjectOwner};
+use aurora_net::land::{LandCommand, ObjectOwner, RT_GROUP, RT_LIST, RT_OTHER, RT_OWNER};
 use egui::{RichText, Vec2};
 
 pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut World) {
@@ -71,24 +71,27 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     let can_group = v.can(powers::LAND_RETURN_GROUP_SET);
     let can_other = v.can(powers::LAND_RETURN_NON_GROUP);
     let any = can_owned || can_group || can_other;
-    for (label, count, can, confirm) in [
+    for (label, count, can, confirm, kind) in [
         (
             aurora_i18n::tr!("ui-land-objects-owned-by-parcel-owner"),
             parcel.owner_prims,
             can_owned,
             Confirm::ReturnOwner,
+            RT_OWNER,
         ),
         (
             aurora_i18n::tr!("ui-land-objects-deeded-to-group"),
             parcel.group_prims,
             can_group,
             Confirm::ReturnGroup,
+            RT_GROUP,
         ),
         (
             aurora_i18n::tr!("ui-land-objects-owned-by-others"),
             parcel.other_prims,
             can_other,
             Confirm::ReturnOther,
+            RT_OTHER,
         ),
     ] {
         ui.horizontal(|ui| {
@@ -107,8 +110,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                 {
                     s.dialog = Some(Dialog::Confirm(confirm));
                 }
-                // the highlight of the objects (ParcelSelectObjects) is not drawn yet
-                button(ui, p, aurora_i18n::tr!("common-show"), false).on_disabled_hover_text(not_yet());
+                // onClickShow*Objects: the simulator highlights them
+                if button(ui, p, aurora_i18n::tr!("common-show"), enabled).clicked() {
+                    world.land.show_objects(kind, Vec::new());
+                }
             });
         });
     }
@@ -310,6 +315,8 @@ fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World
                         }
                         if r.clicked() {
                             s.owner_sel = Some(o.id);
+                            // onCommitList: highlight this owner's objects
+                            world.land.show_objects(RT_LIST, vec![o.id]);
                         }
                         if r.double_clicked() && !o.is_group {
                             // onDoubleClickOwner: the profile (groups have no window yet)

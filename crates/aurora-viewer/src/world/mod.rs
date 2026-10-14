@@ -17,6 +17,7 @@ pub mod hover_height;
 pub mod hud_scale;
 pub mod inventory;
 pub mod land;
+pub mod land_buy;
 pub mod landmarks;
 pub mod lookat;
 pub mod lslbridge;
@@ -214,6 +215,9 @@ pub struct World {
     diag_reported: HashSet<Uuid>,
     pub events_this_frame: usize,
     pub balance: Option<i32>,
+    /// m² of land the account holds (MoneyBalanceReply SquareMetersCommitted,
+    /// LLStatusBar::getSquareMetersCommitted).
+    pub land_committed: i32,
     pub upload_cost: Option<i32>,
     pub local_assets: HashMap<Uuid, (String, bool)>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
@@ -396,6 +400,7 @@ impl World {
             diag_reported: HashSet::new(),
             events_this_frame: 0,
             balance: None,
+            land_committed: 0,
             upload_cost: None,
             local_assets: HashMap::new(),
             health: 100.0,
@@ -2039,6 +2044,10 @@ impl World {
                 // the app compares with UISndMoneyChangeThreshold
                 self.balance_changes.push((self.balance, b));
                 self.balance = Some(b);
+                None
+            }
+            NetEvent::LandHoldings { committed, .. } => {
+                self.land_committed = committed;
                 None
             }
             NetEvent::InventoryContents(c) => {

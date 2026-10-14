@@ -432,12 +432,16 @@ pub enum NewItem {
     Material,
     Wearable(u8),
     Settings(u8),
+    /// AT_LANDMARK / IT_LANDMARK: the server writes the asset from the
+    /// agent's position (LLLandmarkActions::createLandmarkHere).
+    Landmark,
 }
 
 impl NewItem {
     pub fn types(self) -> (i8, i8, u8) {
         match self {
             Self::Script => (10, 10, 255),
+            Self::Landmark => (3, 3, 255),
             Self::Note => (7, 7, 255),
             Self::Gesture => (21, 20, 255),
             Self::Material => (57, 26, 255),

@@ -1,12 +1,19 @@
-//! About Land in the offline demo (`AURORA_DEMO_LAND=<tab>[:owner]`):
+//! About Land in the offline demo (`AURORA_DEMO_LAND=<tab>[:role][:classic]`):
 //! the simulator's answers to the floater's requests, for the plaza
-//! parcel (north-east quarter of the demo region). Without `:owner` the
-//! parcel belongs to a group the avatar has no powers in (everything
-//! greyed, like a visitor); with it, the avatar owns it and can change it.
+//! parcel (north-east quarter of the demo region). The role says who the
+//! avatar is to the parcel: without one it belongs to a group the avatar
+//! has no powers in (everything greyed); `owner` makes the avatar its owner,
+//! `officer` gives the avatar the land powers of the owning group but those
+//! of sale, deed and terraforming, `visitor` gives the parcel to another
+//! resident and a group the avatar is not in. `classic` shows Firestorm's
+//! nine tabs for the session, whatever Preferences › Aurora says.
 //! `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` sets the objects on the owner's
 //! land and makes them grow at each answer (the floater's refresh).
+//! `AURORA_DEMO_BUY_LAND` puts the parcel up for sale, and a ParcelBuy
+//! hands it to the avatar.
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS, TEX_GRADIENT};
+use crate::world::land::powers;
 use aurora_llsd::Llsd;
 use aurora_net::land::{AL_ACCESS, AL_ALLOW_EXPERIENCE, AL_BAN, AccessEntry, FoundAvatar, LandCommand, LandEvent, ObjectOwner};
 use aurora_net::{NetEvent, ParcelInfo, ParcelMedia, parcel_flags as pf};
@@ -21,18 +28,101 @@ pub(super) const PARCEL_UUID: Uuid = Uuid::from_u128(0x1214_B5B2_7C42_D6C4_8741_
 const XP_AURORA: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0001);
 const XP_SITTER: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0002);
 const XP_INTERACT: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0003);
+const XP_BEACH: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0004);
+const XP_CLUB: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0005);
+const XP_GRID: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0006);
 /// Placeholder parcel music (also `AURORA_DEMO_MUSIC=1`).
 pub const MUSIC_URL: &str = "http://flux.exemple.org:8000/";
 
 /// The demo parcel as the "simulator" keeps it (updates are applied).
 static PARCEL: Mutex<Option<ParcelInfo>> = Mutex::new(None);
 
-/// AURORA_DEMO_LAND: (tab name, the avatar owns the parcel).
-pub fn scenario() -> Option<(String, bool)> {
-    let v = std::env::var("AURORA_DEMO_LAND").ok()?;
-    let (tab, owner) = v.split_once(':').map_or((v.as_str(), false), |(t, o)| (t, o == "owner"));
-    Some((tab.to_owned(), owner))
+/// The group of the visitor's parcel, which the avatar is not in.
+const VISITOR_GROUP: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0009);
+
+/// Who the avatar is to the demo parcel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// A member of the owning group, without powers.
+    Member,
+    Owner,
+    /// A member of the owning group with its land powers.
+    Officer,
+    /// Someone else's parcel, a group the avatar is not in.
+    Visitor,
 }
+
+/// What AURORA_DEMO_LAND asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scenario {
+    pub tab: String,
+    pub role: Role,
+    /// Firestorm's nine tabs for the session.
+    pub classic: bool,
+}
+
+/// `<tab>[:role][:classic]`, the role and `classic` in any order.
+fn parse(v: &str) -> Scenario {
+    let mut parts = v.split(':');
+    let tab = parts.next().unwrap_or_default().to_owned();
+    let mut s = Scenario {
+        tab,
+        role: Role::Member,
+        classic: false,
+    };
+    for part in parts {
+        match part.trim() {
+            "owner" => s.role = Role::Owner,
+            "officer" => s.role = Role::Officer,
+            "visitor" => s.role = Role::Visitor,
+            "classic" => s.classic = true,
+            _ => {}
+        }
+    }
+    s
+}
+
+pub fn scenario() -> Option<Scenario> {
+    std::env::var("AURORA_DEMO_LAND").ok().map(|v| parse(&v))
+}
+
+/// The powers an officer has in the owning group: everything of the land
+/// but sale, deed, release and terraforming, so that some settings stay
+/// read only.
+pub const OFFICER_POWERS: u64 = powers::LAND_FIND_PLACES
+    | powers::LAND_CHANGE_IDENTITY
+    | powers::LAND_SET_LANDING_POINT
+    | powers::LAND_CHANGE_MEDIA
+    | powers::LAND_OPTIONS
+    | powers::LAND_MANAGE_ALLOWED
+    | powers::LAND_MANAGE_BANNED
+    | powers::LAND_RETURN_GROUP_SET
+    | powers::LAND_RETURN_NON_GROUP
+    | powers::LAND_ALLOW_ENVIRONMENT
+    | powers::LAND_RETURN_GROUP_OWNED;
+
+/// The powers the avatar has in `group` beyond the demo's own.
+pub fn group_powers(group: Uuid) -> u64 {
+    match scenario() {
+        Some(s) if s.role == Role::Officer && group == DEMO_GROUP1 => OFFICER_POWERS,
+        _ => 0,
+    }
+}
+
+/// AURORA_DEMO_BUY_LAND=<mode>[:confirm]: the plaza parcel for sale by
+/// a demo resident (rich, short, upgrade, other, error; see docs/TESTING.md).
+pub fn buy_scenario() -> Option<String> {
+    let v = std::env::var("AURORA_DEMO_BUY_LAND").ok()?.trim().to_lowercase();
+    Some(v.split(':').next().unwrap_or_default().to_owned())
+}
+
+/// AURORA_DEMO_BUY_LAND=<mode>:confirm: the confirmation opens by itself.
+pub fn buy_confirms() -> bool {
+    std::env::var("AURORA_DEMO_BUY_LAND").is_ok_and(|v| v.trim().to_lowercase().ends_with(":confirm"))
+}
+
+/// Price of the plaza parcel in AURORA_DEMO_BUY_LAND.
+const SALE_PRICE: i32 = 4500;
 
 fn now() -> i32 {
     std::time::SystemTime::now()
@@ -41,15 +131,20 @@ fn now() -> i32 {
         .unwrap_or(0)
 }
 
-fn initial(owner: bool) -> ParcelInfo {
+fn initial(role: Role) -> ParcelInfo {
+    let (owner_id, group_id) = match role {
+        Role::Owner => (DEMO_AGENT, DEMO_GROUP1),
+        Role::Member | Role::Officer => (DEMO_GROUP1, DEMO_GROUP1),
+        Role::Visitor => (DEMO_NOVA, VISITOR_GROUP),
+    };
     ParcelInfo {
         local_id: 1,
         sequence_id: aurora_net::land::SELECTED_PARCEL_SEQ_ID,
         name: aurora_i18n::tr!("demo-land-aurora-plaza-offline-demo").into(),
         desc: aurora_i18n::tr!("demo-land-aurora-viewer-s-offline-demo-parcel-visit-the-fountain").into(),
-        owner_id: if owner { DEMO_AGENT } else { DEMO_GROUP1 },
-        group_id: DEMO_GROUP1,
-        is_group_owned: !owner,
+        owner_id,
+        group_id,
+        is_group_owned: owner_id == group_id,
         status: aurora_net::land::OS_LEASED,
         area: 16384,
         claim_date: 1_655_576_350,
@@ -66,7 +161,6 @@ fn initial(owner: bool) -> ParcelInfo {
         sim_total_prims: 5387,
         other_clean_time: 0,
         flags: pf::ALLOW_FLY
-            | pf::CREATE_OBJECTS
             | pf::CREATE_GROUP_OBJECTS
             | pf::ALLOW_OTHER_SCRIPTS
             | pf::ALLOW_GROUP_SCRIPTS
@@ -77,14 +171,15 @@ fn initial(owner: bool) -> ParcelInfo {
             | pf::RESTRICT_PUSHOBJECT
             | pf::USE_BAN_LIST
             | pf::MATURE_PUBLISH,
-        category: 9,
+        // residential, with a fixed landing point (the overview's mockup)
+        category: 10,
         pass_price: 88,
         pass_hours: 1.0,
         music_url: MUSIC_URL.into(),
         snapshot_id: TEX_GRADIENT,
         user_location: Vec3::new(140.0, 130.0, 25.0),
         user_look_at: Vec3::new(1.0, 0.0, 0.0),
-        landing_type: 2,
+        landing_type: 1,
         see_avatars: true,
         any_av_sounds: true,
         group_av_sounds: true,
@@ -103,9 +198,29 @@ fn initial(owner: bool) -> ParcelInfo {
     }
 }
 
+/// The plaza parcel on sale by a resident, with its objects; "other": set
+/// to sell to Nova only.
+fn for_sale(mut p: ParcelInfo, mode: &str) -> ParcelInfo {
+    p.owner_id = DEMO_LOUP;
+    p.is_group_owned = false;
+    p.flags |= pf::FOR_SALE | pf::SELL_PARCEL_OBJECTS;
+    p.sale_price = SALE_PRICE;
+    if mode == "other" {
+        p.auth_buyer = DEMO_NOVA;
+    }
+    p
+}
+
 pub(super) fn parcel() -> ParcelInfo {
     let mut g = PARCEL.lock();
-    g.get_or_insert_with(|| initial(scenario().is_some_and(|s| s.1))).clone()
+    g.get_or_insert_with(|| {
+        let p = initial(scenario().map_or(Role::Member, |s| s.role));
+        match buy_scenario() {
+            Some(mode) => for_sale(p, &mode),
+            None => p,
+        }
+    })
+    .clone()
 }
 
 /// AURORA_DEMO_LAND_PRIMS=<used>[,<step>]: objects on the owner's land in
@@ -134,25 +249,104 @@ fn selected() -> NetEvent {
     })
 }
 
-/// LLSD environment of the parcel: a 4 h day 16 h ahead (shown as -8 h),
-/// skies at 1000 / 2000 / 3000 m, no names (the region's environment).
-fn environment(day_length: i32, day_offset: i32) -> Llsd {
+/// The parcel's own day cycle once one is applied: the names of its
+/// tracks (0 water, 1 ground, 2–4 skies), its length and offset.
+#[derive(Clone)]
+struct DemoDay {
+    names: [String; 5],
+    length: i32,
+    offset: i32,
+}
+
+static DAY: Mutex<Option<DemoDay>> = Mutex::new(None);
+
+/// Scripted objects returned from "Script info".
+static RETURNED: Mutex<Vec<Uuid>> = Mutex::new(Vec::new());
+
+/// LLSD environment of the parcel: the region's (no day cycle) until a
+/// settings item is applied, then a day with the names of its tracks;
+/// skies at 1000 / 2000 / 3000 m.
+fn environment() -> Llsd {
     let mut env = Llsd::new_map();
     env.insert("parcel_id", 1);
-    env.insert("day_length", day_length);
-    env.insert("day_offset", day_offset);
     env.insert(
         "track_altitudes",
         Llsd::Array(vec![Llsd::Real(1000.0), Llsd::Real(2000.0), Llsd::Real(3000.0)]),
     );
-    let mut day = Llsd::new_map();
-    let frame = || Llsd::Array(vec![Llsd::new_map()]);
-    day.insert(
-        "tracks",
-        Llsd::Array(vec![frame(), frame(), Llsd::new_array(), Llsd::new_array(), Llsd::new_array()]),
-    );
-    env.insert("day_cycle", day);
+    if let Some(d) = DAY.lock().clone() {
+        env.insert("day_length", d.length);
+        env.insert("day_offset", d.offset);
+        let mut day = Llsd::new_map();
+        let track = |name: &str| {
+            if name.is_empty() {
+                Llsd::new_array()
+            } else {
+                Llsd::Array(vec![Llsd::new_map()])
+            }
+        };
+        day.insert("tracks", Llsd::Array(d.names.iter().map(|n| track(n)).collect()));
+        env.insert("day_cycle", day);
+        env.insert("day_names", Llsd::Array(d.names.iter().map(|n| Llsd::String(n.clone())).collect()));
+    }
     env
+}
+
+/// ExtEnvironment PUT of a settings asset: the whole day or one track.
+fn apply_environment(track: Option<i32>, asset: Uuid, name: &str) {
+    let mut g = DAY.lock();
+    let mut day = g.clone().unwrap_or(DemoDay {
+        names: Default::default(),
+        length: 4 * 3600,
+        offset: 16 * 3600,
+    });
+    match (track, super::env::kind_of(asset)) {
+        (Some(t), _) if (0..5).contains(&t) => day.names[t as usize] = name.to_owned(),
+        // a day takes every track; a sky the ground's, a water the water's
+        (_, Some(crate::world::env_select::SettingsKind::Water)) => day.names[0] = name.to_owned(),
+        (_, Some(crate::world::env_select::SettingsKind::Sky)) => day.names[1] = name.to_owned(),
+        _ => day.names = std::array::from_fn(|_| name.to_owned()),
+    }
+    *g = Some(day);
+}
+
+/// Experiences the picker finds: (id, name, rating, properties).
+fn found_experiences() -> Vec<aurora_net::land::FoundExperience> {
+    let e = |id: Uuid, name: &str, maturity: u8, properties: i32| aurora_net::land::FoundExperience {
+        id,
+        name: name.into(),
+        owner: DEMO_LOUP,
+        maturity,
+        properties,
+    };
+    vec![
+        e(XP_AURORA, aurora_i18n::tr!("demo-land-aurora-experience"), 13, 0),
+        e(XP_SITTER, "AVSitter", 13, 0),
+        e(XP_INTERACT, aurora_i18n::tr!("demo-land-interactions-general"), 21, 0),
+        e(XP_BEACH, aurora_i18n::tr!("demo-land-beach-games"), 13, 0),
+        e(XP_CLUB, aurora_i18n::tr!("demo-land-night-club"), 42, 0),
+        // grid-wide and privileged: in no parcel list
+        e(
+            XP_GRID,
+            "Linden Realms",
+            13,
+            aurora_net::land::XP_PROPERTY_GRID | aurora_net::land::XP_PROPERTY_PRIVILEGED,
+        ),
+    ]
+}
+
+/// A new owner and group for the parcel (deed, release, reclaim), off sale.
+fn change_owner(owner: Uuid, group: Uuid, group_owned: bool) -> Vec<NetEvent> {
+    let mut g = PARCEL.lock();
+    if let Some(p) = g.as_mut() {
+        p.owner_id = owner;
+        p.group_id = group;
+        p.is_group_owned = group_owned;
+        p.flags &= !(pf::FOR_SALE | pf::ALLOW_DEED_TO_GROUP | pf::CONTRIBUTE_WITH_DEED);
+        p.sale_price = 0;
+        p.auth_buyer = Uuid::nil();
+    }
+    drop(g);
+    vec![selected()]
 }
 
 /// The demo simulator's answer to an About Land request.
@@ -196,6 +390,18 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
             }
             out
         }
+        LandCommand::Buy { for_group, group, .. } => {
+            // the sale goes through: the parcel changes hands
+            let mut p = parcel();
+            p.owner_id = if *for_group { *group } else { DEMO_AGENT };
+            p.is_group_owned = *for_group;
+            p.flags &= !(pf::FOR_SALE | pf::SELL_PARCEL_OBJECTS);
+            p.sale_price = 0;
+            p.auth_buyer = Uuid::nil();
+            p.claim_date = now();
+            *PARCEL.lock() = Some(p);
+            vec![selected()]
+        }
         LandCommand::DwellRequest { .. } => vec![ev(LandEvent::Dwell { local_id: 1, dwell: 145.0 })],
         LandCommand::ObjectOwnersRequest { .. } => {
             let o = |id: Uuid, is_group: bool, count: i32, ago: i32| ObjectOwner {
@@ -228,18 +434,197 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
             local_id: *local_id,
             id: Some(PARCEL_UUID),
         })],
-        LandCommand::EnvironmentRequest { local_id } | LandCommand::EnvironmentReset { local_id } => vec![ev(LandEvent::Environment {
+        LandCommand::EnvironmentRequest { local_id } => vec![ev(LandEvent::Environment {
             local_id: *local_id,
-            result: Ok(environment(4 * 3600, 16 * 3600)),
+            result: Ok(environment()),
         })],
+        LandCommand::EnvironmentReset { local_id } => {
+            *DAY.lock() = None;
+            vec![ev(LandEvent::Environment {
+                local_id: *local_id,
+                result: Ok(environment()),
+            })]
+        }
         LandCommand::EnvironmentUpdate {
             local_id,
             day_length,
             day_offset,
-        } => vec![ev(LandEvent::Environment {
-            local_id: *local_id,
-            result: Ok(environment(*day_length, *day_offset)),
-        })],
+        } => {
+            if let Some(d) = DAY.lock().as_mut() {
+                if *day_length > 0 {
+                    d.length = *day_length;
+                }
+                if *day_offset > 0 {
+                    d.offset = *day_offset;
+                }
+            }
+            vec![ev(LandEvent::Environment {
+                local_id: *local_id,
+                result: Ok(environment()),
+            })]
+        }
+        LandCommand::EnvironmentApply {
+            local_id,
+            track,
+            asset,
+            name,
+            ..
+        } => {
+            apply_environment(*track, *asset, name);
+            vec![ev(LandEvent::Environment {
+                local_id: *local_id,
+                result: Ok(environment()),
+            })]
+        }
+        LandCommand::ExperienceSearch { query, .. } => {
+            let q = query.to_lowercase();
+            let results = found_experiences()
+                .into_iter()
+                .filter(|e| q.is_empty() || e.name.to_lowercase().contains(&q))
+                .collect();
+            vec![ev(LandEvent::ExperienceSearch {
+                query: query.clone(),
+                results: Some(results),
+            })]
+        }
+        // Script info: the plaza's scripted objects, then my attachments
+        LandCommand::ScriptResources { .. } => {
+            let o = |n: u128, name: &str, owner: Uuid, group: bool, kb: i64, urls: i64, at: Vec3| aurora_net::land::ScriptObject {
+                id: Uuid::from_u128(0x5C00 + n),
+                name: name.into(),
+                owner,
+                group_owned: group,
+                memory: kb * 1024,
+                urls,
+                location: Some(at),
+            };
+            let objects: Vec<_> = vec![
+                o(
+                    1,
+                    aurora_i18n::tr!("demo-fountain"),
+                    DEMO_AGENT,
+                    false,
+                    192,
+                    1,
+                    Vec3::new(135.0, 125.0, 23.6),
+                ),
+                o(
+                    2,
+                    aurora_i18n::tr!("demo-land-script-door"),
+                    DEMO_GROUP1,
+                    true,
+                    64,
+                    0,
+                    Vec3::new(150.0, 130.0, 24.0),
+                ),
+                o(
+                    3,
+                    aurora_i18n::tr!("demo-land-script-radio"),
+                    DEMO_AGENT,
+                    false,
+                    128,
+                    2,
+                    Vec3::new(140.0, 140.0, 24.0),
+                ),
+                o(
+                    4,
+                    aurora_i18n::tr!("demo-land-script-sign"),
+                    DEMO_LOUP,
+                    false,
+                    16,
+                    0,
+                    Vec3::new(130.0, 120.0, 24.0),
+                ),
+            ]
+            .into_iter()
+            .filter(|o| !RETURNED.lock().contains(&o.id))
+            .collect();
+            let used: i64 = objects.iter().map(|o| o.memory).sum();
+            let urls: i64 = objects.iter().map(|o| o.urls).sum();
+            vec![
+                ev(LandEvent::ScriptSummary(Ok(aurora_net::land::ScriptSummary {
+                    memory: Some((used, 8 * 1024 * 1024)),
+                    urls: Some((urls, 750)),
+                }))),
+                ev(LandEvent::ScriptDetails(Ok(vec![aurora_net::land::ScriptParcel {
+                    name: aurora_i18n::tr!("demo-land-aurora-plaza-offline-demo").into(),
+                    local_id: Some(1),
+                    objects,
+                }]))),
+            ]
+        }
+        LandCommand::AttachmentScripts => {
+            let o = |n: u128, name: &str, kb: i64, urls: i64| aurora_net::land::ScriptObject {
+                id: Uuid::from_u128(0x5D00 + n),
+                name: name.into(),
+                owner: DEMO_AGENT,
+                group_owned: false,
+                memory: kb * 1024,
+                urls,
+                location: None,
+            };
+            vec![ev(LandEvent::AttachmentScripts(Ok((
+                aurora_net::land::ScriptSummary {
+                    memory: Some((320 * 1024, 0)),
+                    urls: Some((1, 38)),
+                },
+                vec![
+                    aurora_net::land::ScriptAttachment {
+                        location: "Skull".into(),
+                        objects: vec![o(1, aurora_i18n::tr!("demo-land-script-hud"), 256, 1)],
+                    },
+                    aurora_net::land::ScriptAttachment {
+                        location: "Right Hand".into(),
+                        objects: vec![o(2, aurora_i18n::tr!("demo-land-script-ao"), 64, 0)],
+                    },
+                ],
+            ))))]
+        }
+        LandCommand::ReturnTasks { tasks, .. } => {
+            RETURNED.lock().extend(tasks.iter().copied());
+            Vec::new()
+        }
+        // ForceObjectSelect: the plaza's disc is the group's, its pillars and
+        // orbs the owner's (the demo scene's local IDs 100 to 116)
+        LandCommand::SelectObjects { return_type, owners, .. } => {
+            use aurora_net::land::{RT_GROUP, RT_LIST, RT_OWNER};
+            let listed = |id: &Uuid| *return_type & RT_LIST != 0 && owners.contains(id);
+            let mut ids = Vec::new();
+            if *return_type & RT_OWNER != 0 || listed(&DEMO_AGENT) {
+                ids.extend(101..=116);
+            }
+            if *return_type & RT_GROUP != 0 || listed(&DEMO_GROUP1) {
+                ids.push(100);
+            }
+            vec![ev(LandEvent::Highlight {
+                handle: super::HANDLE,
+                reset: true,
+                local_ids: ids,
+            })]
+        }
+        // the ownership changes of the General tab, as the simulator makes them
+        LandCommand::Release { .. } => change_owner(Uuid::nil(), Uuid::nil(), false),
+        LandCommand::Reclaim { .. } => change_owner(DEMO_LOUP, Uuid::nil(), false),
+        LandCommand::DeedToGroup { group, .. } => change_owner(*group, *group, true),
+        LandCommand::ReturnObjects { return_type, owners, .. } => {
+            let mut g = PARCEL.lock();
+            if let Some(p) = g.as_mut() {
+                use aurora_net::land::{RT_GROUP, RT_LIST, RT_OTHER, RT_OWNER};
+                let listed = |id: &Uuid| *return_type & RT_LIST != 0 && owners.contains(id);
+                if *return_type & RT_OWNER != 0 || listed(&p.owner_id) || listed(&DEMO_AGENT) && p.owner_id == DEMO_AGENT {
+                    p.owner_prims = 0;
+                }
+                if *return_type & RT_GROUP != 0 || listed(&p.group_id) {
+                    p.group_prims = 0;
+                }
+                if *return_type & RT_OTHER != 0 || listed(&DEMO_LOUP) {
+                    p.other_prims = 0;
+                }
+                p.total_prims = p.owner_prims + p.group_prims + p.other_prims;
+            }
+            drop(g);
+            vec![selected()]
+        }
         LandCommand::ExperienceInfo(ids) => vec![ev(LandEvent::ExperienceInfo(
             ids.iter()
                 .map(|id| {
@@ -247,6 +632,9 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                         XP_AURORA => aurora_i18n::tr!("demo-land-aurora-experience"),
                         XP_SITTER => "AVSitter",
                         XP_INTERACT => aurora_i18n::tr!("demo-land-interactions-general"),
+                        XP_BEACH => aurora_i18n::tr!("demo-land-beach-games"),
+                        XP_CLUB => aurora_i18n::tr!("demo-land-night-club"),
+                        XP_GRID => "Linden Realms",
                         _ => aurora_i18n::tr!("demo-land-unknown-experience"),
                     };
                     (*id, name.to_owned())
@@ -278,5 +666,56 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
             mime: "text/html".into(),
         })],
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::land::{AgentRights, modifiable_by_agent};
+    use aurora_net::GroupMembership;
+
+    #[test]
+    fn roles_and_the_classic_window() {
+        assert_eq!(
+            parse("options"),
+            Scenario {
+                tab: "options".into(),
+                role: Role::Member,
+                classic: false
+            }
+        );
+        assert_eq!(parse("general:owner").role, Role::Owner);
+        let s = parse("overview:classic:visitor");
+        assert_eq!((s.tab.as_str(), s.role, s.classic), ("overview", Role::Visitor, true));
+        assert_eq!(parse("access:officer").role, Role::Officer);
+    }
+
+    /// Each role has the rights it is named after.
+    #[test]
+    fn each_role_gets_its_rights() {
+        let member = |powers: u64| GroupMembership {
+            id: DEMO_GROUP1,
+            name: "Aurora Builders".into(),
+            insignia: Uuid::nil(),
+            powers: (1 << 16) | powers,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        };
+        let can = |role: Role, groups: &[GroupMembership], power: u64| {
+            let rights = AgentRights { id: DEMO_AGENT, groups };
+            modifiable_by_agent(&initial(role), &rights, power)
+        };
+        let officer = [member(OFFICER_POWERS)];
+        let plain = [member(0)];
+        assert!(can(Role::Owner, &plain, powers::LAND_OPTIONS));
+        assert!(can(Role::Officer, &officer, powers::LAND_OPTIONS));
+        assert!(!can(Role::Officer, &officer, powers::LAND_EDIT), "terraforming stays read only");
+        assert!(!can(Role::Officer, &officer, powers::LAND_SET_SALE_INFO));
+        assert!(!can(Role::Member, &plain, powers::LAND_OPTIONS));
+        assert!(!can(Role::Visitor, &plain, powers::LAND_OPTIONS));
+        let visitor = initial(Role::Visitor);
+        assert!(!visitor.is_group_owned && visitor.group_id != DEMO_GROUP1);
     }
 }

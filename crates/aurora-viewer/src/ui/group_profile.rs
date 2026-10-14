@@ -19,6 +19,7 @@
 //! (`world.group_data`). Notices, land and experiences are not ported yet.
 
 mod home;
+mod invite;
 mod members;
 mod view;
 
@@ -54,6 +55,11 @@ pub enum GroupAction {
     Refresh { group: Uuid, member: bool },
     /// JoinGroupRequest, confirmed.
     Join(Uuid),
+    /// InviteGroupRequest: (invitee, role) pairs.
+    Invite { group: Uuid, invites: Vec<(Uuid, Uuid)> },
+    /// "Call" (LLGroupActions::startCall), once group voice is there
+    /// (`Env::group_calls`).
+    Call(Uuid),
     /// ActivateGroup (nil: none).
     Activate(Uuid),
     /// GroupTitleUpdate.
@@ -98,6 +104,8 @@ pub struct GroupProfileUi {
     loaded: Option<(Uuid, bool)>,
     pub(super) members: members::MembersState,
     confirm: Option<Confirm>,
+    /// "Invite to the group".
+    pub invite: invite::InviteUi,
     /// Profile pictures of the residents shown (drained by the app).
     pub wanted_pics: HashSet<Uuid>,
     pic_budget: super::nameplate::PictureBudget,
@@ -111,6 +119,8 @@ pub struct Env<'a> {
     pub classic: bool,
     /// Seconds, for the pace of the picture requests.
     pub now: f64,
+    /// Group voice calls can be started ("Call" is greyed until then).
+    pub group_calls: bool,
 }
 
 impl GroupProfileUi {
@@ -187,13 +197,27 @@ impl GroupProfileUi {
         }
         self.open = open;
         self.confirm_dialog(ctx, c.p, &mut actions);
+        self.invite.show(ctx, c, env.avatar_pics, &v, &mut actions);
         actions
+    }
+
+    /// The resident picker of the invitation window (it searches the
+    /// world), after the windows.
+    pub fn dialogs(&mut self, ctx: &egui::Context, p: &crate::theme::Palette, world: &mut World) {
+        self.invite.picker(ctx, p, world);
+    }
+
+    /// "Invite" of the head and of the Members tab (LLGroupActions::invite).
+    pub(super) fn open_invite(&mut self, group: Uuid) {
+        self.invite.open(group, Vec::new());
     }
 
     /// The Aurora look: the header, the tabs, the tab.
     fn aurora(&mut self, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &view::View, actions: &mut Vec<GroupAction>) {
-        if let Some(join) = view::header(ui, c, v, &mut self.tab, actions) {
-            self.ask_join(c.world, v, join);
+        match view::header(ui, c, v, env, &mut self.tab, actions) {
+            Some(view::Header::Join) => self.ask_join(c.world, v, v.id),
+            Some(view::Header::Invite) => self.open_invite(v.id),
+            None => {}
         }
         match self.tab {
             Tab::Home => home::show(self, ui, c, env, v, actions),

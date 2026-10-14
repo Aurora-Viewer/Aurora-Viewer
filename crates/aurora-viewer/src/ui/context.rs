@@ -170,6 +170,8 @@ pub enum CtxAction {
     Zoom(Vec3),
     /// About Land on the parcel at the clicked point (LLToolPie selects it).
     AboutLand(Vec3),
+    /// Buy Land on the parcel at the clicked point (Land.Buy).
+    BuyLand(Vec3),
     StandUp,
     SitGround,
     ToggleFly,
@@ -198,6 +200,8 @@ pub enum CtxAction {
     StopAnimations,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
+    /// "Create landmark" where the agent is (About Land's Landmark).
+    CreateLandmark,
     /// "Report Abuse" on a resident, an object or nothing (LLFloaterReporter).
     ReportAbuse(crate::report_abuse::ReportTarget),
     /// Block / unblock an object (LLMute::OBJECT).

@@ -28,6 +28,11 @@ fn select_enabled() -> bool {
     !scenario().is_empty() && scenario() != "0"
 }
 
+/// The kind of a demo settings asset.
+pub fn kind_of(asset: Uuid) -> Option<SettingsKind> {
+    items().iter().find(|(.., a)| u(*a) == asset).map(|(_, _, k, _)| *k)
+}
+
 /// `AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item`: the sky or water
 /// editor opens on a snapshot (on its Clouds or Sun & Moon tab), or on the
 /// user's "My purple sky" item.
@@ -37,9 +42,10 @@ pub fn editor() -> Option<&'static str> {
     (!s.is_empty() && s != "0").then_some(s.as_str())
 }
 
-/// The library and the user's Settings folder (either scenario).
+/// The library and the user's Settings folder: for the selector's and the
+/// editors' scenarios, and for About Land's (its environment picker).
 pub fn enabled() -> bool {
-    select_enabled() || editor().is_some()
+    select_enabled() || editor().is_some() || std::env::var_os("AURORA_DEMO_LAND").is_some()
 }
 
 /// The item the `item` editor scenario opens.
@@ -380,6 +386,8 @@ pub enum Step {
 }
 
 pub fn step(frame: u64) -> Option<Step> {
+    // the selector's own scenario only (About Land and the editors just
+    // need the items)
     if !select_enabled() {
         return None;
     }

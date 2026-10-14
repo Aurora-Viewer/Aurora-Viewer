@@ -1458,11 +1458,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // two groups, and someone starts a chat in the first one
         aurora_net::NetCommand::RequestGroups => {
             // GP_SESSION_JOIN: the group chat can be opened from Contacts
+            // AURORA_DEMO_LAND=…:officer adds the land powers of the parcel's group
             let g = |id: Uuid, name: &str, notices: bool| aurora_net::GroupMembership {
                 id,
                 name: name.into(),
                 insignia: Uuid::nil(),
-                powers: 1 << 16,
+                powers: 1 << 16 | land::group_powers(id),
                 accept_notices: notices,
                 list_in_profile: true,
                 contribution: 0,
@@ -2402,6 +2403,7 @@ pub fn events() -> Vec<NetEvent> {
             owner: DEMO_LOUP,
             is_estate_manager: false,
             product_name: "Estate / Full Region".into(),
+            billable_factor: 1.0,
         })),
     ];
     // parcel overlay (mini-map property lines): four parcels split at
@@ -3368,12 +3370,22 @@ pub fn events() -> Vec<NetEvent> {
             "1" => land::MUSIC_URL.into(),
             url => url.to_owned(),
         };
+        // the parcel's cells: the 128 m square around the plaza (x and y
+        // 64..192), one bit per 4 m cell (ParcelProperties Bitmap)
+        let mut bitmap = vec![0u8; 512];
+        for y in 16..48 {
+            for x in 16..48 {
+                let i = y * 64 + x;
+                bitmap[i / 8] |= 1 << (i % 8);
+            }
+        }
         ev.push(NetEvent::AgentParcel(Arc::new(aurora_net::ParcelInfo {
             local_id: 1,
             name: aurora_i18n::tr!("common-aurora-plaza").into(),
             desc: aurora_i18n::tr!("demo-aurora-viewer-s-offline-demo-parcel").into(),
             owner_id: u(100),
             area: 16384,
+            bitmap,
             max_prims: 3750,
             owner_prims: 47,
             other_prims: 2,

@@ -427,6 +427,11 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     if let Some(kind) = import {
         s.file_job = Some(super::files::open(kind));
     }
+    poll_files(s, world);
+}
+
+/// The CSV dialogs of export / import: their result once they close.
+pub(super) fn poll_files(s: &mut LandUi, world: &mut World) {
     if let Some(done) = s.file_job.as_ref().and_then(|j| j.try_take()) {
         s.file_job = None;
         match done {
@@ -444,20 +449,41 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
 }
 
 /// The access controls as the panel shows them.
-#[derive(Clone, Copy, PartialEq)]
-struct AccessState {
-    public: bool,
-    group: bool,
-    payment: bool,
-    age: bool,
-    pass: bool,
-    pass_group: bool,
-    price: i32,
-    hours: f32,
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) struct AccessState {
+    pub public: bool,
+    pub group: bool,
+    pub payment: bool,
+    pub age: bool,
+    pub pass: bool,
+    pub pass_group: bool,
+    pub price: i32,
+    pub hours: f32,
+}
+
+impl AccessState {
+    /// LLPanelLandAccess::refresh: what the controls show of the parcel;
+    /// `pass_group` is the combo's own value (the parcel does not keep it).
+    pub(super) fn of(parcel: &aurora_net::ParcelInfo, pass_group: bool) -> AccessState {
+        let f = |b: u32| parcel.flags & b != 0;
+        let override_ok = parcel.region_allow_access_override;
+        let public = !override_ok || !f(pf::USE_ACCESS_LIST);
+        let pass = f(pf::USE_PASS_LIST);
+        AccessState {
+            public,
+            group: override_ok && f(pf::USE_ACCESS_GROUP),
+            payment: parcel.region_deny_anonymous || f(pf::DENY_ANONYMOUS),
+            age: parcel.region_deny_age_unverified || f(pf::DENY_AGEUNVERIFIED),
+            pass,
+            pass_group: pass_group && !public && pass,
+            price: parcel.pass_price,
+            hours: parcel.pass_hours,
+        }
+    }
 }
 
 /// onCommitAny: the access flags and pass settings.
-fn commit(world: &mut World, parcel: &aurora_net::ParcelInfo, a: &AccessState, group_known: bool) {
+pub(super) fn commit(world: &mut World, parcel: &aurora_net::ParcelInfo, a: &AccessState, group_known: bool) {
     let mut use_group = a.group && group_known;
     let (mut payment, mut age, mut access_list, mut pass) = (false, false, false, false);
     if a.public {

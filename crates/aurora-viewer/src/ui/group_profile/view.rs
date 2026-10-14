@@ -262,9 +262,9 @@ fn badge_with(
 
 /// The head of the window. Returns the group to join when "Join" was
 /// clicked (the window confirms it first).
-pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, tab: &mut Tab, actions: &mut Vec<GroupAction>) -> Option<Uuid> {
+pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &mut Tab, actions: &mut Vec<GroupAction>) -> Option<Header> {
     let p = c.p;
-    let mut join = None;
+    let mut clicked = None;
     let top = ui.cursor().min;
     let width = ui.available_width();
     let banner_rect = Rect::from_min_size(top, Vec2::new(width, BANNER_H));
@@ -312,30 +312,34 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, tab: &mut Tab, actions: 
         {
             context::request(acts.ctx(), CtxAction::LeaveGroup(v.id));
         }
-        if v.can(powers::MEMBER_INVITE) {
-            // LLPanelGroupInvite comes with the members' management
-            widgets::action_button_if(
+        if v.can(powers::MEMBER_INVITE)
+            && widgets::action_button(
                 &mut acts,
                 p,
                 "user-plus",
                 aurora_i18n::tr!("ui-group-profile-invite"),
                 ActionKind::Flat,
                 size,
-                false,
             )
-            .on_disabled_hover_text(menu::not_yet());
+            .clicked()
+        {
+            clicked = Some(Header::Invite);
         }
-        // group voice is not ported (the same "call" of the group menus)
-        widgets::action_button_if(
+        // LLGroupActions::startCall: group voice comes with the voice calls
+        // (`Env::group_calls`)
+        let call = widgets::action_button_if(
             &mut acts,
             p,
             "phone-filled",
             aurora_i18n::tr!("ui-group-profile-call"),
             ActionKind::Flat,
             size,
-            false,
+            env.group_calls,
         )
         .on_disabled_hover_text(menu::not_yet());
+        if call.clicked() {
+            actions.push(GroupAction::Call(v.id));
+        }
         if widgets::action_button(
             &mut acts,
             p,
@@ -357,7 +361,7 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, tab: &mut Tab, actions: 
             aurora_i18n::tr!("ui-group-profile-join").to_owned()
         };
         if widgets::action_button(&mut acts, p, "door-enter", &label, ActionKind::Primary, size).clicked() {
-            join = Some(v.id);
+            clicked = Some(Header::Join);
         }
     }
     let buttons_left = acts.min_rect().left();
@@ -432,7 +436,16 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, tab: &mut Tab, actions: 
     let used = b.min_rect().bottom().max(badges_top + 40.0);
     ui.allocate_rect(Rect::from_min_max(top, Pos2::new(banner_rect.right(), used)), Sense::hover());
     tabs(ui, p, v, tab);
-    join
+    clicked
+}
+
+/// What the head's buttons ask of the window itself.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Header {
+    /// "Join", confirmed first.
+    Join,
+    /// "Invite": the invitation window.
+    Invite,
 }
 
 /// Content, enrollment, fee; our membership and title; the active group;
