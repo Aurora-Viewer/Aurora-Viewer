@@ -578,6 +578,29 @@ pub(crate) fn bare_window(
 
 const PLACE_POS: &str = "place_pos";
 
+/// Movable toolbar without a common face. The body supplies its individual
+/// button surfaces and close action; layout placement remains shared.
+pub(crate) fn toolstrip<R>(ctx: &egui::Context, id: &str, pos: egui::Pos2, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let window_id = egui::Id::new(id);
+    super::sound_cues::floater_shown(ctx, window_id);
+    let slot = super::layout::slot(ctx, window_id);
+    let mut area = egui::Area::new(window_id)
+        .order(egui::Order::Middle)
+        .fade_in(false)
+        .movable(true)
+        .default_pos(pos)
+        .constrain_to(slot.limits.unwrap_or_else(|| super::layout::work_area(ctx)));
+    let asked = ctx
+        .data_mut(|data| data.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS)))
+        .or(slot.pos);
+    if let Some(pos) = asked {
+        area = area.current_pos(pos);
+    }
+    let shown = area.show(ctx, body);
+    slot.shown(ctx, shown.response.rect, false);
+    shown.inner
+}
+
 /// Move a dependent floater without changing its size or minimized state.
 pub fn move_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::new(id).with(PLACE_POS), pos));
@@ -660,7 +683,19 @@ const EXPAND: &str = "expand";
 
 /// Title bar button with a Tabler icon (drawn by hand if it is missing).
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::click());
+    title_button_sized(ui, p, icon, Vec2::splat(16.0))
+}
+
+/// The standard plain close glyph, with a toolbar-sized hit target.
+pub(crate) fn close_button(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
+    let label = aurora_i18n::tr!("common-close");
+    let response = title_button_sized(ui, p, "x", Vec2::new(24.0, 36.0));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    response.on_hover_text(label).on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn title_button_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, size: Vec2) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let col = if resp.hovered() { p.ink } else { p.muted };
     let c = rect.center();
     let stroke = Stroke::new(1.4, col);
@@ -1206,6 +1241,105 @@ fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) 
     }
 }
 
+/// Signed height adjustment: keep egui's pointer/keyboard behaviour, with a
+/// visible Aurora rail, zero marker, accent fill and solid rectangular knob.
+/// The surrounding floater supplies the shared glass, no opaque card here.
+pub fn height_slider(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    subdued: bool,
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        let aspect = 0.6;
+        let slider = ui
+            .scope(|ui| {
+                // Paint only the slider ourselves; the numeric field keeps the
+                // theme's normal input face. The stock slider still owns input.
+                let widgets = &mut ui.visuals_mut().widgets;
+                widgets.inactive.bg_fill = Color32::TRANSPARENT;
+                widgets.inactive.fg_stroke = Stroke::NONE;
+                widgets.hovered.bg_fill = Color32::TRANSPARENT;
+                widgets.hovered.fg_stroke = Stroke::NONE;
+                widgets.active.bg_fill = Color32::TRANSPARENT;
+                widgets.active.fg_stroke = Stroke::NONE;
+                ui.add(
+                    egui::Slider::new(&mut *value, range.clone())
+                        .step_by(0.001)
+                        .clamping(egui::SliderClamping::Edits)
+                        .smart_aim(false)
+                        .show_value(false)
+                        .trailing_fill(false)
+                        .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: aspect }),
+                )
+            })
+            .inner;
+        let rect = slider.rect;
+        let half_width = rect.height() / 2.5 * aspect; // egui Slider::position_range
+        let left = rect.left() + half_width;
+        let right = rect.right() - half_width;
+        let at = |v: f32| egui::lerp(left..=right, ((v - range.start()) / (range.end() - range.start())).clamp(0.0, 1.0));
+        let x = at(*value);
+        let zero = at(0.0);
+        let fade = if ui.is_enabled() { 1.0 } else { 0.45 };
+        let rail = egui::Rect::from_center_size(rect.center(), Vec2::new(rect.width(), 8.0));
+        let painter = ui.painter();
+        painter.rect(
+            rail,
+            TRACK_RADIUS,
+            p.muted_dim.lerp_to_gamma(p.raised, 0.25).gamma_multiply(fade),
+            Stroke::new(1.0, p.muted.gamma_multiply(0.5 * fade)),
+            egui::StrokeKind::Inside,
+        );
+        let fill = egui::Rect::from_min_max(egui::pos2(zero.min(x), rail.top()), egui::pos2(zero.max(x), rail.bottom()));
+        if fill.width() > 0.5 {
+            painter.rect_filled(
+                fill,
+                TRACK_RADIUS,
+                (if subdued { p.muted_dim } else { p.violet }).gamma_multiply(fade),
+            );
+        }
+        painter.line_segment(
+            [egui::pos2(zero, rail.top() - 2.0), egui::pos2(zero, rail.bottom() + 2.0)],
+            Stroke::new(1.0, p.muted.gamma_multiply(fade)),
+        );
+        let hot = slider.hovered() || slider.dragged() || slider.has_focus();
+        let knob = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), Vec2::new(half_width * 2.0, rect.height() / 1.25));
+        painter.rect(
+            knob,
+            inner_radius(ui.visuals()),
+            (if subdued {
+                p.muted
+            } else if hot {
+                p.on_accent
+            } else {
+                p.violet_light
+            })
+            .gamma_multiply(fade),
+            Stroke::new(1.0, p.on_accent.gamma_multiply(0.75 * fade)),
+            egui::StrokeKind::Inside,
+        );
+        let numeric = ui.add_sized(
+            Vec2::new(78.0, rect.height()),
+            egui::DragValue::new(value)
+                .range(range)
+                .clamp_existing_to_range(false)
+                .speed(0.001)
+                .fixed_decimals(3)
+                .suffix(" m")
+                .custom_formatter(|value, _| aurora_i18n::number(value, 3))
+                .custom_parser(|text| aurora_i18n::parse_number(text).filter(|v| v.is_finite())),
+        );
+        if numeric.gained_focus() || numeric.has_focus() || numeric.lost_focus() {
+            numeric.union(slider)
+        } else {
+            slider.union(numeric)
+        }
+    })
+    .inner
+}
+
 /// Progress bar of the interface: a flat track filled with the brand
 /// gradient (or `tint`), which glides to its value instead of jumping.
 /// `text` is written under it; `{}` in it is replaced by the percentage
@@ -1453,7 +1587,7 @@ pub struct DialogButton<'a> {
 }
 
 /// The width `action_button` gives `label` with `icon` when it fits its content.
-fn action_button_fit(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
+pub fn action_button_fit(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
     let text = ui
         .painter()
         .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.5), Color32::PLACEHOLDER)
@@ -1485,6 +1619,66 @@ pub fn dialog_buttons(ui: &mut egui::Ui, p: &Palette, buttons: &[DialogButton<'_
         }
     });
     clicked
+}
+
+/// Individual frosted glass with the theme's tint, border, shadow and radius.
+/// The native button retains input and accessibility without painting a face.
+pub fn glass_action_icon(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, size: Vec2, icon_color: Color32) -> egui::Response {
+    let response = ui.add_sized(size, egui::Button::new("").frame(false));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    if ui.is_rect_visible(response.rect) {
+        let rect = response.rect;
+        let pressed = response.is_pointer_button_down_on();
+        let hot = response.hovered() || response.has_focus();
+        let base = if pressed {
+            p.indigo
+        } else if hot {
+            p.raised
+        } else {
+            p.panel
+        };
+        let alpha = if p.panel_alpha == 255 {
+            255
+        } else {
+            (f32::from(p.panel_alpha)
+                * if pressed {
+                    0.88
+                } else if hot {
+                    0.72
+                } else {
+                    0.55
+                }) as u8
+        };
+        let tint = Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
+        let mut frame = overlay_frame(ui.ctx(), p);
+        frame.fill = tint;
+        frame.corner_radius = ui.visuals().widgets.inactive.corner_radius;
+        frame.stroke = Stroke::new(
+            1.0,
+            if hot {
+                p.violet_light.gamma_multiply(0.65)
+            } else {
+                p.ink.gamma_multiply(0.18)
+            },
+        );
+        ui.painter().add(frame.paint(rect.shrink(frame.stroke.width)));
+        if p.panel_alpha < 255 {
+            ui.painter().add(aurora_render::glass_panel(
+                rect.shrink(1.0),
+                f32::from(frame.corner_radius.nw),
+                tint,
+            ));
+        }
+        if let Some(texture) = super::icons::global(icon) {
+            ui.painter().image(
+                texture.id(),
+                egui::Rect::from_center_size(rect.center(), Vec2::splat(22.0)),
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                if pressed { p.on_accent } else { icon_color },
+            );
+        }
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Primary action using the Aurora accent and the flat button geometry.

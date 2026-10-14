@@ -12,6 +12,7 @@ pub mod mesh;
 pub mod permissions;
 pub mod persistence;
 pub mod preview;
+pub mod sound;
 #[cfg(test)]
 mod tests;
 pub mod ui;
@@ -69,6 +70,20 @@ impl Choice {
             Self::Mesh => aurora_i18n::tr!("import-mesh"),
             Self::Bulk => aurora_i18n::tr!("import-bulk"),
             Self::Local => aurora_i18n::tr!("import-local"),
+        }
+    }
+
+    /// Dedicated floaters keep their own placement and size. Multiple keeps
+    /// the established complete inspector and its per-type tabs.
+    pub fn window_id(self) -> &'static str {
+        match self {
+            Self::Texture => "import_textures",
+            Self::Sound => "import_sounds",
+            Self::Animation => "import_animations",
+            Self::Material => "import_materials",
+            Self::Mesh => "import_meshes",
+            Self::Local => "import_local",
+            Self::Bulk => "asset_imports_v6",
         }
     }
 }
@@ -286,6 +301,7 @@ pub struct Entry {
     pub material_large_pending: [bool; 4],
     pub texture_target: usize,
     pub player: animation::Player,
+    pub sound: sound::Editor,
     pub local: bool,
     pub local_pending: bool,
     pub local_published: bool,
@@ -334,6 +350,7 @@ impl Entry {
             folder: Uuid::nil(),
             selected: source.is_some(),
             empty_alpha: matches!(&source,Some(Source::Texture(image)) if import_texture::empty_alpha(image)),
+            sound: sound::Editor::new(source.as_ref()),
             source,
             options,
             preview: None,
@@ -396,11 +413,15 @@ pub(super) enum Worker {
     Watch(Uuid, local::Stamp),
     Map(Uuid, u64, usize, Result<LocalImage, String>),
     Remote(Uuid, LocalImage),
-    Audio(Uuid, aurora_audio::SoundClip),
+    Audio(Uuid, Uuid, aurora_audio::SoundClip, f32),
     Animation(Uuid, Uuid, Arc<crate::scene::anim::BoundAnim>),
 }
 pub enum Playback {
-    Audio(aurora_audio::SoundClip),
+    Audio {
+        entry: Uuid,
+        clip: aurora_audio::SoundClip,
+        duration: f32,
+    },
 }
 
 struct Step {
@@ -412,17 +433,21 @@ struct Step {
     description: String,
     source: Source,
     options: import_texture::Options,
+    sound_options: sound::Options,
     cost: i32,
     permissions: Permissions,
 }
 
 pub struct Imports {
     pub open: bool,
-    pub permissions_open: bool,
+    pub launcher_open: bool,
+    pub settings_open: bool,
     pub preview_zoom: Option<(Uuid, Option<usize>)>,
     pub mesh_permission_account: Uuid,
     pub mesh_permission_denied: bool,
     pub choice: Choice,
+    /// The window opened from the launcher, independent of Multiple's tab.
+    pub inspector: Option<Choice>,
     pub entries: Vec<Entry>,
     pub active: Option<Uuid>,
     pub message: String,
@@ -437,6 +462,7 @@ pub struct Imports {
     current: Option<(Uuid, Step)>,
     uploaded: HashMap<Uuid, Receipt>,
     pub play_request: Option<Uuid>,
+    pub sound_playing: Option<Uuid>,
     pub playback: Vec<Playback>,
     pub local_uploads: Vec<local::Prepared>,
     pub sound_limit: u32,
@@ -465,11 +491,13 @@ impl Default for Imports {
         let (tx, rx) = crossbeam_channel::unbounded();
         Self {
             open: false,
-            permissions_open: false,
+            launcher_open: false,
+            settings_open: false,
             preview_zoom: None,
             mesh_permission_account: Uuid::nil(),
             mesh_permission_denied: false,
             choice: Choice::Texture,
+            inspector: None,
             entries: Vec::new(),
             active: None,
             message: String::new(),
@@ -483,6 +511,7 @@ impl Default for Imports {
             current: None,
             uploaded: HashMap::new(),
             play_request: None,
+            sound_playing: None,
             playback: Vec::new(),
             local_uploads: Vec::new(),
             sound_limit: 30,
@@ -509,6 +538,21 @@ impl Default for Imports {
     }
 }
 impl Imports {
+    /// Repeating the import shortcut closes the visible chooser.
+    pub fn toggle_launcher(&mut self, ctx: &egui::Context) {
+        if self.launcher_open {
+            self.launcher_open = false;
+        } else {
+            self.open_launcher(ctx);
+        }
+    }
+
+    /// The shortcut opens the type chooser without scheduling a disk dialog.
+    pub fn open_launcher(&mut self, ctx: &egui::Context) {
+        crate::ui::widgets::open_floater(ctx, ui::launcher::WINDOW, &mut self.launcher_open);
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(ui::launcher::WINDOW)));
+    }
+
     pub fn open_file_picker(&mut self, choice: Choice) {
         self.open(choice);
         self.choose_files_on_open = true;
@@ -531,7 +575,16 @@ impl Imports {
     }
     pub fn open(&mut self, choice: Choice) {
         self.open = true;
-        self.permissions_open = false;
+        self.inspector = Some(choice);
+        self.select_type(choice);
+    }
+
+    pub fn window_choice(&self) -> Choice {
+        self.inspector.unwrap_or(self.choice)
+    }
+
+    /// Switch a tab inside Multiple without turning it into another window.
+    pub fn select_type(&mut self, choice: Choice) {
         self.choice = choice;
         if self
             .active
@@ -573,10 +626,18 @@ impl Imports {
         {
             let source = entry.source.as_ref()?;
             let options = self.options(entry);
-            total = total.checked_add(match source {
+            let count = if let Source::Sound(sound) = source {
+                if !entry.sound.options.importable(sound, self.sound_limit) {
+                    return None;
+                }
+                i32::try_from(entry.sound.pending(sound).ok()?).ok()?
+            } else {
+                1
+            };
+            total = total.checked_add(count.checked_mul(match source {
                 Source::Mesh(draft) => draft.quote.as_ref()?.cost,
                 _ => self.price(prices, source.kind(), source.dimensions(options))?,
-            })?;
+            })?)?;
             if let Source::Material { images: textures, .. } = source {
                 for image in textures.iter().flatten().filter(|i| i.asset.is_none()) {
                     let key = image.upload_key(options);
@@ -649,6 +710,7 @@ impl Imports {
                             description: String::new(),
                             source: Source::Texture(image.pixels.clone()),
                             options,
+                            sound_options: Default::default(),
                             cost: self
                                 .price(
                                     prices,
@@ -661,25 +723,49 @@ impl Imports {
                     }
                 }
             }
-            self.queue.push_back(Step {
-                key: entry.id,
-                entry: Some(entry.id),
-                kind: source.kind(),
-                folder: entry.folder,
-                name: entry.name.clone(),
-                description: entry.description.clone(),
-                source: source.clone(),
-                options,
-                cost: match source {
-                    Source::Mesh(draft) => draft.quote.as_ref().map(|q| q.cost).unwrap_or(0),
-                    _ => self.price(prices, source.kind(), source.dimensions(options)).unwrap_or(0),
-                },
-                permissions: permission_prefs.permissions_for(source.kind()),
-            });
+            let count = if let Source::Sound(sound) = source {
+                entry.sound.options.pieces(sound).unwrap_or(1)
+            } else {
+                1
+            };
+            for index in 0..count {
+                let split = matches!(source, Source::Sound(_)) && entry.sound.options.segment.is_some();
+                if split && entry.sound.completed_options == entry.sound.options && entry.sound.completed.contains(&index) {
+                    continue;
+                }
+                let sound_options = sound::Options {
+                    piece: split.then_some(index),
+                    ..entry.sound.options
+                };
+                self.queue.push_back(Step {
+                    key: if split { Uuid::new_v4() } else { entry.id },
+                    entry: Some(entry.id),
+                    kind: source.kind(),
+                    folder: entry.folder,
+                    name: if split {
+                        sound::piece_name(&entry.name, index)
+                    } else {
+                        entry.name.clone()
+                    },
+                    description: entry.description.clone(),
+                    source: source.clone(),
+                    options,
+                    sound_options,
+                    cost: match source {
+                        Source::Mesh(draft) => draft.quote.as_ref().map(|q| q.cost).unwrap_or(0),
+                        _ => self.price(prices, source.kind(), source.dimensions(options)).unwrap_or(0),
+                    },
+                    permissions: permission_prefs.permissions_for(source.kind()),
+                });
+            }
         }
         for entry in &mut self.entries {
             if self.choice.accepts(entry) && entry.selected && matches!(entry.status, Status::Ready) {
                 entry.status = Status::Preparing;
+                if entry.sound.completed_options != entry.sound.options {
+                    entry.sound.completed.clear();
+                    entry.sound.completed_options = entry.sound.options;
+                }
             }
         }
         self.confirm = false;
@@ -726,7 +812,14 @@ impl Imports {
                 self.spent = self.spent.saturating_add(receipt.cost);
                 let item = receipt.item.clone();
                 if let Some(entry) = step.entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id)) {
-                    entry.status = Status::Done(item.id);
+                    if let Some(index) = step.sound_options.piece {
+                        entry.sound.completed.insert(index);
+                    }
+                    entry.status = if self.queue.iter().any(|pending| pending.entry == Some(entry.id)) {
+                        Status::Preparing
+                    } else {
+                        Status::Done(item.id)
+                    };
                 }
                 self.uploaded.insert(step.key, receipt);
                 Some(item)
@@ -804,6 +897,7 @@ impl Imports {
                                 }
                                 jobs.discard(entry.source.take());
                                 entry.source = updated.source.take();
+                                entry.sound = std::mem::take(&mut updated.sound);
                                 entry.status = Status::Ready;
                                 entry.preview = None;
                                 entry.preview_generation += 1;
@@ -1028,7 +1122,9 @@ impl Imports {
                         }
                     }
                 }
-                Worker::Audio(request, clip) if self.play_request == Some(request) => self.playback.push(Playback::Audio(clip)),
+                Worker::Audio(request, entry, clip, duration) if self.play_request == Some(request) => {
+                    self.playback.push(Playback::Audio { entry, clip, duration })
+                }
                 Worker::Animation(request, id, animation) if self.play_request == Some(request) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
                         entry.player.request = Some(request);
@@ -1084,11 +1180,12 @@ impl Imports {
             }
             let source = step.source.clone();
             let options = step.options;
+            let sound_options = step.sound_options;
             let request = Uuid::new_v4();
             let tx = self.tx.clone();
             let wake = ctx.clone();
             jobs.execute(move || {
-                let result = files::encode(&source, options);
+                let result = files::encode(&source, options, sound_options);
                 let _ = tx.send(Worker::Encoded(request, result));
                 wake.request_repaint();
             });
@@ -1130,8 +1227,15 @@ impl Imports {
             return;
         };
         let request = Uuid::new_v4();
+        let sound_options = self
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.sound.options)
+            .unwrap_or_default();
         if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
             entry.player.started = true;
+            entry.sound.preparing = matches!(source, Source::Sound(_));
         }
         self.play_request = Some(request);
         if let Some(entry) = self.entries.iter().find(|entry| entry.id == id)
@@ -1147,7 +1251,16 @@ impl Imports {
         jobs.execute(move || {
             match source {
                 Source::Sound(sound) => {
-                    let _ = tx.send(Worker::Audio(request, aurora_audio::SoundClip::from_pcm(&sound.mono, 1, 44100)));
+                    let preview = sound_options.render(&sound);
+                    if let Ok(preview) = preview {
+                        let duration = preview.duration();
+                        let _ = tx.send(Worker::Audio(
+                            request,
+                            id,
+                            aurora_audio::SoundClip::from_pcm(&preview.mono, 1, sound::RATE),
+                            duration,
+                        ));
+                    }
                 }
                 Source::Animation { animation, .. } => {
                     let _ = tx.send(Worker::Animation(

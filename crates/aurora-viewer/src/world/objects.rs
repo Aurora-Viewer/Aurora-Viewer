@@ -4,7 +4,7 @@ use super::motion::{self, Correction};
 use aurora_net::RegionHandle;
 use aurora_net::objects::{ObjectUpdate, ParticleUpdate, TerseUpdate, TextureAnim};
 use aurora_prim::{ExtraParams, TextureEntry, VolumeParams};
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec3, Vec4};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
@@ -117,6 +117,9 @@ pub struct Object {
     pub velocity: Vec3,
     pub acceleration: Vec3,
     pub angular_velocity: Vec3,
+    /// Simulator contact plane in region coordinates (zero means no contact).
+    /// Keep it through updates without that block, as LLVOAvatar::mFootPlane.
+    pub foot_plane: Option<Vec4>,
     /// Clock of its region when the simulator last reported its motion
     /// (`ObjectStore::motion_time`); NaN until the store has stamped it.
     motion_time: f64,
@@ -220,6 +223,7 @@ impl Object {
             velocity: u.velocity,
             acceleration: u.acceleration,
             angular_velocity: u.angular_velocity,
+            foot_plane: u.foot_plane,
             motion_time: f64::NAN,
             correction: None,
             full_update_serial: 1,
@@ -271,6 +275,7 @@ impl Object {
             self.render.local_volume = None;
             self.render.local_scale = None;
             self.render.local_appearance.clear();
+            self.foot_plane = None;
         }
         self.full_update_serial = self.full_update_serial.wrapping_add(1);
         match &u.particles {
@@ -312,6 +317,9 @@ impl Object {
         self.velocity = u.velocity;
         self.acceleration = u.acceleration;
         self.angular_velocity = u.angular_velocity;
+        if let Some(plane) = u.foot_plane {
+            self.foot_plane = Some(plane);
+        }
         self.volume = u.volume;
         if u.texture_entry.is_some() {
             self.te = u.texture_entry;
@@ -354,6 +362,9 @@ impl Object {
         self.velocity = t.velocity;
         self.acceleration = t.acceleration;
         self.angular_velocity = t.angular_velocity;
+        if let Some(plane) = t.foot_plane {
+            self.foot_plane = Some(plane);
+        }
         if let Some(te) = &t.texture_entry
             && self.te.as_ref() != Some(te)
         {
@@ -837,6 +848,9 @@ impl ObjectStore {
         let clocks = (self.motion_time(old.region), self.motion_time(key.region));
         if let Some(o) = self.get_mut(idx) {
             o.key = key;
+            if old.region != key.region {
+                o.foot_plane = None; // region-relative contact cannot follow a crossing
+            }
             o.motion_time += clocks.1 - clocks.0;
         }
         if let Some(mut kids) = self.children.remove(&old) {
@@ -1162,6 +1176,27 @@ mod tests {
     }
 
     const SMOOTH_ON: u8 = TextureAnim::ON | TextureAnim::SMOOTH | TextureAnim::LOOP;
+
+    #[test]
+    fn avatar_contact_plane_survives_absent_blocks_and_accepts_explicit_clears() {
+        let plane = Vec4::new(0.0, 0.0, 1.0, 40.05);
+        let mut full = update(1, AVATAR, "");
+        full.foot_plane = Some(plane);
+        let mut avatar = Object::from_update(1, full);
+        assert_eq!(avatar.foot_plane, Some(plane));
+        avatar.apply_full(update(1, AVATAR, ""));
+        assert_eq!(avatar.foot_plane, Some(plane));
+        let mut motion = terse(1, Vec3::ZERO, Vec3::ZERO);
+        motion.foot_plane = Some(Vec4::ZERO);
+        avatar.apply_terse(&motion);
+        assert_eq!(avatar.foot_plane, Some(Vec4::ZERO));
+        motion.foot_plane = None;
+        avatar.apply_terse(&motion);
+        assert_eq!(avatar.foot_plane, Some(Vec4::ZERO));
+        motion.foot_plane = Some(plane * 2.0);
+        avatar.apply_terse(&motion);
+        assert_eq!(avatar.foot_plane, Some(plane * 2.0));
+    }
 
     fn update(local_id: u32, pcode: u8, text: &str) -> ObjectUpdate {
         ObjectUpdate {

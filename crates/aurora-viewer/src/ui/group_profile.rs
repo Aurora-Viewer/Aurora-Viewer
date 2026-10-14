@@ -14,6 +14,9 @@
 //!   group pane of "Search" (`search/details.rs`), with the members below
 //!   in a collapsing section, as Firestorm's accordions.
 //!
+//! "Create a group" (`group_profile/create.rs`) is a version of the same
+//! window: the header and the identity cards, or Firestorm's creation panel.
+//!
 //! The data: GroupProfileReply (`world.search.groups`), our membership
 //! (`world.groups`) and LLGroupMgr's members, roles, titles and notices
 //! (`world.group_data`), the land and accounts of LLPanelGroupLandMoney
@@ -22,6 +25,7 @@
 mod abilities;
 mod admin_members;
 mod administration;
+pub mod create;
 mod experiences;
 mod home;
 mod invite;
@@ -48,6 +52,17 @@ pub fn request_open(ctx: &egui::Context, id: Uuid) {
 
 pub fn take_open_request(ctx: &egui::Context) -> Option<Uuid> {
     ctx.data_mut(|d| d.remove_temp::<Uuid>(egui::Id::new("aurora_open_group_profile")))
+}
+
+/// Ask for the "Create a group" window (LLGroupActions::createGroup) from
+/// anywhere in the interface; the app opens it at the end of the frame.
+pub fn request_create(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("aurora_create_group"), true));
+}
+
+pub fn take_create_request(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new("aurora_create_group")))
+        .unwrap_or(false)
 }
 
 /// What the window asks the app to do (the rest goes through the context
@@ -82,6 +97,8 @@ pub enum GroupAction {
     },
     /// UpdateGroupInfo: the identity saved.
     UpdateInfo { group: Uuid, info: aurora_net::groups::GroupInfo },
+    /// CreateGroupRequest, confirmed: the trimmed name and the identity.
+    Create { name: String, info: aurora_net::groups::GroupInfo },
     /// The ban list asked (GroupAPIv1).
     RequestBans(Uuid),
     /// Bans lifted.
@@ -183,6 +200,8 @@ pub struct GroupProfileUi {
     confirm: Option<Confirm>,
     /// "Invite to the group".
     pub invite: invite::InviteUi,
+    /// "Create a group".
+    pub create: create::GroupCreateUi,
     /// Profile pictures of the residents shown (drained by the app).
     pub wanted_pics: HashSet<Uuid>,
     pic_budget: super::nameplate::PictureBudget,
@@ -229,9 +248,13 @@ impl GroupProfileUi {
         self.raise = true;
     }
 
-    /// Open the Administration tab (the demo's captures).
-    pub fn show_admin(&mut self) {
+    /// Open the Administration tab, on Group identity when `identity` (the
+    /// demo's captures).
+    pub fn show_admin(&mut self, identity: bool) {
         self.tab = Tab::Admin;
+        if identity {
+            self.admin.section = administration::Section::Identity;
+        }
     }
 
     /// Open the Experiences tab (the demo's captures).
@@ -275,8 +298,16 @@ impl GroupProfileUi {
         }
     }
 
+    /// processCreateGroupReply: the new group's profile opened, or the
+    /// refusal shown by the creation window.
+    pub fn on_created(&mut self, world: &mut World, group: Uuid, success: bool, message: &str) {
+        if let Some(id) = self.create.on_reply(group, success, message) {
+            self.open(world, id);
+        }
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, c: &mut Ctx, env: &Env) -> Vec<GroupAction> {
-        let mut actions = Vec::new();
+        let mut actions = self.create.show(ctx, c, env);
         let Some(id) = self.shown() else {
             self.confirm = None;
             return actions;
@@ -325,7 +356,9 @@ impl GroupProfileUi {
         images: &HashMap<Uuid, egui::TextureHandle>,
     ) -> HashSet<Uuid> {
         self.invite.picker(ctx, p, world);
-        self.admin.dialogs(ctx, p, world, images)
+        let mut wanted = self.admin.dialogs(ctx, p, world, images);
+        wanted.extend(self.create.picker(ctx, p, world, images));
+        wanted
     }
 
     /// "Invite" of the head and of the Members tab (LLGroupActions::invite).

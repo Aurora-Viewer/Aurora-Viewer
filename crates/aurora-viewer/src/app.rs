@@ -1415,6 +1415,19 @@ impl App {
                 self.world.inventory.add_items(vec![crate::demo::offered_item(parent, *owner)]);
                 return;
             }
+            // the demo's dataserver creates the group and takes its fee from
+            // the balance, or refuses it (name taken, L$ or group limit)
+            if let NetCommand::CreateGroup { name, info } = &cmd {
+                let fee = ui::group_profile::create::fee(&self.world);
+                let can_join = ui::group_profile::create::can_join_groups(&self.world);
+                let balance = self.world.balance.unwrap_or(250);
+                for ev in crate::demo::group::create(name, info, balance, fee, can_join) {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+                return;
+            }
             // a new classified is paid when it is published, as the
             // simulator does on the grid
             if let Some(price) = crate::demo::classifieds::price_of_new(&cmd)
@@ -1677,6 +1690,10 @@ impl App {
         }
         if let NetEvent::Balance(balance) = ev {
             self.pay_ui.on_balance(balance);
+        }
+        if let NetEvent::GroupCreated { group, success, message } = &ev {
+            self.group_profile_ui.on_created(&mut self.world, *group, *success, message);
+            return;
         }
         if let NetEvent::ScriptTeleportRequest { .. } = ev {
             // llMapDestination asked for the map (BEACON_SHOW_MAP)
@@ -2559,7 +2576,7 @@ impl App {
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
-            Action::Import => self.imports.open_file_picker(crate::imports::Choice::Bulk),
+            Action::Import => self.imports.toggle_launcher(&self.egui_ctx),
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
                 d.show_alpha = !d.show_alpha;
@@ -4528,6 +4545,7 @@ impl App {
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
         images.extend(self.place_images.drain());
         images.extend(self.land_ui.wanted_images.drain());
+        images.extend(self.region_ui.wanted_images.drain());
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.people_ui.wanted_images.drain());
@@ -5127,6 +5145,13 @@ impl App {
             self.update_ao(now);
             // poses first: attachments follow their bone in the same frame
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, now);
+            self.scene.update_auto_hover(
+                &mut self.world,
+                self.settings.auto_hover_height,
+                self.settings.auto_hover_offset,
+                !self.hover_height_ui.previewing_offset(),
+                now,
+            );
             for anim in completed {
                 self.ao_runtime.finished(anim);
                 // LLAgent::requestStopMotion: stop the finished non-looping
@@ -7229,12 +7254,8 @@ impl App {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.bug_report.requested = true,
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
-            BarAction::Import { choice, pick_files } => {
-                if pick_files {
-                    self.imports.open_file_picker(choice);
-                } else {
-                    self.imports.open(choice);
-                }
+            BarAction::Import => {
+                self.imports.toggle_launcher(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
             }
             BarAction::ShowHuds(visible) => {
@@ -7585,6 +7606,10 @@ impl App {
                     self.world.group_data.update_info(group, info);
                     // the profile again, to show what the server kept
                     self.send(NetCommand::GroupProfileRequest(group));
+                }
+                GroupAction::Create { name, info } => {
+                    self.world.groups.creating = Some(name.clone());
+                    self.send(NetCommand::CreateGroup { name, info });
                 }
                 GroupAction::RequestBans(group) => self.world.group_data.request_bans(group),
                 GroupAction::Unban { group, ids } => self.world.group_data.unban(group, ids),
@@ -8888,8 +8913,18 @@ impl App {
                     .then_some(self.world.main_region)
                     .flatten()
                     .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
-                self.region_ui
-                    .show(&ctx, &p, &mut self.world, &self.avatar_pics, region_map.as_ref(), &mut open);
+                if self.region_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.world,
+                    &self.avatar_pics,
+                    &self.ui_images,
+                    region_map.as_ref(),
+                    &mut self.settings,
+                    &mut open,
+                ) {
+                    self.settings.save();
+                }
                 self.panels.region_estate = open;
                 match self.region_ui.action.take() {
                     Some(ui::region::RegionAction::AboutLand) => self.panels.about_land = true,
@@ -8911,12 +8946,19 @@ impl App {
                 self.controls_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
+                let automatic_base = self.scene.automatic_hover_base(&self.world);
                 if self.hover_height_ui.show(
                     &ctx,
                     &p,
                     &mut self.world.hover_height,
                     hover_enabled,
-                    &mut self.settings.camera.hover_affects_camera,
+                    ui::hover_height::HoverHeightOptions {
+                        camera: &mut self.settings.camera.hover_affects_camera,
+                        automatic: &mut self.settings.auto_hover_height,
+                        offset: &mut self.settings.auto_hover_offset,
+                        automatic_base,
+                        neutral_pose_test: &mut self.scene.neutral_pose_test,
+                    },
                 ) {
                     self.settings.save();
                 }
@@ -9114,7 +9156,7 @@ impl App {
                 // (LLGroupActions::show)
                 let group_env = ui::group_profile::Env {
                     avatar_pics: &self.avatar_pics,
-                    classic: self.settings.classic_profiles,
+                    classic: self.settings.classic_profiles || (self.demo && crate::demo::group::create_classic()),
                     now: ctx.input(|i| i.time),
                     group_calls: self.settings.audio.voice_enabled,
                 };
@@ -9126,6 +9168,9 @@ impl App {
                 self.place_images.extend(wanted);
                 if let Some(id) = ui::group_profile::take_open_request(&ctx) {
                     self.group_profile_ui.open(&mut self.world, id);
+                }
+                if ui::group_profile::take_create_request(&ctx) {
+                    self.group_profile_ui.create.open(&self.world);
                 }
                 t = self.ui_parts.lap(Part::UiPlaces, t);
                 let mut open = self.panels.minimap;
@@ -9903,7 +9948,7 @@ impl ApplicationHandler for App {
             // AURORA_DEMO_REGION=overview[:owner|:manager|:resident]: Region /
             // Estate on that page
             if let Some(scenario) = crate::demo::region::scenario() {
-                self.region_ui.demo(scenario.page, scenario.preview);
+                self.region_ui.demo(scenario.page, scenario.preview, scenario.manage);
                 if scenario.compact {
                     let pos = egui::pos2(560.0, 80.0);
                     ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(480.0, 720.0));
@@ -9930,7 +9975,7 @@ impl ApplicationHandler for App {
                     self.group_profile_ui.show_notices(compose);
                 }
                 if crate::demo::group::admin_tab() {
-                    self.group_profile_ui.show_admin();
+                    self.group_profile_ui.show_admin(crate::demo::group::identity_section());
                 }
                 if crate::demo::group::experiences_tab() {
                     self.group_profile_ui.show_experiences();
@@ -9946,6 +9991,29 @@ impl ApplicationHandler for App {
                 if let Some(invitees) = crate::demo::group::invitees() {
                     self.group_profile_ui.invite.open(crate::demo::group::shown_group(), invitees);
                 }
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_GROUP_CREATE=form|cost|refused|limit|created: "Create
+            // a group", as from People › Groups, once the group list is in
+            if let Some(scenario) = crate::demo::group::create_scenario() {
+                use crate::demo::group::CreateScenario;
+                use ui::group_profile::create::{DemoStart, DemoThen, Draft};
+                let draft = Draft {
+                    name: crate::demo::group::create_name(scenario).into(),
+                    info: aurora_net::groups::GroupInfo {
+                        charter: aurora_i18n::tr!("demo-group-create-charter").into(),
+                        show_in_list: true,
+                        open_enrollment: true,
+                        ..Default::default()
+                    },
+                    rating: Some(false),
+                };
+                let (draft, then) = match scenario {
+                    CreateScenario::Form | CreateScenario::Limit => (None, DemoThen::Wait),
+                    CreateScenario::Cost => (Some(draft), DemoThen::Press),
+                    CreateScenario::Refused | CreateScenario::Created => (Some(draft), DemoThen::Send),
+                };
+                self.group_profile_ui.create.demo(DemoStart { draft, then });
                 self.panels.perf = false;
             }
             // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add: the

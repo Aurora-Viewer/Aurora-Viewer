@@ -526,6 +526,48 @@ pub fn group_info_message(agent: Uuid, session: Uuid, group: Uuid, info: &GroupI
     m
 }
 
+/// The rules of a new group's name (LLPanelGroupCreate::onBtnCreate,
+/// lldbstrings.h, LLTextValidate::validateASCIINoLeadingSpace, originally
+/// LGPL 2.1).
+pub mod name {
+    /// DB_GROUP_NAME_MIN_LEN.
+    pub const MIN: usize = 4;
+    /// DB_GROUP_NAME_STR_LEN, also the field's `max_length_bytes`.
+    pub const MAX: usize = 35;
+
+    /// What the name field accepts while typing: ASCII from the space up,
+    /// not starting with a space, at most `MAX` bytes. A refused edit leaves
+    /// the field as it was, as the prevalidation does.
+    pub fn accepts(text: &str) -> bool {
+        text.len() <= MAX && !text.starts_with(' ') && text.chars().all(|c| (' '..='\u{7f}').contains(&c))
+    }
+
+    /// The name sent: trimmed, within `MIN`..=`MAX` (else
+    /// GroupNameLengthWarning).
+    pub fn checked(text: &str) -> Option<&str> {
+        let name = text.trim();
+        (MIN..=MAX).contains(&name.len()).then_some(name)
+    }
+}
+
+/// CreateGroupRequest (LLGroupMgr::sendCreateGroupRequest): the trimmed name
+/// and what UpdateGroupInfo would send.
+pub fn create_group_message(agent: Uuid, session: Uuid, name: &str, info: &GroupInfo) -> msgs::CreateGroupRequest {
+    let mut m = msgs::CreateGroupRequest::default();
+    m.agent_data.agent_id = agent;
+    m.agent_data.session_id = session;
+    let d = &mut m.group_data;
+    d.name = str_field(name);
+    d.charter = str_field(&info.charter);
+    d.show_in_list = info.show_in_list;
+    d.insignia_id = info.insignia;
+    d.membership_fee = info.membership_fee;
+    d.open_enrollment = info.open_enrollment;
+    d.allow_publish = info.allow_publish;
+    d.mature_publish = info.mature_publish;
+    m
+}
+
 /// The ban actions of the GroupAPIv1 capability (LLGroupMgr::EBanAction).
 pub mod ban {
     pub const CREATE: i32 = 1;
@@ -582,6 +624,41 @@ mod tests {
     use super::*;
     use aurora_msg::str_field;
     use msgs::{group_members_reply, group_notices_list_reply, group_role_data_reply, group_role_members_reply, group_titles_reply};
+
+    #[test]
+    fn a_new_group_name_follows_firestorm_rules() {
+        assert!(name::accepts("Aurora Builders"));
+        assert!(name::accepts(""));
+        assert!(!name::accepts(" Leading"), "no leading space");
+        assert!(!name::accepts("Café"), "ASCII only");
+        assert!(!name::accepts("Tab\tname"));
+        assert!(name::accepts(&"x".repeat(35)));
+        assert!(!name::accepts(&"x".repeat(36)), "35 bytes at most");
+        assert_eq!(name::checked("  Wolves  "), Some("Wolves"));
+        assert_eq!(name::checked("Abc "), None, "four characters at least, once trimmed");
+        assert_eq!(name::checked("Abcd"), Some("Abcd"));
+    }
+
+    #[test]
+    fn create_group_request_carries_the_name_and_the_identity() {
+        let info = GroupInfo {
+            charter: "We build.".into(),
+            show_in_list: true,
+            insignia: Uuid::from_u128(7),
+            membership_fee: 50,
+            open_enrollment: true,
+            allow_publish: false,
+            mature_publish: true,
+        };
+        let m = create_group_message(Uuid::from_u128(1), Uuid::from_u128(2), "Wolves", &info);
+        assert_eq!(m.agent_data.agent_id, Uuid::from_u128(1));
+        assert_eq!(m.group_data.name, str_field("Wolves"));
+        assert_eq!(m.group_data.charter, str_field("We build."));
+        assert!(m.group_data.show_in_list && m.group_data.open_enrollment && m.group_data.mature_publish);
+        assert!(!m.group_data.allow_publish);
+        assert_eq!(m.group_data.membership_fee, 50);
+        assert_eq!(m.group_data.insignia_id, Uuid::from_u128(7));
+    }
 
     #[test]
     fn online_status_reads_online_dates_and_the_rest() {

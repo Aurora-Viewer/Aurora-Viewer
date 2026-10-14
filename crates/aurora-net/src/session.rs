@@ -2216,6 +2216,7 @@ impl Session<'_> {
             | NetCommand::GroupBans { .. }
             | NetCommand::GroupRoleUpdate { .. }
             | NetCommand::UpdateGroupInfo { .. }
+            | NetCommand::CreateGroup { .. }
             | NetCommand::JoinGroup(_)
             | NetCommand::InviteToGroup { .. }
             | NetCommand::GroupLandQuery { .. }

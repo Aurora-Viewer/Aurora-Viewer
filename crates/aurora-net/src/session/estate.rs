@@ -29,7 +29,92 @@ impl Session<'_> {
                 m.agent_data.session_id = self.session_id();
                 self.send(addr, &m, true);
             }
+            EstateCommand::SetRegionInfo { handle, rules } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                // the capability first, else the old message
+                match self.sim_cap(addr, "DispatchRegionInfo") {
+                    Some(url) => self.estate_post(url, rules.body(), "region info update"),
+                    None => {
+                        let invoice = self.estate_invoice;
+                        self.send_estate_owner_message(addr, "setregioninfo", invoice, &rules.strings(), true);
+                    }
+                }
+            }
+            EstateCommand::SetEstateInfo { handle, info } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                match self.sim_cap(addr, "EstateChangeInfo") {
+                    Some(url) => {
+                        let body = estate::estate_change_body(&info, self.estate_invoice);
+                        self.estate_post(url, body, "estate info");
+                    }
+                    None => {
+                        // nextInvoice, then commitEstateInfoDataserver (sent
+                        // with gAgent.sendMessage: not reliable); the answer
+                        // comes on that new invoice
+                        let invoice = Uuid::new_v4();
+                        self.estate_invoice = invoice;
+                        let strings = estate::estate_change_strings(&info);
+                        self.send_estate_owner_message(addr, "estatechangeinfo", invoice, &strings, false);
+                    }
+                }
+            }
+            EstateCommand::SetTerrain { handle, terrain, sun } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let invoice = self.estate_invoice;
+                for (method, strings) in estate::terrain_messages(&terrain, sun) {
+                    self.send_estate_owner_message(addr, method, invoice, &strings, true);
+                }
+            }
+            EstateCommand::BakeTerrain { handle } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let invoice = self.estate_invoice;
+                self.send_estate_owner_message(addr, "terrain", invoice, &["bake".to_owned()], true);
+            }
         }
+    }
+
+    fn sim_cap(&self, addr: SocketAddr, name: &str) -> Option<String> {
+        self.sims.get(&addr).and_then(|s| s.caps.get(name).cloned())
+    }
+
+    /// LLPanelRegionInfo::sendEstateOwnerMessage: one parameter per string,
+    /// a single empty one when there is none.
+    fn send_estate_owner_message(&mut self, addr: SocketAddr, method: &str, invoice: Uuid, strings: &[String], reliable: bool) {
+        log::info!("sending estate request '{method}'");
+        let mut m = EstateOwnerMessage::default();
+        m.agent_data.agent_id = self.agent_id();
+        m.agent_data.session_id = self.session_id();
+        m.method_data.method = str_field(method);
+        m.method_data.invoice = invoice;
+        m.param_list = if strings.is_empty() {
+            vec![estate_owner_message::ParamList { parameter: Vec::new() }]
+        } else {
+            strings
+                .iter()
+                .map(|s| estate_owner_message::ParamList { parameter: str_field(s) })
+                .collect()
+        };
+        self.send(addr, &m, reliable);
+    }
+
+    /// POST of an estate setting (messageHttpPost, postAndSuspend): only
+    /// logged, the simulator's next RegionInfo tells the result.
+    fn estate_post(&self, url: String, body: Llsd, what: &'static str) {
+        let http = self.sh.caps_http.clone();
+        tokio::spawn(async move {
+            match crate::caps::post_llsd(&http, &url, &body).await {
+                Ok(_) => log::info!("{what} posted"),
+                Err(e) => log::warn!("{what} not posted: {e}"),
+            }
+        });
     }
 
     /// The panels' refreshFromRegion, in their order: Estate (getinfo),
@@ -44,15 +129,9 @@ impl Session<'_> {
         // empty parameter
         let invoice = Uuid::new_v4();
         self.estate_invoice = invoice;
-        let mut m = EstateOwnerMessage::default();
-        m.agent_data.agent_id = self.agent_id();
-        m.agent_data.session_id = self.session_id();
-        m.method_data.method = str_field("getinfo");
-        m.method_data.invoice = invoice;
-        m.param_list = vec![estate_owner_message::ParamList { parameter: Vec::new() }];
-        self.send(addr, &m, true);
+        self.send_estate_owner_message(addr, "getinfo", invoice, &[], true);
 
-        let cap = |name: &str| self.sims.get(&addr).and_then(|s| s.caps.get(name).cloned());
+        let cap = |name: &str| self.sim_cap(addr, name);
         let gets = [
             (cap("EstateAccess"), Get::Access),
             (cap("RegionExperiences"), Get::Experiences),

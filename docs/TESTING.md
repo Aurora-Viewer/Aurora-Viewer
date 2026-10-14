@@ -85,6 +85,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
+| `AURORA_TEST_NEUTRAL_POSE=1` | Local neutral-pose comparison in the online or demo Hover Height floater |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
@@ -94,6 +95,44 @@ The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 `AURORA_DEMO_DIALOG` adds only the requested dialog;
 `AURORA_DEMO_INVENTORY=offer|offer-reject` adds only the received item.
+
+`AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
+Appearance › Hover Height, initially off. Our avatar starts with normal
+animations; enable the switch to display the exact shaped neutral skeleton
+used by automatic hover height, including worn-mesh joint offsets.
+Rigged meshes and rigid attachments follow the same neutral palette.
+This is local only, not saved:
+the motion controller and server animation signals continue normally, and
+other avatars are unchanged. Use it online to compare the reported roughly
+10 cm grounding discrepancy with/without the normal pose. The option is
+absent from an ordinary launch.
+Hover Height exposes a saved "Automatic height offset" in every launch
+(default 0 m). Positive values raise the result, negative values lower it;
+the offset applies again after each body attachment change, including removal
+of the last foot attachment. Millimetre numeric entry and -3..3 m adjustment
+match the height control. Dragging previews immediately from the cached
+estimate without another vertex scan; release saves the preference and commits
+the total height. With automatic mode disabled the offset slider is inactive.
+The technical measurements and recalculation button have been removed.
+Use the neutral-pose test switch when comparing shoes with the ground.
+The sliders share Aurora's contrasting track, zero marker, accent fill and
+solid rectangular handle over the normal blurred floater. While auto is on,
+the manual slider/value and Lower/Reset/Raise buttons are grey but remain
+interactive. Any manual change switches auto off immediately; Reset does so
+even when the height already equals zero. The saved automatic offset stays
+available when auto is enabled again. Merely displaying a computed height
+must not round it or switch modes.
+Two shared Aurora dividers separate manual height, automatic adjustment and
+the common camera/pose switches. The automatic section also has
+Lower/Reset/Raise buttons: they change the saved offset, retain automatic
+mode and apply the cached estimate immediately. Reset restores zero offset;
+steps match the manual buttons (1 cm, Alt 10 cm, Ctrl/Shift 1 mm).
+The scene compares an attachment/skeleton signature each frame, but mesh
+decoding and vertex scans run only after changes settle for 200 ms. HUD,
+animation and ordinary movement changes do not trigger ongoing recalculation.
+Body attachment, shape, physical-size and newly available asset changes can
+invalidate the estimate; an initial size-only estimate is upgraded once a
+usable contact plane arrives. Changing the offset reuses the cached result.
 
 The frames-per-second limiter is enabled at **120 fps by default**. It can
 be disabled or adjusted in Preferences › Graphics › Smoothness; preferences
@@ -225,7 +264,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details) |
-| `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Avatar hover-height adjustment and camera toggle |
+| `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
@@ -244,7 +283,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure`**:
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-cycle`**:
   opens the hover-height floater at frame 600. A number sets the height;
   `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
   repeats the cycle with "Affect camera view" enabled; otherwise the camera
@@ -259,6 +298,31 @@ when unfocused") is ignored during a screenshot.
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
   switch for the manual check. On the grid, also verify other viewers see
   the committed adjustment, then teleport and reconnect to check persistence.
+  `auto-static` adds two rigid soles with a linked heel at frame 620;
+  the `auto-*` scenarios frame the feet at 600, after the login camera reset.
+  Their avatar reports a 1.68 m physics height, matching the offline
+  simulation's 0.84 m centre clearance; the generic fixture's 1.9 m size
+  does not match that simulation. Grounding uses the simulator-reported
+  contact distance when available, otherwise the physical height, not the
+  independently computed shaped skeleton height.
+  `auto-static-off` repeats it with automatic adjustment disabled for comparison;
+  `auto-rigged` adds a rigged shoe mesh on the spine with an unrelated low
+  triangle whose foot weights are zero (it must not lift the avatar).
+  `auto-contact` uses those shoes with a reported 1.48 m physical height and
+  a contact plane at the actual ground: the 0.84 m centre clearance includes
+  a 10 cm margin over half that size. It must give the same grounded result
+  as `auto-rigged`, not raise the shoes by those extra 10 cm. Enable
+  `AURORA_TEST_NEUTRAL_POSE=1` to compare the exact neutral pose.
+  `auto-offset` uses that same contact-plane fixture: +0.05 m offset at 700
+  gives +0.316 m total height; -0.03 m at 860 gives +0.236 m. Removing the
+  shoes at 940 leaves the fixed -0.03 m offset. Capture 660, 840, 920 and 1100.
+  `auto-cycle` adds the rigid shoes at 620 and removes them at 940; capture
+  580, 840 and 1100 to compare barefoot / soles on the ground / barefoot.
+  Automatic adjustment is enabled by default in Hover Height. Manual edits
+  last until the next body attachment change; HUD changes must leave the
+  height intact. Updates during sitting/flying wait until standing on the
+  ground. On the grid: add/remove rigged shoes/body, rigid foot linksets and
+  HUDs, including delayed mesh loading and attachments worn while seated.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
@@ -1426,14 +1490,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
 | `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
-| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets |
+| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_REGION=overview[:role][:preview][:compact]` | "Region / Estate" as estate owner, manager or resident |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_REGION=overview\|manage[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -1485,36 +1550,76 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   refuses, with its "Go to website" link. `:confirm` after a mode (`rich:confirm`,
   `upgrade:confirm`) ticks the covenant and opens the confirmation by itself,
   for captures.
+- **`AURORA_DEMO_IMPORTS=launcher|settings`** opens the compact horizontal
+  import chooser or its saved-defaults window, without loading fixtures or
+  opening a disk dialog. The configurable Import shortcut (Ctrl+U by default)
+  toggles the chooser; a type button opens the filtered picker when its list
+  is empty, otherwise the existing inspector. Clicking the displayed type
+  closes its inspector. The icon bar stays open. Check that another type can be clicked while
+  an inspector is displayed, even when a narrow viewport causes overlap.
+  Build › Import performs the same toggle; Contents has no Import entry.
+  The glass variant has eight independent frosted buttons with clear gaps,
+  no group background, and a plain close cross at the right.
+  The Settings icon toggles the permissions/payment window, closing it on the
+  second click even if its title bar was minimized.
+- **`AURORA_DEMO_IMPORTS=inspectors`** opens the chooser with fixtures already
+  loaded for every type, including local previews. A type button therefore
+  opens its inspector directly without a disk dialog, as in the normal viewer.
+  Check each dedicated window and its filtered file list, then Multiple's
+  complete tabs. Permissions belong only to Settings. First-opened windows
+  have the same top-left position; moved windows retain their placement.
 - **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
   previews, the camera, the permissions, the selection and the confirmation.
+  Each type has a dedicated window with the file list at the left and only
+  its relevant metadata, preview and controls at the right. There
+  are no other type tabs in these windows. Sound uses a shorter window.
+  `bulk` is labelled Multiple and retains every type tab and the existing
+  mixed import flow. Switching its tabs keeps the
+  same window and never reopens the picker.
   `material-cube` / `material-aurora` select the additional preview shapes.
-  `material-maps` shows four distinct cards in a 2 × 2 grid without scrolling,
-  square thumbnails preserving original proportions, left-aligned titles
+  `material-maps` shows four unframed rows in one column below a compact preview,
+  95.2-point square thumbnails (1.7× the previous size) preserving original proportions, left-aligned titles
   and texture names, right-aligned commands and common parameter rows.
   Metallic / Roughness use only numeric fields; Normal appears only in
-  its card title. `material-loading` keeps the same 230 × 230 canvas
-  and gesture hints while the model is pending.
+  its row title. The narrower vertical inspector uses a 176 × 176 canvas;
+  `material-loading` keeps that same canvas
+  and gesture tooltip while the model is pending. Multiple keeps its wider grid.
   The preview model selector offers Sphere, Cube and Aurora 3D. Drag to
   orbit, Shift + drag or the middle button to pan in screen coordinates,
   wheel to zoom; Reset view and double-click reset the full camera.
   `material-zoom`, `mesh-zoom` and `material-texture-zoom` open the loupes.
   Texture pixels are prepared on a worker at native resolution, capped
   to 2,048 per side, without upscaling; closing or switching frees the cache.
-  `permissions` opens the shared main tab: Modify / Copy / Transfer for
-  Texture, Sound, Animation, Mesh and PBR Material, with the file list
-  still present. Each row is saved independently; disabling Copy
-  requires Transfer. The batch includes a mesh and needs its quote
-  before confirmation. Ctrl+U opens Batch and the file picker together;
-  rebind it in Preferences › Shortcuts.
+  `permissions` is an alias for Settings: Modify / Copy / Transfer for
+  Texture, Sound, Animation, Mesh and PBR Material, plus group sharing and
+  everyone-copy columns within each type's row. Each row is saved independently; disabling
+  Copy requires Transfer. There are no rights controls in any inspector.
+  Settings contains only the permissions table and payment preference.
+  `mesh-colors` opens the mesh palette floater. Click each pastille, then edit
+  through the viewer's common picker: the palette remains open and the preview
+  updates immediately. Background, edges, physics fill/edges and degenerate
+  fill/edges follow their selected colors without rebuilding the model.
+  `sound` loads a six-second decaying tone: inspect the waveform, drag crop
+  markers, change numeric bounds, adjust import volume up to 400% and reset. The playhead
+  follows the prepared clip; cropping stops it until Play is clicked again.
+  Gain commits restart playback with the processed, ceiling-limited PCM.
+  `sound-split` selects 0.25–5.5 seconds, boosts to 200% and splits at two
+  seconds: verify orange peak indication, division markers, three named assets
+  (`_01`–`_03`), the short tail and a three-asset price. Split length is limited
+  to the grid's asset maximum; long WAV sources enable splitting on load.
+  `animation` shows aligned settings beside its preview, with loop units
+  labelled and easing fields aligned. The batch includes a mesh and needs its quote
+  before confirmation. Ctrl+U toggles the compact chooser; the file picker
+  opens after clicking a type. Rebind it in Preferences › Shortcuts.
   The quote and the uploads stay entirely inside the demo server.
   `destination` opens the folder choice with the "Textures" filter;
   typing another name must filter without changing the destination or
   closing the list. Choosing a result closes the list and applies that folder.
-  The import window defaults to 900 × 760 points, keeping the 180-point
-  file list and closer checkbox / name spacing. Name, Description and
+  Each type has its own default size, with narrower file lists for Material
+  and Animation and closer checkbox / name spacing. Name, Description and
   Destination use the same three rows above every asset panel, including
   meshes; Upload no longer repeats them. Preview and LOD cards are side
   by side, with gesture hints directly under the preview and compact tools.
@@ -2236,7 +2341,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_REGION=overview[:owner|:manager|:resident][:preview][:compact]`**:
+- **`AURORA_DEMO_REGION=overview|manage[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain][:pending][:ask-…]`**:
   the Region / Estate window opens on the demo region, whose simulator
   answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
   at most, estate 104 123, no terraforming, pushing limited, voice, resale
@@ -2253,8 +2358,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `resident` gets neither: no People tab, no "View as", no managers nor
   interventions. `preview` opens on "View as" Resident; `compact` opens
   the window 480 px wide (no map, one column, the action buttons as
-  icons). Manage and People are greyed until the next steps.
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:land|:experiences]`**:
+  icons). People is greyed until a next step. `manage` opens on Manage
+  (who can come, region rules, terrain and water; the other sections of
+  the navigation are greyed): `access`, `rules` or `terrain` scrolls to
+  that section, `pending` makes two changes there and scrolls to the bar
+  "2 changes not sent yet" (Cancel / Apply), and `ask-override`,
+  `ask-linden`, `ask-bonus`, `ask-maturity`, `ask-heights` or `ask-bake`
+  opens that question (EstateParcelAccessOverride, ChangeLindenEstate,
+  ChangeObjectBonusFactor, RegionMaturityChange, ConfirmTextureHeights,
+  ConfirmBakeTerrain). The demo simulator keeps what Apply sends and
+  answers it in the next RegionInfo / `estateupdateinfo`; the terrain's
+  textures and elevations, which a real simulator sends back in a new
+  RegionHandshake, stay shown as sent. A manager sees the bake greyed
+  with the amber "estate owner" lock, a resident (or `preview`) the amber
+  banner and a sentence instead of the estate's access.
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -2286,7 +2404,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   texture picker, charter, show in search, moderate content, open
   enrollment and fee; Save logs `demo group: identity saved`), Abilities
   (who has the ability chosen), Banned residents (two at start; Unban,
-  Ban residents by name), Invitations.
+  Ban residents by name), Invitations. `owner:identity` opens it on Group
+  identity (to compare with the creation window).
   `:notices` opens the Notices tab with the two latest notices unread
   (the tab's count): the first one is read at once (GroupNoticeRequest,
   answered by an IM_GROUP_NOTICE_REQUESTED instant message), its
@@ -2317,6 +2436,29 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   then the guest's view) and, in Preferences › Aurora › Profiles, the
   classic window with its "Members and roles", "Notices", "Land and L$"
   and "Experiences" sections.
+- **`AURORA_DEMO_GROUP_CREATE=form|cost|refused|limit|created[:classic]`**:
+  "Create a group", as from the "Create" button of People › Groups, once
+  the group list is in. The login of these scenarios gives a Base
+  membership whose group creation costs L$ 100 (Premium L$ 50, Premium
+  Plus L$ 0, listed in the fee card) and a limit of 42 groups. `form`: the
+  empty window (Aurora look: the profile's header with the name typed in
+  it and the insignia to click, the charter and settings cards of
+  Administration › Group identity, the fee card); `cost`: "Lagoon
+  Painters" filled in and Create clicked: the L$ 100 confirmation; `limit`:
+  the account at its limit (its three groups): "You have reached your
+  maximum number of groups" instead of the window; `refused`: "Aurora
+  Builders" sent: the simulated server refuses the name ("Unable to create
+  group." and its reason), the form stays; `created`: "Lagoon Painters"
+  sent: the server takes L$ 100 from the balance (top bar), the group joins
+  the list (People › Groups) and its profile opens, us its only member and
+  owner. In the window, try a name of three characters (the 4 to 35 rule),
+  an accent or a leading space (refused as typed, the rule in amber),
+  Create without a content rating (Yes / No / Cancel), then confirm the
+  fee. The server also refuses a name already created during the run, and
+  a fee above the balance. `:classic` shows Firestorm's creation panel
+  (Group Name, insignia and charter, Anyone can join, Cost to join, the
+  maturity list, the fees by membership, Create group for L$ 100, the
+  48-hour note), and the new group's classic profile.
 - **`AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown|landmark|history`**:
   "Places" on a place profile, as after a click on a place link.
   `1`: the home of Violet Wolf on Aurora Demo (the parcel of "About
