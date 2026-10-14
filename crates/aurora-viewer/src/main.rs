@@ -6,6 +6,7 @@ mod agent;
 mod ao;
 mod app;
 mod atomic_file;
+mod autopilot;
 mod bug_report;
 mod build;
 mod cache;

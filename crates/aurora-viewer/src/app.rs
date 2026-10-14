@@ -32,6 +32,7 @@ mod click_pick;
 mod color_picker;
 mod context_menu;
 mod cursor_hold;
+mod double_click;
 mod gestures;
 mod hover_height;
 mod hud_drag;
@@ -214,6 +215,14 @@ pub struct App {
     temp_run: Option<u8>,
     /// "Always run" (Ctrl+R).
     always_run: bool,
+    /// Double click on the ground (src/autopilot.rs): the presses of the
+    /// left button on the world, whether the one being handled is the
+    /// second of a double click, and the walk it may have started.
+    double_click: crate::autopilot::DoubleClickDetector,
+    double_press: bool,
+    autopilot: Option<crate::autopilot::AutoPilot>,
+    /// The control flags the walk asks for this frame.
+    autopilot_flags: u32,
     /// Microphone switched on (toggle mode).
     mic_on: bool,
     /// Microphone button of the bottom bar held (hold-to-talk mode).
@@ -624,6 +633,10 @@ impl App {
             last_tap: None,
             temp_run: None,
             always_run: false,
+            double_click: Default::default(),
+            double_press: false,
+            autopilot: None,
+            autopilot_flags: 0,
             mic_on: false,
             mic_button_held: false,
             voice_connected: false,
@@ -2335,6 +2348,8 @@ impl App {
         let Some(picked) = self.click_pick() else {
             return;
         };
+        // (kept until the depth is in hand: the press is run again then)
+        let double = std::mem::take(&mut self.double_press);
         let (ray, depth) = (picked.ray, picked.depth);
         let hit = self
             .scene
@@ -2452,6 +2467,18 @@ impl App {
             self.camera.begin_drag(true);
             self.mouse_mode = MouseMode::Steer;
             self.set_mouselook_grab(true);
+        } else if crate::autopilot::takes_ground_double_click(crate::autopilot::Press {
+            double,
+            alt: self.alt,
+            ctrl: self.ctrl,
+            shift: self.shift,
+            build: self.build.open,
+            on_avatar,
+        }) && let Some(point) = hit
+        {
+            // a double click on the ground, or on an object without a click
+            // action (which took the press above): walk_to / teleport_to
+            self.double_click_ground(point);
         }
     }
 
@@ -3562,6 +3589,7 @@ impl App {
     /// so even these local teleports remain direct.
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
         self.drop_clicks();
+        self.stop_autopilot(true);
         if self.hud_drag.is_some() {
             self.on_left_release();
         }
@@ -4365,6 +4393,7 @@ impl App {
         // ---- agent / camera
         let typing = self.egui_ctx.egui_wants_keyboard_input();
         self.update_move_input(typing, dt);
+        self.update_autopilot(dt);
         self.update_audio();
         let mut edit_camera_frame = None;
         if self.in_world() {
@@ -4422,6 +4451,11 @@ impl App {
             self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml);
             self.update_look_at(w as f32, h as f32);
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
+            // the walk to a double-clicked point (src/autopilot.rs)
+            c.control_flags |= self.autopilot_flags;
+            if self.autopilot.is_some() {
+                c.flags |= crate::autopilot::AU_FLAGS_CLIENT_AUTOPILOT;
+            }
             let moving = control::AT_POS | control::AT_NEG | control::LEFT_POS | control::LEFT_NEG | control::UP_POS | control::UP_NEG;
             if self.world.status.away && c.control_flags & moving != 0 {
                 self.world.set_away(false);
@@ -5177,6 +5211,7 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             self.gesture_demo_input(&mut raw);
+            self.double_click_menu_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
@@ -5689,6 +5724,9 @@ impl App {
         self.resolve_clicks();
         self.demo_action_steps();
         self.demo_click_steps();
+        if self.demo {
+            self.demo_double_click_steps();
+        }
         self.demo_hud_drag_steps();
         // AURORA_DEMO_INVENTORY=offer|offer-reject: the sample offer's item
         // shown in the folder it reaches; the second rejects it at frame 700
@@ -6537,6 +6575,14 @@ impl App {
                 self.options_ui.tab = ui::options::TAB_AUDIO;
             }
             BarAction::ToggleFly => self.toggle_fly(),
+            BarAction::SetDoubleClick(choice) => {
+                // like the "Double-click teleport enabled / disabled" line
+                // Firestorm writes to the nearby chat
+                self.settings.double_click = choice;
+                self.settings.save();
+                self.world
+                    .system_message(aurora_i18n::tr!("app-double-click-ground-set", action = choice.label().to_string()));
+            }
             BarAction::ToggleMouselook => self.toggle_mouselook(),
             BarAction::SitGround => self.toggle_ground_sit(),
             BarAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
@@ -6969,7 +7015,8 @@ impl App {
                 } else {
                     self.voice.levels(self.world.agent_id)
                 };
-                // the look-at crosshairs under the name tags (none over a held photo)
+                // the look-at crosshairs under the name tags (none over a held
+                // photo, nor the walk mark)
                 if !held {
                     ui::lookat_targets::draw(
                         &ctx,
@@ -6981,6 +7028,7 @@ impl App {
                         &self.look_at_settings(),
                         &mut self.look_at_fades,
                     );
+                    self.draw_walk_mark(&ctx, &p, projector);
                 }
                 let classic_tags = self.classic_name_tags();
                 // AURORA_DEMO_FRIEND_PLATES=1: the setting for this run, without saving it
@@ -7059,6 +7107,7 @@ impl App {
                     tp_forward: self.world.tp_history.next().map(|e| e.region.clone()),
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
+                    double_click: self.double_click_action(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -8575,7 +8624,10 @@ impl ApplicationHandler for App {
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
                 }
                 // the card alone: the list stays closed where no answer is shown
-                if matches!(scene, LureScene::OfferCard | LureScene::RequestCard | LureScene::Legacy) {
+                if matches!(
+                    scene,
+                    LureScene::OfferCard | LureScene::RequestCard | LureScene::Legacy | LureScene::Exceeded
+                ) {
                     self.notif_ui.open = false;
                 }
                 if scene == LureScene::Legacy {
@@ -8609,7 +8661,9 @@ impl ApplicationHandler for App {
             {
                 use crate::demo::LureScene;
                 match scene {
-                    LureScene::CardAnswered => self.on_ctx_action(ui::context::CtxAction::AnswerTeleport { invite: v.0, accept: true }),
+                    LureScene::CardAnswered | LureScene::ExceededContinue => {
+                        self.on_ctx_action(ui::context::CtxAction::AnswerTeleport { invite: v.0, accept: true })
+                    }
                     LureScene::NotificationAnswered => {
                         let (cmds, _) = self.world.respond_notification(v.1, crate::world::notifications::Response::Decline);
                         for c in cmds {

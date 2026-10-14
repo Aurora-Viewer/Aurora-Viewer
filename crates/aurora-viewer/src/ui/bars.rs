@@ -53,6 +53,9 @@ pub enum BarAction {
     TeleportHistory,
     /// The balance, or Me › Buy L$ (LLStatusBar::onClickBuyCurrency).
     BuyCurrency,
+    /// Me › Double-click on the ground (Firestorm's "DoubleClick Teleport"
+    /// of its movement menu, Advanced.SetDoubleClickAction).
+    SetDoubleClick(crate::autopilot::DoubleClick),
 }
 
 pub struct StatusInfo<'a> {
@@ -84,6 +87,8 @@ pub struct StatusInfo<'a> {
     pub parcel_icons: Vec<super::parcel_icons::ParcelIcon>,
     /// A local environment is shown (selector, preset, personal lighting).
     pub local_env: bool,
+    /// What a double click on the ground does (Me › Double-click on the ground).
+    pub double_click: crate::autopilot::DoubleClick,
 }
 
 pub fn maturity_name(sim_access: u8) -> &'static str {
@@ -387,6 +392,22 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item(ui, p, "plane-tilt-filled", fly) {
             *action = BarAction::ToggleFly;
         }
+        // Firestorm keeps its double-click teleport beside its movement
+        // entries (Avatar › Movement): the four choices of the preference
+        menu::submenu(
+            ui,
+            p,
+            "hand-click",
+            aurora_i18n::tr!("ui-options-double-click-ground"),
+            true,
+            |ui| {
+                for choice in crate::autopilot::DoubleClick::ALL {
+                    if menu::check(ui, p, choice.icon(), choice.label(), st.double_click == choice, true) {
+                        *action = BarAction::SetDoubleClick(choice);
+                    }
+                }
+            },
+        );
         menu::separator(ui, p);
         if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-preferences")) {
             super::widgets::open_floater(ui.ctx(), "options", &mut panels.settings);
