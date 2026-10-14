@@ -20,6 +20,14 @@ function New-Check([string]$Id, [string]$Item, [string]$Found, [string]$State, [
     [pscustomobject]@{ Id = $Id; Item = $Item; Found = $Found; State = $State; Action = $Action }
 }
 
+# scripts/common.ps1 next to these tools, or the repository's when the tools
+# run alone from %TEMP% (first installation); $null before the clone
+function Get-CommonScript($P) {
+    foreach ($c in (Join-Path (Split-Path $PSScriptRoot -Parent) 'common.ps1'), (Join-Path $P.Repo 'scripts\common.ps1')) {
+        if (Test-Path $c) { return $c }
+    }
+}
+
 function Get-MsvcName {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path $vswhere) {
@@ -87,15 +95,15 @@ function Get-Checks($P, [switch]$Offline) {
     & $add (New-Check crates 'Rust toolchain and crates' $null always 'installed or updated (cargo fetch)')
 
     # shared compiler cache of the worktrees (scripts/common.ps1)
-    $common = Join-Path $P.Repo 'scripts\common.ps1'
-    if (Test-Path $common) {
+    $common = Get-CommonScript $P
+    if ($common) {
         . $common
         $sccache = Find-Sccache
         $wired = Test-Path (Join-Path $P.Root '.cargo\config.toml')
         if (-not $sccache) {
             & $add (New-Check sccache 'Compiler cache (sccache)' $null todo 'installed with winget (for your account), shared by the tasks')
         } elseif (-not $wired) {
-            & $add (New-Check sccache 'Compiler cache (sccache)' 'installed, not used by Cargo' todo 'set up for the repository and the tasks')
+            & $add (New-Check sccache 'Compiler cache (sccache)' 'installed, not used by Cargo' stale 'set up for the repository and the tasks')
         } else {
             $version = (& $sccache --version 2>$null) -replace '^sccache\s+', ''
             & $add (New-Check sccache 'Compiler cache (sccache)' $version ok 'nothing to do')
@@ -212,7 +220,7 @@ function Invoke-Repair($P) {
 
     Write-Title 'Compiler cache (sccache)'
     # the tasks take the dependencies already built by another one from it
-    . (Join-Path $P.Repo 'scripts\common.ps1')
+    . (Get-CommonScript $P)
     if (-not (Find-Sccache)) {
         try { Install-Tool 'Mozilla.sccache' 'sccache' } catch { Write-Color "  Not installed ($($_.Exception.Message)): the builds work without it." warn }
     } elseif (Get-Command winget -ErrorAction SilentlyContinue) {

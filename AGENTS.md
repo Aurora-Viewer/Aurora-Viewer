@@ -112,7 +112,9 @@ worktree, branch, `target` folder and logs.
   all the worktrees (`<project folder>\.sccache`, through
   `<project folder>\.cargo\config.toml`): the dependencies another task
   already built come from there. Do not change or delete these two, and do
-  not set `RUSTC_WRAPPER` yourself.
+  not set `RUSTC_WRAPPER` yourself. A build that stops on `sccache.exe …
+  didn't exit successfully` with no compiler error lost the cache server
+  (process killed): run it again.
 - **Build only in your worktree**, with its default `target/`: no custom
   `CARGO_TARGET_DIR` and no build folder elsewhere (each build folder weighs
   several GB and ends up forgotten). `end-task.ps1` deletes it with the

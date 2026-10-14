@@ -78,7 +78,7 @@ function Sync-BuildCache([string]$Root) {
         '[env]',
         "SCCACHE_DIR = '$(Join-Path $Root '.sccache')'",
         "SCCACHE_CACHE_SIZE = '$size'",
-        '# the cache server stopped (process killed with its window): build anyway',
+        '# cache server unreachable: compile without it',
         "SCCACHE_IGNORE_SERVER_IO_ERROR = '1'",
         ''
     ) -join "`n"
