@@ -118,6 +118,10 @@ impl EnvEditorUi {
         self.message = Some((aurora_i18n::tr!("ui-env-editor-saved").into(), false));
     }
 
+    pub fn tab_index(&self) -> usize {
+        self.tab
+    }
+
     /// The tab shown (sky: Atmosphere & Lighting, Clouds, Sun & Moon).
     pub fn set_tab(&mut self, tab: usize) {
         self.tab = tab.min(2);

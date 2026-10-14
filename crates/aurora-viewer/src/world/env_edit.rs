@@ -509,7 +509,13 @@ impl Rights {
 
     /// The flags written into the settings (setFlag / clearFlag).
     pub fn apply(self, doc: &mut SettingsDoc) {
-        let mut f = doc.flags() & !(FLAG_NOCOPY | FLAG_NOMOD | FLAG_NOTRANS);
+        let f = self.flags(doc.flags());
+        doc.set_flags(f);
+    }
+
+    /// `flags` with the permission flags of these rights.
+    pub fn flags(self, flags: u32) -> u32 {
+        let mut f = flags & !(FLAG_NOCOPY | FLAG_NOMOD | FLAG_NOTRANS);
         if !self.copy {
             f |= FLAG_NOCOPY;
         }
@@ -519,7 +525,7 @@ impl Rights {
         if !self.transfer {
             f |= FLAG_NOTRANS;
         }
-        doc.set_flags(f);
+        f
     }
 }
 

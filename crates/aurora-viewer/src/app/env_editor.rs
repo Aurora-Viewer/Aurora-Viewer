@@ -40,9 +40,13 @@ impl App {
             self.env_editor.message = Some((aurora_i18n::tr!("ui-env-editor-item-not-found").into(), true));
             return;
         };
-        let Some(kind) = SettingsKind::from_flags(it.flags).filter(|k| *k != SettingsKind::Day) else {
+        let Some(kind) = SettingsKind::from_flags(it.flags) else {
             return;
         };
+        if kind == SettingsKind::Day {
+            self.day_editor_load(item);
+            return;
+        }
         if it.asset_id.is_nil() {
             // UnableEditItem
             self.env_editor.message = Some((aurora_i18n::tr!("ui-env-editor-unable-to-edit").into(), true));

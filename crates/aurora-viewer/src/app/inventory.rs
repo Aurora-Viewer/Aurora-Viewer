@@ -514,6 +514,9 @@ impl App {
             self.env_editor_asset(item, result);
             return;
         }
+        if self.day_editor_asset(item, &result) {
+            return;
+        }
         let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);
         let editable = crate::world::inventory::preview::can_edit(&self.world.inventory, item);
         if self.inventory_ui.preview == Some(item) {

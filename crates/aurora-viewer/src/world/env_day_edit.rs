@@ -164,8 +164,7 @@ impl DayDoc {
     /// The sky and water shown at `pos` while `track` is selected: the
     /// selected sky track (the ground when it is empty), or the last sky
     /// track for the water (reblendSettings keeps the sky blender's track).
-    pub fn frames_at(&self, pos: f32, sky_track: usize) -> (SkyFrame, WaterFrame) {
-        let day = self.day();
+    pub fn frames_at(&self, day: &DayCycle, pos: f32, sky_track: usize) -> (SkyFrame, WaterFrame) {
         let t = sky_track.clamp(TRACK_GROUND, TRACKS - 1);
         let t = if self.tracks[t].is_empty() { TRACK_GROUND } else { t };
         (day.sky_at(pos, t - 1), day.water_at(pos))
@@ -199,7 +198,7 @@ impl DayDoc {
         if !self.can_add(track, pos) {
             return None;
         }
-        let (sky, water) = self.frames_at(pos, if track == TRACK_WATER { sky_track } else { track });
+        let (sky, water) = self.frames_at(&self.day(), pos, if track == TRACK_WATER { sky_track } else { track });
         let frame = if track == TRACK_WATER {
             without_name(SettingsDoc::snapshot_water(&water, "").into_llsd())
         } else {
@@ -442,7 +441,7 @@ mod tests {
         assert_eq!(d.tracks[3], src.tracks[TRACK_GROUND]);
         assert!(d.can_clone(TRACK_GROUND) && d.can_clear(3));
         // a higher track is shown once it has frames
-        let (sky, _) = d.frames_at(0.5, 3);
+        let (sky, _) = d.frames_at(&d.day(), 0.5, 3);
         assert!((sky.gamma - 2.0).abs() < 1e-6);
     }
 
