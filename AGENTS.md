@@ -520,6 +520,21 @@ the review comment.
   (test something, log in, decide).
 - Never claim something is tested when it is not.
 - Keep the logs and screenshots to back up what you state.
+- **Answer from fresh data.** Before answering any question on the state of
+  the project (what is left to do, missing features, progress of a task,
+  issues, PRs, what was merged):
+  - run `git fetch origin`;
+  - read `TASKS.md` from `origin/main` (`git show origin/main:TASKS.md`),
+    not a worktree's copy nor an earlier reading in the session;
+  - list the open issues (`gh issue list`), the open PRs and the recently
+    merged ones (`gh pr list --state open`, `gh pr list --state merged
+    --limit 30`);
+  - say what changed since your last answer.
+
+  Never answer from memory, a session summary or a worktree that is behind,
+  even at the start of a new conversation. If some data could not be
+  refreshed (command refused, network), say so instead of presenting old
+  data as current.
 
 ## 15. GitHub issues: read, analyse, label, reply and close
 
