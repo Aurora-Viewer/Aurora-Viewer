@@ -8,12 +8,39 @@
 
 use aurora_net::groups::{GroupMember, GroupRole, GroupTitle, MembersPage, NoticeSummary, RoleMembersPage, RolesPage};
 use aurora_net::{NetCommand, NetEvent};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 /// Groups kept at most (MAX_CACHED_GROUPS): the least recently opened one
 /// goes first.
 const MAX_CACHED_GROUPS: usize = 20;
+
+/// The notices read, per account: a group's notices are unread once they
+/// arrived after its list was first seen and were never opened.
+pub const NOTICES_READ_FILE: &str = "group_notices_read.xml";
+
+/// IM_GROUP_NOTICE_INVENTORY_ACCEPTED / _DECLINED (llinstantmessage.h).
+const NOTICE_INVENTORY_ACCEPTED: u8 = 33;
+const NOTICE_INVENTORY_DECLINED: u8 = 34;
+
+/// A notice opened (IM_GROUP_NOTICE_REQUESTED, LLPanelGroupNotices::showNotice).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoticeView {
+    /// The notice asked for (the instant message does not name it).
+    pub id: Uuid,
+    pub subject: String,
+    pub message: String,
+    /// The sender's legacy name.
+    pub from_name: String,
+    pub timestamp: u32,
+    /// The attachment's name and asset type.
+    pub attachment: Option<(String, u8)>,
+    /// Who to answer the attachment's offer, and its transaction.
+    offer: Option<(Uuid, Uuid)>,
+    /// The attachment was saved to the inventory.
+    pub saved: bool,
+}
 
 /// One group (LLGroupMgrGroupData).
 #[derive(Debug, Default)]
@@ -39,6 +66,9 @@ pub struct GroupData {
     titles_request: Option<Uuid>,
     /// The notice list, newest first; None until it answered.
     pub notices: Option<Vec<NoticeSummary>>,
+    /// The notice shown, and the one asked for.
+    pub notice: Option<NoticeView>,
+    asked_notice: Option<Uuid>,
     accessed: u64,
 }
 
@@ -83,6 +113,9 @@ impl GroupData {
 pub struct GroupMgr {
     pub groups: HashMap<Uuid, GroupData>,
     clock: u64,
+    /// Notices read, by group (NOTICES_READ_FILE).
+    read: HashMap<Uuid, HashSet<Uuid>>,
+    read_path: Option<PathBuf>,
     pub out: Vec<NetCommand>,
 }
 
@@ -205,6 +238,110 @@ impl GroupMgr {
         self.out.push(NetCommand::GroupNoticesListRequest(group));
     }
 
+    /// LLPanelGroupNotices::onSelectNotice: GroupNoticeRequest, and the
+    /// notice counts as read.
+    pub fn open_notice(&mut self, group: Uuid, notice: Uuid) {
+        self.data(group).asked_notice = Some(notice);
+        self.out.push(NetCommand::GroupNoticeRequest(notice));
+        if self.read.entry(group).or_default().insert(notice) {
+            self.save_read();
+        }
+    }
+
+    /// The notices of a group not read yet.
+    pub fn unread(&self, group: &Uuid) -> usize {
+        let read = self.read.get(group);
+        self.groups
+            .get(group)
+            .and_then(|g| g.notices.as_ref())
+            .map_or(0, |list| list.iter().filter(|n| !read.is_some_and(|r| r.contains(&n.id))).count())
+    }
+
+    pub fn is_read(&self, group: &Uuid, notice: &Uuid) -> bool {
+        self.read.get(group).is_some_and(|r| r.contains(notice))
+    }
+
+    /// The account's notices read: an LLSD map of group ids to arrays of
+    /// notice ids.
+    pub fn load_read(&mut self, path: PathBuf) {
+        self.read = std::fs::read(&path)
+            .ok()
+            .and_then(|b| aurora_llsd::from_xml(&b).ok())
+            .and_then(|v| {
+                v.as_map().map(|m| {
+                    m.iter()
+                        .filter_map(|(g, ids)| {
+                            let g = Uuid::parse_str(g).ok()?;
+                            Some((g, ids.as_array().iter().map(|i| i.as_uuid()).filter(|i| !i.is_nil()).collect()))
+                        })
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        self.read_path = Some(path);
+    }
+
+    fn save_read(&self) {
+        let Some(path) = &self.read_path else {
+            return;
+        };
+        let mut map = aurora_llsd::Map::new();
+        for (g, ids) in &self.read {
+            let mut ids: Vec<Uuid> = ids.iter().copied().collect();
+            ids.sort();
+            map.insert(g.to_string(), aurora_llsd::Llsd::from(ids.into_iter().map(aurora_llsd::Llsd::from).collect::<Vec<_>>()));
+        }
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(path, aurora_llsd::to_xml(&aurora_llsd::Llsd::Map(map))) {
+            log::warn!("group notices read: {e}");
+        }
+    }
+
+    /// IM_GROUP_NOTICE_REQUESTED: the notice asked for, shown; the previous
+    /// one's attachment, still offered, is declined (showNotice).
+    pub fn on_notice_im(&mut self, im: &aurora_net::InstantMessage) -> bool {
+        let Some(bucket) = aurora_net::groups::notice_bucket(&im.binary_bucket) else {
+            log::warn!("group notice: malformed binary bucket");
+            return true;
+        };
+        let Some(g) = self.groups.get_mut(&bucket.group) else {
+            return true;
+        };
+        let (subject, message) = aurora_net::groups::notice_text(&im.message);
+        let id = g.asked_notice.unwrap_or_default();
+        if let Some(prev) = g.notice.take()
+            && let (Some((from, tx)), false) = (prev.offer, prev.saved)
+        {
+            self.out.push(offer_answer(from, tx, None));
+        }
+        let timestamp = g.notices.as_ref().and_then(|l| l.iter().find(|n| n.id == id)).map_or(im.timestamp, |n| n.timestamp);
+        g.notice = Some(NoticeView {
+            id,
+            subject,
+            message,
+            from_name: im.from_name.clone(),
+            timestamp,
+            attachment: bucket.has_inventory.then(|| (bucket.item_name.clone(), bucket.asset_type)),
+            offer: bucket.has_inventory.then_some((im.from_agent_id, im.session_id)),
+            saved: false,
+        });
+        true
+    }
+
+    /// "Open attachment" (LLOfferInfo::forceResponse(IOR_ACCEPT)): into
+    /// `folder`, the inventory folder of its type.
+    pub fn save_attachment(&mut self, group: Uuid, folder: Uuid) {
+        let Some(n) = self.groups.get_mut(&group).and_then(|g| g.notice.as_mut()) else {
+            return;
+        };
+        if let (Some((from, tx)), false) = (n.offer, n.saved) {
+            n.saved = true;
+            self.out.push(offer_answer(from, tx, Some(folder)));
+        }
+    }
+
     /// LLGroupMgr::sendGroupTitleUpdate: sent, and our copy follows at once.
     pub fn set_title(&mut self, group: Uuid, role: Uuid) {
         self.out.push(NetCommand::GroupTitleUpdate { group, role });
@@ -236,6 +373,11 @@ impl GroupMgr {
                         }
                     }
                     list.sort_by_key(|n| std::cmp::Reverse(n.timestamp));
+                    // the first list of a group: what it holds is not new
+                    if !self.read.contains_key(group) {
+                        self.read.insert(*group, list.iter().map(|n| n.id).collect());
+                        self.save_read();
+                    }
                 }
             }
             _ => return false,
@@ -331,6 +473,22 @@ impl GroupMgr {
             g.role_members_complete = true;
             g.role_members_request = None;
         }
+    }
+}
+
+/// The answer to a notice attachment's offer (sendReceiveResponse with
+/// IM_GROUP_NOTICE: accepted with the destination folder, or declined).
+fn offer_answer(from: Uuid, tx: Uuid, folder: Option<Uuid>) -> NetCommand {
+    NetCommand::SendImDialog {
+        to: from,
+        dialog: if folder.is_some() {
+            NOTICE_INVENTORY_ACCEPTED
+        } else {
+            NOTICE_INVENTORY_DECLINED
+        },
+        id: tx,
+        message: String::new(),
+        bucket: folder.map_or_else(|| vec![0], |f| f.as_bytes().to_vec()),
     }
 }
 

@@ -341,6 +341,57 @@ pub fn invite_roles<'a>(
         .collect()
 }
 
+/// The attachment of a notice received by instant message (IM_GROUP_NOTICE,
+/// IM_GROUP_NOTICE_REQUESTED: notice_bucket_header_t of
+/// llimprocessing.cpp): whether it has one, its asset type, the group, the
+/// item's name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoticeBucket {
+    pub has_inventory: bool,
+    pub asset_type: u8,
+    pub group: Uuid,
+    pub item_name: String,
+}
+
+/// The header and a null-terminated name, or None when malformed ("Malformed
+/// group notice binary bucket").
+pub fn notice_bucket(bucket: &[u8]) -> Option<NoticeBucket> {
+    if bucket.len() < 2 + 16 + 1 || bucket.last() != Some(&0) {
+        return None;
+    }
+    let group = Uuid::from_slice(&bucket[2..18]).ok()?;
+    let name = &bucket[18..bucket.len() - 1];
+    let name = name.split(|b| *b == 0).next().unwrap_or_default();
+    Some(NoticeBucket {
+        has_inventory: bucket[0] != 0,
+        asset_type: bucket[1],
+        group,
+        item_name: String::from_utf8_lossy(name).into_owned(),
+    })
+}
+
+/// "subject|message" of a notice (the first "|" splits them).
+pub fn notice_text(message: &str) -> (String, String) {
+    match message.split_once('|') {
+        Some((subject, body)) => (subject.to_owned(), body.to_owned()),
+        None => (message.to_owned(), String::new()),
+    }
+}
+
+/// The instant message text and binary bucket of send_group_notice: the
+/// subject and the message joined by "|", the attachment as an LLSD map
+/// of its item and owner, or the empty bucket.
+pub fn notice_to_send(subject: &str, message: &str, item: Option<(Uuid, Uuid)>) -> (String, Vec<u8>) {
+    let text = format!("{subject}|{message}");
+    let bucket = match item {
+        // the serialized map, without its terminating null
+        Some((item, owner)) => aurora_llsd::to_xml(&llsd_map! { "item_id" => item, "owner_id" => owner }),
+        // EMPTY_BINARY_BUCKET
+        None => vec![0],
+    };
+    (text, bucket)
+}
+
 /// Invitations per InviteGroupRequest (MAX_GROUP_INVITES, the server's cap).
 pub const MAX_GROUP_INVITES: usize = 100;
 
@@ -532,6 +583,29 @@ mod tests {
         assert!(!second.is_owner);
         assert_eq!(member_data_body(Uuid::from_u128(1))["group_id"].as_uuid(), Uuid::from_u128(1));
         assert!(member_data_response(&llsd_map! {}, Uuid::nil()).is_none());
+    }
+
+    #[test]
+    fn notice_buckets_and_texts() {
+        let group = Uuid::from_u128(9);
+        let mut b = vec![1u8, 6];
+        b.extend_from_slice(group.as_bytes());
+        b.extend_from_slice(b"Texture kit ");
+        let n = notice_bucket(&b).expect("bucket");
+        assert!(n.has_inventory);
+        assert_eq!((n.asset_type, n.group, n.item_name.as_str()), (6, group, "Texture kit"));
+        assert!(notice_bucket(&b[..10]).is_none(), "too short");
+        let mut open = b.clone();
+        open.pop();
+        assert!(notice_bucket(&open).is_none(), "not terminated");
+        assert_eq!(notice_text("Hi|Body|more"), ("Hi".into(), "Body|more".into()));
+        assert_eq!(notice_text("Hi"), ("Hi".into(), String::new()));
+        let (text, bucket) = notice_to_send("Hi", "Body", None);
+        assert_eq!((text.as_str(), bucket), ("Hi|Body", vec![0]));
+        let (_, bucket) = notice_to_send("Hi", "Body", Some((Uuid::from_u128(1), Uuid::from_u128(2))));
+        let v = aurora_llsd::from_xml(&bucket).expect("llsd");
+        assert_eq!(v["item_id"].as_uuid(), Uuid::from_u128(1));
+        assert_eq!(v["owner_id"].as_uuid(), Uuid::from_u128(2));
     }
 
     #[test]

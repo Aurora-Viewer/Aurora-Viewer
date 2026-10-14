@@ -1199,6 +1199,7 @@ impl World {
                 let account = crate::settings::account_dir(&l.agent_id);
                 self.contact_sets = contact_sets::ContactSets::load(account.join(contact_sets::CONTACT_SETS_FILE));
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
+                self.group_data.load_read(account.join(group_data::NOTICES_READ_FILE));
                 self.status.invisible = status::Invisible::load(account.join(status::INVISIBLE_FILE), &self.social.friends);
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
@@ -2404,6 +2405,8 @@ impl World {
             d::MESSAGEBOX | d::FROM_TASK_AS_ALERT => {
                 n.push(Kind::Alert, from, im.message.clone(), Data::None);
             }
+            // a notice opened in the group profile's Notices tab
+            d::GROUP_NOTICE_REQUESTED => return self.group_data.on_notice_im(im),
             d::GOTO_URL => {
                 let url = String::from_utf8_lossy(&im.binary_bucket).trim_end_matches('\0').to_owned();
                 n.push(Kind::Url, from, im.message.clone(), Data::Url(url));
@@ -2411,6 +2414,21 @@ impl World {
             _ => return false,
         }
         true
+    }
+
+    /// "Save to inventory" of a notice's attachment: into the system folder
+    /// of its type, as an offer accepted (LLOfferInfo::mFolderID).
+    pub fn save_notice_attachment(&mut self, group: Uuid) {
+        let Some(asset_type) = self.group_data.get(&group).and_then(|g| g.notice.as_ref()).and_then(|n| n.attachment.as_ref()).map(|a| a.1) else {
+            return;
+        };
+        let inv = &self.inventory;
+        let folder = inv
+            .folders
+            .values()
+            .find(|f| !f.library && f.info.type_default == i32::from(asset_type))
+            .map_or(inv.root, |f| f.info.id);
+        self.group_data.save_attachment(group, folder);
     }
 
     /// The Calling Cards folder, sent with a friendship offer

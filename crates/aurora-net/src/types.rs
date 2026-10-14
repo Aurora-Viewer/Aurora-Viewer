@@ -1376,6 +1376,9 @@ pub enum NetCommand {
     },
     /// GroupNoticesListRequest.
     GroupNoticesListRequest(Uuid),
+    /// GroupNoticeRequest: one notice, answered by an IM_GROUP_NOTICE_REQUESTED
+    /// instant message.
+    GroupNoticeRequest(Uuid),
     /// Join a group (JoinGroupRequest).
     JoinGroup(Uuid),
     /// Invite residents into a group, each into a role (InviteGroupRequest,
