@@ -500,3 +500,128 @@ fn bans_by_name_skip_ourselves_the_banned_and_the_full_list() {
     )));
     assert!(cmds.iter().any(|c| matches!(c, aurora_net::NetCommand::EjectGroupMembers { .. })));
 }
+
+/// What the "Land and L$" tab asked, answered by the demo group server.
+fn answer_land(world: &mut World, actions: &[GroupAction]) {
+    for a in actions {
+        match a {
+            GroupAction::LoadLand { group, ledger } => world.group_money.open(*group, *ledger),
+            GroupAction::LandPage { group, ledger } => world.group_money.request(*group, *ledger),
+            _ => {}
+        }
+    }
+    for cmd in world.group_money.take_commands() {
+        for ev in crate::demo::group::reply(&cmd).unwrap_or_default() {
+            world.apply(ev);
+        }
+    }
+}
+
+#[test]
+fn the_land_tab_shows_the_totals_the_parcels_and_this_week() {
+    use aurora_net::group_money::Ledger;
+    let mut world = world(true, MEMBER);
+    world.apply(NetEvent::LandHoldings {
+        credit: 4096,
+        committed: 3584,
+    });
+    let mut st = opened(&mut world);
+    st.show_land(Ledger::Planning);
+    let (texts, actions) = texts(&mut st, &world, false);
+    assert!(has(&texts, "common-loading-2"), "{texts:?}");
+    let loads = actions.iter().filter(|a| matches!(a, GroupAction::LoadLand { .. })).count();
+    assert_eq!(loads, 1, "asked once when the tab shows");
+    answer_land(&mut world, &actions);
+    let (texts, actions) = self::texts(&mut st, &world, false);
+    assert!(
+        !actions.iter().any(|a| matches!(a, GroupAction::LoadLand { .. })),
+        "not again while it shows"
+    );
+    let area = |n: i64| aurora_i18n::tr!("ui-group-profile-area", area = aurora_i18n::integer(n));
+    for want in [
+        area(4608),
+        area(5120),
+        aurora_i18n::tr!("demo-group-land-sandbox").to_owned(),
+        aurora_i18n::tr!("demo-group-land-workshop").to_owned(),
+        land::lindens(1250),
+        land::lindens(-300),
+        // our contribution (0 here) and the 512 m² we hold and give to nobody
+        aurora_i18n::tr!("ui-group-land-of-max", max = aurora_i18n::integer(512)),
+    ] {
+        assert!(texts.iter().any(|t| t.contains(&want)), "{want} in {texts:?}");
+    }
+    assert!(has(&texts, "ui-group-land-money"));
+    assert!(has(&texts, "ui-group-land-balance"));
+
+    // the sales page: both packets of this week
+    st.land.ledger = Ledger::Sales;
+    answer_land(
+        &mut world,
+        &[GroupAction::LandPage {
+            group: DEMO_GROUP1,
+            ledger: Ledger::Sales,
+        }],
+    );
+    let (texts, _) = self::texts(&mut st, &world, false);
+    let lune = format!("Lune {}", aurora_i18n::tr!("demo-example"));
+    assert!(texts.iter().any(|t| t.contains(&lune)), "the second packet in {texts:?}");
+    assert!(texts.iter().any(|t| t.contains(aurora_i18n::tr!("demo-group-notice-workshop-kit"))));
+}
+
+#[test]
+fn a_guest_has_no_land_tab() {
+    let mut world = world(false, 0);
+    let mut st = opened(&mut world);
+    st.show_land(aurora_net::group_money::Ledger::Planning);
+    let (texts, actions) = texts(&mut st, &world, false);
+    assert!(!actions.iter().any(|a| matches!(a, GroupAction::LoadLand { .. })));
+    assert!(!has(&texts, "ui-group-land-money"));
+}
+
+#[test]
+fn the_experiences_tab_lists_what_the_group_owns() {
+    let mut world = world(true, MEMBER);
+    let mut st = opened(&mut world);
+    st.show_experiences();
+    let (texts, actions) = texts(&mut st, &world, false);
+    assert!(has(&texts, "ui-group-experiences-loading"), "{texts:?}");
+    assert!(
+        actions
+            .iter()
+            .any(|a| matches!(a, GroupAction::LoadExperiences(g) if *g == DEMO_GROUP1))
+    );
+    // the list, then the details of its experience
+    world.experiences.request_group(DEMO_GROUP1);
+    for _ in 0..2 {
+        for cmd in world.experiences.take_commands() {
+            for ev in crate::demo::group::reply(&cmd).unwrap_or_default() {
+                world.apply(ev);
+            }
+        }
+    }
+    let (texts, actions) = self::texts(&mut st, &world, false);
+    assert!(
+        !actions.iter().any(|a| matches!(a, GroupAction::LoadExperiences(_))),
+        "not again while it shows"
+    );
+    assert!(texts.iter().any(|t| t == aurora_i18n::tr!("demo-group-experience")), "{texts:?}");
+    assert!(has(&texts, "ui-group-experiences-profile"));
+    let scope = format!(
+        "{} · {}",
+        aurora_i18n::tr!("ui-group-experiences-owned"),
+        aurora_i18n::tr!("ui-group-experiences-land")
+    );
+    assert!(texts.contains(&scope), "{texts:?}");
+    // the tab's count
+    assert!(texts.iter().any(|t| t == "1"));
+}
+
+#[test]
+fn a_guest_has_no_experiences_tab() {
+    let mut world = world(false, 0);
+    let mut st = opened(&mut world);
+    st.show_experiences();
+    let (texts, actions) = texts(&mut st, &world, false);
+    assert!(!actions.iter().any(|a| matches!(a, GroupAction::LoadExperiences(_))));
+    assert!(!has(&texts, "ui-group-experiences-loading"));
+}

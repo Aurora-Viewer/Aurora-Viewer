@@ -144,6 +144,51 @@ pub fn minimized_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     }
 }
 
+/// AURORA_DEMO_RESIZE=corner|edge|drag[,<window>]: the resize marks of a
+/// real window (`conversations` by default; the id of another floater, such
+/// as `about_land_aurora`, or `minimap`) from frame 600: the pointer rests in its
+/// bottom-right corner (`corner`) or on its right edge (`edge`), or presses
+/// that corner and holds it 40 x 30 further out (`drag`), released at frame
+/// 1000.
+pub fn resize_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let Ok(value) = std::env::var("AURORA_DEMO_RESIZE") else {
+        return Vec::new();
+    };
+    if frame < 600 {
+        return Vec::new();
+    }
+    let (mode, window) = value.split_once(',').unwrap_or((value.as_str(), "conversations"));
+    let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(window.trim()))) else {
+        return Vec::new();
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    // inside the corner's and the edge's grab areas (`resize::Edge::hit_rect`)
+    let corner = rect.max - egui::vec2(6.0, 6.0);
+    match mode.trim() {
+        "corner" => vec![egui::Event::PointerMoved(corner)],
+        "edge" => vec![egui::Event::PointerMoved(egui::pos2(rect.right() - 1.0, rect.center().y))],
+        "drag" => {
+            let start = egui::Id::new("demo_resize_start");
+            let Some(from) = ctx.data(|d| d.get_temp::<egui::Pos2>(start)) else {
+                ctx.data_mut(|d| d.insert_temp(start, corner));
+                return vec![egui::Event::PointerMoved(corner), button(corner, true)];
+            };
+            let to = from + egui::vec2(40.0, 30.0);
+            match frame {
+                ..1000 => vec![egui::Event::PointerMoved(to)],
+                1000 => vec![button(to, false)],
+                _ => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// AURORA_DEMO_SNAP=1|group|size: the Conversations window dragged by its
 /// title next to the People window, on the real windows. Frame 700: the
 /// title is pressed; until 900 it is held 6 px short of the right side of

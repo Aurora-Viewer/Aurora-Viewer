@@ -10,6 +10,8 @@ use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+/// Range of a whisper (CHAT_WHISPER_RADIUS).
+pub const WHISPER_RANGE: f32 = 10.0;
 /// Range of the local chat (CHAT_NORMAL_RADIUS).
 pub const CHAT_RANGE: f32 = 20.0;
 /// Range of a shout (CHAT_SHOUT_RADIUS).
@@ -27,7 +29,7 @@ const PROFILES_PER_SWEEP: usize = 4;
 
 /// The typing animation (ANIM_AGENT_TYPE).
 pub const ANIM_AGENT_TYPE: Uuid = Uuid::from_u128(0xc541c47f_e0c0_058b_ad1a_d6ae3a4584d9);
-const ANIM_AGENT_SIT_GROUND: Uuid = Uuid::from_u128(0x1c7600d6_661f_b87b_efe2_d7421eb93c86);
+pub const ANIM_AGENT_SIT_GROUND: Uuid = Uuid::from_u128(0x1c7600d6_661f_b87b_efe2_d7421eb93c86);
 
 /// An avatar as one sweep sees it.
 #[derive(Debug, Clone, PartialEq)]
@@ -239,6 +241,14 @@ impl Radar {
             false
         });
         events
+    }
+
+    /// An avatar seen since `at` at least (the demo's residents arrived
+    /// before the session): its first sighting goes back to it.
+    pub fn backdate(&mut self, id: &Uuid, at: f64) {
+        if let Some(e) = self.entries.get_mut(id) {
+            e.first_seen = e.first_seen.min(at);
+        }
     }
 
     /// The next entries whose profile (age, payment info, notes) is to be

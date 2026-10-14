@@ -25,7 +25,13 @@ const PARCEL_FRAME: u64 = 64;
 
 fn scenario() -> &'static str {
     static S: OnceLock<String> = OnceLock::new();
-    S.get_or_init(|| std::env::var("AURORA_DEMO_EEP_PARCEL").unwrap_or_default().trim().to_owned())
+    S.get_or_init(|| match std::env::var("AURORA_DEMO_EEP_PARCEL") {
+        Ok(v) => v.trim().to_owned(),
+        // the environment editors' parcel and region scenarios need the
+        // region's day (createDayCycleFromEnvironment clones it)
+        Err(_) if super::env::parcel_scenario() => "1".to_owned(),
+        Err(_) => String::new(),
+    })
 }
 
 fn arr(v: &[f32]) -> Llsd {

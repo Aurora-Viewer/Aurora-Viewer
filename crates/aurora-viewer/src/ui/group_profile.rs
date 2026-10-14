@@ -16,13 +16,16 @@
 //!
 //! The data: GroupProfileReply (`world.search.groups`), our membership
 //! (`world.groups`) and LLGroupMgr's members, roles, titles and notices
-//! (`world.group_data`). Notices, land and experiences are not ported yet.
+//! (`world.group_data`), the land and accounts of LLPanelGroupLandMoney
+//! (`world.group_money`). Experiences are not ported yet.
 
 mod abilities;
 mod admin_members;
 mod administration;
+mod experiences;
 mod home;
 mod invite;
+mod land;
 mod members;
 mod notices;
 mod view;
@@ -111,6 +114,33 @@ pub enum GroupAction {
     },
     /// "See in People": the groups tab, filtered on this name.
     ShowInPeople(String),
+    /// The "Land and L$" tab shown (LLPanelGroupLandMoney::activate): the
+    /// parcels and the page shown asked.
+    LoadLand {
+        group: Uuid,
+        ledger: aurora_net::group_money::Ledger,
+    },
+    /// Another page of the accounts shown (onClickTab).
+    LandPage {
+        group: Uuid,
+        ledger: aurora_net::group_money::Ledger,
+    },
+    /// A week earlier or later (onClickEarlier / onClickLater).
+    LandStep {
+        group: Uuid,
+        ledger: aurora_net::group_money::Ledger,
+        earlier: bool,
+    },
+    /// applyContribution: our land given to the group, checked.
+    SetContribution { group: Uuid, contribution: i32 },
+    /// "Map" of a parcel (onMapButton): its global position.
+    ShowOnMap { x: f64, y: f64 },
+    /// "About Land" on a parcel of a region nearby.
+    AboutLand { x: f64, y: f64 },
+    /// The experiences the group owns asked (LLPanelGroupExperiences::activate).
+    LoadExperiences(Uuid),
+    /// "Profile" of an experience: the experience profile window.
+    ExperienceProfile(Uuid),
 }
 
 /// The tabs of the Aurora look.
@@ -120,6 +150,8 @@ pub enum Tab {
     Home,
     Members,
     Notices,
+    Land,
+    Experiences,
     Admin,
 }
 
@@ -145,6 +177,8 @@ pub struct GroupProfileUi {
     loaded: Option<(Uuid, bool)>,
     pub(super) members: members::MembersState,
     pub(super) notices: notices::NoticesState,
+    pub(super) land: land::LandState,
+    pub(super) experiences: experiences::ExperiencesState,
     pub(super) admin: administration::AdminState,
     confirm: Option<Confirm>,
     /// "Invite to the group".
@@ -177,6 +211,8 @@ impl GroupProfileUi {
         if self.group != Some(id) {
             self.tab = Tab::Home;
             self.members = Default::default();
+            self.land = Default::default();
+            self.experiences = Default::default();
             self.loaded = None;
         }
         self.group = Some(id);
@@ -187,6 +223,18 @@ impl GroupProfileUi {
     /// Open the Administration tab (the demo's captures).
     pub fn show_admin(&mut self) {
         self.tab = Tab::Admin;
+    }
+
+    /// Open the Experiences tab (the demo's captures).
+    pub fn show_experiences(&mut self) {
+        self.tab = Tab::Experiences;
+    }
+
+    /// Open the "Land and L$" tab on a page of the accounts (the demo's
+    /// captures).
+    pub fn show_land(&mut self, ledger: aurora_net::group_money::Ledger) {
+        self.tab = Tab::Land;
+        self.land.ledger = ledger;
     }
 
     /// Open the Notices tab (the demo's captures), on a new notice when
@@ -283,10 +331,23 @@ impl GroupProfileUi {
             Some(view::Header::Invite) => self.open_invite(v.id),
             None => {}
         }
+        // members only: back home after leaving the group
+        if (self.tab == Tab::Land && !land::visible(v)) || (self.tab == Tab::Experiences && !experiences::visible(v)) {
+            self.tab = Tab::Home;
+        }
+        // the tabs are activated again each time they are shown
+        if self.tab != Tab::Land {
+            self.land.active = None;
+        }
+        if self.tab != Tab::Experiences {
+            self.experiences.active = None;
+        }
         match self.tab {
             Tab::Home => home::show(self, ui, c, env, v, actions),
             Tab::Members => members::show(self, ui, c, env, v, actions),
             Tab::Notices => notices::show(self, ui, c, v, actions),
+            Tab::Land => land::show(self, ui, c, v, actions),
+            Tab::Experiences => experiences::show(self, ui, c, v, actions),
             Tab::Admin => administration::show(self, ui, c, v, actions),
         }
     }
@@ -325,6 +386,32 @@ impl GroupProfileUi {
                                 .layout(egui::Layout::top_down(egui::Align::Min)),
                         );
                         notices::show(self, &mut part, c, v, actions);
+                    });
+                }
+                // Firestorm's "Land & L$" accordion
+                if land::visible(v) {
+                    let title = aurora_i18n::tr!("ui-group-profile-land");
+                    widgets::collapsing(ui, c.p, "group_profile_classic_land", title, false, |ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 460.0), egui::Sense::hover());
+                        let mut part = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(rect)
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                        );
+                        land::show(self, &mut part, c, v, actions);
+                    });
+                }
+                // and its "Experiences" accordion
+                if experiences::visible(v) {
+                    let title = aurora_i18n::tr!("ui-group-profile-experiences");
+                    widgets::collapsing(ui, c.p, "group_profile_classic_experiences", title, false, |ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 220.0), egui::Sense::hover());
+                        let mut part = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(rect)
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                        );
+                        experiences::show(self, &mut part, c, v, actions);
                     });
                 }
             });

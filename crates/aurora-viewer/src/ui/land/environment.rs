@@ -4,7 +4,7 @@
 //! altitudes shown read-only for a parcel).
 
 use super::dialogs::Confirm;
-use super::{Dialog, LandUi, View, dim, not_yet, text};
+use super::{Dialog, LandUi, View, dim, text};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::land::{EnvState, EnvSummary, MIN_PARCEL_AREA, powers};
@@ -108,13 +108,30 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         {
             s.dialog = Some(Dialog::Confirm(Confirm::ResetEnvironment));
         }
-        ui.add_enabled(
-            false,
-            egui::Button::new(aurora_i18n::tr!("ui-land-environment-use-inventory")).min_size(w),
-        )
-        .on_disabled_hover_text(not_yet());
-        ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-customize")).min_size(w))
-            .on_disabled_hover_text(not_yet());
+        // onBtnSelect: the settings picker for the whole day
+        if ui
+            .add_enabled(
+                can_edit && summary.is_some(),
+                egui::Button::new(aurora_i18n::tr!("ui-land-environment-use-inventory")).min_size(w),
+            )
+            .clicked()
+        {
+            s.dialog = Some(Dialog::EnvironmentPicker(super::dialogs::EnvironmentPicker {
+                track: None,
+                filter: String::new(),
+                selected: None,
+            }));
+        }
+        // onBtnEdit: the day cycle editor on the parcel's day
+        if ui
+            .add_enabled(
+                can_edit && summary.is_some(),
+                egui::Button::new(aurora_i18n::tr!("common-customize")).min_size(w),
+            )
+            .clicked()
+        {
+            s.custom_day = true;
+        }
         ui.add_space(10.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("ui-land-environment-day-settings"))

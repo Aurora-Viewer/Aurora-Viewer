@@ -9,12 +9,14 @@ pub mod contact_sets;
 pub mod eep;
 pub mod eep_env;
 pub mod env;
+pub mod env_apply;
 pub mod env_day_edit;
 pub mod env_edit;
 pub mod env_select;
 pub mod estate;
 pub mod experiences;
 pub mod group_data;
+pub mod group_money;
 pub mod groups;
 pub mod hover_height;
 pub mod hud_scale;
@@ -45,6 +47,7 @@ pub mod teleport_invites;
 pub mod terrain;
 pub mod tphistory;
 pub mod transcripts;
+pub mod windlight_presets;
 pub mod worldmap;
 
 #[cfg(test)]
@@ -221,8 +224,14 @@ pub struct World {
     /// m² of land the account holds (MoneyBalanceReply SquareMetersCommitted,
     /// LLStatusBar::getSquareMetersCommitted).
     pub land_committed: i32,
+    /// m² the account may hold (SquareMetersCredit): what is left is
+    /// LLStatusBar::getSquareMetersLeft.
+    pub land_credit: i32,
     pub upload_cost: Option<i32>,
     pub local_assets: HashMap<Uuid, (String, bool)>,
+    /// ExtEnvironment answers of the frame (parcel local id, error), for the
+    /// environment editors' "Apply To Parcel / Region" (drained by the app).
+    pub environment_answers: Vec<(i32, Result<(), String>)>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
     pub health: f32,
     /// Interface sounds to play (drained by the app).
@@ -276,6 +285,9 @@ pub struct World {
     env_clock: Instant,
     /// Accumulated cloud scroll (LLEnvironment::mCloudScrollDelta).
     pub cloud_scroll: glam::Vec2,
+    /// Directions of the shown sun and moon (the sky frame's), for their
+    /// beacons.
+    pub sky_directions: (glam::Vec3, glam::Vec3),
     /// Name of the parcel the agent stands on.
     pub parcel_name: String,
     /// Full description of that parcel (navigation bar icons, media, voice).
@@ -324,6 +336,8 @@ pub struct World {
     /// Members, roles, titles and notices of the groups whose profile is
     /// open (LLGroupMgr).
     pub group_data: group_data::GroupMgr,
+    /// The parcels and accounts of the group whose "Land and L$" tab shows.
+    pub group_money: group_money::GroupMoney,
     arrived_once: bool,
     /// The instant messages kept while offline were asked for (once per
     /// login).
@@ -420,8 +434,10 @@ impl World {
             events_this_frame: 0,
             balance: None,
             land_committed: 0,
+            land_credit: 0,
             upload_cost: None,
             local_assets: HashMap::new(),
+            environment_answers: Vec::new(),
             health: 100.0,
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -446,6 +462,7 @@ impl World {
             eep: eep_env::EnvSelector::default(),
             env_clock: Instant::now(),
             cloud_scroll: glam::Vec2::ZERO,
+            sky_directions: (glam::Vec3::Z, glam::Vec3::NEG_Z),
             parcel_name: String::new(),
             parcel: None,
             land: land::Land::default(),
@@ -463,6 +480,7 @@ impl World {
             place_details: Default::default(),
             search: Default::default(),
             group_data: Default::default(),
+            group_money: Default::default(),
             notifications: notifications::Notifications::default(),
             teleport_invites: teleport_invites::TeleportInvites::default(),
             maturity: maturity::MaturityPreference::default(),
@@ -1766,6 +1784,10 @@ impl World {
                 self.experiences.permission(experience, result);
                 None
             }
+            NetEvent::GroupExperiences { group, ids } => {
+                self.experiences.group_arrived(group, ids);
+                None
+            }
             NetEvent::LoadUrl {
                 object_name, message, url, ..
             } => {
@@ -1971,6 +1993,11 @@ impl World {
                 {
                     self.social.want_name(info.owner_id);
                 }
+                // the environment editors wait for the answer of what they applied
+                if let aurora_net::land::LandEvent::Environment { local_id, result } = &ev {
+                    self.environment_answers
+                        .push((*local_id, result.as_ref().map(|_| ()).map_err(Clone::clone)));
+                }
                 self.land.apply(ev, &ctx);
                 None
             }
@@ -2046,6 +2073,19 @@ impl World {
                 self.group_data.on_event(&ev);
                 None
             }
+            NetEvent::GroupLand(reply) => {
+                // process_places_reply: only for a group of ours
+                if self.groups.is_member(&reply.group) {
+                    self.group_money.on_land(&reply);
+                } else {
+                    log::warn!("PlacesReply for a group we are not in");
+                }
+                None
+            }
+            NetEvent::GroupAccount(reply) => {
+                self.group_money.on_account(&reply);
+                None
+            }
             // LLGroupMgr::processJoinGroupReply / processLeaveGroupReply: the
             // group list again, the group's data forgotten, its profile
             // asked again
@@ -2062,6 +2102,7 @@ impl World {
                 if success {
                     self.groups.out.push(aurora_net::NetCommand::RequestGroups);
                     self.group_data.clear(&group);
+                    self.group_money.clear(&group);
                     self.search.request_group(group);
                 }
                 None
@@ -2108,8 +2149,9 @@ impl World {
                 self.balance = Some(b);
                 None
             }
-            NetEvent::LandHoldings { committed, .. } => {
+            NetEvent::LandHoldings { credit, committed } => {
                 self.land_committed = committed;
+                self.land_credit = credit;
                 None
             }
             NetEvent::InventoryContents(c) => {

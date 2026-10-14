@@ -83,7 +83,24 @@ fn parse(v: &str) -> Scenario {
 }
 
 pub fn scenario() -> Option<Scenario> {
-    std::env::var("AURORA_DEMO_LAND").ok().map(|v| parse(&v))
+    match std::env::var("AURORA_DEMO_LAND") {
+        Ok(v) => Some(parse(&v)),
+        // AURORA_DEMO_ENV_EDITOR=custom: About Land's environment, as the
+        // plaza's owner
+        Err(_) => super::env::editor()
+            .filter(|s| s.starts_with("custom"))
+            .map(|_| parse("environment:owner")),
+    }
+}
+
+/// Who the avatar is to the plaza: the scenario's role, the owner in the
+/// environment editors' parcel scenarios.
+fn role() -> Role {
+    match scenario() {
+        Some(s) => s.role,
+        None if super::env::parcel_scenario() => Role::Owner,
+        None => Role::Member,
+    }
 }
 
 /// The powers an officer has in the owning group: everything of the land
@@ -214,7 +231,7 @@ fn for_sale(mut p: ParcelInfo, mode: &str) -> ParcelInfo {
 pub(super) fn parcel() -> ParcelInfo {
     let mut g = PARCEL.lock();
     g.get_or_insert_with(|| {
-        let p = initial(scenario().map_or(Role::Member, |s| s.role));
+        let p = initial(role());
         match buy_scenario() {
             Some(mode) => for_sale(p, &mode),
             None => p,
@@ -256,9 +273,31 @@ struct DemoDay {
     names: [String; 5],
     length: i32,
     offset: i32,
+    /// The day's settings map once a day cycle is applied (an item or
+    /// edited inline): what About Land's "Custom" edits.
+    cycle: Option<Llsd>,
 }
 
 static DAY: Mutex<Option<DemoDay>> = Mutex::new(None);
+
+/// `AURORA_DEMO_ENV_EDITOR=custom`: the parcel starts with the user's day
+/// cycle applied, for "Custom" to edit (once: a reset then leaves it).
+fn custom_day_once() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    if !super::env::editor().is_some_and(|s| s.starts_with("custom")) {
+        return;
+    }
+    ONCE.call_once(|| {
+        let asset = super::env::day_asset();
+        let name = aurora_i18n::tr!("demo-env-my-day-cycle").to_owned();
+        *DAY.lock() = Some(DemoDay {
+            names: std::array::from_fn(|t| if t <= 1 { name.clone() } else { String::new() }),
+            length: 4 * 3600,
+            offset: 16 * 3600,
+            cycle: super::env::asset_bytes(asset).and_then(|b| crate::world::eep::Settings::decode_asset(&b)),
+        });
+    });
+}
 
 /// Scripted objects returned from "Script info".
 static RETURNED: Mutex<Vec<Uuid>> = Mutex::new(Vec::new());
@@ -267,6 +306,7 @@ static RETURNED: Mutex<Vec<Uuid>> = Mutex::new(Vec::new());
 /// settings item is applied, then a day with the names of its tracks;
 /// skies at 1000 / 2000 / 3000 m.
 fn environment() -> Llsd {
+    custom_day_once();
     let mut env = Llsd::new_map();
     env.insert("parcel_id", 1);
     env.insert(
@@ -276,37 +316,93 @@ fn environment() -> Llsd {
     if let Some(d) = DAY.lock().clone() {
         env.insert("day_length", d.length);
         env.insert("day_offset", d.offset);
-        let mut day = Llsd::new_map();
-        let track = |name: &str| {
-            if name.is_empty() {
-                Llsd::new_array()
-            } else {
-                Llsd::Array(vec![Llsd::new_map()])
-            }
-        };
-        day.insert("tracks", Llsd::Array(d.names.iter().map(|n| track(n)).collect()));
+        let day = d.cycle.clone().unwrap_or_else(|| {
+            let mut day = Llsd::new_map();
+            let track = |name: &str| {
+                if name.is_empty() {
+                    Llsd::new_array()
+                } else {
+                    Llsd::Array(vec![Llsd::new_map()])
+                }
+            };
+            day.insert("tracks", Llsd::Array(d.names.iter().map(|n| track(n)).collect()));
+            day
+        });
         env.insert("day_cycle", day);
         env.insert("day_names", Llsd::Array(d.names.iter().map(|n| Llsd::String(n.clone())).collect()));
     }
     env
 }
 
-/// ExtEnvironment PUT of a settings asset: the whole day or one track.
-fn apply_environment(track: Option<i32>, asset: Uuid, name: &str) {
-    let mut g = DAY.lock();
-    let mut day = g.clone().unwrap_or(DemoDay {
+fn demo_day() -> DemoDay {
+    custom_day_once();
+    DAY.lock().clone().unwrap_or(DemoDay {
         names: Default::default(),
         length: 4 * 3600,
         offset: 16 * 3600,
-    });
+        cycle: None,
+    })
+}
+
+/// ExtEnvironment PUT of a settings asset: the whole day or one track. A
+/// whole day cycle item becomes the parcel's day.
+fn apply_environment(track: Option<i32>, asset: Uuid, name: &str) {
+    let mut day = demo_day();
     match (track, super::env::kind_of(asset)) {
         (Some(t), _) if (0..5).contains(&t) => day.names[t as usize] = name.to_owned(),
         // a day takes every track; a sky the ground's, a water the water's
         (_, Some(crate::world::env_select::SettingsKind::Water)) => day.names[0] = name.to_owned(),
         (_, Some(crate::world::env_select::SettingsKind::Sky)) => day.names[1] = name.to_owned(),
-        _ => day.names = std::array::from_fn(|_| name.to_owned()),
+        _ => {
+            day.names = std::array::from_fn(|_| name.to_owned());
+            day.cycle = super::env::asset_bytes(asset).and_then(|b| crate::world::eep::Settings::decode_asset(&b));
+        }
     }
-    *g = Some(day);
+    *DAY.lock() = Some(day);
+}
+
+/// ExtEnvironment PUT of a day sent inline (the editors' "Apply To Parcel /
+/// Region", "Custom"): the parcel's day becomes it, named by its tracks; the
+/// sky of the demo follows (the simulator would push the new environment).
+fn apply_day_inline(local_id: i32, cycle: &Llsd, day_length: i32, day_offset: i32) -> Vec<NetEvent> {
+    let mut day = demo_day();
+    if day_length > 0 {
+        day.length = day_length;
+    }
+    if day_offset > 0 {
+        day.offset = day_offset;
+    }
+    let name = cycle["name"].to_string_value();
+    let tracks = &cycle["tracks"];
+    day.names = std::array::from_fn(|t| {
+        if tracks.at(t).as_array().is_empty() {
+            String::new()
+        } else {
+            name.clone()
+        }
+    });
+    day.cycle = Some(cycle.clone());
+    let (length, offset) = (day.length, day.offset);
+    if local_id == aurora_net::land::REGION_PARCEL_ID {
+        log::info!("demo environment: the region takes the day \"{name}\"");
+    } else {
+        log::info!("demo environment: parcel {local_id} takes the day \"{name}\"");
+        *DAY.lock() = Some(day);
+    }
+    let mut env = Llsd::new_map();
+    env.insert("parcel_id", local_id);
+    env.insert("day_length", length);
+    env.insert("day_offset", offset);
+    env.insert(
+        "track_altitudes",
+        Llsd::Array(vec![Llsd::Real(1000.0), Llsd::Real(2000.0), Llsd::Real(3000.0)]),
+    );
+    env.insert("day_cycle", cycle.clone());
+    vec![NetEvent::Environment {
+        handle: super::HANDLE,
+        parcel_id: local_id,
+        environment: env,
+    }]
 }
 
 /// Experiences the picker finds: (id, name, rating, properties).
@@ -470,11 +566,42 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
             name,
             ..
         } => {
-            apply_environment(*track, *asset, name);
-            vec![ev(LandEvent::Environment {
+            let mut out = Vec::new();
+            if *local_id == aurora_net::land::REGION_PARCEL_ID {
+                // the region's day: the demo's sky follows a day cycle item
+                let cycle = super::env::asset_bytes(*asset).and_then(|b| crate::world::eep::Settings::decode_asset(&b));
+                if let Some(cycle) = cycle.filter(|c| c["type"].as_str() == "daycycle") {
+                    out = apply_day_inline(*local_id, &cycle, -1, -1);
+                }
+            } else {
+                apply_environment(*track, *asset, name);
+            }
+            out.push(ev(LandEvent::Environment {
                 local_id: *local_id,
                 result: Ok(environment()),
-            })]
+            }));
+            out
+        }
+        LandCommand::EnvironmentApplyDay {
+            local_id,
+            day,
+            day_length,
+            day_offset,
+            ..
+        } => {
+            // AURORA_DEMO_ENV_EDITOR=…-refused: the simulator refuses it
+            if super::env::editor().is_some_and(|s| s.ends_with("-refused")) {
+                return vec![ev(LandEvent::Environment {
+                    local_id: *local_id,
+                    result: Err(aurora_i18n::tr!("demo-env-apply-refused").into()),
+                })];
+            }
+            let mut out = apply_day_inline(*local_id, day, *day_length, *day_offset);
+            out.push(ev(LandEvent::Environment {
+                local_id: *local_id,
+                result: Ok(environment()),
+            }));
+            out
         }
         LandCommand::ExperienceSearch { query, .. } => {
             let q = query.to_lowercase();

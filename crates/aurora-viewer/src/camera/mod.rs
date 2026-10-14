@@ -17,7 +17,7 @@ pub(crate) mod follow;
 mod settings;
 
 pub use focus::FocusObject;
-pub use settings::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE};
+pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE};
 
 use crate::agent::AgentState;
 use crate::scene::Scene;
@@ -348,6 +348,23 @@ impl Camera {
             (Some(seat), Some(s)) => seat * Quat::from_rotation_z(s.local_yaw + self.orbit_yaw) * pitch,
             _ => Quat::from_rotation_z(agent.yaw + self.orbit_yaw) * pitch,
         }
+    }
+
+    /// LLAgentCamera::getCurrentCameraOffset and getCurrentFocusOffset:
+    /// the camera and the point it looks at, in the avatar's frame (a saved
+    /// camera position).
+    pub fn current_offsets(&self, agent: &AgentState) -> (Vec3, Vec3) {
+        let rotation = match (self.avatar.seat, self.seat) {
+            (Some(seat), Some(s)) => seat * Quat::from_rotation_z(s.local_yaw),
+            _ => Quat::from_rotation_z(agent.yaw),
+        };
+        let inverse = rotation.inverse();
+        // mThirdPersonHeadOffset, as `update` places the camera
+        let head = if self.avatar.seat.is_some() { Vec3::ZERO } else { Vec3::Z };
+        (
+            inverse * (self.position - self.avatar.root - head),
+            inverse * (self.target - self.avatar.position),
+        )
     }
 
     // ------------------------------------------------------------ transitions

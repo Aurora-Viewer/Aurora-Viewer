@@ -124,6 +124,27 @@ impl Default for CameraSettings {
     }
 }
 
+/// A camera position saved by name (LLFloaterSaveCameraPreset: the
+/// camera and its focus where they are, in the avatar's frame), used again
+/// as a custom view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CameraShot {
+    pub name: String,
+    pub camera_offset: [f32; 3],
+    pub focus_offset: [f32; 3],
+}
+
+impl CameraSettings {
+    /// The view of `shot` (Firestorm loads the preset's offsets).
+    pub fn apply_shot(&mut self, shot: &CameraShot) {
+        self.preset = CameraPreset::Custom;
+        self.camera_offset = shot.camera_offset;
+        self.focus_offset = shot.focus_offset;
+        // the saved offset is where the camera was: at its own distance
+        self.offset_scale = 1.0;
+    }
+}
+
 /// DEFAULT_FIELD_OF_VIEW (60°).
 pub const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 /// LLViewerCamera min / max view angles of the "Viewing angle" slider.

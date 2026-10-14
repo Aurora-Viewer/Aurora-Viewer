@@ -1439,8 +1439,9 @@ fn parcel_media(
 }
 
 /// The environment choice of the title: the region's when the parcel has
-/// no day cycle of its own, else the one applied from the inventory (a
-/// custom day is made by the editor, not ported yet).
+/// no day cycle of its own, else the one applied from the inventory
+/// ("Custom" opens the day cycle editor, it is never the lit choice: the
+/// server does not tell an edited day from an applied item).
 pub(super) fn environment_choice(env: &EnvState) -> usize {
     match env {
         EnvState::Ready(e) if e.has_day => 1,
@@ -1482,9 +1483,10 @@ fn environment(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
                         selected: None,
                     }));
                 }
+                // onBtnEdit: the day cycle editor on the parcel's day
+                2 => s.custom_day = true,
                 _ => {}
             }
-            // the day cycle editor (LLFloaterEditExtDayCycle) is not ported yet
             r.on_hover_text(aurora_i18n::tr!("ui-land-manage-env-custom-tip"));
         });
     });

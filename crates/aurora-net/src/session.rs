@@ -1230,6 +1230,7 @@ impl Session<'_> {
                 }
             }
             NetCommand::ExperienceInfo(ids) => self.request_experiences(ids),
+            NetCommand::GroupExperiences(group) => self.request_group_experiences(group),
             NetCommand::ExperiencePermission { experience, change } => self.experience_permission(experience, change),
             NetCommand::Touch { local_id } => {
                 // a click is a grab immediately followed by a release (LLToolGrab)
@@ -2199,7 +2200,10 @@ impl Session<'_> {
             | NetCommand::GroupRoleUpdate { .. }
             | NetCommand::UpdateGroupInfo { .. }
             | NetCommand::JoinGroup(_)
-            | NetCommand::InviteToGroup { .. } => {}
+            | NetCommand::InviteToGroup { .. }
+            | NetCommand::GroupLandQuery { .. }
+            | NetCommand::SetGroupContribution { .. }
+            | NetCommand::GroupAccount(_) => {}
             // handled by on_search_command
             NetCommand::DirQuery { .. }
             | NetCommand::EventInfoRequest(_)
@@ -2505,6 +2509,17 @@ impl Session<'_> {
         });
     }
 
+    /// LLExperienceCache::getGroupExperiences, on a task.
+    fn request_group_experiences(&self, group: Uuid) {
+        let cap = self.main_cap("GroupExperiences");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let ids = crate::experience::fetch_group_experiences(&http, cap.as_deref(), group).await;
+            let _ = events.send(NetEvent::GroupExperiences { group, ids });
+        });
+    }
+
     /// LLExperienceCache::get / set / forgetExperiencePermission.
     fn experience_permission(&self, experience: Uuid, change: crate::experience::ExperiencePermissionChange) {
         let cap = self.main_cap("ExperiencePreferences");
@@ -2770,6 +2785,7 @@ impl Session<'_> {
         if self.on_social_eq(&e.message, b)
             || self.on_land_eq(&e.message, b)
             || self.on_search_eq(&e.message, b)
+            || self.on_groups_eq(&e.message, b)
             || self.on_build_eq(&e.message, b)
         {
             return;

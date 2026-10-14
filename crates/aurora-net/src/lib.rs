@@ -10,6 +10,7 @@ pub mod currency;
 pub mod estate;
 pub mod experience;
 pub mod fetch;
+pub mod group_money;
 pub mod groups;
 pub mod inventory;
 pub mod land;

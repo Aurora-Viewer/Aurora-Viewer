@@ -58,6 +58,8 @@ pub mod land;
 #[path = "demo_notifs.rs"]
 pub mod notifs;
 /// Place details of place links (AURORA_DEMO_PLACE).
+#[path = "demo_people.rs"]
+pub mod people;
 #[path = "demo_place.rs"]
 pub mod place;
 /// Region / Estate answers (AURORA_DEMO_REGION).
@@ -473,9 +475,21 @@ fn demo_raw() -> Llsd {
     if env::enabled() {
         skel.push(env::settings_folder(u(1)));
     }
-    let buddies: Vec<Llsd> = (0..4)
-        .map(|i| llsd_map! {"buddy_id" => u(100 + i), "buddy_rights_given" => [1, 3, 7, 0][i as usize], "buddy_rights_has" => if i % 2 == 0 { 3 } else { 1 }})
+    // AURORA_DEMO_PEOPLE: its friends and their rights
+    let people = people::friends();
+    let mut buddies: Vec<Llsd> = (0..4)
+        .map(|i| u(100 + i))
+        .filter(|id| people.iter().all(|(f, _, _)| f != id))
+        .map(|id| {
+            let i = (id.as_u128() & 0xFF) as usize - 100;
+            llsd_map! {"buddy_id" => id, "buddy_rights_given" => [1, 3, 7, 0][i], "buddy_rights_has" => if i.is_multiple_of(2) { 3 } else { 1 }}
+        })
         .collect();
+    buddies.extend(
+        people
+            .into_iter()
+            .map(|(id, given, has)| llsd_map! {"buddy_id" => id, "buddy_rights_given" => given, "buddy_rights_has" => has}),
+    );
     let mut raw = llsd_map! {
         "inventory-root" => Llsd::Array(vec![llsd_map!{"folder_id" => u(1)}]),
         // an adult account that wants every rating (the search window's boxes);
@@ -1140,6 +1154,8 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
     if p.sl_image.is_nil() && std::env::var_os("AURORA_DEMO_PROFILE").is_some() {
         p.sl_image = tags::scenario_picture(id);
     }
+    // AURORA_DEMO_PEOPLE: what the rows and the sheet show of them
+    people::profile(&mut p);
     p
 }
 
@@ -1320,6 +1336,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                             ("Aurora", "Demo", "")
                         } else if let Some(long) = long_name(id) {
                             long
+                        } else if let Some(resident) = people::name(id) {
+                            resident
                         } else if let Some(resident) = tags::name(id) {
                             resident
                         } else if let Some(member) = group::member_name(id) {
@@ -1464,8 +1482,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 value3 = format!("{}", Uuid::nil()),
                 value4 = format!("{}", DEMO_GROUP2)
             );
-            // The animesh fixture needs its wearer visible in full.
-            let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some() {
+            // The animesh fixture needs its wearer visible in full, and
+            // AURORA_DEMO_PEOPLE the wolf as a friend.
+            let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some() || people::mode().is_some() {
                 text.lines().skip(1).collect::<Vec<_>>().join("\n")
             } else {
                 text
@@ -1491,6 +1510,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             let mut groups = vec![
                 aurora_net::GroupMembership {
                     powers: group::my_powers(),
+                    contribution: group::MY_CONTRIBUTION,
                     ..g(DEMO_GROUP1, "Aurora Builders", true)
                 },
                 g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),
@@ -2411,9 +2431,10 @@ pub fn events() -> Vec<NetEvent> {
             size_x: 256,
             size_y: 256,
             is_main: true,
-            // AURORA_DEMO_REGION: the avatar may own the estate or manage it
+            // AURORA_DEMO_REGION: the avatar may own the estate or manage it;
+            // AURORA_DEMO_ENV_EDITOR=region: the avatar manages the estate
             owner: region::estate_owner(),
-            is_estate_manager: region::is_manager(),
+            is_estate_manager: region::is_manager() || env::estate_manager(),
             product_name: "Estate / Full Region".into(),
             billable_factor: 1.0,
         })),
@@ -3395,7 +3416,8 @@ pub fn events() -> Vec<NetEvent> {
             local_id: 1,
             name: aurora_i18n::tr!("common-aurora-plaza").into(),
             desc: aurora_i18n::tr!("demo-aurora-viewer-s-offline-demo-parcel").into(),
-            owner_id: u(100),
+            // the environment editors' parcel scenarios: the avatar's own
+            owner_id: if env::parcel_scenario() { DEMO_AGENT } else { u(100) },
             area: 16384,
             bitmap,
             max_prims: 3750,

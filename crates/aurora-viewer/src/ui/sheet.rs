@@ -3,7 +3,8 @@
 //! "View as", pills, cards with a title and a link, lines of facts, settings
 //! rows with their explanation, the amber lock banner and line, folded
 //! "Advanced" parts, a column of sections whose navigation follows the
-//! scrolling, and the lists of residents with their search field. Each
+//! scrolling, and the lists of residents (their search field is
+//! `widgets::search_box`). Each
 //! window keeps its own data and rules; these only draw.
 
 use crate::theme::Palette;
@@ -623,28 +624,6 @@ pub fn list_title(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str, count
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
     });
-}
-
-/// The search field of a list: a magnifier then the text, on the field's
-/// face like the mockup's.
-pub fn search_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, width: f32) {
-    egui::Frame::new()
-        .fill(p.bar)
-        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
-        .inner_margin(egui::Margin::symmetric(9, 4))
-        .show(ui, |ui| {
-            ui.set_width(width - 18.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 7.0;
-                widgets::glyph(ui, "search-filled", p.muted, 13.0);
-                ui.add(
-                    egui::TextEdit::singleline(text)
-                        .frame(egui::Frame::NONE)
-                        .hint_text(aurora_i18n::tr!("common-search"))
-                        .desired_width(f32::INFINITY),
-                );
-            });
-        });
 }
 
 /// A resident's display name and user name (when the settings show both).
