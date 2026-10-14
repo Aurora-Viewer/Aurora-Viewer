@@ -1407,6 +1407,56 @@ impl Session<'_> {
                 m.data.classified_id = id;
                 self.send_main(&m, true);
             }
+            NetCommand::ClassifiedUpdate(c) => {
+                // LLAvatarPropertiesProcessor::sendClassifiedInfoUpdate; the
+                // simulator fills ParcelID and ParentEstate on the way
+                let mut m = ClassifiedInfoUpdate::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                let d = &mut m.data;
+                d.classified_id = c.id;
+                d.category = c.category;
+                d.name = str_field(&c.name);
+                d.desc = str_field(&c.desc);
+                d.parcel_id = c.parcel;
+                d.parent_estate = 0;
+                d.snapshot_id = c.snapshot;
+                d.pos_global = c.pos_global;
+                d.classified_flags = c.flags;
+                d.price_for_listing = c.price;
+                self.send_main(&m, true);
+            }
+            NetCommand::ClassifiedStatsRequest(id) => {
+                // LLPanelProfileClassified::onOpen: the stats of the new table
+                // when the capability exists
+                let Some(url) = self.main_cap("SearchStatRequest") else {
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    let body = aurora_llsd::llsd_map! { "classified_id" => id };
+                    match caps::post_llsd(&http, &url, &body).await {
+                        Ok(reply) => {
+                            let stats = crate::profile::ClassifiedStats::from_llsd(&reply);
+                            let _ = events.send(NetEvent::ClassifiedStats { id, stats });
+                        }
+                        Err(e) => log::warn!("SearchStatRequest {id}: {e}"),
+                    }
+                });
+            }
+            NetCommand::ClassifiedClick { kind, classified } => {
+                let Some(url) = self.main_cap("SearchStatTracking") else {
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let body = crate::profile::click_body(kind, &classified);
+                tokio::spawn(async move {
+                    if let Err(e) = caps::post_llsd(&http, &url, &body).await {
+                        log::info!("SearchStatTracking click report not sent: {e}");
+                    }
+                });
+            }
             NetCommand::Land(l) => self.on_land_command(l),
             NetCommand::ParcelInfoRequest(id) => {
                 let mut m = ParcelInfoRequest::default();
@@ -1684,6 +1734,12 @@ impl Session<'_> {
             }
             NetCommand::CurrencyQuote { helper, amount } => self.currency_quote(helper, amount),
             NetCommand::BuyCurrency { helper, quote, password } => self.buy_currency(helper, quote, password),
+            NetCommand::LandToolPreflight {
+                helper,
+                billable_area,
+                currency_buy,
+            } => self.land_tool_preflight(helper, billable_area, currency_buy),
+            NetCommand::LandToolBuy { helper, request } => self.land_tool_buy(helper, request),
             NetCommand::FetchInventoryThumbnail { request, asset, resize } => {
                 let cap = self.main_cap("ViewerAsset");
                 let http = self.sh.caps_http.clone();
@@ -1831,6 +1887,14 @@ impl Session<'_> {
                 copy_name,
             } => self.save_wearable(request, *item, data, copy_name),
             NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
+            NetCommand::CreateSettingsItem {
+                request,
+                parent,
+                name,
+                subtype,
+                next_owner_mask,
+                data,
+            } => self.create_settings_item(request, parent, name, subtype, next_owner_mask, data),
             NetCommand::RestoreInventoryObject(it) => {
                 let mut m = RezRestoreToWorld::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -1867,6 +1931,7 @@ impl Session<'_> {
                     7 => "UpdateNotecardAgentInventory",
                     10 => "UpdateScriptAgent",
                     21 => "UpdateGestureAgentInventory",
+                    56 => "UpdateSettingsAgentInventory",
                     _ => "",
                 };
                 let Some((cap, fetch)) = self.main_cap(name).zip(self.main_cap("FetchInventory2")) else {
@@ -2096,6 +2161,7 @@ impl Session<'_> {
             | NetCommand::GroupTitlesRequest { .. }
             | NetCommand::GroupTitleUpdate { .. }
             | NetCommand::GroupNoticesListRequest(_)
+            | NetCommand::GroupNoticeRequest(_)
             | NetCommand::JoinGroup(_)
             | NetCommand::InviteToGroup { .. } => {}
             // handled by on_search_command
@@ -3715,6 +3781,13 @@ impl Session<'_> {
             let m: MoneyBalanceReply = pkt.decode()?;
             self.asset_imports.balance = Some(m.money_data.money_balance);
             emit(self.sh, NetEvent::Balance(m.money_data.money_balance));
+            emit(
+                self.sh,
+                NetEvent::LandHoldings {
+                    credit: m.money_data.square_meters_credit,
+                    committed: m.money_data.square_meters_committed,
+                },
+            );
         } else if id == TeleportStart::ID {
             emit(self.sh, NetEvent::TeleportStarted);
         } else if id == TeleportProgress::ID {
@@ -3906,6 +3979,7 @@ impl Session<'_> {
             owner: r.sim_owner,
             is_estate_manager: r.is_estate_manager,
             product_name: field_str(&m.region_info3.product_name),
+            billable_factor: r.billable_factor,
         };
         emit(self.sh, NetEvent::RegionHandshake(Arc::new(info)));
         if is_main {

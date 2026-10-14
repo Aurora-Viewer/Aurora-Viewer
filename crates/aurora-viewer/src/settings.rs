@@ -332,6 +332,9 @@ pub struct Settings {
     /// written in their place.
     #[serde(skip)]
     pub photo_held: Option<crate::snapshot::quality::Held>,
+    /// About Land as Firestorm's nine tabs (`ui/land`) instead of the
+    /// overview and the settings grouped by intent (`ui/land/aurora`).
+    pub classic_about_land: bool,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// What a double click on the ground does (Preferences › Controls, the
@@ -752,6 +755,7 @@ impl Default for Settings {
             world_map_style: WorldMapStyle::Aurora,
             photo_window: PhotoWindowStyle::Aurora,
             photo_held: None,
+            classic_about_land: false,
             invert_mouse: false,
             arrows_strafe: false,
             double_click: crate::autopilot::DoubleClick::Nothing,

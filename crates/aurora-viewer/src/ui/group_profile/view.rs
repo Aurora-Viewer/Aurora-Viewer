@@ -262,9 +262,9 @@ fn badge_with(
 
 /// The head of the window. Returns the group to join when "Join" was
 /// clicked (the window confirms it first).
-pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, tab: &mut Tab, actions: &mut Vec<GroupAction>) -> Option<Uuid> {
+pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &mut Tab, actions: &mut Vec<GroupAction>) -> Option<Header> {
     let p = c.p;
-    let mut join = None;
+    let mut clicked = None;
     let top = ui.cursor().min;
     let width = ui.available_width();
     let banner_rect = Rect::from_min_size(top, Vec2::new(width, BANNER_H));
@@ -312,30 +312,34 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, tab: &mut Tab, actions: 
         {
             context::request(acts.ctx(), CtxAction::LeaveGroup(v.id));
         }
-        if v.can(powers::MEMBER_INVITE) {
-            // LLPanelGroupInvite comes with the members' management
-            widgets::action_button_if(
+        if v.can(powers::MEMBER_INVITE)
+            && widgets::action_button(
                 &mut acts,
                 p,
                 "user-plus",
                 aurora_i18n::tr!("ui-group-profile-invite"),
                 ActionKind::Flat,
                 size,
-                false,
             )
-            .on_disabled_hover_text(menu::not_yet());
+            .clicked()
+        {
+            clicked = Some(Header::Invite);
         }
-        // group voice is not ported (the same "call" of the group menus)
-        widgets::action_button_if(
+        // LLGroupActions::startCall: group voice comes with the voice calls
+        // (`Env::group_calls`)
+        let call = widgets::action_button_if(
             &mut acts,
             p,
             "phone-filled",
             aurora_i18n::tr!("ui-group-profile-call"),
             ActionKind::Flat,
             size,
-            false,
+            env.group_calls,
         )
         .on_disabled_hover_text(menu::not_yet());
+        if call.clicked() {
+            actions.push(GroupAction::Call(v.id));
+        }
         if widgets::action_button(
             &mut acts,
             p,
@@ -357,7 +361,7 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, tab: &mut Tab, actions: 
             aurora_i18n::tr!("ui-group-profile-join").to_owned()
         };
         if widgets::action_button(&mut acts, p, "door-enter", &label, ActionKind::Primary, size).clicked() {
-            join = Some(v.id);
+            clicked = Some(Header::Join);
         }
     }
     let buttons_left = acts.min_rect().left();
@@ -431,8 +435,17 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, tab: &mut Tab, actions: 
     badges_row(&mut b, c, v, actions);
     let used = b.min_rect().bottom().max(badges_top + 40.0);
     ui.allocate_rect(Rect::from_min_max(top, Pos2::new(banner_rect.right(), used)), Sense::hover());
-    tabs(ui, p, v, tab);
-    join
+    tabs(ui, p, v, tab, c.world.group_data.unread(&v.id));
+    clicked
+}
+
+/// What the head's buttons ask of the window itself.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Header {
+    /// "Join", confirmed first.
+    Join,
+    /// "Invite": the invitation window.
+    Invite,
 }
 
 /// Content, enrollment, fee; our membership and title; the active group;
@@ -563,6 +576,7 @@ fn tab_button(
     icon: &str,
     label: &str,
     count: Option<String>,
+    accent: bool,
     selected: bool,
     enabled: bool,
 ) -> egui::Response {
@@ -575,11 +589,14 @@ fn tab_button(
         p.muted
     };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
+    // an unread count is a pill in the accent (`accent`)
+    let count_ink = if accent { p.on_accent } else { p.muted_dim };
     let count = count.map(|t| {
         ui.painter()
-            .layout_no_wrap(t, FontId::new(11.0, crate::ui::fonts::semibold(ui.ctx())), p.muted_dim)
+            .layout_no_wrap(t, FontId::new(11.0, crate::ui::fonts::semibold(ui.ctx())), count_ink)
     });
-    let count_w = count.as_ref().map_or(0.0, |g| 5.0 + g.size().x);
+    let pad = if accent { 5.0 } else { 0.0 };
+    let count_w = count.as_ref().map_or(0.0, |g| 5.0 + g.size().x + pad * 2.0);
     let size = Vec2::new(12.0 + 15.0 + 5.0 + galley.size().x + count_w + 12.0, 28.0);
     let (rect, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
     let radius = ui.visuals().widgets.inactive.corner_radius;
@@ -599,8 +616,15 @@ fn tab_button(
     ui.painter()
         .galley(Pos2::new(x, rect.center().y - galley.size().y / 2.0).round(), galley, ink);
     if let Some(g) = count {
-        let pos = Pos2::new(x + w + 5.0, rect.center().y - g.size().y / 2.0);
-        ui.painter().galley(pos.round(), g, p.muted_dim);
+        let pos = Pos2::new(x + w + 5.0 + pad, rect.center().y - g.size().y / 2.0);
+        if accent {
+            let pill = Rect::from_min_size(
+                Pos2::new(x + w + 5.0, rect.center().y - 8.0),
+                Vec2::new(g.size().x + pad * 2.0, 16.0),
+            );
+            ui.painter().rect_filled(pill, ui.visuals().window_corner_radius, p.violet);
+        }
+        ui.painter().galley(pos.round(), g, count_ink);
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label));
     if enabled {
@@ -612,7 +636,7 @@ fn tab_button(
 
 /// Home, Members and the tabs still to port (greyed: notices, land and
 /// L$, experiences).
-fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab) {
+fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) {
     ui.add_space(12.0);
     ui.horizontal(|ui| {
         ui.add_space(4.0);
@@ -623,6 +647,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab) {
             "home-filled",
             aurora_i18n::tr!("ui-group-profile-home"),
             None,
+            false,
             *tab == Tab::Home,
             true,
         )
@@ -637,6 +662,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab) {
             "users",
             aurora_i18n::tr!("ui-group-profile-members-tab"),
             count,
+            false,
             *tab == Tab::Members,
             true,
         )
@@ -644,22 +670,30 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab) {
         {
             *tab = Tab::Members;
         }
-        tab_button(
+        // the unread notices on the tab
+        let unread = (unread > 0).then(|| aurora_i18n::integer(unread as i64));
+        if tab_button(
             ui,
             p,
             "speakerphone",
             aurora_i18n::tr!("ui-group-profile-notices"),
-            None,
-            false,
-            false,
-        );
-        tab_button(ui, p, "map-2", aurora_i18n::tr!("ui-group-profile-land"), None, false, false);
+            unread,
+            true,
+            *tab == Tab::Notices,
+            super::notices::visible(v),
+        )
+        .clicked()
+        {
+            *tab = Tab::Notices;
+        }
+        tab_button(ui, p, "map-2", aurora_i18n::tr!("ui-group-profile-land"), None, false, false, false);
         tab_button(
             ui,
             p,
             "flask-filled",
             aurora_i18n::tr!("ui-group-profile-experiences"),
             None,
+            false,
             false,
             false,
         );

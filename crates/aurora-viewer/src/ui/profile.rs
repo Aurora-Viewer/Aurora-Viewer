@@ -123,6 +123,35 @@ struct PickEdit {
     location: Option<String>,
 }
 
+/// One of our classifieds as edited (LLPanelProfileClassified's edit panel).
+#[derive(Clone, Default, PartialEq)]
+struct ClassifiedEdit {
+    /// Nil for a classified being created.
+    id: Uuid,
+    name: String,
+    desc: String,
+    snapshot: Uuid,
+    category: u32,
+    mature: bool,
+    auto_renew: bool,
+    pos: DVec3,
+    parcel: Uuid,
+    sim_name: String,
+    parcel_name: String,
+    /// Location text while it is not saved (location_notice).
+    location: Option<String>,
+    /// What it cost (an edit sends it back unchanged).
+    price: i32,
+}
+
+/// A new classified waiting for the price to pay (LLPublishClassifiedFloater).
+#[derive(Clone, Default, PartialEq)]
+struct Publish {
+    price: String,
+    /// MinClassifiedPrice / ClassifiedInsufficientFunds, shown in the strip.
+    error: Option<String>,
+}
+
 struct Window {
     id: Uuid,
     open: bool,
@@ -155,6 +184,18 @@ struct Window {
     editing: bool,
     /// The picture shown large in a window of its own (the Aurora window).
     big_photo: bool,
+    /// Our classified being edited and its saved state (the Aurora window).
+    classified_edit: Option<(ClassifiedEdit, ClassifiedEdit)>,
+    /// The price asked before a new classified is published.
+    publish: Option<Publish>,
+    /// Classifieds whose details, statistics and profile click were asked
+    /// (LLPanelProfileClassified::onOpen).
+    classifieds_opened: HashSet<Uuid>,
+    /// The notes were just saved ("Saved" until the next change).
+    notes_saved: bool,
+    /// Demo captures: our first classified in its form (false) or a new
+    /// one at its price (true), once the tab shows.
+    demo_classified: Option<bool>,
 }
 
 impl Window {
@@ -181,6 +222,11 @@ impl Window {
             bottom_h: 200.0,
             editing: false,
             big_photo: false,
+            classified_edit: None,
+            publish: None,
+            classifieds_opened: HashSet::new(),
+            notes_saved: false,
+            demo_classified: None,
         }
     }
 
@@ -196,6 +242,10 @@ impl Window {
 enum PictureSlot {
     SecondLife,
     FirstLife,
+    /// The snapshot of our pick or classified being edited (in the window
+    /// of this id).
+    Pick(Uuid),
+    Classified(Uuid),
 }
 
 #[derive(Default)]
@@ -239,14 +289,19 @@ impl ProfileUi {
         let Some(w) = self.windows.iter_mut().find(|w| w.id == id) else {
             return;
         };
-        match option {
-            "edit" => w.editing = true,
-            "compact" => {
-                let size = Vec2::new(380.0, 640.0);
-                let pos = ctx.content_rect().center() - size * 0.5;
-                widgets::place_floater(ctx, &aurora::window_id(id), pos, size);
+        // several at once: "edit:3", "compact:2"
+        for option in option.split(':') {
+            match option {
+                "edit" => w.editing = true,
+                "form" => w.demo_classified = Some(false),
+                "publish" => w.demo_classified = Some(true),
+                "compact" => {
+                    let size = Vec2::new(380.0, 640.0);
+                    let pos = ctx.content_rect().center() - size * 0.5;
+                    widgets::place_floater(ctx, &aurora::window_id(id), pos, size);
+                }
+                tab => w.tab = tab.parse::<usize>().unwrap_or(TAB_SL).min(TAB_NOTES),
             }
-            tab => w.tab = tab.parse::<usize>().unwrap_or(TAB_SL).min(TAB_NOTES),
         }
     }
 
@@ -413,21 +468,42 @@ impl ProfileUi {
             let title = match slot {
                 PictureSlot::SecondLife => aurora_i18n::tr!("ui-profile-profile-picture"),
                 PictureSlot::FirstLife => aurora_i18n::tr!("ui-profile-rl-picture"),
+                PictureSlot::Pick(_) | PictureSlot::Classified(_) => aurora_i18n::tr!("ui-profile-aurora-snapshot"),
             };
             self.picker.open(title, current);
             self.picker_slot = Some(slot);
         }
         if let Some(asset) = self.picker.show(ctx, p, world, images) {
-            let key = match self.picker_slot {
-                Some(PictureSlot::FirstLife) => "fl_image_id",
-                _ => "sl_image_id",
-            };
-            let mut data = Llsd::new_map();
-            data.insert(key, asset);
-            actions.push(ProfileAction::Save {
-                target: world.agent_id,
-                data,
-            });
+            // a snapshot goes into the edit, saved with it
+            match self.picker_slot {
+                Some(PictureSlot::Pick(id)) => {
+                    if let Some((e, _)) = self.windows.iter_mut().find(|w| w.id == id).and_then(|w| w.pick_edit.as_mut()) {
+                        e.snapshot = asset;
+                    }
+                }
+                Some(PictureSlot::Classified(id)) => {
+                    if let Some((e, _)) = self
+                        .windows
+                        .iter_mut()
+                        .find(|w| w.id == id)
+                        .and_then(|w| w.classified_edit.as_mut())
+                    {
+                        e.snapshot = asset;
+                    }
+                }
+                slot => {
+                    let key = match slot {
+                        Some(PictureSlot::FirstLife) => "fl_image_id",
+                        _ => "sl_image_id",
+                    };
+                    let mut data = Llsd::new_map();
+                    data.insert(key, asset);
+                    actions.push(ProfileAction::Save {
+                        target: world.agent_id,
+                        data,
+                    });
+                }
+            }
         }
         self.wanted_images.extend(self.picker.wanted_images.drain());
         actions
@@ -475,7 +551,8 @@ fn unsaved_bar(ui: &mut egui::Ui, p: &Palette, w: &mut Window, actions: &mut Vec
 /// Some text or pick of the window is edited and not saved.
 fn has_unsaved(w: &Window) -> bool {
     let pick_dirty = w.pick_edit.as_ref().is_some_and(|(e, base)| e != base);
-    w.about.dirty() || w.fl_about.dirty() || w.notes.dirty() || pick_dirty
+    let classified_dirty = w.classified_edit.as_ref().is_some_and(|(e, base)| e != base);
+    w.about.dirty() || w.fl_about.dirty() || w.notes.dirty() || pick_dirty || classified_dirty
 }
 
 /// The close button was pressed when `open` is false:
@@ -506,10 +583,48 @@ fn save_all(w: &mut Window, actions: &mut Vec<ProfileAction>) {
             actions.push(ProfileAction::Save { target: w.id, data });
         }
     }
-    if let Some((e, base)) = &w.pick_edit
+    if let Some((e, base)) = &mut w.pick_edit
         && e != base
     {
-        actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick_of(e)))));
+        // a new pick gets its id once: saved again, it is the same pick
+        let pick = pick_of(e);
+        e.id = pick.id;
+        e.location = None;
+        *base = e.clone();
+        w.pick_sel = Some(pick.id);
+        actions.push(ProfileAction::Net(NetCommand::PickUpdate(Box::new(pick))));
+    }
+    if let Some((e, base)) = &mut w.classified_edit
+        && e != base
+    {
+        if e.id.is_nil() {
+            // a new classified is paid: its price is asked first
+            // (LLPanelProfileClassified::onSaveClick)
+            w.publish.get_or_insert_with(Publish::default);
+        } else {
+            e.location = None;
+            *base = e.clone();
+            actions.push(ProfileAction::Net(NetCommand::ClassifiedUpdate(Box::new(classified_of(e)))));
+        }
+    }
+}
+
+/// The classified sent for an edit (LLPanelProfileClassified::sendUpdate): a
+/// new one gets its id here.
+fn classified_of(e: &ClassifiedEdit) -> aurora_net::ClassifiedInfo {
+    aurora_net::ClassifiedInfo {
+        id: if e.id.is_nil() { Uuid::new_v4() } else { e.id },
+        category: e.category,
+        name: e.name.clone(),
+        desc: e.desc.clone(),
+        parcel: e.parcel,
+        snapshot: e.snapshot,
+        sim_name: e.sim_name.clone(),
+        parcel_name: e.parcel_name.clone(),
+        pos_global: e.pos,
+        flags: aurora_net::profile::classified_flags::request(e.auto_renew, e.mature),
+        price: e.price,
+        ..Default::default()
     }
 }
 

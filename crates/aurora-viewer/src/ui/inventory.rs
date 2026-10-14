@@ -89,6 +89,8 @@ pub enum InvAction {
         resident: Uuid,
     },
     Preview(Uuid),
+    /// Open a sky or water settings item in its editor (LLSettingsBridgeAction).
+    EditEnvironment(Uuid),
     Gesture(crate::ui::gestures::Action),
     Embedded {
         editor: Uuid,

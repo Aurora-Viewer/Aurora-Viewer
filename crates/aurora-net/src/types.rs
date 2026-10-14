@@ -47,6 +47,9 @@ pub struct RegionInfo {
     pub is_estate_manager: bool,
     /// RegionInfo3 ProductName ("Mainland / Full Region"...).
     pub product_name: String,
+    /// RegionHandshake BillableFactor: land here is charged as its area
+    /// times this (LLViewerRegion::getBillableFactor).
+    pub billable_factor: f32,
 }
 
 /// Parcel description from ParcelProperties (About Land).
@@ -71,6 +74,10 @@ pub struct ParcelInfo {
     /// Bounding box in region coordinates (z unused).
     pub aabb_min: Vec3,
     pub aabb_max: Vec3,
+    /// The parcel's cells: one bit per 4 m cell of the region, x + y * cells
+    /// (Bitmap; LLViewerParcelMgr keeps the agent parcel's as
+    /// mAgentParcelOverlay for inAgentParcel).
+    pub bitmap: Vec<u8>,
     /// Parcel prim capacity (with bonus) and usage.
     pub max_prims: i32,
     pub total_prims: i32,
@@ -82,6 +89,12 @@ pub struct ParcelInfo {
     pub selected_prims: i32,
     pub sim_max_prims: i32,
     pub sim_total_prims: i32,
+    /// Parcel grid units of the requested rectangle owned by the agent, by
+    /// others, and public (SelfCount / OtherCount / PublicCount:
+    /// LLParcelSelection's mSelected*Count).
+    pub self_count: i32,
+    pub other_count: i32,
+    pub public_count: i32,
     /// Auto-return of other residents' objects, minutes (0 = off).
     pub other_clean_time: i32,
     /// `PF_*` flags (llparcelflags.h).
@@ -554,6 +567,22 @@ pub enum NetEvent {
         online: bool,
     },
     Balance(i32),
+    /// MoneyBalanceReply's land: m² the account may hold (tier) and m² it
+    /// holds (LLStatusBar::setLandCredit / setLandCommitted).
+    LandHoldings {
+        credit: i32,
+        committed: i32,
+    },
+    /// Answer of the land helper to `LandToolPreflight`, for the billable
+    /// area and the L$ asked (so a stale answer can be told apart).
+    LandToolPreflight {
+        billable_area: i32,
+        currency_buy: i32,
+        result: Result<crate::land_tool::LandToolInfo, crate::currency::CurrencyError>,
+    },
+    /// Outcome of `LandToolBuy`: the website side of a land purchase is done
+    /// (membership, land use, L$); the ParcelBuy is sent next.
+    LandToolPrepared(Result<(), crate::currency::CurrencyError>),
     /// Answer of the currency helper to `CurrencyQuote`; `amount` is the one
     /// asked, so an estimate for a figure typed over can be dropped.
     CurrencyQuote {
@@ -653,6 +682,11 @@ pub enum NetEvent {
     },
     /// ClassifiedInfoReply.
     ClassifiedInfo(Box<crate::ClassifiedInfo>),
+    /// The answer of SearchStatRequest for one of our classifieds.
+    ClassifiedStats {
+        id: Uuid,
+        stats: crate::profile::ClassifiedStats,
+    },
     /// ParcelInfoReply (LLRemoteParcelInfoProcessor).
     ParcelInfo(Box<crate::ParcelSummary>),
     /// One reply packet of a directory search (Dir*Reply).
@@ -1308,6 +1342,17 @@ pub enum NetCommand {
     ClassifiedsRequest(Uuid),
     ClassifiedInfoRequest(Uuid),
     ClassifiedDelete(Uuid),
+    /// Create or save one of our classifieds (ClassifiedInfoUpdate,
+    /// LLPanelProfileClassified::sendUpdate): a new one is paid
+    /// `price` L$ by the simulator.
+    ClassifiedUpdate(Box<crate::ClassifiedInfo>),
+    /// The clicks on one of our classifieds (SearchStatRequest capability).
+    ClassifiedStatsRequest(Uuid),
+    /// A click to report (SearchStatTracking capability).
+    ClassifiedClick {
+        kind: crate::profile::ClassifiedClick,
+        classified: Box<crate::ClassifiedInfo>,
+    },
     /// ParcelInfoRequest (name and region of a pick's parcel, place details).
     ParcelInfoRequest(Uuid),
     /// A directory search (search.rs): `id` names the query in its replies,
@@ -1347,6 +1392,9 @@ pub enum NetCommand {
     },
     /// GroupNoticesListRequest.
     GroupNoticesListRequest(Uuid),
+    /// GroupNoticeRequest: one notice, answered by an IM_GROUP_NOTICE_REQUESTED
+    /// instant message.
+    GroupNoticeRequest(Uuid),
     /// Join a group (JoinGroupRequest).
     JoinGroup(Uuid),
     /// Invite residents into a group, each into a role (InviteGroupRequest,
@@ -1534,6 +1582,18 @@ pub enum NetCommand {
         quote: crate::currency::CurrencyQuote,
         password: crate::currency::Password,
     },
+    /// What buying land needs on the website side (XML-RPC
+    /// preflightBuyLandPrep on `<helper>landtool.php`).
+    LandToolPreflight {
+        helper: String,
+        billable_area: i32,
+        currency_buy: i32,
+    },
+    /// Do that website side (XML-RPC buyLandPrep), before the ParcelBuy.
+    LandToolBuy {
+        helper: String,
+        request: crate::land_tool::LandToolBuy,
+    },
     RequestInventoryMerchant,
     /// GET /merchant for the "Marketplace listings" window
     /// (LLMarketplaceData::initializeSLM).
@@ -1557,6 +1617,20 @@ pub enum NetCommand {
         request: Uuid,
         item: Uuid,
         asset_type: i32,
+        data: Vec<u8>,
+    },
+    /// A new environment settings item holding `data` (LLSettingsVOBase::
+    /// createInventoryItem): CreateInventoryItem, then the asset through
+    /// UpdateSettingsAgentInventory. Answered by `InventoryContentSaved`.
+    CreateSettingsItem {
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        /// LLSettingsType: 0 sky, 1 water, 2 day cycle.
+        subtype: u8,
+        /// The edited item's next owner permissions (Save As); None: the
+        /// defaults for new settings.
+        next_owner_mask: Option<u32>,
         data: Vec<u8>,
     },
     LoadGesture {

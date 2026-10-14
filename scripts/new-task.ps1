@@ -1,7 +1,9 @@
 ﻿<#
 .SYNOPSIS
     Creates the work folder of a task: a git worktree on its own branch,
-    next to the repository (..\work\<task>), with its own target\.
+    next to the repository (..\work\<task>), with its own target\. Its
+    first build takes the dependencies from the shared compiler cache when
+    sccache is installed (common.ps1).
 
     On its way, frees the target\ of the other tasks that no longer need
     it (PR merged, or no build for -IdleDays days): the code stays, only
@@ -62,6 +64,8 @@ if ($LASTEXITCODE -eq 0) {
 New-Item -ItemType Directory -Force -Path $p.Work -ErrorAction Stop | Out-Null
 Invoke-Checked 'git worktree add' { git -C $p.Main worktree add -b $branch $dir $base }
 New-Item -ItemType Directory -Force -Path (Join-Path $dir '.scratch') | Out-Null
+# the first build of the task takes the dependencies from the shared cache
+Sync-BuildCache
 
 Write-Host ""
 Write-Host "Task ready:" -ForegroundColor Green

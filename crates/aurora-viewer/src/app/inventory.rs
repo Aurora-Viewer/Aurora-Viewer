@@ -272,6 +272,7 @@ impl App {
                 self.scene.sounds.want(asset);
                 self.scene.sounds.play_ui(self.audio_engine.as_ref(), asset);
             }
+            InvAction::EditEnvironment(id) => self.env_editor_load(id),
             InvAction::Preview(id) => {
                 if self.world.inventory.items.get(&id).is_some_and(|it| it.asset_type == 21) {
                     self.gesture_action(crate::ui::gestures::Action::Open(id));
@@ -507,6 +508,10 @@ impl App {
 
     pub(super) fn inventory_preview(&mut self, item: Uuid, asset: Uuid, result: Result<Vec<u8>, String>) {
         if self.world.inventory.items.get(&item).is_none_or(|it| it.asset_id != asset) {
+            return;
+        }
+        if self.env_editor.loading == Some(item) {
+            self.env_editor_asset(item, result);
             return;
         }
         let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);

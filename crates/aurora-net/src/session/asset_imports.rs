@@ -12,6 +12,8 @@ use crate::inventory::{
 #[derive(Default)]
 pub(super) struct Imports {
     creates: HashMap<u32, Pending>,
+    /// New environment settings items waiting for their inventory callback.
+    settings: HashMap<u32, SettingsCreate>,
     meshes: Arc<Mutex<HashMap<Uuid, MeshOffer>>>,
     pub balance: Option<i32>,
 }
@@ -20,6 +22,24 @@ struct MeshOffer {
     upload: crate::inventory::mesh_upload::Request,
     offer: Option<crate::inventory::mesh_upload::Offer>,
 }
+/// LLSettingsVOBase::createInventoryItem: the item first, its asset once the
+/// callback names it (onInventoryItemCreated → updateInventoryItem).
+struct SettingsCreate {
+    started: Instant,
+    request: Uuid,
+    folder: Uuid,
+    data: Vec<u8>,
+    /// UpdateSettingsAgentInventory and FetchInventory2.
+    caps: (String, String),
+}
+
+/// PERM_COPY (llpermissionsflags.h).
+const PERM_COPY: u32 = 0x8000;
+/// LLFloaterPerms::getNextOwnerPerms("Settings") with Firestorm's defaults:
+/// PERM_MOVE, plus SettingsNextOwnerModify and SettingsNextOwnerTransfer
+/// (on); SettingsNextOwnerCopy is not defined, so it reads as off.
+const SETTINGS_NEXT_OWNER: u32 = 0x0008_0000 | 0x4000 | 0x2000;
+
 struct Pending {
     started: Instant,
     request: Uuid,
@@ -328,7 +348,117 @@ impl Session<'_> {
         self.send_main(&message, true);
     }
 
+    /// LLSettingsVOBase::createInventoryItem (create_inventory_settings): a
+    /// new sky, water or day cycle item in `parent`, its asset uploaded once
+    /// the simulator has created it.
+    pub(super) fn create_settings_item(
+        &mut self,
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        subtype: u8,
+        next_owner_mask: Option<u32>,
+        data: Vec<u8>,
+    ) {
+        let fail = |sh: &Shared, reason: &str| {
+            emit(
+                sh,
+                NetEvent::InventoryContentSaved {
+                    request,
+                    item: Uuid::nil(),
+                    result: Err(reason.to_owned()),
+                },
+            );
+        };
+        // isInventoryEnabled: both settings capabilities ("SettingsUnsuported")
+        let caps = self
+            .main_cap("UpdateSettingsAgentInventory")
+            .filter(|_| self.main_cap("UpdateSettingsTaskInventory").is_some())
+            .zip(self.main_cap("FetchInventory2"));
+        let Some(caps) = caps else {
+            fail(self.sh, aurora_i18n::tr!("session-saving-is-unavailable-in-this-region"));
+            return;
+        };
+        if self.asset_imports.settings.len() >= 8 || subtype > 2 {
+            fail(self.sh, aurora_i18n::tr!("session-saving-is-unavailable-in-this-region"));
+            return;
+        }
+        let callback = self.inventory_callback(false);
+        let mut message = CreateInventoryItem::default();
+        message.agent_data.agent_id = self.agent_id();
+        message.agent_data.session_id = self.session_id();
+        message.inventory_block.folder_id = parent;
+        message.inventory_block.callback_id = callback;
+        message.inventory_block.transaction_id = Uuid::new_v4();
+        message.inventory_block.next_owner_mask = next_owner_mask.unwrap_or(SETTINGS_NEXT_OWNER);
+        // AT_SETTINGS, IT_SETTINGS; the settings type rides in the
+        // wearable type field (create_inventory_settings)
+        message.inventory_block.type_ = 56;
+        message.inventory_block.inv_type = 25;
+        message.inventory_block.wearable_type = subtype;
+        message.inventory_block.name = str_field(&name);
+        message.inventory_block.description = str_field("");
+        self.asset_imports.settings.insert(
+            callback,
+            SettingsCreate {
+                started: Instant::now(),
+                request,
+                folder: parent,
+                data,
+                caps,
+            },
+        );
+        self.send_main(&message, true);
+    }
+
+    /// onInventoryItemCreated: everyone may copy the new item, then its asset
+    /// goes up (updateInventoryItem).
+    fn settings_created(&mut self, pending: SettingsCreate, item: &InvItem) {
+        let owner = self.agent_id();
+        if item.id.is_nil() || item.asset_type != 56 || item.parent != pending.folder || item.owner != owner {
+            emit(
+                self.sh,
+                NetEvent::InventoryContentSaved {
+                    request: pending.request,
+                    item: item.id,
+                    result: Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into()),
+                },
+            );
+            return;
+        }
+        if item.everyone_mask != PERM_COPY {
+            let callback = self.inventory_callback(false);
+            let mut message = UpdateInventoryItem::default();
+            message.agent_data.agent_id = owner;
+            message.agent_data.session_id = self.session_id();
+            message.agent_data.transaction_id = Uuid::new_v4();
+            let rights = crate::inventory::upload::Permissions {
+                next_owner: item.next_owner_mask,
+                group: item.group_mask,
+                everyone: PERM_COPY,
+            };
+            message.inventory_data.push(permission_update(item, rights, callback));
+            self.send_main(&message, true);
+        }
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        let id = item.id;
+        tokio::spawn(async move {
+            let (cap, fetch) = pending.caps;
+            let result = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, id, 56, pending.data).await;
+            let _ = events.send(NetEvent::InventoryContentSaved {
+                request: pending.request,
+                item: id,
+                result,
+            });
+        });
+    }
+
     pub(super) fn asset_created(&mut self, callback: u32, item: &InvItem) {
+        if let Some(pending) = self.asset_imports.settings.remove(&callback) {
+            self.settings_created(pending, item);
+            return;
+        }
         let Some(mut pending) = self.asset_imports.creates.remove(&callback) else {
             return;
         };
@@ -428,6 +558,20 @@ impl Session<'_> {
             .meshes
             .lock()
             .retain(|_, pending| pending.started.elapsed() < Duration::from_secs(300));
+        self.asset_imports.settings.retain(|_, pending| {
+            if pending.started.elapsed() < Duration::from_secs(60) {
+                return true;
+            }
+            emit(
+                self.sh,
+                NetEvent::InventoryContentSaved {
+                    request: pending.request,
+                    item: Uuid::nil(),
+                    result: Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into()),
+                },
+            );
+            false
+        });
         self.asset_imports.creates.retain(|_, pending| {
             if pending.started.elapsed() < Duration::from_secs(60) {
                 return true;

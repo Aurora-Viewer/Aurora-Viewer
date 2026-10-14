@@ -14,6 +14,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "AcceptGroupInvite",
     "AgentPreferences",
     "AgentProfile",
+    // the scripts of my attachments (Script info)
+    "AttachmentResources",
     "AvatarPickerSearch",
     "AvatarRenderInfo",
     "ChatSessionRequest",
@@ -29,6 +31,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "FetchInventoryDescendents2",
     "FetchLib2",
     "FetchLibDescendents2",
+    // the experience picker of About Land (LLExperienceCache::findExperienceByName)
+    "FindExperienceByName",
     "GetCreatorExperiences",
     "GetDisplayNames",
     "GetExperienceInfo",
@@ -44,6 +48,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "IncrementCOFVersion",
     "InventoryAPIv3",
     "InventoryThumbnailUpload",
+    // the scripts of a parcel (LLFloaterScriptLimits)
+    "LandResources",
     "NewFileAgentInventory",
     "MeshUploadFlag",
     "DirectDelivery",
@@ -61,6 +67,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "RenderMaterials",
     "RequestTaskInventory",
     "ResourceCostSelected",
+    // the clicks of a classified (LLPanelProfileClassified)
+    "SearchStatRequest",
+    "SearchStatTracking",
     // abuse reports, with or without their screenshot (sendReportViaCaps)
     "SendUserReport",
     "SendUserReportWithScreenshot",
@@ -77,6 +86,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "UpdateGestureAgentInventory",
     "UpdateScriptAgent",
     "UpdateScriptTask",
+    // environment settings items (LLEnvironment::isInventoryEnabled needs both)
+    "UpdateSettingsAgentInventory",
+    "UpdateSettingsTaskInventory",
     "ViewerAsset",
     "ViewerStats",
     "VoiceSignalingRequest",

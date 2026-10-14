@@ -57,6 +57,7 @@ fn texts(st: &mut GroupProfileUi, world: &World, classic: bool) -> (Vec<String>,
         avatar_pics: &pics,
         classic,
         now: 0.0,
+        group_calls: false,
     };
     let mut actions = Vec::new();
     let mut shapes = Vec::new();
@@ -277,4 +278,92 @@ fn status_reads_online_recent_days_and_dates() {
         members::status_text(&LastSeen::Date(2026, 9, 12), today),
         aurora_i18n::tr!("profile-date", month = "09", day = "12", year = "2026")
     );
+}
+
+#[test]
+fn invitations_skip_members_and_ask_before_making_owners() {
+    let officer = MEMBER | powers::MEMBER_INVITE | powers::ROLE_ASSIGN_MEMBER_LIMITED;
+    let mut world = world(true, officer);
+    // the demo group's owners' role
+    let owners = world
+        .group_data
+        .get(&DEMO_GROUP1)
+        .and_then(|d| d.roles.values().find(|r| r.name == "Owners").map(|r| r.id));
+    if let (Some(g), Some(o)) = (world.search.groups.get_mut(&DEMO_GROUP1), owners) {
+        g.owner_role = o;
+    }
+    let v = view::View::of(&world, DEMO_GROUP1);
+    let outsider = Uuid::from_u128(0xD0D0_0000_0000_0000_0000_0000_0000_0064);
+    let mut st = invite::InviteUi::default();
+    st.open(DEMO_GROUP1, vec![outsider, crate::demo::DEMO_LOUP]);
+    // everyone's role: the member is left out and said so
+    let pairs = st.submit(&v).expect("sent");
+    assert_eq!(pairs, vec![(outsider, Uuid::nil())]);
+    assert_eq!(st.notice, Some(invite::Notice::AlreadyInGroup));
+
+    // the owners' role waits for a yes
+    st.open(DEMO_GROUP1, vec![outsider]);
+    st.role = owners.expect("owners");
+    assert!(st.submit(&v).is_none(), "asks first");
+    assert_eq!(st.submit(&v).expect("confirmed"), vec![(outsider, st.role)]);
+
+    // more than 100 at once: nothing goes
+    st.open(DEMO_GROUP1, (0..101u128).map(|i| Uuid::from_u128(0xABC0_0000 + i)).collect());
+    st.role = Uuid::nil();
+    assert_eq!(st.submit(&v), Some(Vec::new()));
+    assert_eq!(st.notice, Some(invite::Notice::TooMany));
+}
+
+#[test]
+fn invite_shows_with_the_ability_and_call_waits_for_group_voice() {
+    for (abilities, invites) in [(MEMBER, false), (MEMBER | powers::MEMBER_INVITE, true)] {
+        let mut world = world(true, abilities);
+        let mut st = opened(&mut world);
+        let (texts, _) = texts(&mut st, &world, false);
+        assert_eq!(has(&texts, "ui-group-profile-invite"), invites);
+        assert!(has(&texts, "ui-group-profile-call"));
+    }
+}
+
+/// Feed the demo server's answers to the commands of the group data.
+fn pump(world: &mut World) {
+    for _ in 0..3 {
+        let mut cmds = world.group_data.take_commands();
+        cmds.extend(world.take_social_commands());
+        for cmd in cmds {
+            for ev in crate::demo::group::reply(&cmd).unwrap_or_default() {
+                world.apply(ev);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_notice_opens_with_its_attachment_and_is_saved_once() {
+    let mut world = world(true, MEMBER);
+    let first = world
+        .group_data
+        .get(&DEMO_GROUP1)
+        .and_then(|d| d.notices.as_ref())
+        .and_then(|l| l.first().map(|n| n.id))
+        .expect("notices");
+    world.group_data.open_notice(DEMO_GROUP1, first);
+    pump(&mut world);
+    let n = world
+        .group_data
+        .get(&DEMO_GROUP1)
+        .and_then(|d| d.notice.clone())
+        .expect("notice shown");
+    assert_eq!(n.id, first);
+    assert_eq!(n.subject, aurora_i18n::tr!("demo-group-notice-workshop"));
+    assert_eq!(n.attachment.as_ref().map(|a| a.1), Some(6));
+    assert!(world.group_data.is_read(&DEMO_GROUP1, &first));
+    world.save_notice_attachment(DEMO_GROUP1);
+    let cmds = world.group_data.take_commands();
+    assert!(
+        matches!(&cmds[..], [aurora_net::NetCommand::SendImDialog { dialog: 33, .. }]),
+        "{cmds:?}"
+    );
+    world.save_notice_attachment(DEMO_GROUP1);
+    assert!(world.group_data.take_commands().is_empty(), "saved once");
 }

@@ -12,6 +12,7 @@ pub mod fetch;
 pub mod groups;
 pub mod inventory;
 pub mod land;
+pub mod land_tool;
 pub mod login;
 pub mod objcache;
 pub mod objects;

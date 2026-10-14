@@ -15,11 +15,9 @@ use egui::{RichText, Vec2};
 const ALT_MIN: f32 = 100.0;
 const ALT_MAX: f32 = 4000.0;
 
-pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut World) {
-    let parcel = v.parcel.clone();
-    let env = world.land.sel.as_ref().map(|s| s.env.clone()).unwrap_or_default();
-    // setControlsEnabled: why the panel is unavailable, in Firestorm's order
-    let unavailable = match (&parcel, &env) {
+/// setControlsEnabled: why the panel is unavailable, in Firestorm's order.
+pub(super) fn unavailable(v: &View, env: &EnvState) -> Option<&'static str> {
+    match (&v.parcel, env) {
         (_, EnvState::Failed(e)) => {
             log::debug!("parcel environment unavailable: {e}");
             Some(aurora_i18n::tr!(
@@ -39,8 +37,43 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             "ui-land-environment-the-parcel-must-be-at-least-128-square-meters"
         )),
         _ => None,
-    };
-    if let Some(why) = unavailable {
+    }
+}
+
+/// The day's length and offset in hours as the sliders show them (the
+/// offset between -12 and 12), or the one being dragged.
+pub(super) fn day_hours(summary: Option<&EnvSummary>, drag: Option<(f32, f32)>) -> (f32, f32) {
+    match (summary, drag) {
+        (_, Some(d)) => d,
+        (Some(e), None) if e.day_length > 0 => {
+            let mut off = e.day_offset as f32 / 3600.0;
+            if off > 12.0 {
+                off -= 24.0;
+            }
+            (e.day_length as f32 / 3600.0, off)
+        }
+        _ => (4.0, -8.0),
+    }
+}
+
+/// commitDayLenOffsetChanges.
+pub(super) fn commit_day(world: &mut World, length_h: f32, offset_h: f32) {
+    let length = (length_h * 3600.0) as i32;
+    let mut offset = (offset_h * 3600.0) as i32;
+    if offset <= 0 {
+        offset += 24 * 3600;
+    }
+    world.land.environment(|local_id| LandCommand::EnvironmentUpdate {
+        local_id,
+        day_length: length,
+        day_offset: offset,
+    });
+}
+
+pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut World) {
+    let parcel = v.parcel.clone();
+    let env = world.land.sel.as_ref().map(|s| s.env.clone()).unwrap_or_default();
+    if let Some(why) = unavailable(v, &env) {
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
             ui.add(egui::Label::new(RichText::new(why).size(12.5).color(p.muted)).wrap());
@@ -88,17 +121,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                 .size(12.5)
                 .color(p.ink),
         );
-        let (mut length_h, mut offset_h) = match (&summary, s.env_drag) {
-            (_, Some(d)) => d,
-            (Some(e), None) if e.day_length > 0 => {
-                let mut off = e.day_offset as f32 / 3600.0;
-                if off > 12.0 {
-                    off -= 24.0;
-                }
-                (e.day_length as f32 / 3600.0, off)
-            }
-            _ => (4.0, -8.0),
-        };
+        let (mut length_h, mut offset_h) = day_hours(summary.as_ref(), s.env_drag);
         dim(ui, p, aurora_i18n::tr!("ui-land-environment-day-length-hours"));
         let r1 = ui.add_enabled(
             can_enable,
@@ -122,16 +145,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         if !dragging && s.env_drag.is_some() {
             // onDayLenOffsetMouseUp → commitDayLenOffsetChanges
             s.env_drag = None;
-            let length = (length_h * 3600.0) as i32;
-            let mut offset = (offset_h * 3600.0) as i32;
-            if offset <= 0 {
-                offset += 24 * 3600;
-            }
-            world.land.environment(|local_id| LandCommand::EnvironmentUpdate {
-                local_id,
-                day_length: length,
-                day_offset: offset,
-            });
+            commit_day(world, length_h, offset_h);
         }
         // the apparent time follows the sliders while they move
         let shown = summary.as_ref().map(|e| EnvSummary {

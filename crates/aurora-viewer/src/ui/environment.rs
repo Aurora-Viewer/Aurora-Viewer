@@ -454,9 +454,21 @@ fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
     ui.label(RichText::new(title).size(13.0).strong().color(p.ink));
 }
 
-fn slider(ui: &mut egui::Ui, p: &Palette, label: &str, v: &mut f32, range: std::ops::RangeInclusive<f32>) -> egui::Response {
+pub(super) fn slider(ui: &mut egui::Ui, p: &Palette, label: &str, v: &mut f32, range: std::ops::RangeInclusive<f32>) -> egui::Response {
+    slider_w(ui, p, label, v, range, 130.0)
+}
+
+/// [`slider`] with a wider label column (the sky and water editors).
+pub(super) fn slider_w(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    label: &str,
+    v: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    label_w: f32,
+) -> egui::Response {
     ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(130.0, 18.0), egui::Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(label_w, 18.0), egui::Sense::hover());
         ui.painter().text(
             rect.left_center(),
             egui::Align2::LEFT_CENTER,
@@ -477,8 +489,13 @@ fn slider(ui: &mut egui::Ui, p: &Palette, label: &str, v: &mut f32, range: std::
 
 /// A label and its color swatch (LLColorSwatchCtrl) showing `value / scale`,
 /// two grid cells.
-fn color(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut Vec3, scale: f32) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(122.0, 20.0), egui::Sense::hover());
+pub(super) fn color(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut Vec3, scale: f32) {
+    color_w(ui, p, label, value, scale, 122.0);
+}
+
+/// [`color`] with a wider label column (the sky and water editors).
+pub(super) fn color_w(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut Vec3, scale: f32, label_w: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(label_w, 20.0), egui::Sense::hover());
     ui.painter().text(
         rect.left_center(),
         egui::Align2::LEFT_CENTER,
