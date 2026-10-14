@@ -3,7 +3,7 @@
 //! originally LGPL 2.1): our own target with its priorities and timeouts, sent to the
 //! simulator as a ViewerEffect, and the targets other avatars send us.
 
-use glam::DVec3;
+use glam::{DVec3, Quat, Vec3};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -179,6 +179,19 @@ pub fn color(kind: u8) -> [f32; 3] {
         [1.0, 1.0, 1.0],
     ];
     COLORS[kind.min(NUM - 1) as usize]
+}
+
+/// Where the head looks when the cursor moves (LLAgentCamera::updateLookAt,
+/// third person): the camera's view turned by the cursor's offset from the
+/// middle of the window (`x` from -0.5 on the left to 0.5 on the right, `y`
+/// from -0.5 at the bottom to 0.5 at the top), `yaw` / `pitch` degrees
+/// across the whole window (YawFromMousePosition, PitchFromMousePosition).
+/// LLCoordFrame::yaw then pitch turn the camera's own frame: about its up
+/// axis, then about its left axis. A direction from the head (FREELOOK).
+pub fn cursor_direction(forward: Vec3, x: f32, y: f32, yaw: f32, pitch: f32) -> Vec3 {
+    let left = Vec3::Z.cross(forward).normalize_or(Vec3::Y);
+    let up = forward.cross(left).normalize_or(Vec3::Z);
+    Quat::from_axis_angle(up, -x * yaw.to_radians()) * Quat::from_axis_angle(left, -y * pitch.to_radians()) * forward
 }
 
 /// Types whose crosshair gets a line to its avatar (ExodusLookAtLines).
@@ -384,6 +397,29 @@ mod tests {
         assert!(!on.private && !on.private_local && !on.limit_distance);
         assert_eq!(Settings::from_former(Some(true), Some(50.0), 64.0).max_distance, 32.0);
         assert_eq!(Settings::from_former(None, None, 64.0), Settings::default());
+    }
+
+    #[test]
+    fn the_head_turns_toward_the_cursor() {
+        let close = |a: Vec3, b: Vec3| (a - b).length() < 1e-5;
+        let h = std::f32::consts::FRAC_1_SQRT_2;
+        // middle of the window: the camera's view
+        assert!(close(cursor_direction(Vec3::X, 0.0, 0.0, 90.0, 90.0), Vec3::X));
+        // left edge, 90° across the window: 45° to the left (+Y)
+        assert!(close(cursor_direction(Vec3::X, -0.5, 0.0, 90.0, 90.0), Vec3::new(h, h, 0.0)));
+        assert!(close(cursor_direction(Vec3::X, 0.5, 0.0, 90.0, 90.0), Vec3::new(h, -h, 0.0)));
+        // top edge: 45° up; bottom: down
+        assert!(close(cursor_direction(Vec3::X, 0.0, 0.5, 90.0, 90.0), Vec3::new(h, 0.0, h)));
+        assert!(close(cursor_direction(Vec3::X, 0.0, -0.5, 90.0, 90.0), Vec3::new(h, 0.0, -h)));
+        // 0°: the head does not follow
+        assert!(close(cursor_direction(Vec3::X, 0.4, -0.3, 0.0, 0.0), Vec3::X));
+        // a camera looking 30° down: the yaw turns about the camera's own up
+        // axis, so the direction stays 45° away from the view
+        let down = Vec3::new(30f32.to_radians().cos(), 0.0, -30f32.to_radians().sin());
+        let d = cursor_direction(down, -0.5, 0.0, 90.0, 0.0);
+        assert!((d.dot(down) - h).abs() < 1e-5 && d.y > 0.0);
+        // and the pitch lifts it back to the horizon
+        assert!(close(cursor_direction(down, 0.0, 0.5, 0.0, 60.0), Vec3::X));
     }
 
     #[test]

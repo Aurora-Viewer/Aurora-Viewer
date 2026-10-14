@@ -2467,15 +2467,13 @@ impl App {
         } else if self.camera.mouselook() {
             (lookat::MOUSELOOK, self.camera.forward())
         } else {
-            // YawFromMousePosition / PitchFromMousePosition: degrees
-            // across the whole window
-            let fwd = self.camera.forward();
-            let xc = cx / width.max(1.0) - 0.5;
-            let yc = 0.5 - cy / height.max(1.0);
-            let left = Vec3::Z.cross(fwd).normalize_or(Vec3::Y);
-            let dir = glam::Quat::from_axis_angle(Vec3::Z, -xc * prefs.head_yaw.to_radians())
-                * glam::Quat::from_axis_angle(left, -yc * prefs.head_pitch.to_radians())
-                * fwd;
+            let dir = lookat::cursor_direction(
+                self.camera.forward(),
+                cx / width.max(1.0) - 0.5,
+                0.5 - cy / height.max(1.0),
+                prefs.head_yaw,
+                prefs.head_pitch,
+            );
             (lookat::FREELOOK, dir)
         };
         self.set_look_at(kind, Some(me), offset.as_dvec3());
@@ -5725,18 +5723,31 @@ impl App {
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
         // the window, moving), Violet Wolf looks at a point north of him;
-        // =targets: the crosshairs too, every avatar looking somewhere
+        // =own: the crosshairs shown, ours too, the real cursor; =own,x,y:
+        // the cursor at (x, y), fractions of the window, moving by a pixel
+        // (the head follows a cursor that moves); =targets: own
+        // with every other avatar looking somewhere new every 2 s
         if self.demo
-            && let Some(mode) = std::env::var_os("AURORA_DEMO_LOOKAT")
+            && let Ok(value) = std::env::var("AURORA_DEMO_LOOKAT")
         {
+            let mut parts = value.split(',');
+            let mode = parts.next().unwrap_or_default().trim();
+            let pinned: Vec<f32> = parts.filter_map(|v| v.trim().parse().ok()).collect();
             self.demo_look_at = true;
-            self.demo_look_at_targets = mode == "targets";
-            if self.demo_look_at_targets && self.frame_count >= 200 && self.frame_count.is_multiple_of(120) {
+            self.demo_look_at_targets = matches!(mode, "own" | "targets");
+            if mode == "targets" && self.frame_count >= 200 && self.frame_count.is_multiple_of(120) {
                 self.demo_look_at_everyone();
             }
-            if let Some(g) = self.gfx.as_ref() {
+            // the cursor is pinned for captures; "own" and "targets" leave
+            // the real one alone
+            let pin = match (mode, pinned.as_slice()) {
+                ("own", [x, y]) => Some((*x, *y, (self.frame_count % 2) as f32)),
+                ("own" | "targets", _) => None,
+                _ => Some((0.15, 0.3, (self.frame_count % 2) as f32)),
+            };
+            if let (Some((x, y, wiggle)), Some(g)) = (pin, self.gfx.as_ref()) {
                 let (w, h) = g.renderer.size();
-                self.cursor_pos = (w as f32 * 0.15 + (self.frame_count % 2) as f32, h as f32 * 0.3);
+                self.cursor_pos = (w as f32 * x + wiggle, h as f32 * y);
             }
             if self.frame_count == 230
                 && let Some((mx, my)) = self.world.main_origin()
