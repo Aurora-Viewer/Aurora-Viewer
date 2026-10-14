@@ -1350,6 +1350,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
+| `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet` or `legacy` | People › Near you with the mock-up's residents: rich rows, compact crowd, a person's sheet, Firestorm's table |
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
@@ -1992,6 +1993,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `AURORA_FPS_LIMIT=60`, they are greyed out at frame 780 and removed from the
   list at frame 1400. `friends` and `groups`: these tabs. `profile`: the
   Groups tab and the "Group Profile" window of the first group.
+- **`AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy`**: People › Near you in
+  Aurora's look, with the residents of the People mock-up (names, ranges,
+  states, arrivals), alone on screen. `rows`: the rich rows grouped by
+  range (whisper 10 m, say 20 m, shout 100 m, beyond), Tess selected with
+  her quick actions out as under the pointer. `sheet`: the window at the
+  mock-up's 860 × 600 with Nova's sheet (the rights she has and the ones
+  we grant her, what the radar knows); a click on a row of a narrower
+  window widens it by the sheet, and its cross gives the width back.
+  `crowd`: forty residents in the compact density. `hover` and
+  `crowd-hover`: `rows` and `crowd` with a friend under the pointer
+  carrying every badge: the quick actions take the place of the time and
+  the range, beside the badges, never over them. `legacy`: the same
+  residents in Firestorm's table, for this run only (the preference is
+  not changed). Capture `crowd` at frame 900 or later: the profiles
+  (payment info, notes) arrive four a second.
 - **`AURORA_DEMO_STATUSMENU=1|invisible`**: the menu of the status
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing

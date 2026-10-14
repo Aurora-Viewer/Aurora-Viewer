@@ -33,6 +33,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
         NotificationsStyle::Legacy
     };
     s.world_map_style = if aurora { WorldMapStyle::Aurora } else { WorldMapStyle::Legacy };
+    s.classic_people = !aurora;
     s.classic_profiles = !aurora;
     s.photo_window = if aurora {
         PhotoWindowStyle::Aurora
@@ -379,6 +380,16 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
         c |= look_choice(
             ui,
             p,
+            aurora_i18n::tr!("ui-options-aurora-people"),
+            aurora_i18n::tr!("ui-options-aurora-people-help"),
+            aurora_i18n::tr!("ui-options-aurora-people-rows"),
+            aurora_i18n::tr!("ui-options-aurora-people-table"),
+            &mut s.classic_people,
+        );
+        between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
             aurora_i18n::tr!("ui-options-aurora-profiles"),
             aurora_i18n::tr!("ui-options-aurora-profiles-help"),
             aurora_i18n::tr!("ui-options-aurora-profiles-aurora"),
@@ -503,6 +514,7 @@ mod tests {
         assert_eq!(s.lookat.aim, Aim::Direction);
         assert_eq!(s.notifications_style, NotificationsStyle::Legacy);
         assert_eq!(s.world_map_style, WorldMapStyle::Legacy);
+        assert!(s.classic_people, "People › Near you shows the radar table");
         assert!(s.classic_profiles);
         assert_eq!(s.photo_window, PhotoWindowStyle::Legacy);
         assert!(s.classic_about_land, "About Land opens Firestorm's nine tabs");
@@ -517,6 +529,10 @@ mod tests {
         assert_eq!(s.notifications_style, NotificationsStyle::Aurora);
         assert_eq!(fresh.notifications_style, NotificationsStyle::Aurora);
         assert_eq!(s.world_map_style, fresh.world_map_style);
+        assert!(
+            !s.classic_people && !fresh.classic_people,
+            "the rows grouped by range are the default"
+        );
         assert_eq!(s.classic_profiles, fresh.classic_profiles);
         assert_eq!(s.photo_window, PhotoWindowStyle::Aurora);
         assert_eq!(fresh.photo_window, PhotoWindowStyle::Aurora);
@@ -590,6 +606,7 @@ mod tests {
             "ui-options-aurora-look-at",
             "ui-options-aurora-notifications",
             "ui-options-aurora-world-map",
+            "ui-options-aurora-people",
             "ui-options-aurora-profiles",
             "ui-options-aurora-about-land",
             "ui-options-aurora-pay-window",
@@ -613,6 +630,7 @@ mod tests {
             "ui-options-aurora-plates",
             "ui-options-aurora-halo",
             "ui-options-aurora-world-map-full",
+            "ui-options-aurora-people-rows",
             "ui-options-aurora-profiles-aurora",
             "ui-options-aurora-about-land-aurora",
             "ui-options-aurora-aim-point",

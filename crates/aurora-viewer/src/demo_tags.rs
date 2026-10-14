@@ -154,7 +154,7 @@ fn residents() -> [Resident; 9] {
 }
 
 /// Texture of a demo profile picture.
-const fn picture_texture(gradient: u8) -> Uuid {
+pub(crate) const fn picture_texture(gradient: u8) -> Uuid {
     Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0100 | gradient as u128)
 }
 

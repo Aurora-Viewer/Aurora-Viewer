@@ -332,6 +332,10 @@ pub struct Settings {
     pub classic_profiles: bool,
     /// Firestorm's Pay window (floater_pay.xml) instead of `ui/pay.rs`.
     pub classic_pay_window: bool,
+    /// People › Near you as Firestorm's radar table (`ui/people/radar.rs`)
+    /// instead of the rows grouped by range and the sheet of
+    /// `ui/people/nearby.rs`.
+    pub classic_people: bool,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
@@ -775,6 +779,7 @@ impl Default for Settings {
             classic_name_tags: false,
             classic_profiles: false,
             classic_pay_window: false,
+            classic_people: false,
             plates_friends_only_full: false,
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,
