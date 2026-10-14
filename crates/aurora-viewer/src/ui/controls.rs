@@ -174,7 +174,7 @@ impl ControlsUi {
                 (Tab::Camera, "video-filled", aurora_i18n::tr!("controls-tab-camera")),
                 (Tab::Movement, "walk", aurora_i18n::tr!("controls-tab-movement")),
             ] {
-                if widgets::pills::pill_tab_wide(ui, p, icon, label, self.tab == tab, INNER / 2.0).clicked() {
+                if widgets::pill_tab_wide(ui, p, icon, label, self.tab == tab, INNER / 2.0).clicked() {
                     self.tab = tab;
                 }
             }

@@ -568,6 +568,73 @@ fn more_menu(resp: &egui::Response, c: &mut Ctx, v: &View, actions: &mut Vec<Gro
     });
 }
 
+/// One tab of the row: its icon, its name, a count after it. A tab we may
+/// not open is greyed, `Err` saying why.
+fn tab_button(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    count: Option<String>,
+    accent: bool,
+    selected: bool,
+    enabled: Result<(), &str>,
+) -> egui::Response {
+    let why = enabled.err();
+    let enabled = why.is_none();
+    let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+    let ink = if !enabled {
+        p.muted_dim
+    } else if selected {
+        p.ink
+    } else {
+        p.muted
+    };
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
+    // an unread count is a pill in the accent (`accent`)
+    let count_ink = if accent { p.on_accent } else { p.muted_dim };
+    let count = count.map(|t| {
+        ui.painter()
+            .layout_no_wrap(t, FontId::new(11.0, crate::ui::fonts::semibold(ui.ctx())), count_ink)
+    });
+    let pad = if accent { 5.0 } else { 0.0 };
+    let count_w = count.as_ref().map_or(0.0, |g| 5.0 + g.size().x + pad * 2.0);
+    let size = Vec2::new(12.0 + 15.0 + 5.0 + galley.size().x + count_w + 12.0, 28.0);
+    let (rect, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    if selected {
+        ui.painter().rect_filled(rect, radius, p.raised);
+    } else if enabled && resp.hovered() {
+        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.5));
+    }
+    let mut x = rect.left() + 12.0;
+    if let Some(t) = crate::ui::icons::global(icon) {
+        let r = Rect::from_center_size(Pos2::new(x + 7.5, rect.center().y), Vec2::splat(15.0));
+        ui.painter()
+            .image(t.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), ink);
+    }
+    x += 15.0 + 5.0;
+    let w = galley.size().x;
+    ui.painter()
+        .galley(Pos2::new(x, rect.center().y - galley.size().y / 2.0).round(), galley, ink);
+    if let Some(g) = count {
+        let pos = Pos2::new(x + w + 5.0 + pad, rect.center().y - g.size().y / 2.0);
+        if accent {
+            let pill = Rect::from_min_size(
+                Pos2::new(x + w + 5.0, rect.center().y - 8.0),
+                Vec2::new(g.size().x + pad * 2.0, 16.0),
+            );
+            ui.painter().rect_filled(pill, ui.visuals().window_corner_radius, p.violet);
+        }
+        ui.painter().galley(pos.round(), g, count_ink);
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label));
+    match why {
+        None => resp.on_hover_cursor(egui::CursorIcon::PointingHand),
+        Some(why) => resp.on_hover_text(why),
+    }
+}
+
 /// Home, Members, Notices, Land and L$ and the tab still to port
 /// (Experiences, greyed).
 fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) {
@@ -584,7 +651,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
     ui.horizontal(|ui| {
         ui.add_space(4.0);
         ui.spacing_mut().item_spacing.x = 2.0;
-        if crate::ui::widgets::pills::pill_tab(
+        if tab_button(
             ui,
             p,
             "home-filled",
@@ -599,7 +666,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             *tab = Tab::Home;
         }
         let count = v.member_count().map(aurora_i18n::integer);
-        if crate::ui::widgets::pills::pill_tab(
+        if tab_button(
             ui,
             p,
             "users",
@@ -615,7 +682,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
         }
         // the unread notices on the tab
         let unread = (unread > 0).then(|| aurora_i18n::integer(unread as i64));
-        if crate::ui::widgets::pills::pill_tab(
+        if tab_button(
             ui,
             p,
             "speakerphone",
@@ -629,7 +696,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
         {
             *tab = Tab::Notices;
         }
-        if crate::ui::widgets::pills::pill_tab(
+        if tab_button(
             ui,
             p,
             "map-2",
@@ -643,7 +710,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
         {
             *tab = Tab::Land;
         }
-        crate::ui::widgets::pills::pill_tab(
+        tab_button(
             ui,
             p,
             "flask-filled",

@@ -1,13 +1,13 @@
-//! The tabs in pills of the redrawn windows (group profile, Controls):
-//! first written for one window, shared here once a second one needed them.
+//! The tabs, filter pills and search box of the redrawn windows (group
+//! profile, About Land, People): first written for one window each, shared
+//! here once a second window needed them.
 
 use crate::theme::Palette;
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 
 /// One tab of a row of tabs in pills: an optional Tabler icon, its name, a
 /// count after it (in a violet pill when `accent`, an unread count). The
-/// selected tab sits on `raised`; a tab that may not be opened is greyed,
-/// `Err` saying why.
+/// selected tab sits on `raised`.
 #[allow(clippy::too_many_arguments)]
 pub fn pill_tab(
     ui: &mut egui::Ui,
@@ -17,7 +17,7 @@ pub fn pill_tab(
     count: Option<String>,
     accent: bool,
     selected: bool,
-    enabled: Result<(), &str>,
+    enabled: bool,
 ) -> egui::Response {
     tab(ui, p, icon, label, count, accent, selected, enabled, None)
 }
@@ -25,7 +25,7 @@ pub fn pill_tab(
 /// A `pill_tab` of the given width, its icon and name in the middle (the
 /// two halves of the Controls window).
 pub fn pill_tab_wide(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool, width: f32) -> egui::Response {
-    tab(ui, p, icon, label, None, false, selected, Ok(()), Some(width))
+    tab(ui, p, icon, label, None, false, selected, true, Some(width))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -37,11 +37,9 @@ fn tab(
     count: Option<String>,
     accent: bool,
     selected: bool,
-    enabled: Result<(), &str>,
+    enabled: bool,
     width: Option<f32>,
 ) -> egui::Response {
-    let why = enabled.err();
-    let enabled = why.is_none();
     let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
     let ink = if !enabled {
         p.muted_dim
@@ -95,8 +93,73 @@ fn tab(
         ui.painter().galley(pos.round(), g, count_ink);
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label));
-    match why {
-        None => resp.on_hover_cursor(egui::CursorIcon::PointingHand),
-        Some(why) => resp.on_hover_text(why),
+    if enabled {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        resp.on_hover_text(crate::ui::menu::not_yet())
     }
+}
+
+/// A filter or sort pill of a list's bar: lit in the accent while `on`,
+/// with an optional Tabler icon before its label.
+pub fn filter_pill(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: bool) -> egui::Response {
+    let font = FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx()));
+    let ink = if on { p.ink } else { p.muted };
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
+    let icon_w = if icon.is_empty() { 0.0 } else { 13.0 + 5.0 };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(icon_w + galley.size().x + 18.0, 26.0), Sense::click());
+    let radius = ui.visuals().window_corner_radius;
+    let fill = if on {
+        p.violet.gamma_multiply(0.28)
+    } else if resp.hovered() {
+        p.raised
+    } else {
+        p.bar
+    };
+    ui.painter().rect_filled(rect, radius, fill);
+    if on {
+        ui.painter().rect_stroke(
+            rect.shrink(0.5),
+            radius,
+            egui::Stroke::new(1.0, p.violet_light.gamma_multiply(0.5)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let mut x = rect.left() + 9.0;
+    if !icon.is_empty() {
+        if let Some(t) = crate::ui::icons::global(icon) {
+            let r = Rect::from_center_size(Pos2::new(x + 6.5, rect.center().y), Vec2::splat(13.0));
+            ui.painter()
+                .image(t.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), ink);
+        }
+        x += icon_w;
+    }
+    ui.painter()
+        .galley(Pos2::new(x, rect.center().y - galley.size().y / 2.0).round(), galley, ink);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The search field of a list: a magnifier then the text, on the field's
+/// face.
+pub fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    egui::Frame::new()
+        .fill(p.bar)
+        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
+        .inner_margin(egui::Margin::symmetric(9, 4))
+        .show(ui, |ui| {
+            ui.set_width(width - 18.0);
+            // left to right even in a row laid out from the right
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 7.0;
+                super::glyph(ui, "search-filled", p.muted, 13.0);
+                ui.add(
+                    egui::TextEdit::singleline(text)
+                        .frame(egui::Frame::NONE)
+                        .hint_text(hint)
+                        .desired_width(f32::INFINITY),
+                )
+            })
+            .inner
+        })
+        .inner
 }

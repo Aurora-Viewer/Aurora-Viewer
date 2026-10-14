@@ -5159,6 +5159,32 @@ radar-age-alert = { $days ->
     }
 radar-too-far-to-zoom = This avatar is too far for the camera to reach it.
 people-view-sort-options = View/sort options
+people-filter-by-name = Filter by name…
+people-view-rich = Rich rows
+people-view-compact = Compact (one line each, for a crowd)
+people-alerts-options = Alerts and options
+people-sort = Sort
+people-sort-arrival = Arrival
+people-sum-nearby = near you
+people-sum-earshot = within earshot
+people-sum-friends = { $count ->
+    [one] friend
+   *[other] friends
+    }
+people-band-whisper = Whisper · { $range } m
+people-band-say = Say · { $range } m
+people-band-shout = Shout · { $range } m
+people-band-beyond = Beyond
+people-seen-now = < 1 min
+people-seen-minutes = { $n } min
+people-seen-hours = { $n } h
+people-sheet-im = IM
+people-sheet-i-grant = What I grant { $name }
+people-sheet-they-grant = What { $name } grants me
+people-sheet-grant-map = Locate me on the map
+people-sheet-has-online = I see when they are online
+people-sheet-has-map = I can locate them
+people-sheet-gone = No longer near you.
 people-friends-add = Offer friendship to a resident
 people-friends-sort-name = Sort by name
 people-friends-sort-username = Sort by username
@@ -5222,6 +5248,10 @@ ui-options-aurora-world-map = World map
 ui-options-aurora-world-map-help = The map fills the window, with the search and the place floating over it; or the map and a side panel, as in Firestorm.
 ui-options-aurora-world-map-full = Full-frame map
 ui-options-aurora-world-map-side = Side panel (Firestorm)
+ui-options-aurora-people = People
+ui-options-aurora-people-help = Rows with picture, badges and range, or a table with columns like Firestorm's radar.
+ui-options-aurora-people-rows = Rich rows
+ui-options-aurora-people-table = Table (Firestorm)
 ui-options-aurora-profiles = Profiles
 ui-options-aurora-profiles-help = A header with picture, badges and actions, the content in cards; or windows with Second Life, Feed, Favorites… tabs like Firestorm. For avatars and groups.
 ui-options-aurora-profiles-aurora = Aurora

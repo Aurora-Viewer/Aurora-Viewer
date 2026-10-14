@@ -332,6 +332,10 @@ pub struct Settings {
     pub classic_profiles: bool,
     /// Firestorm's Pay window (floater_pay.xml) instead of `ui/pay.rs`.
     pub classic_pay_window: bool,
+    /// People › Near you as Firestorm's radar table (`ui/people/radar.rs`)
+    /// instead of the rows grouped by range and the sheet of
+    /// `ui/people/nearby.rs`.
+    pub classic_people: bool,
     /// Firestorm's camera and movement windows (floater_camera.xml,
     /// floater_moveview.xml) instead of `ui/controls.rs`.
     pub classic_controls: bool,
@@ -781,6 +785,7 @@ impl Default for Settings {
             classic_name_tags: false,
             classic_profiles: false,
             classic_pay_window: false,
+            classic_people: false,
             classic_controls: false,
             camera_shots: Vec::new(),
             plates_friends_only_full: false,
