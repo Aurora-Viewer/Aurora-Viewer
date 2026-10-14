@@ -1924,8 +1924,8 @@ What the inventory must show with these scenarios:
   - `voice`: Nova out of the voice channel (no microphone badge);
     Tess in the channel, silent (green microphone badge, no outline) and
     without a profile picture (the icon stays); Orion, a friend, is speaking
-    (green outline and halo that follows the level, light violet ring around
-    his picture, microphone and triangle badges: he is shown as too complex;
+    (green outline and halo that follows the level, microphone, green heart
+    and triangle badges: he is shown as too complex;
     his name is in ink like everyone's unless Preferences › Colors › "Color
     the names by relation" is on); Lune
     is typing (three animated dots) and has no display name (two lines); La
@@ -1934,7 +1934,7 @@ What the inventory must show with these scenarios:
     typing; beyond, Vega is in the channel and Atlas is not (the far pill
     has no badge).
   - `status`: Nova away (amber dot), Tess do not disturb (red dot), Orion
-    out of the channel (triangle only, violet ring), Lune typing
+    out of the channel (green heart and triangle), Lune typing
     while away.
   - `cycle`: switches from one to the other every six seconds.
   - `wall`: the states of `voice`, with the wall in front of Nova and Tess

@@ -167,6 +167,8 @@ pub enum Badge {
     /// In the voice channel.
     Voice,
     Typing,
+    /// A green heart (the human's choice of 2026-10-14; it was light violet).
+    Friend,
     /// Drawn as a silhouette: over the complexity or surface limit.
     TooComplex,
     Blocked,
@@ -257,6 +259,7 @@ pub fn badges(level: Level, c: &Content) -> Badges {
     for (on, badge) in [
         (c.in_voice, Badge::Voice),
         (c.typing, Badge::Typing),
+        (c.friend, Badge::Friend),
         (c.too_complex, Badge::TooComplex),
         (c.blocked, Badge::Blocked),
     ] {
@@ -270,13 +273,6 @@ pub fn badges(level: Level, c: &Content) -> Badges {
 /// The status dot: on the picture only, and not for a blocked resident.
 pub fn status_dot(level: Level, c: &Content) -> Option<Presence> {
     (level == Level::Full && !c.blocked).then_some(c.presence)
-}
-
-/// A friend's picture has a light violet ring, in place of the heart badge
-/// it replaces (the human's choice of 2026-10-14): only where there is a
-/// picture.
-pub fn friend_ring(level: Level, c: &Content) -> bool {
-    level == Level::Full && c.friend
 }
 
 /// Measures of a plate in points, from the mockup's pixels.

@@ -255,18 +255,31 @@ fn badges_and_status_dot_by_state_and_level() {
         presence: Presence::Away,
         ..content()
     };
-    let order = [Badge::Voice, Badge::Typing, Badge::TooComplex, Badge::Blocked];
+    let order = [Badge::Voice, Badge::Typing, Badge::Friend, Badge::TooComplex, Badge::Blocked];
     for level in [Level::Full, Level::Compact] {
         assert_eq!(badges(level, &everything).iter().collect::<Vec<_>>(), order);
     }
     assert_eq!(badges(Level::Far, &everything).len(), 0);
     // a blocked resident's status is hidden
     assert_eq!(status_dot(Level::Full, &everything), None);
-    // a friend has no badge of its own, but a ring around the picture
+    // a friend's heart, after the microphone, at the levels that have badges
     let friend = Content { friend: true, ..content() };
-    assert_eq!(badges(Level::Full, &friend).len(), 0);
-    let in_voice = Content { in_voice: true, ..friend };
-    assert_eq!(badges(Level::Compact, &in_voice).iter().collect::<Vec<_>>(), [Badge::Voice]);
+    assert_eq!(badges(Level::Full, &friend).iter().collect::<Vec<_>>(), [Badge::Friend]);
+    let in_voice = Content {
+        in_voice: true,
+        ..friend.clone()
+    };
+    assert_eq!(
+        badges(Level::Compact, &in_voice).iter().collect::<Vec<_>>(),
+        [Badge::Voice, Badge::Friend]
+    );
+    assert_eq!(badges(Level::Far, &in_voice).len(), 0);
+    // the status dot stays the status, friend or not
+    let away = Content {
+        presence: Presence::Away,
+        ..friend
+    };
+    assert_eq!(status_dot(Level::Full, &away), Some(Presence::Away));
 }
 
 #[test]
@@ -305,22 +318,6 @@ fn a_stranger_s_plate_stays_compact_close_up_with_friends_only() {
     let level = |id: u128| plates.entries.get(&Uuid::from_u128(id)).map(|e| e.level);
     assert_eq!(level(1), Some(Level::Compact));
     assert_eq!(level(2), Some(Level::Full));
-}
-
-#[test]
-fn only_a_friend_s_picture_is_ringed() {
-    let friend = Content { friend: true, ..content() };
-    assert!(friend_ring(Level::Full, &friend));
-    // no picture below the full level, no ring
-    assert!(!friend_ring(Level::Compact, &friend));
-    assert!(!friend_ring(Level::Far, &friend));
-    assert!(!friend_ring(Level::Full, &content()));
-    // the status dot stays the status, friend or not
-    let away = Content {
-        presence: Presence::Away,
-        ..friend
-    };
-    assert_eq!(status_dot(Level::Full, &away), Some(Presence::Away));
 }
 
 #[test]
