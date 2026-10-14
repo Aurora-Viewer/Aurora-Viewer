@@ -56,6 +56,8 @@ pub enum BarAction {
     /// Me › Double-click on the ground (Firestorm's "DoubleClick Teleport"
     /// of its movement menu, Advanced.SetDoubleClickAction).
     SetDoubleClick(crate::autopilot::DoubleClick),
+    /// World › SL Marketplace (FSLoadSLMarketplace).
+    Marketplace,
 }
 
 pub struct StatusInfo<'a> {
@@ -89,6 +91,9 @@ pub struct StatusInfo<'a> {
     pub local_env: bool,
     /// What a double click on the ground does (Me › Double-click on the ground).
     pub double_click: crate::autopilot::DoubleClick,
+    /// The grid has a Marketplace (World › SL Marketplace is shown only on
+    /// the Second Life grids, GridCheck "secondlife").
+    pub marketplace: bool,
 }
 
 pub fn maturity_name(sim_access: u8) -> &'static str {
@@ -480,6 +485,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // menu_viewer.xml: Search (Ctrl+F)
         if menu::item_keys(ui, p, "search-filled", aurora_i18n::tr!("search-title"), "Ctrl+F") {
             super::widgets::toggle_floater(ui.ctx(), super::search::WINDOW, &mut panels.search);
+        }
+        // menu_viewer.xml: SL Marketplace, after Search
+        if st.marketplace && menu::item(ui, p, "building-store", aurora_i18n::tr!("marketplace-menu")) {
+            *action = BarAction::Marketplace;
         }
         flip(
             ui,

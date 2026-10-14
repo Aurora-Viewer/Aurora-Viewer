@@ -337,6 +337,8 @@ pub struct App {
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
+    /// World › SL Marketplace (LLFloaterMarketplace).
+    marketplace_ui: ui::marketplace::MarketplaceUi,
     people_map_ui: ui::minimap::MiniMap,
     worldmap_ui: ui::worldmap::WorldMapUi,
     map_tiles: ui::map_tiles::MapTiles,
@@ -413,6 +415,8 @@ pub struct App {
     stream_demo: Option<crate::demo::stream::StreamDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
+    /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
+    experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_GEOMETRY: meshes filling the geometry arena.
     geometry_demo: Option<crate::demo::geometry::GeometryDemo>,
     /// Detail levels of the objects around the camera, while the debug
@@ -716,6 +720,7 @@ impl App {
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
+            marketplace_ui: Default::default(),
             people_map_ui: Default::default(),
             worldmap_ui: Default::default(),
             map_tiles: ui::map_tiles::MapTiles::new(),
@@ -769,6 +774,7 @@ impl App {
             demo_place: None,
             stream_demo: None,
             tex_refresh_demo: None,
+            experience_demo: None,
             geometry_demo: None,
             lod_infos: Vec::new(),
             place_groups: Default::default(),
@@ -814,6 +820,21 @@ impl App {
         })
     }
 
+    /// What the experience demo's simulator answers or does on its own.
+    fn apply_experience_demo(&mut self, reply: crate::demo::experience::Reply) {
+        match reply {
+            crate::demo::experience::Reply::Events(events) => {
+                for ev in events {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+            }
+            crate::demo::experience::Reply::Say(text) => self.world.system_message(text),
+            crate::demo::experience::Reply::Nothing => {}
+        }
+    }
+
     fn send(&mut self, cmd: NetCommand) {
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
         // preference is not in sync with the server (TELEPORT_PENDING)
@@ -829,6 +850,13 @@ impl App {
         {
             log::info!("teleport: waiting for the maturity preference");
             self.world.maturity.hold(cmd);
+            return;
+        }
+        // AURORA_DEMO_EXPERIENCE: the simulator and the capabilities
+        if self.demo
+            && let Some(reply) = self.experience_demo.as_mut().and_then(|demo| demo.reply(&cmd))
+        {
+            self.apply_experience_demo(reply);
             return;
         }
         // AURORA_DEMO_MATURITY: the server agrees, keeps its value or fails
@@ -1374,6 +1402,8 @@ impl App {
         self.inventory_ui = Default::default();
         self.gesture_state = Default::default();
         self.buy_currency_ui = Default::default();
+        // the next session signs in with its own cookie (the browser stops)
+        self.marketplace_ui = Default::default();
         self.task_notecards.clear();
         self.script_editors.disconnected();
         self.demo_script_sources.clear();
@@ -4181,6 +4211,10 @@ impl App {
         for c in self.world.maturity.take_commands() {
             self.send(c);
         }
+        // experiences' details and permissions (questions, profile)
+        for c in self.world.experiences.take_commands() {
+            self.send(c);
+        }
         // where the teleport offers lead, and the gods' lures accepted at once
         self.world.refresh_teleport_places();
         for c in self.world.teleport_invites.take_commands() {
@@ -5936,6 +5970,15 @@ impl App {
         {
             self.refresh_object_textures(object);
         }
+        // AURORA_DEMO_EXPERIENCE: the door or the pad, and what asks
+        // without a click (walking into the pad, arriving)
+        if let Some(reply) = self
+            .experience_demo
+            .as_mut()
+            .and_then(|demo| demo.tick(self.frame_count, &mut self.world))
+        {
+            self.apply_experience_demo(reply);
+        }
         // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back
         if self.demo
             && let Some(events) = crate::demo::away_teleport(self.frame_count, self.world.agent.position, self.world.agent.forward())
@@ -6617,6 +6660,7 @@ impl App {
                 self.profile_ui.open(&mut self.world, me);
             }
             BarAction::BuyCurrency => self.open_buy_currency(),
+            BarAction::Marketplace => self.marketplace_ui.open(None),
             BarAction::ChatPrefs => {
                 self.panels.settings = true;
                 self.options_ui.tab = ui::options::TAB_CHAT;
@@ -6672,6 +6716,16 @@ impl App {
             aurora_i18n::language(),
             self.search_session(),
         )
+    }
+
+    /// The Marketplace page of the grid (World › SL Marketplace), None on a
+    /// grid without one. AURORA_DEMO_MARKETPLACE=<page>: a page of the
+    /// tester's choice in demo, which also stands for the Marketplace links.
+    fn marketplace_home(&self) -> Option<String> {
+        if self.demo {
+            return std::env::var("AURORA_DEMO_MARKETPLACE").ok().filter(|u| !u.trim().is_empty());
+        }
+        ui::marketplace::home(&self.settings.grid).map(str::to_owned)
     }
 
     /// The session id the web tab's search page is opened with; none in
@@ -7167,6 +7221,7 @@ impl App {
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
                     double_click: self.double_click_action(),
+                    marketplace: self.marketplace_home().is_some(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -7749,6 +7804,10 @@ impl App {
                 }
                 self.panels.about_land = open;
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
+                // the experience profile (the permission question's link)
+                if let Some((experience, change)) = ui::experience_profile::show(&ctx, &p, &mut self.world) {
+                    self.world.experiences.change(experience, change);
+                }
                 self.photo_ui(&ctx, &p, renderer);
                 let hover_enabled = self.world.hover_height_available();
                 if self.hover_height_ui.show(
@@ -7795,6 +7854,19 @@ impl App {
                         .map(|l| l.raw["web_profile_url"].to_string_value())
                         .filter(|u| !u.trim().is_empty()),
                 };
+                // World › SL Marketplace: the same plugins, browser settings
+                // and OpenID cookie (LLFloaterMarketplace::postBuild)
+                let marketplace_home = self.marketplace_home();
+                self.marketplace_ui.show(
+                    &ctx,
+                    &p,
+                    &ui::marketplace::MarketWeb {
+                        paths: paths.as_ref(),
+                        browser: &browser,
+                        cookie: cookie.as_ref(),
+                        home: marketplace_home.as_deref(),
+                    },
+                );
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
                     browser: &browser,
@@ -8578,6 +8650,12 @@ impl ApplicationHandler for App {
                 self.panels.places = true;
                 self.panels.perf = false;
             }
+            // AURORA_DEMO_MARKETPLACE=<page>: World › SL Marketplace on that
+            // page, open at start
+            if self.marketplace_home().is_some() {
+                self.marketplace_ui.open(None);
+                self.panels.perf = false;
+            }
             // AURORA_DEMO_TP_CONFIRM=link|landmark: a teleport confirmation on
             // screen, asked whatever the saved setting says (not saved)
             if let Some(confirm) = crate::demo::place::teleport_confirm_scenario() {
@@ -9192,6 +9270,7 @@ impl ApplicationHandler for App {
             }
             self.stream_demo = crate::demo::stream::StreamDemo::from_env();
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
+            self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             if let Some(n) = crate::demo::texture_stress_count() {
                 if let Some(g) = &mut self.gfx {

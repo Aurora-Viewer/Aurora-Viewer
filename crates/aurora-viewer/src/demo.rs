@@ -28,6 +28,10 @@ pub mod eep;
 /// Environment selector library and script (AURORA_DEMO_ENV_SELECT).
 #[path = "demo_env.rs"]
 pub mod env;
+/// An experience's teleport door and its permission question
+/// (AURORA_DEMO_EXPERIENCE).
+#[path = "demo_experience.rs"]
+pub mod experience;
 /// Meshes filling the geometry arena until it outgrows its buffers
 /// (AURORA_DEMO_GEOMETRY).
 #[path = "demo_geometry.rs"]
