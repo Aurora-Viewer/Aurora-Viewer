@@ -10144,6 +10144,9 @@ impl ApplicationHandler for App {
                 self.panels.chat = false;
                 self.panels.inventory = false;
             }
+            if crate::demo::presence::position().is_some() {
+                self.panels.people = false;
+            }
             // AURORA_DEMO_TOASTS: the toasts arrive with the Conversations
             // window closed, or minimized for `minimized`
             if let Some(mode) = crate::demo::toasts::mode() {
