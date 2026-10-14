@@ -250,7 +250,7 @@ impl Bench {
     fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
         let p = crate::theme::Theme::default().palette();
         let layout = layout();
-        self.ctx.run_ui(
+        let mut output = self.ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(900.0, 650.0))),
                 events,
@@ -280,7 +280,9 @@ impl Bench {
                     self.saves += 1;
                 }
             },
-        )
+        );
+        output.textures_delta.clear();
+        output
     }
 
     fn pos(&self, command: &str) -> egui::Pos2 {

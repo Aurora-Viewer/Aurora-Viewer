@@ -1777,10 +1777,11 @@ mod tests {
         let mut mic = MicButton::default();
         let mut open_id = None;
         for requested in [false, true, true] {
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 let response = mic_button(ui, &p, &Icons::default(), 22.0, &mut mic, true, requested);
                 open_id = Some(response.parent_id().with("mic_panel_open"));
             });
+            output.textures_delta.clear();
             assert_eq!(
                 ctx.data(|d| d.get_temp::<bool>(open_id.expect("mic parent"))).unwrap_or(false),
                 requested
