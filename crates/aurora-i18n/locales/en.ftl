@@ -1,4 +1,14 @@
 language-name = English
+toolbar-edit = Edit toolbar buttons
+toolbar-remove = Remove this button
+toolbar-locked = Lock toolbar
+toolbar-help = Drag a button onto the bottom toolbar. Drag buttons along the bar to reorder them, or click an available button here to add it at the end.
+toolbar-remove-help = Drop a toolbar button back here to remove it.
+toolbar-already-placed = This button is already on the toolbar.
+toolbar-restore = Restore defaults
+toolbar-clear = Clear toolbar
+toolbar-confirm-restore = Restore the skin's default toolbar buttons?
+toolbar-confirm-clear = Remove all buttons from the toolbar?
 login-accounts-title = Choose your account
 login-accounts-first-title = Add your first account
 login-accounts-last-place = Last visited place

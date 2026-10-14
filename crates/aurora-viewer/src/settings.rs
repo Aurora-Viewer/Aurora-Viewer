@@ -433,6 +433,8 @@ pub struct Settings {
     pub bandwidth_kbps: u32,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
+    /// Per-account toolbar overrides (Firestorm's per-account toolbars.xml).
+    pub toolbar: std::collections::HashMap<uuid::Uuid, crate::ui::toolbar::ToolbarSettings>,
     /// Volumes and toggles (Firestorm volume panel).
     pub audio: AudioSettings,
     /// Parcel media and media on a prim.
@@ -813,6 +815,7 @@ impl Default for Settings {
             cache_size_mb: 20480,
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             chat_bar_width: 0.0,
+            toolbar: Default::default(),
             audio: AudioSettings::default(),
             media: Default::default(),
             colors: ColorSettings::default(),
@@ -1164,6 +1167,9 @@ impl Settings {
         }
         self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
         self.chat_commands.sanitize();
+        for toolbar in self.toolbar.values_mut() {
+            toolbar.sanitize();
+        }
         self.snapshot.sanitize();
         self.dof.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);

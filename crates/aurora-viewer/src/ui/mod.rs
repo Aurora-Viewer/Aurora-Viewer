@@ -71,6 +71,7 @@ pub mod sound_cues;
 pub mod texture_picker;
 #[cfg(test)]
 mod theme_guard;
+pub mod toolbar;
 pub mod update;
 pub mod voice_tag;
 pub mod web_view;

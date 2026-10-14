@@ -1,4 +1,14 @@
 language-name = Français
+toolbar-edit = Modifier les boutons de la barre
+toolbar-remove = Retirer ce bouton
+toolbar-locked = Verrouiller la barre
+toolbar-help = Glissez un bouton vers la barre du bas. Glissez les boutons le long de la barre pour les réorganiser, ou cliquez ici sur un bouton disponible pour l’ajouter à la fin.
+toolbar-remove-help = Glissez un bouton de la barre dans cette fenêtre pour le retirer.
+toolbar-already-placed = Ce bouton est déjà dans la barre.
+toolbar-restore = Rétablir les boutons par défaut
+toolbar-clear = Vider la barre
+toolbar-confirm-restore = Rétablir les boutons par défaut du thème ?
+toolbar-confirm-clear = Retirer tous les boutons de la barre ?
 login-accounts-title = Choisissez votre compte
 login-accounts-first-title = Ajoutez votre premier compte
 login-accounts-last-place = Dernier lieu visité
