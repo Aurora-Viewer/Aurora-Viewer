@@ -5203,6 +5203,16 @@ ui-group-profile-roles = Rôles
 ui-group-profile-roles-of = { $name } · rôles
 ui-group-profile-pick-a-member = Choisissez un membre pour voir ses rôles.
 ui-group-profile-fixed = fixe
+ui-group-invite-title = Inviter dans { $group }
+ui-group-invite-help = Vous pouvez choisir plusieurs résidents à inviter dans le groupe : choisissez-les avec le sélecteur de résidents.
+ui-group-invite-choose = Choisir des résidents
+ui-group-invite-empty = Aucun résident choisi pour l'instant.
+ui-group-invite-remove = Retirer de la liste
+ui-group-invite-role = Rôle à leur attribuer :
+ui-group-invite-send = Envoyer les invitations
+ui-group-invite-owner = Êtes-vous sûr de vouloir inviter de nouveaux propriétaires ? Cette action est permanente !
+ui-group-invite-already = Certains résidents choisis sont déjà dans le groupe et n'ont donc pas reçu d'invitation.
+ui-group-invite-too-many = Invitations non envoyées : trop de résidents choisis. Les invitations sont limitées à 100 par envoi.
 
 ## Achat de L$
 currency-title = Acheter des L$
