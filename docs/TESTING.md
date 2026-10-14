@@ -114,6 +114,13 @@ estimate without another vertex scan; release saves the preference and commits
 the total height. With automatic mode disabled the offset slider is inactive.
 The technical measurements and recalculation button have been removed.
 Use the neutral-pose test switch when comparing shoes with the ground.
+The sliders share Aurora's contrasting track, zero marker, accent fill and
+solid rectangular handle over the normal blurred floater. While auto is on,
+the manual slider/value and Lower/Reset/Raise buttons are grey but remain
+interactive. Any manual change switches auto off immediately; Reset does so
+even when the height already equals zero. The saved automatic offset stays
+available when auto is enabled again. Merely displaying a computed height
+must not round it or switch modes.
 
 The frames-per-second limiter is enabled at **120 fps by default**. It can
 be disabled or adjusted in Preferences › Graphics › Smoothness; preferences

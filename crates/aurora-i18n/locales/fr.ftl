@@ -3928,6 +3928,7 @@ hover-height-affect-camera = Ajuster aussi la caméra
 hover-height-automatic = Ajuster automatiquement quand les attachements changent
 hover-height-auto-offset = Décalage du mode auto
 hover-height-auto-offset-tip = Une valeur positive relève l’avatar, une valeur négative l’abaisse. Ce décalage sauvegardé s’ajoute à chaque ajustement automatique.
+hover-height-manual-tip = Modifier cette hauteur désactive l’ajustement automatique.
 hover-height-neutral-pose-test = Pose neutre — test local
 hover-height-neutral-pose-test-tip = Affiche la pose utilisée par le calcul automatique, avec votre silhouette et vos attachements. Les animations du serveur continuent ; désactivez pour retrouver la pose normale.
 hover-height-unavailable = Cette région ne permet pas encore d'ajuster la hauteur de survol.

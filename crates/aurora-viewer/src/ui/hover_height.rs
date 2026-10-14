@@ -18,6 +18,10 @@ pub struct HoverHeightUi {
     offset_editing: bool,
     #[cfg(test)]
     offset_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    manual_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    button_rects: Vec<egui::Rect>,
 }
 
 impl HoverHeightUi {
@@ -52,32 +56,45 @@ impl HoverHeightUi {
         .fixed()
         .show(ctx, p, &mut self.open, |ui| {
             ui.add_enabled_ui(enabled, |ui| {
-                let mut value = height.value();
-                ui.spacing_mut().slider_width = 260.0;
-                let response = ui.add(
-                    egui::Slider::new(&mut value, hover_height::MIN..=hover_height::MAX)
-                        .step_by(0.001)
-                        .fixed_decimals(3)
-                        .suffix(" m")
-                        .custom_formatter(|value, _| aurora_i18n::number(value, 3))
-                        .custom_parser(aurora_i18n::parse_number),
-                );
-                if response.changed() {
-                    height.preview(value);
-                    self.editing = true;
-                }
-                ui.horizontal(|ui| {
-                    let step = ui.input(|i| hover_height::step(i.modifiers.alt, i.modifiers.ctrl || i.modifiers.shift));
-                    for (icon, label, value) in [
-                        ("minus", aurora_i18n::tr!("hover-height-lower"), height.value() - step),
-                        ("restore", aurora_i18n::tr!("common-reset"), 0.0),
-                        ("plus", aurora_i18n::tr!("hover-height-raise"), height.value() + step),
-                    ] {
-                        if widgets::action_button(ui, p, icon, label, ActionKind::Flat, egui::vec2(0.0, 26.0)).clicked() {
-                            height.preview(value);
-                            height.commit();
-                        }
+                ui.scope(|ui| {
+                    if *automatic {
+                        ui.set_opacity(0.72); // visually secondary, still interactive
                     }
+                    let mut value = height.value();
+                    ui.spacing_mut().slider_width = 260.0;
+                    let response = widgets::height_slider(ui, p, &mut value, hover_height::MIN..=hover_height::MAX, *automatic)
+                        .on_hover_text(aurora_i18n::tr!("hover-height-manual-tip"));
+                    #[cfg(test)]
+                    {
+                        self.manual_rect = Some(response.rect);
+                        self.button_rects.clear();
+                    }
+                    if response.changed() {
+                        preferences_changed |= std::mem::replace(automatic, false);
+                        self.offset_editing = false;
+                        height.preview(value);
+                        self.editing = true;
+                    }
+                    ui.horizontal(|ui| {
+                        let step = ui.input(|i| hover_height::step(i.modifiers.alt, i.modifiers.ctrl || i.modifiers.shift));
+                        for (icon, label, value) in [
+                            ("minus", aurora_i18n::tr!("hover-height-lower"), height.value() - step),
+                            ("restore", aurora_i18n::tr!("common-reset"), 0.0),
+                            ("plus", aurora_i18n::tr!("hover-height-raise"), height.value() + step),
+                        ] {
+                            let response = widgets::action_button(ui, p, icon, label, ActionKind::Flat, egui::vec2(0.0, 26.0));
+                            #[cfg(test)]
+                            {
+                                self.button_rects.push(response.rect);
+                            }
+                            if response.clicked() {
+                                preferences_changed |= std::mem::replace(automatic, false);
+                                self.offset_editing = false;
+                                height.preview(value);
+                                height.commit();
+                            }
+                        }
+                    });
                 });
             });
             ui.add_space(4.0);
@@ -86,14 +103,7 @@ impl HoverHeightUi {
                 ui.spacing_mut().slider_width = 260.0;
                 ui.label(aurora_i18n::tr!("hover-height-auto-offset"))
                     .on_hover_text(aurora_i18n::tr!("hover-height-auto-offset-tip"));
-                let response = ui.add(
-                    egui::Slider::new(offset, hover_height::MIN..=hover_height::MAX)
-                        .step_by(0.001)
-                        .fixed_decimals(3)
-                        .suffix(" m")
-                        .custom_formatter(|value, _| aurora_i18n::number(value, 3))
-                        .custom_parser(|text| aurora_i18n::parse_number(text).filter(|value| value.is_finite())),
-                );
+                let response = widgets::height_slider(ui, p, offset, hover_height::MIN..=hover_height::MAX, !*automatic);
                 #[cfg(test)]
                 {
                     self.offset_rect = Some(response.rect);
@@ -209,6 +219,104 @@ mod tests {
             pressed,
             modifiers: egui::Modifiers::default(),
         }
+    }
+
+    #[test]
+    fn painting_an_automatic_height_never_rounds_it_or_switches_modes() {
+        let mut f = Fixture::new();
+        f.height.preview(0.234567);
+        f.height.commit();
+        for _ in 0..4 {
+            assert!(!f.frame(Vec::new()));
+            assert!(f.automatic);
+            assert_eq!(f.height.value(), 0.234567);
+        }
+    }
+
+    #[test]
+    fn subdued_manual_slider_is_interactive_and_immediately_switches_off_auto() {
+        let mut f = Fixture::new();
+        for _ in 0..3 {
+            f.frame(Vec::new());
+        }
+        let rect = f.panel.manual_rect.unwrap();
+        let point = egui::pos2(rect.left() + 180.0, rect.center().y);
+        assert!(f.frame(vec![egui::Event::PointerMoved(point), button(point, true)]));
+        assert!(!f.automatic, "manual input must turn auto off during the drag");
+        assert_ne!(f.height.value(), 0.2);
+        assert_eq!(f.offset, 0.0);
+        assert!(f.height.next_update(Some(1)).is_none(), "manual height previews until release");
+        f.frame(vec![button(point, false)]);
+        let Some(NetCommand::SetHoverHeight { value, .. }) = f.height.next_update(Some(1)) else {
+            panic!("manual commit");
+        };
+        assert_eq!(value, f.height.value());
+        assert!(!f.automatic);
+    }
+
+    #[test]
+    fn every_manual_button_takes_over_including_resetting_an_already_zero_height() {
+        for index in 0..3 {
+            let mut f = Fixture::new();
+            if index == 1 {
+                f.height.preview(0.0);
+                f.height.commit();
+            }
+            for _ in 0..3 {
+                f.frame(Vec::new());
+            }
+            let before = f.height.value();
+            let point = f.panel.button_rects[index].center();
+            f.frame(vec![egui::Event::PointerMoved(point), button(point, true)]);
+            assert!(f.frame(vec![button(point, false)]));
+            assert!(!f.automatic);
+            let expected = match index {
+                0 => before - 0.01,
+                1 => 0.0,
+                _ => before + 0.01,
+            };
+            assert!((f.height.value() - expected).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn manual_numeric_entry_takes_over_without_losing_the_saved_auto_offset() {
+        let mut f = Fixture::new();
+        f.offset = -0.8;
+        for _ in 0..3 {
+            f.frame(Vec::new());
+        }
+        let rect = f.panel.manual_rect.unwrap();
+        let point = egui::pos2(rect.right() - 39.0, rect.center().y);
+        f.frame(vec![egui::Event::PointerMoved(point), button(point, true)]);
+        f.frame(vec![button(point, false)]);
+        f.frame(Vec::new());
+        f.frame(vec![egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                command: true,
+                ..Default::default()
+            },
+        }]);
+        assert!(f.frame(vec![egui::Event::Text("0.075".into())]));
+        assert!(!f.automatic);
+        assert!((f.height.value() - 0.075).abs() < 1e-5);
+        assert_eq!(f.offset, -0.8);
+        f.frame(vec![egui::Event::Key {
+            key: egui::Key::ArrowUp,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        }]);
+        assert!(
+            (f.height.value() - 0.076).abs() < 1e-5,
+            "numeric keyboard steps remain one millimetre"
+        );
     }
 
     #[test]
