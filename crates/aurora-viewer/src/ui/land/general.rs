@@ -267,16 +267,20 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     ui.add_space(6.0);
     let can_access = true;
     let buy = can_agent_buy(&parcel, &v.rights(), None, can_access);
-    let buy_group = false;
+    // LLPanelLandGeneral::refresh: for the active group, with the power
+    let active_group = world.groups.active;
+    let buy_group = !active_group.is_nil() && can_agent_buy(&parcel, &v.rights(), Some(active_group), can_access);
     let release = v.owns(powers::LAND_RELEASE) || (estate_manager && v.region.as_ref().is_some_and(|r| parcel.owner_id != r.owner));
     // a pass: someone else's land selling passes (not while banned)
     let use_pass = parcel.owner_id != agent && parcel.flags & pf::USE_PASS_LIST != 0;
     ui.horizontal(|ui| {
-        button(ui, p, aurora_i18n::tr!("ui-land-general-buy-land"), false).on_disabled_hover_text(if buy {
-            not_yet()
-        } else {
-            aurora_i18n::tr!("ui-land-general-this-land-is-not-for-sale-to-you")
-        });
+        // onClickBuyLand: startBuyLand on the selection
+        if button(ui, p, aurora_i18n::tr!("ui-land-general-buy-land"), buy)
+            .on_disabled_hover_text(aurora_i18n::tr!("ui-land-general-this-land-is-not-for-sale-to-you"))
+            .clicked()
+        {
+            world.land.request_buy(false);
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if region_owner {
                 // reclaimParcel: the region owner takes back someone's parcel
@@ -308,7 +312,12 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             s.dialog = Some(Dialog::Confirm(Confirm::BuyPass));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            button(ui, p, aurora_i18n::tr!("ui-land-general-buy-for-group"), buy_group).on_disabled_hover_text(not_yet());
+            if button(ui, p, aurora_i18n::tr!("ui-land-general-buy-for-group"), buy_group)
+                .on_disabled_hover_text(aurora_i18n::tr!("ui-land-general-this-land-is-not-for-sale-to-you"))
+                .clicked()
+            {
+                world.land.request_buy(true);
+            }
         });
     });
 }

@@ -66,9 +66,11 @@ dragging a handle switch to `violet_light`, like any selection.
   menu), under a dark tint. A soft shadow and a thin border separate the
   surface from the world; the fields stay calm and readable. A skin with
   `panel_alpha = 255` keeps opaque surfaces without this blur. Outside a
-  window, a surface is drawn with `widgets::overlay` (or
-  `widgets::overlay_frame` with no world behind, as on the login screen),
-  never with a background, a border or a radius written by hand. The bars
+  window, a surface is drawn with `widgets::overlay`. An already positioned
+  scene label uses `widgets::paint_world_label`, with a lighter tint and
+  shaded scene blur to keep its text readable. With no world behind, as on
+  the login screen, use `widgets::overlay_frame`. Never write a background,
+  border or radius by hand. The bars
   keep the `bar` colour as their tint (`widgets::finish_bar_glass`); the
   minimap keeps Firestorm's opacity with the border and the shadow of the
   windows. Menus, submenus, right-click menus and drop-down lists get this
@@ -309,7 +311,7 @@ well. The outline version is used in three cases:
 - **linear glyphs**, which have no surface to fill: cross, plus, minus,
   tick, arrows, undo / redo, refresh, rotate, `</>`;
 - **struck-through icons** (`eye-off`, `microphone-off`, `volume-off`,
-  `message-off`): Tabler only draws them as outlines;
+  `message-off`, `ban` for blocking): Tabler only draws them as outlines;
 - **functions with no suitable filled icon**: object (`box`), people in the
   plural (`users`, `users-group`, `user-plus`), loudspeaker (`volume`), map
   (`map`), hands (`hand-grab`, `hand-stop`), sitting (`armchair`), walking /
@@ -318,7 +320,8 @@ well. The outline version is used in three cases:
 Do not force a filled icon that does not express the function. Two icons
 that go as a pair (link / unlink, plus / minus) stay in the same style.
 A function keeps the same icon everywhere (script = `code`, object = `box`,
-outfit = `hanger-2-filled`, profile = `user-filled`…): look for the icon
+outfit = `hanger-2-filled`, profile = `user-filled`, block = `ban`, a
+friend's right to modify our objects = `pencil-filled`…): look for the icon
 already in use before adding one.
 
 **Adding an icon:**

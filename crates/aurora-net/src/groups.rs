@@ -1,0 +1,577 @@
+//! The data of one group as LLGroupMgr keeps it (indra/newview/llgroupmgr.cpp,
+//! roles_constants.h, llpanelgroupnotices.cpp, originally LGPL 2.1): its
+//! members (GroupMembersReply, or the GroupMemberData capability), roles
+//! (GroupRoleDataReply), role / member pairs (GroupRoleMembersReply), the
+//! titles we can wear (GroupTitlesReply) and its notice list
+//! (GroupNoticesListReply). The requests carry a random request id that the
+//! replies repeat: a reply to an older request is dropped by the viewer.
+
+use aurora_llsd::{Llsd, llsd_map};
+use aurora_msg::field_str;
+use aurora_msg::msgs;
+use uuid::Uuid;
+
+/// Group abilities (roles_constants.h GP_*), the bits of a role's or a
+/// member's powers.
+pub mod powers {
+    pub const MEMBER_INVITE: u64 = 1 << 1;
+    pub const MEMBER_EJECT: u64 = 1 << 2;
+    pub const MEMBER_OPTIONS: u64 = 1 << 3;
+    pub const ROLE_CREATE: u64 = 1 << 4;
+    pub const ROLE_DELETE: u64 = 1 << 5;
+    pub const ROLE_PROPERTIES: u64 = 1 << 6;
+    pub const ROLE_ASSIGN_MEMBER_LIMITED: u64 = 1 << 7;
+    pub const ROLE_ASSIGN_MEMBER: u64 = 1 << 8;
+    pub const ROLE_REMOVE_MEMBER: u64 = 1 << 9;
+    pub const ROLE_CHANGE_ACTIONS: u64 = 1 << 10;
+    pub const GROUP_CHANGE_IDENTITY: u64 = 1 << 11;
+    pub const SESSION_JOIN: u64 = 1 << 16;
+    pub const SESSION_VOICE: u64 = 1 << 27;
+    pub const ACCOUNTING_ACCOUNTABLE: u64 = 1 << 40;
+    pub const NOTICES_SEND: u64 = 1 << 42;
+    pub const NOTICES_RECEIVE: u64 = 1 << 43;
+    pub const MEMBER_VISIBLE_IN_DIR: u64 = 1 << 47;
+    pub const GROUP_BAN_ACCESS: u64 = 1 << 51;
+}
+
+/// Where a member was last seen (the OnlineStatus string: "Online", or
+/// the date of their last login as MM/DD/YYYY).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LastSeen {
+    Online,
+    /// (year, month, day).
+    Date(u16, u8, u8),
+    /// Hidden, or a text we do not read: shown as it came.
+    Other(String),
+}
+
+impl LastSeen {
+    /// The OnlineStatus text (LLGroupMgr::processGroupMembersReply then
+    /// formatDateString reads "Online" or a MM/DD/YYYY date).
+    pub fn parse(text: &str) -> LastSeen {
+        let text = text.trim();
+        if text == "Online" {
+            return LastSeen::Online;
+        }
+        let parts: Vec<&str> = text.split('/').collect();
+        if let [m, d, y] = parts[..]
+            && let (Ok(m), Ok(d), Ok(y)) = (m.parse::<u8>(), d.parse::<u8>(), y.parse::<u16>())
+            && (1..=12).contains(&m)
+            && (1..=31).contains(&d)
+        {
+            return LastSeen::Date(y, m, d);
+        }
+        LastSeen::Other(text.to_owned())
+    }
+
+    /// Most recent first: online, then by date, the unreadable texts last
+    /// (the order of the "status" column, sorted on the reformatted dates).
+    pub fn rank(&self) -> (u8, u16, u8, u8) {
+        match self {
+            LastSeen::Online => (2, 0, 0, 0),
+            LastSeen::Date(y, m, d) => (1, *y, *m, *d),
+            LastSeen::Other(_) => (0, 0, 0, 0),
+        }
+    }
+}
+
+/// One member (LLGroupMemberData).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupMember {
+    pub id: Uuid,
+    /// Land donated to the group, in m².
+    pub contribution: i32,
+    pub powers: u64,
+    pub title: String,
+    pub last_seen: LastSeen,
+    pub is_owner: bool,
+}
+
+/// One role (LLGroupRoleData). The "everyone" role has the nil id.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupRole {
+    pub id: Uuid,
+    pub name: String,
+    pub title: String,
+    pub description: String,
+    pub powers: u64,
+    pub members: u32,
+}
+
+/// A title we can wear in the group, the one of one of our roles
+/// (LLGroupTitle).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupTitle {
+    pub title: String,
+    pub role: Uuid,
+    pub selected: bool,
+}
+
+/// One line of the notice list (LLPanelGroupNotices::processNotices).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoticeSummary {
+    pub id: Uuid,
+    /// Unix time.
+    pub timestamp: u32,
+    /// The legacy name of the sender ("First Last").
+    pub from: String,
+    pub subject: String,
+    pub has_attachment: bool,
+    pub asset_type: u8,
+}
+
+/// A page of members: one GroupMembersReply packet, or the whole list of
+/// the GroupMemberData capability.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MembersPage {
+    pub group: Uuid,
+    pub request: Uuid,
+    /// The total the group has (MemberCount); the list is complete once
+    /// that many arrived.
+    pub total: i32,
+    pub members: Vec<GroupMember>,
+    /// The capability answered with the whole list at once.
+    pub whole: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RolesPage {
+    pub group: Uuid,
+    pub request: Uuid,
+    pub total: i32,
+    pub roles: Vec<GroupRole>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoleMembersPage {
+    pub group: Uuid,
+    pub request: Uuid,
+    pub total_pairs: u32,
+    /// (role, member).
+    pub pairs: Vec<(Uuid, Uuid)>,
+}
+
+/// The roles the server names in English, as LLGroupMgr renames them
+/// (lldatagroups.cpp creates them under these names).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinRole {
+    Everyone,
+    Officers,
+    Owners,
+}
+
+impl BuiltinRole {
+    pub fn of(name: &str) -> Option<BuiltinRole> {
+        match name {
+            "Everyone" => Some(BuiltinRole::Everyone),
+            "Officers" => Some(BuiltinRole::Officers),
+            "Owners" => Some(BuiltinRole::Owners),
+            _ => None,
+        }
+    }
+}
+
+/// LLGroupMgr::processGroupMembersReply; the null ids are skipped.
+pub fn members_reply(m: &msgs::GroupMembersReply) -> MembersPage {
+    MembersPage {
+        group: m.group_data.group_id,
+        request: m.group_data.request_id,
+        total: m.group_data.member_count,
+        members: if m.group_data.member_count > 0 {
+            m.member_data
+                .iter()
+                .filter(|d| !d.agent_id.is_nil())
+                .map(|d| GroupMember {
+                    id: d.agent_id,
+                    contribution: d.contribution,
+                    powers: d.agent_powers,
+                    title: field_str(&d.title),
+                    last_seen: LastSeen::parse(&field_str(&d.online_status)),
+                    is_owner: d.is_owner,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
+        whole: false,
+    }
+}
+
+/// LLGroupMgr::processGroupRoleDataReply.
+pub fn roles_reply(m: &msgs::GroupRoleDataReply) -> RolesPage {
+    RolesPage {
+        group: m.group_data.group_id,
+        request: m.group_data.request_id,
+        total: m.group_data.role_count,
+        roles: m
+            .role_data
+            .iter()
+            .map(|r| GroupRole {
+                id: r.role_id,
+                name: field_str(&r.name),
+                title: field_str(&r.title),
+                description: field_str(&r.description),
+                powers: r.powers,
+                members: r.members,
+            })
+            .collect(),
+    }
+}
+
+/// LLGroupMgr::processGroupRoleMembersReply: the pairs with a null id are
+/// counted but not kept.
+pub fn role_members_reply(m: &msgs::GroupRoleMembersReply) -> RoleMembersPage {
+    RoleMembersPage {
+        group: m.agent_data.group_id,
+        request: m.agent_data.request_id,
+        total_pairs: m.agent_data.total_pairs,
+        pairs: m.member_data.iter().map(|d| (d.role_id, d.member_id)).collect(),
+    }
+}
+
+/// LLGroupMgr::processGroupTitlesReply: titles left empty are not offered.
+pub fn titles_reply(m: &msgs::GroupTitlesReply) -> Vec<GroupTitle> {
+    m.group_data
+        .iter()
+        .map(|d| GroupTitle {
+            title: field_str(&d.title),
+            role: d.role_id,
+            selected: d.selected,
+        })
+        .filter(|t| !t.title.is_empty())
+        .collect()
+}
+
+/// LLPanelGroupNotices::processNotices: a single null notice means "no
+/// notices".
+pub fn notices_reply(m: &msgs::GroupNoticesListReply) -> Vec<NoticeSummary> {
+    if m.data.len() == 1 && m.data[0].notice_id.is_nil() {
+        return Vec::new();
+    }
+    m.data
+        .iter()
+        .filter(|d| !d.notice_id.is_nil())
+        .map(|d| NoticeSummary {
+            id: d.notice_id,
+            timestamp: d.timestamp,
+            from: field_str(&d.from_name),
+            subject: field_str(&d.subject),
+            has_attachment: d.has_attachment,
+            asset_type: d.asset_type,
+        })
+        .collect()
+}
+
+/// The body of a GroupMemberData request (LLGroupMgr::groupMembersRequestCoro
+/// with no page size and no sorting, as sendCapGroupMembersRequest is called
+/// by the group panels).
+pub fn member_data_body(group: Uuid) -> Llsd {
+    llsd_map! { "group_id" => group }
+}
+
+/// A hexadecimal power mask of the capability ("powers", "default_powers").
+fn hex_powers(v: &Llsd) -> u64 {
+    u64::from_str_radix(v.as_str().trim(), 16).unwrap_or(0)
+}
+
+/// LLGroupMgr::processCapGroupMembersResponse: every member, the title an
+/// index into "titles" (the first by default), the powers those of
+/// "defaults" unless given, a member without "last_login" of unknown status.
+pub fn member_data_response(v: &Llsd, request: Uuid) -> Option<MembersPage> {
+    let group = v["group_id"].as_uuid();
+    let members = v["members"].as_map()?;
+    let titles = v["titles"].as_array();
+    let default_title = titles.first().map(|t| t.to_string_value()).unwrap_or_default();
+    let default_powers = hex_powers(&v["defaults"]["default_powers"]);
+    let list: Vec<GroupMember> = members
+        .iter()
+        .filter_map(|(id, info)| {
+            let id = Uuid::parse_str(id).ok().filter(|id| !id.is_nil())?;
+            Some(GroupMember {
+                id,
+                contribution: info["donated_square_meters"].as_i32(),
+                powers: if info.has("powers") {
+                    hex_powers(&info["powers"])
+                } else {
+                    default_powers
+                },
+                title: if info.has("title") {
+                    usize::try_from(info["title"].as_i32())
+                        .ok()
+                        .and_then(|i| titles.get(i))
+                        .map(|t| t.to_string_value())
+                        .unwrap_or_default()
+                } else {
+                    default_title.clone()
+                },
+                last_seen: if info.has("last_login") {
+                    LastSeen::parse(info["last_login"].as_str())
+                } else {
+                    LastSeen::Other("unknown".into())
+                },
+                is_owner: info.has("owner"),
+            })
+        })
+        .collect();
+    Some(MembersPage {
+        group,
+        request,
+        total: list.len() as i32,
+        members: list,
+        whole: true,
+    })
+}
+
+/// Roles a member can be invited into (LLPanelGroupInvite::impl::addRoleNames):
+/// every role for an owner, with "assign members to any role" every role
+/// but the owners', with "assign members to our roles" the roles we have;
+/// "everyone" always.
+pub fn invite_roles<'a>(
+    roles: &'a [GroupRole],
+    my_roles: &[Uuid],
+    my_powers: u64,
+    owner_role: Uuid,
+    i_am_owner: bool,
+) -> Vec<&'a GroupRole> {
+    let any = my_powers & powers::ROLE_ASSIGN_MEMBER != 0;
+    let limited = my_powers & powers::ROLE_ASSIGN_MEMBER_LIMITED != 0;
+    roles
+        .iter()
+        .filter(|r| i_am_owner || (any && r.id != owner_role) || (limited && my_roles.contains(&r.id)) || r.id.is_nil())
+        .collect()
+}
+
+/// Invitations per InviteGroupRequest (MAX_GROUP_INVITES, the server's cap).
+pub const MAX_GROUP_INVITES: usize = 100;
+
+/// LLGroupMgr::sendGroupMemberInvites: the (invitee, role) pairs, a new
+/// message every MAX_GROUP_INVITES of them.
+pub fn invite_messages(agent: Uuid, session: Uuid, group: Uuid, invites: &[(Uuid, Uuid)]) -> Vec<msgs::InviteGroupRequest> {
+    invites
+        .chunks(MAX_GROUP_INVITES)
+        .map(|chunk| {
+            let mut m = msgs::InviteGroupRequest::default();
+            m.agent_data.agent_id = agent;
+            m.agent_data.session_id = session;
+            m.group_data.group_id = group;
+            m.invite_data = chunk
+                .iter()
+                .map(|(invitee, role)| msgs::invite_group_request::InviteData {
+                    invitee_id: *invitee,
+                    role_id: *role,
+                })
+                .collect();
+            m
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_msg::str_field;
+    use msgs::{group_members_reply, group_notices_list_reply, group_role_data_reply, group_role_members_reply, group_titles_reply};
+
+    #[test]
+    fn online_status_reads_online_dates_and_the_rest() {
+        assert_eq!(LastSeen::parse("Online"), LastSeen::Online);
+        assert_eq!(LastSeen::parse("12/25/2008"), LastSeen::Date(2008, 12, 25));
+        assert_eq!(LastSeen::parse("unknown"), LastSeen::Other("unknown".into()));
+        assert_eq!(LastSeen::parse("13/01/2008"), LastSeen::Other("13/01/2008".into()));
+        let mut v = [
+            LastSeen::parse("01/02/2020"),
+            LastSeen::Online,
+            LastSeen::parse("x"),
+            LastSeen::parse("12/25/2021"),
+        ];
+        v.sort_by_key(|s| std::cmp::Reverse(s.rank()));
+        assert_eq!(v[0], LastSeen::Online);
+        assert_eq!(v[1], LastSeen::Date(2021, 12, 25));
+        assert_eq!(v[3], LastSeen::Other("x".into()));
+    }
+
+    #[test]
+    fn members_reply_keeps_the_page_and_skips_null_members() {
+        let mut m = msgs::GroupMembersReply::default();
+        m.group_data.group_id = Uuid::from_u128(1);
+        m.group_data.request_id = Uuid::from_u128(2);
+        m.group_data.member_count = 3;
+        let member = |id: u128, status: &str, owner: bool| group_members_reply::MemberData {
+            agent_id: Uuid::from_u128(id),
+            contribution: 512,
+            online_status: str_field(status),
+            agent_powers: powers::MEMBER_INVITE,
+            title: str_field("Builder"),
+            is_owner: owner,
+        };
+        m.member_data = vec![
+            member(10, "Online", true),
+            member(0, "Online", false),
+            member(11, "09/12/2026", false),
+        ];
+        let page = members_reply(&m);
+        assert_eq!((page.group, page.request, page.total), (Uuid::from_u128(1), Uuid::from_u128(2), 3));
+        assert_eq!(page.members.len(), 2);
+        assert!(page.members[0].is_owner);
+        assert_eq!(page.members[0].last_seen, LastSeen::Online);
+        assert_eq!(page.members[1].last_seen, LastSeen::Date(2026, 9, 12));
+        assert_eq!(page.members[1].title, "Builder");
+        assert_eq!(page.members[1].contribution, 512);
+        assert!(!page.whole);
+    }
+
+    #[test]
+    fn role_data_titles_and_pairs() {
+        let mut r = msgs::GroupRoleDataReply::default();
+        r.group_data.role_count = 2;
+        r.role_data = vec![
+            group_role_data_reply::RoleData {
+                role_id: Uuid::nil(),
+                name: str_field("Everyone"),
+                title: str_field("Member"),
+                description: str_field(""),
+                powers: powers::NOTICES_RECEIVE,
+                members: 3,
+            },
+            group_role_data_reply::RoleData {
+                role_id: Uuid::from_u128(5),
+                name: str_field("Owners"),
+                title: str_field("Founder"),
+                description: str_field("The owners"),
+                powers: u64::MAX,
+                members: 1,
+            },
+        ];
+        let page = roles_reply(&r);
+        assert_eq!(page.total, 2);
+        assert_eq!(BuiltinRole::of(&page.roles[0].name), Some(BuiltinRole::Everyone));
+        assert_eq!(BuiltinRole::of(&page.roles[1].name), Some(BuiltinRole::Owners));
+        assert_eq!(BuiltinRole::of("Builders"), None);
+
+        let mut p = msgs::GroupRoleMembersReply::default();
+        p.agent_data.total_pairs = 1;
+        p.member_data = vec![group_role_members_reply::MemberData {
+            role_id: Uuid::from_u128(5),
+            member_id: Uuid::from_u128(10),
+        }];
+        assert_eq!(role_members_reply(&p).pairs, vec![(Uuid::from_u128(5), Uuid::from_u128(10))]);
+
+        let t = msgs::GroupTitlesReply {
+            group_data: vec![
+                group_titles_reply::GroupData {
+                    title: str_field("Member"),
+                    role_id: Uuid::nil(),
+                    selected: false,
+                },
+                group_titles_reply::GroupData {
+                    title: str_field(""),
+                    role_id: Uuid::from_u128(6),
+                    selected: false,
+                },
+                group_titles_reply::GroupData {
+                    title: str_field("Founder"),
+                    role_id: Uuid::from_u128(5),
+                    selected: true,
+                },
+            ],
+            ..Default::default()
+        };
+        let titles = titles_reply(&t);
+        assert_eq!(titles.len(), 2, "an empty title is not offered");
+        assert!(titles[1].selected && titles[1].role == Uuid::from_u128(5));
+    }
+
+    #[test]
+    fn notice_list_with_the_dummy_entry_is_empty() {
+        let mut m = msgs::GroupNoticesListReply {
+            data: vec![group_notices_list_reply::Data::default()],
+            ..Default::default()
+        };
+        assert!(notices_reply(&m).is_empty());
+        m.data = vec![group_notices_list_reply::Data {
+            notice_id: Uuid::from_u128(1),
+            timestamp: 1_790_000_000,
+            from_name: str_field("Orion Example"),
+            subject: str_field("Workshop"),
+            has_attachment: true,
+            asset_type: 0,
+        }];
+        let v = notices_reply(&m);
+        assert_eq!(v[0].subject, "Workshop");
+        assert!(v[0].has_attachment);
+    }
+
+    #[test]
+    fn member_data_capability_fills_defaults() {
+        let a = Uuid::from_u128(10);
+        let b = Uuid::from_u128(11);
+        let mut members = aurora_llsd::Map::new();
+        members.insert(
+            a.to_string(),
+            llsd_map! { "last_login" => "Online", "title" => 1, "powers" => "a", "owner" => "Y", "donated_square_meters" => 4096 },
+        );
+        members.insert(b.to_string(), llsd_map! { "last_login" => "09/12/2026" });
+        members.insert(Uuid::nil().to_string(), llsd_map! {});
+        let v = llsd_map! {
+            "group_id" => Uuid::from_u128(1),
+            "members" => members,
+            "titles" => Llsd::Array(vec!["Member".into(), "Founder".into()]),
+            "defaults" => llsd_map! { "default_powers" => "80000000000" },
+        };
+        let page = member_data_response(&v, Uuid::from_u128(7)).unwrap();
+        assert!(page.whole);
+        assert_eq!((page.group, page.request, page.total), (Uuid::from_u128(1), Uuid::from_u128(7), 2));
+        let first = page.members.iter().find(|m| m.id == a).unwrap();
+        assert_eq!(first.title, "Founder");
+        assert_eq!(first.powers, 0xa);
+        assert!(first.is_owner);
+        assert_eq!(first.contribution, 4096);
+        let second = page.members.iter().find(|m| m.id == b).unwrap();
+        assert_eq!(second.title, "Member");
+        assert_eq!(second.powers, 0x800_0000_0000);
+        assert!(!second.is_owner);
+        assert_eq!(member_data_body(Uuid::from_u128(1))["group_id"].as_uuid(), Uuid::from_u128(1));
+        assert!(member_data_response(&llsd_map! {}, Uuid::nil()).is_none());
+    }
+
+    #[test]
+    fn invitations_go_by_a_hundred() {
+        let pairs: Vec<(Uuid, Uuid)> = (1..=150u128).map(|i| (Uuid::from_u128(i), Uuid::nil())).collect();
+        let v = invite_messages(Uuid::from_u128(1000), Uuid::from_u128(1001), Uuid::from_u128(9), &pairs);
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].invite_data.len(), 100);
+        assert_eq!(v[1].invite_data.len(), 50);
+        assert_eq!(v[1].invite_data[0].invitee_id, Uuid::from_u128(101));
+        assert!(
+            v.iter()
+                .all(|m| m.group_data.group_id == Uuid::from_u128(9) && m.agent_data.agent_id == Uuid::from_u128(1000))
+        );
+        assert!(invite_messages(Uuid::nil(), Uuid::nil(), Uuid::nil(), &[]).is_empty());
+    }
+
+    #[test]
+    fn invite_roles_follow_the_assign_powers() {
+        let role = |id: u128| GroupRole {
+            id: Uuid::from_u128(id),
+            name: String::new(),
+            title: String::new(),
+            description: String::new(),
+            powers: 0,
+            members: 0,
+        };
+        let roles = [role(0), role(1), role(2), role(3)];
+        let owner = Uuid::from_u128(1);
+        let ids = |v: Vec<&GroupRole>| v.iter().map(|r| r.id.as_u128()).collect::<Vec<_>>();
+        assert_eq!(ids(invite_roles(&roles, &[], 0, owner, false)), [0]);
+        assert_eq!(ids(invite_roles(&roles, &[], powers::ROLE_ASSIGN_MEMBER, owner, false)), [0, 2, 3]);
+        assert_eq!(
+            ids(invite_roles(&roles, &[], powers::ROLE_ASSIGN_MEMBER, owner, true)),
+            [0, 1, 2, 3]
+        );
+        let mine = [Uuid::from_u128(3)];
+        assert_eq!(
+            ids(invite_roles(&roles, &mine, powers::ROLE_ASSIGN_MEMBER_LIMITED, owner, false)),
+            [0, 3]
+        );
+    }
+}

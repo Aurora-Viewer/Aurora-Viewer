@@ -174,6 +174,18 @@ pub fn profile_picture(agent: Uuid) -> Uuid {
         .map_or(Uuid::nil(), picture_texture)
 }
 
+/// Profile picture of the residents of the profile scenarios
+/// (AURORA_DEMO_PROFILE): ours, the friend and the wolf, in the colors of
+/// the profile mock-up's banners.
+pub fn scenario_picture(agent: Uuid) -> Uuid {
+    match agent {
+        a if a == super::DEMO_AGENT => picture_texture(0),
+        a if a == super::DEMO_FRIEND => picture_texture(3),
+        a if a == super::DEMO_LOUP => picture_texture(1),
+        _ => Uuid::nil(),
+    }
+}
+
 /// Pixels of a demo profile picture: a diagonal gradient with the outline
 /// of a bust, 64 x 64.
 pub fn picture_pixels(texture: &Uuid) -> Option<(Vec<u8>, u32, u32)> {

@@ -170,6 +170,8 @@ pub enum CtxAction {
     Zoom(Vec3),
     /// About Land on the parcel at the clicked point (LLToolPie selects it).
     AboutLand(Vec3),
+    /// Buy Land on the parcel at the clicked point (Land.Buy).
+    BuyLand(Vec3),
     StandUp,
     SitGround,
     ToggleFly,
@@ -198,6 +200,8 @@ pub enum CtxAction {
     StopAnimations,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
+    /// "Report Abuse" on a resident, an object or nothing (LLFloaterReporter).
+    ReportAbuse(crate::report_abuse::ReportTarget),
     /// Block / unblock an object (LLMute::OBJECT).
     ToggleBlockObject {
         id: Uuid,
@@ -358,6 +362,23 @@ pub enum AvatarList {
 /// Right-click menu of an avatar name in a list. Our own name gets only
 /// the profile.
 pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, kind: AvatarList) {
+    avatar_menu_reporting(ui, p, world, id, kind, None);
+}
+
+/// The menu of the sender of a chat line: its "Report abuse" carries the
+/// line (menu_avatar_icon.xml report_abuse, LLFloaterReporter::showFromChat).
+pub fn chat_sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, line: &crate::world::ChatLine) {
+    avatar_menu_reporting(ui, p, world, id, AvatarList::Name, Some(crate::report_abuse::chat_target(id, line)));
+}
+
+fn avatar_menu_reporting(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    id: Uuid,
+    kind: AvatarList,
+    report: Option<crate::report_abuse::ReportTarget>,
+) {
     let ctx = ui.ctx().clone();
     let act = |a: CtxAction| request(&ctx, a);
     if id == world.agent_id {
@@ -397,7 +418,7 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
         }
     };
     let block = |ui: &mut egui::Ui| {
-        if menu::check(ui, p, "forbid-filled", aurora_i18n::tr!("common-ignore"), blocked, true) {
+        if menu::check(ui, p, "ban", aurora_i18n::tr!("common-ignore"), blocked, true) {
             act(CtxAction::ToggleBlock(id));
         }
     };
@@ -510,7 +531,11 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
             menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("ui-context-follow-resident"));
             remove_friend(ui);
             menu::separator(ui, p);
-            menu::todo(ui, p, "flag-filled", aurora_i18n::tr!("ui-context-report-abuse"));
+            if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("ui-context-report-abuse")) {
+                act(CtxAction::ReportAbuse(
+                    report.clone().unwrap_or(crate::report_abuse::ReportTarget::Avatar(id)),
+                ));
+            }
             block(ui);
             menu::separator(ui, p);
             copy(ui);

@@ -58,7 +58,14 @@ impl App {
             }
             return Some(dof::lens(&s, d, fov_y, height, window_height, debug));
         }
-        let s = &self.settings.dof;
+        // the photo window's lens while it is open and on, else the
+        // Preferences' (never changed by the window)
+        let photo = &self.settings.snapshot.dof;
+        let (s, manual) = if self.panels.snapshot && photo.enabled {
+            photo.applied(&self.settings.dof)
+        } else {
+            (self.settings.dof.clone(), None)
+        };
         if !s.enabled || (self.build.open && !s.in_edit) || !self.in_world() {
             return None;
         }
@@ -90,9 +97,9 @@ impl App {
             // what a lock keeps
             self.dof_focus.point = point;
         }
-        let target = point.map_or(f32::NAN, |p| dof::distance_along(eye, at, p));
+        let target = manual.unwrap_or_else(|| point.map_or(f32::NAN, |p| dof::distance_along(eye, at, p)));
         let transition = s.transition;
         let focus = self.dof_focus.update(target, dt, transition);
-        Some(dof::lens(&self.settings.dof, focus, fov_y, height, window_height, false))
+        Some(dof::lens(&s, focus, fov_y, height, window_height, false))
     }
 }
