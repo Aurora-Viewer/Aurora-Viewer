@@ -4,6 +4,7 @@
 
 pub mod feed;
 pub mod install;
+pub mod media_pack;
 pub mod package;
 mod user_data;
 
