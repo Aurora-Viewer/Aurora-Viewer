@@ -1464,7 +1464,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   its status dot), two IMs from the same resident arrive at 820 and 880 (one
   card, "(2)"), a group IM at 940 (group toasts are forced on for the
   scenario). The Conversations button of the bottom bar shows the unread
-  IMs and group chats in a violet pill (5 here), not the nearby chat lines.
+  IMs and group chats in a violet pill (5 at frame 1000), not the nearby
+  chat lines.
   The friends announced at login get no toast, only their chat line. `1` opens the bell list at frame 1100: only the
   two conversations are listed, never the presence notices. `click` (window
   closed) and `minimized` (window minimized at start) click the first IM
