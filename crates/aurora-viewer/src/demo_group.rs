@@ -716,12 +716,14 @@ fn created(group: &Uuid) -> Option<aurora_net::search::GroupProfile> {
 /// else the group is ours (its only member, an owner), the fee taken.
 pub fn create(name: &str, info: &aurora_net::groups::GroupInfo, balance: i32, fee: i32, can_join: bool) -> Vec<NetEvent> {
     let taken = super::search::group_named(name)
-        || ["Aurora Builders", aurora_i18n::tr!("demo-northern-wolves"), aurora_i18n::tr!("common-plaza-market")]
-            .iter()
-            .any(|n| n.eq_ignore_ascii_case(name))
-        || CREATED
-            .lock()
-            .is_ok_and(|c| c.iter().any(|g| g.name.eq_ignore_ascii_case(name)));
+        || [
+            "Aurora Builders",
+            aurora_i18n::tr!("demo-northern-wolves"),
+            aurora_i18n::tr!("common-plaza-market"),
+        ]
+        .iter()
+        .any(|n| n.eq_ignore_ascii_case(name))
+        || CREATED.lock().is_ok_and(|c| c.iter().any(|g| g.name.eq_ignore_ascii_case(name)));
     let refused = if taken {
         Some(aurora_i18n::tr!("demo-group-create-taken"))
     } else if !can_join {
@@ -1043,7 +1045,10 @@ mod tests {
         let s = spec(group).expect("roles and members");
         assert_eq!(s.members.len(), 1);
         assert!(s.members[0].is_owner);
-        assert!(refused(create("Test Created Group", &info, 1000, 100, true)), "the name is taken now");
+        assert!(
+            refused(create("Test Created Group", &info, 1000, 100, true)),
+            "the name is taken now"
+        );
     }
 
     #[test]

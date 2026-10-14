@@ -972,7 +972,11 @@ fn rating_choice(ui: &mut egui::Ui, p: &Palette, chosen: &mut Option<bool>, info
         let ink = if chosen.is_none() { p.amber } else { p.muted };
         widgets::glyph(ui, "alert-triangle-filled", ink, 15.0);
         let label = egui::RichText::new(aurora_i18n::tr!("ui-group-create-rating")).size(12.5);
-        ui.label(if chosen.is_none() { label.color(p.amber) } else { label.color(p.ink) });
+        ui.label(if chosen.is_none() {
+            label.color(p.amber)
+        } else {
+            label.color(p.ink)
+        });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(enabled, |ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;

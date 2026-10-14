@@ -221,9 +221,11 @@ impl GroupCreateUi {
             self.dialog = Some(Dialog::TooManyGroups);
             return;
         }
-        if !self.open || !self.sending {
+        // an open window is only brought to the front, its draft kept
+        if !self.open {
             self.draft = Draft::default();
             self.sending = false;
+            self.refused_key = false;
             self.dialog = None;
         }
         self.open = true;
@@ -273,7 +275,13 @@ impl GroupCreateUi {
     }
 
     /// The insignia chosen in the texture picker (after the windows).
-    pub fn picker(&mut self, ctx: &egui::Context, p: &Palette, world: &mut World, images: &HashMap<Uuid, egui::TextureHandle>) -> std::collections::HashSet<Uuid> {
+    pub fn picker(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &mut World,
+        images: &HashMap<Uuid, egui::TextureHandle>,
+    ) -> std::collections::HashSet<Uuid> {
         if let Some(texture) = self.texture.show(ctx, p, world, images) {
             self.draft.info.insignia = texture;
         }
@@ -281,7 +289,8 @@ impl GroupCreateUi {
     }
 
     fn pick_insignia(&mut self) {
-        self.texture.open(aurora_i18n::tr!("ui-group-admin-insignia"), self.draft.info.insignia);
+        self.texture
+            .open(aurora_i18n::tr!("ui-group-admin-insignia"), self.draft.info.insignia);
     }
 
     /// A click on "Create".
@@ -441,7 +450,11 @@ impl GroupCreateUi {
             if !me.is_nil() && !rule {
                 c.want_names.insert(me);
                 ui.label(small(aurora_i18n::tr!("ui-group-profile-founded-by").to_owned() + " "));
-                ui.label(egui::RichText::new(c.world.social.display_name_of(&me)).size(12.0).color(p.violet_light));
+                ui.label(
+                    egui::RichText::new(c.world.social.display_name_of(&me))
+                        .size(12.0)
+                        .color(p.violet_light),
+                );
                 ui.label(small(" · ".into()));
             }
             ui.label(small(format!("{len} / {}", name::MAX)));
@@ -543,9 +556,15 @@ impl GroupCreateUi {
         match self.draft.rating {
             Some(moderate) => {
                 let (rating, text) = if moderate {
-                    (aurora_i18n::tr!("common-moderate"), aurora_i18n::tr!("ui-group-profile-moderate-content"))
+                    (
+                        aurora_i18n::tr!("common-moderate"),
+                        aurora_i18n::tr!("ui-group-profile-moderate-content"),
+                    )
                 } else {
-                    (aurora_i18n::tr!("common-general"), aurora_i18n::tr!("ui-group-profile-general-content"))
+                    (
+                        aurora_i18n::tr!("common-general"),
+                        aurora_i18n::tr!("ui-group-profile-general-content"),
+                    )
                 };
                 view::badge_with(ui, p, text, neutral.0, neutral.1, 13.0, |ui, r| {
                     widgets::paint_maturity_badge(ui.painter(), p, rating, r, widgets::inner_radius(ui.visuals()));
@@ -563,9 +582,23 @@ impl GroupCreateUi {
             }
         }
         if self.draft.info.open_enrollment {
-            view::badge(ui, p, "door-enter", aurora_i18n::tr!("ui-group-profile-open-enrollment"), neutral.0, neutral.1);
+            view::badge(
+                ui,
+                p,
+                "door-enter",
+                aurora_i18n::tr!("ui-group-profile-open-enrollment"),
+                neutral.0,
+                neutral.1,
+            );
         } else {
-            view::badge(ui, p, "lock-filled", aurora_i18n::tr!("ui-group-profile-invitation-only"), neutral.0, neutral.1);
+            view::badge(
+                ui,
+                p,
+                "lock-filled",
+                aurora_i18n::tr!("ui-group-profile-invitation-only"),
+                neutral.0,
+                neutral.1,
+            );
         }
         let fee = self.draft.info.membership_fee;
         let text = if fee > 0 {
@@ -591,7 +624,11 @@ impl GroupCreateUi {
         let p = c.p;
         let enabled = !self.sending;
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(aurora_i18n::tr!("ui-group-create-classic-name")).size(12.5).color(p.ink));
+            ui.label(
+                egui::RichText::new(aurora_i18n::tr!("ui-group-create-classic-name"))
+                    .size(12.5)
+                    .color(p.ink),
+            );
             let w = ui.available_width();
             self.name_edit(ui, None, w);
         });
@@ -629,8 +666,13 @@ impl GroupCreateUi {
                 });
                 ui.add_space(6.0);
                 ui.add_enabled_ui(enabled, |ui| {
-                    widgets::checkbox(ui, p, &mut self.draft.info.open_enrollment, aurora_i18n::tr!("ui-group-create-anyone-can-join"))
-                        .on_hover_text(aurora_i18n::tr!("ui-group-create-anyone-can-join-tip"));
+                    widgets::checkbox(
+                        ui,
+                        p,
+                        &mut self.draft.info.open_enrollment,
+                        aurora_i18n::tr!("ui-group-create-anyone-can-join"),
+                    )
+                    .on_hover_text(aurora_i18n::tr!("ui-group-create-anyone-can-join-tip"));
                     let mut paid = self.draft.info.membership_fee > 0;
                     if widgets::checkbox(ui, p, &mut paid, aurora_i18n::tr!("ui-group-create-cost-to-join"))
                         .on_hover_text(aurora_i18n::tr!("ui-group-create-cost-to-join-tip"))
@@ -653,16 +695,35 @@ impl GroupCreateUi {
                         .width(200.0)
                         .show_ui(ui, |ui| {
                             ui.selectable_value(&mut self.draft.rating, None, aurora_i18n::tr!("ui-group-create-select-rating"));
-                            ui.selectable_value(&mut self.draft.rating, Some(true), aurora_i18n::tr!("ui-group-profile-moderate-content"));
-                            ui.selectable_value(&mut self.draft.rating, Some(false), aurora_i18n::tr!("ui-group-profile-general-content"));
+                            ui.selectable_value(
+                                &mut self.draft.rating,
+                                Some(true),
+                                aurora_i18n::tr!("ui-group-profile-moderate-content"),
+                            );
+                            ui.selectable_value(
+                                &mut self.draft.rating,
+                                Some(false),
+                                aurora_i18n::tr!("ui-group-profile-general-content"),
+                            );
                         })
                         .response
                         .on_hover_text(aurora_i18n::tr!("ui-group-create-rating-tip"));
                 });
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new(aurora_i18n::tr!("ui-group-create-fee-info")).size(11.5).color(p.muted));
+                ui.label(
+                    egui::RichText::new(aurora_i18n::tr!("ui-group-create-fee-info"))
+                        .size(11.5)
+                        .color(p.muted),
+                );
                 if ui
-                    .add(egui::Label::new(egui::RichText::new(aurora_i18n::tr!("ui-group-create-more-info")).size(11.5).color(p.violet_light)).sense(Sense::click()))
+                    .add(
+                        egui::Label::new(
+                            egui::RichText::new(aurora_i18n::tr!("ui-group-create-more-info"))
+                                .size(11.5)
+                                .color(p.violet_light),
+                        )
+                        .sense(Sense::click()),
+                    )
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {
@@ -679,12 +740,18 @@ impl GroupCreateUi {
                     {
                         self.press(c.world, actions);
                     }
-                    if widgets::action_button(ui, p, "", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, Vec2::new(0.0, 24.0)).clicked() {
+                    if widgets::action_button(ui, p, "", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, Vec2::new(0.0, 24.0))
+                        .clicked()
+                    {
                         self.open = false;
                     }
                 });
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new(aurora_i18n::tr!("ui-group-create-classic-note")).size(11.5).color(p.muted));
+                ui.label(
+                    egui::RichText::new(aurora_i18n::tr!("ui-group-create-classic-note"))
+                        .size(11.5)
+                        .color(p.muted),
+                );
             });
     }
 
@@ -837,7 +904,11 @@ fn fees_card(ui: &mut egui::Ui, c: &mut Ctx) {
             if let Some(balance) = c.world.balance {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(aurora_i18n::tr!("ui-group-create-balance")).size(12.0).color(p.muted));
+                    ui.label(
+                        egui::RichText::new(aurora_i18n::tr!("ui-group-create-balance"))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let short = balance < fee(c.world);
                         let text = aurora_i18n::tr!("ui-group-create-amount", cost = aurora_i18n::integer(i64::from(balance)));
@@ -859,7 +930,11 @@ fn fees_card(ui: &mut egui::Ui, c: &mut Ctx) {
         aurora_i18n::tr!("ui-group-create-members-title"),
         None,
         |ui| {
-            ui.label(egui::RichText::new(aurora_i18n::tr!("ui-group-create-members-note")).size(12.0).color(p.muted));
+            ui.label(
+                egui::RichText::new(aurora_i18n::tr!("ui-group-create-members-note"))
+                    .size(12.0)
+                    .color(p.muted),
+            );
         },
     );
 }
