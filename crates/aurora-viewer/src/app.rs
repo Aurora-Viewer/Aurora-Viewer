@@ -393,6 +393,8 @@ pub struct App {
     /// Avatar name tags on screen last frame, far first: a click on one
     /// counts as one on its avatar.
     name_tags: Vec<ui::hud::NameTag>,
+    /// Clickable destination marker last painted under the HUDs and UI.
+    beacon_hit: Option<ui::minimap::BeaconHit>,
     /// The avatar whose plate is under the pointer (app/plate_click.rs).
     plate_hover: Option<uuid::Uuid>,
     /// Block list version applied to object sounds, and the objects whose
@@ -775,6 +777,7 @@ impl App {
             voice_tags: Default::default(),
             plates: Default::default(),
             name_tags: Vec::new(),
+            beacon_hit: None,
             plate_hover: None,
             sound_blocks: Default::default(),
             sound_changes: Vec::new(),
@@ -2004,6 +2007,28 @@ impl App {
     }
 
     // ------------------------------------------------------------------ input
+
+    /// LLTracker::handleMouseDown: only the visible destination marker
+    /// takes the press. UI, worn HUDs and camera modifiers keep priority.
+    fn beacon_hover(&self) -> bool {
+        let ppp = self.egui_ctx.pixels_per_point();
+        let at = egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp);
+        matches!(self.screen, Screen::World)
+            && !self.camera.mouselook()
+            && !self.alt
+            && !self.ctrl
+            && !self.shift
+            && !self.color_pipette()
+            && !self.exit_prompt.open
+            && !self.cursor_hold.held()
+            && self.mouse_mode == MouseMode::None
+            && self
+                .beacon_hit
+                .as_ref()
+                .zip(self.world.map.track.as_ref())
+                .is_some_and(|(hit, track)| hit.contains(at, track))
+            && (!self.settings.show_huds || self.scene.hud_pick(&self.world, self.cursor_pos, true).is_none())
+    }
 
     /// The camera drag a left click would start under the pointer, like
     /// LLToolCamera::handleHover (lltoolfocus.cpp): Alt held over the world,
@@ -5618,6 +5643,10 @@ impl App {
             full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
             full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
         }
+        if !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover() {
+            full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
+            full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
+        }
         if let Some(h) = &self.interactions.held {
             if h.physical {
                 full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Grab, false);
@@ -5994,6 +6023,20 @@ impl App {
         self.resolve_clicks();
         self.demo_action_steps();
         self.demo_click_steps();
+        if self.demo && self.frame_count == 700 && std::env::var("AURORA_DEMO_MAP").as_deref() == Ok("beacon-click") {
+            if let Some(hit) = &self.beacon_hit {
+                let at = hit.rect.center() * self.egui_ctx.pixels_per_point();
+                self.cursor_pos = (at.x, at.y);
+                self.mouse_input(MouseButton::Left, true, false);
+                self.mouse_input(MouseButton::Left, false, false);
+            }
+            log::info!(
+                "demo beacon click: cleared={}, mouse_mode={:?}, pending_pick={}",
+                self.world.map.track.is_none(),
+                self.mouse_mode,
+                self.clicks.waiting(),
+            );
+        }
         if self.demo {
             self.demo_double_click_steps();
         }
@@ -7196,6 +7239,8 @@ impl App {
         let mut a = UiActions::default();
         let p = self.palette;
         let ctx = ui.ctx().clone();
+        let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
+        self.beacon_hit = None;
         let mut t = Instant::now();
         if self.exit_prompt.open {
             ui.disable();
@@ -7396,7 +7441,7 @@ impl App {
                     )
                 };
                 if !self.camera.mouselook() && !held {
-                    ui::minimap::draw_beacon(&ctx, &self.world, projector);
+                    self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
                 }
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
@@ -9053,10 +9098,18 @@ impl ApplicationHandler for App {
             // captures: AURORA_DEMO_MAP=1 opens the mini-map and the world map
             // (with a tracked spot east of the plaza)
             if let Ok(scenario) = std::env::var("AURORA_DEMO_MAP") {
+                let mode = scenario.split(',').next().unwrap_or_default().trim();
                 self.panels.minimap = true;
-                self.panels.world_map = scenario != "mini";
+                self.panels.world_map = mode != "mini" && !mode.starts_with("beacon");
                 self.panels.perf = false;
-                self.world.map.track_location(256000.0 + 200.0, 256000.0 + 150.0, 25.0, false);
+                let (x, y, z) = match mode {
+                    "beacon" | "beacon-click" => (160.0, 128.0, 30.0),
+                    "beacon-offscreen" => (80.0, 128.0, 30.0),
+                    _ => (200.0, 150.0, 25.0),
+                };
+                if mode != "coordinates" {
+                    self.world.map.track_location(256000.0 + x, 256000.0 + y, z, false);
+                }
                 // words separated by commas: search:<text> (the search with its
                 // suggestions), drawer:<landmarks|history|friends>, landmarks
                 // (212 of them, the drawer open), friend (Nova followed),

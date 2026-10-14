@@ -1289,7 +1289,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent |
-| `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy` | World map and mini-map, the search, the drawer, 204 more landmarks, a followed friend, the side panel layout |
+| `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
@@ -1781,6 +1781,29 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   buttons on one line), the layer pills at the top right (greyed when zoomed
   out), zoom / my position / home at the bottom right; the panels fade while
   the map is dragged and never let a click through to the map.
+  `beacon` shows a nearby destination without the world-map window: the
+  bright upper column stays visible up to the screen edge, with a pin and a
+  readable location / distance label. A second column descends from the
+  destination to altitude zero, as in Firestorm; with the default skin it
+  is mauve (`violet_light`), while the upper column is red. Both use the same
+  glow and viewport clipping. The pin has no extra circle; its information
+  card shows the frosted scene under the theme's tint, border and shadow,
+  including beside the off-screen arrow. Opaque skins keep an opaque card.
+  Hover the pin or its label for
+  "Click to remove beacon"; click either to remove it from the scene
+  and mini-map. `beacon-offscreen` puts the destination behind the camera:
+  a clickable direction arrow and its label stay within the screen.
+  `beacon-click` presses the pin at frame 700 through the normal mouse
+  input path; the log must say `cleared=true`, `mouse_mode=None`,
+  `pending_pick=false`. Capture frames 650 and 780 for before / after.
+  With `legacy`, "Remove beacon" is in the position actions, at the former
+  "Clear" button's location. Its tooltip explains removal from all three
+  views. The full-frame card's removal tooltip uses the same name and
+  explanation. `coordinates,legacy` opens the side panel without a beacon:
+  X / Y / Z show our current position and remain editable. Commit a new
+  value with Enter or
+  by leaving the field: a destination appears without teleporting. Remove
+  it: the coordinates return to our position and can be edited again.
 - **`AURORA_DEMO_SLURLS=1|offer`**: Tess Touch's conversation, the chat
   console and the notification list show the same place links, one per
   SLURL form: the plaza (General), the lagoon (Moderate), Nordheim (Adult),

@@ -1741,25 +1741,19 @@ impl WorldMapUi {
             let (mut lx, mut ly, mut lz) = (l.x, l.y, l.z);
             ui.horizontal(|ui| {
                 ui.spacing_mut().interact_size.x = 46.0;
-                let mut moved = false;
-                let mut lifted = false;
                 for (label, v, max) in [("X", &mut lx, 8191.0), ("Y", &mut ly, 8191.0), ("Z", &mut lz, 10000.0)] {
                     ui.label(egui::RichText::new(label).size(12.0).color(p.muted));
-                    let changed = ui
-                        .add(
-                            egui::DragValue::new(v)
-                                .custom_parser(aurora_i18n::parse_number)
-                                .range(0.0..=max)
-                                .speed(1.0)
-                                .max_decimals(0),
-                        )
-                        .changed();
-                    if label == "Z" {
-                        lifted |= changed;
-                    } else {
-                        moved |= changed;
-                    }
+                    ui.add(
+                        egui::DragValue::new(v)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .range(0.0..=max)
+                            .speed(1.0)
+                            .max_decimals(0)
+                            .update_while_editing(false),
+                    );
                 }
+                let moved = (lx, ly) != (l.x, l.y);
+                let lifted = lz != l.z;
                 if moved || lifted {
                     edited = Some((k.0 as f64 * 256.0 + lx as f64, k.1 as f64 * 256.0 + ly as f64, lz, moved));
                 }
@@ -1810,7 +1804,11 @@ impl WorldMapUi {
                 .on_hover_text(aurora_i18n::tr!("ui-worldmap-show-selection"))
                 .clicked();
             clear = widgets::action_button(ui, p, "backspace-filled", "", ActionKind::Flat, icon_only)
-                .on_hover_text(aurora_i18n::tr!("common-clear"))
+                .on_hover_text(format!(
+                    "{}\n{}",
+                    aurora_i18n::tr!("ui-waypoint-remove"),
+                    aurora_i18n::tr!("ui-waypoint-remove-help")
+                ))
                 .clicked();
         });
         let ctx = ui.ctx().clone();
@@ -1838,7 +1836,7 @@ impl WorldMapUi {
             }
         }
         if go {
-            match (&landmark, &track) {
+            match (&self.landmark, &world.map.track) {
                 (Some((_, asset, _)), _) => actions.push(WorldMapAction::TeleportLandmark(*asset)),
                 (None, Some(t)) if !t.pending && !t.invalid => {
                     world.map.push(crate::world::worldmap::teleport_command(t.x, t.y, t.z));
@@ -1857,6 +1855,9 @@ impl WorldMapUi {
         }
         if clear {
             world.map.clear_track();
+            world.map.search = None;
+            self.search.clear();
+            self.ov.query.clear();
             self.landmark = None;
             self.ov.landmark_at = None;
             self.selected = None;

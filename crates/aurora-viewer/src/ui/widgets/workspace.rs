@@ -334,6 +334,24 @@ pub(crate) fn overlay_frame(ctx: &egui::Context, p: &Palette) -> egui::Frame {
         .shadow(visuals.window_shadow)
 }
 
+/// A laid-out world label, using the overlay's border, shadow and corners.
+/// A lighter tint exposes the scene blur; shading keeps text legible against
+/// bright skies, as on avatar name plates. Opaque skins keep their surface.
+pub(crate) fn paint_world_label(painter: &egui::Painter, p: &Palette, rect: egui::Rect) {
+    let mut frame = overlay_frame(painter.ctx(), p);
+    let glass = p.panel_alpha < 255;
+    if glass {
+        frame.fill = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), (f32::from(p.panel_alpha) * 0.65) as u8);
+    }
+    painter.add(frame.paint(rect));
+    if glass {
+        let radius = f32::from(frame.corner_radius.nw);
+        let inner = rect.shrink(1.0);
+        painter.add(aurora_render::glass_region(inner, radius, 1.0, 0.65));
+        painter.rect_filled(inner, frame.corner_radius, frame.fill);
+    }
+}
+
 /// `overlay_frame` over the windows' blur of the world behind it.
 pub(crate) fn overlay<R>(
     ui: &mut egui::Ui,

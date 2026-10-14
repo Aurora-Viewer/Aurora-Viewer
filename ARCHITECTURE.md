@@ -509,7 +509,12 @@ pipeline of its own instead of egui-wgpu's (`aurora-render/src/label_depth.rs`,
 compared with the scene's depth at its pixel, the cut smoothed over the four
 texels around it). A wall cuts the name of someone standing half behind it;
 nothing is read back from the GPU. What is painted without a mark (the
-destination beacon) is never hidden. A name tag stands half a metre in front
+destination beacon) is never hidden. Its column is clipped in homogeneous
+coordinates so its visible part remains when the summit is off screen
+(`ui/minimap.rs`). The pin, direction arrow and location label return hit
+rectangles tied to that destination; `app/click_pick.rs` consumes their
+unmodified left press before requesting a world pick, after the UI and worn
+HUDs. A name tag stands half a metre in front
 of its anchor (`ui::hud::tag_point`), so that its avatar's head never cuts it,
 and a click on it reaches the avatar only where the tag shows.
 

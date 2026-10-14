@@ -222,12 +222,18 @@ impl WorldMapUi {
                         ui.set_width(side);
                         ui.set_max_width(side);
                         ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                        let footer_id = egui::Id::new("worldmap-position-height");
+                        let footer_height = ui.ctx().data(|d| d.get_temp::<f32>(footer_id)).unwrap_or(180.0);
+                        let scroll_height = (avail.y - footer_height - ui.spacing().item_spacing.y).max(0.0);
                         egui::ScrollArea::vertical()
                             .id_salt("worldmap-side")
-                            .max_height(avail.y)
+                            .auto_shrink([false, false])
+                            .max_height(scroll_height)
                             .show(ui, |ui| {
                                 self.side_panel(ui, p, world, cam, opts, &mut actions);
                             });
+                        let footer = ui.vertical(|ui| self.position_panel(ui, p, world, cam, &mut actions));
+                        ui.ctx().data_mut(|d| d.insert_temp(footer_id, footer.response.rect.height()));
                     });
                 });
             });
@@ -645,6 +651,92 @@ impl WorldMapUi {
         input
     }
 
+    fn clear_button(&mut self, ui: &mut egui::Ui, world: &mut World) -> egui::Response {
+        let response = ui
+            .add_enabled(
+                world.map.track.is_some() || self.landmark.is_some(),
+                egui::Button::new(aurora_i18n::tr!("ui-waypoint-remove")),
+            )
+            .on_hover_text(aurora_i18n::tr!("ui-waypoint-remove-help"));
+        if response.clicked() {
+            world.map.clear_track();
+            // Cancel the old search too: clearing its selection alone lets
+            // the exact-match result create the beacon again next frame.
+            world.map.search = None;
+            self.search.clear();
+            self.landmark = None;
+            self.selected = None;
+            self.target_pan = Vec2::ZERO;
+            self.pan_tau = PAN_TAU_CENTER;
+        }
+        response
+    }
+
+    /// LLFloaterWorldMap::onCoordinatesCommit: editing a position creates
+    /// a destination. Without tracking, use our current region / position
+    /// (onClearBtn's mSetToUserPosition), with editable fields throughout.
+    fn coordinates(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World) -> Option<[egui::Response; 3]> {
+        let tracked = world.map.track.clone();
+        let (x, y, z) = if let Some(t) = &tracked {
+            (t.x, t.y, t.z)
+        } else {
+            let (ox, oy) = world.main_origin()?;
+            let pos = world.agent.position;
+            (ox as f64 + pos.x as f64, oy as f64 + pos.y as f64, pos.z)
+        };
+        let ((ox, oy), name) = if let Some(((sx, sy), sim)) = world.map.sim_at_global(x, y) {
+            ((sx as f64 * 256.0, sy as f64 * 256.0), sim.name.clone())
+        } else {
+            match &tracked {
+                Some(t) => (
+                    ((x / 256.0).floor() * 256.0, (y / 256.0).floor() * 256.0),
+                    if t.pending {
+                        aurora_i18n::tr!("common-loading-2")
+                    } else {
+                        aurora_i18n::tr!("ui-worldmap-invalid-location")
+                    }
+                    .to_owned(),
+                ),
+                None => {
+                    let (ox, oy) = world.main_origin()?;
+                    ((ox as f64, oy as f64), world.region_name())
+                }
+            }
+        };
+        ui.label(RichText::new(&name).size(12.5).color(p.ink));
+        let (mut lx, mut ly, mut lz) = ((x - ox) as f32, (y - oy) as f32, z);
+        let before = (lx, ly, lz);
+        let responses = ui
+            .horizontal(|ui| {
+                [("X", &mut lx, 8191.0), ("Y", &mut ly, 8191.0), ("Z", &mut lz, 10000.0)].map(|(label, value, max)| {
+                    ui.label(RichText::new(label).size(12.0).color(p.muted));
+                    ui.add(
+                        egui::DragValue::new(value)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .range(0.0..=max)
+                            .speed(1.0)
+                            .max_decimals(0)
+                            .update_while_editing(false),
+                    )
+                })
+            })
+            .inner;
+        // TextEdit reports a change while a DragValue is still typing.
+        // Track only a committed numeric change (or a drag of the value).
+        if (lx, ly, lz) != before {
+            self.landmark = None;
+            world.map.track_location(ox + lx as f64, oy + ly as f64, lz, false);
+            // Named events keep their title; a coordinate destination gets
+            // the freshly formatted region / coordinates from track_location.
+            if let Some(old) = tracked.filter(|t| !t.label.is_empty() && !t.label.starts_with(&name))
+                && let Some(t) = &mut world.map.track
+            {
+                t.label = old.label;
+            }
+        }
+        Some(responses)
+    }
+
     fn side_panel(
         &mut self,
         ui: &mut egui::Ui,
@@ -847,70 +939,55 @@ impl WorldMapUi {
                 });
         }
 
-        heading(ui, aurora_i18n::tr!("ui-worldmap-position"));
-        let mut tp_target: Option<NetCommand> = None;
-        if let Some((_, asset, name)) = &self.landmark {
+        heading(ui, aurora_i18n::tr!("common-zoom"));
+        let mut z = self.target_zoom;
+        if ui
+            .add(
+                egui::Slider::new(&mut z, ZOOM_MIN..=ZOOM_MAX)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .step_by(0.2)
+                    .show_value(false),
+            )
+            .changed()
+        {
+            self.target_zoom = z;
+            self.zoom_pivot = None;
+        }
+    }
+
+    fn position_panel(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World, cam: &MapCamera, actions: &mut Vec<WorldMapAction>) {
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-worldmap-position"))
+                .size(12.0)
+                .strong()
+                .color(p.violet_light),
+        );
+        widgets::divider(ui, p);
+        if let Some((_, _, name)) = &self.landmark {
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-worldmap-landmark", name = name.to_string()))
                     .size(12.0)
                     .color(p.ink),
             );
-            tp_target = Some(NetCommand::TeleportLandmark(*asset));
-        } else if let Some(t) = world.map.track.clone() {
-            let region = world.map.sim_at_global(t.x, t.y).map(|(k, s)| (k, s.name.clone()));
-            match &region {
-                Some((_, n)) => ui.label(RichText::new(n).size(12.5).color(p.ink)),
-                None => ui.label(
-                    RichText::new(if t.pending {
-                        aurora_i18n::tr!("common-loading-2")
-                    } else {
-                        aurora_i18n::tr!("ui-worldmap-invalid-location")
-                    })
-                    .size(12.0)
-                    .color(p.muted),
-                ),
-            };
-            if let Some(((sx, sy), _)) = region {
-                let (mut lx, mut ly, mut lz) = ((t.x - sx as f64 * 256.0) as f32, (t.y - sy as f64 * 256.0) as f32, t.z);
-                let mut changed = false;
-                ui.horizontal(|ui| {
-                    for (label, v, max) in [("X", &mut lx, 8191.0), ("Y", &mut ly, 8191.0), ("Z", &mut lz, 10000.0)] {
-                        ui.label(RichText::new(label).size(12.0).color(p.muted));
-                        changed |= ui
-                            .add(
-                                egui::DragValue::new(v)
-                                    .custom_parser(aurora_i18n::parse_number)
-                                    .range(0.0..=max)
-                                    .speed(1.0)
-                                    .max_decimals(0),
-                            )
-                            .changed();
-                    }
-                });
-                if changed {
-                    let (x, y) = (sx as f64 * 256.0 + lx as f64, sy as f64 * 256.0 + ly as f64);
-                    let label = t.label.clone();
-                    world.map.track_location(x, y, lz, false);
-                    let region = world.map.sim_at_global(x, y).map(|(_, s)| s.name.clone());
-                    if let (Some(nt), Some(n)) = (world.map.track.as_mut(), region) {
-                        nt.label = if label.starts_with(&n) {
-                            location_label(&n, lx as f64, ly as f64, lz)
-                        } else {
-                            label
-                        };
-                    }
-                }
-                if !t.invalid {
-                    tp_target = Some(teleport_command(t.x, t.y, t.z));
-                }
-            }
-        } else {
+        }
+        if self.coordinates(ui, p, world).is_none() {
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-worldmap-click-on-the-map-to-choose-a-location"))
                     .size(12.0)
                     .color(p.muted),
             );
         }
+        let tp_target = if let Some((_, asset, _)) = &self.landmark {
+            Some(NetCommand::TeleportLandmark(*asset))
+        } else {
+            world
+                .map
+                .track
+                .as_ref()
+                .filter(|t| !t.pending && !t.invalid)
+                .map(|t| teleport_command(t.x, t.y, t.z))
+        };
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             if ui
@@ -945,35 +1022,8 @@ impl WorldMapUi {
             {
                 self.center_on(world, cam, x, y);
             }
-            if ui
-                .add_enabled(
-                    tracked.is_some() || self.landmark.is_some(),
-                    egui::Button::new(aurora_i18n::tr!("common-clear")),
-                )
-                .clicked()
-            {
-                world.map.clear_track();
-                self.landmark = None;
-                self.selected = None;
-                self.target_pan = Vec2::ZERO;
-                self.pan_tau = PAN_TAU_CENTER;
-            }
+            self.clear_button(ui, world);
         });
-
-        heading(ui, aurora_i18n::tr!("common-zoom"));
-        let mut z = self.target_zoom;
-        if ui
-            .add(
-                egui::Slider::new(&mut z, ZOOM_MIN..=ZOOM_MAX)
-                    .custom_parser(aurora_i18n::parse_number)
-                    .step_by(0.2)
-                    .show_value(false),
-            )
-            .changed()
-        {
-            self.target_zoom = z;
-            self.zoom_pivot = None;
-        }
     }
 
     /// A search result: track its middle and center the map on it.
@@ -1236,4 +1286,164 @@ fn legend_check(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: &str, icon
         }
         ui.label(RichText::new(label).size(12.5).color(p.ink));
     });
+}
+
+#[cfg(test)]
+mod coordinate_tests {
+    use super::*;
+    use crate::scene::avatar::AvatarLibrary;
+    use std::sync::Arc;
+
+    struct Bench {
+        ctx: egui::Context,
+        map: WorldMapUi,
+        world: World,
+        fields: [Rect; 3],
+        enabled: [bool; 3],
+        remove: Rect,
+        time: f64,
+    }
+
+    impl Bench {
+        fn new() -> Self {
+            let mut world = World::new(Arc::new(AvatarLibrary::load()));
+            world.main_region = Some(aurora_net::origin_to_handle(256000, 256000));
+            world.agent.position = glam::Vec3::new(32.0, 48.0, 70.0);
+            world.map.apply_blocks(vec![aurora_net::MapBlock {
+                x: 1000,
+                y: 1000,
+                name: "Coordinate Region".into(),
+                access: 13,
+                region_flags: 0,
+                water_height: 20,
+                agents: 0,
+                map_image_id: Uuid::nil(),
+                size_x: 256,
+                size_y: 256,
+            }]);
+            let mut bench = Self {
+                ctx: egui::Context::default(),
+                map: WorldMapUi::default(),
+                world,
+                fields: [Rect::NOTHING; 3],
+                enabled: [false; 3],
+                remove: Rect::NOTHING,
+                time: 0.0,
+            };
+            bench.frame(vec![]);
+            bench
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) {
+            self.time += 0.1;
+            let p = crate::theme::Theme::default().palette();
+            let ctx = self.ctx.clone();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 200.0))),
+                    time: Some(self.time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let fields = self.map.coordinates(ui, &p, &mut self.world).expect("in-world coordinates");
+                    self.fields = std::array::from_fn(|i| fields[i].rect);
+                    self.enabled = std::array::from_fn(|i| fields[i].enabled());
+                    self.remove = self.map.clear_button(ui, &mut self.world).rect;
+                },
+            );
+            // This headless bench intentionally has no GPU texture consumer.
+            output.textures_delta.clear();
+        }
+
+        fn type_value(&mut self, field: usize, value: &str) {
+            let pos = self.fields[field].center();
+            for pressed in [true, false] {
+                self.frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ]);
+            }
+            self.frame(vec![]);
+            self.frame(vec![egui::Event::Text(value.into())]);
+        }
+
+        fn commit(&mut self) {
+            self.frame(vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }]);
+            self.frame(vec![]);
+        }
+
+        fn clear(&mut self) {
+            let pos = self.remove.center();
+            for pressed in [true, false] {
+                self.frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ]);
+            }
+            self.frame(vec![]);
+        }
+    }
+
+    #[test]
+    fn coordinates_are_editable_without_a_beacon_and_commit_without_teleporting() {
+        let mut b = Bench::new();
+        assert!(b.enabled.into_iter().all(|enabled| enabled));
+        assert!(b.world.map.track.is_none());
+        b.type_value(2, "120");
+        assert!(b.world.map.track.is_none(), "typing does not track partial input");
+        b.commit();
+        let t = b.world.map.track.as_ref().expect("typed destination");
+        assert_eq!((t.x, t.y, t.z), (256032.0, 256048.0, 120.0));
+        assert!(!t.pending && !t.invalid);
+        assert!(b.world.map.take_commands().is_empty(), "coordinate entry does not teleport");
+    }
+
+    #[test]
+    fn removing_the_beacon_cancels_search_and_allows_coordinate_entry_again() {
+        let mut b = Bench::new();
+        b.world.map.track_location(256100.0, 256110.0, 90.0, false);
+        b.map.search = "Coordinate Region".into();
+        b.map.selected = Some((1000, 1000));
+        b.world.map.search = Some(("coordinate region".into(), std::time::Instant::now()));
+        b.frame(vec![]);
+        b.clear();
+        assert!(b.world.map.track.is_none());
+        assert!(b.world.map.search.is_none() && b.map.search.is_empty());
+        assert!(b.enabled.into_iter().all(|enabled| enabled));
+        b.type_value(0, "64");
+        b.commit();
+        let t = b.world.map.track.as_ref().expect("new typed destination");
+        assert_eq!((t.x, t.y, t.z), (256064.0, 256048.0, 70.0));
+        assert!(b.world.map.take_commands().is_empty());
+    }
+
+    #[test]
+    fn coordinates_keep_the_main_region_origin_before_map_metadata_arrives() {
+        let mut b = Bench::new();
+        b.world.map.sims.clear();
+        b.world.agent.position = glam::Vec3::new(500.0, 700.0, 30.0);
+        b.frame(vec![]);
+        b.type_value(0, "600");
+        b.commit();
+        let t = b.world.map.track.as_ref().expect("typed destination awaiting metadata");
+        assert_eq!((t.x, t.y, t.z), (256600.0, 256700.0, 30.0));
+        assert!(t.pending && !t.teleport);
+    }
 }
