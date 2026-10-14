@@ -3023,6 +3023,9 @@ impl Session<'_> {
                     url: field_str(&d.url),
                 },
             );
+        } else if id == ScriptTeleportRequest::ID {
+            let m: ScriptTeleportRequest = pkt.decode()?;
+            emit(self.sh, script_teleport_request(&m));
         } else if id == AvatarSitResponse::ID {
             // the simulator sits us itself unless it asks for the autopilot walk
             // (process_avatar_sit_response); we skip the walk and sit at once
@@ -3938,6 +3941,68 @@ mod follow_cam_tests {
                 acks: vec![],
             };
             assert!(follow_cam_event(&packet, 10).is_err());
+        }
+    }
+}
+
+/// llMapDestination, as process_script_teleport_request reads it
+/// (indra/newview/llviewermessage.cpp, originally LGPL 2.1): without an
+/// Options block the map opens and centres on the place.
+fn script_teleport_request(m: &ScriptTeleportRequest) -> NetEvent {
+    NetEvent::ScriptTeleportRequest {
+        object_name: field_str(&m.data.object_name),
+        region: field_str(&m.data.sim_name),
+        position: m.data.sim_position,
+        flags: m.options.first().map_or(beacon::SHOW_MAP | beacon::FOCUS_MAP, |o| o.flags),
+    }
+}
+
+#[cfg(test)]
+mod script_teleport_tests {
+    use super::*;
+
+    fn request(options: Vec<u32>) -> ScriptTeleportRequest {
+        let mut m = ScriptTeleportRequest::default();
+        m.data.object_name = str_field("Club door");
+        m.data.sim_name = str_field("YIFF");
+        m.data.sim_position = Vec3::new(168.4, 149.6, 3010.2);
+        m.options = options
+            .into_iter()
+            .map(|flags| msgs::script_teleport_request::Options { flags })
+            .collect();
+        m
+    }
+
+    fn decoded(m: &ScriptTeleportRequest) -> ScriptTeleportRequest {
+        let mut bytes = Vec::new();
+        aurora_msg::build_packet(m, 1, true, false, &[], &mut bytes);
+        parse_packet(&bytes).expect("packet").decode().expect("decode")
+    }
+
+    #[test]
+    fn map_destination_reads_the_place_and_opens_the_map_by_default() {
+        match script_teleport_request(&decoded(&request(vec![]))) {
+            NetEvent::ScriptTeleportRequest {
+                object_name,
+                region,
+                position,
+                flags,
+            } => {
+                assert_eq!((object_name.as_str(), region.as_str()), ("Club door", "YIFF"));
+                assert_eq!(position, Vec3::new(168.4, 149.6, 3010.2));
+                assert_eq!(flags, beacon::SHOW_MAP | beacon::FOCUS_MAP);
+            }
+            event => panic!("unexpected {event:?}"),
+        }
+    }
+
+    #[test]
+    fn map_destination_keeps_the_options_the_script_sent() {
+        for flags in [0, beacon::SHOW_MAP, beacon::FOCUS_MAP] {
+            assert!(matches!(
+                script_teleport_request(&decoded(&request(vec![flags]))),
+                NetEvent::ScriptTeleportRequest { flags: f, .. } if f == flags
+            ));
         }
     }
 }

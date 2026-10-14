@@ -153,8 +153,13 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
             let mut buttons: Vec<(String, Response, bool)> = Vec::new();
             match &n.data {
                 Data::None => {}
-                Data::Lure { .. } => {
-                    buttons.push((aurora_i18n::tr!("common-teleport-3").into(), Response::Accept, true));
+                Data::Lure { change_rating, .. } => {
+                    let accept = if *change_rating {
+                        aurora_i18n::tr!("ui-chat-invite-change-and-continue")
+                    } else {
+                        aurora_i18n::tr!("common-teleport-3")
+                    };
+                    buttons.push((accept.into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
                 }
                 // TeleportRequest: Yes offers a teleport, No sends nothing

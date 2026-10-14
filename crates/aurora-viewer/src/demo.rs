@@ -425,9 +425,11 @@ fn demo_raw() -> Llsd {
         .collect();
     let mut raw = llsd_map! {
         "inventory-root" => Llsd::Array(vec![llsd_map!{"folder_id" => u(1)}]),
-        // an adult account that wants every rating (the search window's boxes)
-        "agent_access_max" => "A",
-        "agent_region_access" => "A",
+        // an adult account that wants every rating (the search window's boxes);
+        // AURORA_DEMO_LURE=exceeded: it wants General and Moderate only,
+        // =blocked: it is not adult
+        "agent_access_max" => demo_access().0,
+        "agent_region_access" => demo_access().1,
         "inventory-skeleton" => Llsd::Array(skel),
         "buddy-list" => Llsd::Array(buddies),
         "classified_categories" => Llsd::Array(
@@ -715,12 +717,30 @@ pub enum LureScene {
     NotificationAnswered,
     /// The offer's card in the legacy lines.
     Legacy,
+    /// An offer to an Adult region while the account wants General and
+    /// Moderate: "Change and Continue" (part C).
+    Exceeded,
+    /// The same, answered by "Change and Continue": the rating is asked
+    /// for, then the teleport leaves.
+    ExceededContinue,
+    /// An offer to an Adult region for an account that is not adult: no
+    /// teleport, the sender is told.
+    Blocked,
 }
 
 impl LureScene {
     /// Her conversation is open on the card.
     pub fn shows_card(self) -> bool {
         !matches!(self, LureScene::Offer | LureScene::Request | LureScene::God | LureScene::Reject)
+    }
+}
+
+/// The demo account's content ceiling and preference (login letters).
+fn demo_access() -> (&'static str, &'static str) {
+    match lure_scene() {
+        Some(LureScene::Exceeded | LureScene::ExceededContinue) => ("A", "M"),
+        Some(LureScene::Blocked) => ("M", "M"),
+        _ => ("A", "A"),
     }
 }
 
@@ -754,6 +774,9 @@ pub fn lure_scene() -> Option<LureScene> {
         "card-answered" => Some(LureScene::CardAnswered),
         "notification-answered" => Some(LureScene::NotificationAnswered),
         "legacy" => Some(LureScene::Legacy),
+        "exceeded" => Some(LureScene::Exceeded),
+        "exceeded-continue" => Some(LureScene::ExceededContinue),
+        "blocked" => Some(LureScene::Blocked),
         _ => None,
     }
 }
@@ -786,6 +809,10 @@ pub fn lure_events(scene: LureScene, agent: Uuid) -> Vec<NetEvent> {
     match scene {
         LureScene::Offer | LureScene::OfferCard | LureScene::CardAnswered | LureScene::NotificationAnswered | LureScene::Legacy => {
             vec![im(d::LURE_USER, &invitation, plaza)]
+        }
+        // the plaza, rated Adult
+        LureScene::Exceeded | LureScene::ExceededContinue | LureScene::Blocked => {
+            vec![im(d::LURE_USER, &invitation, b"256000|256000|128|130|25|0|1|0|A")]
         }
         LureScene::Request | LureScene::RequestCard => vec![im(d::TELEPORT_REQUEST, aurora_i18n::tr!("demo-can-i-join-you"), b"")],
         LureScene::God => vec![im(d::GODLIKE_LURE_USER, &invitation, plaza)],
@@ -1630,6 +1657,18 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 },
             ]
         }
+        // AURORA_DEMO_ACTIONS=tp-door: the touched object answers like a
+        // club's teleport door scripted with llMapDestination (issue #283)
+        aurora_net::NetCommand::ObjectGrab { local_id: 975, .. }
+            if std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|m| m.starts_with("tp-door")) =>
+        {
+            vec![NetEvent::ScriptTeleportRequest {
+                object_name: "Club door".into(),
+                region: aurora_i18n::tr!("common-aurora-demo").into(),
+                position: Vec3::new(168.4, 149.7, 118.2),
+                flags: aurora_net::beacon::SHOW_MAP | aurora_net::beacon::FOCUS_MAP,
+            }]
+        }
         _ => Vec::new(),
     }
 }
@@ -1679,7 +1718,7 @@ pub fn action_mode_id(mode: &str) -> u32 {
         "sit" => 970,
         "buy" => 971,
         "pay" => 972,
-        "none" | "touch" => 975,
+        "none" | "touch" | "tp" => 975,
         "open" => 976,
         "play" | "pause" => 977,
         "zoom" => 979,

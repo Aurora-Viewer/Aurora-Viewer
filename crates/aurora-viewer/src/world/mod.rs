@@ -1710,6 +1710,23 @@ impl World {
                 );
                 None
             }
+            NetEvent::ScriptTeleportRequest {
+                object_name,
+                region,
+                position,
+                flags,
+            } => {
+                log::info!("llMapDestination from {object_name:?}: {region} {position:.0?}, flags {flags:#x}");
+                // the app opens the map (LLFloaterWorldMap::openFloater)
+                self.map
+                    .map_destination(&region, position, flags)
+                    .then_some(NetEvent::ScriptTeleportRequest {
+                        object_name,
+                        region,
+                        position,
+                        flags,
+                    })
+            }
             NetEvent::Names(list) => {
                 for (id, first, last) in list {
                     self.social.avatar_names.on_legacy(id, &first, &last);
@@ -2223,7 +2240,7 @@ impl World {
             // teleport offers and requests (teleport_invites.rs)
             d::LURE_USER => self.on_teleport_offer(im, &from),
             d::TELEPORT_REQUEST => self.on_teleport_request(im, &from),
-            d::GODLIKE_LURE_USER => self.on_godlike_lure(im),
+            d::GODLIKE_LURE_USER => self.on_godlike_lure(im, &from),
             d::LURE_ACCEPTED => self.on_teleport_offer_answered(im, true),
             d::LURE_DECLINED => self.on_teleport_offer_answered(im, false),
             d::FRIENDSHIP_OFFERED => {

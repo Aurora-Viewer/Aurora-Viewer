@@ -9,6 +9,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Options of llMapDestination's ScriptTeleportRequest (indra_constants.h).
+pub mod beacon {
+    pub const SHOW_MAP: u32 = 0x1;
+    pub const FOCUS_MAP: u32 = 0x2;
+}
+
 /// Region identifier: global origin in meters packed as `(x << 32) | y`.
 pub type RegionHandle = u64;
 
@@ -626,6 +632,15 @@ pub enum NetEvent {
         object_id: Uuid,
         message: String,
         url: String,
+    },
+    /// llMapDestination (ScriptTeleportRequest): a place to show on the
+    /// world map. Despite its name it never teleports by itself.
+    ScriptTeleportRequest {
+        object_name: String,
+        region: String,
+        position: Vec3,
+        /// `beacon::SHOW_MAP` / `beacon::FOCUS_MAP`.
+        flags: u32,
     },
     /// Avatar profile data (AgentProfile / AvatarPropertiesReply).
     AvatarProfile(Box<crate::profile::AvatarProfile>),
