@@ -9,6 +9,13 @@
 //! (CreateInventoryItem, named after the parcel, in the Landmarks folder or
 //! the one asked for); OK then renames it, gives it its notes and moves it to
 //! the chosen folder, Cancel deletes it.
+//!
+//! The navigation bar's star (LLLocationInputCtrl's add landmark button,
+//! LLLandmarkActions::hasParcelLandmark) asks here whether a landmark of the
+//! Favorites or Landmarks folders lies on the agent's parcel: the same
+//! answer greys out World › Landmark this place and the Places entries.
+//! Aurora's star adds a quick menu (Favorites / Landmarks / more options) and
+//! opens a found landmark in this window, in its edit form.
 
 use super::widgets::{self, Floater, flat_button};
 use crate::theme::Palette;
@@ -16,26 +23,64 @@ use crate::world::World;
 use crate::world::inventory::Inventory;
 use crate::world::landmarks::Landmarks;
 use aurora_llsd::Llsd;
-use aurora_net::NetCommand;
 use aurora_net::inventory::operations::{Mutation, NewItem, Operation};
+use aurora_net::{NetCommand, ParcelInfo};
 use egui::{RichText, Vec2};
-use glam::DVec3;
 use std::collections::HashSet;
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub const WINDOW: &str = "create_landmark";
 /// FT_LANDMARK and FT_FAVORITE.
-const FOLDER_LANDMARKS: i32 = 3;
-const FOLDER_FAVORITES: i32 = 23;
+pub const FOLDER_LANDMARKS: i32 = 3;
+pub const FOLDER_FAVORITES: i32 = 23;
+
+/// The landmark found on the agent's parcel (the lit star).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParcelLandmark {
+    pub item: Uuid,
+    pub name: String,
+    /// In Favorites rather than in Landmarks.
+    pub favorite: bool,
+}
+
+/// AURORA_DEMO_LANDMARK=create|favorite|landmark: the Create Landmark
+/// window, or a landmark of the plaza already in Favorites / Landmarks (the
+/// star lit).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DemoStart {
+    Window,
+    Quick(i32),
+}
+
+impl DemoStart {
+    pub fn from_env() -> Option<Self> {
+        match std::env::var("AURORA_DEMO_LANDMARK").ok()?.as_str() {
+            "create" => Some(Self::Window),
+            "favorite" | "favorites" => Some(Self::Quick(FOLDER_FAVORITES)),
+            "landmark" | "landmarks" => Some(Self::Quick(FOLDER_LANDMARKS)),
+            _ => None,
+        }
+    }
+}
+
+/// Cache key of the parcel landmark: inventory generation, landmark
+/// assets version, agent region and a hash of the parcel's cells.
+type HereKey = (u64, u64, Option<(u32, u32)>, u64);
 
 #[derive(Default)]
 pub struct CreateLandmarkUi {
     pub open: bool,
-    /// AURORA_DEMO_LANDMARK=create: open once the agent stands on a parcel.
-    pub demo_pending: bool,
-    /// CreateInventoryItem sent, its item not arrived yet.
+    /// AURORA_DEMO_LANDMARK: what to do once the agent stands on a parcel.
+    pub demo_pending: Option<DemoStart>,
+    /// CreateInventoryItem sent by the window, its item not arrived yet.
     waiting: bool,
-    /// The landmark being made, and the folder it was created in.
+    /// Landmarks made from the star's menu, not arrived yet.
+    quick: usize,
+    /// Editing a landmark found by the star (LLPanelLandmarkInfo in edit
+    /// mode) rather than creating one: Cancel keeps it, Delete removes it.
+    editing: bool,
+    /// The landmark being made or edited, and the folder it was in.
     item: Option<(Uuid, Uuid)>,
     title: String,
     notes: String,
@@ -45,9 +90,7 @@ pub struct CreateLandmarkUi {
     /// Inventory changes sent by the window: their replies update the
     /// inventory like any other.
     pub edits: HashSet<Uuid>,
-    /// landmarkAlreadyExists, kept until the inventory, the landmark assets or
-    /// the metre the agent stands on change.
-    here: Option<((u64, u64, [i64; 3]), Option<Uuid>)>,
+    here: Option<(HereKey, Option<ParcelLandmark>)>,
 }
 
 /// LLFloaterCreateLandmark::setLandmarkInfo: the parcel's name, or "Region
@@ -148,23 +191,76 @@ fn delete(inv: &Inventory, item: Uuid) -> Option<Mutation> {
 }
 
 impl CreateLandmarkUi {
-    /// landmarkAlreadyExists: a landmark of the Favorites or Landmarks
-    /// folders already points at the agent's position (World › Landmark this
-    /// Place and the Places "add" entries are then greyed out).
-    pub fn landmark_here(&mut self, inv: &Inventory, landmarks: &mut Landmarks, pos: Option<DVec3>) -> Option<Uuid> {
-        let pos = pos?;
-        let r = pos.round();
-        let key = (inv.generation, landmarks.version, [r.x as i64, r.y as i64, r.z as i64]);
-        match self.here {
-            Some((k, found)) if k == key => found,
-            _ => {
-                let found = landmarks.find_at(inv, pos);
-                // asking for an asset does not bump the version: the key
-                // still holds until it arrives
-                self.here = Some(((inv.generation, landmarks.version, key.2), found));
-                found
-            }
+    /// LLLandmarkActions::hasParcelLandmark (LLFirstAgentParcelLandmark): the
+    /// first landmark of the Favorites or Landmarks folders lying on the
+    /// agent's parcel. Kept until the inventory, the landmark assets, the
+    /// region or the parcel change (teleports and parcel crossings included).
+    pub fn parcel_landmark(
+        &mut self,
+        inv: &Inventory,
+        landmarks: &mut Landmarks,
+        parcel: Option<&Arc<ParcelInfo>>,
+        origin: Option<(u32, u32)>,
+    ) -> Option<ParcelLandmark> {
+        // the parcel by its cells (an Arc's address may be reused by the next one)
+        let cells = parcel.map_or(0, |p| {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            p.bitmap.hash(&mut h);
+            h.finish()
+        });
+        let key = (inv.generation, landmarks.version, origin, cells);
+        if let Some((k, found)) = &self.here
+            && *k == key
+        {
+            return found.clone();
         }
+        let found = match (parcel, origin) {
+            (Some(parcel), Some(origin)) => landmarks
+                .find(inv, |g| crate::world::landmarks::in_parcel(&parcel.bitmap, origin, g))
+                .and_then(|id| inv.items.get(&id))
+                .map(|it| ParcelLandmark {
+                    item: it.id,
+                    name: it.name.clone(),
+                    favorite: crate::world::inventory::actions::in_type(inv, it.id, FOLDER_FAVORITES),
+                }),
+            _ => None,
+        };
+        // asking for an asset does not bump the version: the key holds
+        // until it arrives
+        self.here = Some((key, found.clone()));
+        found
+    }
+
+    /// The star's quick entries "Add to Favorites" / "Add to Landmarks":
+    /// the landmark is made at once in that folder, named like the window's
+    /// title (createLandmarkHere without the window).
+    pub fn quick(&mut self, world: &World, folder_kind: i32) -> Option<NetCommand> {
+        let parent = crate::world::appearance::system_folder(&world.inventory, folder_kind)?;
+        if world.main().is_none() || world.parcel.is_none() {
+            log::warn!("landmark not created: no agent region or parcel yet");
+            return None;
+        }
+        self.quick += 1;
+        Some(NetCommand::CreateInventoryItem {
+            parent,
+            kind: NewItem::Landmark,
+            name: default_title(&world.parcel_name, &world.region_name(), world.agent.position),
+        })
+    }
+
+    /// The lit star: the landmark of this parcel in the window's edit form
+    /// (LLPanelLandmarkInfo: title, folder, notes), with Delete.
+    pub fn open_edit(&mut self, inv: &Inventory, item: Uuid) {
+        let Some(it) = inv.items.get(&item) else { return };
+        self.open = true;
+        self.editing = true;
+        self.waiting = false;
+        self.new_folder = None;
+        self.item = Some((it.id, it.parent));
+        self.title = it.name.clone();
+        self.notes = it.desc.clone();
+        self.folder = it.parent;
     }
 
     /// LLFloaterReg::showInstance("add_landmark", dest_folder): open the
@@ -176,6 +272,7 @@ impl CreateLandmarkUi {
         }
         let inv = &world.inventory;
         self.open = true;
+        self.editing = false;
         self.item = None;
         self.waiting = false;
         self.new_folder = None;
@@ -202,8 +299,12 @@ impl CreateLandmarkUi {
     /// asked for has arrived. True when it is the window's: the inventory
     /// then neither selects nor renames it (highlight_offered_object).
     pub fn created(&mut self, id: Uuid, parent: Uuid, asset_type: i32) -> bool {
-        if !self.waiting || asset_type != 3 {
+        if asset_type != 3 {
             return false;
+        }
+        if !self.waiting {
+            // one made from the star's menu: nothing more to do with it
+            return self.quick.checked_sub(1).map(|n| self.quick = n).is_some();
         }
         self.waiting = false;
         if self.open {
@@ -246,10 +347,21 @@ impl CreateLandmarkUi {
         let mut open = true;
         let mut ok = false;
         let mut cancel = false;
-        let list = folders(inv);
+        let mut remove = false;
+        let mut list = folders(inv);
+        // an edited landmark may sit in a folder of its own (a Favorites
+        // subfolder): it stays selectable
+        if !list.iter().any(|(id, _)| *id == self.folder) && inv.folders.contains_key(&self.folder) {
+            list.push((self.folder, full_name(inv, self.folder)));
+        }
+        let editing = self.editing;
         Floater::new(
             WINDOW,
-            aurora_i18n::tr!("ui-places-create-landmark"),
+            if editing {
+                aurora_i18n::tr!("landmark-edit-title")
+            } else {
+                aurora_i18n::tr!("ui-places-create-landmark")
+            },
             egui::pos2(screen.center().x - 180.0, screen.center().y - 170.0),
             Vec2::new(360.0, 340.0),
         )
@@ -304,9 +416,22 @@ impl CreateLandmarkUi {
                     .desired_width(f32::INFINITY),
             );
             ui.add_space(10.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                cancel = flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked();
-                ok = widgets::primary_button_sized(ui, p, aurora_i18n::tr!("common-ok"), Vec2::new(90.0, 24.0)).clicked();
+            ui.horizontal(|ui| {
+                if editing {
+                    remove = widgets::action_button(
+                        ui,
+                        p,
+                        "trash-filled",
+                        aurora_i18n::tr!("common-delete"),
+                        widgets::ActionKind::Danger,
+                        Vec2::new(0.0, 24.0),
+                    )
+                    .clicked();
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    cancel = flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked();
+                    ok = widgets::primary_button_sized(ui, p, aurora_i18n::tr!("common-ok"), Vec2::new(90.0, 24.0)).clicked();
+                });
             });
         });
         if let Some(name) = self.new_folder.as_mut() {
@@ -359,8 +484,12 @@ impl CreateLandmarkUi {
                 self.edit(change, &mut out);
             }
             self.open = false;
-        } else if cancel || !open {
-            // the window has no close button in Firestorm: closing it is Cancel
+        } else if editing && (cancel || !open) {
+            // an existing landmark: Cancel leaves it as it was
+            self.open = false;
+        } else if remove || cancel || !open {
+            // the creation window has no close button in Firestorm: closing
+            // it is Cancel
             if let Some((id, _)) = self.item {
                 let change = delete(inv, id);
                 self.edit(change, &mut out);
@@ -426,6 +555,7 @@ mod tests {
                 parent: Uuid::from_u128(30),
                 name: "Plage".into(),
                 desc: String::new(),
+                asset_id: Uuid::from_u128(1100),
                 asset_type: 3,
                 inv_type: 3,
                 ..Default::default()
@@ -475,6 +605,61 @@ mod tests {
         let (b, refresh) = body(save_change(&inv, item, "", "", art).expect("moved"));
         assert_eq!(b, llsd_map! { "parent_id" => art }, "an empty title renames nothing");
         assert_eq!(refresh, vec![fav, art]);
+    }
+
+    #[test]
+    fn the_star_finds_a_landmark_on_the_agent_parcel_and_follows_the_parcel() {
+        let inv = inventory();
+        let region = Uuid::from_u128(0x5E61);
+        let origin = (256_000, 256_000);
+        let mut landmarks = Landmarks::default();
+        landmarks.set_local_region(region, aurora_net::origin_to_handle(origin.0, origin.1));
+        // the landmark points at (10, 41): cell x 2, y 10
+        let text = format!("Landmark version 2\nregion_id {region}\nlocal_pos 10 41 22\n");
+        landmarks.on_data(Uuid::from_u128(1100), Some(text.as_bytes()));
+        let parcel_with = |cells: &[(usize, usize)]| {
+            let mut bitmap = vec![0u8; 512];
+            for (x, y) in cells {
+                let i = y * 64 + x;
+                bitmap[i / 8] |= 1 << (i % 8);
+            }
+            Arc::new(ParcelInfo {
+                bitmap,
+                ..Default::default()
+            })
+        };
+        let mut ui = CreateLandmarkUi::default();
+        let here = parcel_with(&[(2, 10), (3, 10)]);
+        let found = ui.parcel_landmark(&inv, &mut landmarks, Some(&here), Some(origin));
+        assert_eq!(
+            found,
+            Some(ParcelLandmark {
+                item: Uuid::from_u128(100),
+                name: "Plage".into(),
+                favorite: true
+            })
+        );
+        // another parcel of the same region (a crossing): not lit any more
+        let next = parcel_with(&[(4, 10)]);
+        assert_eq!(ui.parcel_landmark(&inv, &mut landmarks, Some(&next), Some(origin)), None);
+        // another region (a teleport) with the same cells
+        assert_eq!(
+            ui.parcel_landmark(&inv, &mut landmarks, Some(&here), Some((512_000, 256_000))),
+            None
+        );
+        assert_eq!(ui.parcel_landmark(&inv, &mut landmarks, None, Some(origin)), None, "no parcel yet");
+        assert!(ui.parcel_landmark(&inv, &mut landmarks, Some(&here), Some(origin)).is_some());
+    }
+
+    #[test]
+    fn landmarks_made_from_the_star_stay_out_of_the_window() {
+        let mut ui = CreateLandmarkUi {
+            quick: 1,
+            ..Default::default()
+        };
+        assert!(ui.created(Uuid::from_u128(6), Uuid::from_u128(30), 3));
+        assert_eq!(ui.item, None);
+        assert!(!ui.created(Uuid::from_u128(7), Uuid::from_u128(30), 3), "only the one asked for");
     }
 
     #[test]

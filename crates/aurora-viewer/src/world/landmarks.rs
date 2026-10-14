@@ -88,10 +88,20 @@ pub struct Landmarks {
     pub version: u64,
 }
 
-/// LLFetchFirstLandmarkByPos: two global positions are the same spot when
-/// each coordinate rounds to the same metre.
-pub fn same_spot(a: DVec3, b: DVec3) -> bool {
-    a.round() == b.round()
+/// LLViewerParcelMgr::inAgentParcel: is the global position `pos` on the
+/// agent's parcel? `bitmap` holds the parcel's cells (ParcelProperties
+/// Bitmap: one bit per 4 m cell, x + y * cells, low bit first, as
+/// writeAgentParcelFromBitmap reads it) and `origin` is the agent region's
+/// corner; another region is never the agent's parcel.
+pub fn in_parcel(bitmap: &[u8], origin: (u32, u32), pos: DVec3) -> bool {
+    let cells = (bitmap.len() * 8).isqrt();
+    let width = (cells * 4) as f64;
+    let (x, y) = (pos.x - f64::from(origin.0), pos.y - f64::from(origin.1));
+    if cells == 0 || !(0.0..width).contains(&x) || !(0.0..width).contains(&y) {
+        return false;
+    }
+    let i = (y / 4.0) as usize * cells + (x / 4.0) as usize;
+    bitmap.get(i / 8).is_some_and(|b| b & (1 << (i % 8)) != 0)
 }
 
 impl Landmarks {
@@ -197,11 +207,12 @@ impl Landmarks {
         std::mem::take(&mut self.out)
     }
 
-    /// LLLandmarkActions::findLandmarkForGlobalPos (fetch_landmarks): the
-    /// first landmark of the Favorites or Landmarks folders, subfolders
-    /// included, that points at `pos`. As in Firestorm, the assets not
-    /// loaded yet are asked for and count as pointing elsewhere meanwhile.
-    pub fn find_at(&mut self, inv: &Inventory, pos: DVec3) -> Option<Uuid> {
+    /// fetch_landmarks with LLFirstAgentParcelLandmark / LLFetchFirstLandmarkByPos:
+    /// the first landmark of the Favorites or Landmarks folders, subfolders
+    /// included, whose global position `matches`. As in Firestorm, the
+    /// assets not loaded yet are asked for and count as pointing elsewhere
+    /// meanwhile.
+    pub fn find(&mut self, inv: &Inventory, matches: impl Fn(DVec3) -> bool) -> Option<Uuid> {
         let mut stack: Vec<Uuid> = [FOLDER_FAVORITES, FOLDER_LANDMARKS]
             .into_iter()
             .filter_map(|kind| crate::world::appearance::system_folder(inv, kind))
@@ -218,7 +229,7 @@ impl Landmarks {
                 }
                 self.want(it.asset_id);
                 if let Resolved::Ready { global, .. } = self.peek(it.asset_id)
-                    && same_spot(global, pos)
+                    && matches(global)
                 {
                     return Some(it.id);
                 }
@@ -291,6 +302,31 @@ mod tests {
     }
 
     #[test]
+    fn the_parcel_bitmap_holds_one_bit_per_4_m_cell() {
+        // a 256 m region: 64 x 64 cells; the parcel is cells x 2..=3, y 10
+        let mut bitmap = vec![0u8; 512];
+        for x in 2..=3 {
+            let i = 10 * 64 + x;
+            bitmap[i / 8] |= 1 << (i % 8);
+        }
+        let origin = (256_000, 512_000);
+        let at = |x: f64, y: f64| DVec3::new(256_000.0 + x, 512_000.0 + y, 20.0);
+        assert!(in_parcel(&bitmap, origin, at(8.0, 40.0)));
+        assert!(in_parcel(&bitmap, origin, at(15.9, 43.9)));
+        assert!(!in_parcel(&bitmap, origin, at(16.0, 40.0)), "next cell east");
+        assert!(!in_parcel(&bitmap, origin, at(8.0, 44.0)), "next cell north");
+        assert!(!in_parcel(&bitmap, origin, at(8.0 + 256.0, 40.0)), "same cell of the neighbour");
+        assert!(!in_parcel(&bitmap, origin, at(-248.0, 40.0)), "west neighbour");
+        assert!(!in_parcel(&[], origin, at(8.0, 40.0)), "parcel not known yet");
+        // a 512 m variable region: 128 x 128 cells
+        let mut big = vec![0u8; 2048];
+        let i = 100 * 128 + 120;
+        big[i / 8] |= 1 << (i % 8);
+        assert!(in_parcel(&big, origin, at(481.0, 401.0)));
+        assert!(!in_parcel(&big, origin, at(481.0, 401.0 - 256.0)));
+    }
+
+    #[test]
     fn finds_a_landmark_of_the_same_spot_in_landmark_folders_only() {
         use aurora_net::inventory::{FolderContents, InvFolder, InvItem};
         let folder = |id: u128, parent: u128, t: i32| InvFolder {
@@ -326,14 +362,15 @@ mod tests {
         let mut l = Landmarks::default();
         l.set_local_region(REGION, aurora_net::origin_to_handle(256_000, 256_000));
         let here = DVec3::new(256_010.4, 256_020.0, 30.0);
-        assert_eq!(l.find_at(&inv, here), None, "assets not loaded yet");
+        let same_metre = |g: DVec3| g.round() == here.round();
+        assert_eq!(l.find(&inv, same_metre), None, "assets not loaded yet");
         assert_eq!(l.take_wanted().len(), 1, "only the landmark under Landmarks is asked for");
         for (asset, x) in [(1100u128, 10.0), (1200, 10.0)] {
             let text = format!("Landmark version 2\nregion_id {REGION}\nlocal_pos {x} 20.2 29.6\n");
             l.on_data(Uuid::from_u128(asset), Some(text.as_bytes()));
         }
-        assert_eq!(l.find_at(&inv, here), Some(Uuid::from_u128(100)));
-        assert_eq!(l.find_at(&inv, here + DVec3::X), None, "one metre away");
+        assert_eq!(l.find(&inv, same_metre), Some(Uuid::from_u128(100)));
+        assert_eq!(l.find(&inv, |g| g.round() == (here + DVec3::X).round()), None, "one metre away");
     }
 
     #[test]

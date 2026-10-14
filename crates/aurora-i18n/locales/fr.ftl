@@ -1398,6 +1398,15 @@ landmark-create-new-folder = Créer un nouveau dossier
 landmark-create-notes = Notes :
 landmark-create-favorites-bar = Barre des favoris
 landmark-create-folder-prompt = Choisissez un nom pour le dossier :
+landmark-edit-title = Modifier le repère
+landmark-star-add = Créer un repère pour cette parcelle
+landmark-star-in-favorites = Dans les favoris : { $name }
+    Cliquez pour le modifier
+landmark-star-in-landmarks = Dans les repères : { $name }
+    Cliquez pour le modifier
+landmark-star-add-favorites = Ajouter aux favoris
+landmark-star-add-landmarks = Ajouter aux repères
+landmark-star-more = Plus d'options…
 ui-options-commands-create-a-platform-under-your-avatar = Créer une plateforme sous l'avatar
 ui-contacts-create-2 = Créer...
 ui-place-details-created-on = Créé le :

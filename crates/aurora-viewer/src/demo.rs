@@ -3215,12 +3215,22 @@ pub fn events() -> Vec<NetEvent> {
             "1" => land::MUSIC_URL.into(),
             url => url.to_owned(),
         };
+        // the parcel's cells: the 128 m square around the plaza (x and y
+        // 64..192), one bit per 4 m cell (ParcelProperties Bitmap)
+        let mut bitmap = vec![0u8; 512];
+        for y in 16..48 {
+            for x in 16..48 {
+                let i = y * 64 + x;
+                bitmap[i / 8] |= 1 << (i % 8);
+            }
+        }
         ev.push(NetEvent::AgentParcel(Arc::new(aurora_net::ParcelInfo {
             local_id: 1,
             name: aurora_i18n::tr!("common-aurora-plaza").into(),
             desc: aurora_i18n::tr!("demo-aurora-viewer-s-offline-demo-parcel").into(),
             owner_id: u(100),
             area: 16384,
+            bitmap,
             max_prims: 3750,
             owner_prims: 47,
             other_prims: 2,

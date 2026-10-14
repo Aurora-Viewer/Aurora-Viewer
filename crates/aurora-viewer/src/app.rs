@@ -4249,11 +4249,20 @@ impl App {
                 self.show_place_profile(source);
             }
         }
-        // AURORA_DEMO_LANDMARK=create: World › Landmark this Place once the
-        // agent stands on a parcel
-        if self.create_landmark_ui.demo_pending && self.world.movement_complete && self.world.parcel.is_some() {
-            self.create_landmark_ui.demo_pending = false;
-            self.open_create_landmark(None);
+        // AURORA_DEMO_LANDMARK: World › Landmark this place, or a landmark of
+        // the plaza already made, once the agent stands on a parcel
+        if self.world.movement_complete
+            && self.world.parcel.is_some()
+            && let Some(start) = self.create_landmark_ui.demo_pending.take()
+        {
+            match start {
+                ui::landmark_create::DemoStart::Window => self.open_create_landmark(None),
+                ui::landmark_create::DemoStart::Quick(kind) => {
+                    if let Some(cmd) = self.create_landmark_ui.quick(&self.world, kind) {
+                        self.send(cmd);
+                    }
+                }
+            }
         }
         self.world.flush_arrival(now);
         // LLLandmark::setRegionHandle: the agent's region needs no request
@@ -6908,6 +6917,7 @@ impl App {
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
+            BarAction::LandmarkStar(star) => self.landmark_star(star),
         }
     }
 
@@ -6950,12 +6960,30 @@ impl App {
         }
     }
 
-    /// landmarkAlreadyExists, for the greyed-out entries.
-    fn landmark_here(&mut self) -> bool {
-        let pos = self.world.agent_global();
+    /// hasParcelLandmark: the landmark lying on the agent's parcel (the lit
+    /// star; the "add landmark" entries are greyed out meanwhile).
+    fn parcel_landmark(&mut self) -> Option<ui::landmark_create::ParcelLandmark> {
+        let origin = self.world.main_origin();
         self.create_landmark_ui
-            .landmark_here(&self.world.inventory, &mut self.world.landmarks, pos)
-            .is_some()
+            .parcel_landmark(&self.world.inventory, &mut self.world.landmarks, self.world.parcel.as_ref(), origin)
+    }
+
+    /// The navigation bar's star.
+    fn landmark_star(&mut self, action: ui::bars::StarAction) {
+        use ui::bars::StarAction;
+        use ui::landmark_create::{FOLDER_FAVORITES, FOLDER_LANDMARKS};
+        let cmd = match action {
+            StarAction::AddFavorite => self.create_landmark_ui.quick(&self.world, FOLDER_FAVORITES),
+            StarAction::AddLandmark => self.create_landmark_ui.quick(&self.world, FOLDER_LANDMARKS),
+            StarAction::MoreOptions => self.create_landmark_ui.open(&self.world, None),
+            StarAction::Edit(item) => {
+                self.create_landmark_ui.open_edit(&self.world.inventory, item);
+                None
+            }
+        };
+        if let Some(cmd) = cmd {
+            self.send(cmd);
+        }
     }
 
     /// The Marketplace page of the grid (World › SL Marketplace), None on a
@@ -7455,7 +7483,7 @@ impl App {
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 t = self.ui_parts.lap(Part::UiTags, t);
-                let landmark_here = self.landmark_here();
+                let parcel_landmark = self.parcel_landmark();
                 let icons = &self.skin.icons;
                 let layout = &self.skin.layout;
                 let maturity = self
@@ -7485,7 +7513,7 @@ impl App {
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
                     double_click: self.double_click_action(),
-                    landmark_here,
+                    parcel_landmark,
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
@@ -8215,7 +8243,7 @@ impl App {
                 }
                 // place profiles: standalone windows and "Places"
                 if self.panels.places {
-                    self.places_ui.landmark_here = self.landmark_here();
+                    self.places_ui.landmark_here = self.parcel_landmark().is_some();
                 }
                 let mut c = ui::place_details::Ctx {
                     p: &p,
@@ -8971,8 +8999,8 @@ impl ApplicationHandler for App {
                 self.demo_place = Some(source);
                 self.panels.perf = false;
             }
-            if std::env::var("AURORA_DEMO_LANDMARK").is_ok_and(|v| v == "create") {
-                self.create_landmark_ui.demo_pending = true;
+            if let Some(start) = ui::landmark_create::DemoStart::from_env() {
+                self.create_landmark_ui.demo_pending = Some(start);
                 self.panels.perf = false;
             }
             // AURORA_DEMO_PLACES=favorites|landmarks|history: "Places" on a tab

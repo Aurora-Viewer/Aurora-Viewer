@@ -62,6 +62,7 @@ pub enum BarAction {
     MarketplaceListings,
     /// World › Landmark this Place (World.CreateLandmark).
     CreateLandmark,
+    LandmarkStar(StarAction),
 }
 
 pub struct StatusInfo<'a> {
@@ -98,9 +99,20 @@ pub struct StatusInfo<'a> {
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
-    /// A landmark already points here: World › Landmark this Place is
-    /// greyed out (World.EnableCreateLandmark).
-    pub landmark_here: bool,
+    /// The landmark lying on the agent's parcel (hasParcelLandmark): the
+    /// star is lit and World › Landmark this place greyed out.
+    pub parcel_landmark: Option<super::landmark_create::ParcelLandmark>,
+}
+
+/// The navigation bar's star (LLLocationInputCtrl's add landmark button).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StarAction {
+    AddFavorite,
+    AddLandmark,
+    /// The Create Landmark window.
+    MoreOptions,
+    /// The lit star: edit the parcel's landmark.
+    Edit(uuid::Uuid),
 }
 
 pub fn maturity_name(sim_access: u8) -> &'static str {
@@ -518,7 +530,13 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             &mut panels.world_map,
         );
         // menu_viewer.xml: Landmark this Place, after the maps
-        if menu::item_if(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-create-here"), !st.landmark_here) {
+        if menu::item_if(
+            ui,
+            p,
+            "map-pin-filled",
+            aurora_i18n::tr!("landmark-create-here"),
+            st.parcel_landmark.is_none(),
+        ) {
             *action = BarAction::CreateLandmark;
         }
         menu::submenu(ui, p, "barrier-block-filled", aurora_i18n::tr!("ui-bars-ban-lines"), true, |ui| {
@@ -710,6 +728,48 @@ fn info_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons) -> bool {
     let col = if resp.hovered() { p.ink } else { p.muted };
     paint_icon(ui, icons, "info-circle-filled", rect, 16.0, col);
     resp.on_hover_text(aurora_i18n::tr!("common-about-land")).clicked()
+}
+
+/// Width kept for the landmark star at the right end of the location field.
+const STAR_W: f32 = 22.0;
+
+/// LLLocationInputCtrl's add landmark button: an outline star opening the
+/// quick menu (Favorites, Landmarks, the Create Landmark window), lit in
+/// amber when a landmark of the Favorites or Landmarks folders lies on the
+/// agent's parcel; a click then edits it.
+fn landmark_star(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    found: Option<&super::landmark_create::ParcelLandmark>,
+) -> Option<StarAction> {
+    if let Some(lm) = found {
+        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::click());
+        let tint = if resp.hovered() { p.amber } else { p.amber.gamma_multiply(0.9) };
+        paint_icon(ui, icons, "star-filled", rect, 16.0, tint);
+        let tip = if lm.favorite {
+            aurora_i18n::tr!("landmark-star-in-favorites", name = lm.name.clone())
+        } else {
+            aurora_i18n::tr!("landmark-star-in-landmarks", name = lm.name.clone())
+        };
+        return resp.on_hover_text(tip).clicked().then_some(StarAction::Edit(lm.item));
+    }
+    let texture = super::icons::global("star")?;
+    let img = egui::Image::from_texture(egui::load::SizedTexture::new(texture.id(), Vec2::splat(16.0))).tint(p.muted);
+    let mut out = None;
+    menu::button(ui, p, egui::Button::image(img).frame(false), |ui| {
+        if menu::item(ui, p, "star-filled", aurora_i18n::tr!("landmark-star-add-favorites")) {
+            out = Some(StarAction::AddFavorite);
+        }
+        if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-star-add-landmarks")) {
+            out = Some(StarAction::AddLandmark);
+        }
+        if menu::item(ui, p, "dots", aurora_i18n::tr!("landmark-star-more")) {
+            out = Some(StarAction::MoreOptions);
+        }
+    })
+    .on_hover_text(aurora_i18n::tr!("landmark-star-add"));
+    out
 }
 
 /// Height of the chips of the top bar (voice light, flying, sitting).
@@ -1057,26 +1117,32 @@ pub fn top_bars(
                                 } else {
                                     super::parcel_icons::width(ui, &st.parcel_icons) + 8.0
                                 };
-                                let icons_w = if ui.available_width() - 24.0 - icons_w >= 80.0 {
+                                let icons_w = if ui.available_width() - 24.0 - STAR_W - icons_w >= 80.0 {
                                     icons_w
                                 } else {
                                     0.0
                                 };
-                                let w = (ui.available_width() - 24.0 - icons_w).max(40.0);
+                                let w = (ui.available_width() - 24.0 - STAR_W - icons_w).max(40.0);
                                 ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
                                     if let Some(a) = location_field(ui, p, panels, &loc, &st.slurl, w) {
                                         action = a;
                                     }
                                 });
                                 super::widgets::maturity_badge(ui, p, st.maturity, 14.0);
-                                // parcel abilities, anchored to the right edge of the field
+                                // parcel abilities then the landmark star, anchored to
+                                // the right edge of the field
                                 if icons_w > 0.0 {
-                                    ui.add_space((ui.available_width() - icons_w + 8.0).max(0.0));
+                                    ui.add_space((ui.available_width() - icons_w + 8.0 - STAR_W).max(0.0));
                                     ui.scope(|ui| {
                                         if super::parcel_icons::show(ui, p, icons, &st.parcel_icons, p.field) {
                                             panels.about_land = !panels.about_land;
                                         }
                                     });
+                                } else {
+                                    ui.add_space((ui.available_width() - STAR_W).max(0.0));
+                                }
+                                if let Some(star) = landmark_star(ui, p, icons, st.parcel_landmark.as_ref()) {
+                                    action = BarAction::LandmarkStar(star);
                                 }
                             });
                         });
