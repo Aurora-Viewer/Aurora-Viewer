@@ -562,6 +562,9 @@ pub async fn save_content(
     if kind == 7 {
         super::notecard::Notecard::decode(&data)?;
     }
+    if kind == 21 {
+        aurora_assets::gesture::Gesture::decode(&data).map_err(|_| aurora_i18n::tr!("gesture-invalid").to_owned())?;
+    }
     let mut body = llsd_map! { "item_id" => item };
     if kind == 10 {
         body.insert("target", Llsd::String("mono".into()));
@@ -571,7 +574,7 @@ pub async fn save_content(
         return Err(aurora_i18n::tr!("inventory-operations-the-script-contains-compilation-errors-check-the-code-and").into());
     }
     let asset = ack["new_asset"].as_uuid();
-    if kind == 7 && asset.is_nil() {
+    if matches!(kind, 7 | 21) && asset.is_nil() {
         return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into());
     }
     let saved_item = if ack["new_inventory_item"].as_uuid().is_nil() {
@@ -586,8 +589,13 @@ pub async fn save_content(
         .into_iter()
         .find(|it| it.id == saved_item)
         .ok_or_else(|| aurora_i18n::tr!("inventory-operations-the-saved-item-could-not-be-found").to_owned())?;
-    if kind == 7 && (saved.asset_id != asset || saved.asset_type != 7) {
-        return Err(aurora_i18n::tr!("notecard-save-unconfirmed").into());
+    if matches!(kind, 7 | 21) && (saved.asset_id != asset || saved.asset_type != kind) {
+        return Err(if kind == 21 {
+            aurora_i18n::tr!("gesture-save-unconfirmed")
+        } else {
+            aurora_i18n::tr!("notecard-save-unconfirmed")
+        }
+        .into());
     }
     Ok(saved)
 }

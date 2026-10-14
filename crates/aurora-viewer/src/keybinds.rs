@@ -302,6 +302,7 @@ pub enum Action {
     Conversations,
     People,
     Inventory,
+    Gestures,
     Minimap,
     WorldMap,
     /// World › Teleport history (Firestorm Alt+H).
@@ -396,6 +397,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Conversations, aurora_i18n::tr!("common-conversations")),
                     (Action::People, aurora_i18n::tr!("common-people")),
                     (Action::Inventory, aurora_i18n::tr!("common-inventory")),
+                    (Action::Gestures, aurora_i18n::tr!("gesture-title")),
                     (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
                     (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
                     (Action::TeleportHistory, aurora_i18n::tr!("common-teleport-history")),
@@ -508,6 +510,7 @@ impl KeyBindings {
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
             (Action::Inventory, [kmod(K::KeyI, true, false), None]),
+            (Action::Gestures, [kmod(K::KeyG, true, false), None]),
             (Action::Minimap, [kmod(K::KeyM, true, true), None]),
             (Action::WorldMap, [kmod(K::KeyM, true, false), None]),
             (

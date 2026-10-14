@@ -708,6 +708,7 @@ mod tests {
             worn_labels: Default::default(),
             points: vec![],
             appearance_busy: false,
+            active_gestures: Default::default(),
             touchable: Default::default(),
             names: HashMap::new(),
         };
