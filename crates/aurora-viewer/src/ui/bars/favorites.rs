@@ -874,7 +874,6 @@ pub fn demo_thumbnail(colors: [[u8; 3]; 3]) -> egui::ColorImage {
     let span = W as f32 * dx.abs() + H as f32 * dy;
     let mix = |a: [u8; 3], b: [u8; 3], t: f32| {
         let c = |i: usize| (a[i] as f32 + (b[i] as f32 - a[i] as f32) * t).round() as u8;
-        // theme-guard: content — the demo's thumbnail pixels
         Color32::from_rgb(c(0), c(1), c(2))
     };
     let mut pixels = Vec::with_capacity(W * H);

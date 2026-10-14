@@ -328,7 +328,6 @@ const BAR_FAVORITES: usize = 2000;
 #[allow(clippy::type_complexity)]
 fn bar_favorites() -> &'static Vec<(&'static str, (u32, u32), [f32; 3], i64, [[u8; 3]; 3])> {
     static TABLE: aurora_i18n::Localized<Vec<(&'static str, (u32, u32), [f32; 3], i64, [[u8; 3]; 3])>> = aurora_i18n::Localized::new();
-    // theme-guard: content — the demo's thumbnails, the mockup's gradients
     TABLE.get(|| {
         let g = (1000, 1000);
         let m = (1001, 1000);
