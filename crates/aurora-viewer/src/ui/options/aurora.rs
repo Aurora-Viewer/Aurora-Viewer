@@ -27,6 +27,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
     s.lookat.aim = if aurora { Aim::Point } else { Aim::Direction };
+    s.classic_profiles = !aurora;
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -329,6 +330,16 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             s.lookat.style = if legacy { Style::Legacy } else { Style::Aurora };
             c = true;
         }
+        between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-profiles"),
+            aurora_i18n::tr!("ui-options-aurora-profiles-help"),
+            aurora_i18n::tr!("ui-options-aurora-profiles-aurora"),
+            aurora_i18n::tr!("ui-options-aurora-profiles-classic"),
+            &mut s.classic_profiles,
+        );
     });
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-gaze"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -407,6 +418,7 @@ mod tests {
         assert!(s.classic_name_tags);
         assert_eq!(s.lookat.style, Style::Legacy);
         assert_eq!(s.lookat.aim, Aim::Direction);
+        assert!(s.classic_profiles);
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
         set_all(&mut s, Look::Aurora);
         let fresh = Settings::default();
@@ -414,6 +426,7 @@ mod tests {
         assert_eq!(s.classic_name_tags, fresh.classic_name_tags);
         assert_eq!(s.lookat.style, fresh.lookat.style);
         assert_eq!(s.lookat.aim, fresh.lookat.aim);
+        assert_eq!(s.classic_profiles, fresh.classic_profiles);
         assert!(s.plates_friends_only_full);
     }
 
@@ -464,6 +477,7 @@ mod tests {
             "ui-options-aurora-conversations",
             "ui-options-aurora-name-tags",
             "ui-options-aurora-look-at",
+            "ui-options-aurora-profiles",
             "ui-options-aurora-gaze",
             "ui-options-aurora-aim",
             "ui-options-aurora-avatar-plates",
@@ -478,11 +492,12 @@ mod tests {
             assert!(found.is_some(), "{want:?} comes after the previous one in {texts:?}");
             at += found.unwrap_or(0) + 1;
         }
-        // the four choices start on Aurora's look
+        // the five choices start on Aurora's look
         for choice in [
             "ui-options-aurora-bubbles",
             "ui-options-aurora-plates",
             "ui-options-aurora-halo",
+            "ui-options-aurora-profiles-aurora",
             "ui-options-aurora-aim-point",
         ] {
             assert!(texts.iter().any(|t| t == aurora_i18n::text(choice)), "{choice}");
