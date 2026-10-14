@@ -1402,6 +1402,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   for example `8:Ctrl` for assigned keys or `8:HUD` for a category;
   `8:zzzz` shows the empty result. The field stays above the scrolling list,
   and its clear button restores all actions. Search follows the selected language.
+  With `AURORA_DEMO_LOGIN` (for example `empty` or `cards`) the preferences
+  open over the login screen, as its top right cogwheel does: every page
+  works before login, and Chat › Conversation logs says that the folder
+  belongs to an account.
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
   drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Colors): the
