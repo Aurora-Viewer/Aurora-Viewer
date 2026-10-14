@@ -1264,6 +1264,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab, search done |
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo |
+| `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_BAN=1` | Ban lines |
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
 
@@ -1794,6 +1795,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   reload and the address). Without it the Web tab of the demo loads
   nothing: the search page of the grid is only opened once
   connected.
+- **`AURORA_DEMO_MARKETPLACE=<page>`**: World › SL Marketplace stands for
+  this page in demo (a local `file:///…` page is enough): the window opens
+  at start on it, the menu entry shows, and a link to an address under it
+  opens in the window instead of the system browser. Without it the demo
+  has no Marketplace (the entry is hidden, as on a grid without one).
 - **`AURORA_DEMO_PLACE_WINDOW=1`**: with `AURORA_DEMO_PLACE`, the separate
   place windows instead of "Places" ("Landmarks and place
   profiles" option, not saved).

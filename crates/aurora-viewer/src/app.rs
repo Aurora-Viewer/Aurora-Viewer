@@ -334,6 +334,8 @@ pub struct App {
     hover_height_ui: ui::hover_height::HoverHeightUi,
     inspect_ui: ui::inspect::InspectUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
+    /// World › SL Marketplace (LLFloaterMarketplace).
+    marketplace_ui: ui::marketplace::MarketplaceUi,
     people_map_ui: ui::minimap::MiniMap,
     worldmap_ui: ui::worldmap::WorldMapUi,
     map_tiles: ui::map_tiles::MapTiles,
@@ -700,6 +702,7 @@ impl App {
             hover_height_ui: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
+            marketplace_ui: Default::default(),
             people_map_ui: Default::default(),
             worldmap_ui: Default::default(),
             map_tiles: ui::map_tiles::MapTiles::new(),
@@ -1358,6 +1361,8 @@ impl App {
         self.inventory_ui = Default::default();
         self.gesture_state = Default::default();
         self.buy_currency_ui = Default::default();
+        // the next session signs in with its own cookie (the browser stops)
+        self.marketplace_ui = Default::default();
         self.task_notecards.clear();
         self.script_editors.disconnected();
         self.demo_script_sources.clear();
@@ -6540,6 +6545,7 @@ impl App {
                 self.profile_ui.open(&mut self.world, me);
             }
             BarAction::BuyCurrency => self.open_buy_currency(),
+            BarAction::Marketplace => self.marketplace_ui.open(None),
             BarAction::ChatPrefs => {
                 self.panels.settings = true;
                 self.options_ui.tab = ui::options::TAB_CHAT;
@@ -6595,6 +6601,16 @@ impl App {
             aurora_i18n::language(),
             self.search_session(),
         )
+    }
+
+    /// The Marketplace page of the grid (World › SL Marketplace), None on a
+    /// grid without one. AURORA_DEMO_MARKETPLACE=<page>: a page of the
+    /// tester's choice in demo, which also stands for the Marketplace links.
+    fn marketplace_home(&self) -> Option<String> {
+        if self.demo {
+            return std::env::var("AURORA_DEMO_MARKETPLACE").ok().filter(|u| !u.trim().is_empty());
+        }
+        ui::marketplace::home(&self.settings.grid).map(str::to_owned)
     }
 
     /// The session id the web tab's search page is opened with; none in
@@ -7068,6 +7084,7 @@ impl App {
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
                     double_click: self.double_click_action(),
+                    marketplace: self.marketplace_home().is_some(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -7664,6 +7681,19 @@ impl App {
                         .map(|l| l.raw["web_profile_url"].to_string_value())
                         .filter(|u| !u.trim().is_empty()),
                 };
+                // World › SL Marketplace: the same plugins, browser settings
+                // and OpenID cookie (LLFloaterMarketplace::postBuild)
+                let marketplace_home = self.marketplace_home();
+                self.marketplace_ui.show(
+                    &ctx,
+                    &p,
+                    &ui::marketplace::MarketWeb {
+                        paths: paths.as_ref(),
+                        browser: &browser,
+                        cookie: cookie.as_ref(),
+                        home: marketplace_home.as_deref(),
+                    },
+                );
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
                     browser: &browser,
@@ -8423,6 +8453,12 @@ impl ApplicationHandler for App {
             if let Some(tab) = std::env::var("AURORA_DEMO_PLACES").ok().and_then(|v| ui::places::tab_from_name(&v)) {
                 self.places_ui.open_tab(tab);
                 self.panels.places = true;
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_MARKETPLACE=<page>: World › SL Marketplace on that
+            // page, open at start
+            if self.marketplace_home().is_some() {
+                self.marketplace_ui.open(None);
                 self.panels.perf = false;
             }
             // AURORA_DEMO_TP_CONFIRM=link|landmark: a teleport confirmation on

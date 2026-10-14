@@ -254,6 +254,10 @@ pub(super) fn window_icon(id: &str) -> &'static str {
     if id.contains("script") || id.ends_with("_goto") || id.ends_with("_revert") || id.ends_with("_file_conflict") {
         return "code";
     }
+    // before the places: "marketplace" holds "place"
+    if id == super::super::marketplace::WINDOW {
+        return "building-store";
+    }
     if id.contains("place") || id.contains("land") {
         return "map-pin-filled";
     }
