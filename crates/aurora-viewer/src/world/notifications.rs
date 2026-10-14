@@ -306,21 +306,11 @@ impl Notifications {
             .list
             .iter()
             .position(|n| matches!(n.data, Data::Message { session: s, .. } if s == session))
+            && let Data::Message { count: c, .. } = self.list.remove(i).data
         {
-            if let Data::Message { count: c, .. } = self.list.remove(i).data {
-                count += c;
-            }
+            count += c;
         }
-        self.push(
-            Kind::Message,
-            title,
-            text,
-            Data::Message {
-                session,
-                from,
-                count,
-            },
-        )
+        self.push(Kind::Message, title, text, Data::Message { session, from, count })
     }
 
     /// Forget the message entries of the conversations now read (opened in

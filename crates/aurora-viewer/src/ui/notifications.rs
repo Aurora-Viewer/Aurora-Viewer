@@ -206,7 +206,11 @@ fn person_card(
     };
     let cover = if tip.is_empty() { cover } else { cover.on_hover_text(tip) };
     if cover.clicked() {
-        return Some(if on_close || !n.opens() { Response::Dismiss } else { Response::Open });
+        return Some(if on_close || !n.opens() {
+            Response::Dismiss
+        } else {
+            Response::Open
+        });
     }
     None
 }
@@ -668,11 +672,16 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    super::super::widgets::Floater::new("conversations", "Conversations", egui::pos2(300.0, 200.0), egui::vec2(440.0, 300.0))
-                        .silent()
-                        .show(ui.ctx(), &p, open, |ui| {
-                            ui.label("lines");
-                        });
+                    super::super::widgets::Floater::new(
+                        "conversations",
+                        "Conversations",
+                        egui::pos2(300.0, 200.0),
+                        egui::vec2(440.0, 300.0),
+                    )
+                    .silent()
+                    .show(ui.ctx(), &p, open, |ui| {
+                        ui.label("lines");
+                    });
                 },
             );
             out.textures_delta.clear();

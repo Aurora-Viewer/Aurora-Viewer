@@ -2607,13 +2607,7 @@ impl World {
         if !wanted || in_sight || self.status.dnd {
             return;
         }
-        let Some(line) = self
-            .social
-            .ims
-            .iter()
-            .find(|s| s.other == m.session)
-            .and_then(|s| s.lines.back())
-        else {
+        let Some(line) = self.social.ims.iter().find(|s| s.other == m.session).and_then(|s| s.lines.back()) else {
             return;
         };
         // only what a resident wrote (no system lines, no objects)

@@ -62,7 +62,12 @@ fn a_friend_online_is_a_toast_that_never_enters_the_bell() {
     w.social.set_online(&[JANE], true);
     w.flush_online_notices();
     // the toast is there, waiting for the interface to show it
-    let n = w.notifications.list.iter().find(|n| n.kind == Kind::Presence).expect("a presence toast");
+    let n = w
+        .notifications
+        .list
+        .iter()
+        .find(|n| n.kind == Kind::Presence)
+        .expect("a presence toast");
     assert!(n.transient && n.opens());
     // but nothing is listed nor counted under the bell
     assert_eq!(w.notifications.unread(), 0);
