@@ -88,6 +88,9 @@ impl Default for ContactsSettings {
 
 pub enum ContactsAction {
     Im(Uuid),
+    /// Call the friends chosen: one directly, several in a conference
+    /// (LLAvatarActions::startCall / startAdhocCall).
+    Call(Vec<Uuid>),
     Profile(Uuid),
     OfferTeleport(Uuid),
     /// The OfferTeleport prompt was confirmed: send the invitation.
@@ -1057,6 +1060,23 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
     if side_button(ui, p, aurora_i18n::tr!("status-im-call"), im_tip, n == 1) {
         actions.push(ContactsAction::Im(sel[0]));
     }
+    // a voice call with one friend, a voice conference with several
+    let call_tip = if !world.calls.voice_enabled {
+        aurora_i18n::tr!("ui-call-voice-off")
+    } else if n > 1 {
+        aurora_i18n::tr!("ui-contacts-call-conference")
+    } else {
+        aurora_i18n::tr!("ui-contacts-call-friend")
+    };
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("common-voice-call"),
+        call_tip,
+        n >= 1 && world.calls.voice_enabled,
+    ) {
+        actions.push(ContactsAction::Call(sel.clone()));
+    }
     if side_button(
         ui,
         p,
@@ -1286,7 +1306,15 @@ fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
     if menu::item_if(ui, p, "message-filled", aurora_i18n::tr!("common-chat"), real) {
         actions.push(ContactsAction::GroupChat(id));
     }
-    menu::todo(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"));
+    if menu::item_if(
+        ui,
+        p,
+        "phone-filled",
+        aurora_i18n::tr!("common-voice-call"),
+        real && world.calls.voice_enabled,
+    ) {
+        super::context::request(ui.ctx(), super::context::CtxAction::Call(id));
+    }
     if real {
         let label = if world.groups.favorites.contains(&id) {
             aurora_i18n::tr!("common-unpin-group")

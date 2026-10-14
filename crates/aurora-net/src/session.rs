@@ -2148,7 +2148,8 @@ impl Session<'_> {
             | NetCommand::ObjectGrabUpdate { .. }
             | NetCommand::ObjectRelease { .. }
             | NetCommand::RequestTaskInventory { .. }
-            | NetCommand::ChatSession { .. } => {}
+            | NetCommand::ChatSession { .. }
+            | NetCommand::Call { .. } => {}
             // handled by on_offline_command
             NetCommand::RequestOfflineMessages
             | NetCommand::RequestOfflineMessagesLegacy
