@@ -2457,7 +2457,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
-| `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
+| `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
@@ -2495,7 +2495,8 @@ What the inventory must show with these scenarios:
   enabled (Preferences › Sound and voice), as on the grid. Residents added to
   a conference ("Add" of the call strip, or dragged from Contacts › Friends
   or People › Nearby onto the conversation) join it at once, and our
-  message "<names> was / were invited to the conversation." follows in it.
+  message "<names> was / were invited to the conversation." follows in it
+  (`conference-invite` adds Orion by itself once the conference is connected).
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),

@@ -17,6 +17,10 @@ use std::collections::HashMap;
 const MEMBER: f32 = 22.0;
 /// Pictures shown before "+n".
 const SHOWN: usize = 8;
+/// Room kept at the right for Add, the microphone and Hang up, and for the
+/// count of participants.
+const BUTTONS_W: f32 = 240.0;
+const COUNT_W: f32 = 85.0;
 
 /// "m:ss", or "h:mm:ss" past an hour.
 pub(super) fn duration(secs: u64) -> String {
@@ -76,7 +80,10 @@ pub(super) fn strip(
                 let others: Vec<_> = call.members.iter().filter(|m| m.id != world.agent_id).collect();
                 if !others.is_empty() {
                     ui.add_space(4.0);
-                    for m in others.iter().take(SHOWN) {
+                    // the pictures that fit before the buttons, the rest as "+n"
+                    let room = ((ui.available_width() - BUTTONS_W) / (MEMBER + 6.0)).floor().max(1.0) as usize;
+                    let shown = others.len().min(SHOWN).min(room);
+                    for m in others.iter().take(shown) {
                         st.wanted_pics.insert(m.id);
                         let name = world.social.name_of(&m.id);
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(MEMBER, MEMBER), egui::Sense::click());
@@ -90,10 +97,11 @@ pub(super) fn strip(
                             .on_hover_text(aurora_i18n::tr!("ui-call-volume-of", name = name.as_str()));
                         volume_menu(&resp, p, &name, m.id, st, actions);
                     }
-                    if others.len() > SHOWN {
-                        ui.label(RichText::new(format!("+{}", others.len() - SHOWN)).size(11.5).color(p.muted));
+                    if others.len() > shown {
+                        ui.label(RichText::new(format!("+{}", others.len() - shown)).size(11.5).color(p.muted));
                     }
-                    if !call.p2p() {
+                    // the count, when it fits before the buttons
+                    if !call.p2p() && ui.available_width() > BUTTONS_W + COUNT_W {
                         let n = others.len() + 1;
                         ui.label(
                             RichText::new(aurora_i18n::tr!("ui-call-in-call", n = n.to_string()))

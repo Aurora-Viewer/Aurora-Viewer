@@ -14,6 +14,9 @@
 //! - `conference-legacy`: the conference of `conference`, refused by the
 //!   capability (400): it starts by message (IM_SESSION_CONFERENCE_START).
 //!
+//! - `conference-invite`: the conference of `conference`, then Orion added
+//!   once it is connected: he joins and our "was invited" message follows.
+//!
 //! Residents invited into a conference ("invite") join it at once.
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
@@ -30,6 +33,7 @@ pub enum Mode {
     Group,
     Conference,
     ConferenceLegacy,
+    ConferenceInvite,
     Incoming,
     IncomingGroup,
 }
@@ -41,6 +45,7 @@ pub fn mode() -> Option<Mode> {
         "group" => Some(Mode::Group),
         "conference" => Some(Mode::Conference),
         "conference-legacy" => Some(Mode::ConferenceLegacy),
+        "conference-invite" => Some(Mode::ConferenceInvite),
         "incoming" => Some(Mode::Incoming),
         "incoming-group" => Some(Mode::IncomingGroup),
         _ => None,
@@ -63,6 +68,8 @@ pub struct CallDemo {
     /// First frame in world, and the scenario already started.
     since: Option<Instant>,
     started: bool,
+    /// `conference-invite`: Orion was added.
+    invited: bool,
 }
 
 fn present(agent: Uuid) -> aurora_net::SessionAgent {
@@ -187,6 +194,20 @@ impl CallDemo {
     /// Starts the scenario of AURORA_DEMO_CALL once in world: a call made
     /// in `world`, or invitation events to apply.
     pub fn scenario(&mut self, world: &mut World, in_world: bool) -> Vec<NetEvent> {
+        // `conference-invite`: Orion added once the conference is connected
+        if self.started && !self.invited && mode() == Some(Mode::ConferenceInvite) {
+            if let Some(c) = world
+                .calls
+                .active
+                .as_ref()
+                .filter(|c| c.state == crate::world::calls::CallState::Connected)
+            {
+                self.invited = true;
+                let session = c.session;
+                world.invite_to_conversation(session, vec![DEMO_LOUP]);
+            }
+            return Vec::new();
+        }
         if self.started || !in_world {
             return Vec::new();
         }
@@ -202,7 +223,7 @@ impl CallDemo {
         match mode {
             Mode::P2p | Mode::Hangup => world.start_call(DEMO_NOVA),
             Mode::Group => world.start_call(DEMO_GROUP1),
-            Mode::Conference | Mode::ConferenceLegacy => world.start_conference(vec![DEMO_NOVA, DEMO_TESS]),
+            Mode::Conference | Mode::ConferenceLegacy | Mode::ConferenceInvite => world.start_conference(vec![DEMO_NOVA, DEMO_TESS]),
             Mode::Incoming => return vec![NetEvent::VoiceInvite(invite(false))],
             Mode::IncomingGroup => return vec![NetEvent::VoiceInvite(invite(true))],
         }
