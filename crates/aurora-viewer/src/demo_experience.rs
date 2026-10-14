@@ -174,10 +174,15 @@ fn teleport() -> Vec<NetEvent> {
     ]
 }
 
-/// A tall violet panel right of the avatar, with its hover text.
+/// Where the door stands: in front of the camera, left of the avatar.
+pub const DOOR_XY: (f32, f32) = (136.0, 128.5);
+
+/// A tall violet panel right of the avatar, with its hover text. Its script
+/// handles touch (FLAGS_HANDLE_TOUCH): without the flag a left click sends
+/// nothing, as for any object without a touch event.
 fn door(avatar: Vec3) -> NetEvent {
-    let (x, y) = (135.0, 131.0);
-    let object = prim(
+    let (x, y) = DOOR_XY;
+    let mut object = prim(
         LOCAL_ID,
         Vec3::new(x, y, avatar.z.max(height(x, y) + 1.1)),
         Quat::IDENTITY,
@@ -187,6 +192,8 @@ fn door(avatar: Vec3) -> NetEvent {
         ExtraParams::default(),
         aurora_i18n::tr!("demo-experience-door-hover"),
     );
+    object.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+    object.owner_id = Uuid::from_u128(0x2222);
     NetEvent::ObjectUpdates {
         handle: HANDLE,
         objects: vec![object],
@@ -204,6 +211,15 @@ mod tests {
             offset: Vec3::ZERO,
             surface: Default::default(),
         }
+    }
+
+    #[test]
+    fn the_door_handles_touch_so_a_left_click_reaches_it() {
+        let NetEvent::ObjectUpdates { objects, .. } = door(Vec3::new(132.0, 126.0, 33.0)) else {
+            panic!("an object update");
+        };
+        assert_eq!(objects[0].full_id, object_id());
+        assert_ne!(objects[0].update_flags & crate::ui::context::flags::HANDLE_TOUCH, 0);
     }
 
     #[test]
