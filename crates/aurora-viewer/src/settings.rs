@@ -4,6 +4,16 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// How the Conversations window draws its lines: as a messenger, in bubbles
+/// (the default), or in the lines of Firestorm's conversations (the legacy
+/// style, to be offered by a Preferences tab of its own).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ChatStyle {
+    #[default]
+    Bubbles,
+    Legacy,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum GridChoice {
     SecondLife,
@@ -81,8 +91,8 @@ impl DebugView {
     }
 }
 
-/// Look-at range slider maximum: no limit.
-pub const LOOK_AT_UNLIMITED: f32 = 64.0;
+/// The former look-at range slider's maximum, which meant no limit.
+const FORMER_LOOK_AT_UNLIMITED: f32 = 64.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -232,16 +242,21 @@ pub struct Settings {
     /// Complete name plates for friends only: the others stop at the
     /// compact pill (off by default).
     pub plates_friends_only_full: bool,
+    /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
+    /// legacy lines).
+    pub chat_style: ChatStyle,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
-    /// Our avatar's head and eyes follow the cursor and what we point at,
-    /// and others see where we look (LookAt). Off by default (Firestorm:
-    /// DisableLookAtAnimation / PrivateLookAtTarget).
-    pub look_at: bool,
-    /// Look-at range (m): a farther target is brought back to this distance
-    /// from the head before being shown (FSLookAtTargetMaxDistance);
-    /// LOOK_AT_UNLIMITED = no limit.
-    pub look_at_range: f32,
+    /// Look-at: what we send of where we look, the crosshairs of where the
+    /// avatars look, how our head follows the cursor (Preferences ›
+    /// Privacy and Controls).
+    pub lookat: crate::world::lookat::Settings,
+    /// The former "Look-at tracking" switch and its range, read once to
+    /// carry the user's choice into `lookat`.
+    #[serde(rename = "look_at", skip_serializing)]
+    pub(crate) former_look_at: Option<bool>,
+    #[serde(rename = "look_at_range", skip_serializing)]
+    pub(crate) former_look_at_range: Option<f32>,
     /// 0 off, 1 low, 2 medium, 3 high, 4 ultra
     pub shadow_quality: u8,
     /// The two projectors that weigh most on screen cast shadows
@@ -613,10 +628,12 @@ impl Default for Settings {
             name_tag_distance: 64.0,
             classic_name_tags: false,
             plates_friends_only_full: false,
+            chat_style: ChatStyle::Bubbles,
             invert_mouse: false,
             arrows_strafe: false,
-            look_at: false,
-            look_at_range: 10.0,
+            lookat: Default::default(),
+            former_look_at: None,
+            former_look_at_range: None,
             shadow_quality: 3,
             projector_shadows: true,
             antialiasing: 6,
@@ -858,6 +875,14 @@ impl Settings {
                 Some(crate::keybinds::HoldKey::Ctrl.into_binding()),
             );
         }
+        if self.former_look_at.is_some() || self.former_look_at_range.is_some() {
+            self.lookat = crate::world::lookat::Settings::from_former(
+                self.former_look_at.take(),
+                self.former_look_at_range.take(),
+                FORMER_LOOK_AT_UNLIMITED,
+            );
+        }
+        self.lookat = self.lookat.sanitized();
         self.camera = std::mem::take(&mut self.camera).sanitized();
         if self.settings_version < 5 {
             // new defaults: no vsync, no frame cap (the old "0 = screen rate,
@@ -1486,5 +1511,23 @@ mod tests {
             ..Settings::default()
         };
         assert!(!off.sanitized().background_fps_cap);
+    }
+
+    #[test]
+    fn the_former_look_at_switch_carries_into_the_privacy_settings() {
+        // an older file: the switch off (its default) and a 10 m range
+        let file = serde_json::json!({ "look_at": false, "look_at_range": 10.0, "settings_version": 9 });
+        let s = serde_json::from_value::<Settings>(file).expect("read old settings").sanitized();
+        assert!(s.lookat.private && s.lookat.private_local);
+        assert!(s.lookat.limit_distance && s.lookat.max_distance == 10.0);
+        // saved again: the former keys are gone, the choice stays
+        let again = serde_json::to_value(&s).expect("serialize");
+        assert!(again.get("look_at").is_none() && again.get("look_at_range").is_none());
+        let s = serde_json::from_value::<Settings>(again).expect("read new settings").sanitized();
+        assert!(s.lookat.private && s.lookat.private_local);
+        // on, without a limit
+        let file = serde_json::json!({ "look_at": true, "look_at_range": 64.0 });
+        let s = serde_json::from_value::<Settings>(file).expect("read old settings").sanitized();
+        assert_eq!(s.lookat, crate::world::lookat::Settings::default());
     }
 }
