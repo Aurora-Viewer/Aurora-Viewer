@@ -52,7 +52,9 @@ pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
         st.land.contribution = None;
         st.land.selected = None;
         // activate(): our contribution plus what we hold and give to nobody
-        st.land.max = me.contribution + (c.world.land_credit - c.world.land_committed);
+        st.land.max = me
+            .contribution
+            .saturating_add(c.world.land_credit.saturating_sub(c.world.land_committed));
         actions.push(GroupAction::LoadLand {
             group: v.id,
             ledger: st.land.ledger,

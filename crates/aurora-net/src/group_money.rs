@@ -424,8 +424,10 @@ mod tests {
 
     #[test]
     fn a_group_without_parcels_reads_its_land_in_use_from_the_totals_block() {
-        let mut m = msgs::PlacesReply::default();
-        m.query_data = vec![block(0, "", 1024, 2048)];
+        let mut m = msgs::PlacesReply {
+            query_data: vec![block(0, "", 1024, 2048)],
+            ..Default::default()
+        };
         let (_, r) = places_reply(&m);
         assert_eq!(
             r.totals,
