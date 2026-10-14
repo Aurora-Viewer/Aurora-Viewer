@@ -82,6 +82,11 @@ impl Session<'_> {
                 let m = groups::group_info_message(self.agent_id(), self.session_id(), *group, info);
                 self.send_main(&m, true);
             }
+            NetCommand::CreateGroup { name, info } => {
+                log::info!("creating group \"{name}\"");
+                let m = groups::create_group_message(self.agent_id(), self.session_id(), name, info);
+                self.send_main(&m, true);
+            }
             NetCommand::GroupNoticeRequest(notice) => {
                 // LLPanelGroupNotices::onSelectNotice
                 let mut m = GroupNoticeRequest::default();
@@ -234,6 +239,21 @@ impl Session<'_> {
                     NetEvent::GroupJoined {
                         group: m.group_data.group_id,
                         success: m.group_data.success,
+                    },
+                );
+            }
+        } else if id == CreateGroupReply::ID {
+            let m: CreateGroupReply = pkt.decode()?;
+            if m.agent_data.agent_id == me {
+                let d = &m.reply_data;
+                let message = aurora_msg::field_str(&d.message);
+                log::info!("group creation: success {}, {message:?}", d.success);
+                emit(
+                    self.sh,
+                    NetEvent::GroupCreated {
+                        group: d.group_id,
+                        success: d.success,
+                        message,
                     },
                 );
             }

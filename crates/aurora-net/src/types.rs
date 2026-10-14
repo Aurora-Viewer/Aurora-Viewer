@@ -759,6 +759,13 @@ pub enum NetEvent {
         group: Uuid,
         success: bool,
     },
+    /// CreateGroupReply: the new group, or the server's reason for refusing
+    /// it (LLGroupMgr::processCreateGroupReply).
+    GroupCreated {
+        group: Uuid,
+        success: bool,
+        message: String,
+    },
     /// EjectGroupMemberReply.
     GroupEjected {
         group: Uuid,
@@ -1490,6 +1497,12 @@ pub enum NetCommand {
     /// UpdateGroupInfo (LLGroupMgr::sendUpdateGroupInfo).
     UpdateGroupInfo {
         group: Uuid,
+        info: crate::groups::GroupInfo,
+    },
+    /// CreateGroupRequest (LLGroupMgr::sendCreateGroupRequest), answered by
+    /// NetEvent::GroupCreated. The simulator charges the creation fee.
+    CreateGroup {
+        name: String,
         info: crate::groups::GroupInfo,
     },
     /// GroupNoticeRequest: one notice, answered by an IM_GROUP_NOTICE_REQUESTED

@@ -519,6 +519,10 @@ fn demo_raw() -> Llsd {
     {
         m.insert("max-agent-groups".to_owned(), Llsd::from(limit));
     }
+    // AURORA_DEMO_GROUP_CREATE: the membership's fee and group limit
+    for (key, value) in group::login_benefits().unwrap_or_default() {
+        raw.insert(key, value);
+    }
     raw
 }
 

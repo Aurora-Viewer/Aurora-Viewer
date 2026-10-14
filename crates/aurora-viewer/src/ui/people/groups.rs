@@ -51,9 +51,14 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, _data: &super::RadarData, st: &mut Peopl
         {
             c.actions.push(PeopleAction::SearchGroups);
         }
-        // no group creation in Aurora yet (Contacts' "Create..." neither)
-        widgets::action_button_if(ui, p, "plus", aurora_i18n::tr!("ui-contacts-create"), ActionKind::Flat, size, false)
-            .on_disabled_hover_text(menu::not_yet());
+        // LLPanelPeople's "+" › New group: the window, or
+        // JoinedTooManyGroups at the limit (onGroupPlusButtonValidate)
+        if widgets::action_button(ui, p, "plus", aurora_i18n::tr!("ui-contacts-create"), ActionKind::Flat, size)
+            .on_hover_text(aurora_i18n::tr!("ui-group-create-create-tip"))
+            .clicked()
+        {
+            crate::ui::group_profile::request_create(ui.ctx());
+        }
         let w = ui.available_width();
         widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-groups-filter"), w);
     });
