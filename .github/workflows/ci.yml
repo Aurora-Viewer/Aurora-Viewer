@@ -50,6 +50,11 @@ jobs:
         if: steps.changes.outputs.code == 'true'
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Windows PowerShell 5.1, the one the Aurora tools run with
+      - name: PowerShell scripts parse
+        if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
+        shell: powershell
+        run: ./scripts/check-scripts.ps1
       - name: Formatting
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: cargo fmt --all -- --check

@@ -87,7 +87,7 @@ pub(super) fn show(
     // buttons at the right: their count fixes the room the names keep
     let tools = match st.selected {
         None => 1,
-        Some(_) if group => 1,
+        Some(_) if group => 2,
         Some(_) => 3,
     } + 1;
     egui::Frame::new()
@@ -173,17 +173,10 @@ pub(super) fn show(
                             if tool(ui, p, icons, "users-group", &tip, true, st.show_profile) {
                                 st.show_profile = !st.show_profile;
                             }
+                            call_tool(ui, p, icons, world, st, actions);
                         }
                         Some(other) => {
-                            tool(
-                                ui,
-                                p,
-                                icons,
-                                "phone-filled",
-                                aurora_i18n::tr!("ui-chat-voice-call-coming-soon"),
-                                false,
-                                false,
-                            );
+                            call_tool(ui, p, icons, world, st, actions);
                             if tool(ui, p, icons, "send-filled", aurora_i18n::tr!("common-offer-teleport"), true, false) {
                                 actions.push(ConvAction::OfferTeleport(other));
                             }
@@ -205,6 +198,37 @@ pub(super) fn show(
                 .hint_text(aurora_i18n::tr!("ui-chat-filter"))
                 .desired_width(ui.available_width()),
         );
+    }
+}
+
+/// The call button of FSFloaterIM: calls the conversation, or hangs up
+/// its call in progress ("Leave call"). Greyed while voice is off.
+fn call_tool(ui: &mut egui::Ui, p: &Palette, icons: &crate::ui::icons::Icons, world: &World, st: &ChatUi, actions: &mut Vec<ConvAction>) {
+    let Some(other) = st.selected else {
+        return;
+    };
+    if world.call_of(&other).is_some() {
+        // in a call: the strip under the head hangs up; the phone stays,
+        // greyed and green
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::hover());
+        if let Some(t) = icons.get("phone-filled") {
+            ui.painter().image(
+                t.id(),
+                egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                p.success.gamma_multiply(0.7),
+            );
+        }
+        resp.on_hover_text(aurora_i18n::tr!("ui-call-in-progress"));
+    } else if world.calls.invite_for(&other).is_some() {
+        // ringing: answered from the strip
+        tool(ui, p, icons, "phone-filled", aurora_i18n::tr!("ui-call-ringing"), false, false);
+    } else if st.voice_on {
+        if tool(ui, p, icons, "phone-filled", aurora_i18n::tr!("common-voice-call"), true, false) {
+            actions.push(ConvAction::Call(other));
+        }
+    } else {
+        tool(ui, p, icons, "phone-filled", aurora_i18n::tr!("ui-call-voice-off"), false, false);
     }
 }
 

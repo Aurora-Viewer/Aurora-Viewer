@@ -1230,11 +1230,16 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
         if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
         }
-        for (icon, label) in [
-            ("share", aurora_i18n::tr!("common-share")),
-            ("phone-filled", aurora_i18n::tr!("ui-profile-call")),
-        ] {
-            menu::item_tip(ui, p, icon, label, false, soon);
+        menu::item_tip(ui, p, "share", aurora_i18n::tr!("common-share"), false, soon);
+        // LLAvatarActions::startCall (canCall: voice enabled)
+        if menu::item_if(
+            ui,
+            p,
+            "phone-filled",
+            aurora_i18n::tr!("ui-profile-call"),
+            world.calls.voice_enabled,
+        ) {
+            crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::Call(id));
         }
         let block = if blocked {
             aurora_i18n::tr!("common-unblock")

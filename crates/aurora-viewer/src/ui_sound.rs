@@ -25,6 +25,8 @@ pub enum UiSound {
     FriendshipOffer,
     GroupInvitation,
     GroupNotice,
+    /// Someone calls (UISndIncomingVoiceCall, LLIncomingCallDialog::onOpen).
+    IncomingVoiceCall,
     InventoryOffer,
     MicToggle,
     MoneyChangeDown,
@@ -93,7 +95,7 @@ use UiSound as S;
 
 /// Every interface sound, in the order of the preferences list.
 #[rustfmt::skip]
-pub const CATALOG: [Entry; 42] = [
+pub const CATALOG: [Entry; 43] = [
     e!(S::Click, "Click", aurora_i18n::tr!("ui-sound-click-button-pressed"), CLICK, true),
     e!(S::ClickRelease, "ClickRelease", aurora_i18n::tr!("ui-sound-click-button-released"), CLICK, true),
     e!(S::BadKeystroke, "BadKeystroke", aurora_i18n::tr!("ui-sound-key-rejected"), u(0x2ca849ba_2885_4bc3_90ef_d4987a5b983a), true),
@@ -129,6 +131,7 @@ pub const CATALOG: [Entry; 42] = [
     e!(S::InventoryOffer, "InventoryOffer", aurora_i18n::tr!("ui-sound-object-offered"), NEW_SESSION, false),
     e!(S::GroupInvitation, "GroupInvitation", aurora_i18n::tr!("ui-sound-group-invitation"), START_IM, false),
     e!(S::GroupNotice, "GroupNotice", aurora_i18n::tr!("common-group-notice"), START_IM, false),
+    e!(S::IncomingVoiceCall, "IncomingVoiceCall", aurora_i18n::tr!("ui-sound-incoming-voice-call"), WINDOW_OPEN, true),
     e!(S::ObjectCreate, "ObjectCreate", aurora_i18n::tr!("ui-sound-object-creation"), u(0xf4a0660f_5446_dea2_80b7_6482a082803c), true),
     e!(S::ObjectDelete, "ObjectDelete", aurora_i18n::tr!("ui-sound-object-deletion"), u(0x0cb7b00a_4c10_6948_84de_a93c09af2ba9), false),
     e!(S::ObjectRezOut, "ObjectRezOut", aurora_i18n::tr!("ui-sound-object-taken"), Uuid::nil(), true),

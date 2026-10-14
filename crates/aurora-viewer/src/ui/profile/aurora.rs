@@ -802,7 +802,6 @@ fn camera_button(ui: &mut egui::Ui, env: &mut Env, photo: Rect, profile: Option<
 fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Facts, icon_only: bool, width: f32) {
     let p = env.p;
     let id = w.id;
-    let soon = aurora_i18n::tr!("ui-profile-coming-soon");
     let (icon, label, kind, enabled, tip): (&str, &str, ActionKind, bool, Option<&str>) = match act {
         Act::Conversation => (
             "message-filled",
@@ -811,14 +810,17 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             true,
             None,
         ),
-        // voice calls between two residents are not ported yet
-        Act::Call => (
-            "phone-filled",
-            aurora_i18n::tr!("ui-profile-aurora-call"),
-            ActionKind::Flat,
-            false,
-            Some(soon),
-        ),
+        // LLAvatarActions::startCall, enabled with voice (canCall)
+        Act::Call => {
+            let voice = env.world.calls.voice_enabled;
+            (
+                "phone-filled",
+                aurora_i18n::tr!("ui-profile-aurora-call"),
+                ActionKind::Flat,
+                voice,
+                (!voice).then(|| aurora_i18n::tr!("ui-call-voice-off")),
+            )
+        }
         Act::AddFriend => (
             "user-plus",
             aurora_i18n::tr!("ui-profile-aurora-add-friend"),
@@ -892,13 +894,14 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
         // LLAvatarActions::pay
         Act::Pay => context::request(ui.ctx(), CtxAction::PayResident(id)),
         Act::Block => env.actions.push(ProfileAction::ToggleBlock(id)),
+        Act::Call => context::request(ui.ctx(), CtxAction::Call(id)),
         Act::Edit => w.editing = true,
         Act::ViewAsOthers => w.editing = false,
         Act::Done => {
             save_all(w, env.actions);
             w.editing = false;
         }
-        Act::Call | Act::More => {}
+        Act::More => {}
     }
 }
 

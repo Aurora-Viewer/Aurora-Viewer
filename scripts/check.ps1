@@ -1,7 +1,7 @@
 ﻿<#
 .SYNOPSIS
-    The CI checks, locally: formatting, clippy (warnings = errors) and
-    tests. Run it before each PR.
+    The CI checks, locally: syntax of the PowerShell scripts, formatting,
+    clippy (warnings = errors) and tests. Run it before each PR.
 
     Clippy and the tests wait for a build slot when other heavy builds
     already run on the PC (AURORA_BUILD_SLOTS, 2 by default; common.ps1).
@@ -11,6 +11,7 @@
 Set-Location (git rev-parse --show-toplevel).Trim()
 Sync-BuildCache
 $steps = @(
+    @{ Name = 'PowerShell scripts (5.1 parser)'; Run = { & "$PSScriptRoot\check-scripts.ps1" } },
     @{ Name = 'Formatting (rustfmt)'; Run = { cargo fmt --all -- --check } },
     @{ Name = 'Clippy'; Heavy = $true; Run = { cargo clippy --workspace --all-targets --locked -- -D warnings } },
     @{ Name = 'Tests'; Heavy = $true; Run = { cargo test --workspace --locked } }

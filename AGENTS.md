@@ -181,7 +181,7 @@ cargo run -p aurora-viewer -- --title "Test avatar-gaze"
 Before each significant commit, and always before the PR:
 
 ```powershell
-./scripts/check.ps1   # cargo fmt --check, clippy -D warnings, tests
+./scripts/check.ps1   # scripts parse in PowerShell 5.1, cargo fmt --check, clippy -D warnings, tests
 ```
 
 - **Build slots**: several agents share the PC. Before clippy and the tests,

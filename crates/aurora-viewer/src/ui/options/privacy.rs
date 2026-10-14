@@ -1,6 +1,7 @@
-//! Preferences › Privacy: Firestorm's "Privacy › LookAt" tab
-//! (panel_preferences_privacy.xml, tab-lookat): the crosshairs of where the
-//! avatars look, and what we send of where we look.
+//! Preferences › Privacy: "Only friends and groups can call or IM me"
+//! (panel_preferences_privacy.xml), then Firestorm's "Privacy › LookAt" tab
+//! (tab-lookat): the crosshairs of where the avatars look, and what we send
+//! of where we look.
 
 use super::{group, row, slider_whole, toggle};
 use crate::theme::Palette;
@@ -17,8 +18,19 @@ fn name_formats() -> [&'static str; 5] {
     ]
 }
 
-pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, friends_only: &mut bool) -> bool {
     let mut c = false;
+    // "Only friends and groups can call or IM me" (voice_call_friends_only_check,
+    // VoiceCallsFriendsOnly; its hint is the FriendsAndGroupsOnly notice)
+    group(ui, p, aurora_i18n::tr!("ui-options-calls-and-messages"), |ui| {
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-calls-friends-only"),
+            aurora_i18n::tr!("ui-options-calls-friends-only-hint"),
+            |ui| toggle(ui, p, friends_only),
+        );
+    });
     group(ui, p, aurora_i18n::tr!("ui-options-look-at-targets"), |ui| {
         c |= row(
             ui,
