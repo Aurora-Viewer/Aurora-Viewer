@@ -852,6 +852,14 @@ pub enum NetEvent {
         result: Result<crate::inventory::InvItem, String>,
     },
     InventoryMerchant(Result<bool, String>),
+    /// The merchant status of the "Marketplace listings" window
+    /// (getMerchantStatusCoro).
+    MerchantStatus(crate::slm::MerchantStatus),
+    /// The answer of an SLM API request.
+    Slm {
+        request: crate::slm::SlmRequest,
+        reply: crate::slm::SlmReply,
+    },
     InventoryContentSaved {
         request: Uuid,
         item: Uuid,
@@ -1448,6 +1456,11 @@ pub enum NetCommand {
         password: crate::currency::Password,
     },
     RequestInventoryMerchant,
+    /// GET /merchant for the "Marketplace listings" window
+    /// (LLMarketplaceData::initializeSLM).
+    RequestMerchantStatus,
+    /// One SLM API request (LLMarketplaceData's coroutines).
+    Slm(crate::slm::SlmRequest),
     SaveWearable {
         request: Uuid,
         item: Box<crate::inventory::InvItem>,

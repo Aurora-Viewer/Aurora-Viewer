@@ -14,6 +14,17 @@ pub enum ChatStyle {
     Legacy,
 }
 
+/// How notifications arrive (Preferences › Aurora): unrolled from the bell
+/// at the right end of the navigation bar and folded back into it (the
+/// default, `ui/notification_center.rs`), or as Firestorm's toasts stacked
+/// apart from the bell (`ui/notifications.rs`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NotificationsStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
 /// How the world map lays out its controls: over a map filling the window
 /// (the default), or in Firestorm's side panel next to the map (the legacy
 /// style, Preferences › Aurora).
@@ -159,6 +170,8 @@ pub struct Settings {
     pub ao: crate::ao::Settings,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
+    /// Depth of field (Preferences › Graphics).
+    pub dof: crate::dof::Settings,
     pub shape_show_hints: bool,
     pub shape_height_feet: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
@@ -294,6 +307,8 @@ pub struct Settings {
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
+    /// The notification center's style (Preferences › Aurora).
+    pub notifications_style: NotificationsStyle,
     /// The world map's layout (`ui/worldmap/overlay.rs` or the side panel).
     pub world_map_style: WorldMapStyle,
     pub invert_mouse: bool,
@@ -677,6 +692,7 @@ impl Default for Settings {
             show_ao: false,
             ao: Default::default(),
             snapshot: Default::default(),
+            dof: Default::default(),
             loading_backdrop: true,
             mouse_sensitivity: 1.0,
             window_width: 1600,
@@ -710,6 +726,7 @@ impl Default for Settings {
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,
             chat_style: ChatStyle::Bubbles,
+            notifications_style: NotificationsStyle::Aurora,
             world_map_style: WorldMapStyle::Aurora,
             invert_mouse: false,
             arrows_strafe: false,
@@ -1102,6 +1119,7 @@ impl Settings {
         self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
         self.chat_commands.sanitize();
         self.snapshot.sanitize();
+        self.dof.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.sharpen = if self.sharpen.is_finite() {
             self.sharpen.clamp(0.0, 1.0)

@@ -5,7 +5,7 @@
 //! below keep the cards and controls of the other pages.
 
 use super::{group, toggle};
-use crate::settings::{ChatStyle, PlateClick, Settings, WorldMapStyle};
+use crate::settings::{ChatStyle, NotificationsStyle, PlateClick, Settings, WorldMapStyle};
 use crate::theme::Palette;
 use crate::ui::widgets::{self, ActionKind};
 use crate::world::lookat::{Aim, Style};
@@ -27,6 +27,11 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
     s.lookat.aim = if aurora { Aim::Point } else { Aim::Direction };
+    s.notifications_style = if aurora {
+        NotificationsStyle::Aurora
+    } else {
+        NotificationsStyle::Legacy
+    };
     s.world_map_style = if aurora { WorldMapStyle::Aurora } else { WorldMapStyle::Legacy };
 }
 
@@ -331,6 +336,24 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             c = true;
         }
         between(ui, p);
+        let mut legacy = s.notifications_style == NotificationsStyle::Legacy;
+        if look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-notifications"),
+            aurora_i18n::tr!("ui-options-aurora-notifications-help"),
+            aurora_i18n::tr!("ui-options-aurora-animated-bell"),
+            aurora_i18n::tr!("ui-options-aurora-toasts"),
+            &mut legacy,
+        ) {
+            s.notifications_style = if legacy {
+                NotificationsStyle::Legacy
+            } else {
+                NotificationsStyle::Aurora
+            };
+            c = true;
+        }
+        between(ui, p);
         let mut legacy = s.world_map_style == WorldMapStyle::Legacy;
         if look_choice(
             ui,
@@ -422,6 +445,7 @@ mod tests {
         assert!(s.classic_name_tags);
         assert_eq!(s.lookat.style, Style::Legacy);
         assert_eq!(s.lookat.aim, Aim::Direction);
+        assert_eq!(s.notifications_style, NotificationsStyle::Legacy);
         assert_eq!(s.world_map_style, WorldMapStyle::Legacy);
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
         set_all(&mut s, Look::Aurora);
@@ -430,8 +454,25 @@ mod tests {
         assert_eq!(s.classic_name_tags, fresh.classic_name_tags);
         assert_eq!(s.lookat.style, fresh.lookat.style);
         assert_eq!(s.lookat.aim, fresh.lookat.aim);
+        assert_eq!(s.notifications_style, NotificationsStyle::Aurora);
+        assert_eq!(fresh.notifications_style, NotificationsStyle::Aurora);
         assert_eq!(s.world_map_style, fresh.world_map_style);
         assert!(s.plates_friends_only_full);
+    }
+
+    /// The notifications' style is saved; a file from before it was added
+    /// gets the animated bell.
+    #[test]
+    fn the_notifications_style_is_saved() {
+        let s = Settings {
+            notifications_style: NotificationsStyle::Legacy,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&s).expect("settings serialize");
+        let back: Settings = serde_json::from_str(&json).expect("settings read back");
+        assert_eq!(back.notifications_style, NotificationsStyle::Legacy);
+        let old: Settings = serde_json::from_str("{}").expect("empty settings");
+        assert_eq!(old.notifications_style, NotificationsStyle::Aurora);
     }
 
     #[test]
@@ -481,6 +522,7 @@ mod tests {
             "ui-options-aurora-conversations",
             "ui-options-aurora-name-tags",
             "ui-options-aurora-look-at",
+            "ui-options-aurora-notifications",
             "ui-options-aurora-world-map",
             "ui-options-aurora-gaze",
             "ui-options-aurora-aim",
@@ -503,6 +545,7 @@ mod tests {
             "ui-options-aurora-halo",
             "ui-options-aurora-world-map-full",
             "ui-options-aurora-aim-point",
+            "ui-options-aurora-animated-bell",
         ] {
             assert!(texts.iter().any(|t| t == aurora_i18n::text(choice)), "{choice}");
         }

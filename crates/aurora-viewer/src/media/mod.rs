@@ -472,6 +472,12 @@ impl Default for MediaManager {
     }
 }
 
+/// The user agent of the viewer's web requests (getCurrentUserAgent): the
+/// browsers' and the web profile's.
+pub fn user_agent() -> String {
+    format!("SecondLife (Aurora Viewer {})", aurora_version::version())
+}
+
 /// Settings of our CEF browsers (newSourceFromMediaType): cache, log,
 /// language and the viewer's user agent.
 pub fn browser_settings(cache_dir: &std::path::Path, language: &str) -> BrowserSettings {
@@ -480,7 +486,7 @@ pub fn browser_settings(cache_dir: &std::path::Path, language: &str) -> BrowserS
         username: "aurora".into(),
         cef_log_file: cache_dir.join("cef.log").display().to_string(),
         language: language.to_string(),
-        user_agent: format!("SecondLife (Aurora Viewer {})", aurora_version::version()),
+        user_agent: user_agent(),
         cookies_enabled: true,
         javascript_enabled: true,
         zoom_factor: 1.0,

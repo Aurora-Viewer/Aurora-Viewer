@@ -35,6 +35,10 @@ pub struct NotifUi {
     last_seen: u64,
     /// Profile pictures the cards of friends and messages want.
     pub wanted_pics: HashSet<Uuid>,
+    /// The bell's rectangle (Aurora's center unrolls under it).
+    pub bell: Option<egui::Rect>,
+    /// Aurora's center (`ui::notification_center`).
+    pub center: super::notification_center::CenterUi,
 }
 
 /// What the cards of friends and messages draw with, and when toasts stay
@@ -92,7 +96,7 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: 
     (resp.on_hover_text(tip).clicked(), rect)
 }
 
-fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
+pub(super) fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
     match kind {
         Kind::Info => ("info-circle-filled", p.muted),
         Kind::Alert => ("alert-triangle-filled", p.amber),
@@ -108,11 +112,16 @@ fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
     }
 }
 
+/// The icon and colour of a history entry's kind.
+pub(super) fn look_style(p: &Palette, look: crate::world::notification_history::Look) -> (&'static str, Color32) {
+    kind_style(p, Kind::of_look(look))
+}
+
 /// The card of a friend online / offline or of the messages of a
 /// conversation: their picture, the name, the start of the last message.
 /// Clicking the card opens the conversation (`Notification::opens`), its
 /// cross hides it.
-fn person_card(
+pub(super) fn person_card(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
@@ -128,8 +137,10 @@ fn person_card(
     };
     let mut close = egui::Rect::NOTHING;
     let surface = if toast { p.panel } else { p.raised.gamma_multiply(0.55) };
+    // a toast floats at its own width, a card fills its list
+    let width = if toast { WIDTH - 18.0 } else { ui.available_width() - 16.0 };
     let body = |ui: &mut egui::Ui| {
-        ui.set_width(WIDTH - 18.0);
+        ui.set_width(width);
         ui.horizontal_top(|ui| {
             let (pic, _) = ui.allocate_exact_size(Vec2::splat(PIC), egui::Sense::hover());
             wanted.insert(who);
@@ -216,32 +227,48 @@ fn person_card(
     None
 }
 
-/// One notification card; returns the user's answer.
-fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, ratings: &RegionRatings, n: &mut Notification, toast: bool) -> Option<Response> {
+/// One notification card; returns the user's answer. `aurora`: the card of
+/// Aurora's center (its kind in a coloured disc beside the text, the width
+/// of its panel).
+pub(super) fn card(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    ratings: &RegionRatings,
+    n: &mut Notification,
+    toast: bool,
+    aurora: bool,
+) -> Option<Response> {
     let mut out = None;
     let (icon, accent) = kind_style(p, n.kind);
     // in the list, an unread card is lighter than a read one
-    let fill = if n.read {
+    let fill = if aurora {
+        p.field
+    } else if n.read {
         p.field.gamma_multiply(0.8)
     } else {
         p.raised.gamma_multiply(0.55)
     };
     let script = matches!(n.data, Data::Dialog { .. });
-    let body = |ui: &mut egui::Ui| {
+    let width = if aurora { ui.available_width() - 16.0 } else { WIDTH - 18.0 };
+    // the text and the answers line up after the kind's icon
+    let indent = if aurora { 0.0 } else { 22.0 };
+    let mut content = |ui: &mut egui::Ui| {
         {
-            ui.set_width(WIDTH - 18.0);
             if script {
                 ui.spacing_mut().interact_size.y = 24.0;
             }
             ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
-                if let Some(t) = icons.get(icon) {
-                    ui.painter().image(
-                        t.id(),
-                        egui::Rect::from_center_size(r.center(), Vec2::splat(16.0)),
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        accent,
-                    );
+                if !aurora {
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+                    if let Some(t) = icons.get(icon) {
+                        ui.painter().image(
+                            t.id(),
+                            egui::Rect::from_center_size(r.center(), Vec2::splat(16.0)),
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            accent,
+                        );
+                    }
                 }
                 // the rating of the region the entry is about
                 if n.maturity != 0 {
@@ -291,7 +318,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, ratings: &RegionRatings, 
                     });
                 } else {
                     ui.horizontal(|ui| {
-                        ui.add_space(22.0);
+                        ui.add_space(indent);
                         super::chat::text_with_places(ui, p, ratings, &n.body, 12.0, p.muted);
                     });
                 }
@@ -329,7 +356,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, ratings: &RegionRatings, 
                 } => {
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
-                        ui.add_space(22.0);
+                        ui.add_space(indent);
                         let link = ui
                             .add(
                                 egui::Label::new(
@@ -396,11 +423,11 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, ratings: &RegionRatings, 
                 Data::TextBox { .. } => {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        ui.add_space(22.0);
+                        ui.add_space(indent);
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut n.text)
                                 .hint_text(aurora_i18n::tr!("ui-notifications-reply"))
-                                .desired_width(WIDTH - 110.0),
+                                .desired_width(ui.available_width() - 82.0),
                         );
                         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         if button(ui, p, aurora_i18n::tr!("common-send"), true).clicked() || enter {
@@ -412,7 +439,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, ratings: &RegionRatings, 
             if !buttons.is_empty() {
                 ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
-                    ui.add_space(22.0);
+                    ui.add_space(indent);
                     ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                     for (label, r, primary) in buttons {
                         if button(ui, p, &label, primary).clicked() {
@@ -421,6 +448,23 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, ratings: &RegionRatings, 
                     }
                 });
             }
+        }
+    };
+    let body = |ui: &mut egui::Ui| {
+        ui.set_width(width);
+        if aurora {
+            ui.horizontal_top(|ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::splat(30.0), egui::Sense::hover());
+                ui.painter().circle_filled(r.center(), 15.0, accent);
+                if let Some(t) = icons.get(icon) {
+                    egui::Image::new(t)
+                        .tint(p.on_accent)
+                        .paint_at(ui, egui::Rect::from_center_size(r.center(), Vec2::splat(15.0)));
+                }
+                ui.vertical(|ui| content(ui));
+            });
+        } else {
+            content(ui);
         }
     };
     if toast {
@@ -487,10 +531,12 @@ pub fn show(
     icons: &Icons,
     ratings: &RegionRatings,
     list: &mut Notifications,
+    hist: &mut crate::world::notification_history::History,
     nui: &mut NotifUi,
     env: &mut ToastEnv<'_>,
-) -> Vec<(u64, Response)> {
+) -> (Vec<(u64, Response)>, Vec<super::notification_center::Ask>) {
     let mut answers = Vec::new();
+    let mut asks = Vec::new();
     let now = ctx.input(|i| i.time);
     update_toasts(list, nui, now, env.message_seconds, env.hidden);
 
@@ -536,6 +582,21 @@ pub fn show(
                             });
                         });
                         ui.add_space(4.0);
+                        // the history, as in Aurora's center
+                        if super::notification_center::tabs(ui, p, &mut nui.center.tab) {
+                            ui.add_space(4.0);
+                            super::notification_center::history_list(
+                                ui,
+                                p,
+                                icons,
+                                hist,
+                                &mut nui.center.query,
+                                ctx.content_rect().height() * 0.7,
+                                &mut asks,
+                            );
+                            return;
+                        }
+                        ui.add_space(4.0);
                         if list.listed().next().is_none() {
                             ui.add_space(14.0);
                             ui.vertical_centered(|ui| {
@@ -558,7 +619,7 @@ pub fn show(
                                     let r = if matches!(n.data, Data::Message { .. }) {
                                         person_card(ui, p, icons, env, &mut nui.wanted_pics, n, false)
                                     } else {
-                                        card(ui, p, icons, ratings, n, false)
+                                        card(ui, p, icons, ratings, n, false, false)
                                     };
                                     if let Some(r) = r {
                                         answers.push((n.id, r));
@@ -591,7 +652,7 @@ pub fn show(
                         let r = if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
                             person_card(ui, p, icons, env, &mut nui.wanted_pics, n, true)
                         } else {
-                            card(ui, p, icons, ratings, n, true)
+                            card(ui, p, icons, ratings, n, true, false)
                         };
                         match r {
                             // closing a toast only hides it: the offer waits in the list
@@ -605,7 +666,7 @@ pub fn show(
         // keep toasts expiring without input
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
-    answers
+    (answers, asks)
 }
 
 fn script_rows(count: usize) -> impl Iterator<Item = std::ops::Range<usize>> {

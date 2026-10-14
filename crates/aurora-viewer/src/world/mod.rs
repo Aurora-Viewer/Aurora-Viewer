@@ -18,10 +18,12 @@ pub mod land;
 pub mod landmarks;
 pub mod lookat;
 pub mod lslbridge;
+pub mod marketplace;
 pub mod maturity;
 pub mod motion;
 pub mod mutes;
 pub mod names;
+pub mod notification_history;
 pub mod notifications;
 pub mod objects;
 pub mod outfit;
@@ -149,6 +151,9 @@ pub struct World {
     pub hud_zoom: f32,
     pub hud_scales: hud_scale::HudScales,
     pub hover_height: hover_height::HoverHeight,
+    /// What left the notification list, kept per account (the center's
+    /// History).
+    pub notification_history: notification_history::History,
     pub login: Option<Arc<LoginResponse>>,
     pub agent_id: Uuid,
     pub regions: HashMap<RegionHandle, Region>,
@@ -343,6 +348,7 @@ impl World {
             hud_zoom: 1.0,
             hud_scales: Default::default(),
             hover_height: Default::default(),
+            notification_history: Default::default(),
             ui_sounds: Vec::new(),
             im_messages: Vec::new(),
             balance_changes: Vec::new(),
@@ -2609,15 +2615,16 @@ impl World {
     /// A message received in a conversation that is not in sight
     /// (`in_sight`: its tab shown in the Conversations window): a toast and
     /// an entry under the bell until the conversation is read, as
-    /// notify_of_message decides (llimview.cpp) — never in do not disturb,
-    /// group chats by their own preference.
+    /// notify_of_message decides (llimview.cpp) — never in do not disturb
+    /// with Firestorm's toasts, group chats by their own preference.
     pub fn notify_message(&mut self, m: &ImMessage, in_sight: bool) {
         let prefs = self.notifications.toasts;
         let wanted = match m.kind {
             ImKind::Group => prefs.group_im,
             ImKind::Private | ImKind::Conference => prefs.im,
         };
-        if !wanted || in_sight || self.status.dnd {
+        // Aurora's paused bell still keeps them in "To do", silently
+        if !wanted || in_sight || (self.status.dnd && !self.notifications.aurora) {
             return;
         }
         let Some(line) = self.social.ims.iter().find(|s| s.other == m.session).and_then(|s| s.lines.back()) else {
@@ -2658,6 +2665,15 @@ impl World {
         self.acknowledge_read_messages();
         self.social.focus_im = Some(session);
         Some(session)
+    }
+
+    /// Each frame: the file of the history once read, and what left the
+    /// notification list since.
+    pub fn record_notification_history(&mut self) {
+        self.notification_history.poll();
+        for e in self.notifications.take_departures() {
+            self.notification_history.add(e);
+        }
     }
 
     /// The message entries whose conversation has been read leave the bell.
