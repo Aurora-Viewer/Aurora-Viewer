@@ -193,6 +193,13 @@ pub enum CtxAction {
     Edit(Uuid),
     /// "Inspect": the window of the object's prims (Floater.Show "inspect").
     Inspect(Uuid),
+    /// "Refresh textures" of an object or of something worn: every texture
+    /// of its linkset is downloaded again (Object.TexRefresh).
+    RefreshTextures(Uuid),
+    /// "Refresh textures" of an avatar: its bakes (Avatar.TexRefresh).
+    RefreshAvatarTextures(Uuid),
+    /// "Force appearance update (rebake)" (Advanced.RebakeTextures).
+    Rebake,
     /// Take / take a copy into the inventory (derez_objects).
     Take(Uuid),
     TakeCopy(Uuid),

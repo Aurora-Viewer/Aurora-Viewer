@@ -50,6 +50,10 @@ pub mod stream;
 /// Name plates in every state and at each distance (AURORA_DEMO_TAGS).
 #[path = "demo_tags.rs"]
 pub mod tags;
+/// "Refresh textures" on a panel whose disk cache file is stale
+/// (AURORA_DEMO_TEXREFRESH).
+#[path = "demo_tex_refresh.rs"]
+pub mod tex_refresh;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;

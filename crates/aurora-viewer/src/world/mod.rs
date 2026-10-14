@@ -1049,6 +1049,15 @@ impl World {
         self.outfit.update(inputs, now);
     }
 
+    /// "Force appearance update (rebake)": the server side (see
+    /// `OutfitRestore::rebake`); its commands are left in
+    /// `self.outfit.commands`, the textures are the scene's.
+    pub fn rebake(&mut self) {
+        let step = self.main().is_some_and(|r| r.caps.contains_key("IncrementCOFVersion"));
+        let received = self.appearance_cof_version(&self.agent_id);
+        self.outfit.rebake(&self.inventory, step, received);
+    }
+
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
         self.appearances.get(avatar).map(|(_, g)| *g).unwrap_or(0)
             + if *avatar == self.agent_id {
@@ -1909,6 +1918,11 @@ impl World {
                 expected,
             } => {
                 self.outfit.on_bake_result(cof_version, success, expected);
+                None
+            }
+            NetEvent::CofVersionIncremented(version) => {
+                let received = self.appearance_cof_version(&self.agent_id);
+                self.outfit.on_cof_stepped(version, &mut self.inventory, received);
                 None
             }
             NetEvent::MapBlocks { blocks, .. } => {

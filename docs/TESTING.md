@@ -340,8 +340,22 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
+| `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
 
 ### Details
+
+`AURORA_DEMO_TEXREFRESH=1|auto`: a panel right of the avatar wears a texture
+whose file in the disk cache is stale, a grey picture crossed in red written
+as its `.j2c` before the panel arrives (frame 300), while a local asset
+server (the one of `AURORA_DEMO_STREAM`'s `net=`, 150 ms a request) holds
+the right one, violet and teal stripes. The panel shows the cross, read from
+the disk. "Refresh textures" in its menu (right click), or `auto` at frame
+900, forgets the texture, removes its files (`.j2c`, `.part`, `.bc7`) and
+downloads it again: the stripes replace the cross (`refreshing 1 textures:
+downloaded again` in the log). Capture before with `AURORA_FPS_LIMIT=60`
+and `AURORA_CAPTURE_FRAMES=800`, after with `auto` and frame 1300. The
+region's `ViewerAsset` is that server for the whole session: the few demo
+textures that never had data are answered 404 (`fetch failed` in the log).
 
 `AURORA_DEMO_COLOR_PICKER=1|left|follow|link|toggle|dock|lsl|hex|invalid|drag|cancel|no-apply|palette|pipette`
 opens the colour picker of the selection, with

@@ -333,6 +333,9 @@ impl App {
                 }
             }
             CtxAction::Inspect(id) => self.inspect_object(id),
+            CtxAction::RefreshTextures(id) => self.refresh_object_textures(id),
+            CtxAction::RefreshAvatarTextures(id) => self.refresh_avatar_textures(id),
+            CtxAction::Rebake => self.rebake(),
             CtxAction::Take(id) | CtxAction::TakeCopy(id) => {
                 let copy = matches!(act, CtxAction::TakeCopy(_));
                 if let Some(idx) = self.world.objects.index_of_uuid(&id) {
@@ -461,7 +464,7 @@ impl App {
 }
 
 /// The root prim of object `idx`'s linkset (not the avatar it is worn by).
-fn linkset_root(world: &World, idx: usize) -> usize {
+pub(super) fn linkset_root(world: &World, idx: usize) -> usize {
     let mut i = idx;
     for _ in 0..64 {
         let Some(o) = world.objects.get(i) else { break };

@@ -35,6 +35,24 @@ pub fn bake_name(te_index: usize) -> Option<&'static str> {
     BAKES.iter().find(|(i, _, _)| *i == te_index).map(|(_, n, _)| *n)
 }
 
+/// The bakes of an avatar that "Refresh textures" downloads again
+/// (avatar_tex_refresh, llviewermenu.cpp): every slot holding a texture,
+/// leaving out what destroy_texture leaves (IMG_DEFAULT and the default
+/// textures: the default avatar texture, the invisible bake, the "use baked"
+/// placeholders). Firestorm goes through the six system slots; the five of
+/// bakes on mesh are taken too, they are bakes like the others.
+pub fn refreshable_bakes(bake: impl Fn(usize) -> Option<Uuid>) -> Vec<Uuid> {
+    let mut out = Vec::new();
+    for (te, _, _) in BAKES {
+        let Some(t) = bake(te) else { continue };
+        let default = t.is_nil() || t == IMG_DEFAULT_AVATAR || t == IMG_INVISIBLE || bake_slot_for(&t).is_some();
+        if !default && !out.contains(&t) {
+            out.push(t);
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct AttachPoint {
     /// Avatar-local (pelvis-origin) position of the point.
@@ -328,6 +346,24 @@ impl AvatarLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refresh_takes_the_bakes_not_the_default_textures() {
+        let head = Uuid::from_u128(1);
+        let arm = Uuid::from_u128(2);
+        let got = refreshable_bakes(|te| match te {
+            8 => Some(head),
+            // the same bake in two slots is refreshed once
+            9 => Some(head),
+            10 => Some(IMG_DEFAULT_AVATAR),
+            11 => Some(IMG_INVISIBLE),
+            19 => Some(BAKES[4].2),
+            20 => Some(Uuid::nil()),
+            40 => Some(arm),
+            _ => None,
+        });
+        assert_eq!(got, vec![head, arm]);
+    }
 
     /// Issue 262: an empty library (no skeleton, hence no joint) stopped the
     /// viewer at the first avatar. Every file `load` asks for is built in.

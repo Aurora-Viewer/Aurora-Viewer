@@ -44,6 +44,7 @@ mod object_actions;
 mod scripts;
 mod shape_editor;
 mod task_notecards;
+mod texture_refresh;
 mod worn_demo;
 
 enum Screen {
@@ -394,6 +395,8 @@ pub struct App {
     demo_place: Option<crate::world::place_details::Source>,
     /// AURORA_DEMO_STREAM: objects and textures arriving in waves.
     stream_demo: Option<crate::demo::stream::StreamDemo>,
+    /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
+    tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
     /// AURORA_DEMO_GEOMETRY: meshes filling the geometry arena.
     geometry_demo: Option<crate::demo::geometry::GeometryDemo>,
     /// Detail levels of the objects around the camera, while the debug
@@ -731,6 +734,7 @@ impl App {
             place_images: Default::default(),
             demo_place: None,
             stream_demo: None,
+            tex_refresh_demo: None,
             geometry_demo: None,
             lod_infos: Vec::new(),
             place_groups: Default::default(),
@@ -849,6 +853,19 @@ impl App {
                 NetCommand::ObjectRelease { local_id, surface, .. } => {
                     log::info!("demo touch_end: prim={local_id}, face={}", surface.face);
                     self.world.system_message(aurora_i18n::tr!("app-demo-touch-end-simulated"));
+                }
+                NetCommand::AvatarTexturesRequest(id) => log::info!("demo avatartexturesrequest: {id}"),
+                NetCommand::IncrementCofVersion => {
+                    // the server's answer: the folder's version, one step on
+                    let version = self
+                        .world
+                        .inventory
+                        .folders
+                        .values()
+                        .find(|f| f.info.type_default == crate::world::outfit::FT_CURRENT_OUTFIT && !f.library)
+                        .map(|f| f.info.version + 1);
+                    log::info!("demo IncrementCOFVersion: {version:?}");
+                    let _ = self.world.apply(NetEvent::CofVersionIncremented(version));
                 }
                 _ => {}
             }
@@ -2143,6 +2160,7 @@ impl App {
                     aurora_i18n::tr!("app-show-transparency-disabled")
                 });
             }
+            Action::Rebake => self.rebake(),
             // held actions are read every frame
             _ => {}
         }
@@ -5734,6 +5752,12 @@ impl App {
                 pending,
             );
         }
+        // AURORA_DEMO_TEXREFRESH: a panel with a stale cached texture
+        if let Some(demo) = &mut self.tex_refresh_demo
+            && let Some(object) = demo.tick(self.frame_count, &mut self.world, self.scene.textures.cache_dir())
+        {
+            self.refresh_object_textures(object);
+        }
         // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back
         if self.demo
             && let Some(events) = crate::demo::away_teleport(self.frame_count, self.world.agent.position, self.world.agent.forward())
@@ -8805,6 +8829,7 @@ impl ApplicationHandler for App {
                 }
             }
             self.stream_demo = crate::demo::stream::StreamDemo::from_env();
+            self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             if let Some(n) = crate::demo::texture_stress_count() {
                 if let Some(g) = &mut self.gfx {
