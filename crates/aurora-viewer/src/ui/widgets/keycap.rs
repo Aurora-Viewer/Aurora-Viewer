@@ -73,11 +73,8 @@ pub(crate) fn caps(ui: &egui::Ui, binding: &crate::keybinds::Binding, behind: Co
                 cap.mouse.then(|| crate::ui::icons::global("mouse-filled")).flatten(),
                 // semibold, like the mockups' keys: a regular 10.5 px cut-out
                 // loses thin strokes, the accent of "Échap" first
-                ui.painter().layout_no_wrap(
-                    cap.label,
-                    egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())),
-                    behind,
-                ),
+                ui.painter()
+                    .layout_no_wrap(cap.label, egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())), behind),
             ),
         })
         .collect()
