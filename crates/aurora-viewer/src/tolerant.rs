@@ -59,7 +59,10 @@ pub fn from_value<T: DeserializeOwned>(mut value: Value, file: &str) -> Option<R
             log::warn!("{file}: unreadable at `{path}`, file ignored");
             return None;
         }
-        log::warn!("{file}: value at `{path}` not understood, default used");
+        // a tuple fails element by element at the same path: one line
+        if dropped.last() != Some(&path) {
+            log::warn!("{file}: value at `{path}` not understood, default used");
+        }
         dropped.push(path);
     }
 }
