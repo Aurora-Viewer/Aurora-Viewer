@@ -66,6 +66,8 @@ struct Frame {
     tex_slots: vec4<u32>,       // cloud, sun, moon, water normal map
     sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier
     sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1)
+    sky_optics: vec4<f32>,      // x moisture level (rainbow), y droplet radius, z ice level (22° halo)
+    sky_optics_tex: vec4<u32>,  // x rainbow texture slot, y halo texture slot (0: none)
     anim_clock: vec4<u32>,      // texture animation clock: x ms (wrapping), y sub-ms fraction (f32 bits)
     selection_color: vec4<f32>, // selected-face overlay, from the UI palette
     cascade_vp: array<mat4x4<f32>, 3>,
@@ -746,6 +748,7 @@ struct Atmos {
     below: vec3<f32>,          // haze color below the clouds
     light_atten: vec3<f32>,
     rel_z: f32,                // dome point height relative to the camera (+50)
+    light_dot: f32,            // cosine to the light (skyV's vary_LightNormPosDot)
 };
 
 /// Point of the sky dome seen in direction `d` (camera-relative), as in
@@ -794,7 +797,8 @@ fn atmos_eval(dir: vec3<f32>, for_clouds: bool) -> Atmos {
     let density_dist = rel_len * density_multiplier;
     combined_haze = exp(-combined_haze * density_dist);
 
-    var haze_glow = max(1.0 - dot(rel_norm, lightnorm), 0.001);
+    a.light_dot = dot(rel_norm, lightnorm);
+    var haze_glow = max(1.0 - a.light_dot, 0.001);
     haze_glow *= glow.x;
     haze_glow = pow(haze_glow, glow.z);
     if (for_clouds) {

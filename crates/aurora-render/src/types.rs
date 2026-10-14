@@ -679,6 +679,14 @@ pub struct SkyParams {
     pub cloud_texture: u32,
     pub sun_texture: u32,
     pub moon_texture: u32,
+    /// Rainbow strength (moisture level, 0 with neither sun nor moon up),
+    /// droplet radius and 22° halo strength (ice level), as skyF.glsl.
+    pub moisture_level: f32,
+    pub droplet_radius: f32,
+    pub ice_level: f32,
+    /// Bindless slots (0 = none) of the rainbow and halo textures.
+    pub rainbow_texture: u32,
+    pub halo_texture: u32,
 }
 
 impl Default for SkyParams {
@@ -720,6 +728,11 @@ impl Default for SkyParams {
             cloud_texture: 0,
             sun_texture: 0,
             moon_texture: 0,
+            moisture_level: 0.0,
+            droplet_radius: 800.0,
+            ice_level: 0.0,
+            rainbow_texture: 0,
+            halo_texture: 0,
         }
     }
 }

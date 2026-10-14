@@ -48,6 +48,11 @@ pub fn enabled() -> bool {
     select_enabled() || editor().is_some() || std::env::var_os("AURORA_DEMO_LAND").is_some()
 }
 
+/// The user's day cycle item the `day` editor scenarios open.
+pub fn day_item() -> Uuid {
+    u(0x503 + 0x1000)
+}
+
 /// The item the `item` editor scenario opens.
 pub fn editor_item() -> Uuid {
     u(0x501 + 0x1000)
@@ -103,6 +108,7 @@ fn items() -> &'static Vec<(u128, &'static str, SettingsKind, u128)> {
                 SettingsKind::Water,
                 0x502,
             ),
+            (USER_SETTINGS, aurora_i18n::tr!("demo-env-my-day-cycle"), SettingsKind::Day, 0x503),
         ]
     })
 }
@@ -363,8 +369,16 @@ fn defs() -> Vec<(u128, Llsd)> {
             ),
         ),
         (0x402, day(&[(0.0, sunset()), (0.5, noon())], water([0.05, 0.35, 0.4], 3.0))),
-        (0x501, purple),
+        (0x501, purple.clone()),
         (0x502, water([0.05, 0.45, 0.45], 1.5)),
+        // the user's day: midnight, the purple sky in the morning, noon, sunset
+        (
+            0x503,
+            day(
+                &[(0.0, midnight()), (0.25, purple), (0.5, noon()), (0.75, sunset())],
+                water([0.05, 0.45, 0.45], 1.5),
+            ),
+        ),
     ]
 }
 

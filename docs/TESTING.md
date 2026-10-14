@@ -1004,11 +1004,12 @@ To check with these scenarios:
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>]]` | Classic EEP sky with this gamma |
+| `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
-| `AURORA_DEMO_ENV_EDITOR=<mode>` | Sky and water editors |
+| `AURORA_DEMO_ENV_EDITOR=<mode>` | Sky, water and day cycle editors |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 
 ### Details
@@ -1091,6 +1092,17 @@ To check with these scenarios:
   `AURORA_DEMO_SKY=1.62,0.8,1.1` and `AURORA_DEMO_PBR_OVERRIDE=1`, the surround
   of each bump of the slabs must be darkened by ambient occlusion, and no
   longer be once ambient occlusion is turned off in the settings.
+- **`AURORA_DEMO_SKY_OPTICS=rainbow|halo|clear`**: the region's sky carries a
+  moisture level of 1 (`rainbow`, sun 12° up in the west) or an ice level of
+  1 (`halo`, sun 14° up in the east), and the camera looks east from behind
+  the avatar (`demo_sky.rs`). `rainbow`: a bow over the eastern horizon, its
+  top about 30° up, red outside and violet inside, the sky brighter inside
+  it. `halo`: a ring 22° around the sun, red on its inner edge, darker sky
+  inside it. `clear`: the sky and the view of `rainbow` without the bow, to
+  compare. Offline, the textures are stand-ins drawn by the demo (the grid
+  sends Second Life's own, `rainbow_id` and `halo_id`); the shape, the place
+  and the colors' order are those of skyF.glsl. Capture in `AURORA_AA=3` and
+  `AURORA_AA=6`.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`, `lod`, `shadows`, `ao`, `check_lights`,
@@ -1122,8 +1134,15 @@ To check with these scenarios:
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
   (2500).
-- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save`**: sky
-  and water editors (`app/env_editor.rs`), with the library and Settings
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save|day|day-play|day-edit`**: sky,
+  water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
+  `day`: the day cycle editor opens on the user's "my day cycle" (frame
+  400: midnight, the purple sky at 25 %, noon, sunset), the ground track and
+  its first key frame selected; `day-play` plays it (a day in a minute,
+  from frame 900); `day-edit` brightens the noon frame (900), tries a frame
+  at 75 % (950, refused: a frame is there), clones the ground track into
+  Sky 3 and selects it (1000), then saves over the item (1100, logged as
+  `day cycle saved`). The sky and water editors use the library and Settings
   folder of `AURORA_DEMO_ENV_SELECT`. At frame 400 the editor opens on a
   snapshot of the shown sky (`sky`, `clouds` and `sun` pick the tab) or
   water (`water`), or on the user's "my purple sky" item once its folder
@@ -2465,7 +2484,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
-| `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
+| `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
@@ -2493,12 +2512,16 @@ What the inventory must show with these scenarios:
   then "In call" with a timer; `hangup` is the same and Tess hangs up after
   12 s (back to nearby voice, a notice in the conversation); `group` calls
   the group Aurora Builders (Nova, Tess and Orion); `conference` starts a
-  voice conference with Tess and Nova; `incoming` makes Tess call us (the
+  voice conference with Tess and Nova (`conference-legacy`: the capability
+  answers 400 and the conference starts by message, IM_SESSION_CONFERENCE_START;
+  the log says "starting it by message"); `incoming` makes Tess call us (the
   card with Accept, Decline and Reply by text, and the same answers in her
   conversation, which comes up flashing; unanswered, both close after 30 s)
   and
   `incoming-group` makes Nova start a call in Aurora Builders. Voice must be
-  enabled (Preferences › Sound and voice), as on the grid.
+  enabled (Preferences › Sound and voice), as on the grid. Residents added to
+  a conference ("Add" of the call strip, or dragged from Contacts › Friends
+  or People › Nearby onto the conversation) join it at once.
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),

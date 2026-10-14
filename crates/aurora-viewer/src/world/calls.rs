@@ -122,6 +122,21 @@ pub enum ChannelStatus {
     Failed,
 }
 
+/// IM_SESSION_CONFERENCE_START (llinstantmessage.h).
+const IM_SESSION_CONFERENCE_START: u8 = 16;
+
+/// What adding residents to a conversation does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AddOutcome {
+    /// Invited into the conference.
+    Invited,
+    /// A conversation with one resident: a new conference, once confirmed
+    /// (ConfirmAddingChatParticipants).
+    Confirm(Vec<Uuid>),
+    /// A group's conversation, or nobody new.
+    NotAllowed,
+}
+
 /// DEFAULT_RETRIES_COUNT (llvoicechannel.cpp).
 const RETRIES: u8 = 3;
 
@@ -162,6 +177,9 @@ pub enum InviteAnswer {
 pub struct Calls {
     pub active: Option<Call>,
     pub invites: Vec<PendingInvite>,
+    /// Conferences we are starting, by temporary session id: the residents
+    /// asked, for the start by message after a refusal.
+    pub conferences: std::collections::HashMap<Uuid, Vec<Uuid>>,
     /// Voice is enabled and working: invitations are shown only then
     /// (LLViewerChatterBoxInvitation::post).
     pub voice_enabled: bool,
@@ -365,27 +383,15 @@ impl World {
     /// ("start conference"), whose call starts once the server answered
     /// with the session's real id (autoStartCallOnStartup).
     pub fn start_conference(&mut self, residents: Vec<Uuid>) {
-        let me = self.agent_id;
-        let mut agents: Vec<Uuid> = Vec::new();
-        for id in residents {
-            if !id.is_nil() && id != me && !agents.contains(&id) {
-                agents.push(id);
-            }
-        }
+        let agents = self.conference_agents(residents);
         match agents.len() {
             0 => return,
             1 => return self.start_call(agents[0]),
             _ => {}
         }
         self.end_call();
-        let session = Uuid::new_v4();
+        let session = self.open_conference(agents, true);
         let name = aurora_i18n::tr!("world-groups-conference").to_owned();
-        log::info!("call: starting a conference with {} residents", agents.len());
-        self.info_mut(session, &name).started_by_us = true;
-        self.session_lines(session);
-        self.social.focus_im = Some(session);
-        self.call_request(CallMethod::StartConference { agents }, session);
-        self.ui_sounds.push(crate::ui_sound::UiSound::StartIm);
         self.calls.active = Some(Call {
             session,
             kind: CallKind::AdHoc,
@@ -399,6 +405,136 @@ impl World {
             connected_at: None,
             members: Vec::new(),
         });
+    }
+
+    /// A text conference with several residents (LLAvatarActions::
+    /// startConference, the "IM" of a multiple selection); one resident is
+    /// an ordinary conversation (startIM).
+    pub fn start_text_conference(&mut self, residents: Vec<Uuid>) {
+        let agents = self.conference_agents(residents);
+        match agents.len() {
+            0 => {}
+            1 => {
+                self.social.session_mut(agents[0]);
+                self.social.focus_im = Some(agents[0]);
+                self.ui_sounds.push(crate::ui_sound::UiSound::StartIm);
+            }
+            _ => {
+                self.open_conference(agents, false);
+            }
+        }
+    }
+
+    /// The residents of a new conference: ourselves, nil ids and repeats
+    /// left out, in their order.
+    fn conference_agents(&self, residents: Vec<Uuid>) -> Vec<Uuid> {
+        let me = self.agent_id;
+        let mut agents: Vec<Uuid> = Vec::new();
+        for id in residents {
+            if !id.is_nil() && id != me && !agents.contains(&id) {
+                agents.push(id);
+            }
+        }
+        agents
+    }
+
+    /// LLIMMgr::addSession(IM_SESSION_CONFERENCE_START) → sendStartSession:
+    /// the conversation under a temporary id, "start conference" asked; the
+    /// deprecated start by message follows a refusal (`on_conference_reply`).
+    fn open_conference(&mut self, agents: Vec<Uuid>, voice: bool) -> Uuid {
+        let session = Uuid::new_v4();
+        let name = aurora_i18n::tr!("world-groups-conference").to_owned();
+        log::info!(
+            "conference: starting with {} residents{}",
+            agents.len(),
+            if voice { ", with a call" } else { "" }
+        );
+        self.info_mut(session, &name).started_by_us = true;
+        self.session_lines(session);
+        self.social.focus_im = Some(session);
+        self.calls.conferences.insert(session, agents.clone());
+        self.call_request(CallMethod::StartConference { agents }, session);
+        self.ui_sounds.push(crate::ui_sound::UiSound::StartIm);
+        session
+    }
+
+    /// startConferenceCoro: a 400 falls back on the old way, the
+    /// conference started by message (start_deprecated_conference_chat:
+    /// IM_SESSION_CONFERENCE_START to the first resident, every invited id
+    /// in the binary bucket); another failure ends there.
+    fn on_conference_reply(&mut self, session: Uuid, result: &Result<Llsd, u16>) {
+        let Some(agents) = self.calls.conferences.get(&session).cloned() else {
+            return;
+        };
+        match result {
+            Ok(_) => {}
+            Err(400) => {
+                log::info!("conference: start refused (400), starting it by message");
+                let bucket: Vec<u8> = agents.iter().flat_map(|a| *a.as_bytes()).collect();
+                self.groups.out.push(NetCommand::SendImDialog {
+                    to: agents[0],
+                    dialog: IM_SESSION_CONFERENCE_START,
+                    id: session,
+                    message: String::new(),
+                    bucket,
+                });
+            }
+            Err(status) => {
+                log::warn!("conference: start failed ({status})");
+                self.calls.conferences.remove(&session);
+                if self.calls.active.as_ref().is_some_and(|c| c.session == session) {
+                    let name = aurora_i18n::tr!("world-groups-conference");
+                    self.call_failed(aurora_i18n::tr!("world-calls-generic-error", name = name));
+                }
+            }
+        }
+    }
+
+    /// Add residents to a conversation (FSFloaterIM::addSessionParticipants):
+    /// a conference invites them ("invite"); a conversation with one
+    /// resident asks first, then becomes a new conference
+    /// (`convert_to_conference`); a group's cannot (isInviteAllowed).
+    pub fn invite_to_conversation(&mut self, conversation: Uuid, residents: Vec<Uuid>) -> AddOutcome {
+        let agents = self.conference_agents(residents);
+        if agents.is_empty() || self.groups.is_member(&conversation) {
+            return AddOutcome::NotAllowed;
+        }
+        if self.is_group_session(&conversation) {
+            let present = self
+                .groups
+                .sessions
+                .get(&conversation)
+                .map(|s| s.participants.clone())
+                .unwrap_or_default();
+            let agents: Vec<Uuid> = agents.into_iter().filter(|a| !present.contains(a)).collect();
+            if !agents.is_empty() {
+                log::info!("conference: inviting {} residents", agents.len());
+                self.call_request(CallMethod::Invite { agents }, conversation);
+            }
+            return AddOutcome::Invited;
+        }
+        // a P2P conversation: not the other participant again
+        // (FSFloaterIM::canAddSelectedToChat)
+        if agents.contains(&conversation) {
+            return AddOutcome::NotAllowed;
+        }
+        AddOutcome::Confirm(agents)
+    }
+
+    /// The confirmed addition to a conversation with one resident
+    /// (FSFloaterIM::addP2PSessionParticipants): that conversation closes
+    /// (its call with it) and a conference starts with the resident and the
+    /// new ones, a voice conference if a call was in progress.
+    pub fn convert_to_conference(&mut self, other: Uuid, added: Vec<Uuid>) {
+        let voice = self.call_of(&other).is_some();
+        self.conversation_closed(&other);
+        let mut residents = vec![other];
+        residents.extend(added);
+        if voice {
+            self.start_conference(residents);
+        } else {
+            self.start_text_conference(residents);
+        }
     }
 
     /// Hang up (LLIMMgr::endCall → LLVoiceChannel::deactivate): back to the
@@ -452,6 +588,10 @@ impl World {
     /// conference's temporary id becomes the server's
     /// (processSessionInitializedReply).
     pub(super) fn call_session_started(&mut self, temp: Uuid, session: Uuid, success: bool) {
+        // a conference we started: its conversation follows it to its id
+        if self.calls.conferences.remove(&temp).is_some() && success && !session.is_nil() && session != temp {
+            self.social.focus_im = Some(session);
+        }
         let Some(c) = self
             .calls
             .active
@@ -486,18 +626,17 @@ impl World {
     }
 
     fn on_call_reply(&mut self, method: CallMethod, session: Uuid, result: Result<Llsd, u16>) {
+        // a conference's start, with or without a call: its own fallback
+        if matches!(method, CallMethod::StartConference { .. }) {
+            self.on_conference_reply(session, &result);
+            return;
+        }
         let Some(c) = self.calls.active.as_mut().filter(|c| c.session == session) else {
             return;
         };
         let name = c.name.clone();
         match (method, result) {
-            // startConferenceCoro: the call starts with the session's start
-            // reply (ChatterBoxSessionStartReply)
-            (CallMethod::StartConference { .. }, Ok(_)) => {}
-            (CallMethod::StartConference { .. }, Err(status)) => {
-                log::warn!("call: start conference failed ({status})");
-                self.call_failed(aurora_i18n::tr!("world-calls-generic-error", name = name.as_str()));
-            }
+            (CallMethod::StartConference { .. } | CallMethod::Invite { .. }, _) => {}
             // startP2PVoiceCoro: the session exists, the credentials next
             (CallMethod::StartP2p { .. }, Ok(_)) => self.call_request(CallMethod::Call, session),
             (CallMethod::StartP2p { .. }, Err(status)) => {
@@ -1055,6 +1194,78 @@ mod tests {
         assert_eq!(again.volumes.len(), 1);
         assert!((again.volumes[&a] - 0.8).abs() < 1e-6);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_refused_conference_start_falls_back_on_the_message() {
+        let mut w = world();
+        let (a, b) = (Uuid::from_u128(2), Uuid::from_u128(3));
+        w.start_text_conference(vec![a, b]);
+        assert!(w.calls.active.is_none(), "a text conference has no call");
+        let temp = *w.calls.conferences.keys().next().expect("conference");
+        w.groups.out.clear();
+        w.on_call_event(NetEvent::CallReply {
+            method: CallMethod::StartConference { agents: vec![a, b] },
+            session: temp,
+            result: Err(400),
+        });
+        let sent = std::mem::take(&mut w.groups.out);
+        let Some(NetCommand::SendImDialog {
+            to, dialog, id, bucket, ..
+        }) = sent.first()
+        else {
+            panic!("the conference started by message: {sent:?}");
+        };
+        assert_eq!((*to, *dialog, *id), (a, IM_SESSION_CONFERENCE_START, temp));
+        let mut expected = a.as_bytes().to_vec();
+        expected.extend_from_slice(b.as_bytes());
+        assert_eq!(*bucket, expected);
+        // another failure gives up
+        let mut w = world();
+        w.start_conference(vec![a, b]);
+        let temp = w.calls.active.as_ref().expect("call").session;
+        w.on_call_event(NetEvent::CallReply {
+            method: CallMethod::StartConference { agents: vec![a, b] },
+            session: temp,
+            result: Err(500),
+        });
+        assert!(w.calls.active.is_none());
+    }
+
+    #[test]
+    fn adding_people_invites_into_a_conference_and_converts_a_p2p_call() {
+        let (a, b, c) = (Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4));
+        // a conference: "invite" for who is not in it yet
+        let mut w = world();
+        let session = Uuid::from_u128(50);
+        w.info_mut(session, "Conference").participants.insert(b);
+        assert_eq!(w.invite_to_conversation(session, vec![b, c]), AddOutcome::Invited);
+        assert_eq!(calls_sent(&mut w), vec![(CallMethod::Invite { agents: vec![c] }, session)]);
+        // a group's conversation cannot
+        w.groups.groups.push(aurora_net::GroupMembership {
+            id: Uuid::from_u128(60),
+            name: "G".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+        assert_eq!(w.invite_to_conversation(Uuid::from_u128(60), vec![c]), AddOutcome::NotAllowed);
+        // a call with one resident: confirmed, it becomes a voice conference
+        let mut w = world();
+        w.start_call(a);
+        assert_eq!(w.invite_to_conversation(a, vec![a]), AddOutcome::NotAllowed);
+        assert_eq!(w.invite_to_conversation(a, vec![b]), AddOutcome::Confirm(vec![b]));
+        calls_sent(&mut w);
+        w.convert_to_conference(a, vec![b]);
+        let call = w.calls.active.as_ref().expect("conference call");
+        assert!(matches!(call.kind, CallKind::AdHoc));
+        let session = call.session;
+        assert_eq!(
+            calls_sent(&mut w),
+            vec![(CallMethod::StartConference { agents: vec![a, b] }, session)]
+        );
     }
 
     #[test]

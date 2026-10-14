@@ -25,8 +25,9 @@ pub struct Environment {
     pub fog_density: f32,
     pub sky: SkyParams,
     pub water: WaterParams,
-    /// Texture ids the sky / water need (cloud, sun, moon, water normal map).
-    pub textures: [uuid::Uuid; 4],
+    /// Texture ids the sky / water need (cloud, sun, moon, water normal map,
+    /// rainbow, halo).
+    pub textures: [uuid::Uuid; 6],
     /// Sky reflection_probe_ambiance: minimum ambiance of every probe.
     pub probe_ambiance: f32,
 }
@@ -205,6 +206,13 @@ impl Environment {
             cloud_texture: 0,
             sun_texture: 0,
             moon_texture: 0,
+            // LLDrawPoolWLSky::renderSkyHazeDeferred: no rainbow nor halo
+            // without a light to make them
+            moisture_level: if sun_up || moon_up { sky.moisture_level } else { 0.0 },
+            droplet_radius: sky.droplet_radius,
+            ice_level: if sun_up || moon_up { sky.ice_level } else { 0.0 },
+            rainbow_texture: 0,
+            halo_texture: 0,
         };
         let water_params = WaterParams {
             fog_color: water.fog_color,
@@ -229,7 +237,23 @@ impl Environment {
             fog_density,
             sky: sky_params,
             water: water_params,
-            textures: [sky.cloud_id, sky.sun_id, sky.moon_id, water.normal_map],
+            textures: [
+                sky.cloud_id,
+                sky.sun_id,
+                sky.moon_id,
+                water.normal_map,
+                // fetched only while they show
+                if sky_params.moisture_level > 0.0 {
+                    sky.rainbow_id
+                } else {
+                    uuid::Uuid::nil()
+                },
+                if sky_params.ice_level > 0.0 {
+                    sky.halo_id
+                } else {
+                    uuid::Uuid::nil()
+                },
+            ],
             probe_ambiance: sky.probe_ambiance,
         }
     }
@@ -302,6 +326,29 @@ mod tests {
         assert!(night.sun_dir.z > 0.0);
         // objects are lit by the moon with the sun's normalized color
         assert_eq!(night.sky.object_sunlight, noon.sky.object_sunlight);
+    }
+
+    /// LLDrawPoolWLSky: no rainbow nor halo without a light; their textures
+    /// are only wanted while they show.
+    #[test]
+    fn rainbow_and_halo_need_a_light() {
+        let wet = |sun: Vec3, moon: Vec3| {
+            let sky = SkyFrame {
+                moisture_level: 0.8,
+                ice_level: 0.6,
+                moon_rotation: glam::Quat::from_rotation_arc(Vec3::X, moon),
+                ..SkyFrame::with_sun(sun)
+            };
+            Environment::from_eep(&sky, &WaterFrame::default(), glam::Vec2::ZERO, 96.0)
+        };
+        let day = wet(Vec3::new(0.0, 0.3, 0.95), Vec3::new(0.0, -0.3, -0.95));
+        assert_eq!((day.sky.moisture_level, day.sky.ice_level), (0.8, 0.6));
+        assert!(!day.textures[4].is_nil() && !day.textures[5].is_nil());
+        let dark = wet(Vec3::new(0.0, 0.3, -0.95), Vec3::new(0.0, -0.3, -0.95));
+        assert_eq!((dark.sky.moisture_level, dark.sky.ice_level), (0.0, 0.0));
+        assert!(dark.textures[4].is_nil() && dark.textures[5].is_nil());
+        let dry = Environment::from_sun(Vec3::new(0.0, 0.3, 0.95), 96.0);
+        assert!(dry.textures[4].is_nil() && dry.textures[5].is_nil());
     }
 
     #[test]

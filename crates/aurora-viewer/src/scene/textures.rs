@@ -1484,6 +1484,11 @@ impl TextureStreamer {
         self.entries.get(id).is_some_and(|e| e.decoded.is_some())
     }
 
+    /// A procedural texture of the offline demo, resident as soon as acquired.
+    pub fn is_local(&self, id: &Uuid) -> bool {
+        self.local_slots.contains_key(id)
+    }
+
     /// Record that a texture covers about `px` pixels on screen.
     #[inline]
     pub fn note_usage(&mut self, id: &Uuid, px: f32) {

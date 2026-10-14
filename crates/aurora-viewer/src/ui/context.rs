@@ -19,7 +19,10 @@ use glam::Vec3;
 use uuid::Uuid;
 
 mod entries;
+mod multi;
 mod pie;
+
+pub use multi::avatars_menu;
 
 /// Object update flags (llprimitive/object_flags.h).
 pub mod flags {
@@ -278,6 +281,14 @@ pub enum CtxAction {
     /// Friendship: offer (with a message) / end, both confirmed first.
     AddFriend(Uuid),
     RemoveFriend(Uuid),
+    /// Several friends removed, after one confirmation (removeFriendsDialog).
+    RemoveFriends(Vec<Uuid>),
+    /// A text conference with these residents (startConference).
+    Conference(Vec<Uuid>),
+    /// A voice conference with these residents (startAdhocCall).
+    ConferenceCall(Vec<Uuid>),
+    /// A teleport offer to each of them (one prompt).
+    OfferTeleports(Vec<Uuid>),
     /// Ask an avatar to teleport us to them (TeleportRequest prompt).
     RequestTeleport(Uuid),
     GroupChat(Uuid),

@@ -217,6 +217,9 @@ pub enum CallMethod {
     /// Start an ad-hoc conference with these residents, under a temporary
     /// session id the server replaces (startConferenceCoro).
     StartConference { agents: Vec<Uuid> },
+    /// Invite residents into a conference (LLFloaterIMSession::
+    /// inviteToSession, FSFloaterIM::inviteToSession).
+    Invite { agents: Vec<Uuid> },
 }
 
 impl CallMethod {
@@ -226,6 +229,7 @@ impl CallMethod {
             CallMethod::StartP2p { .. } => "start p2p voice",
             CallMethod::DeclineP2p => "decline p2p voice",
             CallMethod::StartConference { .. } => "start conference",
+            CallMethod::Invite { .. } => "invite",
         }
     }
 
@@ -233,6 +237,11 @@ impl CallMethod {
     /// voice server type (VoiceServerType unset: getVersion's).
     pub fn body(&self, session: Uuid, server_type: &str) -> Llsd {
         match self {
+            CallMethod::Invite { agents } => aurora_llsd::llsd_map! {
+                "params" => Llsd::Array(agents.iter().map(|a| Llsd::from(*a)).collect()),
+                "method" => self.name(),
+                "session-id" => session,
+            },
             CallMethod::StartConference { agents } => aurora_llsd::llsd_map! {
                 "method" => self.name(),
                 "session-id" => session,
@@ -351,6 +360,10 @@ mod tests {
         assert_eq!(conference["params"].as_array().len(), 2);
         assert_eq!(conference["params"][0].as_uuid(), other);
         assert_eq!(conference["alt_params"]["voice_server_type"].as_str(), "webrtc");
+        let invite = CallMethod::Invite { agents: vec![other] }.body(s, "webrtc");
+        assert_eq!(invite["method"].as_str(), "invite");
+        assert_eq!(invite["params"][0].as_uuid(), other);
+        assert!(invite.as_map().is_some_and(|m| !m.contains_key("alt_params")));
         let decline = CallMethod::DeclineP2p.body(s, "webrtc");
         assert_eq!(decline["method"].as_str(), "decline p2p voice");
         assert!(decline.as_map().is_some_and(|m| !m.contains_key("alt_params")));
