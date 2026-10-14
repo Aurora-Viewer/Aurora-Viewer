@@ -297,7 +297,16 @@ pub struct LandUi {
 impl LandUi {
     /// Open on the parcel at a global position (right-click on land, mini-map).
     pub fn select_at_global(world: &mut World, gx: f64, gy: f64) {
-        let hit = world.regions.iter().find_map(|(h, r)| {
+        if let Some((h, pos, size)) = Self::region_at_global(world, gx, gy) {
+            world.land.select_at(h, pos, size);
+        }
+    }
+
+    /// The region we are connected to that holds a global position: its
+    /// handle, the position in it and its size. "About Land" only reaches
+    /// the parcels of these regions.
+    pub fn region_at_global(world: &World, gx: f64, gy: f64) -> Option<(aurora_net::RegionHandle, glam::Vec3, (f32, f32))> {
+        world.regions.iter().find_map(|(h, r)| {
             let (ox, oy) = aurora_net::handle_to_origin(*h);
             let (sx, sy) = (r.heightmap.size_x.max(256) as f64, r.heightmap.size_y.max(256) as f64);
             let (lx, ly) = (gx - ox as f64, gy - oy as f64);
@@ -306,10 +315,7 @@ impl LandUi {
                 glam::Vec3::new(lx as f32, ly as f32, 0.0),
                 (sx as f32, sy as f32),
             ))
-        });
-        if let Some((h, pos, size)) = hit {
-            world.land.select_at(h, pos, size);
-        }
+        })
     }
 
     /// Show a tab by its key (`Tab::key`), its label in the interface language

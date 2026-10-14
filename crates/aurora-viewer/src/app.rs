@@ -7370,6 +7370,7 @@ impl App {
                 GroupAction::Refresh { group, member } => {
                     self.send(NetCommand::GroupProfileRequest(group));
                     self.world.group_data.refresh(group, member);
+                    self.world.group_money.refresh(group);
                 }
                 GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
                 GroupAction::Eject { group, members } | GroupAction::Ban { group, members } if members.is_empty() => {
@@ -7438,6 +7439,28 @@ impl App {
                     self.panels.people = true;
                     self.panels.people_tab = 2;
                     self.people_ui.filter = name;
+                }
+                GroupAction::LoadLand { group, ledger } => {
+                    // the land types name the parcels' "Type" column
+                    self.world.search.want_land_types();
+                    self.world.group_money.open(group, ledger);
+                }
+                GroupAction::LandPage { group, ledger } => self.world.group_money.request(group, ledger),
+                GroupAction::LandStep { group, ledger, earlier } => self.world.group_money.step(group, ledger, earlier),
+                GroupAction::SetContribution { group, contribution } => {
+                    if !self.world.groups.set_contribution(group, contribution) {
+                        self.world.system_message(aurora_i18n::tr!("ui-group-land-contribution-error"));
+                    }
+                }
+                // onMapButton: "use the agent's z-height"
+                GroupAction::ShowOnMap { x, y } => {
+                    let z = self.world.agent_global().map_or(0.0, |g| g.z as f32);
+                    self.world.map.track_location(x, y, z, false);
+                    self.panels.world_map = true;
+                }
+                GroupAction::AboutLand { x, y } => {
+                    ui::land::LandUi::select_at_global(&mut self.world, x, y);
+                    self.panels.about_land = true;
                 }
             }
         }
@@ -9539,6 +9562,14 @@ impl ApplicationHandler for App {
                 }
                 if crate::demo::group::admin_tab() {
                     self.group_profile_ui.show_admin();
+                }
+                if let Some(ledger) = crate::demo::group::land_tab() {
+                    // the land we hold, for the most we may give
+                    self.world.apply(NetEvent::LandHoldings {
+                        credit: crate::demo::group::LAND_CREDIT,
+                        committed: crate::demo::group::LAND_COMMITTED,
+                    });
+                    self.group_profile_ui.show_land(ledger);
                 }
                 if let Some(invitees) = crate::demo::group::invitees() {
                     self.group_profile_ui.invite.open(crate::demo::group::shown_group(), invitees);

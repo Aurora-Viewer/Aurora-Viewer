@@ -9,6 +9,7 @@ pub mod circuit;
 pub mod currency;
 pub mod experience;
 pub mod fetch;
+pub mod group_money;
 pub mod groups;
 pub mod inventory;
 pub mod land;
