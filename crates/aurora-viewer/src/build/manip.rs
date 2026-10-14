@@ -3,8 +3,9 @@
 //! their grid snapping, snap rulers and the position readout.
 //!
 //! Sizes follow LL: handles keep a constant size on screen (50 px arrows,
-//! 100 px rotation sphere, 10 px stretch boxes). Objects follow the mouse
-//! locally; MultipleObjectUpdate goes out on release (stretching also every
+//! 100 px rotation sphere). Aurora uses thicker strokes and 14 px stretch
+//! boxes for readability. Objects follow the mouse locally;
+//! MultipleObjectUpdate goes out on release (stretching also every
 //! 0.1 s like LLManipScale::sendUpdates).
 
 use super::draw::{Painter3d, axis_color, fade};
@@ -25,7 +26,7 @@ const ARROW_PX: f32 = 50.0;
 const SELECTED_ARROW_SCALE: f32 = 1.3;
 const HOTSPOT_START: f32 = 0.2;
 const HOTSPOT_END: f32 = 1.2;
-/// Aurora: the plane handles are squares between the two arrows of their
+/// Aurora: the plane handles are squares between the two axes of their
 /// plane, next to the pivot (center and half side, in arrow lengths; the hit
 /// test takes them a little larger). LL puts two triangles at 1.8 arrow
 /// lengths, away from the handles they belong to.
@@ -33,9 +34,10 @@ pub(super) const PLANE_OFFSET: f32 = 0.52;
 const PLANE_HALF: f32 = 0.15;
 const PLANE_PICK_SCALE: f32 = 1.3;
 /// Arrow head: height and radius, in arrow lengths.
-const ARROW_HEAD: (f32, f32) = (0.26, 0.09);
-/// Stroke of the handles in pixels, at rest and under the cursor.
-const STROKE_PX: (f32, f32) = (2.0, 3.0);
+const ARROW_HEAD: (f32, f32) = (0.26, 0.12);
+/// Aurora: thicker than LLManipTranslate's 2 px shafts, with the same
+/// axis length and picking tolerance; shared by the rotation rings.
+const STROKE_PX: (f32, f32) = (4.0, 6.0);
 const MIN_PLANE_MANIP_DOT: f32 = 0.25;
 const SNAP_GUIDE_SCREEN_SIZE: f32 = 0.7;
 const SNAP_ARROW_SCALE: f32 = 0.7;
@@ -47,8 +49,8 @@ const MAX_DRAG_DISTANCE: f32 = 48.0;
 const RING_PX: f32 = 100.0;
 const SNAP_ANGLE: f32 = 5.625;
 /// LLManipScale: pick radius, box size, streaming interval.
-const SCALE_PICK_PX: f32 = 11.0;
-const SCALE_BOX_FACTOR: f32 = 0.2;
+const SCALE_PICK_PX: f32 = 14.0;
+const SCALE_BOX_FACTOR: f32 = 0.28;
 const SCALE_UPDATE_DELAY: f32 = 0.1;
 const SNAP_GUIDE_SCREEN_OFFSET: f32 = 0.05;
 /// Tick label spacing in pixels (LLManip::sTickLabelSpacing).
@@ -549,7 +551,7 @@ impl Manip {
     }
 
     /// Aurora look of LLManipTranslate::renderTranslationHandles: pale axes
-    /// with heads in the color of their axis, square plane handles in the
+    /// with one positive arrow per axis, square plane handles in the
     /// color of their normal, and the accent of the theme under the cursor.
     fn draw_translate(&self, p: &mut Painter3d, s: &BuildSettings, f: &Frame, drag: Option<&Drag>) {
         let cam = p.cam;
@@ -587,32 +589,24 @@ impl Manip {
             p.tri_plain(q[0], q[2], q[3], fill);
             p.flush();
             for k in 0..4 {
-                p.line(q[k], q[(k + 1) % 4], color, 1.2);
+                p.line(q[k], q[(k + 1) % 4], color, if hl { 3.5 } else { 2.5 });
             }
         }
-        // arrows, farthest first; the heads point away from the pivot
-        let mut arrows: Vec<(f32, usize, f32)> = Vec::new();
-        for i in 0..3 {
-            for sgn in [1.0f32, -1.0] {
-                let tip = piv + g * unit(i) * len * sgn;
-                arrows.push((cam.depth(tip), i, sgn));
-            }
-        }
+        // Only positive ends have handles; guidelines show the full axes.
+        let mut arrows: [(f32, usize); 3] = std::array::from_fn(|i| (cam.depth(piv + g * unit(i) * len), i));
         arrows.sort_by(|a, b| b.0.total_cmp(&a.0));
         let (head_h, head_r) = (len * ARROW_HEAD.0, len * ARROW_HEAD.1);
-        for (_, i, sgn) in arrows {
+        for (_, i) in arrows {
             let selected = active == Some(Part::Arrow(i)) || self.hover == Some(Part::Arrow(i));
             if active.is_some() && !selected {
                 continue;
             }
-            // the negative side is the same handle, quieter
-            let side = if sgn > 0.0 { 1.0 } else { 0.6 };
             let (shaft, head, width) = if selected {
                 (pal.violet_light, pal.violet_light, STROKE_PX.1)
             } else {
-                (fade(pal.ink, 0.85 * side), fade(axis_color(&pal, i), side), STROKE_PX.0)
+                (fade(pal.ink, 0.85), axis_color(&pal, i), STROKE_PX.0)
             };
-            let a = g * unit(i) * sgn;
+            let a = g * unit(i);
             let sc = self.arrow_scale[i].max(1.0);
             let base = piv + a * (len - head_h * 0.5 * sc);
             p.line_cased(piv, base, shaft, width);
@@ -622,7 +616,7 @@ impl Manip {
         if active.is_none()
             && let Some(c) = cam.project(piv)
         {
-            p.painter.circle(c, 3.5, pal.violet_light, Stroke::new(1.0, fade(pal.navy, 0.5)));
+            p.painter.circle(c, 5.5, pal.violet_light, Stroke::new(2.0, fade(pal.navy, 0.5)));
         }
     }
 
@@ -848,7 +842,7 @@ impl Manip {
                 for bit in [1u8, 2, 4] {
                     if c & bit == 0 {
                         let (from, to) = (corner(corner_signs(c)), corner(corner_signs(c | bit)));
-                        p.line(from, to, fade(pal.violet_light, 0.7), 1.2);
+                        p.line(from, to, fade(pal.violet_light, 0.7), 2.0);
                     }
                 }
             }
@@ -885,12 +879,12 @@ impl Manip {
             }
             let hl = self.hover == Some(part) || active == Some(part);
             let (fill, outline) = match part {
-                Part::Corner(_) | Part::Face(..) if hl => (pal.violet_light, Stroke::new(1.5, pal.ink)),
-                Part::Corner(_) => (fade(pal.ink, 0.9), Stroke::new(1.0, fade(pal.navy, 0.5))),
-                Part::Face(i, _) => (axis_color(&pal, i), Stroke::new(1.0, fade(pal.navy, 0.5))),
+                Part::Corner(_) | Part::Face(..) if hl => (pal.violet_light, Stroke::new(2.5, pal.ink)),
+                Part::Corner(_) => (fade(pal.ink, 0.9), Stroke::new(2.0, fade(pal.navy, 0.5))),
+                Part::Face(i, _) => (axis_color(&pal, i), Stroke::new(2.0, fade(pal.navy, 0.5))),
                 _ => continue,
             };
-            // LL's boxes: 10 px wide on screen whatever the distance
+            // Slightly larger than LL's 10 px boxes; resting corners fit the pick radius.
             let size = ARROW_PX * SCALE_BOX_FACTOR * if hl { 1.2 } else { 1.0 };
             p.square(pos, size, fill, outline);
         }
@@ -1027,14 +1021,11 @@ fn pick_translate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
         }
     }
     // (depth of the end, part, start, end)
-    let mut segs: Vec<(f32, Part, Vec3, Vec3)> = Vec::new();
-    for i in 0..3 {
+    let mut segs: [(f32, Part, Vec3, Vec3); 3] = std::array::from_fn(|i| {
         let a = g * unit(i);
-        for sgn in [1.0f32, -1.0] {
-            let (s0, s1) = (piv + a * len * HOTSPOT_START * sgn, piv + a * len * HOTSPOT_END * sgn);
-            segs.push((cam.depth(s1), Part::Arrow(i), s0, s1));
-        }
-    }
+        let (s0, s1) = (piv + a * len * HOTSPOT_START, piv + a * len * HOTSPOT_END);
+        (cam.depth(s1), Part::Arrow(i), s0, s1)
+    });
     segs.sort_by(|a, b| a.0.total_cmp(&b.0));
     for (_, part, s0, s1) in segs {
         let (Some(a), Some(b)) = (cam.project(s0), cam.project(s1)) else {
@@ -1738,15 +1729,15 @@ mod tests {
         let at = cam.at;
         let signs = Vec3::new(at.x.signum(), at.y.signum(), at.z.signum());
         for i in 0..3 {
-            // the middle of each square, between the two arrows of its plane
+            // the middle of each square, between the two axes of its plane
             let q = plane_quad(piv, Quat::IDENTITY, len, signs, i, 1.0);
             let middle = cam.project((q[0] + q[2]) * 0.5).unwrap();
             assert_eq!(pick_translate(&cam, &f, middle), Some(Part::Plane(i)));
-            // an arrow keeps its whole hot spot, on both sides of the pivot
-            for sgn in [1.0, -1.0] {
-                let on_arrow = cam.project(piv + unit(i) * len * 0.9 * sgn).unwrap();
-                assert_eq!(pick_translate(&cam, &f, on_arrow), Some(Part::Arrow(i)));
-            }
+            let on_arrow = cam.project(piv + unit(i) * len * 0.9).unwrap();
+            assert_eq!(pick_translate(&cam, &f, on_arrow), Some(Part::Arrow(i)));
+            // The negative guideline must not retain an invisible arrow handle.
+            let on_guide = cam.project(piv - unit(i) * len * 0.9).unwrap();
+            assert_ne!(pick_translate(&cam, &f, on_guide), Some(Part::Arrow(i)));
         }
     }
 
