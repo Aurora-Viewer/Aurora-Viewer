@@ -201,7 +201,7 @@ pub enum Command {
     /// `bw kbps`: the maximum bandwidth, within the range of the
     /// Preferences (Firestorm's command stops at 3,000).
     Bandwidth(u32),
-    /// A command Aurora can't do yet (no hover height): said in the chat
+    /// A command Aurora can't do yet: said in the chat
     /// instead of sending the line.
     Unavailable(&'static str),
     /// `key2name uuid`: tell the avatar name once known.
@@ -238,7 +238,7 @@ pub enum Command {
 }
 
 fn hover_unavailable() -> &'static str {
-    aurora_i18n::tr!("cmdline-mod-aurora-does-not-support-adjusting-avatar-hover-height-yet")
+    aurora_i18n::tr!("cmdline-mod-use-hover-height-in-appearance")
 }
 fn camera_parse_error() -> &'static str {
     aurora_i18n::tr!("cmdline-mod-invalid-camera-position-expected-x-y-z-or-x")

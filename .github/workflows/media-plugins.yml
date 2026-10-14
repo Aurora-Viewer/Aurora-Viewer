@@ -1,0 +1,113 @@
+name: Media plugins
+
+# Builds the pack of media plugins used by the viewer (web through CEF /
+# Dullahan, video and audio through LibVLC). The three Linden Lab binaries
+# (SLPlugin.exe, media_plugin_cef.dll, media_plugin_libvlc.dll, LGPL 2.1) are
+# compiled from a pinned commit of the Firestorm sources; CEF, Dullahan and
+# VLC are the prebuilt packages that commit names in its autobuild.xml, the
+# ones Firestorm ships. Run by hand: the pack only changes with these pins.
+# With "publish", the pack goes to the release media-plugins-<PACK_VERSION>,
+# whose size and SHA-256 the viewer then pins (aurora-updater media_pack.rs).
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the pack as the release media-plugins-<PACK_VERSION>
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  PACK_VERSION: '1'
+  FIRESTORM_SHA: c33bfee253160cceefdb7c98d864fbb736e8ed9a
+  BUILD_VARIABLES_SHA: c17312d38377c003977cf5b6dcc83c6042eba194
+  AUTOBUILD_VSVER: '170'
+  AUTOBUILD_VARIABLES_FILE: ${{ github.workspace }}/fs-vars/variables
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      # short folder names: the build tree of the viewer has long paths
+      - name: Firestorm sources
+        uses: actions/checkout@v7
+        with:
+          repository: FirestormViewer/phoenix-firestorm
+          ref: ${{ env.FIRESTORM_SHA }}
+          path: fs
+      - name: Firestorm build variables
+        uses: actions/checkout@v7
+        with:
+          repository: FirestormViewer/fs-build-variables
+          ref: ${{ env.BUILD_VARIABLES_SHA }}
+          path: fs-vars
+      # a pack is never replaced: viewers pin its archive
+      - name: Release still free
+        if: inputs.publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "media-plugins-$env:PACK_VERSION" --repo "${{ github.repository }}" 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "media-plugins-$env:PACK_VERSION is already published: raise PACK_VERSION" }
+          $global:LASTEXITCODE = 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Autobuild
+        run: python -m pip install -r fs/requirements.txt
+      # the open-source configuration: no KDU, FMOD nor Havok
+      - name: Configure
+        shell: bash
+        working-directory: fs
+        run: autobuild configure -c ReleaseFS_open -A 64
+      - name: Build the launcher and the two plugins
+        shell: pwsh
+        working-directory: fs
+        run: cmake --build build-vc170-64 --config Release --parallel --target SLPlugin media_plugin_cef media_plugin_libvlc
+      - name: Package
+        shell: pwsh
+        run: |
+          $dir = "Aurora-Media-Plugins-$env:PACK_VERSION-windows-x64"
+          ./scripts/package-media-plugins.ps1 -Source fs -Build fs/build-vc170-64 -Out $dir -Version $env:PACK_VERSION
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+          $hash = (Get-FileHash -LiteralPath "$dir.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $dir.zip" | Set-Content -LiteralPath "$dir.zip.sha256" -Encoding utf8NoBOM
+          "{0}: {1} bytes, sha256 {2}" -f "$dir.zip", (Get-Item "$dir.zip").Length, $hash
+          # the corresponding source of the LGPL binaries, published with them
+          $src = "Aurora-Media-Plugins-$env:PACK_VERSION-source.tar.gz"
+          git -C fs archive --format=tar.gz --prefix="phoenix-firestorm-$env:FIRESTORM_SHA/" -o "../$src" HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'git archive failed' }
+          "PACK=$dir.zip" >> $env:GITHUB_ENV
+          "SOURCE=$src" >> $env:GITHUB_ENV
+      - uses: actions/upload-artifact@v7
+        with:
+          name: media-plugins
+          path: |
+            ${{ env.PACK }}
+            ${{ env.PACK }}.sha256
+            ${{ env.SOURCE }}
+          compression-level: 0
+      - name: Publish
+        if: inputs.publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "media-plugins-$env:PACK_VERSION"
+          $manifest = Get-Content -Raw "Aurora-Media-Plugins-$env:PACK_VERSION-windows-x64/aurora-media-plugins.json" | ConvertFrom-Json
+          $notes = @(
+              "Media plugins of Aurora Viewer, pack $env:PACK_VERSION (Windows x64). The viewer downloads this archive by itself when media need it; it checks its size and SHA-256 and installs it in the user's data folder."
+              ''
+              "- SLPlugin.exe, media_plugin_cef.dll and media_plugin_libvlc.dll: built from FirestormViewer/phoenix-firestorm@$env:FIRESTORM_SHA (LGPL 2.1); that source is attached ($env:SOURCE)."
+              "- CEF / Dullahan $($manifest.packages.dullahan): Linden Lab's prebuilt package (BSD-3-Clause for CEF, see LICENSES in the archive)."
+              "- VLC $($manifest.packages.'vlc-bin'): Linden Lab's prebuilt package (LGPL 2.1+ for libvlc, see LICENSES/vlc.txt); source at https://download.videolan.org/pub/videolan/vlc/"
+              ''
+              'This is not a viewer release: the viewer is in the releases tagged vX.Y.Z.'
+          )
+          $notes -join "`n" | Set-Content -LiteralPath notes.md -Encoding utf8NoBOM
+          gh release create $tag $env:PACK "$($env:PACK).sha256" $env:SOURCE --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Media plugins $env:PACK_VERSION" --notes-file notes.md --latest=false

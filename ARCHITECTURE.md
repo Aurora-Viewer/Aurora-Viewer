@@ -45,7 +45,7 @@ aurora-viewer/                  git repository (GitHub: Aurora-Viewer/Aurora-Vie
 │  ├─ branding/                 logos (colour, silhouette), SVG + PNG 4096, aurora.ico
 │  ├─ models/                   self-contained Aurora 3D GLB for material previews
 │  ├─ tabler-icons/             full Tabler library (SVG: outline, filled)
-│  └─ emoji/                    emoji font (downloaded, outside git; inside the exe of a published build)
+│  └─ emoji/                    Noto Color Emoji font and its licence (built into the exe)
 ├─ crates/                      the code (see below)
 ├─ docs/                        BRANDING.md, TESTING.md (`AURORA_*` test options, profiling), README screenshots (`screenshots/`), README buttons and "Soon" pill (`readme/`)
 ├─ news/                        news of the login screen, written by hand: fr.md, en.md (read on `main` by the viewer, and compiled into it)
@@ -94,6 +94,19 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 ```
 
 ## `aurora-viewer` in detail
+
+`ui/hover_height.rs` exposes the avatar's -3..3 m hover adjustment and the
+shared camera preference. `world/hover_height.rs` owns local preview, the
+committed value, ordered background persistence in the account's
+`hover_height.json`, and one outstanding server write at a time. The app
+resends after region changes only when SimulatorFeatures and AgentPreferences
+allow it. `NetCommand::SetHoverHeight` posts one finite `hover_height` real;
+its correlated result supports retry without letting an old reply overwrite
+a newer edit. The skeleton caches only the shape offset; scene transforms
+add the current hover height independently of pose updates. Camera roots
+start from the unshifted object position and add hover only when enabled,
+avoiding a one-frame mismatch and floating-point cancellation while dragging.
+`app/hover_height.rs` drives the lifecycle and the offline scenario.
 
 Avatar name tag height is evaluated with each avatar's skeleton in
 `scene/anim.rs`: shape and mesh joint offsets, plus the upper translation
@@ -189,7 +202,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/inventory/embedded.rs` | Items embedded in notecards: icon and name in the text, preview / opening and copy to the inventory, drop at the pointer position; one character per item to preserve selection, deletion and undo |
 | `aurora-net/src/session/inventory_preview.rs` | Reading of the notecards and scripts protected by the simulator's inventory transfer (identifiers of the agent, the session, the owner, the object, the item and the asset); bounded reassembly of out-of-order packets, correlation with the simulator and expiry |
 | `app/task_notecards.rs`, `aurora-net/src/session/task_notecard.rs` | Notecards in the contents of objects: double-click / Open, shared editor with a state specific to the object and to the item; rights of the object and of the notecard, asset transfer authorised by the inventory, save through UpdateNotecardTaskInventory, read-back and draft kept on refusal |
-| `main.rs`, `app.rs`, `app/` | Startup, event loop, one frame of the viewer, interface actions; chat bar commands (`app/chat_commands.rs`), right-click menus (`app/context_menu.rs`: opening, rights on the object, chosen actions), clicks on the world without waiting for the GPU (`app/click_pick.rs`: the depth under the click is requested from the renderer, the click is handled when the reply arrives with the cursor and the keys it had, and what follows it — release, other buttons, mouse movement that moves the camera — waits behind it in order; check `AURORA_CLICK_PICK`, demo clicks `AURORA_DEMO_CLICKS`), HUD move gesture with a configurable key (ALT by default) and left click, and offline scenario (`app/hud_drag.rs`) |
+| `main.rs`, `app.rs`, `app/` | Startup, event loop, one frame of the viewer, interface actions; chat bar commands (`app/chat_commands.rs`), right-click menus (`app/context_menu.rs`: opening, rights on the object, chosen actions), clicks on the world without waiting for the GPU (`app/click_pick.rs`: the depth under the click is requested from the renderer, the click is handled when the reply arrives with the cursor and the keys it had, and what follows it — release, other buttons, mouse movement that moves the camera — waits behind it in order; check `AURORA_CLICK_PICK`, demo clicks `AURORA_DEMO_CLICKS`), HUD move gesture with a configurable key (Ctrl by default) and left click, and offline scenario (`app/hud_drag.rs`) |
 | `cli.rs` | Command-line arguments (`--title`, `--fps-limit`, `--language`, `--version`); title with the common version and the build profile |
 | `cmdline/` | Chat bar as a command line (FSCmdLine): parsing of the commands, calculator (LLCalc), dice; executed by `app/chat_commands.rs` |
 | `agent.rs` | Our avatar (AgentUpdate, extrapolation from the server velocity / acceleration, smoothing like LLDrawable) |
@@ -626,7 +639,7 @@ viewer closes cleanly.
 
 Worn HUDs go through `scene/hud.rs` (lists of our avatar, interest of the textures, triangle picking) and the shared projection `aurora-render/src/hud.rs`. The attachment points in `Scene::object_transform` are relative to the screen, with the aspect of `mScreen`, without the position or the orientation of the avatar. The renderer draws the opaque / masked then the transparent faces after post-processing, in an independent depth, before egui; it reuses the geometry, the bindless textures, the materials and the UV animations of the world. `demo_hud.rs` provides the offline updates and touch replies.
 
-The editing of HUDs reuses the building tools: `build/geom.rs` adapts their camera to the orthographic HUD projection (parallel rays, handles of constant size in pixels), `build/mod.rs::edit_parent` provides the transform of the attachment point to convert the moves into local coordinates. HUD and world selections stay separate. `build/manip.rs` sends the local positions on release with the linkset flag; the Object tab also uses the local values for HUDs. Direct moving with the chosen key (ALT by default) shares this same edit_parent and the picking of the visible faces, with the double-sided exceptions. Preferences › Shortcuts › HUDs uses `ui/options.rs` and the `keybinds::Action::HudDrag` action: the two keys share the capture, the clearing, the conflicts and the reset of the other shortcuts. Modifiers alone are captured on release and their left / right sides are equivalent. `Settings::sanitized` migrates the old `hud_drag_key` to the main key without overwriting the two choices already saved; `app/hud_drag.rs` uses these shortcuts for the gesture and the cursor.
+The editing of HUDs reuses the building tools: `build/geom.rs` adapts their camera to the orthographic HUD projection (parallel rays, handles of constant size in pixels), `build/mod.rs::edit_parent` provides the transform of the attachment point to convert the moves into local coordinates. HUD and world selections stay separate. `build/manip.rs` sends the local positions on release with the linkset flag; the Object tab also uses the local values for HUDs. Direct moving with the chosen key (Ctrl by default) shares this same edit_parent and the picking of the visible faces, with the double-sided exceptions. Preferences › Shortcuts › HUDs uses `ui/options.rs` and the `keybinds::Action::HudDrag` action: the two keys share the capture, the clearing, the conflicts and the reset of the other shortcuts. Modifiers alone are captured on release and their left / right sides are equivalent. `Settings::sanitized` migrates the old `hud_drag_key` to the main key without overwriting the two choices already saved; `app/hud_drag.rs` uses these shortcuts for the gesture and the cursor. Settings version 10 replaces the former Alt-only default with Ctrl once (#266), while preserving other saved bindings and cleared slots.
 
 What our avatar wears on its body is edited in the same way: `build/mod.rs` distinguishes three selection spaces (`SelectType`: world, worn object, HUD, never mixed, like `LLSelectMgr::canSelectObject`), `edit_parent` gives the reference frame of the attachment point as it is posed at that instant (animated bone included), and the positions typed or dragged are sent in that reference frame. With the "World" grid, the arrows follow that reference frame (`LLSelectMgr::getGrid`). A worn object cannot be deleted, taken, copied or linked and does not enter a selection rectangle; those of the other avatars stay unselectable. "Touch" and "Edit" in the menus of the inventory (`ui/inventory/context.rs`) and of the outfit (`ui/appearance/items.rs`) go through `CtxAction::TouchWorn` / `EditWorn`, resolved by `World::worn_attachment`. `demo_worn.rs` and `app/worn_demo.rs` provide the worn object and the offline scenario (`AURORA_DEMO_WORN`).
 

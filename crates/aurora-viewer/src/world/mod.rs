@@ -10,6 +10,7 @@ pub mod eep_env;
 pub mod env;
 pub mod env_select;
 pub mod groups;
+pub mod hover_height;
 pub mod hud_scale;
 pub mod inventory;
 pub mod land;
@@ -60,6 +61,7 @@ pub struct Region {
     pub caps: Arc<HashMap<String, String>>,
     /// Voice server of the region (SimulatorFeatures): "webrtc", "vivox" or empty.
     pub voice_server: String,
+    pub avatar_hover_height: bool,
     /// RenderMaterials limits of the region (SimulatorFeatures).
     pub materials_limits: crate::scene::legacy_mat::RegionLimits,
     /// Object capacity (SimStats ObjectCapacity, LLViewerRegion::getMaxTasks);
@@ -129,6 +131,7 @@ pub struct World {
     /// HUD zoom is local to the current session (LLAgentCamera).
     pub hud_zoom: f32,
     pub hud_scales: hud_scale::HudScales,
+    pub hover_height: hover_height::HoverHeight,
     pub login: Option<Arc<LoginResponse>>,
     pub agent_id: Uuid,
     pub regions: HashMap<RegionHandle, Region>,
@@ -164,9 +167,9 @@ pub struct World {
     /// Animated joint matrices (skeleton space, rest -> posed) of the avatars
     /// near the camera, so attachments follow their bone.
     pub avatar_poses: HashMap<Uuid, Vec<glam::Mat4>>,
-    /// Height of each posed avatar's pelvis above its object position
-    /// (shape: body size, hover).
-    pub avatar_root_dz: HashMap<Uuid, f32>,
+    /// Pelvis offset from body size, shape hover and mesh overrides only.
+    /// The adjustable hover height stays live, independent of pose timing.
+    pub avatar_shape_dz: HashMap<Uuid, f32>,
     /// Drawn body orientation per standing avatar (LLVOAvatar::updateOrientation).
     pub bodies: HashMap<Uuid, body::Body>,
     /// Where avatars look (ours and the ones others send).
@@ -309,6 +312,7 @@ impl World {
             hud_aspect: 1.0,
             hud_zoom: 1.0,
             hud_scales: Default::default(),
+            hover_height: Default::default(),
             ui_sounds: Vec::new(),
             im_messages: Vec::new(),
             balance_changes: Vec::new(),
@@ -333,7 +337,7 @@ impl World {
             parked: HashMap::new(),
             appearances: HashMap::new(),
             avatar_poses: HashMap::new(),
-            avatar_root_dz: HashMap::new(),
+            avatar_shape_dz: HashMap::new(),
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
             appearance_counter: 1,
@@ -879,6 +883,7 @@ impl World {
             dirty_chunks: HashSet::new(),
             caps: Arc::new(HashMap::new()),
             voice_server: String::new(),
+            avatar_hover_height: false,
             materials_limits: Default::default(),
             max_tasks: 0,
         })
@@ -891,12 +896,24 @@ impl World {
 
     /// Hover height of an avatar's last appearance (m).
     pub fn appearance_hover(&self, avatar: &Uuid) -> f32 {
+        if *avatar == self.agent_id {
+            return if self.hover_height_available() {
+                self.hover_height.value()
+            } else {
+                0.0
+            };
+        }
         self.appearances
             .get(avatar)
             .map(|(a, _)| a.hover_height)
             .filter(|h| h.is_finite())
             .unwrap_or(0.0)
-            .clamp(-2.0, 2.0)
+            .clamp(hover_height::MIN, hover_height::MAX)
+    }
+
+    pub fn hover_height_available(&self) -> bool {
+        self.main()
+            .is_some_and(|region| region.avatar_hover_height && region.caps.contains_key("AgentPreferences"))
     }
 
     /// COF version of the last appearance received for an avatar.
@@ -1086,12 +1103,18 @@ impl World {
             NetEvent::SimulatorFeatures {
                 handle,
                 voice_server_type,
+                avatar_hover_height,
                 materials_rate,
                 materials_max,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.voice_server = voice_server_type;
+                r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
+                None
+            }
+            NetEvent::HoverHeightUpdated { region, request, success } => {
+                self.hover_height.reply(request, region, success);
                 None
             }
             NetEvent::AgentMovementComplete { handle, position, look_at } => {

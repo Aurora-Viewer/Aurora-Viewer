@@ -438,10 +438,16 @@ pub enum NetEvent {
     SimulatorFeatures {
         handle: RegionHandle,
         voice_server_type: String,
+        avatar_hover_height: bool,
         /// "RenderMaterialsCapability": requests per second.
         materials_rate: Option<f32>,
         /// "MaxMaterialsPerTransaction": material ids per request.
         materials_max: Option<u32>,
+    },
+    HoverHeightUpdated {
+        region: RegionHandle,
+        request: u64,
+        success: bool,
     },
     ObjectUpdates {
         handle: RegionHandle,
@@ -943,6 +949,12 @@ impl Default for TouchSurface {
 pub enum NetCommand {
     /// Send the current language and visibility through its capability.
     UpdateAgentLanguage,
+    /// LLVOAvatarSelf::sendHoverHeight: final value, scoped to its region.
+    SetHoverHeight {
+        region: RegionHandle,
+        request: u64,
+        value: f32,
+    },
     /// Ask for the mute list (MuteListRequest; CRC of our cached copy, 0 if none).
     RequestMuteList {
         crc: u32,

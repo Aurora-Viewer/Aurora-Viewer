@@ -31,7 +31,7 @@ function Get-ResetInventory {
         if ($n -gt 0) { [pscustomobject]@{ Branch = $name; Count = $n; Pushed = [bool]$up } }
     })
     $stashes = @(git -C $repo stash list 2>$null)
-    # ignored files that are not builds or fetched assets (.env, editor settings…)
+    # ignored files that are not builds or the old downloaded emoji font (.env, editor settings…)
     $ignored = @(git -C $repo clean -ndX 2>$null | ForEach-Object { $_ -replace '^Would remove ', '' } |
         Where-Object { $_ -notmatch '^(target/|\.scratch/|assets/emoji/)' })
     $worktrees = @()
@@ -91,7 +91,7 @@ function Show-ResetInventory($Inv) {
         if ($Inv.Ignored.Count -gt 8) { Write-Color "      … and $($Inv.Ignored.Count - 8) more" muted_dim }
     }
     if (-not $lost) { Write-Color '  Nothing: all your work is already on GitHub.' success }
-    Write-Color '  Also erased, but rebuilt afterwards: builds (target), emoji font, RELEASE folder.' muted_dim
+    Write-Color '  Also erased, but rebuilt afterwards: builds (target), RELEASE folder.' muted_dim
     Write-Color '  Kept: your git identity, your GitHub login, the Firestorm sources (updated).' muted_dim
     Write-Rule 90
     $lost
@@ -115,7 +115,7 @@ function Invoke-Reset {
     if ($DryRun) {
         Write-Color '  [dry run] git worktree remove --force (each task, RELEASE\src); folders work\* and RELEASE\ deleted' teal
         Write-Color '  [dry run] git checkout -B main origin/main; git reset --hard origin/main; git clean -ffdx; local branches and stashes deleted' teal
-        Write-Color '  [dry run] repair (font, toolchain, crates, Firestorm)' teal
+        Write-Color '  [dry run] repair (toolchain, crates, Firestorm)' teal
         Wait-Back; return
     }
 

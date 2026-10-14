@@ -118,7 +118,7 @@ below). They check that `main` is green, suggest the number from the labels
 of the PRs merged since the last version, show these PRs, create the tag and
 follow the publication up to the release link. They are also used to
 **delete** a release (you have to type its tag to confirm; `assets-1`, which
-holds the emoji font, is protected). Write access to the repository is
+holds the 3D emoji font older commits download, is protected). Write access to the repository is
 required.
 
 Before the creation is confirmed, two choices set the effect of the update
@@ -203,7 +203,7 @@ see the news item in the viewer **before** merging, launch it with
      Windows permission prompts may open;
    - they clone the Firestorm sources into `phoenix-firestorm\`, next to the
      repository;
-   - they download the emoji font, the Rust toolchain and all the crates;
+   - they download the Rust toolchain and all the crates;
    - they log you in to GitHub (`gh auth login`, in the browser) if needed,
      and set your git identity in the repository: your GitHub user name and
      your "noreply" address (your e-mail stays private).

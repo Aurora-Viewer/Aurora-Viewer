@@ -158,7 +158,7 @@ struct AvatarFrame {
     root: Vec3,
     /// gAgent.getPositionGlobal: the avatar object's position.
     position: Vec3,
-    /// Follow camera uses the rendered root, including hover height.
+    /// Scripted follow also respects the hover-camera preference.
     follow_root: Vec3,
     /// Seated avatar render rotation, including its local rotation.
     rotation: Option<Quat>,
@@ -1485,7 +1485,7 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
     let Some(idx) = world.objects.index_of_uuid(&id) else {
         return fallback;
     };
-    let Some((p, rotation, _)) = Scene::object_transform(world, idx, now, 0) else {
+    let Some((position, rotation, _)) = Scene::object_transform_unshifted(world, idx, now) else {
         return fallback;
     };
     let seat = world
@@ -1495,17 +1495,17 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
         .and_then(|o| world.objects.parent_of(o))
         .and_then(|parent| Scene::object_transform(world, parent, now, 0))
         .map(|(_, r, _)| r);
-    // the scene's root offset includes the hover height (standing only)
-    let dz = world.avatar_root_dz.get(&id).copied().unwrap_or(0.0);
-    let hover = if seat.is_none() && !s.hover_affects_camera {
-        world.appearance_hover(&id)
-    } else {
-        0.0
-    };
+    // LLAgentCamera::getAvatarRootPosition, computed without ever adding
+    // hover when disabled. Camera updates run before the pose cache, so a
+    // cached rendered root minus the current hover would jump for one frame.
+    let shape = world.avatar_shape_dz.get(&id).copied().unwrap_or(0.0);
+    let hover = if s.hover_affects_camera { world.appearance_hover(&id) } else { 0.0 };
+    let axis = if seat.is_some() { rotation * Vec3::Z } else { Vec3::Z };
+    let root = position + axis * (shape + hover);
     AvatarFrame {
-        root: p - Vec3::Z * hover,
-        position: p - Vec3::Z * dz,
-        follow_root: p,
+        root,
+        position,
+        follow_root: root,
         rotation: seat.map(|_| rotation),
         seat,
     }
@@ -1514,15 +1514,10 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
 fn focus_object_geom(world: &World, id: &Uuid, now: Instant) -> Option<FocusObject> {
     let idx = world.objects.index_of_uuid(id)?;
     let o = world.objects.get(idx)?;
-    let (p, rotation, hud) = Scene::object_transform(world, idx, now, 0)?;
+    let (position, rotation, hud) = Scene::object_transform_unshifted(world, idx, now)?;
     if hud {
         return None;
     }
-    let position = if o.is_avatar() {
-        p - Vec3::Z * world.avatar_root_dz.get(id).copied().unwrap_or(0.0)
-    } else {
-        p
-    };
     Some(FocusObject {
         position,
         rotation,
@@ -1559,6 +1554,121 @@ pub fn pick_focus_object(world: &World, idx: usize, now: Instant) -> Option<(Uui
 mod tests {
     use super::*;
     use crate::scene::avatar::AvatarLibrary;
+
+    fn hover_world(seated: bool) -> World {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for event in crate::demo::sit_events(700) {
+            if let aurora_net::NetEvent::ObjectUpdates { handle, .. } = &event {
+                world.main_region = Some(*handle);
+            }
+            world.apply(event);
+        }
+        world.apply(aurora_net::NetEvent::Capabilities {
+            handle: world.main_region.unwrap(),
+            caps: std::sync::Arc::new(Default::default()),
+        });
+        let region = world.regions.get_mut(&world.main_region.unwrap()).unwrap();
+        region.avatar_hover_height = true;
+        std::sync::Arc::make_mut(&mut region.caps).insert("AgentPreferences".into(), String::new());
+        if seated {
+            for frame in [250, 300] {
+                for event in crate::demo::sit_events(frame) {
+                    world.apply(event);
+                }
+            }
+            let idx = world.objects.index_of_uuid(&world.agent_id).unwrap();
+            let parent = world.objects.parent_of(world.objects.get(idx).unwrap()).unwrap();
+            world.objects.get_mut(parent).unwrap().rotation = Quat::from_rotation_y(0.7) * Quat::from_rotation_z(1.2);
+        }
+        world
+    }
+
+    #[test]
+    fn hover_changes_leave_the_disabled_camera_still_before_pose_updates() {
+        for seated in [false, true] {
+            for mode in ["third", "follow", "mouselook", "alt-self"] {
+                let settings = CameraSettings::default();
+                let setup = || {
+                    let mut world = hover_world(seated);
+                    let id = world.agent_id;
+                    world.avatar_shape_dz.insert(id, 0.17);
+                    let mut camera = Camera::default();
+                    settle(&mut camera, &mut world, &settings);
+                    match mode {
+                        "follow" => {
+                            world.apply(aurora_net::NetEvent::SetFollowCam {
+                                handle: world.main_region.unwrap(),
+                                object: Uuid::from_u128(123),
+                                properties: vec![(12, 1.0), (7, 6.0)],
+                            });
+                        }
+                        "mouselook" => camera.toggle_mouselook(&mut world.agent, &settings),
+                        "alt-self" => {
+                            let geom = focus_object_geom(&world, &id, Instant::now()).unwrap();
+                            camera.alt_focus(
+                                geom.position,
+                                Some((id, geom)),
+                                (camera.position, camera.forward()),
+                                &mut world.agent,
+                                &settings,
+                            );
+                        }
+                        _ => {}
+                    }
+                    settle(&mut camera, &mut world, &settings);
+                    (world, camera)
+                };
+                let (mut world, mut camera) = setup();
+                let (mut control_world, mut control_camera) = setup();
+                let dt = [1.0 / 144.0, 1.0 / 60.0, 1.0 / 30.0];
+                // App updates the camera before poses. Keep the shape cache
+                // untouched while dragging; compare against an identical
+                // camera without hover edits at the same variable frame times.
+                for i in 0..180 {
+                    let height = if i < 120 { (i as f32 * 0.2).sin() * 3.0 } else { 0.0 };
+                    world.hover_height.preview(height);
+                    let input = frame(dt[i % dt.len()]);
+                    camera.update(&mut world, &settings, &input);
+                    control_camera.update(&mut control_world, &settings, &input);
+                    assert_eq!(
+                        (camera.position, camera.target, camera.view(), camera.fov_y),
+                        (
+                            control_camera.position,
+                            control_camera.target,
+                            control_camera.view(),
+                            control_camera.fov_y
+                        ),
+                        "seated {seated}, {mode}, frame {i}, hover {height}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hover_camera_toggle_changes_the_camera_root_without_changing_agent_position() {
+        for seated in [false, true] {
+            let mut world = hover_world(seated);
+            let now = Instant::now();
+            let mut settings = CameraSettings::default();
+            let baseline = avatar_frame(&world, &settings, now);
+            let agent = world.agent.position;
+            let axis = baseline.rotation.map_or(Vec3::Z, |r| r * Vec3::Z);
+            for height in [-3.0, -0.25, 0.4, 3.0, 0.0] {
+                world.hover_height.preview(height);
+                let fixed = avatar_frame(&world, &settings, now);
+                assert_eq!(fixed.root, baseline.root);
+                settings.hover_affects_camera = true;
+                let following = avatar_frame(&world, &settings, now);
+                assert!(following.root.abs_diff_eq(baseline.root + axis * height, 1e-5));
+                assert_eq!(following.follow_root, following.root);
+                assert_eq!(following.position, baseline.position);
+                assert_eq!(world.agent.position, agent);
+                settings.hover_affects_camera = false;
+            }
+        }
+    }
 
     fn world_at(pos: Vec3) -> World {
         let mut w = World::new(std::sync::Arc::new(AvatarLibrary::load()));
