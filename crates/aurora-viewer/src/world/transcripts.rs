@@ -245,6 +245,21 @@ impl World {
         trim(&mut s.lines, &mut s.clock);
     }
 
+    /// A line for the conversation with an avatar that has none open: only
+    /// written to its transcript, as LLHandlerUtil::logToIM does without a
+    /// session (llnotificationhandlerutil.cpp). Lost while the avatar's name,
+    /// which names the file, is unknown.
+    pub(super) fn transcript_only(&mut self, other: Uuid, line: &ChatLine) {
+        if !self.chat_log.cfg.log_im || self.chat_log.identity().is_none() {
+            return;
+        }
+        let Some(stem) = self.transcript_stem(&other) else {
+            return;
+        };
+        let (from, text) = self.transcript_text(line);
+        self.chat_log.append(&stem, line.time, &from, &text);
+    }
+
     /// A line enters the nearby chat (same bound).
     pub(super) fn nearby_push(&mut self, line: ChatLine) {
         self.log_nearby(&line);
@@ -842,6 +857,59 @@ mod tests {
         let s = &w.social.ims[0];
         assert_eq!(s.lines.len(), MAX_CHAT);
         assert_eq!(s.lines[0].text, "line 50");
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn a_teleport_offer_is_noted_with_the_avatar_not_in_the_nearby_chat() {
+        let root = temp();
+        let jane = Uuid::from_u128(2);
+        let bob = Uuid::from_u128(3);
+        let mut w = world(&root, Uuid::from_u128(1));
+        let link = |id: Uuid| format!("secondlife:///app/agent/{id}/completename");
+        // a conversation with Jane is open: the notice goes in it, not unread
+        w.on_im(im(jane, "Jane Doe", "hello"));
+        let unread = w.social.ims[0].unread;
+        w.teleport_offer_sent(jane);
+        let s = &w.social.ims[0];
+        let notice = s.lines.back().unwrap();
+        assert!(notice.kind == ChatKind::System);
+        assert!(notice.text.ends_with(&link(jane)), "{}", notice.text);
+        assert_eq!(s.unread, unread);
+        // none with Bob: none opens, the notice is only in his transcript
+        w.social.names.insert(bob, "Bob Builder".into());
+        w.teleport_offer_sent(bob);
+        assert_eq!(w.social.ims.len(), 1);
+        assert!(w.chat.is_empty());
+        settle(&mut w);
+        let bob_file = file_texts(&w, "Bob Builder");
+        assert_eq!(bob_file.len(), 1);
+        assert_eq!(bob_file[0].0, format::SYSTEM_FROM);
+        assert!(bob_file[0].1.ends_with(&link(bob)), "{}", bob_file[0].1);
+        assert_eq!(file_texts(&w, "Jane Doe").len(), 2);
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn a_teleport_offer_carries_where_we_stand_to_every_invitee() {
+        let root = temp();
+        let (jane, bob) = (Uuid::from_u128(2), Uuid::from_u128(3));
+        let mut w = world(&root, Uuid::from_u128(1));
+        w.agent.position = glam::Vec3::new(128.4, 64.6, 22.0);
+        w.on_im(im(jane, "Jane Doe", "hello"));
+        let cmd = w.offer_teleport(vec![jane, bob], "Join me");
+        // send_lures: the invitation, then the SLURL of our position
+        let aurora_net::NetCommand::OfferTeleport { to, message } = cmd else {
+            panic!("not a teleport offer: {cmd:?}");
+        };
+        assert_eq!(to, [jane, bob]);
+        let (text, slurl) = message.split_once("\r\n").unwrap();
+        assert_eq!(text, "Join me");
+        assert!(slurl.starts_with("http://maps.secondlife.com/secondlife/"), "{slurl}");
+        assert!(slurl.ends_with("/128/65/22"), "{slurl}");
+        // the notice of each invitee: in Jane's conversation, none opened for Bob
+        assert!(w.social.ims[0].lines.back().unwrap().kind == ChatKind::System);
+        assert_eq!(w.social.ims.len(), 1);
         clean(&w, &root);
     }
 }
