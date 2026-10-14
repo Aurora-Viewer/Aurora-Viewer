@@ -255,6 +255,11 @@ struct Entry {
     queued: bool,
     /// What it adds to `TextureStreamer::counts` (`count` bits).
     counted: u8,
+    /// "Refresh textures" asked: what is held of it is forgotten as soon as
+    /// no read, decode or download is under way (`TextureStreamer::refresh`).
+    refresh: bool,
+    /// Bumped by each refresh: an upload decoded before it is dropped.
+    epoch: u32,
 }
 
 /// `Entry::counted`.
@@ -350,16 +355,50 @@ impl Entry {
     /// download. Not while nothing uses it, nor while a read, a decode or a
     /// download is under way: their result lists it again.
     fn has_work(&self) -> bool {
+        if self.refresh {
+            return !self.busy();
+        }
         if self.refs == 0 {
             return false;
         }
         if self.cache_state == 0 {
             return true;
         }
-        if self.cache_state == 1 || self.decoding || self.fetching {
+        if self.busy() {
             return false;
         }
         self.decoded.is_none_or(|d| self.want < d)
+    }
+
+    /// A disk read, a decode or a download of it is under way.
+    fn busy(&self) -> bool {
+        self.cache_state == 1 || self.decoding || self.fetching
+    }
+
+    /// Texture Refresh (destroy_texture, llviewermenu.cpp): what is held of
+    /// it is forgotten and it is downloaded again, not read from the disk
+    /// (its files are removed by the caller). The slot keeps showing its
+    /// texels until the new ones replace them, where Firestorm shows the
+    /// grey placeholder meanwhile. Returns the data it held, to free.
+    fn forget(&mut self) -> Arc<Vec<u8>> {
+        self.refresh = false;
+        self.epoch = self.epoch.wrapping_add(1);
+        self.complete = false;
+        self.info = None;
+        self.decoded = None;
+        // (2: the JPEG 2000 data is read, or not on the disk)
+        self.cache_state = 2;
+        self.transcoded = None;
+        self.keep_rgba = false;
+        self.failures = 0;
+        self.retry_at = None;
+        self.last_error = None;
+        self.error_logged = false;
+        self.gone = false;
+        self.dirty_cache = false;
+        self.asked_at = None;
+        self.fetch_key = 0;
+        std::mem::take(&mut self.data)
     }
 
     /// Its states for `Counts`.
@@ -418,6 +457,9 @@ struct PendingUpload {
     alpha_channel: bool,
     pick_mask: Option<PickMask>,
     priority: UploadPriority,
+    /// `Entry::epoch` when it was decoded: one decoded before a refresh is
+    /// dropped.
+    epoch: u32,
     /// Tests: as if staged in a chunk a job still writes in.
     #[cfg(test)]
     held: bool,
@@ -832,6 +874,9 @@ pub struct TextureStreamer {
     /// Textures with downloaded data not written to the disk cache yet
     /// (`Entry::dirty_cache`), each once.
     dirty: Vec<Uuid>,
+    /// Refreshed textures whose files the next `update` removes from the
+    /// disk cache.
+    forgotten: Vec<Uuid>,
     /// What evicted textures leave to free (`evict`), handed to the trash
     /// thread by `maintain`.
     evicted: Vec<Evicted>,
@@ -967,6 +1012,7 @@ impl TextureStreamer {
             evict_after: UNUSED_EVICT,
             unused: VecDeque::new(),
             dirty: Vec::new(),
+            forgotten: Vec::new(),
             evicted: Vec::new(),
             slotless: 0,
             slotless_unreported: 0,
@@ -989,6 +1035,11 @@ impl TextureStreamer {
     /// must not trust between two syncs (hover.rs).
     pub fn pending_alpha_changes(&self) -> &[u32] {
         &self.alpha_changes
+    }
+
+    /// The cache folder the textures' files are in (`tex/` below it).
+    pub fn cache_dir(&self) -> &std::path::Path {
+        &self.cache_dir
     }
 
     /// The transcoded chain of a texture (`texture_cache.rs`).
@@ -1221,9 +1272,37 @@ impl TextureStreamer {
             gone: false,
             queued: false,
             counted: 0,
+            refresh: false,
+            epoch: 0,
         });
         Self::settle(&mut self.todo, &mut self.counts, id, e);
         slot
+    }
+
+    /// "Refresh textures" (destroy_texture, llviewermenu.cpp): the texture
+    /// is downloaded again, and its files in the disk cache go. What it
+    /// holds is forgotten by `update`, at once or, while a disk read, a
+    /// decode or a download of it is under way, once that is over (its
+    /// result would bring the old data back). Built-in textures (blank,
+    /// transparent, those of the demo) are left alone, as Firestorm leaves
+    /// IMG_DEFAULT and its default textures. Returns whether it was asked.
+    pub fn refresh(&mut self, id: &Uuid) -> bool {
+        if id.is_nil()
+            || *id == aurora_prim::te::TRANSPARENT_TEXTURE
+            || *id == aurora_prim::te::BLANK_TEXTURE
+            || self.local_slots.contains_key(id)
+        {
+            return false;
+        }
+        match self.entries.get_mut(id) {
+            Some(e) => {
+                e.refresh = true;
+                Self::settle(&mut self.todo, &mut self.counts, *id, e);
+            }
+            // not held: only its files, as removeFromCache
+            None => self.forgotten.push(*id),
+        }
+        true
     }
 
     /// The slot of a texture met for the first time. With the table full,
@@ -1543,6 +1622,8 @@ impl TextureStreamer {
             demo_source,
             todo,
             counts,
+            forgotten,
+            trash,
             ..
         } = self;
         if *bc7_cache && cache_writer.is_none() {
@@ -1554,6 +1635,18 @@ impl TextureStreamer {
         let mut cache_reads = Vec::new();
         {
             let mut visit = |id: Uuid, e: &mut Entry| {
+                if e.refresh {
+                    // (listed only once nothing of it is under way)
+                    if e.busy() {
+                        return;
+                    }
+                    if let Ok(old) = Arc::try_unwrap(e.forget())
+                        && !old.is_empty()
+                    {
+                        trash.push(old);
+                    }
+                    forgotten.push(id);
+                }
                 if e.refs == 0 {
                     return;
                 }
@@ -1733,6 +1826,14 @@ impl TextureStreamer {
         jobs.spawn_many(cache_reads, move |(id, want, blocks)| {
             read_job(&dir, id, want, blocks, pool.as_deref())
         });
+        if !forgotten.is_empty() {
+            log::info!("refreshing {} textures: downloaded again", forgotten.len());
+            let dir = cache_dir.clone();
+            jobs.spawn_many(std::mem::take(forgotten), move |id| {
+                remove_cached(&dir, &id);
+                JobResult::Done
+            });
+        }
         self.stats.total = self.entries.len();
         let Counts {
             loaded,
@@ -1938,6 +2039,7 @@ impl TextureStreamer {
                         alpha_channel,
                         pick_mask,
                         priority: UploadPriority::default(),
+                        epoch: e.epoch,
                         #[cfg(test)]
                         held: false,
                     },
@@ -2027,6 +2129,14 @@ impl TextureStreamer {
             };
             if e.decoded.is_some_and(|d| d <= u.discard) {
                 u.retire(&mut self.trash);
+                continue;
+            }
+            if u.epoch != e.epoch {
+                // decoded from what a refresh forgot (its level no longer
+                // waits: `update` may decode the new data at it)
+                let id = u.id;
+                u.retire(&mut self.trash);
+                Self::settle(&mut self.todo, &mut self.counts, id, e);
                 continue;
             }
             if !u.ready() {
@@ -2454,6 +2564,23 @@ fn texture_result_from(
     }
 }
 
+/// The files a texture leaves in the disk cache (LLTextureCache::
+/// removeFromCache for a refresh): its JPEG 2000 data, whole or partial,
+/// and its transcoded chain.
+fn remove_cached(dir: &std::path::Path, id: &Uuid) {
+    for path in [
+        TextureStreamer::cache_path(dir, id, true),
+        TextureStreamer::cache_path(dir, id, false),
+        TextureStreamer::transcoded_path(dir, id),
+    ] {
+        if let Err(e) = std::fs::remove_file(&path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("texture {id}: its cached file could not be removed: {e}");
+        }
+    }
+}
+
 /// One decode: the texture, the level, and what to do with the result.
 struct DecodeJob {
     id: Uuid,
@@ -2634,6 +2761,8 @@ mod tests {
             gone: false,
             queued: false,
             counted: 0,
+            refresh: false,
+            epoch: 0,
         }
     }
 
@@ -2996,6 +3125,7 @@ mod tests {
             alpha_channel: false,
             pick_mask: None,
             priority: UploadPriority::default(),
+            epoch: 0,
             held: false,
         }
     }
@@ -3427,5 +3557,148 @@ mod tests {
         let mut empty = Vec::new();
         assert!(merge_reply(&mut empty, 0, &[9]));
         assert_eq!(empty, [9]);
+    }
+
+    /// A streamer over a cache folder of its own, removed when dropped.
+    struct RefreshBench {
+        dir: PathBuf,
+        s: TextureStreamer,
+        jobs: Jobs,
+        results: crossbeam_channel::Receiver<JobResult>,
+        _rt: tokio::runtime::Runtime,
+        fetcher: Fetcher,
+    }
+
+    impl RefreshBench {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("aurora-refresh-{}", Uuid::new_v4()));
+            let rt = tokio::runtime::Builder::new_current_thread().build().expect("runtime");
+            let (fetcher, _results) = Fetcher::new(rt.handle(), reqwest::Client::new(), 1, Default::default());
+            let (jobs, results) = Jobs::new();
+            RefreshBench {
+                s: TextureStreamer::new(dir.clone()),
+                dir,
+                jobs,
+                results,
+                _rt: rt,
+                fetcher,
+            }
+        }
+
+        /// A texture shown from its downloaded data, with its three files.
+        fn loaded(&mut self, id: Uuid) {
+            let mut e = entry(Some(2), 100.0);
+            e.data = Arc::new(vec![1, 2, 3]);
+            e.complete = true;
+            e.cache_state = 3;
+            e.transcoded = Some(2);
+            e.failures = 2;
+            self.s.entries.insert(id, e);
+            for name in self.files(id) {
+                std::fs::write(name, b"old").expect("cache file");
+            }
+        }
+
+        fn files(&self, id: Uuid) -> [PathBuf; 3] {
+            [
+                TextureStreamer::cache_path(&self.dir, &id, true),
+                TextureStreamer::cache_path(&self.dir, &id, false),
+                TextureStreamer::transcoded_path(&self.dir, &id),
+            ]
+        }
+
+        /// One `update`, then its jobs to the end (their results are
+        /// dropped: these tests look at the entries and the files).
+        fn update(&mut self) {
+            self.s.update(&self.jobs, &self.fetcher, None);
+            let until = Instant::now() + Duration::from_secs(10);
+            while self.jobs.pending() > 0 && Instant::now() < until {
+                let _ = self.results.recv_timeout(Duration::from_millis(20));
+            }
+            while self.results.try_recv().is_ok() {}
+        }
+    }
+
+    impl Drop for RefreshBench {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[test]
+    fn a_refresh_forgets_the_texture_and_its_files() {
+        let mut b = RefreshBench::new();
+        let id = Uuid::from_u128(0x7e57);
+        b.loaded(id);
+        assert!(b.s.refresh(&id));
+        b.update();
+        let e = &b.s.entries[&id];
+        assert!(e.data.is_empty() && !e.complete && e.info.is_none());
+        // shown again from what is downloaded, not read from the disk
+        assert_eq!((e.decoded, e.cache_state, e.transcoded), (None, 2, None));
+        assert_eq!((e.failures, e.epoch, e.refresh), (0, 1, false));
+        // the slot still holds the texels until the new ones come
+        assert_eq!(e.slot, 9);
+        for file in b.files(id) {
+            assert!(!file.exists(), "{} still there", file.display());
+        }
+    }
+
+    #[test]
+    fn a_refresh_waits_for_the_download_under_way() {
+        let mut b = RefreshBench::new();
+        let id = Uuid::from_u128(0x7e58);
+        b.loaded(id);
+        let e = b.s.entries.get_mut(&id).expect("entry");
+        e.fetching = true;
+        e.fetch_key = 77;
+        b.s.by_fetch_key.insert(77, id);
+        assert!(b.s.refresh(&id));
+        b.update();
+        // nothing forgotten while the reply may still bring old bytes
+        assert_eq!(b.s.entries[&id].data.len(), 3);
+        assert!(b.files(id).iter().all(|f| f.exists()));
+        b.s.on_fetch(FetchResult {
+            key: 77,
+            status: 200,
+            complete: true,
+            offset: 0,
+            data: Ok(vec![4, 5, 6, 7]),
+        });
+        b.update();
+        let e = &b.s.entries[&id];
+        assert!(e.data.is_empty());
+        assert_eq!(e.epoch, 1);
+        assert!(b.files(id).iter().all(|f| !f.exists()));
+    }
+
+    #[test]
+    fn only_streamed_textures_are_refreshed() {
+        let mut b = RefreshBench::new();
+        assert!(!b.s.refresh(&Uuid::nil()));
+        assert!(!b.s.refresh(&aurora_prim::te::BLANK_TEXTURE));
+        assert!(!b.s.refresh(&aurora_prim::te::TRANSPARENT_TEXTURE));
+        // a texture not held: only its files go
+        let id = Uuid::from_u128(0x7e59);
+        for file in b.files(id) {
+            std::fs::write(file, b"old").expect("cache file");
+        }
+        assert!(b.s.refresh(&id));
+        b.update();
+        assert!(!b.s.entries.contains_key(&id));
+        assert!(b.files(id).iter().all(|f| !f.exists()));
+    }
+
+    #[test]
+    fn an_unused_texture_is_forgotten_but_not_downloaded() {
+        let mut b = RefreshBench::new();
+        let id = Uuid::from_u128(0x7e5a);
+        b.loaded(id);
+        b.s.entries.get_mut(&id).expect("entry").refs = 0;
+        assert!(b.s.refresh(&id));
+        b.update();
+        let e = &b.s.entries[&id];
+        assert!(e.data.is_empty() && !e.fetching);
+        assert!(!e.has_work());
     }
 }

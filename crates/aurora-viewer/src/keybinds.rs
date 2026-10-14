@@ -317,6 +317,8 @@ pub enum Action {
     HudDrag,
     /// "Show transparency" (Firestorm Ctrl+Alt+T).
     ShowTransparency,
+    /// "Force appearance update (rebake)" (Firestorm Ctrl+Alt+R).
+    Rebake,
 }
 
 /// Held actions follow the key state; the others trigger on press.
@@ -410,6 +412,10 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
             (
                 aurora_i18n::tr!("preferences-group-huds"),
                 vec![(Action::HudDrag, aurora_i18n::tr!("ui-options-practical-movement-key"))],
+            ),
+            (
+                aurora_i18n::tr!("common-appearance"),
+                vec![(Action::Rebake, aurora_i18n::tr!("ui-context-rebake"))],
             ),
             (
                 aurora_i18n::tr!("keybinds-debug"),
@@ -536,6 +542,18 @@ impl KeyBindings {
                 [
                     Some(Binding {
                         input: Input::key(K::KeyT),
+                        ctrl: true,
+                        shift: false,
+                        alt: true,
+                    }),
+                    None,
+                ],
+            ),
+            (
+                Action::Rebake,
+                [
+                    Some(Binding {
+                        input: Input::key(K::KeyR),
                         ctrl: true,
                         shift: false,
                         alt: true,

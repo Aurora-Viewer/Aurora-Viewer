@@ -842,6 +842,9 @@ pub enum NetEvent {
         success: bool,
         expected: Option<i32>,
     },
+    /// Answer to `IncrementCofVersion`: the folder's new version, None when
+    /// the region has no such capability or every attempt failed.
+    CofVersionIncremented(Option<i32>),
     /// ObjectProperties / ObjectPropertiesFamily (build tools: selection).
     ObjectProperties(Vec<crate::build::ObjectProps>),
     /// llSetPayPrice values for the clicked object.
@@ -1445,6 +1448,14 @@ pub enum NetCommand {
     RequestServerAppearance {
         cof_version: i32,
     },
+    /// Rebake: ask the server to step our Current Outfit folder's version
+    /// (IncrementCOFVersion capability, LLAppearanceMgr::
+    /// syncCofVersionAndRefresh), answered by `CofVersionIncremented`.
+    IncrementCofVersion,
+    /// Have the simulator send an avatar's appearance again (generic
+    /// "avatartexturesrequest", LLAvatarPropertiesProcessor::
+    /// sendAvatarTexturesRequest).
+    AvatarTexturesRequest(Uuid),
     /// Legacy wearables message the SL servers expect after login
     /// (LLAgentWearables::sendDummyAgentWearablesUpdate).
     DummyWearablesUpdate,

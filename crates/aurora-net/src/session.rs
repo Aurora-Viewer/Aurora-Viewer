@@ -1967,6 +1967,8 @@ impl Session<'_> {
                 });
             }
             NetCommand::RequestServerAppearance { cof_version } => self.request_server_appearance(cof_version),
+            NetCommand::IncrementCofVersion => self.increment_cof_version(),
+            NetCommand::AvatarTexturesRequest(id) => self.send_generic("avatartexturesrequest", &[id.to_string()]),
             NetCommand::DummyWearablesUpdate => {
                 // the 4 standard placeholder ids LL's viewer sends
                 let mut m = AgentIsNowWearing::default();
@@ -2421,6 +2423,56 @@ impl Session<'_> {
                 success,
                 expected,
             });
+        });
+    }
+
+    /// LLAppearanceMgr::syncCofVersionAndRefreshCoro: GET the capability,
+    /// which steps the Current Outfit folder's version on the server and
+    /// answers it ({"version": n}); retried as Firestorm does (BAKE_RETRY_*:
+    /// five more times, 1, 3, 7, 15 then 31 s apart).
+    fn increment_cof_version(&mut self) {
+        /// BAKE_RETRY_MAX_COUNT (llappearancemgr.cpp).
+        const BAKE_RETRY_MAX: u32 = 5;
+        let Some(url) = self.main_cap("IncrementCOFVersion") else {
+            log::warn!("no IncrementCOFVersion capability: COF version not stepped");
+            emit(self.sh, NetEvent::CofVersionIncremented(None));
+            return;
+        };
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let mut retries = 0u32;
+            let version = loop {
+                let result = http.get(&url).header("Accept", "application/llsd+xml").send().await;
+                let reply = match result {
+                    Ok(resp) if resp.status().is_success() => {
+                        let doc = resp.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok());
+                        match doc {
+                            Some(d) if d.has("version") => Ok(d["version"].as_i32()),
+                            _ => Err("malformed response".to_string()),
+                        }
+                    }
+                    Ok(resp) => Err(format!("HTTP {}", resp.status().as_u16())),
+                    Err(e) => Err(e.to_string()),
+                };
+                match reply {
+                    Ok(v) => {
+                        log::info!("Current Outfit folder version stepped to {v}");
+                        break Some(v);
+                    }
+                    Err(e) if retries < BAKE_RETRY_MAX => {
+                        retries += 1;
+                        let wait = 2u64.pow(retries) - 1;
+                        log::warn!("COF version increment failed: {e}; retry {retries} in {wait} s");
+                        tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+                    }
+                    Err(e) => {
+                        log::warn!("COF version increment failed: {e}; giving up");
+                        break None;
+                    }
+                }
+            };
+            let _ = events.send(NetEvent::CofVersionIncremented(version));
         });
     }
 
