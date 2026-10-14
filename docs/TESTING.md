@@ -135,7 +135,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
-| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size or sent to the inventory |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 
@@ -166,6 +166,12 @@ loses L$ 10 (the log gives `photo: texture <W> x <H> encoded in <ms>` and
 `photo: saved to the inventory`). `inventory-ask` leaves the price's
 confirmation on screen; `inventory-poor` sets the balance to L$ 5 and shows
 the "cannot afford" message instead.
+`profile` opens the window on the Profile destination with a caption and
+posts the photo at `AURORA_DEMO_SNAPSHOT_FRAME` to a local web profile that
+answers like my.secondlife.com and its storage (session cookie, upload
+configuration, form, 303): the log gives `demo profile: photo posted (<KB>
+PNG, caption "…", location true)` and the window "Posted to your profile".
+`profile-fail` has the configuration refused: the window shows the failure.
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,

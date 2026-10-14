@@ -7924,14 +7924,15 @@ impl App {
                 let profile_base = match self.settings.grid {
                     // AURORA_DEMO_FEED=<page>: the feed browser on a local page
                     _ if self.demo => std::env::var("AURORA_DEMO_FEED").ok(),
-                    crate::settings::GridChoice::SecondLife => Some("https://my.secondlife.com/".to_owned()),
-                    crate::settings::GridChoice::SecondLifeBeta => Some("https://my.secondlife-beta.com/".to_owned()),
-                    crate::settings::GridChoice::Custom => self
-                        .world
-                        .login
-                        .as_ref()
-                        .map(|l| l.raw["web_profile_url"].to_string_value())
-                        .filter(|u| !u.trim().is_empty()),
+                    ref grid => crate::snapshot::profile::grid_web_profile(
+                        grid,
+                        &self
+                            .world
+                            .login
+                            .as_ref()
+                            .map(|l| l.raw["web_profile_url"].to_string_value())
+                            .unwrap_or_default(),
+                    ),
                 };
                 // World › SL Marketplace: the same plugins, browser settings
                 // and OpenID cookie (LLFloaterMarketplace::postBuild)
