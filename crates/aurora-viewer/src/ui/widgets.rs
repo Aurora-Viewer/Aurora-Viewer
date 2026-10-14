@@ -141,6 +141,9 @@ pub struct Floater<'a> {
     pub framed_header: Option<&'a str>,
     /// Keep an inspector's width stable while its height follows the content.
     pub auto_height: bool,
+    /// Resized in height only: its width is the one it opens with
+    /// (Performance's full view, lined up under the system island).
+    pub height_only: bool,
     /// Put a toolbar directly beneath the title, without a separator layout row.
     pub compact_header: bool,
     /// Something new waits inside (unread messages): the minimized bar shows
@@ -161,6 +164,7 @@ impl<'a> Floater<'a> {
             default_size: size,
             min_size: Vec2::new(220.0, 120.0),
             resizable: true,
+            height_only: false,
             help: None,
             action: None,
             silent: false,
@@ -174,6 +178,16 @@ impl<'a> Floater<'a> {
 
     pub fn fixed(mut self) -> Self {
         self.resizable = false;
+        self
+    }
+
+    /// Resizable in height only, `width` wide (outline included) and at
+    /// least `min_height` tall.
+    pub fn height_only(mut self, width: f32, min_height: f32) -> Self {
+        self.resizable = true;
+        self.height_only = true;
+        self.default_size.x = width;
+        self.min_size = Vec2::new(width, min_height);
         self
     }
 
@@ -318,6 +332,13 @@ impl<'a> Floater<'a> {
             w = w.fixed_size(expanded.min(work.size()));
         } else if let Some(size) = shrink {
             w = w.fixed_size(size);
+        } else if self.height_only
+            && !minimized
+            && let Some(size) = egui::AreaState::load(ctx, window_id).and_then(|s| s.size)
+        {
+            // its width held at every frame: egui's first layout of a new
+            // window could otherwise widen it to what it measured
+            w = w.fixed_size(Vec2::new(self.default_size.x, size.y));
         }
         // the viewer window changed size: the floater follows its edges;
         // a placement asked this frame and a resize in progress come after
@@ -504,7 +525,7 @@ impl<'a> Floater<'a> {
                 drag.finish(ctx, window_id, requested, response.response.rect);
             }
             if resizable {
-                resize::handles(ctx, p, &response.response);
+                resize::handles_of(ctx, p, &response.response, self.height_only);
             }
         }
         if close {

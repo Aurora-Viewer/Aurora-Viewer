@@ -325,6 +325,119 @@ pub fn show_network(ctx: &egui::Context) {
     });
 }
 
+/// A placement under the system island asked (`place_under`), for the
+/// next frame the window is open.
+fn place_id() -> egui::Id {
+    egui::Id::new(("perf", "place-under"))
+}
+
+/// The system island of this opening (`island`).
+fn island_id() -> egui::Id {
+    egui::Id::new(("perf", "island"))
+}
+
+/// The window was shown last frame.
+fn shown_id() -> egui::Id {
+    egui::Id::new(("perf", "shown"))
+}
+
+/// Performance opened from the system island of Aurora's bars (its frame
+/// rate, its tooltip's network row, the traffic indicator, its right
+/// click): its full view 8 px under the island, its left and right edges on
+/// the island's, for as long as it stays open (moved, it stays where it was
+/// put); the compact view keeps its own size and place. An open window
+/// stays where it is. An island narrower than the compact view (items
+/// hidden from it) gives the full view the compact view's width under its
+/// right edge.
+pub fn place_under(ctx: &egui::Context, island: Rect) {
+    if !ctx.data(|d| d.get_temp::<bool>(shown_id())).unwrap_or(false) {
+        ctx.data_mut(|d| d.insert_temp(place_id(), island));
+    }
+}
+
+/// The least height of the full view (outline included): its title, the
+/// frame rate's numbers and graph, a few rows of details.
+const FULL_MIN_H: f32 = 280.0;
+
+/// The system island Performance opened from, for this opening: its full
+/// view lines up under it.
+fn island(ctx: &egui::Context) -> Option<Rect> {
+    ctx.data(|d| d.get_temp::<Rect>(island_id()))
+}
+
+/// The body's width: the compact view's own; the full view's, the system
+/// island's less the window's sides when it opened from it (never narrower
+/// than the compact view), else its own.
+fn body_width(ctx: &egui::Context, full: bool) -> f32 {
+    match (full, island(ctx)) {
+        (false, _) => COMPACT_W,
+        (true, Some(island)) => (island.width() - SIDES).max(COMPACT_W),
+        (true, None) => FULL_W,
+    }
+}
+
+/// The full view's place and size before the window is laid out (never
+/// from its body), each time it opens or comes in: under the system island
+/// when Performance opened from it (`place_under`), its edges on the
+/// island's, else where the window stands; down to the bottom of the work
+/// area (above the dock, 8 px off), the user's height afterwards. The
+/// compact view keeps its own size and place: back from a full view, it
+/// returns where it stood.
+fn place(ctx: &egui::Context, work: Rect, full: bool, open: bool) {
+    let was_shown = ctx.data(|d| d.get_temp::<bool>(shown_id())).unwrap_or(false);
+    let was_full = ctx.data(|d| d.get_temp::<bool>(shown_id().with("full"))).unwrap_or(false);
+    let compact_pos_id = shown_id().with("compact-pos");
+    if !open {
+        ctx.data_mut(|d| {
+            d.remove_temp::<bool>(shown_id());
+            d.remove::<Rect>(island_id());
+        });
+        return;
+    }
+    ctx.data_mut(|d| {
+        d.insert_temp(shown_id(), true);
+        d.insert_temp(shown_id().with("full"), full);
+        // asked from the island: for this opening
+        if let Some(island) = d.get_temp::<Rect>(place_id()) {
+            d.remove::<Rect>(place_id());
+            d.insert_temp(island_id(), island);
+        }
+    });
+    let stands = || {
+        egui::AreaState::load(ctx, egui::Id::new("perf"))
+            .filter(|s| s.size.is_some())
+            .map(|s| s.left_top_pos())
+    };
+    if !full {
+        // back to the compact view (toggled, or opened after a full view):
+        // its own size, where it stood
+        if !was_full {
+            // where the compact view stands, for its return
+            if let Some(pos) = stands() {
+                ctx.data_mut(|d| d.insert_temp(compact_pos_id, pos));
+            }
+        } else {
+            let pos = ctx
+                .data(|d| d.get_temp::<egui::Pos2>(compact_pos_id))
+                .or_else(stands)
+                .unwrap_or_else(|| default_pos(work, COMPACT_W));
+            super::widgets::place_floater(ctx, "perf", pos, vec2(COMPACT_W + SIDES, COMPACT_H));
+        }
+        return;
+    }
+    if was_shown && was_full {
+        return;
+    }
+    let width = body_width(ctx, true);
+    let top_left = match island(ctx) {
+        Some(island) => pos2(island.right() - width - SIDES, island.bottom() + super::bars::islands::MARGIN),
+        // where it stands (or stood when last closed), else its first place
+        None => stands().unwrap_or_else(|| default_pos(work, width)),
+    };
+    let height = (work.bottom() - top_left.y).max(FULL_MIN_H).min(work.height());
+    super::widgets::place_floater(ctx, "perf", top_left, vec2(width + SIDES, height));
+}
+
 /// Where the window stands before the user moves it: under the mini-map of
 /// a first launch (`minimap::default_rect`), on its right edge.
 pub(crate) fn default_pos(work: egui::Rect, width: f32) -> egui::Pos2 {
@@ -340,35 +453,38 @@ pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
     } else {
         ("arrows-maximize", aurora_i18n::tr!("ui-perf-show-details"))
     };
-    let width = if full { FULL_W } else { COMPACT_W };
     let work = super::layout::work_area(ctx);
+    place(ctx, work, full, *open);
+    let width = body_width(ctx, full);
     let mut toggle = false;
-    Floater::new(
+    let floater = Floater::new(
         "perf",
         aurora_i18n::tr!("common-performance"),
         default_pos(work, width),
         vec2(width, 0.0),
-    )
-    .fixed()
-    .help(aurora_i18n::tr!("ui-perf-the-graph-shows-fps-over-the-last-few-seconds"))
-    .action(icon, tip, &mut toggle)
-    .show(ctx, p, open, |ui| {
-        ui.set_width(width);
-        headline(ui, p, v.data);
-        ui.add_space(6.0);
-        graph(ui, p, v.data);
-        if full {
-            // what does not fit above the bottom of the work area scrolls
-            // (the Network section unfolded under the GPU and CPU parts at
-            // 864 px), so `show_network` can bring it into view
-            let room = (work.bottom() - ui.cursor().top() - 12.0).max(160.0);
-            egui::ScrollArea::vertical()
-                .id_salt("perf-details")
-                .max_height(room)
-                .auto_shrink([false, true])
-                .show(ui, |ui| details(ui, p, v));
-        }
-    });
+    );
+    // the full view: as wide as it opened, its height the user's (its
+    // details scroll); the compact one as large as its content
+    let floater = if full {
+        floater.height_only(width + SIDES, FULL_MIN_H)
+    } else {
+        floater.fixed()
+    };
+    floater
+        .help(aurora_i18n::tr!("ui-perf-the-graph-shows-fps-over-the-last-few-seconds"))
+        .action(icon, tip, &mut toggle)
+        .show(ctx, p, open, |ui| {
+            ui.set_width(width);
+            headline(ui, p, v.data);
+            ui.add_space(6.0);
+            graph(ui, p, v.data);
+            if full {
+                egui::ScrollArea::vertical()
+                    .id_salt("perf-details")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| details(ui, p, v));
+            }
+        });
     if toggle {
         set_full(ctx, !full);
     }

@@ -2255,7 +2255,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   last minute under its losses and bandwidth), `sysmenu` (its right click,
   under the island at its right end as the mockup draws it, from frame
   300), `netgraph` (Firestorm's traffic indicator shown before the audio
-  controls). In demo the network's graphs show a synthetic minute of
+  controls), `sysperf` / `sysnet` (Performance opened from the island at
+  frame 300, by its frame rate / its network: the full view 8 px under the
+  island, its left and right edges on the island's, down to the work
+  area's bottom; the compact view where it stands). In demo the network's graphs show a synthetic minute of
   traffic (about 1.2 Mb/s in, waves), no packet lost.
   Capture at
   `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`

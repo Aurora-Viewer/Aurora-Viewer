@@ -550,11 +550,13 @@ fn system(
                     true,
                 );
                 if fps.clicked() {
+                    crate::ui::perf::place_under(ui.ctx(), island);
                     panels.perf = !panels.perf;
                 }
             }
             Item::Net => {
                 if traffic(ui, p, icons, st, rect).clicked() {
+                    crate::ui::perf::place_under(ui.ctx(), island);
                     *action = BarAction::NetworkGraph;
                 }
             }
@@ -577,15 +579,26 @@ fn system(
     let on_button = ctx
         .input(|i| i.pointer.secondary_clicked().then_some(i.pointer.interact_pos()).flatten())
         .is_some_and(|pos| !back.secondary_clicked() && island.contains(pos) && ctx.layer_id_at(pos) == Some(ui.layer_id()));
-    menu::context_menu_also(&back, p, on_button, |ui| system_menu(ui, p, panels, st, action));
+    menu::context_menu_also(&back, p, on_button, |ui| system_menu(ui, p, panels, st, island, action));
     // the demo cannot right-click: the same menu where the pointer would be
     if super::demo::get().open == Some(super::demo::Open::System) && ctx.cumulative_frame_nr() >= 300 {
         let id = Id::new("bars_system_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         // under the island at its right end, as the mockup draws it
         let at = Pos2::new(island.right() - 270.0, island.bottom() + MARGIN);
-        menu::popup_at(&ctx, id, at, &mut open, p, |ui| system_menu(ui, p, panels, st, action));
+        menu::popup_at(&ctx, id, at, &mut open, p, |ui| system_menu(ui, p, panels, st, island, action));
         ctx.data_mut(|d| d.insert_temp(id, open));
+    }
+    // the demo cannot click: Performance opened from the island at frame
+    // 300, by its frame rate or its network
+    let demo = super::demo::get().perf;
+    if demo.is_some() && ctx.cumulative_frame_nr() == 300 && !panels.perf {
+        crate::ui::perf::place_under(&ctx, island);
+        if demo == Some(super::demo::Perf::Network) {
+            *action = BarAction::NetworkGraph;
+        } else {
+            panels.perf = true;
+        }
     }
     // gone under a menu or the volume panel
     let hovered = readouts_zone.is_positive() && ui.rect_contains_pointer(readouts_zone);
@@ -623,7 +636,7 @@ fn traffic(ui: &mut egui::Ui, p: &Palette, icons: &Icons, st: &StatusInfo, rect:
 /// LLPanelPresetsCameraPulldown), what the island shows (its status bar's
 /// menu, menu_hide_navbar.xml, the last item shown staying), hiding the
 /// interface, the bars' buttons.
-fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, action: &mut BarAction) {
+fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, island: Rect, action: &mut BarAction) {
     use crate::camera::CameraPreset;
     use crate::graphics_presets::Preset;
     menu::submenu(ui, p, "photo-filled", aurora_i18n::tr!("ui-bars-graphics-presets"), true, |ui| {
@@ -644,9 +657,11 @@ fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusI
             *action = BarAction::GraphicsPreferences;
         }
         if menu::item(ui, p, "gauge-filled", aurora_i18n::tr!("ui-bars-performance-window")) {
+            crate::ui::perf::place_under(ui.ctx(), island);
             crate::ui::widgets::open_floater(ui.ctx(), "perf", &mut panels.perf);
         }
         if menu::item(ui, p, "chart-area-line-filled", aurora_i18n::tr!("ui-bars-network-window")) {
+            crate::ui::perf::place_under(ui.ctx(), island);
             *action = BarAction::NetworkGraph;
         }
     });
@@ -791,13 +806,21 @@ fn system_tip(
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     ui.set_width(TIP_W - 2.0 - 18.0);
-                    tip_body(ui, p, icons, st, media, action);
+                    tip_body(ui, p, icons, st, media, island, action);
                 });
         });
 }
 
 /// The rows of the system island's tooltip.
-fn tip_body(ui: &mut egui::Ui, p: &Palette, icons: &Icons, st: &StatusInfo, media: crate::ui::audio::MediaState, action: &mut BarAction) {
+fn tip_body(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    st: &StatusInfo,
+    media: crate::ui::audio::MediaState,
+    island: Rect,
+    action: &mut BarAction,
+) {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -861,6 +884,7 @@ fn tip_body(ui: &mut egui::Ui, p: &Palette, icons: &Icons, st: &StatusInfo, medi
     let curve = Rect::from_min_size(Pos2::new(rect.left(), row_rect.bottom() + 2.0), Vec2::new(w, TIP_CURVE));
     crate::ui::perf::net_curve(&ui.painter().with_clip_rect(curve.expand(1.0)), p, curve, 2.0, st.perf);
     if resp.clicked() {
+        crate::ui::perf::place_under(ui.ctx(), island);
         *action = BarAction::NetworkGraph;
     }
 
@@ -1290,5 +1314,189 @@ mod tests {
         frame_at(&ctx, &st, 1.35, vec![]);
         assert!(egui::Popup::is_any_open(&ctx), "the island's menu");
         assert!(!open(), "no tooltip under the menu");
+    }
+
+    /// One frame of the islands and of Performance (`open`), at `width` ×
+    /// 9/16, the work area under the islands and 60 px above the bottom
+    /// (the dock), at `time`, the pointer's `events`.
+    fn perf_frame(ctx: &egui::Context, width: f32, open: &mut bool, time: f64, events: Vec<egui::Event>) {
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let settings = crate::settings::Settings::default();
+        let mut panels = Panels::from_settings(&settings);
+        let mut audio = settings.audio.clone();
+        let mut audio_ui = crate::ui::audio::AudioUi::default();
+        let mut notif = crate::ui::notifications::NotifUi::default();
+        let st = status(true, true);
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(width, width * 9.0 / 16.0));
+        let data = crate::ui::perf::PerfData::default();
+        let gpu = aurora_render::GpuInfo {
+            name: String::new(),
+            backend: String::new(),
+            driver: String::new(),
+            bindless: false,
+            timestamps: false,
+            max_textures: 0,
+            vram_mb: None,
+            integrated: false,
+        };
+        let (render, net, scene, tex) = Default::default();
+        let (period, totals) = Default::default();
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| {
+            top(
+                ui,
+                &p,
+                &icons,
+                &mut panels,
+                &st,
+                &mut audio,
+                &mut audio_ui,
+                Default::default(),
+                &mut notif,
+                BellState::default(),
+            );
+            crate::ui::layout::set_work_area(ui.ctx(), work_area(screen, screen.bottom() - 60.0));
+            let view = crate::ui::perf::PerfView {
+                data: &data,
+                render: &render,
+                gpu: &gpu,
+                net: &net,
+                link: (&period, &totals),
+                scene: &scene,
+                tex: &tex,
+                meshes_fetching: 0,
+                regions: 1,
+                draw_distance: 128.0,
+                probes: (0, 0),
+                sounds: 0,
+                complexity: (None, 0),
+            };
+            crate::ui::perf::show(ui.ctx(), &p, &view, open);
+        });
+        out.textures_delta.clear();
+    }
+
+    fn perf_rect(ctx: &egui::Context) -> Rect {
+        ctx.memory(|m| m.area_rect(Id::new("perf"))).expect("the Performance window")
+    }
+
+    /// Performance opened from the system island: its full view stands 8 px
+    /// under the island, its left and right edges on the island's (within
+    /// half a pixel), down to the bottom of the work area at most, at the
+    /// three widths; its sides do not resize it, its bottom does, never
+    /// past the work area. The compact view keeps its own width and place.
+    #[test]
+    fn performance_opens_under_the_system_island() {
+        for width in [1280.0, 1536.0, 1920.0] {
+            let ctx = egui::Context::default();
+            let mut open = false;
+            let mut t = 0.0;
+            let mut frame = |ctx: &egui::Context, open: &mut bool, events: Vec<egui::Event>| {
+                t += 0.05;
+                perf_frame(ctx, width, open, t, events);
+            };
+            frame(&ctx, &mut open, vec![]);
+            frame(&ctx, &mut open, vec![]);
+            let island = system_rect(&ctx);
+            let work = crate::ui::layout::work_area(&ctx);
+
+            // full, the window's first opening: under the island
+            crate::ui::perf::set_full(&ctx, true);
+            crate::ui::perf::place_under(&ctx, island);
+            open = true;
+            for _ in 0..4 {
+                frame(&ctx, &mut open, vec![]);
+            }
+            let full = perf_rect(&ctx);
+            let case = format!("{width}: {full:?} under {island:?}");
+            assert!((full.left() - island.left()).abs() <= 0.5, "{case}");
+            assert!((full.right() - island.right()).abs() <= 0.5, "{case}");
+            assert!((full.top() - (island.bottom() + MARGIN)).abs() <= 0.5, "{case}");
+            assert!(full.bottom() <= work.bottom() + 0.5, "{case}: within the work area {work:?}");
+            assert!(full.bottom() >= work.bottom() - 1.0, "{case}: down to the dock");
+
+            // the right side does not resize it
+            let drag = |ctx: &egui::Context,
+                        open: &mut bool,
+                        from: Pos2,
+                        by: Vec2,
+                        frame: &mut dyn FnMut(&egui::Context, &mut bool, Vec<egui::Event>)| {
+                frame(ctx, open, vec![egui::Event::PointerMoved(from)]);
+                frame(ctx, open, vec![press(from, egui::PointerButton::Primary, true)]);
+                for k in 1..=4 {
+                    frame(ctx, open, vec![egui::Event::PointerMoved(from + by * k as f32 / 4.0)]);
+                }
+                frame(ctx, open, vec![press(from + by, egui::PointerButton::Primary, false)]);
+                frame(ctx, open, vec![]);
+            };
+            drag(
+                &ctx,
+                &mut open,
+                Pos2::new(full.right() - 1.0, full.center().y),
+                Vec2::new(60.0, 0.0),
+                &mut frame,
+            );
+            drag(
+                &ctx,
+                &mut open,
+                Pos2::new(full.left() + 1.0, full.center().y),
+                Vec2::new(-60.0, 0.0),
+                &mut frame,
+            );
+            let after = perf_rect(&ctx);
+            assert!(
+                (after.width() - full.width()).abs() <= 0.5,
+                "{width}: no horizontal handle, {after:?}"
+            );
+            // its bottom does, within the work area
+            drag(
+                &ctx,
+                &mut open,
+                Pos2::new(full.center().x, full.bottom() - 1.0),
+                Vec2::new(0.0, -120.0),
+                &mut frame,
+            );
+            let shorter = perf_rect(&ctx);
+            assert!(
+                shorter.height() < full.height() - 60.0,
+                "{width}: the bottom resizes it, {shorter:?}"
+            );
+            drag(
+                &ctx,
+                &mut open,
+                Pos2::new(shorter.center().x, shorter.bottom() - 1.0),
+                Vec2::new(0.0, 400.0),
+                &mut frame,
+            );
+            let taller = perf_rect(&ctx);
+            assert!(taller.bottom() <= work.bottom() + 0.5, "{width}: {taller:?} within {work:?}");
+            assert!((taller.width() - full.width()).abs() <= 0.5, "{width}: same width, {taller:?}");
+
+            // compact: its own width, wherever it stands
+            open = false;
+            frame(&ctx, &mut open, vec![]);
+            crate::ui::perf::set_full(&ctx, false);
+            crate::ui::perf::place_under(&ctx, island);
+            open = true;
+            for _ in 0..3 {
+                frame(&ctx, &mut open, vec![]);
+            }
+            let compact = perf_rect(&ctx);
+            assert_eq!(
+                compact.width(),
+                crate::ui::perf::COMPACT_W + crate::ui::perf::SIDES,
+                "{width}: compact"
+            );
+            assert!(
+                (compact.right() - island.right()).abs() > 0.5,
+                "{width}: the compact view stands where it stood"
+            );
+        }
     }
 }
