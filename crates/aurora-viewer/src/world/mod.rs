@@ -8,6 +8,7 @@ pub mod contact_sets;
 pub mod eep;
 pub mod eep_env;
 pub mod env;
+pub mod env_day_edit;
 pub mod env_edit;
 pub mod env_select;
 pub mod experiences;

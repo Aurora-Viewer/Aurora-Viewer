@@ -201,32 +201,7 @@ impl EnvEditorUi {
             }
             let footer = 64.0;
             let body_h = (ui.available_height() - footer).max(120.0);
-            if kind == SettingsKind::Sky {
-                widgets::tabs(
-                    ui,
-                    p,
-                    &mut self.tab,
-                    &[
-                        (aurora_i18n::tr!("ui-env-editor-atmosphere"), true),
-                        (aurora_i18n::tr!("ui-environment-clouds"), true),
-                        (aurora_i18n::tr!("ui-env-editor-sun-moon"), true),
-                    ],
-                );
-                ui.add_space(4.0);
-            }
-            egui::ScrollArea::vertical()
-                .max_height(body_h - if kind == SettingsKind::Sky { 34.0 } else { 0.0 })
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.add_enabled_ui(self.rights.modify, |ui| match kind {
-                        SettingsKind::Water => self.water_panel(ui, p, images, &mut out),
-                        _ => match self.tab {
-                            1 => self.clouds_panel(ui, p, images, &mut out),
-                            2 => self.sun_moon_panel(ui, p, images, &mut out),
-                            _ => self.atmosphere_panel(ui, p, &mut out),
-                        },
-                    });
-                });
+            self.panels_into(ui, p, images, body_h, &mut out);
             widgets::divider(ui, p);
             self.footer(ui, p, can_inventory, &mut out);
         });
@@ -235,6 +210,54 @@ impl EnvEditorUi {
         }
         self.dialogs(ctx, p, &mut out);
         out
+    }
+
+    /// The tabs and panels of the document (the sky tabs or the water
+    /// panel), within `height`: the fixed editors' body, and the day cycle
+    /// editor's frame panels (LLPanelSettingsSky / Water in its tabs).
+    /// Returns whether the document changed.
+    pub fn panels(&mut self, ui: &mut egui::Ui, p: &Palette, images: &HashMap<Uuid, egui::TextureHandle>, height: f32) -> bool {
+        let mut out = Vec::new();
+        self.panels_into(ui, p, images, height, &mut out);
+        out.contains(&EditorAction::Changed)
+    }
+
+    fn panels_into(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        images: &HashMap<Uuid, egui::TextureHandle>,
+        height: f32,
+        out: &mut Vec<EditorAction>,
+    ) {
+        let kind = self.kind.unwrap_or(SettingsKind::Sky);
+        if kind == SettingsKind::Sky {
+            widgets::tabs(
+                ui,
+                p,
+                &mut self.tab,
+                &[
+                    (aurora_i18n::tr!("ui-env-editor-atmosphere"), true),
+                    (aurora_i18n::tr!("ui-environment-clouds"), true),
+                    (aurora_i18n::tr!("ui-env-editor-sun-moon"), true),
+                ],
+            );
+            ui.add_space(4.0);
+        }
+        egui::ScrollArea::vertical()
+            .id_salt(("env_panels", kind == SettingsKind::Water))
+            .max_height(height - if kind == SettingsKind::Sky { 34.0 } else { 0.0 })
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add_enabled_ui(self.rights.modify, |ui| match kind {
+                    SettingsKind::Water => self.water_panel(ui, p, images, out),
+                    _ => match self.tab {
+                        1 => self.clouds_panel(ui, p, images, out),
+                        2 => self.sun_moon_panel(ui, p, images, out),
+                        _ => self.atmosphere_panel(ui, p, out),
+                    },
+                });
+            });
     }
 
     /// Run `what` now, or after "discard the changes?" when dirty.
