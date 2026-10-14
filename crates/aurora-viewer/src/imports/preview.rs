@@ -119,6 +119,7 @@ fn material_thumbnails(source: &Source) -> [Option<(Uuid, egui::ColorImage)>; 4]
 
 pub fn material(value: &PbrMaterial) -> Material {
     Material {
+        uv: Material::default().uv,
         color: value.base_color_factor,
         emissive: value.emissive_factor,
         metallic: value.metallic_factor,

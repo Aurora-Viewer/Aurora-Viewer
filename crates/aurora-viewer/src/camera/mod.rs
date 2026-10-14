@@ -199,6 +199,7 @@ struct Tool {
     steering: bool,
 }
 
+#[derive(Clone)]
 pub struct Camera {
     pub mode: CameraMode,
     last_mode: CameraMode,

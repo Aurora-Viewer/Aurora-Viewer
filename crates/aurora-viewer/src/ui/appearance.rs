@@ -182,6 +182,9 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
 
 fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, actions: &mut Vec<Action>) {
     menu::context_menu(response, p, |ui| {
+        if it.asset_type == 13 && it.flags & 0xff == 0 && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
+            super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(it.id));
+        }
         let label = if it.asset_type == 6 {
             aurora_i18n::tr!("common-detach")
         } else {
@@ -713,6 +716,19 @@ pub fn show(
             });
         });
         ui.add_space(8.0);
+        if let Some(shape) = crate::shape_editor::worn_shape(world)
+            && widgets::action_button(
+                ui,
+                p,
+                "man-filled",
+                aurora_i18n::tr!("shape-edit-worn"),
+                widgets::ActionKind::Flat,
+                Vec2::new(ui.available_width(), 30.0),
+            )
+            .clicked()
+        {
+            super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(shape));
+        }
         if !st.editing {
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - 28.0 - ui.spacing().item_spacing.x).max(100.0);

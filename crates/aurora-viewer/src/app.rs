@@ -42,6 +42,7 @@ mod inventory_drag;
 mod inventory_thumbnail;
 mod object_actions;
 mod scripts;
+mod shape_editor;
 mod task_notecards;
 mod worn_demo;
 
@@ -435,6 +436,8 @@ pub struct App {
     demo_script_experiences: std::collections::HashMap<aurora_net::scripts::ScriptTarget, uuid::Uuid>,
     inventory_images: inventory_thumbnail::ImageJobs,
     appearance_ui: ui::appearance::AppearanceUi,
+    shape_ui: crate::shape_editor::State,
+    shape_camera: Option<Camera>,
     last_social_poll: Instant,
     /// Last keyboard / mouse button input (automatic away, AFKTimeout), and
     /// whether the current away status was set by that timer.
@@ -758,6 +761,8 @@ impl App {
             demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
             appearance_ui: Default::default(),
+            shape_ui: Default::default(),
+            shape_camera: None,
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
             auto_away: false,
@@ -1323,6 +1328,8 @@ impl App {
         self.chat_ui = ChatUi::default();
         self.ao_agent = uuid::Uuid::nil();
         self.appearance_ui = Default::default();
+        self.shape_ui = Default::default();
+        self.shape_camera = None;
         self.interactions = Default::default();
         self.screen = Screen::Login;
         self.login_form.busy = false;
@@ -1432,6 +1439,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryPreview { item, asset, result } = ev {
+            if self.shape_ui.loaded(&mut self.world, item, asset, &result) {
+                return;
+            }
             if self.ao_ui.import == Some(item) {
                 // A shared download can serve both an AO import and an editor.
                 self.ao_import_result(item, result.clone());
@@ -1441,6 +1451,21 @@ impl App {
         }
         if let NetEvent::GestureLoaded { item, asset, result } = ev {
             self.gesture_loaded(item, asset, result);
+            return;
+        }
+        if let NetEvent::WearableSaved { request, result } = ev {
+            if self.shape_ui.draft.as_ref().is_none_or(|draft| draft.pending != Some(request)) {
+                return;
+            }
+            let saved = result.as_ref().ok().map(|item| item.id);
+            let copy = self.shape_ui.saved(&mut self.world, request, result);
+            if let Some(item) = copy.or(saved) {
+                self.apply_appearance_action(crate::world::appearance::Action::WearItem {
+                    item,
+                    replace: true,
+                    point: 0,
+                });
+            }
             return;
         }
         if let NetEvent::TaskNotecardPreview {
@@ -7209,6 +7234,30 @@ impl App {
                     self.apply_appearance_action(action);
                 }
                 self.panels.appearance = open;
+                self.update_demo_shape_mesh();
+                self.shape_ui.update(&mut self.world, &self.scene, &ctx);
+                let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
+                let shape_group = self.shape_ui.group;
+                let (shape_actions, visible) = ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui);
+                self.demo_shape_drag();
+                if shape_preferences != (self.shape_ui.hints, self.shape_ui.feet) {
+                    self.settings.shape_show_hints = self.shape_ui.hints;
+                    self.settings.shape_height_feet = self.shape_ui.feet;
+                    self.settings.save();
+                }
+                self.shape_ui.request_hints(&self.world, &self.scene.jobs, &ctx, &visible);
+                if self.shape_ui.open && self.shape_camera.is_some() && (self.shape_ui.group != shape_group || self.shape_ui.camera_pending)
+                {
+                    self.focus_shape_category();
+                }
+                for action in shape_actions {
+                    self.shape_action(action);
+                }
+                if !self.shape_ui.open
+                    && let Some(camera) = self.shape_camera.take()
+                {
+                    self.camera = camera;
+                }
                 let mut open = self.panels.ao;
                 let mut account = self.settings.ao.accounts.get(&self.world.agent_id).cloned().unwrap_or_default();
                 let actions = ui::ao::show(
@@ -8506,6 +8555,7 @@ impl ApplicationHandler for App {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
                 }
             }
+            self.demo_shape_editor();
             if let Some(mode) = ui::widgets::demo::rez_mode() {
                 if mode != "1" && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                     self.camera.demo_orbit(0.0, 0.6, Some(9.0), &self.settings.camera);
