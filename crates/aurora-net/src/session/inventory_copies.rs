@@ -117,6 +117,9 @@ pub(super) fn message(agent: Uuid, session: Uuid, callback: u32, copy: &CopyItem
 
 impl Session<'_> {
     pub(super) fn accept_inventory_copy(&mut self, callback: u32, item: &InvItem) {
+        if self.accept_wearable_copy(callback, item) {
+            return;
+        }
         let request = self.inventory_copies.request_for(callback);
         if let Some(completion) = self.inventory_copies.accept(callback, item) {
             self.finish_inventory_copies(completion);

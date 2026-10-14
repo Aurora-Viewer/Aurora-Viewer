@@ -281,6 +281,10 @@ impl App {
                     f.state = crate::world::inventory::FetchState::Unknown;
                     self.world.inventory.request(id);
                 } else if let Some(it) = self.world.inventory.items.get(&id).cloned() {
+                    if Some(it.id) == crate::shape_editor::worn_shape(&self.world) {
+                        self.open_shape_editor(it.id);
+                        return;
+                    }
                     if it.asset_type == 10 {
                         self.inventory_ui.preview = self.inventory_ui.preview.filter(|preview| *preview != id);
                         self.open_script(aurora_net::scripts::ScriptTarget {

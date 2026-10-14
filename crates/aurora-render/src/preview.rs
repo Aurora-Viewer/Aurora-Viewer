@@ -6,7 +6,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 use wgpu::util::DeviceExt;
 
@@ -50,6 +50,8 @@ pub struct Material {
     pub alpha_mode: u32,
     pub normal_scale: f32,
     pub double_sided: bool,
+    /// Affine UV rows per map, in the preview's top-left image space.
+    pub uv: [[[f32; 4]; 2]; 4],
 }
 impl Default for Material {
     fn default() -> Self {
@@ -62,6 +64,7 @@ impl Default for Material {
             alpha_mode: 0,
             normal_scale: 1.0,
             double_sided: true,
+            uv: [[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]; 4],
         }
     }
 }
@@ -143,6 +146,24 @@ struct Region {
 pub fn paint(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: &mut View, size: egui::Vec2) -> egui::Response {
     paint_with_pose(ui, id, model, view, size, None)
 }
+
+/// Appearance hints are buttons in a scrolling list; they do not consume its
+/// wheel or change the camera when the user clicks a minimum/maximum image.
+pub fn paint_hint(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: View, size: egui::Vec2) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
+            rect,
+            callback: Arc::new(Region {
+                id,
+                model,
+                view,
+                pose: None,
+            }),
+        }));
+    }
+    response
+}
 pub fn paint_with_pose(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -195,6 +216,7 @@ struct Uniform {
     edge_color: [f32; 4],
     ambient: [f32; 4],
     surface: [f32; 4],
+    uv: [[[f32; 4]; 2]; 4],
 }
 struct GpuPart {
     vertices: wgpu::Buffer,
@@ -210,8 +232,10 @@ struct GpuPart {
 struct Pipelines {
     layout: wgpu::BindGroupLayout,
     triangles: wgpu::RenderPipeline,
+    blended: wgpu::RenderPipeline,
     edges: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
+    assets: SharedAssets,
 }
 struct Target {
     model: Arc<Model>,
@@ -227,6 +251,22 @@ struct Target {
 pub(crate) struct Cache {
     pipeline: Option<Pipelines>,
     targets: HashMap<egui::Id, Target>,
+}
+
+type ImageMap = HashMap<(usize, bool), (Option<Weak<Image>>, wgpu::TextureView)>;
+#[derive(Default)]
+struct SharedAssets {
+    images: ImageMap,
+    vertices: HashMap<usize, (Weak<[Vertex]>, wgpu::Buffer)>,
+    indices: HashMap<usize, (Weak<[u32]>, wgpu::Buffer, wgpu::Buffer)>,
+}
+impl SharedAssets {
+    fn retain(&mut self) {
+        self.images
+            .retain(|_, (owner, _)| owner.as_ref().is_none_or(|owner| owner.strong_count() > 0));
+        self.vertices.retain(|_, (owner, _)| owner.strong_count() > 0);
+        self.indices.retain(|_, (owner, _, _)| owner.strong_count() > 0);
+    }
 }
 
 impl Pipelines {
@@ -282,7 +322,7 @@ impl Pipelines {
             label: Some("Asset preview"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/preview.wgsl").into()),
         });
-        let pipeline = |topology, entry| {
+        let pipeline = |topology, entry, depth_write| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("Asset preview"),
                 layout: Some(&pipeline_layout),
@@ -313,7 +353,7 @@ impl Pipelines {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: Some(topology == wgpu::PrimitiveTopology::TriangleList),
+                    depth_write_enabled: Some(depth_write),
                     depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: Default::default(),
                     bias: Default::default(),
@@ -323,8 +363,9 @@ impl Pipelines {
                 cache: None,
             })
         };
-        let triangles = pipeline(wgpu::PrimitiveTopology::TriangleList, "fs");
-        let edges = pipeline(wgpu::PrimitiveTopology::LineList, "fs_edge");
+        let triangles = pipeline(wgpu::PrimitiveTopology::TriangleList, "fs", true);
+        let blended = pipeline(wgpu::PrimitiveTopology::TriangleList, "fs", false);
+        let edges = pipeline(wgpu::PrimitiveTopology::LineList, "fs_edge", false);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Preview textures"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -336,8 +377,10 @@ impl Pipelines {
         Self {
             layout,
             triangles,
+            blended,
             edges,
             sampler,
+            assets: SharedAssets::default(),
         }
     }
 }
@@ -347,7 +390,7 @@ impl Target {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         egui: &mut egui_wgpu::Renderer,
-        pipeline: &Pipelines,
+        pipeline: &mut Pipelines,
         model: Arc<Model>,
         size: [u32; 2],
     ) -> Self {
@@ -372,8 +415,8 @@ impl Target {
         let color = target("Preview color", wgpu::TextureFormat::Rgba8Unorm);
         let depth = target("Preview depth", wgpu::TextureFormat::Depth32Float);
         let texture = egui.register_native_texture(device, &color, wgpu::FilterMode::Linear);
+        let assets = &mut pipeline.assets;
         let mut parts = Vec::new();
-        let mut images = HashMap::<(usize, bool), wgpu::TextureView>::new();
         for (source, part) in model.parts.iter().enumerate() {
             if part.vertices.is_empty() || part.indices.is_empty() {
                 continue;
@@ -385,13 +428,33 @@ impl Target {
                     usage,
                 })
             };
-            let vertices = buffer("Preview vertices", bytemuck::cast_slice(&part.vertices), wgpu::BufferUsages::VERTEX);
-            let indices = buffer("Preview indices", bytemuck::cast_slice(&part.indices), wgpu::BufferUsages::INDEX);
-            let mut lines = Vec::with_capacity(part.indices.len() * 2);
-            for triangle in part.indices.as_chunks::<3>().0 {
-                lines.extend_from_slice(&[triangle[0], triangle[1], triangle[1], triangle[2], triangle[2], triangle[0]]);
-            }
-            let edges = buffer("Preview edges", bytemuck::cast_slice(&lines), wgpu::BufferUsages::INDEX);
+            let key = Arc::as_ptr(&part.vertices) as *const () as usize;
+            let vertices = if let Some((owner, buffer)) = assets.vertices.get(&key)
+                && owner.strong_count() > 0
+            {
+                buffer.clone()
+            } else {
+                let vertices = buffer("Preview vertices", bytemuck::cast_slice(&part.vertices), wgpu::BufferUsages::VERTEX);
+                assets.vertices.insert(key, (Arc::downgrade(&part.vertices), vertices.clone()));
+                vertices
+            };
+            let key = Arc::as_ptr(&part.indices) as *const () as usize;
+            let (indices, edges) = if let Some((owner, indices, edges)) = assets.indices.get(&key)
+                && owner.strong_count() > 0
+            {
+                (indices.clone(), edges.clone())
+            } else {
+                let indices = buffer("Preview indices", bytemuck::cast_slice(&part.indices), wgpu::BufferUsages::INDEX);
+                let mut lines = Vec::with_capacity(part.indices.len() * 2);
+                for triangle in part.indices.as_chunks::<3>().0 {
+                    lines.extend_from_slice(&[triangle[0], triangle[1], triangle[1], triangle[2], triangle[2], triangle[0]]);
+                }
+                let edges = buffer("Preview edges", bytemuck::cast_slice(&lines), wgpu::BufferUsages::INDEX);
+                assets
+                    .indices
+                    .insert(key, (Arc::downgrade(&part.indices), indices.clone(), edges.clone()));
+                (indices, edges)
+            };
             let uniform = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Preview parameters"),
                 size: std::mem::size_of::<Uniform>() as u64,
@@ -418,7 +481,9 @@ impl Target {
                         image.as_ref().map_or(if slot == 1 { 1 } else { 2 }, |i| Arc::as_ptr(i) as usize),
                         srgb,
                     );
-                    if let Some(view) = images.get(&key) {
+                    if let Some((owner, view)) = assets.images.get(&key)
+                        && owner.as_ref().is_none_or(|owner| owner.strong_count() > 0)
+                    {
                         return view.clone();
                     }
                     let defaults = [[255u8; 4], [128, 128, 255, 255], [255; 4], [255; 4]];
@@ -459,7 +524,7 @@ impl Target {
                         },
                     );
                     let view = texture.create_view(&Default::default());
-                    images.insert(key, view.clone());
+                    assets.images.insert(key, (image.as_ref().map(Arc::downgrade), view.clone()));
                     view
                 })
                 .collect();
@@ -491,7 +556,7 @@ impl Target {
                 indices,
                 edges,
                 count: part.indices.len() as u32,
-                edge_count: lines.len() as u32,
+                edge_count: (part.indices.len() / 3 * 6) as u32,
                 uniform,
                 bones,
                 source,
@@ -540,15 +605,7 @@ impl Target {
                     .collect::<Vec<_>>();
                 queue.write_buffer(&part.bones, 0, bytemuck::cast_slice(&matrices));
             }
-            let material = if source.diagnostic {
-                Material {
-                    color: view.diagnostic_colors[0],
-                    alpha_mode: if view.diagnostic_colors[0][3] < 1.0 { 1 } else { 0 },
-                    ..Default::default()
-                }
-            } else {
-                view.material.unwrap_or(source.material)
-            };
+            let material = effective_material(source, &view);
             let uniforms = Uniform {
                 projection: projection.to_cols_array_2d(),
                 eye: [eye.x, eye.y, eye.z, 1.0],
@@ -567,6 +624,7 @@ impl Target {
                 },
                 ambient: [view.ambient[0], view.ambient[1], view.ambient[2], 1.0],
                 surface: [material.normal_scale, if material.double_sided { 1.0 } else { 0.0 }, 0.0, 0.0],
+                uv: material.uv,
             };
             queue.write_buffer(&part.uniform, 0, bytemuck::bytes_of(&uniforms));
         }
@@ -598,12 +656,19 @@ impl Target {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&pipeline.triangles);
-        for part in &self.parts {
-            pass.set_bind_group(0, &part.group, &[]);
-            pass.set_vertex_buffer(0, part.vertices.slice(..));
-            pass.set_index_buffer(part.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..part.count, 0, 0..1);
+        // Like the world passes, skin/masked faces precede blended cosmetics.
+        // A transparent layer must never write depth over the face behind it.
+        for blended in [false, true] {
+            pass.set_pipeline(if blended { &pipeline.blended } else { &pipeline.triangles });
+            for part in &self.parts {
+                if (effective_material(&self.model.parts[part.source], &view).alpha_mode == 1) != blended {
+                    continue;
+                }
+                pass.set_bind_group(0, &part.group, &[]);
+                pass.set_vertex_buffer(0, part.vertices.slice(..));
+                pass.set_index_buffer(part.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..part.count, 0, 0..1);
+            }
         }
         if view.edges || self.model.parts.iter().any(|p| p.diagnostic) {
             pass.set_pipeline(&pipeline.edges);
@@ -617,6 +682,18 @@ impl Target {
                 pass.draw_indexed(0..part.edge_count, 0, 0..1);
             }
         }
+    }
+}
+
+fn effective_material(source: &Part, view: &View) -> Material {
+    if source.diagnostic {
+        Material {
+            color: view.diagnostic_colors[0],
+            alpha_mode: if view.diagnostic_colors[0][3] < 1.0 { 1 } else { 0 },
+            ..Default::default()
+        }
+    } else {
+        view.material.unwrap_or(source.material)
     }
 }
 
@@ -682,12 +759,122 @@ impl Cache {
                 false
             }
         });
+        // Image UUIDs are immutable; all min/max views share their GPU maps.
+        // Weak owners bound the cache to the images still held by previews.
+        if let Some(pipeline) = &mut self.pipeline {
+            pipeline.assets.retain();
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transparent_mesh_layers_never_hide_the_textured_skin_behind_them() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
+        let mut pipeline = Pipelines::new(&device);
+        let mut egui = egui_wgpu::Renderer::new(&device, wgpu::TextureFormat::Rgba8Unorm, Default::default());
+        let quad = |x, rgba: [u8; 4], mode| Part {
+            diagnostic: false,
+            vertices: [[x, -0.8, -0.8], [x, 0.8, -0.8], [x, 0.8, 0.8], [x, -0.8, 0.8]]
+                .map(|p| Vertex::new(p, [1.0, 0.0, 0.0], [0.5; 2]))
+                .into(),
+            indices: Arc::from([0, 1, 2, 0, 2, 3]),
+            textures: [
+                Some(Arc::new(Image {
+                    size: [1, 1],
+                    rgba: Arc::from(rgba),
+                })),
+                None,
+                None,
+                None,
+            ],
+            material: Material {
+                alpha_mode: mode,
+                ..Default::default()
+            },
+            skin: None,
+        };
+        let skin = quad(0.0, [220, 80, 30, 255], 0);
+        let ghost = quad(0.02, [0; 4], 1);
+        let render = |parts: Vec<Part>, pipeline: &mut Pipelines, egui: &mut egui_wgpu::Renderer| {
+            const SIZE: u32 = 64;
+            let model = Arc::new(Model {
+                parts,
+                center: Vec3::ZERO,
+                radius: 1.0,
+            });
+            let mut target = Target::new(&device, &queue, egui, pipeline, model, [SIZE; 2]);
+            let color = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Layered head test"),
+                size: wgpu::Extent3d {
+                    width: SIZE,
+                    height: SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            target.color = color.create_view(&Default::default());
+            let mut encoder = device.create_command_encoder(&Default::default());
+            target.draw(
+                &queue,
+                &mut encoder,
+                pipeline,
+                View {
+                    yaw: 0.0,
+                    pitch: 0.0,
+                    distance: 3.0,
+                    ..Default::default()
+                },
+                None,
+            );
+            let pixels = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Layer pixels"),
+                size: u64::from(SIZE * SIZE * 4),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_texture_to_buffer(
+                color.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &pixels,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(SIZE * 4),
+                        rows_per_image: Some(SIZE),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: SIZE,
+                    height: SIZE,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit([encoder.finish()]);
+            pixels.map_async(wgpu::MapMode::Read, .., |result| result.expect("pixel readback"));
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("test GPU completion");
+            let bytes = pixels.get_mapped_range(..).expect("pixels");
+            let at = ((SIZE / 2 * SIZE + SIZE / 2) * 4) as usize;
+            let pixel: [u8; 4] = bytes[at..at + 4].try_into().expect("pixel");
+            egui.free_texture(&target.texture);
+            pixel
+        };
+        let reference = render(vec![skin.clone()], &mut pipeline, &mut egui);
+        assert!(reference[0] > reference[1] + 20, "skin is visibly colored");
+        assert_eq!(render(vec![ghost.clone(), skin.clone()], &mut pipeline, &mut egui), reference);
+        assert_eq!(render(vec![skin, ghost], &mut pipeline, &mut egui), reference);
+    }
 
     #[test]
     fn preview_gestures_pan_with_shift_or_middle_button_and_orbit_without_them() {
@@ -870,6 +1057,7 @@ mod tests {
                 edge_color: [0.0; 4],
                 ambient: [0.2, 0.2, 0.2, 1.0],
                 surface: [1.0, 1.0, 0.0, 0.0],
+                uv: Material::default().uv,
             }),
             wgpu::BufferUsages::UNIFORM,
         );

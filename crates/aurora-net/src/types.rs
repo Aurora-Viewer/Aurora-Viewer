@@ -744,6 +744,10 @@ pub enum NetEvent {
         request: Uuid,
         result: Result<crate::inventory::mesh_upload::Quote, crate::inventory::upload::Error>,
     },
+    WearableSaved {
+        request: Uuid,
+        result: Result<crate::inventory::InvItem, String>,
+    },
     InventoryPreview {
         item: Uuid,
         asset: Uuid,
@@ -1352,6 +1356,12 @@ pub enum NetCommand {
         password: crate::currency::Password,
     },
     RequestInventoryMerchant,
+    SaveWearable {
+        request: Uuid,
+        item: Box<crate::inventory::InvItem>,
+        data: Vec<u8>,
+        copy_name: Option<String>,
+    },
     CreateInventoryWearable {
         parent: Uuid,
         kind: u8,

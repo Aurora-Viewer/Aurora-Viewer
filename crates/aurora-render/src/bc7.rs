@@ -103,6 +103,33 @@ fn encode_level(settings: &bc7::EncodeSettings, w: u32, h: u32, rgba: &[u8]) -> 
     bc7::compress_blocks(settings, &surface)
 }
 
+/// Decode a bounded cache level for CPU consumers such as appearance hints.
+/// Edge blocks may be padded; their padding is never copied to the image.
+pub fn decode_level(blocks: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
+    if w == 0 || h == 0 || w > 16384 || h > 16384 {
+        return None;
+    }
+    let columns = w.div_ceil(4) as usize;
+    let rows = h.div_ceil(4) as usize;
+    if blocks.len() != columns.checked_mul(rows)?.checked_mul(16)? {
+        return None;
+    }
+    let mut rgba = vec![0; (w as usize).checked_mul(h as usize)?.checked_mul(4)?];
+    let mut decoded = [0u8; 64];
+    for by in 0..rows {
+        for bx in 0..columns {
+            let at = (by * columns + bx) * 16;
+            bcdec_rs::bc7(&blocks[at..at + 16], &mut decoded, 16);
+            let width = (w as usize - bx * 4).min(4) * 4;
+            for y in 0..(h as usize - by * 4).min(4) {
+                let at = ((by * 4 + y) * w as usize + bx * 4) * 4;
+                rgba[at..at + width].copy_from_slice(&decoded[y * 16..y * 16 + width]);
+            }
+        }
+    }
+    Some(rgba)
+}
+
 /// Whether `blocks` (the BC7 level of `rgba`) differ from it enough to show:
 /// more than [`MAX_OFF_PER_MILLE`] of the checked blocks have a texel
 /// channel off by more than [`TOLERANCE`]. The whole blocks of the level are
@@ -169,6 +196,22 @@ mod tests {
             .flat_map(|y| (0..w).map(move |x| (x, y)))
             .flat_map(|(x, y)| texel(x, y))
             .collect()
+    }
+
+    #[test]
+    fn cache_decode_handles_padded_edges_and_rejects_invalid_sizes() {
+        let pixels = image(5, 3, |_, _| [210, 120, 60, 255]);
+        let blocks = encode_level(&bc7::opaque_fast_settings(), 5, 3, &pixels);
+        let rgba = decode_level(&blocks, 5, 3).expect("edge pixels");
+        assert_eq!(rgba.len(), 5 * 3 * 4);
+        for pixel in rgba.as_chunks::<4>().0 {
+            for (actual, expected) in pixel.iter().zip([210u8, 120, 60, 255]) {
+                assert!(actual.abs_diff(expected) < 5);
+            }
+        }
+        assert!(decode_level(&blocks[..16], 5, 3).is_none());
+        assert!(decode_level(&[], 0, 3).is_none());
+        assert!(decode_level(&[], 16385, 3).is_none());
     }
 
     /// A cheap deterministic noise.

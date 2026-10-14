@@ -1206,6 +1206,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PROFILE=<avatar>[:tab]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
+| `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
 | `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets |
@@ -1737,6 +1738,43 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_RESTRICTED=1`**: red parcel icons, damage
   enabled, health at 72%.
 
+**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|saving|save-feedback|mesh-head|static-head|pbr-head|mesh-drag|layered-head`**
+opens the editor with a synthetic worn shape, without reading a real inventory or
+connecting to a grid. Category modes select the corresponding controls; `male`
+selects the male shape, `readonly` removes Modify, `nocopy` removes Copy, `dirty`
+opens the unsaved-changes confirmation and `save-as` opens the copy name dialog.
+`saving` holds a synthetic save pending, and `save-feedback` shows a wrapped
+save error. In both, the editor must keep its size, with the three buttons
+reachable at the bottom; only the parameter list gives space to the status.
+`mesh-head` and `static-head` wear a tinted head through the real mesh codec,
+with/without skin weights, using BOM so the system head is hidden in the world
+and in the hints. Check the same head in both views and change Head Size. Wheel
+over the category row goes forward/backward, stays within Body/Legs and does not
+scroll the parameter list. The self-avatar/attachment menu's Appearance › Edit
+Shape opens this editor. Asset arrivals and AO cycles must keep ready hint images
+visible, with no repeated "Preparing preview" placeholders.
+`pbr-head` uses a PBR skin material over a conflicting blue texture-entry tint;
+the head must retain its textured skin color in the world and in the hints.
+`layered-head` adds a cosmetic shell above a rigged, BOM-textured mesh head.
+The shell uses the built-in transparent texture, which has no cached asset.
+The hints must retain the skin color, as the world does; a white face means
+the reserved transparent pixels were lost. Blended layers must not write depth
+over the skin, regardless of their order in the mesh.
+`mesh-drag` sweeps Head Size for six seconds, starting two seconds after opening:
+the live head changes smoothly, existing comparison images remain visible and
+the log has no hint dispatch during the sweep (one refresh after release).
+Switch Body / Head / Torso / Legs: the main camera smoothly frames each area.
+Combine with `AURORA_DEMO_CLASSIC=1` for a baked system avatar. Move a slider or
+type a value, switch sex, use minimum/maximum
+hints, filter parameters, toggle hints and height units, then Cancel, Save and Save
+As, then reopen the editor to check the saved values. Save receipts and appearance
+updates are simulated only in demo mode. Inspect the preview's framing,
+the persistent footer and the same theme as Appearance; Cancel restores the latest
+server appearance. `--language fr|en`, `AURORA_WINDOW_SIZE` and captures after frame
+900 cover both locales, compact and wide layouts, and asynchronously loaded hints.
+On the grid, also check a rigged body, real baked textures and persistence after
+relogin; only the human connects and performs these checks.
+
 **`AURORA_DEMO_APPEARANCE=gallery|outfits|worn|save|edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:
 
@@ -1989,6 +2027,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
+| `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 
 ### Details
 
@@ -2017,18 +2056,20 @@ What the inventory must show with these scenarios:
     Compare frames 660 and 780 at 60 fps; also use `AURORA_NAME_TAGS=classic`.
     A change of animation can change its height envelope; its individual
     frames never move the tag. Use a human-run grid session to verify real deformer assets.
-  - `voice`: Nova out of the voice channel (red struck-through microphone);
+  - `voice`: Nova out of the voice channel (no microphone badge);
     Tess in the channel, silent (green microphone badge, no outline) and
     without a profile picture (the icon stays); Orion, a friend, is speaking
-    (green outline and halo that follows the level, light violet name,
-    microphone, heart and triangle badges: he is shown as too complex); Lune
+    (green outline and halo that follows the level, microphone, green heart
+    and triangle badges: he is shown as too complex;
+    his name is in ink like everyone's unless Preferences › Colors › "Color
+    the names by relation" is on); Lune
     is typing (three animated dots) and has no display name (two lines); La
     Brume is blocked (dimmed plate, name in italics, forbidden badge, no
     status dot). Farther away, Sol is speaking (green outline) and Iris is
     typing; beyond, Vega is in the channel and Atlas is not (the far pill
     has no badge).
   - `status`: Nova away (amber dot), Tess do not disturb (red dot), Orion
-    out of the channel (red microphone, heart and triangle), Lune typing
+    out of the channel (green heart and triangle), Lune typing
     while away.
   - `cycle`: switches from one to the other every six seconds.
   - `wall`: the states of `voice`, with the wall in front of Nova and Tess
@@ -2040,6 +2081,10 @@ What the inventory must show with these scenarios:
     the right are whole. `AURORA_LABEL_OCCLUSION=0` gives the image without
     the cut. To look at in `AURORA_AA=3`, `5` and `6` (with 5, the cut must
     not shimmer from one frame to the next).
+  - With `AURORA_DEMO_FRIEND_PLATES=1` (the setting Preferences › Interface ›
+    "Full plates for friends only" for this run, not saved): only Orion, the
+    friend, and our own plate are complete; Nova, Tess, Lune and La Brume are
+    compact pills however near; the far pills do not change.
   - The pictures are generated gradients (`demo_tags::picture_pixels`),
     requested as on the grid: profile, then texture, at most four per
     second, the nearest first; our avatar and La Brume have the same one.

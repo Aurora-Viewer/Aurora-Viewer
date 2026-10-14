@@ -514,7 +514,12 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
             aurora_i18n::tr!("ui-context-change-outfit"),
             CtxAction::OpenAppearance { tab: 0, editing: false },
         );
-        ui.todo("man-filled", aurora_i18n::tr!("ui-context-edit-shape"));
+        ui.item_if(
+            "man-filled",
+            aurora_i18n::tr!("ui-context-edit-shape"),
+            f.worn_shape.is_some(),
+            CtxAction::EditWorn(f.worn_shape.unwrap_or_default()),
+        );
         ui.item(
             "pencil-filled",
             aurora_i18n::tr!("ui-context-edit-outfit"),
@@ -649,6 +654,41 @@ mod tests {
             attachment: None,
         };
         assert_ne!(labels(&world_menu(&avatar, &f, Vec3::ZERO)), expected(true));
+    }
+
+    #[test]
+    fn worn_shape_edit_is_available_from_our_avatar_and_attachment_menus() {
+        let item = Uuid::from_u128(42);
+        let facts = Facts {
+            worn_shape: Some(item),
+            ..Default::default()
+        };
+        for target in [
+            Target::Avatar {
+                id: facts.me,
+                own: true,
+                attachment: None,
+            },
+            Target::Attachment {
+                key: ObjKey { region: 1, local_id: 2 },
+            },
+        ] {
+            let find = |facts: &Facts| {
+                world_menu(&target, facts, Vec3::ZERO)
+                    .into_iter()
+                    .find_map(|entry| {
+                        let Kind::Submenu(entries) = entry.kind else { return None };
+                        entries
+                            .into_iter()
+                            .find(|entry| entry.label == aurora_i18n::tr!("ui-context-edit-shape"))
+                    })
+                    .expect("shape action")
+            };
+            let entry = find(&facts);
+            assert!(entry.enabled);
+            assert!(matches!(entry.kind, Kind::Action(CtxAction::EditWorn(id)) if id == item));
+            assert!(!find(&Facts::default()).enabled);
+        }
     }
 
     #[test]

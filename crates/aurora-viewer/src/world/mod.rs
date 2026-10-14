@@ -173,6 +173,8 @@ pub struct World {
     parked: HashMap<RegionHandle, parked::Parked>,
     appearances: HashMap<Uuid, (AvatarAppearance, u64)>,
     appearance_counter: u64,
+    shape_preview: Option<Vec<u8>>,
+    shape_preview_generation: u64,
     pub alerts: VecDeque<String>,
     pub movement_complete: bool,
     pub avatar_lib: Arc<AvatarLibrary>,
@@ -356,6 +358,8 @@ impl World {
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
             appearance_counter: 1,
+            shape_preview: None,
+            shape_preview_generation: 0,
             alerts: VecDeque::new(),
             movement_complete: false,
             avatar_lib,
@@ -908,7 +912,30 @@ impl World {
 
     /// Visual parameter values (shape) of an avatar's last appearance.
     pub fn visual_params(&self, avatar: &Uuid) -> Option<&[u8]> {
+        if *avatar == self.agent_id
+            && let Some(values) = &self.shape_preview
+        {
+            return Some(values);
+        }
         self.appearances.get(avatar).map(|(a, _)| a.visual_params.as_slice())
+    }
+
+    /// A draft never replaces the authoritative appearance received meanwhile.
+    pub fn preview_shape(&mut self, values: Option<Vec<u8>>) {
+        if self.shape_preview != values {
+            self.shape_preview = values;
+            self.shape_preview_generation = self.shape_preview_generation.wrapping_add(1);
+        }
+    }
+
+    pub fn server_visual_params(&self) -> &[u8] {
+        self.appearances
+            .get(&self.agent_id)
+            .map_or(&[], |(a, _)| a.visual_params.as_slice())
+    }
+
+    pub fn server_appearance(&self) -> Option<&AvatarAppearance> {
+        self.appearances.get(&self.agent_id).map(|(appearance, _)| appearance)
     }
 
     /// Hover height of an avatar's last appearance (m).
@@ -1035,6 +1062,11 @@ impl World {
 
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
         self.appearances.get(avatar).map(|(_, g)| *g).unwrap_or(0)
+            + if *avatar == self.agent_id {
+                self.shape_preview_generation
+            } else {
+                0
+            }
     }
 
     /// Baked texture id for an avatar (by object index) and TE slot.

@@ -119,6 +119,62 @@ human's request (#261). An animation change may change the height envelope.
 
 Gestures: `aurora-assets/src/gesture.rs` reads/writes the bounded Firestorm v2 newline format. `gestures.rs` owns active definitions and a nonblocking playback state machine; `gestures/keys.rs` and `windows.rs` map SL key/mask and Windows virtual-key values and `builtins.rs` lists Firestorm's 69 stock animations. `app/gestures.rs` correlates loads/saves, restores login/COF gestures, preloads motion/sound assets and routes effects to the existing avatar/audio/chat systems. `ui/gestures.rs` and `ui/gestures/editor.rs` provide the Ctrl+G manager and independent draft editors through shared Aurora floaters. `ui/chat/completion.rs` selects inline trigger suffixes in both local-chat inputs, using the active manager's case-insensitive exact/common-prefix matching. Inventory links resolve to original items; activation labels are mirrored in `World::active_gestures`. Per-account enable/filter preferences live in settings; active gestures persist through the server. `aurora-net/src/session/gestures.rs` loads and parses on network/workers and sends the Firestorm activation/sound messages; uploads use UpdateGestureAgentInventory and inventory read-back.
 
+`shape_editor/` owns the worn shape draft. `catalog.rs` lists the 82 tweakable
+shape controls from the shipped `avatar_lad.xml`, including edit groups, order,
+sex filters, ranges and hint cameras; its test checks the catalogue against the
+XML. `aurora-assets/wearable.rs` parses the bounded LLWearable format and retains
+permissions, sale, textures and unknown sections when parameters are changed.
+`ui/shape.rs` uses Aurora's Floater, tabs, surfaces and modals, with visible-row
+virtualisation and a bottom-anchored Save As / Cancel / Save footer. The footer
+measures pending/status labels before the list receives the remaining height,
+so asynchronous saves and wrapped errors never enlarge the floater. `app/shape_editor.rs`
+opens it from Appearance, the self-avatar/attachment menu or the worn shape's
+inventory menu, restores the camera
+on closing and provides `AURORA_DEMO_SHAPE`.
+`shape_editor/camera.rs` frames the posed skeleton by category (whole body,
+head, torso or legs), using the existing camera transition.
+
+The draft overrides only our avatar's visual parameter view in `World`; incoming
+appearances stay authoritative underneath and Cancel restores the newest one.
+`shape_editor/preview.rs` shares compressed texture/mesh sources and the frozen
+local pose, decodes textures and mesh geometry on workers, applies the
+shape and joint overrides independently for visible minimum/maximum hints, then
+uses the ordinary `aurora-render/preview.rs` GPU pass without a readback. At most
+one snapshot and one hint batch are pending; stale replies are discarded and
+offscreen hint models are released. BOM visibility shares the world's system-part
+mask, with all bake slots mapped for the mesh faces. Static meshes follow their
+attachment joint and local parent chain. Content signatures exclude animation
+cycles and sort attachment identities; active snapshot/model keys remain separate
+from pending ones, so refreshes replace ready images without a loading flash.
+Decoded geometry is shared across texture updates; temporarily missing source
+bytes retain the same asset's ready geometry/pixels.
+Texture sources include progressive JPEG2000, cache-only BC7 and procedural
+demo pixels, with small decodes on workers and no frame-thread disk access.
+Reserved blank/transparent textures carry the world's exact one-pixel values
+without requiring a cached asset. Progressive JPEG2000 hints respect the level
+already decoded by the streamer. The preview pass draws opaque/masked parts
+before blended layers, whose pipeline does not write depth over the skin.
+`shape_editor/material.rs` resolves texture entries, legacy normal/alpha settings,
+PBR materials and face overrides, with BOM redirection and per-map UV transforms.
+Dragging updates the live avatar immediately; hints coalesce after release and
+180 ms without edits, and obsolete workers stop before the next comparison.
+Each slider's own endpoints ignore its current value. Immutable rigged vertices
+and indices are shared across models; the render preview cache also shares their
+GPU buffers and textures, releasing unused assets through weak owners.
+`shape_editor/demo.rs` builds rigged/static mesh-head fixtures on workers
+through the ordinary asset codec, including PBR and continuous-slider scenarios.
+The category row consumes discrete wheel events once per frame and accumulates
+trackpad deltas. Hint visibility and height units are saved
+in Settings. The main scene continues to use its normal shape/morph streaming.
+
+`aurora-net/session/wearable_save.rs` checks shape ownership and Modify/Copy,
+uploads the wearable through the existing AssetUpload/Xfer path, preserves item
+permissions for Save As through CopyInventoryItem, patches only the transaction
+`hash_id` through AIS and reads the resulting asset back before acknowledging
+success. Non-modifiable shapes can be copied only unchanged. Requests and replies
+are scoped by request/item/asset identities; failed saves retain the draft. A
+confirmed save uses the existing outfit/COF path to request server appearance.
+
 Account login: `login_accounts.rs` keeps the per-grid catalogue, each account's start location, remember preferences and last-place image reference without secrets, and merges changes under an OS file lock. `credentials.rs` stores password hashes and MFA authorizations in separate OS credential entries per grid/user; MFA expires after 30 days and is saved only when requested. `atomic_file.rs` publishes complete files through a unique temporary per write. `ui/login/carousel.rs` presents account cards with their own grid/start selectors, keyboard selection and the separate Add button. `ui/login/credentials_form.rs` shares the full first-account/Add form and the compact password/MFA prompt for existing profiles; registration happens after successful login. `ui/login/manager.rs` provides searchable portrait rows, saved account ordering and account-scoped credential removal, with confirmation keyed by identity. `ui/login/manager_drag.rs` tracks row gestures, insertion targets, a floating identity preview, Escape cancellation and edge scrolling; order changes happen once on release. Reordering moves identities in the latest lock-protected catalogue without replacing profile metadata or touching credentials. Login dialogs use `widgets::Modal::login_surface`: the existing GPU modal backdrop blurs the sky and lower account cards, with the login cards’ lighter tint inside the theme’s frame. Ordinary world modals retain their scene-glass markers; opaque skins skip the login blur. The floating drag preview shares `aurora_bg::frosted_pane` with login cards. `ui/login/derez.rs` prepares fragments on a background worker and batches them by GPU texture. `login_places.rs` resizes scene captures off the frame thread, publishes unique images atomically and loads bounded thumbnails; metadata updates only the matching grid/user/agent. Portraits and scene images (at most 512 pixels wide) live in each account's own folder. Place capture piggybacks on the existing scene capture at logout/quit, without interface overlays or a recurring readback.
 
 `ui/login/layout.rs` caps central cards at three and large-window growth at 22%, reserving neighbour previews and the right information column. `ui/login/chrome.rs` shares the version/news panels, compact information dialog and community/version footer between the account and legacy login screens.
