@@ -99,16 +99,6 @@ pub(super) fn icon_slot(ui: &mut egui::Ui, p: &Palette, icons: &Icons, rect: Rec
     resp
 }
 
-/// Reserve the island's surface under what is drawn next; `set_island`
-/// gives it its rectangle once the contents are laid out.
-fn reserve(ui: &egui::Ui) -> egui::layers::ShapeIdx {
-    ui.painter().add(egui::Shape::Noop)
-}
-
-fn set_island(ui: &egui::Ui, p: &Palette, slot: egui::layers::ShapeIdx, rect: Rect) {
-    ui.painter().set(slot, crate::ui::widgets::island_shape(ui.ctx(), p, rect));
-}
-
 /// A text laid out in the font of the islands' readouts.
 fn text(ui: &egui::Ui, s: String, size: f32, color: Color32) -> std::sync::Arc<egui::Galley> {
     ui.painter().layout_no_wrap(s, FontId::proportional(size), color)
@@ -225,9 +215,15 @@ pub fn top(
         let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
         slot_face(ui, p, wolf, resp.hovered() || open, false);
         paint_icon(ui, icons, "wolf", wolf, 18.0, p.ink);
-        menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-            main_menus(ui, p, panels, st, &mut action, true);
-        });
+        menu::dropdown_placed(
+            &resp,
+            p,
+            egui::PopupCloseBehavior::CloseOnClick,
+            Some((egui::RectAlign::BOTTOM_START, 10.0)),
+            |ui| {
+                main_menus(ui, p, panels, st, &mut action, true);
+            },
+        );
         resp.on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
         // the bug report next to it, when shown
         if st.show_bug_report {
@@ -257,11 +253,9 @@ fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect: Rect, bod
         .constrain(false)
         .fade_in(false)
         .show(ctx, |ui| {
-            let slot = reserve(ui);
+            ui.painter().add(crate::ui::widgets::island_shape(ui.ctx(), p, rect));
             ui.set_min_size(rect.size());
-            let out = body(ui);
-            set_island(ui, p, slot, rect);
-            out
+            body(ui)
         })
         .inner
 }
@@ -320,9 +314,15 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
         *action = BarAction::BuyCurrency;
     }
     demo_open(ui.ctx(), &status, super::demo::Open::Status);
-    menu::dropdown(&status, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-        status_menu_body(ui, p, st.status, action);
-    });
+    menu::dropdown_placed(
+        &status,
+        p,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        Some((egui::RectAlign::BOTTOM_START, 10.0)),
+        |ui| {
+            status_menu_body(ui, p, st.status, action);
+        },
+    );
     status.on_hover_text(status_tip(&st.status));
 }
 
@@ -436,4 +436,117 @@ fn system(
     )
     .on_hover_text(aurora_i18n::tr!("ui-bars-second-life-time-pacific"));
     audio_action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{IslandsLook, StatusInfo};
+    use super::*;
+
+    fn status(stretch: bool) -> StatusInfo<'static> {
+        StatusInfo {
+            show_bug_report: false,
+            show_huds: true,
+            hud_zoom: 1.0,
+            region: "Aurora Demo",
+            parcel: "Aurora Plaza",
+            tp_back: None,
+            tp_forward: None,
+            maturity: "",
+            position: glam::Vec3::new(132.0, 126.0, 33.0),
+            fps: 60.0,
+            flying: false,
+            seated: false,
+            ping_ms: 38,
+            balance: Some(1000),
+            voice: (crate::voice::VoiceLight::Off, String::new()),
+            slurl: String::new(),
+            status: Default::default(),
+            ban_lines: 0,
+            parcel_icons: Vec::new(),
+            local_env: false,
+            double_click: Default::default(),
+            marketplace: false,
+            parcel_landmark: None,
+            classic_bars: false,
+            islands: IslandsLook {
+                stretch,
+                rights_text: false,
+            },
+            own_name: "Aurora Demo",
+            own_pic: None,
+            recent: Vec::new(),
+        }
+    }
+
+    /// Two frames of the islands in a 1536 × 864 screen, the pointer at
+    /// `pointer`; the areas' rectangles by name.
+    fn frames(stretch: bool, pointer: Pos2) -> (egui::Context, impl Fn(&str) -> Rect) {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let settings = crate::settings::Settings::default();
+        let mut panels = Panels::from_settings(&settings);
+        let mut audio = settings.audio.clone();
+        let mut audio_ui = crate::ui::audio::AudioUi::default();
+        let mut notif = crate::ui::notifications::NotifUi::default();
+        let st = status(stretch);
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1536.0, 864.0))),
+                events: vec![egui::Event::PointerMoved(pointer)],
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                top(
+                    ui,
+                    &p,
+                    &icons,
+                    &mut panels,
+                    &st,
+                    &mut audio,
+                    &mut audio_ui,
+                    Default::default(),
+                    &mut notif,
+                    BellState::default(),
+                );
+            });
+            out.textures_delta.clear();
+        }
+        let c = ctx.clone();
+        let rect = move |name: &str| {
+            c.memory(|m| m.area_rect(Id::new(("bars_island", name))))
+                .unwrap_or_else(|| panic!("no {name} island"))
+        };
+        (ctx, rect)
+    }
+
+    /// The islands stand 8 px from the edges and from each other; stretched,
+    /// the place reaches the account island.
+    #[test]
+    fn the_islands_line_up_8_px_apart() {
+        let (_, rect) = frames(true, Pos2::new(700.0, 400.0));
+        let (menu, place, account, system, bell) = (rect("menu"), rect("place"), rect("account"), rect("system"), rect("bell"));
+        assert_eq!((menu.left(), menu.top(), menu.height()), (MARGIN, MARGIN, HEIGHT));
+        assert_eq!(bell.right(), 1536.0 - MARGIN);
+        for (a, b) in [(menu, place), (place, account), (account, system), (system, bell)] {
+            assert_eq!(b.left() - a.right(), MARGIN, "{a:?} {b:?}");
+        }
+        assert_eq!(
+            work_area(Rect::from_min_size(Pos2::ZERO, Vec2::new(1536.0, 864.0)), 834.0).top(),
+            52.0
+        );
+    }
+
+    /// The pointer over an island is over the interface; between the
+    /// islands (the place not stretched), over the world.
+    #[test]
+    fn an_island_takes_the_pointer_the_gap_between_them_does_not() {
+        let (ctx, rect) = frames(true, Pos2::new(20.0, 20.0));
+        assert!(ctx.is_pointer_over_egui(), "the menu island");
+        let (account, place) = (rect("account"), rect("place"));
+        let (ctx, rect) = frames(false, Pos2::new(account.left() - 30.0, 20.0));
+        assert!(rect("place").right() < account.left() - 30.0, "{place:?}");
+        assert!(!ctx.is_pointer_over_egui(), "between the place and the account");
+    }
 }

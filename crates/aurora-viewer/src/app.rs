@@ -7261,7 +7261,8 @@ impl App {
     }
 
     /// The last places of the teleport history for the place menu, newest
-    /// first, without the one we stand in (its last entry): three at most.
+    /// first, without the one we stand in (its last entry): two, as in the
+    /// mockup.
     fn recent_places(&self) -> Vec<ui::bars::RecentPlace> {
         self.world
             .tp_storage
@@ -7269,7 +7270,7 @@ impl App {
             .iter()
             .rev()
             .skip(1)
-            .take(3)
+            .take(2)
             .map(|item| {
                 let (name, region) = match item.title.rsplit_once(", ") {
                     Some((name, region)) => (name.to_owned(), region.to_owned()),
@@ -8015,8 +8016,9 @@ impl App {
                 let parcel_landmark = self.parcel_landmark();
                 let (classic_bars, islands) = self.bars_look();
                 let own_name = self.world.own_name();
-                // AURORA_DEMO_BARS: the long parcel name of the mockup
-                let parcel_name = if self.demo && ui::bars::demo::get().on {
+                // AURORA_DEMO_BARS: the long parcel name of the mockup (the
+                // islands only: Firestorm's bars stay as they were)
+                let parcel_name = if self.demo && ui::bars::demo::get().on && !classic_bars {
                     aurora_i18n::tr!("demo-bars-parcel")
                 } else {
                     self.world.parcel_name.as_str()

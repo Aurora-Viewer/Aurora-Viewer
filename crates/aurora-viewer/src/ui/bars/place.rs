@@ -295,15 +295,21 @@ fn favorites_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, rect: Rect, s
     paint_icon(ui, icons, "chevron-down", caret, CARET, ink);
     demo_open(ui.ctx(), &resp, super::demo::Open::Favorites);
     let mut out = None;
-    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-        let in_favorites = st.parcel_landmark.as_ref().is_some_and(|lm| lm.favorite);
-        if menu::item_if(ui, p, "star-filled", aurora_i18n::tr!("landmark-star-add-favorites"), !in_favorites) {
-            out = Some(BarAction::LandmarkStar(StarAction::AddFavorite));
-        }
-        if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-bars-open-favorites")) {
-            out = Some(BarAction::OpenFavorites);
-        }
-    });
+    menu::dropdown_placed(
+        &resp,
+        p,
+        egui::PopupCloseBehavior::CloseOnClick,
+        Some((egui::RectAlign::BOTTOM_START, 10.0)),
+        |ui| {
+            let in_favorites = st.parcel_landmark.as_ref().is_some_and(|lm| lm.favorite);
+            if menu::item_if(ui, p, "star-filled", aurora_i18n::tr!("landmark-star-add-favorites"), !in_favorites) {
+                out = Some(BarAction::LandmarkStar(StarAction::AddFavorite));
+            }
+            if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-bars-open-favorites")) {
+                out = Some(BarAction::OpenFavorites);
+            }
+        },
+    );
     resp.on_hover_text(aurora_i18n::tr!("common-favorites"));
     out
 }
@@ -331,9 +337,15 @@ fn star_slot(ui: &mut egui::Ui, p: &Palette, icons: &Icons, rect: Rect, st: &Sta
     paint_icon(ui, icons, "star", rect, ICON, slot_ink(p, hot, true));
     demo_open(ui.ctx(), &resp, super::demo::Open::Star);
     let mut out = None;
-    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-        out = super::star_menu(ui, p);
-    });
+    menu::dropdown_placed(
+        &resp,
+        p,
+        egui::PopupCloseBehavior::CloseOnClick,
+        Some((egui::RectAlign::BOTTOM_END, 10.0)),
+        |ui| {
+            out = super::star_menu(ui, p);
+        },
+    );
     resp.on_hover_text(aurora_i18n::tr!("landmark-star-add"));
     out
 }
@@ -421,12 +433,18 @@ fn place(
     }
 
     demo_open(ui.ctx(), &resp, super::demo::Open::Place);
-    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-        if let Some(a) = place_menu(ui, p, icons, panels, st) {
-            action = Some(a);
-            ui.close();
-        }
-    });
+    menu::dropdown_placed(
+        &resp,
+        p,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        Some((egui::RectAlign::BOTTOM_START, 10.0)),
+        |ui| {
+            if let Some(a) = place_menu(ui, p, icons, panels, st) {
+                action = Some(a);
+                ui.close();
+            }
+        },
+    );
     let resp = resp.on_hover_text(aurora_i18n::tr!("ui-bars-place-menu-tip"));
     place_options(&resp, p, st, &mut action);
     action

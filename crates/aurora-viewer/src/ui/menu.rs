@@ -129,10 +129,27 @@ pub fn context_menu(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut U
 /// `menu_button` closes on any of them, `CloseOnClickOutside` leaves the menu
 /// open until an entry closes it. Returns whether the menu is open.
 pub fn dropdown(resp: &egui::Response, p: &Palette, close: PopupCloseBehavior, body: impl FnOnce(&mut Ui)) -> bool {
+    dropdown_placed(resp, p, close, None, body)
+}
+
+/// [`dropdown`] at a given side of the widget and distance from it: the
+/// menus of the bars' islands open 10 points under their island, those at
+/// its right end aligned on its right (`RectAlign::BOTTOM_END`).
+pub fn dropdown_placed(
+    resp: &egui::Response,
+    p: &Palette,
+    close: PopupCloseBehavior,
+    place: Option<(egui::RectAlign, f32)>,
+    body: impl FnOnce(&mut Ui),
+) -> bool {
     use egui::containers::menu::MenuConfig;
     // the tag hands the same style and rule to the sub-menus
     let config = MenuConfig::new().close_behavior(close).style(style(p));
-    Popup::menu(resp)
+    let mut popup = Popup::menu(resp);
+    if let Some((align, gap)) = place {
+        popup = popup.align(align).gap(gap);
+    }
+    popup
         .close_behavior(close)
         .style(style(p))
         .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(MenuConfig::MENU_CONFIG_TAG, config))

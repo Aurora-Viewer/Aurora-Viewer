@@ -412,6 +412,29 @@ mod tests {
         assert!(!parcel_icons(&s)[3].ok);
     }
 
+    /// The place menu writes the first clause of a tooltip, in both languages'
+    /// punctuation; each right has a short name for the place island.
+    #[test]
+    fn a_right_reads_in_a_few_words() {
+        assert_eq!(
+            headline("Vol interdit sur cette parcelle : vous ne pouvez pas voler ici."),
+            "Vol interdit sur cette parcelle"
+        );
+        assert_eq!(
+            headline("Flight disabled on this parcel: you cannot fly here."),
+            "Flight disabled on this parcel"
+        );
+        assert_eq!(headline("Scripts allowed"), "Scripts allowed");
+        assert_eq!(
+            headline("Aucun script ne fonctionne dans cette région."),
+            "Aucun script ne fonctionne dans cette région"
+        );
+        let parcel = ParcelInfo::default();
+        for it in parcel_icons(&state(0, &parcel)) {
+            assert!(!it.name.is_empty() && it.name.len() < it.tip.len(), "{}", it.icon);
+        }
+    }
+
     #[test]
     fn hidden_avatars_and_health() {
         let parcel = ParcelInfo {
