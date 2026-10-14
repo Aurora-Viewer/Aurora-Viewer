@@ -39,6 +39,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     } else {
         PhotoWindowStyle::Legacy
     };
+    s.classic_about_land = !aurora;
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -401,6 +402,16 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             };
             c = true;
         }
+        between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-about-land"),
+            aurora_i18n::tr!("ui-options-aurora-about-land-help"),
+            aurora_i18n::tr!("ui-options-aurora-about-land-aurora"),
+            aurora_i18n::tr!("ui-options-aurora-about-land-classic"),
+            &mut s.classic_about_land,
+        );
     });
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-gaze"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -483,6 +494,7 @@ mod tests {
         assert_eq!(s.world_map_style, WorldMapStyle::Legacy);
         assert!(s.classic_profiles);
         assert_eq!(s.photo_window, PhotoWindowStyle::Legacy);
+        assert!(s.classic_about_land, "About Land opens Firestorm's nine tabs");
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
         set_all(&mut s, Look::Aurora);
         let fresh = Settings::default();
@@ -496,6 +508,8 @@ mod tests {
         assert_eq!(s.classic_profiles, fresh.classic_profiles);
         assert_eq!(s.photo_window, PhotoWindowStyle::Aurora);
         assert_eq!(fresh.photo_window, PhotoWindowStyle::Aurora);
+        assert_eq!(s.classic_about_land, fresh.classic_about_land);
+        assert!(!fresh.classic_about_land, "the Aurora About Land is the default");
         assert!(s.plates_friends_only_full);
     }
 
@@ -564,6 +578,7 @@ mod tests {
             "ui-options-aurora-notifications",
             "ui-options-aurora-world-map",
             "ui-options-aurora-profiles",
+            "ui-options-aurora-about-land",
             "ui-options-aurora-gaze",
             "ui-options-aurora-aim",
             "ui-options-aurora-avatar-plates",
@@ -585,6 +600,7 @@ mod tests {
             "ui-options-aurora-halo",
             "ui-options-aurora-world-map-full",
             "ui-options-aurora-profiles-aurora",
+            "ui-options-aurora-about-land-aurora",
             "ui-options-aurora-aim-point",
             "ui-options-aurora-animated-bell",
         ] {

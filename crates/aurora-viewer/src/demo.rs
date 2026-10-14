@@ -1458,11 +1458,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // two groups, and someone starts a chat in the first one
         aurora_net::NetCommand::RequestGroups => {
             // GP_SESSION_JOIN: the group chat can be opened from Contacts
+            // AURORA_DEMO_LAND=…:officer adds the land powers of the parcel's group
             let g = |id: Uuid, name: &str, notices: bool| aurora_net::GroupMembership {
                 id,
                 name: name.into(),
                 insignia: Uuid::nil(),
-                powers: 1 << 16,
+                powers: 1 << 16 | land::group_powers(id),
                 accept_notices: notices,
                 list_in_profile: true,
                 contribution: 0,
