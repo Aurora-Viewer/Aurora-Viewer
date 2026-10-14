@@ -1,7 +1,7 @@
 //! Attachment-driven grounding in a neutral pose. This extends Firestorm's
 //! manual LLFloaterHoverHeight / LLVOAvatarSelf::sendHoverHeight: animations
 //! never drive the estimate, and only rendered vertices with foot weights count.
-use super::{GpuGeom, Scene, anim, avatar::AvatarLibrary, shape};
+use super::{GpuGeom, Scene, anim, avatar::AvatarLibrary};
 use crate::world::World;
 use aurora_assets::{MeshFace, SkinInfo};
 use aurora_render::SkinVertex;
@@ -114,6 +114,9 @@ impl Scene {
         if owner.parent_id != 0 || world.agent.flying {
             return;
         }
+        if !owner.scale.z.is_finite() || owner.scale.z <= 0.0 {
+            return;
+        }
         let Some(skeleton) = self.skeletons.get(&world.agent_id) else {
             return;
         };
@@ -133,7 +136,7 @@ impl Scene {
             state.base = Some(skeleton.base.clone());
         }
         state.base_hash.hash(&mut hash);
-        bits(&[skeleton.shape_dz], &mut hash);
+        bits(&[skeleton.shape_dz, owner.scale.z], &mut hash);
         let matrices = &self.auto_hover.matrices;
         let mut surfaces = Vec::new();
         let mut ready = true;
@@ -234,11 +237,14 @@ impl Scene {
         if !ready || state.pending || state.finished == Some(signature) || now.duration_since(state.changed) < SETTLE {
             return;
         }
-        let (_, height) = shape::body_size(rig, &skeleton.base.local_pos, &skeleton.base.scale);
         let estimate = Estimate {
             lib: self.avatar_lib.clone(),
             base: skeleton.base.clone(),
-            ground: self.avatar_lib.pelvis.z - skeleton.shape_dz - 0.5 * height,
+            // The simulator places the object's physical centre half its
+            // reported scale above the floor (World::avatar_floor). The
+            // shaped skeleton's computed height can differ: using it here
+            // raised every type of shoe by half that difference (~10 cm).
+            ground: self.avatar_lib.pelvis.z - skeleton.shape_dz - 0.5 * owner.scale.z,
             surfaces,
         };
         state.pending = true;
@@ -596,6 +602,48 @@ mod tests {
     }
 
     #[test]
+    fn simulator_physical_height_places_the_lowest_shoe_vertex_on_the_floor() {
+        let (mut world, mut scene, now) = fixture();
+        let lib = world.avatar_lib.clone();
+        crate::demo::auto_hover::install_mesh(&lib, &mut scene).unwrap();
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::auto_hover::rigged_object()],
+        });
+        let owner = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let physical_height = 1.9;
+        let avatar = world.objects.get_mut(owner).unwrap();
+        avatar.scale.z = physical_height;
+        avatar.position.z = 0.5 * physical_height; // physics centre above a floor at z = 0
+        world.agent.position.z = 0.5 * physical_height;
+        scene.palette_base(world.agent_id);
+        scene.neutral_pose_test = Some(true);
+        scene.update_poses(&mut world, Vec3::ZERO, now);
+        settle(&mut scene, &mut world, now);
+        let (data, skin) = scene.meshes.preview_source(&crate::demo::auto_hover::MESH);
+        let data = data.unwrap();
+        let header = aurora_assets::parse_mesh_header(&data).unwrap();
+        let faces = aurora_assets::decode_mesh_lod(aurora_assets::mesh::section_bytes(&data, header.lods[3].unwrap()).unwrap()).unwrap();
+        let lowest = mesh_min(&faces, skin.as_deref(), None, &lib.rig, &scene.auto_hover.matrices).unwrap();
+        let root = Scene::object_transform(&world, owner, now, 0).unwrap().0;
+        let bottom_world = root.z - lib.pelvis.z + lowest;
+        assert!(
+            bottom_world.abs() < 1e-5,
+            "shoe must touch the physical floor, bottom = {bottom_world:.6} m"
+        );
+        let previous = world.hover_height.value();
+        world.objects.get_mut(owner).unwrap().scale.z += 0.2;
+        world.agent.position.z += 0.1;
+        settle(&mut scene, &mut world, now + Duration::from_secs(1));
+        assert!(
+            (world.hover_height.value() - previous + 0.1).abs() < 1e-5,
+            "late physics height must invalidate the cached estimate"
+        );
+        let root = Scene::object_transform(&world, owner, now, 0).unwrap().0;
+        assert!((root.z - lib.pelvis.z + lowest).abs() < 1e-5);
+    }
+
+    #[test]
     fn loading_detach_stale_results_seating_and_disable_do_not_apply_old_heights() {
         let (mut world, mut scene, now) = fixture();
         world.hover_height.preview(0.42);
@@ -679,8 +727,13 @@ mod tests {
         let skeleton = &scene.skeletons[&world.agent_id];
         let matrices = &scene.auto_hover.matrices;
         let foot = matrices[scene.avatar_lib.rig.names["mFootLeft"]].w_axis.z;
-        let (_, height) = shape::body_size(&scene.avatar_lib.rig, &skeleton.base.local_pos, &skeleton.base.scale);
-        let ground = scene.avatar_lib.pelvis.z - skeleton.shape_dz - 0.5 * height;
+        let physical_height = world
+            .objects
+            .get(world.objects.index_of_uuid(&world.agent_id).unwrap())
+            .unwrap()
+            .scale
+            .z;
+        let ground = scene.avatar_lib.pelvis.z - skeleton.shape_dz - 0.5 * physical_height;
         assert!(
             (world.hover_height.value() - (ground - foot + 0.22)).abs() < 1e-5,
             "linked heel must be the lowest point"

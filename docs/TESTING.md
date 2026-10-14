@@ -263,6 +263,10 @@ when unfocused") is ignored during a screenshot.
   the committed adjustment, then teleport and reconnect to check persistence.
   `auto-static` adds two rigid soles with a linked heel at frame 620;
   the `auto-*` scenarios frame the feet at 600, after the login camera reset.
+  Their avatar reports a 1.68 m physics height, matching the offline
+  simulation's 0.84 m centre clearance; the generic fixture's 1.9 m size
+  does not match that simulation. Grounding uses the simulator-reported
+  physical height, not the independently computed shaped skeleton height.
   `auto-static-off` repeats it with automatic adjustment disabled for comparison;
   `auto-rigged` adds a rigged shoe mesh on the spine with an unrelated low
   triangle whose foot weights are zero (it must not lift the avatar).

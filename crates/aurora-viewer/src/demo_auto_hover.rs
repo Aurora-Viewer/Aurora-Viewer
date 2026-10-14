@@ -134,6 +134,16 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
     if !mode.starts_with("auto-") {
         return;
     }
+    if frame == 600
+        && let Some(avatar) = world
+            .objects
+            .index_of_uuid(&world.agent_id)
+            .and_then(|index| world.objects.get_mut(index))
+    {
+        // Match AgentState::simulate_locally's 0.84 m centre clearance.
+        // The generic avatar fixture reports 1.9 m despite this physics.
+        avatar.scale.z = 1.68;
+    }
     if frame == 620 {
         let objects = if mode == "auto-rigged" {
             if let Err(error) = install_mesh(&world.avatar_lib, scene) {
