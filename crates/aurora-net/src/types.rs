@@ -682,6 +682,11 @@ pub enum NetEvent {
     },
     /// ClassifiedInfoReply.
     ClassifiedInfo(Box<crate::ClassifiedInfo>),
+    /// The answer of SearchStatRequest for one of our classifieds.
+    ClassifiedStats {
+        id: Uuid,
+        stats: crate::profile::ClassifiedStats,
+    },
     /// ParcelInfoReply (LLRemoteParcelInfoProcessor).
     ParcelInfo(Box<crate::ParcelSummary>),
     /// One reply packet of a directory search (Dir*Reply).
@@ -1337,6 +1342,17 @@ pub enum NetCommand {
     ClassifiedsRequest(Uuid),
     ClassifiedInfoRequest(Uuid),
     ClassifiedDelete(Uuid),
+    /// Create or save one of our classifieds (ClassifiedInfoUpdate,
+    /// LLPanelProfileClassified::sendUpdate): a new one is paid
+    /// `price` L$ by the simulator.
+    ClassifiedUpdate(Box<crate::ClassifiedInfo>),
+    /// The clicks on one of our classifieds (SearchStatRequest capability).
+    ClassifiedStatsRequest(Uuid),
+    /// A click to report (SearchStatTracking capability).
+    ClassifiedClick {
+        kind: crate::profile::ClassifiedClick,
+        classified: Box<crate::ClassifiedInfo>,
+    },
     /// ParcelInfoRequest (name and region of a pick's parcel, place details).
     ParcelInfoRequest(Uuid),
     /// A directory search (search.rs): `id` names the query in its replies,

@@ -1302,6 +1302,13 @@ impl App {
                 self.world.inventory.add_items(vec![crate::demo::offered_item(parent, *owner)]);
                 return;
             }
+            // a new classified is paid when it is published, as the
+            // simulator does on the grid
+            if let Some(price) = crate::demo::classifieds::price_of_new(&cmd)
+                && let Some(balance) = self.world.balance
+            {
+                self.world.apply(NetEvent::Balance(balance - price));
+            }
             for mut ev in crate::demo::demo_reply(&cmd) {
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
                     crate::demo::hud::preserve_touch_transform(&self.world, &mut ev);

@@ -67,6 +67,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "RenderMaterials",
     "RequestTaskInventory",
     "ResourceCostSelected",
+    // the clicks of a classified (LLPanelProfileClassified)
+    "SearchStatRequest",
+    "SearchStatTracking",
     // abuse reports, with or without their screenshot (sendReportViaCaps)
     "SendUserReport",
     "SendUserReportWithScreenshot",

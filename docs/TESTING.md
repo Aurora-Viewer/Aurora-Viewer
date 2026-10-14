@@ -1315,7 +1315,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
-| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact]` | An avatar's profile window |
+| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -1983,6 +1983,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   - my profile: `self`, then `self:edit` (camera button, pencil, About
     editor, Visibility, the unsaved bar once About is changed);
   - compact: `wolf:compact` (icons in a row, the tabs in a drop-down list).
+
+  Options add up, separated by `:` (`self:edit:2`). The other tabs:
+  `friend:2` (Nova's favorite places, featured place over thumbnails),
+  `friend:3` (two classifieds, the first one unfolded), `friend:4` (first
+  life picture and text), `friend:5` (notes), `nova:2|3|4` (the empty
+  states), `self:edit:2` (our places in their form, the card that adds
+  one), `self:edit:3:form` (our classified in its form, with its clicks)
+  and `self:3:publish` (a new classified and the strip that asks its
+  price). Publishing takes the price from the demo balance; the demo keeps
+  our classifieds for the run.
 - **`AURORA_DEMO_FEED=<url>`**: the user name and `/?feed_only=true`
   are appended to the address; a `data:` URL can put them in a comment.
 - **`AURORA_DEMO_LAND=<tab>[:role][:classic]`**: the pages of Aurora's
