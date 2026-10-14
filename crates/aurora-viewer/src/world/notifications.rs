@@ -166,6 +166,10 @@ pub enum Data {
     Call {
         invite: Box<aurora_net::VoiceInvite>,
     },
+    /// The restart of the agent's region (RegionRestartMinutes /
+    /// RegionRestartSeconds, show_toast="false"): pinned at the top of "To
+    /// do" with the live count while the alert counts (`region_restart.rs`).
+    RegionRestart,
 }
 
 /// What the question of an experience shows besides the permissions.
@@ -192,6 +196,9 @@ pub struct Notification {
     /// Shown as a toast only: never listed under the bell nor counted, and
     /// dropped when its toast ends.
     pub transient: bool,
+    /// Listed without a toast (a notification of Firestorm with
+    /// show_toast="false"): it waits under the bell.
+    pub quiet: bool,
     /// A region's rating (SIM_ACCESS_*) the entry is about, shown as the
     /// navigation bar's badge (0: none).
     pub maturity: u8,
@@ -279,7 +286,7 @@ impl Notification {
     /// inventory offer is kept.
     pub fn close_declines(&self) -> bool {
         match &self.data {
-            Data::None | Data::Url(_) | Data::Presence { .. } | Data::Message { .. } => false,
+            Data::None | Data::Url(_) | Data::Presence { .. } | Data::Message { .. } | Data::RegionRestart => false,
             Data::Inventory { object, .. } => object.is_nil(),
             _ => true,
         }
@@ -367,6 +374,7 @@ impl Notifications {
             data,
             text: String::new(),
             transient: false,
+            quiet: false,
             maturity: 0,
         });
         if self.list.len() > MAX {

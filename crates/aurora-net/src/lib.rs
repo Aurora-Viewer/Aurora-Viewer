@@ -21,6 +21,7 @@ pub mod objects;
 pub mod offline_im;
 pub mod outfits;
 pub mod profile;
+pub mod region_restart;
 pub mod scripts;
 pub mod search;
 mod session;

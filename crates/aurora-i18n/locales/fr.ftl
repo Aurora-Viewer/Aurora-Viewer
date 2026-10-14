@@ -1848,6 +1848,19 @@ keybinds-left-arrow = Flèche gauche
 keybinds-up-arrow = Flèche haut
 ui-options-arrows-strafe = Flèches : pas latéraux
 ui-options-loading-backdrop = Fond des chargements
+ui-options-reduce-motion = Réduire les animations
+ui-options-reduce-motion-help = Les pulsations, les secousses et les indicateurs qui tournent restent immobiles (alerte de redémarrage de région).
+ui-options-region-restart = Redémarrage de région
+ui-options-region-restart-alert = Afficher l'alerte de redémarrage
+ui-options-region-restart-alert-help = Compte à rebours, Domicile et repères. Désactivée : un simple toast à chaque avis du simulateur.
+ui-options-region-restart-shake = Secousse à l'apparition
+ui-options-region-restart-shake-help = L'alerte tremble une fois. « La vue » secoue la caméra comme Firestorm.
+ui-options-region-restart-shake-alert = L'alerte
+ui-options-region-restart-shake-view = La vue
+ui-options-region-restart-shake-none = Aucune
+ui-options-region-restart-announce = Annoncer sur un canal
+ui-options-region-restart-announce-help = Pour les HUD et scripts : chuchote region_restart_in:<secondes> sur ce canal.
+ui-options-region-restart-channel = Canal (473405 par défaut)
 ui-options-environment-fade = Fondu de l'environnement
 demo-fountain = Fontaine
 build-ui-tools-force = Force
@@ -3065,6 +3078,65 @@ keybinds-move-backward = Reculer
 build-ui-floaters-automatically-resize-media-to-the-object-face = Redimensionnement automatique du média à la taille de la face de l'objet
 world-mod-redirecting-to-another-location = Redirection vers un autre emplacement…
 ui-sound-region-restart = Redémarrage de la région
+ui-sound-region-restart-opensim = Redémarrage de la région (OpenSim)
+region-restart-title = Redémarrage de la région
+region-restart-before = avant le redémarrage
+region-restart-seconds = secondes
+region-restart-seconds-short = { $seconds } s
+region-restart-calm-title = { $region } va redémarrer
+region-restart-calm-text = Si vous restez dans la région, vous serez déconnecté.
+region-restart-near-title = Plus qu'une minute
+region-restart-near-text = Partez { $elide ->
+        [yes] d'{ $region }
+       *[other] de { $region }
+    } pour rester connecté.
+region-restart-red-title = Partez maintenant
+region-restart-red-text = { $region } redémarre dans moins de 30 secondes.
+region-restart-final-title = Redémarrage imminent
+region-restart-final-text = Restez dans { $region } et vous serez déconnecté.
+region-restart-zero-title = { $region } redémarre
+region-restart-zero-text = Si vous êtes encore ici, la connexion va se couper.
+region-restart-cancelled-title = Redémarrage annulé
+region-restart-cancelled-text = Un gérant a annulé le redémarrage { $elide ->
+        [yes] d'{ $region }
+       *[other] de { $region }
+    }.
+region-restart-left-title = Vous avez quitté { $region }
+region-restart-left-text = Arrivée : { $arrival }. L'alerte se ferme.
+region-restart-minimize = Réduire
+region-restart-show = Afficher l'alerte
+region-restart-search = Chercher un repère…
+region-restart-recent = Récents
+region-restart-no-landmark = Aucun repère trouvé
+region-restart-neighbour = Région voisine : { $region }
+region-restart-suggestion = proposition
+region-restart-last-place = Dernier lieu : { $place }
+region-restart-all-landmarks = Tous les repères…
+region-restart-manager = Vous gérez cette région
+region-restart-cancel = Annuler le redémarrage
+region-restart-region-estate = Région / Domaine ›
+region-restart-cancel-confirm-title = Annuler le redémarrage ?
+region-restart-cancel-confirm-text = { $region } ne redémarrera pas, et les résidents présents en seront avertis.
+region-restart-keep = Garder le redémarrage
+region-restart-pinned = épinglée
+region-restart-chat = La région où vous êtes est sur le point de redémarrer. Si vous restez, vous serez déconnecté.
+region-restart-chat-zero = La région redémarre.
+region-restart-chat-cancelled = Le redémarrage de la région a été annulé.
+region-restart-toast-minutes = La région « { $region } » va redémarrer dans { $count } { $count ->
+        [one] minute
+       *[other] minutes
+    }. Si vous y restez au moment de l'arrêt, vous serez déconnecté.
+region-restart-toast-seconds = La région « { $region } » va redémarrer dans { $count } { $count ->
+        [one] seconde
+       *[other] secondes
+    }. Si vous y restez au moment de l'arrêt, vous serez déconnecté.
+region-restart-disconnected = { $region } a redémarré : la connexion a été coupée.
+region-restart-legacy-text =
+    La région dans laquelle vous vous trouvez actuellement ({ $region }) est sur le point de redémarrer.
+    Si vous restez dans cette région, vous serez déconnecté(e).
+region-restart-legacy-seconds = Secondes avant le redémarrage
+region-restart-legacy-landmarks = Mes Repères
+region-restart-legacy-teleport = Se téléporter au repère
 ui-options-planar-scene-reflection-high-and-ultra-are-costly = Reflet plan du décor ; Haute et Ultra coûtent cher
 ui-options-reflections = Reflets
 ui-options-water-reflections = Reflets de l'eau
@@ -3322,6 +3394,7 @@ build-ui-object-sculptie = Sculptie
 ui-perf-scene = Scène
 ui-options-entire-scene = Scène complète
 ui-login-log-in = Se connecter
+ui-login-reconnect = Se reconnecter
 ui-bars-log-out = Se déconnecter
 common-stand-up = Se lever
 ui-login-remember-me = Se souvenir de moi
@@ -3777,6 +3850,7 @@ ui-profile-real-life = Vie RL
 ui-profile-second-life = Vie SL
 demo-come-see-the-lagoon-at-sunset = Viens voir le lagon au coucher du soleil !
 demo-toast-hello = Coucou ! Je suis sur la place 😄
+demo-restart-toast = Tu viens au concert ce soir ?
 demo-toast-are-you-there = Tu es là ? Viens voir la nouvelle fontaine ✨
 demo-toast-group-message = La réunion commence dans dix minutes sur la scène
 demo-notifs-lantern = Une lanterne en papier
@@ -5287,6 +5361,10 @@ ui-options-aurora-controls = Contrôles caméra et déplacement
 ui-options-aurora-controls-help = Les fenêtres Caméra et Déplacement.
 ui-options-aurora-controls-aurora = Aurora
 ui-options-aurora-controls-classic = Fenêtres classiques (Firestorm)
+ui-options-aurora-restart-alert = Alerte de redémarrage
+ui-options-aurora-restart-alert-help = Carte avec compte à rebours, ou boîte jaune centrée comme Firestorm.
+ui-options-aurora-restart-card = Carte
+ui-options-aurora-restart-classic = Boîte jaune (Firestorm)
 ui-options-aurora-gaze = Regard
 ui-options-aurora-aim = Où va votre regard
 ui-options-aurora-aim-help = Votre avatar regarde le point exact sous le curseur, ou tourne la tête vers le côté du curseur comme Firestorm.

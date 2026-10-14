@@ -31,8 +31,11 @@ enum End<'a> {
     None,
     Caret,
     Check(bool),
-    /// The keys of the entry's shortcut.
+    /// The keys of the entry's shortcut, or a detail of the entry (where a
+    /// landmark leads), muted at the right end.
     Keys(&'a str),
+    /// A small label in the brand teal (a suggestion).
+    Tag(&'a str),
 }
 
 /// Rows of the menu opened with [`popup_at`], for the hover sounds of the
@@ -195,9 +198,11 @@ fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: En
             let color = if enabled { p.muted } else { p.muted_dim };
             Some(ui.painter().layout_no_wrap(keys.to_owned(), FontId::proportional(11.5), color))
         }
+        End::Tag(tag) => Some(ui.painter().layout_no_wrap(tag.to_owned(), FontId::proportional(10.5), p.teal)),
         _ => None,
     };
-    let right = keys.as_ref().map_or(RIGHT, |k| k.size().x + PAD * 2.0);
+    let tag_room = if matches!(end, End::Tag(_)) { TAG_PAD * 2.0 } else { 0.0 };
+    let right = keys.as_ref().map_or(RIGHT, |k| k.size().x + PAD * 2.0 + tag_room);
     let natural = (PAD + ICON + PAD + galley.size().x + right + PAD).max(MIN_W);
     // natural width while egui measures the menu, then the menu's width
     let w = if ui.is_sizing_pass() {
@@ -241,8 +246,61 @@ fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: En
                 painter.galley(pos, keys, p.muted);
             }
         }
+        End::Tag(_) => {
+            if let Some(tag) = keys {
+                let pill = egui::Rect::from_min_size(
+                    egui::pos2(rect.right() - PAD - tag.size().x - TAG_PAD * 2.0, rect.center().y - 8.0),
+                    Vec2::new(tag.size().x + TAG_PAD * 2.0, 16.0),
+                );
+                painter.rect_filled(pill, ui.visuals().window_corner_radius, p.teal.gamma_multiply(0.12));
+                super::widgets::paint_ink_centered(painter, tag, pill.center(), p.teal);
+            }
+        }
     }
     resp
+}
+
+/// Horizontal room inside a tag.
+const TAG_PAD: f32 = 6.0;
+
+/// Entry with a detail at its right end (where a landmark leads); true when
+/// clicked (the menu closes).
+pub fn item_detail(ui: &mut Ui, p: &Palette, icon: &str, label: &str, detail: &str) -> bool {
+    let clicked = row(ui, p, icon, label, true, End::Keys(detail), false).clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
+/// Entry with a small teal tag at its right end (a suggestion); true when
+/// clicked (the menu closes).
+pub fn item_tag(ui: &mut Ui, p: &Palette, icon: &str, label: &str, tag: &str) -> bool {
+    let clicked = row(ui, p, icon, label, true, End::Tag(tag), false).clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
+/// The title of a group of entries: small capitals, muted.
+pub fn section(ui: &mut Ui, p: &Palette, title: &str) {
+    let galley = ui.painter().layout_no_wrap(
+        title.to_uppercase(),
+        FontId::new(10.5, super::fonts::semibold(ui.ctx())),
+        p.muted_dim,
+    );
+    let w = if ui.is_sizing_pass() {
+        (galley.size().x + PAD * 2.0).max(MIN_W)
+    } else {
+        ui.available_width()
+    };
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 18.0), Sense::hover());
+    ui.painter().galley(
+        egui::pos2(rect.left() + PAD - 1.0, rect.bottom() - galley.size().y - 1.0),
+        galley,
+        p.muted_dim,
+    );
 }
 
 fn paint_icon(painter: &egui::Painter, icon: &str, rect: egui::Rect, tint: Color32) {

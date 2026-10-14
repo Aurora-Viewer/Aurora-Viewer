@@ -1132,6 +1132,23 @@ impl Session<'_> {
                 m.info.landmark_id = uuid::Uuid::nil();
                 self.send_main(&m, true);
             }
+            NetCommand::CancelRegionRestart => {
+                // LLPanelRegionInfo::sendEstateOwnerMessage("restart", {"-1"}),
+                // to the agent's region, with the invoice of the Region /
+                // Estate window's last `getinfo` (LLFloaterRegionInfo::
+                // getLastInvoice: nil when the window was never opened)
+                let mut m = EstateOwnerMessage::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.agent_data.transaction_id = uuid::Uuid::nil();
+                m.method_data.method = str_field("restart");
+                m.method_data.invoice = self.estate_invoice;
+                m.param_list = vec![msgs::estate_owner_message::ParamList {
+                    parameter: str_field("-1"),
+                }];
+                log::info!("Sending estate request 'restart' (-1: cancel)");
+                self.send_main(&m, true);
+            }
             NetCommand::TeleportTo { handle, position, look_at } => {
                 let mut m = TeleportLocationRequest::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -3545,8 +3562,19 @@ impl Session<'_> {
         } else if id == AlertMessage::ID {
             let m: AlertMessage = pkt.decode()?;
             let msg = field_str(&m.alert_data.message);
-            if !msg.is_empty() {
-                emit(self.sh, NetEvent::Alert { message: msg });
+            // attempt_standard_notification: a named notification (AlertInfo)
+            // is the viewer's to word; then process_alert_core's system
+            // messages (OpenSim's restart notices, the cancellation)
+            use crate::region_restart::{self, Restart};
+            let named = m
+                .alert_info
+                .first()
+                .and_then(|info| region_restart::from_alert_info(&field_str(&info.message), &info.extra_params));
+            match named.map(Restart::Notice).or_else(|| region_restart::from_text(&msg)) {
+                Some(Restart::Notice(notice)) => emit(self.sh, NetEvent::RegionRestart(notice)),
+                Some(Restart::Cancelled) => emit(self.sh, NetEvent::RegionRestartCancelled),
+                None if !msg.is_empty() => emit(self.sh, NetEvent::Alert { message: msg }),
+                None => {}
             }
         } else if id == AgentAlertMessage::ID {
             let m: AgentAlertMessage = pkt.decode()?;
