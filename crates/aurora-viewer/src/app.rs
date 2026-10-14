@@ -162,6 +162,9 @@ pub struct App {
     login_form: LoginForm,
     bug_report: ui::bug_report::BugReportUi,
     login_progress: Option<(String, f32)>,
+    /// `AURORA_DEMO_LOGIN=add-mfa`: when the offline login server asks for
+    /// the second factor, after the request has been pending a moment.
+    demo_mfa_challenge: Option<std::time::Instant>,
     panels: Panels,
     chat_ui: ChatUi,
     /// The History window (a conversation's whole transcript).
@@ -619,6 +622,7 @@ impl App {
             login_form: LoginForm::default(),
             bug_report: Default::default(),
             login_progress: None,
+            demo_mfa_challenge: None,
             panels,
             chat_ui: ChatUi::default(),
             history_ui: Default::default(),
@@ -1330,9 +1334,27 @@ impl App {
 
     fn start_login(&mut self) {
         if self.demo {
-            if std::env::var("AURORA_DEMO_LOGIN").is_ok_and(|mode| matches!(mode.as_str(), "derez" | "connecting")) {
+            let mode = std::env::var("AURORA_DEMO_LOGIN").unwrap_or_default();
+            // Which identity the offline server received: the account being
+            // added, or a saved card (never the name itself).
+            let saved = self
+                .login_form
+                .accounts
+                .iter()
+                .any(|account| account.key() == (self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
+            log::info!(
+                "demo login: request for {} (adding {}, code {})",
+                if saved { "a saved account" } else { "a new account" },
+                self.login_form.adding,
+                !self.login_form.mfa_token.trim().is_empty()
+            );
+            if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
+            } else if mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty() {
+                self.login_form.busy = true;
+                self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
+                self.demo_mfa_challenge = Some(std::time::Instant::now() + std::time::Duration::from_millis(1200));
             } else {
                 self.login_form.transition = None;
                 self.login_form.error = Some(aurora_i18n::tr!("app-demo-mode-no-grid-connection").into());
@@ -1753,7 +1775,9 @@ impl App {
                     // A server challenge invalidates this account's authorization only.
                     self.login_form.mfa_authorization = None;
                     self.login_form.mfa_token.clear();
-                    crate::credentials::forget_mfa(&self.settings.login_uri(), &self.settings.username);
+                    if !self.demo {
+                        crate::credentials::forget_mfa(&self.settings.login_uri(), &self.settings.username);
+                    }
                     self.login_form.show_mfa = true;
                     self.login_form.error = Some(aurora_i18n::tr!("app-enter-the-code-from-your-authenticator-app").into());
                 } else if tos_required {
@@ -1834,6 +1858,7 @@ impl App {
                     self.world.social.avatar_names.load(&path);
                 }
                 self.screen = Screen::Loading { since: Instant::now() };
+                self.world.notifications.started = false;
                 self.loading_frac = 0.0;
                 self.loading_target = 0.0;
                 self.loading_stage = aurora_i18n::tr!("common-connecting-to-region").into();
@@ -2873,12 +2898,25 @@ impl App {
         // conversations by their IM mode (LLIMMgr::addMessage), never in
         // do not disturb; "in front" = shown in the focused window
         let dnd = w.status.dnd;
+        w.notifications.toasts = crate::world::notifications::ToastPrefs {
+            presence: self.settings.toast_friends_online,
+            im: self.settings.toast_im,
+            // AURORA_DEMO_TOASTS shows a group message too (off by default)
+            group_im: self.settings.toast_group_im || (self.demo && crate::demo::toasts::mode().is_some()),
+        };
+        // a conversation in sight: its tab shown in the Conversations window
+        // (FSFloaterIM visible), whether or not the viewer has the focus
+        let shown = (self.panels.chat && !crate::ui::widgets::floater_minimized(&self.egui_ctx, "conversations"))
+            .then_some(self.chat_ui.selected)
+            .flatten();
         for m in std::mem::take(&mut w.im_messages) {
             let front = self.focused && self.panels.chat && self.chat_ui.selected == Some(m.session);
             if !dnd && let Some(s) = ui.im_sound(m, front) {
                 w.ui_sounds.push(s);
             }
+            w.notify_message(&m, shown == Some(m.session));
         }
+        w.acknowledge_read_messages();
         for (old, new) in std::mem::take(&mut w.balance_changes) {
             if let Some(s) = ui.money_sound(old, new) {
                 w.ui_sounds.push(s);
@@ -4004,6 +4042,7 @@ impl App {
         wanted.extend(self.plates.wanted_pics.drain());
         wanted.extend(self.search_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
+        wanted.extend(self.notif_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -4908,6 +4947,7 @@ impl App {
             let terrain = self.world.terrain_progress();
             if self.world.movement_complete && since.elapsed() > Duration::from_millis(1500) && (terrain > 0.97 || moved > 6.0) {
                 self.screen = Screen::World;
+                self.world.notifications.started = true;
                 self.camera.snap();
                 // the loading screen fades out over the world
                 let mut o = TpOverlay::new(String::new(), true);
@@ -5731,6 +5771,31 @@ impl App {
             }
             if let Some((avatar, animations)) = crate::demo::deform::reset_at(self.frame_count, mode) {
                 self.on_ctx_action(ui::context::CtxAction::ResetSkeleton { avatar, animations });
+            }
+        }
+        if self.demo
+            && let Some(mode) = crate::demo::toasts::mode()
+        {
+            let agent = self.world.agent_id;
+            for event in crate::demo::toasts::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+            if self.frame_count == crate::demo::toasts::LIST_AT && mode == "1" {
+                self.notif_ui.open = true;
+            }
+            if self.frame_count == crate::demo::toasts::CLICK_AT && (mode == "click" || mode == "minimized") {
+                // the click on the resident's toast, as the card answers it
+                let nova = self.world.notifications.list.iter().find_map(|n| match n.data {
+                    crate::world::notifications::Data::Message { session, .. } if session == crate::demo::DEMO_NOVA => Some(n.id),
+                    _ => None,
+                });
+                if let Some(id) = nova
+                    && self.world.open_from_notification(id).is_some()
+                {
+                    ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
+                }
             }
         }
         if self.demo {
@@ -7021,6 +7086,29 @@ impl App {
                     a.exit = self.exit_prompt.show(&ctx, &p, false);
                     return a;
                 }
+                // `AURORA_DEMO_LOGIN_SUBMIT=<frame>`: press the open form's
+                // Log in at that frame, as its button does (the editor
+                // closes, an Add stays an Add while the request runs).
+                if self.demo
+                    && std::env::var("AURORA_DEMO_LOGIN_SUBMIT")
+                        .ok()
+                        .and_then(|frame| frame.parse::<u64>().ok())
+                        .is_some_and(|frame| frame == self.frame_count)
+                {
+                    self.login_form.editing = false;
+                    self.start_login();
+                }
+                if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
+                    self.demo_mfa_challenge = None;
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: String::new(),
+                        mfa_required: true,
+                        tos_required: false,
+                        bad_credentials: false,
+                    });
+                } else if self.demo_mfa_challenge.is_some() {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                }
                 self.sync_remembered_password();
                 let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 self.login_info.poll();
@@ -7272,7 +7360,7 @@ impl App {
                     &mut self.panels,
                     &mut self.chat_ui,
                     &self.gesture_state.manager,
-                    self.world.chat_unread + self.world.social.total_unread(),
+                    self.world.conversations_badge(),
                     self.world.agent.flying,
                     self.world.agent.is_sitting(),
                     self.camera.mouselook(),
@@ -7729,14 +7817,39 @@ impl App {
                         n.read = true;
                     }
                 }
-                for (id, r) in ui::notifications::show(
+                // nothing over the view in mouselook or the photo's full frame
+                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame();
+                let mut toast_env = ui::notifications::ToastEnv {
+                    pics: &self.avatar_pics,
+                    emoji: &mut self.emoji,
+                    hidden: toasts_hidden,
+                    message_seconds: f64::from(self.settings.im_toast_seconds),
+                };
+                let answers = ui::notifications::show(
                     &ctx,
                     &p,
                     &self.skin.icons,
                     &self.world.map.ratings,
                     &mut self.world.notifications,
                     &mut self.notif_ui,
-                ) {
+                    &mut toast_env,
+                );
+                for (id, r) in answers {
+                    if matches!(r, crate::world::notifications::Response::Open) {
+                        let presence = self
+                            .world
+                            .notifications
+                            .list
+                            .iter()
+                            .any(|n| n.id == id && matches!(n.data, crate::world::notifications::Data::Presence { .. }));
+                        if self.world.open_from_notification(id).is_some() {
+                            if presence {
+                                self.world.ui_sounds.push(UiSound::StartIm);
+                            }
+                            ui::notifications::open_conversations(&ctx, &mut self.panels.chat);
+                        }
+                        continue;
+                    }
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
                         self.begin_teleport(String::new(), false);
@@ -8388,8 +8501,11 @@ impl ApplicationHandler for App {
                 if matches!(
                     mode.as_str(),
                     "cards"
+                        | "cards1"
                         | "cards2"
                         | "cards8"
+                        | "derez1"
+                        | "add-mfa"
                         | "drag"
                         | "drag2"
                         | "drag-card"
@@ -8416,6 +8532,7 @@ impl ApplicationHandler for App {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
                         "first" | "first-mfa" | "first-connecting" => 0,
+                        "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
                     })
@@ -8440,12 +8557,19 @@ impl ApplicationHandler for App {
                         .first()
                         .map_or_else(String::new, |account| account.username.clone());
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
-                    if matches!(mode.as_str(), "first" | "first-mfa" | "add" | "password") {
+                    if matches!(mode.as_str(), "first" | "first-mfa" | "add" | "add-mfa" | "password") {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
-                        self.login_form.adding = mode == "add";
-                        if mode == "add" {
+                        self.login_form.adding = matches!(mode.as_str(), "add" | "add-mfa");
+                        if self.login_form.adding {
+                            // what the Add button records to come back to
+                            self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
+                        }
+                        if mode == "add-mfa" {
+                            // a second identity, ready to submit (no real credential)
+                            self.settings.username = "Example new account".into();
+                            self.login_form.password = "demo-placeholder".into();
                         }
                         if mode == "first-mfa" {
                             self.settings.username = "Example new account".into();
@@ -8463,7 +8587,7 @@ impl ApplicationHandler for App {
                         self.login_form.editing = true;
                         self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
                     }
-                    if matches!(mode.as_str(), "derez" | "connecting") {
+                    if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                         self.login_form.pending_connect = Some(0);
                     } else if mode == "mfa" {
                         self.login_form.editing = true;
@@ -8764,6 +8888,16 @@ impl ApplicationHandler for App {
             // captures: AURORA_DEMO_NOTIF=1 opens the notification list
             if std::env::var_os("AURORA_DEMO_NOTIF").is_some() {
                 self.notif_ui.open = true;
+            }
+            // AURORA_DEMO_TOASTS: the toasts arrive with the Conversations
+            // window closed, or minimized for `minimized`
+            if let Some(mode) = crate::demo::toasts::mode() {
+                self.panels.perf = false;
+                self.panels.chat = mode == "minimized";
+                if mode == "minimized" {
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(700.0, 560.0));
+                    ui::widgets::minimize_floater(&self.egui_ctx, "conversations");
+                }
             }
             // AURORA_DEMO_MATURITY: the content rating changed in the
             // Preferences, answered by the demo server

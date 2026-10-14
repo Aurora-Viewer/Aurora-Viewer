@@ -153,7 +153,10 @@ pub fn show(
         form.motion.stop();
     }
     let mut current_key = (settings.login_uri(), settings.username.trim().to_lowercase());
-    if !form.editing && form.selection_shown_for.as_ref() != Some(&current_key) {
+    // An account being added is not a card yet: from its submit to its
+    // answer (success, error, MFA or terms) the identity typed in the Add
+    // form is the one sent, challenged and saved, never a saved card's.
+    if !form.editing && !form.adding && !form.busy && form.selection_shown_for.as_ref() != Some(&current_key) {
         let index = if !paginated && form.selection_shown_for.is_none() && form.pending_connect.is_none() && !form.busy {
             (!visible.is_empty()).then_some(visible.len() / 2)
         } else {
@@ -1775,6 +1778,62 @@ mod tests {
         assert!(submit.bottom() < 653.0);
         assert!(output.shapes.iter().any(|source| matches!(&source.shape, egui::Shape::Text(text)
             if text.galley.text() == aurora_i18n::tr!("ui-login-log-in") && source.clip_rect.contains_rect(submit))));
+    }
+
+    /// Adding a second account: from the submit of the Add form to its MFA
+    /// challenge, the login form keeps the new account's identity. The
+    /// carousel used to re-select a saved card on the first frame without
+    /// the dialog (editing off while the request ran), so the challenge
+    /// showed, forgot and resubmitted the first account.
+    #[test]
+    fn adding_an_account_keeps_its_identity_through_the_mfa_challenge() {
+        let ctx = Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let (mut settings, mut form) = fixture(1);
+        let mut frame = 0;
+        let mut run = |settings: &mut Settings, form: &mut LoginForm| {
+            for _ in 0..3 {
+                frame += 1;
+                let _ = super::super::test_output(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 720.0))),
+                        time: Some(frame as f64 / 30.0),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(ui, &p, &icons, None, settings, form, &info, None);
+                    },
+                ));
+            }
+        };
+        run(&mut settings, &mut form);
+        assert_eq!(form.selection_shown_for.as_ref().map(|key| key.1.as_str()), Some("synthetic-0"));
+        // what the Add button prepares, then the typed identity
+        form.add_return = Some((settings.login_uri(), settings.username.clone()));
+        form.adding = true;
+        form.editing = true;
+        settings.username = "synthetic-new".into();
+        form.password = "synthetic-input".into();
+        run(&mut settings, &mut form);
+        assert_eq!(settings.username, "synthetic-new");
+        // the dialog's submit closes the editor; the request is in flight
+        form.editing = false;
+        form.busy = true;
+        run(&mut settings, &mut form);
+        assert_eq!(settings.username, "synthetic-new", "a saved card replaced the account being added");
+        assert_eq!(form.password, "synthetic-input");
+        // the server asks for the second factor (NetEvent::LoginFailed)
+        form.busy = false;
+        form.show_mfa = true;
+        run(&mut settings, &mut form);
+        assert_eq!(settings.username, "synthetic-new");
+        assert!(form.adding && form.editing, "the Add form asks for the code");
+        assert_eq!(form.password, "synthetic-input");
+        assert_eq!(form.accounts.len(), 1, "the new account is saved only after its login");
     }
 
     #[test]
