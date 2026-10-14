@@ -747,6 +747,16 @@ pub enum NetEvent {
         group: Uuid,
         success: bool,
     },
+    /// EjectGroupMemberReply.
+    GroupEjected {
+        group: Uuid,
+        success: bool,
+    },
+    /// The ban list of a group (GroupAPIv1): residents and ban dates.
+    GroupBanList {
+        group: Uuid,
+        bans: Vec<(Uuid, f64)>,
+    },
     /// Land types of the grid, (ProductSKU, description) (ProductInfoRequest).
     ProductInfo(Vec<(String, String)>),
     /// RegionIDAndHandleReply (LLLandmark::processRegionIDAndHandle).
@@ -1432,6 +1442,23 @@ pub enum NetCommand {
     },
     /// GroupNoticesListRequest.
     GroupNoticesListRequest(Uuid),
+    /// EjectGroupMemberRequest (LLGroupMgr::sendGroupMemberEjects).
+    EjectGroupMembers {
+        group: Uuid,
+        members: Vec<Uuid>,
+    },
+    /// GroupRoleChanges (sendGroupRoleMemberChanges).
+    GroupRoleChanges {
+        group: Uuid,
+        changes: Vec<crate::groups::RoleChange>,
+    },
+    /// The GroupAPIv1 capability: a POST of a ban action (create, delete),
+    /// or the ban list asked (`action` None, a GET).
+    GroupBans {
+        group: Uuid,
+        action: Option<i32>,
+        ids: Vec<Uuid>,
+    },
     /// GroupNoticeRequest: one notice, answered by an IM_GROUP_NOTICE_REQUESTED
     /// instant message.
     GroupNoticeRequest(Uuid),

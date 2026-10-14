@@ -43,7 +43,7 @@ pub struct NoticeView {
 }
 
 /// One group (LLGroupMgrGroupData).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct GroupData {
     pub members: HashMap<Uuid, GroupMember>,
     /// MemberCount of the replies.
@@ -66,6 +66,9 @@ pub struct GroupData {
     titles_request: Option<Uuid>,
     /// The notice list, newest first; None until it answered.
     pub notices: Option<Vec<NoticeSummary>>,
+    /// The banned residents and their ban dates (GroupAPIv1); None until
+    /// asked.
+    pub bans: Option<Vec<(Uuid, f64)>>,
     /// The notice shown, and the one asked for.
     pub notice: Option<NoticeView>,
     asked_notice: Option<Uuid>,
@@ -253,6 +256,65 @@ impl GroupMgr {
         self.read.insert(group, ids.into_iter().collect());
     }
 
+    /// LLGroupMgr::sendGroupMemberEjects: sent, and the members leave our
+    /// copy at once (we never eject ourselves).
+    pub fn eject(&mut self, group: Uuid, members: Vec<Uuid>, me: Uuid) {
+        let members: Vec<Uuid> = members.into_iter().filter(|m| *m != me).collect();
+        if members.is_empty() {
+            return;
+        }
+        if let Some(g) = self.groups.get_mut(&group) {
+            for m in &members {
+                g.members.remove(m);
+                g.member_roles.remove(m);
+            }
+            g.member_total = g.member_total.saturating_sub(members.len() as i32).max(g.members.len() as i32);
+        }
+        self.out.push(NetCommand::EjectGroupMembers { group, members });
+    }
+
+    /// LLPanelGroupMembersSubTab::handleBanMember: the ban (BAN_CREATE), then
+    /// the ejection.
+    pub fn ban(&mut self, group: Uuid, members: Vec<Uuid>, me: Uuid) {
+        let members: Vec<Uuid> = members.into_iter().filter(|m| *m != me).collect();
+        if members.is_empty() {
+            return;
+        }
+        if let Some(bans) = self.groups.get_mut(&group).and_then(|g| g.bans.as_mut()) {
+            bans.extend(members.iter().map(|m| (*m, 0.0)));
+        }
+        self.out.push(NetCommand::GroupBans {
+            group,
+            action: Some(aurora_net::groups::ban::CREATE),
+            ids: members.clone(),
+        });
+        self.eject(group, members, me);
+    }
+
+    /// applyMemberChanges: the role changes sent (GroupRoleChanges), and our
+    /// copy follows.
+    pub fn change_roles(&mut self, group: Uuid, changes: Vec<aurora_net::groups::RoleChange>) {
+        if changes.is_empty() {
+            return;
+        }
+        if let Some(g) = self.groups.get_mut(&group) {
+            for c in &changes {
+                let roles = g.member_roles.entry(c.member).or_default();
+                if c.add {
+                    if !roles.contains(&c.role) {
+                        roles.push(c.role);
+                    }
+                } else {
+                    roles.retain(|r| *r != c.role);
+                }
+                if let Some(r) = g.roles.get_mut(&c.role) {
+                    r.members = if c.add { r.members + 1 } else { r.members.saturating_sub(1) };
+                }
+            }
+        }
+        self.out.push(NetCommand::GroupRoleChanges { group, changes });
+    }
+
     /// The notices of a group not read yet.
     pub fn unread(&self, group: &Uuid) -> usize {
         let read = self.read.get(group);
@@ -400,6 +462,11 @@ impl GroupMgr {
                 Some(g) if g.titles_request == Some(*request) => g.titles.extend(titles.iter().cloned()),
                 _ => log::warn!("group titles: stale group or request id"),
             },
+            NetEvent::GroupBanList { group, bans } => {
+                if let Some(g) = self.groups.get_mut(group) {
+                    g.bans = Some(bans.clone());
+                }
+            }
             NetEvent::GroupNotices { group, notices } => {
                 if let Some(g) = self.groups.get_mut(group) {
                     // the list can arrive in several packets, and more than

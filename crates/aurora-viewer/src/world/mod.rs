@@ -2016,13 +2016,23 @@ impl World {
             | NetEvent::GroupRoles(_)
             | NetEvent::GroupRoleMembers(_)
             | NetEvent::GroupTitles { .. }
-            | NetEvent::GroupNotices { .. }) => {
+            | NetEvent::GroupNotices { .. }
+            | NetEvent::GroupBanList { .. }) => {
                 self.group_data.on_event(&ev);
                 None
             }
             // LLGroupMgr::processJoinGroupReply / processLeaveGroupReply: the
             // group list again, the group's data forgotten, its profile
             // asked again
+            // processEjectGroupMemberReply: a failure refreshes the group
+            NetEvent::GroupEjected { group, success } => {
+                if !success {
+                    log::warn!("group {group}: ejection refused, the group is asked again");
+                    let member = self.groups.is_member(&group);
+                    self.group_data.refresh(group, member);
+                }
+                None
+            }
             NetEvent::GroupJoined { group, success } | NetEvent::GroupLeft { group, success } => {
                 if success {
                     self.groups.out.push(aurora_net::NetCommand::RequestGroups);

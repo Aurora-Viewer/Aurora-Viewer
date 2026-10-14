@@ -2068,6 +2068,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `group invite: 2 resident(s) invited` and says the member was left out;
   the role list follows our abilities (an officer: everyone and the
   officers' own roles; an owner: every role, the owners' asking to confirm).
+  With `officer:members` or `owner:members`, the Members tab manages:
+  tick members (Ctrl+click adds), Eject and Ban follow Firestorm's rules
+  (an officer ejects a member in no role but "everyone", an owner anyone
+  but another owner, never ourselves) and ask to confirm, the log says
+  `demo group: N member(s) ejected` / `ban action`; the roles card ticks
+  the roles we may give or take (a tick waits for Save, adding owners asks
+  to confirm, `demo group: N role change(s)`); "What they can do" lists
+  the abilities of the chosen by set; the download icon exports the list
+  to a CSV file.
   `:notices` opens the Notices tab with the two latest notices unread
   (the tab's count): the first one is read at once (GroupNoticeRequest,
   answered by an IM_GROUP_NOTICE_REQUESTED instant message), its

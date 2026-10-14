@@ -367,3 +367,67 @@ fn a_notice_opens_with_its_attachment_and_is_saved_once() {
     world.save_notice_attachment(DEMO_GROUP1);
     assert!(world.group_data.take_commands().is_empty(), "saved once");
 }
+
+#[test]
+fn ejects_bans_and_role_ticks_follow_firestorm() {
+    use super::admin_members::{self, Me};
+    let world = world(true, MEMBER);
+    let d = world.group_data.get(&DEMO_GROUP1).expect("data");
+    let role = |name: &str| d.roles.values().find(|r| r.name == name).map(|r| r.id).expect("role");
+    let (owners, officers, builders) = (role("Owners"), role("Officers"), role("Builders"));
+    let plain = d
+        .members
+        .keys()
+        .copied()
+        .find(|m| d.member_roles.get(m).is_some_and(|r| r.iter().all(|r| r.is_nil())))
+        .expect("an everyone-only member");
+    let founder = crate::demo::DEMO_LOUP;
+    let officer = Me {
+        id: crate::demo::DEMO_TESS,
+        powers: powers::MEMBER_EJECT | powers::GROUP_BAN_ACCESS | powers::ROLE_ASSIGN_MEMBER_LIMITED,
+        owner_role: owners,
+    };
+    // an officer ejects and bans a member in no role but "everyone"
+    assert_eq!(admin_members::eject_and_ban(d, &officer, &[plain]), (true, true));
+    // not someone in another role, never themselves
+    assert!(!admin_members::eject_and_ban(d, &officer, &[founder]).0);
+    assert_eq!(admin_members::eject_and_ban(d, &officer, &[officer.id]), (false, false));
+    // an owner ejects anyone but another owner
+    let owner = Me {
+        id: DEMO_AGENT,
+        powers: u64::MAX,
+        owner_role: owners,
+    };
+    let mut d2 = d.clone();
+    d2.member_roles.entry(DEMO_AGENT).or_default().push(owners);
+    assert!(admin_members::eject_and_ban(&d2, &owner, &[crate::demo::DEMO_NOVA]).0);
+    assert_eq!(admin_members::eject_and_ban(&d2, &owner, &[founder]), (false, false));
+
+    // ticks: the officer adds to the officers' role (theirs), not the owners'
+    let checks = admin_members::role_checks(d, &officer, &[plain], &[]);
+    let enabled = |r: Uuid| checks.iter().find(|c| c.role == r).map(|c| c.enabled);
+    assert_eq!(enabled(Uuid::nil()), Some(false), "nobody leaves everyone");
+    assert_eq!(enabled(officers), Some(true));
+    assert_eq!(enabled(owners), Some(false));
+    assert_eq!(enabled(builders), Some(false), "not one of the officer's roles");
+    // a click adds, a second one cancels the change
+    let mut staged = Vec::new();
+    admin_members::toggle_role(d, &[plain], &mut staged, officers);
+    assert_eq!(
+        staged,
+        vec![aurora_net::groups::RoleChange {
+            role: officers,
+            member: plain,
+            add: true
+        }]
+    );
+    let (some, _) = admin_members::powers_of(d, &[plain], &staged);
+    assert!(some & powers::MEMBER_INVITE != 0, "an officer's abilities once saved");
+    admin_members::toggle_role(d, &[plain], &mut staged, officers);
+    assert!(staged.is_empty());
+
+    // the export: a title line, then one line per member
+    let csv = admin_members::export_csv("Aurora Builders", d, &|_| "Name".into());
+    assert!(csv.starts_with("Group membership record for Aurora Builders"));
+    assert_eq!(csv.trim_end().lines().count(), 1 + d.members.len());
+}
