@@ -146,7 +146,7 @@ impl World {
         if flags == 0 || flags & flag::TEXT_CHAT != 0 {
             // LLNotifications::cancelByOwner (agents), scripts of the object
             self.notifications.list.retain(|n| match &n.data {
-                Data::Lure { from, .. } | Data::Inventory { from, .. } => *from != id,
+                Data::Lure { from, .. } | Data::TeleportRequest { from, .. } | Data::Inventory { from, .. } => *from != id,
                 Data::Dialog { object, .. } | Data::TextBox { object, .. } => *object != id,
                 Data::Permissions { task, .. } => *task != id,
                 _ => true,

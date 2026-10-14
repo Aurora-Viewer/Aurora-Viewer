@@ -31,6 +31,7 @@ pub mod script_debug;
 pub mod search;
 pub mod social;
 pub mod status;
+pub mod teleport_invites;
 pub mod terrain;
 pub mod tphistory;
 pub mod transcripts;
@@ -250,6 +251,8 @@ pub struct World {
     pub profiles: profiles::Profiles,
     /// Notification center (bell).
     pub notifications: notifications::Notifications,
+    /// Teleport offers and requests from other residents, and their answers.
+    pub teleport_invites: teleport_invites::TeleportInvites,
     /// Teleport history (navigation bar back / forward).
     pub tp_history: tphistory::TeleportHistory,
     /// Dated history of the Places window (teleport_history.txt).
@@ -394,6 +397,7 @@ impl World {
             place_details: Default::default(),
             search: Default::default(),
             notifications: notifications::Notifications::default(),
+            teleport_invites: teleport_invites::TeleportInvites::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
             offline_im_requested: false,
@@ -2055,18 +2059,12 @@ impl World {
         };
         let n = &mut self.notifications;
         match im.dialog {
-            d::LURE_USER => {
-                self.ui_sounds.push(UiSound::TeleportOffer);
-                n.push(
-                    Kind::Teleport,
-                    aurora_i18n::tr!("world-mod-offers-you-a-teleport", from = from.to_string()),
-                    im.message.clone(),
-                    Data::Lure {
-                        from: im.from_agent_id,
-                        lure: im.session_id,
-                    },
-                );
-            }
+            // teleport offers and requests (teleport_invites.rs)
+            d::LURE_USER => self.on_teleport_offer(im, &from),
+            d::TELEPORT_REQUEST => self.on_teleport_request(im, &from),
+            d::GODLIKE_LURE_USER => self.on_godlike_lure(im),
+            d::LURE_ACCEPTED => self.on_teleport_offer_answered(im, true),
+            d::LURE_DECLINED => self.on_teleport_offer_answered(im, false),
             d::FRIENDSHIP_OFFERED => {
                 self.ui_sounds.push(UiSound::FriendshipOffer);
                 n.push(
@@ -2146,22 +2144,6 @@ impl World {
                     .unwrap_or((aurora_i18n::tr!("common-group-notice"), im.message.as_str()));
                 n.push(Kind::Group, format!("{from} : {subject}"), body.to_owned(), Data::None);
             }
-            d::LURE_ACCEPTED => {
-                n.push(
-                    Kind::Info,
-                    aurora_i18n::tr!("world-mod-accepted-your-teleport-offer", from = from.to_string()),
-                    String::new(),
-                    Data::None,
-                );
-            }
-            d::LURE_DECLINED => {
-                n.push(
-                    Kind::Info,
-                    aurora_i18n::tr!("world-mod-declined-your-teleport-offer", from = from.to_string()),
-                    im.message.clone(),
-                    Data::None,
-                );
-            }
             d::FRIENDSHIP_ACCEPTED => {
                 self.social.form_friendship(im.from_agent_id);
                 self.status
@@ -2223,6 +2205,15 @@ impl World {
                 self.system_message(error);
             }
             return (Vec::new(), None);
+        }
+        // teleport offers and requests: answered through their invitation,
+        // closing the notification declines (as Firestorm's toasts do)
+        if let Some(notifications::Data::Lure { invite, .. } | notifications::Data::TeleportRequest { invite, .. }) =
+            self.notifications.list.iter().find(|n| n.id == id).map(|n| n.data.clone())
+        {
+            let accept = matches!(r, notifications::Response::Accept);
+            self.notifications.list.retain(|n| n.id != id);
+            return (self.answer_teleport_invite(invite, accept), None);
         }
         // friendship_offer_callback: formFriendship on accept
         if matches!(r, notifications::Response::Accept)
@@ -2392,22 +2383,11 @@ impl World {
     /// toast (log_to_im, not log_to_chat, show_toast false in
     /// notifications.xml).
     pub fn teleport_offer_sent(&mut self, to: Uuid) {
-        let line = ChatLine {
-            time: SystemTime::now(),
-            from: String::new(),
-            text: aurora_i18n::tr!(
-                "common-teleport-offer-sent",
-                name = format!("secondlife:///app/agent/{to}/completename")
-            ),
-            kind: ChatKind::System,
-            source: Uuid::nil(),
-            origin: Origin::Live,
-        };
-        if self.social.has_session(&to) {
-            self.conversation_push(to, line, false);
-        } else {
-            self.transcript_only(to, &line);
-        }
+        let text = aurora_i18n::tr!(
+            "common-teleport-offer-sent",
+            name = format!("secondlife:///app/agent/{to}/completename")
+        );
+        self.note_with(to, text);
     }
 
     /// Turn the drawn bodies of the standing avatars toward where they face
