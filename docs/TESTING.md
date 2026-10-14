@@ -177,9 +177,12 @@ at 3.3 m, the own avatar), `full-dof` the full-frame view with the aperture
 in its strip: the view, the preview and the photos are blurred, while
 Preferences › Graphics › Depth of field stays off.
 `quality` opens the window with its "Photo quality" on: the log gives
-`photo quality: on (draw distance 256 m, shadows 4, LOD 3)` and the saved
+`photo quality: on (draw distance 512 m, shadows 4, LOD 4)` and the saved
 settings keep the user's own values (`draw_distance` unchanged in
-`settings.json` after the run).
+`settings.json` after the run); a photo taken then logs
+`photo quality: details loaded in … ms` and is drawn at twice its size
+(`photo: reduced to …`); `save-quality:<W>x<H>…` takes such a photo like
+`save`.
 `classic` shows Firestorm's floater instead of the panel for this run
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.

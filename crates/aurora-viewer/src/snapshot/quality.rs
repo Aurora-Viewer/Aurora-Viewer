@@ -1,7 +1,10 @@
 //! Photo quality: while the photo window is open with its "Photo quality"
-//! switch on, the graphics settings are raised to at least the Deluxe
-//! level (shadows, draw distance, levels of detail, full avatars, ambient
-//! occlusion, reflections, anisotropy), the user's own values set aside.
+//! switch on, the graphics settings are raised to the most Aurora renders
+//! (draw distance, levels of detail, every avatar in full, shadows,
+//! ambient occlusion, reflections at full resolution, anisotropy), the
+//! textures in view are loaded at full resolution and the photo itself is
+//! drawn at twice its size (`app::snapshot`), the user's own values set
+//! aside.
 //! Firestorm has no such switch: its Phototools change the real settings
 //! for good. Here the user's values are what is saved while the boost is
 //! on (`Settings::save`), and they come back when the window closes.
@@ -74,25 +77,61 @@ impl Held {
     }
 }
 
-/// The boosted values: each one at least the Deluxe level's, never lower
-/// than the user's. The anti-aliasing, the complexity limit, the particles,
-/// the sharpening and the glow stay the user's own choices.
+/// The most each setting goes to (the top of its range in Aurora; Firestorm
+/// allows a draw distance of 1,024 m and a LOD factor of 8 by hand, Aurora
+/// draws up to 512 m and 4). Every avatar is drawn in full (no impostor up
+/// to Aurora's 100, no complexity limit): a photo shows people as they are.
+fn photo_maxima() -> Values {
+    Values {
+        draw_distance: 512.0,
+        lod_factor: 4.0,
+        max_avatars: 100,
+        max_complexity: 0,
+        shadow_quality: 4,
+        projector_shadows: true,
+        ssao: 2,
+        water_reflections: 4,
+        mirrors: 4,
+        reflection_probes: 3,
+        probe_count: 64,
+        anisotropy: 16,
+        ..Preset::Deluxe.values()
+    }
+}
+
+/// The boosted values: each one at Aurora's most, never lower than the
+/// user's (an unlimited complexity stays unlimited). The anti-aliasing, the
+/// particles, the screen-space reflections, the sharpening and the glow stay
+/// the user's own choices.
 pub fn boosted(user: Values) -> Values {
-    let top = Preset::Deluxe.values();
+    let top = photo_maxima();
     Values {
         draw_distance: user.draw_distance.max(top.draw_distance),
         lod_factor: user.lod_factor.max(top.lod_factor),
         max_avatars: user.max_avatars.max(top.max_avatars),
+        max_complexity: top.max_complexity,
         shadow_quality: user.shadow_quality.max(top.shadow_quality),
         projector_shadows: user.projector_shadows || top.projector_shadows,
         ssao: user.ssao.max(top.ssao),
         water_reflections: user.water_reflections.max(top.water_reflections),
+        mirrors: user.mirrors.max(top.mirrors),
         reflection_probes: user.reflection_probes.max(top.reflection_probes),
         probe_count: user.probe_count.max(top.probe_count),
         anisotropy: user.anisotropy.max(top.anisotropy),
         ..user
     }
 }
+
+/// The photo is drawn at this many times its size, then reduced (a box
+/// filter over whole pixels), while its larger side stays within
+/// `snapshot::MAX_SIDE`: an 8K photo is drawn once, a 4K one at 8K.
+pub fn supersample(size: (u32, u32)) -> u32 {
+    if size.0.max(size.1) * 2 <= super::MAX_SIDE { 2 } else { 1 }
+}
+
+/// The longest wait for the textures in view to reach full resolution
+/// before the photo is taken anyway.
+pub const DETAIL_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Raise `s`, returning what to restore.
 pub fn boost(s: &mut Settings) -> Held {
@@ -124,13 +163,11 @@ mod tests {
         };
         let before = s.clone();
         let held = boost(&mut s);
-        assert_eq!(s.draw_distance, 256.0);
-        // already higher than Deluxe: kept
-        assert_eq!(s.lod_factor, 4.0);
-        assert_eq!(s.shadow_quality, 4);
+        assert_eq!((s.draw_distance, s.lod_factor, s.max_avatars), (512.0, 4.0, 100));
+        assert_eq!((s.shadow_quality, s.water_reflections, s.mirrors), (4, 4, 4));
         assert!(s.shadows);
-        // the user's own choices stay
-        assert_eq!((s.antialiasing, s.max_complexity), (3, 80_000));
+        // no complexity limit during the photo; the anti-aliasing stays
+        assert_eq!((s.antialiasing, s.max_complexity), (3, 0));
         held.restore(&mut s);
         assert_eq!(Values::read(&s), Values::read(&before));
         assert_eq!(s.shadows, before.shadows);
@@ -159,13 +196,21 @@ mod tests {
     }
 
     #[test]
+    fn photos_up_to_4k_are_drawn_at_twice_their_size() {
+        assert_eq!(supersample((3840, 2160)), 2);
+        assert_eq!(supersample((1600, 900)), 2);
+        assert_eq!(supersample((5120, 2880)), 1);
+        assert_eq!(supersample((7680, 4320)), 1);
+    }
+
+    #[test]
     fn a_boosted_profile_saves_the_users_values() {
         let mut s = Settings {
             draw_distance: 96.0,
             ..Settings::default()
         };
         s.photo_held = Some(boost(&mut s));
-        assert_eq!(s.draw_distance, 256.0);
+        assert_eq!(s.draw_distance, 512.0);
         let saved = s.to_saved();
         assert_eq!(saved.draw_distance, 96.0);
         assert_eq!(saved.photo_held, None);

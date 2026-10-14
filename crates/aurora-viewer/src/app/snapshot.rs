@@ -79,6 +79,9 @@ struct Job {
     interface: bool,
     huds: bool,
     started: Instant,
+    /// Drawn at this many times the photo's size, reduced once complete
+    /// (the photo quality's supersampling).
+    supersample: u32,
 }
 
 /// A held photo (freeze frame) and what shows it.
@@ -133,6 +136,10 @@ pub(super) struct Snapshots {
     message_item: Option<Uuid>,
     /// The message tells of a post to the profile feed ("View").
     message_profile: bool,
+    /// The photo quality waits since then for the textures in view.
+    detail_wait: Option<Instant>,
+    /// The wait is over: the next "Take" goes ahead.
+    detail_ready: bool,
     /// The web profile's session cookie, for the OpenID cookie it was
     /// asked with (getOpenIDCookieCoro gives it once per login).
     web_auth: std::sync::Arc<parking_lot::Mutex<Option<(String, String)>>>,
@@ -196,6 +203,8 @@ impl Default for Snapshots {
             upload: None,
             message_item: None,
             message_profile: false,
+            detail_wait: None,
+            detail_ready: false,
             web_auth: Default::default(),
             demo_profile: None,
             demo: None,
@@ -277,7 +286,7 @@ impl App {
         if job.next < job.tiles.len() {
             return;
         }
-        let Some(job) = self.snapshots.job.take() else {
+        let Some(mut job) = self.snapshots.job.take() else {
             return;
         };
         let render_ms = job.started.elapsed().as_millis();
@@ -288,6 +297,15 @@ impl App {
                 job.size.1,
                 job.tiles.len()
             );
+        }
+        if job.supersample > 1 {
+            // back to the photo's size: each pixel the mean of the ones drawn
+            let t0 = Instant::now();
+            let (w, h) = (job.size.0 / job.supersample, job.size.1 / job.supersample);
+            let (_, _, px) = save::downscale(job.size.0, job.size.1, &job.pixels, w.max(h));
+            job.size = (w, h);
+            job.pixels = px;
+            log::info!("photo: reduced to {w} x {h} in {} ms", t0.elapsed().as_millis());
         }
         match job.purpose {
             Purpose::Preview => {
@@ -442,6 +460,13 @@ impl App {
         } else {
             full
         };
+        // the photo quality draws a photo (not its preview) at twice its size
+        let supersample = if purpose != Purpose::Preview && self.settings.photo_held.is_some() {
+            snapshot::quality::supersample(size)
+        } else {
+            1
+        };
+        let size = (size.0 * supersample, size.1 * supersample);
         let max_pixels = renderer.video_memory.read(&renderer.device).map_or(DEFAULT_MAX_PIXELS, |m| {
             // half of what is free, besides what the window's frame holds
             m.budget.saturating_sub(m.usage) / 2 / TARGET_BYTES_PER_PIXEL
@@ -458,6 +483,7 @@ impl App {
             interface,
             huds: s.huds,
             started: Instant::now(),
+            supersample,
         });
     }
 
@@ -502,7 +528,7 @@ impl App {
     /// A photo is being taken, saved or uploaded.
     fn photo_busy(&self) -> bool {
         let s = &self.snapshots;
-        s.saving.is_some() || s.upload.is_some() || s.job.as_ref().is_some_and(|j| j.purpose != Purpose::Preview)
+        s.saving.is_some() || s.upload.is_some() || s.detail_wait.is_some() || s.job.as_ref().is_some_and(|j| j.purpose != Purpose::Preview)
     }
 
     /// Upload prices: the account's benefits (texture_upload_cost, by area
@@ -730,6 +756,19 @@ impl App {
     pub(super) fn photo_update(&mut self, renderer: &Renderer) {
         self.photo_demo(renderer);
         self.photo_quality();
+        if let Some(t) = self.snapshots.detail_wait {
+            let pending = self.scene.textures.pending_in_view();
+            if pending == 0 || t.elapsed() >= snapshot::quality::DETAIL_WAIT || self.settings.photo_held.is_none() {
+                log::info!(
+                    "photo quality: details loaded in {} ms ({pending} textures left)",
+                    t.elapsed().as_millis()
+                );
+                self.snapshots.detail_wait = None;
+                self.snapshots.detail_ready = true;
+                self.photo_action(Action::Take, renderer);
+                self.snapshots.detail_ready = false;
+            }
+        }
         // the texture encoded on its worker: its upload
         if let Some(Upload::Encoding { rx, cost }) = &self.snapshots.upload
             && let Ok(encoded) = rx.try_recv()
@@ -882,6 +921,19 @@ impl App {
             Action::Refresh => self.snapshots.preview_wanted = true,
             Action::Take => {
                 self.snapshots.quiet = false;
+                // the photo quality waits for the textures in view to load
+                // at full resolution (photo_update takes it then, or after
+                // quality::DETAIL_WAIT)
+                if self.settings.photo_held.is_some()
+                    && !std::mem::take(&mut self.snapshots.detail_ready)
+                    && self.scene.textures.pending_in_view() > 0
+                {
+                    if self.snapshots.detail_wait.is_none() && !self.photo_busy() {
+                        log::info!("photo quality: waiting for {} textures", self.scene.textures.pending_in_view());
+                        self.snapshots.detail_wait = Some(Instant::now());
+                    }
+                    return;
+                }
                 match self.snapshots.ui.destination {
                     Destination::Disk => self.photo_take(renderer, None),
                     Destination::Inventory => self.photo_to_inventory(renderer),
@@ -983,7 +1035,13 @@ impl App {
             });
             let tiles = snapshot::plan(photo, self.photo_max_side(renderer), max_pixels).len();
             let s = &self.snapshots;
-            let busy = if let Some(saving) = &s.saving {
+            let busy = if let Some(t) = s.detail_wait {
+                let wait = snapshot::quality::DETAIL_WAIT.as_secs_f32();
+                Some((
+                    (t.elapsed().as_secs_f32() / wait).min(1.0) * 0.5,
+                    aurora_i18n::tr!("photo-quality-loading", count = self.scene.textures.pending_in_view()).to_owned(),
+                ))
+            } else if let Some(saving) = &s.saving {
                 Some((0.5 + 0.5 * saving.fraction(), aurora_i18n::tr!("photo-saving").to_owned()))
             } else if let Some(upload) = &s.upload {
                 Some(match upload {
@@ -1103,6 +1161,7 @@ impl App {
             }
             (None, false) => {}
         }
+        self.scene.textures.full_resolution = self.settings.photo_held.is_some();
     }
 
     /// AURORA_DEMO_SNAPSHOT=open | full[-<W>x<H> proportions, e.g. full-4x5] |
@@ -1124,7 +1183,8 @@ impl App {
                 .unwrap_or(700);
             let mut parts = mode.split(':');
             let kind = parts.next().unwrap_or("open");
-            let save = (kind == "save").then(|| {
+            // save-quality: the same with the photo quality on
+            let save = kind.starts_with("save").then(|| {
                 let size = parts
                     .next()
                     .and_then(|s| s.split_once('x'))
@@ -1170,7 +1230,7 @@ impl App {
                 profile: kind.starts_with("profile"),
                 dof: kind.ends_with("dof"),
                 classic: kind == "classic",
-                quality: kind == "quality",
+                quality: kind.ends_with("quality"),
             });
         }
         let Some(demo) = self.snapshots.demo.as_ref() else {
@@ -1237,8 +1297,8 @@ impl App {
             if let Some(folder) = folder {
                 s.folder = Some(folder);
             }
-            self.snapshots.quiet = false;
-            self.photo_take(renderer, None);
+            self.snapshots.ui.destination = Destination::Disk;
+            self.photo_action(Action::Take, renderer);
         }
     }
 }
