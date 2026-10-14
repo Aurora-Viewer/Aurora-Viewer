@@ -210,7 +210,12 @@ impl App {
             MouseButton::Right => self.on_right_button(pressed, over_ui),
             MouseButton::Left if pressed => {
                 if !over_ui && self.in_world() && !self.camera.mouselook() {
+                    // the second press of a double click on the world
+                    // (src/autopilot.rs), read by the press it starts
+                    self.double_press = self.double_click.press(Instant::now(), self.cursor_pos);
                     self.click(Click::Press);
+                } else {
+                    self.double_click.reset();
                 }
             }
             MouseButton::Left => self.on_left_release(),

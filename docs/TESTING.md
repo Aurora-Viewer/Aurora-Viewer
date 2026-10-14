@@ -154,6 +154,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_KEY=<arrow>` | Holds an arrow key |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_MMO="x,y[,1\|2]"` | Steering the avatar with the mouse |
+| `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
 | `AURORA_DEMO_POINTER=<points>` | Moves the pointer over the interface |
@@ -240,6 +241,16 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_MMO="x,y[,1|2]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead,
   `2`: double right click (running).
+- **`AURORA_DEMO_DOUBLECLICK=walk|run|tp[,x,y]`**: the double-click action
+  of the session (the saved one is left alone), and a double click of the
+  left button at pixel (x, y) at frames 700 to 703 (ground ahead and to the
+  left of the avatar by default), through the same way in as the mouse.
+  With `AURORA_FPS_LIMIT=60`: capture frame 712 to see the destination
+  mark (a teal dot) and the body turning toward it, 780 for the arrival or
+  the teleport. The log says `demo double click: …` and `demo walk ended
+  (done|cancelled): …`. `menu` opens the wolf menu at frame 540, Me at 560
+  and its "Double-click on the ground" entry at 580 (`menu,y`: another
+  height in points): capture frame 620.
 - **`AURORA_DEMO_RCLICK`**: right click at (x, y) at frame 225, or with
   `tag` on the name plate of the nearest other avatar at frame 600.
 - **`AURORA_DEMO_PIE`**: `1` forces the pie menu, `0` forces the list, only
@@ -1656,7 +1667,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Adult" and the notification list shows "Content rating not changed".
   `fail`: the request fails, the same notice at once. A teleport asked
   meanwhile waits for the answer and is dropped on a failure.
-- **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy`**:
+- **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy|exceeded|exceeded-continue|blocked`**:
   teleports received from Tess Touch (issue #280, parts B1 and B2). Each
   offer and request opens her conversation (unread) with its card and has
   an entry in the notification centre; answering one closes the entry and
@@ -1672,7 +1683,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   card: "Accepted" on the card, the list empty, the teleport starts and fails
   offline. `notification-answered`: the offer declined from its entry:
   "Declined" on the card. `legacy`: the card as one line of the legacy
-  style, its buttons at the end. `god`: no notification, the
+  style, its buttons at the end. `exceeded` (part C): the demo account
+  wants General and Moderate and the offer leads to an Adult plaza: the
+  card and the entry explain it and offer "Change and Continue" / Decline.
+  `exceeded-continue`: answered by "Change and Continue": the rating is
+  asked for, then the teleport leaves (and fails offline); the card says
+  "Accepted". `blocked`: the demo account is not adult: the card and the
+  entry say the region is for adults only, without a button, and the
+  sender gets "The Resident cannot visit this region." then the decline
+  (in the log of the demo commands). `god`: no notification, the
   teleport starts at once and fails offline (two lines in the nearby chat).
   `answers`: her conversation is open with "Tess … declined your teleport
   offer" as a system line, without a notification; Nova's acceptance goes to

@@ -15,7 +15,7 @@ use crate::theme::Palette;
 use crate::ui::context::{CtxAction, request};
 use crate::ui::widgets;
 use crate::world::ChatLine;
-use crate::world::teleport_invites::{Answer, Invite, InviteKind, Place};
+use crate::world::teleport_invites::{Answer, Invite, InviteKind, Place, Rating, rating_note};
 use egui::{RichText, Vec2};
 
 /// Width of a card at most.
@@ -30,7 +30,8 @@ struct Texts {
     /// The place as a SLURL, shown as its link.
     place: Option<String>,
     message: String,
-    /// The question of a request ("Offer a teleport?").
+    /// The question of a request ("Offer a teleport?"), or what an offer's
+    /// region rating means (TeleportOffered_MaturityExceeded / _Blocked).
     question: Option<String>,
     /// The two buttons: (accept, refuse).
     buttons: (String, String),
@@ -43,9 +44,14 @@ fn texts(env: &LineEnv, line: &ChatLine, v: &Invite) -> Texts {
             title: aurora_i18n::tr!("world-mod-offers-you-a-teleport", from = name),
             place: place.as_ref().and_then(|p| Some(crate::slurl::make(p.region.as_deref()?, p.pos))),
             message: without_own_place(&v.message, place.as_ref()).to_owned(),
-            question: None,
+            question: rating_note(v.rating),
             buttons: (
-                aurora_i18n::tr!("common-teleport-3").into(),
+                if matches!(v.rating, Rating::Exceeded(_)) {
+                    aurora_i18n::tr!("ui-chat-invite-change-and-continue")
+                } else {
+                    aurora_i18n::tr!("common-teleport-3")
+                }
+                .into(),
                 aurora_i18n::tr!("ui-notifications-decline").into(),
             ),
         },
@@ -80,8 +86,14 @@ fn without_own_place<'a>(message: &'a str, place: Option<&Place>) -> &'a str {
     }
 }
 
-fn answer_label(answer: Answer) -> Option<&'static str> {
-    match answer {
+/// None while it waits for an answer, else what to say instead of the
+/// buttons: the answer, or nothing for an offer out of the account's reach
+/// (its explanation is already on the card).
+fn answer_label(v: &Invite) -> Option<&'static str> {
+    if let Rating::Blocked(_) = v.rating {
+        return Some("");
+    }
+    match v.answer {
         Answer::Pending => None,
         Answer::Accepted => Some(aurora_i18n::tr!("ui-chat-invite-accepted")),
         Answer::Declined => Some(aurora_i18n::tr!("ui-chat-invite-declined")),
@@ -103,7 +115,9 @@ fn icon(ui: &mut egui::Ui, env: &LineEnv, color: egui::Color32) {
 /// The two buttons of a pending invitation, sent as a request of the
 /// interface (the app answers it).
 fn buttons(ui: &mut egui::Ui, p: &Palette, invite: u64, (yes, no): &(String, String), size: Vec2) {
-    if widgets::primary_button_sized(ui, p, yes, size).clicked() {
+    // "Change and Continue" is longer than the other answers
+    let wide = Vec2::new(size.x.max(yes.chars().count() as f32 * 7.0 + 20.0), size.y);
+    if widgets::primary_button_sized(ui, p, yes, wide).clicked() {
         request(ui.ctx(), CtxAction::AnswerTeleport { invite, accept: true });
     }
     if widgets::flat_button_sized(ui, p, no, size).clicked() {
@@ -121,7 +135,7 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
         return;
     };
     let t = texts(env, line, &v);
-    let done = answer_label(v.answer);
+    let done = answer_label(&v);
     let inset = ui.spacing().item_spacing.x;
     let width = (ui.available_width() - inset * 2.0 - indent).clamp(160.0, CARD_WIDTH);
     ui.add_space(4.0);
@@ -154,15 +168,19 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
                         chat_text_marked(ui, p, env.emoji, world, env.want_names, &t.message, 12.5, ink, false, None);
                     }
                     if let Some(q) = &t.question {
-                        ui.label(RichText::new(q).size(12.0).color(muted));
+                        ui.add(egui::Label::new(RichText::new(q).size(12.0).color(muted)).wrap());
                     }
-                    ui.add_space(5.0);
-                    ui.horizontal(|ui| match done {
-                        None => buttons(ui, p, invite, &t.buttons, BUTTON),
+                    match done {
+                        None => {
+                            ui.add_space(5.0);
+                            ui.horizontal(|ui| buttons(ui, p, invite, &t.buttons, BUTTON));
+                        }
+                        Some("") => {}
                         Some(label) => {
+                            ui.add_space(5.0);
                             ui.label(RichText::new(label).size(12.0).color(p.muted_dim));
                         }
-                    });
+                    }
                 });
             });
         // the teal edge of the cards (mock-up C), grey once answered
@@ -195,7 +213,7 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
         return;
     };
     let t = texts(env, line, &v);
-    let done = answer_label(v.answer);
+    let done = answer_label(&v);
     let mut text = t.title.clone();
     if let Some(place) = &t.place {
         text = format!("{text} {place}");
@@ -213,6 +231,7 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
         chat_text_marked(ui, p, env.emoji, world, env.want_names, &text, 12.5, color, false, None);
         match done {
             None => buttons(ui, p, invite, &t.buttons, Vec2::new(80.0, 20.0)),
+            Some("") => {}
             Some(label) => {
                 ui.label(RichText::new(format!("· {label}")).size(12.0).color(p.muted_dim));
             }

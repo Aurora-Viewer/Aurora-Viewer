@@ -44,10 +44,38 @@ impl Place {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InviteKind {
-    /// Teleport to the sender: the lure to accept.
-    Offer { lure: Uuid, place: Option<Place> },
+    /// Teleport to the sender: the lure to accept (a god's when `godlike`).
+    Offer { lure: Uuid, place: Option<Place>, godlike: bool },
     /// The sender asks to come to us: "Yes" offers them a teleport.
     Request,
+}
+
+/// What the agent's content rating makes of a lure (process_improved_im):
+/// the region's rating (SIM_ACCESS_*) against the account's ceiling and its
+/// preference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rating {
+    Allowed,
+    /// Above the preference: "Change and Continue" sets the preference to
+    /// this rating, then teleports (TeleportOffered_MaturityExceeded,
+    /// mature_lure_callback).
+    Exceeded(u8),
+    /// Above what the account may enter: no teleport, and the sender is told
+    /// (TeleportOffered_MaturityBlocked).
+    Blocked(u8),
+}
+
+/// process_improved_im's check of a lure's region: a teen account cannot
+/// enter Moderate, an account that is not adult cannot enter Adult; a
+/// preference below the region's rating asks to change it.
+pub fn rating_of(region: u8, access: aurora_net::search::AgentAccess) -> Rating {
+    use aurora_net::search::{SIM_ACCESS_ADULT, SIM_ACCESS_MATURE};
+    match region {
+        SIM_ACCESS_MATURE if access.max < SIM_ACCESS_MATURE => Rating::Blocked(region),
+        SIM_ACCESS_ADULT if access.max < SIM_ACCESS_ADULT => Rating::Blocked(region),
+        SIM_ACCESS_MATURE | SIM_ACCESS_ADULT if access.preferred < region => Rating::Exceeded(region),
+        _ => Rating::Allowed,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +92,8 @@ pub struct Invite {
     pub kind: InviteKind,
     /// The sender's text, as received.
     pub message: String,
+    /// An offer's region against the agent's content rating.
+    pub rating: Rating,
     pub answer: Answer,
     /// Its entry in the notification centre (0 = none).
     pub notification: u64,
@@ -83,13 +113,14 @@ pub struct TeleportInvites {
 }
 
 impl TeleportInvites {
-    fn push(&mut self, from: Uuid, kind: InviteKind, message: String) -> u64 {
+    fn push(&mut self, from: Uuid, kind: InviteKind, message: String, rating: Rating) -> u64 {
         self.next += 1;
         self.list.push(Invite {
             id: self.next,
             from,
             kind,
             message,
+            rating,
             answer: Answer::Pending,
             notification: 0,
         });
@@ -135,6 +166,17 @@ pub fn parse_lure_bucket(bucket: &[u8]) -> Option<((u32, u32), Vec3, Vec3, Optio
     Some((grid, pos, look, access))
 }
 
+/// The explanation of an offer above the preference or out of reach
+/// (TeleportOffered_MaturityExceeded / _MaturityBlocked).
+pub fn rating_note(rating: Rating) -> Option<String> {
+    let name = |m: u8| crate::ui::bars::maturity_name(m).to_lowercase();
+    match rating {
+        Rating::Allowed => None,
+        Rating::Exceeded(region) => Some(aurora_i18n::tr!("world-teleport-invites-rating-exceeded", rating = name(region))),
+        Rating::Blocked(_) => Some(aurora_i18n::tr!("world-teleport-invites-rating-blocked").into()),
+    }
+}
+
 /// `secondlife:///app/agent/<id>/completename`: the chat shows the name.
 fn agent_link(id: Uuid) -> String {
     format!("secondlife:///app/agent/{id}/completename")
@@ -147,34 +189,89 @@ impl World {
     /// and its text in the sender's transcript (log_to_im). Muted senders
     /// and the "reject teleports" mode were handled before.
     pub(super) fn on_teleport_offer(&mut self, im: &InstantMessage, from: &str) {
-        let place = parse_lure_bucket(&im.binary_bucket).map(|(grid, pos, _, _)| Place { grid, pos, region: None });
+        self.on_lure(im, from, false);
+    }
+
+    /// An offer or a god's lure, checked against the agent's content
+    /// rating: a region above the preference asks to change it ("Change and
+    /// Continue"); a region the account may not enter cannot be accepted,
+    /// and the sender gets "The Resident cannot visit this region." then
+    /// IM_LURE_DECLINED (send_simple_im, as Firestorm sends them).
+    fn on_lure(&mut self, im: &InstantMessage, from: &str, godlike: bool) {
+        let bucket = parse_lure_bucket(&im.binary_bucket);
+        let place = bucket.as_ref().map(|(grid, pos, _, _)| Place {
+            grid: *grid,
+            pos: *pos,
+            region: None,
+        });
+        let region = bucket
+            .as_ref()
+            .and_then(|(.., access)| access.as_deref())
+            .map_or(0, aurora_net::search::short_string_to_access);
+        let rating = rating_of(region, self.agent_access());
+        if godlike && rating == Rating::Allowed {
+            // "you're about to be teleported": no box
+            log::info!("teleport: god lure from {}, accepted", im.from_agent_id);
+            self.teleport_invites.out.push(NetCommand::AcceptLure {
+                lure_id: im.session_id,
+                godlike: true,
+            });
+            return;
+        }
         let message = im.message.replace('\r', "");
         let invite = self.teleport_invites.push(
             im.from_agent_id,
             InviteKind::Offer {
                 lure: im.session_id,
                 place,
+                godlike,
             },
             message.clone(),
+            rating,
         );
         self.ui_sounds.push(UiSound::TeleportOffer);
         let title = aurora_i18n::tr!("world-mod-offers-you-a-teleport", from = from.to_string());
-        self.add_invite_card(im, invite, format!("{title}\n{message}"));
-        let id = self.notifications.push(
-            Kind::Teleport,
-            title,
-            message,
-            Data::Lure {
+        let note = rating_note(rating);
+        let body = match &note {
+            Some(note) if message.is_empty() => note.clone(),
+            Some(note) => format!("{message}\n\n{note}"),
+            None => message.clone(),
+        };
+        self.add_invite_card(im, invite, format!("{title}\n{body}"));
+        let data = match rating {
+            // TeleportOffered_MaturityBlocked: a notice, nothing to answer
+            Rating::Blocked(_) => Data::None,
+            _ => Data::Lure {
                 from: im.from_agent_id,
                 invite,
+                change_rating: matches!(rating, Rating::Exceeded(_)),
             },
-        );
+        };
+        let id = self.notifications.push(Kind::Teleport, title, body.clone(), data);
         self.set_invite_notification(invite, id);
+        if let Rating::Blocked(_) = rating {
+            if let Some(v) = self.teleport_invites.list.iter_mut().find(|v| v.id == invite) {
+                v.answer = Answer::Declined;
+            }
+            let to = im.from_agent_id;
+            for (dialog, message) in [
+                (0, aurora_i18n::tr!("world-teleport-invites-resident-cannot-visit").to_owned()),
+                (im::LURE_DECLINED, String::new()),
+            ] {
+                self.teleport_invites.out.push(NetCommand::SendImDialog {
+                    to,
+                    dialog,
+                    id: im.session_id,
+                    message,
+                    bucket: Vec::new(),
+                });
+            }
+        }
         self.refresh_teleport_places();
         let line = self.invite_line(aurora_i18n::tr!(
             "world-teleport-invites-offer-received",
             name = agent_link(im.from_agent_id),
-            message = im.message.replace('\r', "")
+            message = body
         ));
         self.transcript_only(im.from_agent_id, &line);
     }
@@ -184,7 +281,9 @@ impl World {
     /// the same sound and log as an offer.
     pub(super) fn on_teleport_request(&mut self, im: &InstantMessage, from: &str) {
         let message = im.message.replace('\r', "");
-        let invite = self.teleport_invites.push(im.from_agent_id, InviteKind::Request, message.clone());
+        let invite = self
+            .teleport_invites
+            .push(im.from_agent_id, InviteKind::Request, message.clone(), Rating::Allowed);
         self.ui_sounds.push(UiSound::TeleportOffer);
         let body = if message.is_empty() {
             aurora_i18n::tr!("world-teleport-invites-offer-a-teleport").to_owned()
@@ -212,13 +311,10 @@ impl World {
     }
 
     /// IM_GODLIKE_LURE_USER: accepted at once, without a box ("you're about
-    /// to be teleported"). The maturity checks come later (part C).
-    pub(super) fn on_godlike_lure(&mut self, im: &InstantMessage) {
-        log::info!("teleport: god lure from {}, accepted", im.from_agent_id);
-        self.teleport_invites.out.push(NetCommand::AcceptLure {
-            lure_id: im.session_id,
-            godlike: true,
-        });
+    /// to be teleported"), unless the region's rating asks to change the
+    /// preference or is out of the account's reach: then as an offer.
+    pub(super) fn on_godlike_lure(&mut self, im: &InstantMessage, from: &str) {
+        self.on_lure(im, from, true);
     }
 
     /// IM_LURE_ACCEPTED / IM_LURE_DECLINED: the answer to our offer, as a
@@ -253,13 +349,17 @@ impl World {
             return Vec::new();
         }
         v.answer = if accept { Answer::Accepted } else { Answer::Declined };
-        let (from, kind, notification) = (v.from, v.kind.clone(), v.notification);
+        let (from, kind, notification, rating) = (v.from, v.kind.clone(), v.notification, v.rating);
         self.notifications.list.retain(|n| n.id != notification);
         match (kind, accept) {
-            (InviteKind::Offer { lure, .. }, true) => vec![NetCommand::AcceptLure {
-                lure_id: lure,
-                godlike: false,
-            }],
+            (InviteKind::Offer { lure, godlike, .. }, true) => {
+                // mature_lure_callback: the preference first, the teleport
+                // waits for the server to keep it (App::send)
+                if let Rating::Exceeded(region) = rating {
+                    self.set_maturity_preference(region);
+                }
+                vec![NetCommand::AcceptLure { lure_id: lure, godlike }]
+            }
             (InviteKind::Offer { lure, .. }, false) => vec![NetCommand::SendImDialog {
                 to: from,
                 dialog: im::LURE_DECLINED,
@@ -311,6 +411,9 @@ impl World {
             let mut body = aurora_i18n::tr!("world-teleport-invites-place", place = label).to_string();
             if !v.message.is_empty() {
                 body = format!("{body}\n{}", v.message);
+            }
+            if let Some(note) = rating_note(v.rating) {
+                body = format!("{body}\n\n{note}");
             }
             let notification = v.notification;
             if let Some(n) = self.notifications.list.iter_mut().find(|n| n.id == notification) {
@@ -452,6 +555,8 @@ mod tests {
     fn an_offer_shows_a_card_and_an_entry_and_goes_to_the_transcript() {
         let root = temp();
         let mut w = world(&root);
+        // an adult account that wants every rating: the Moderate region is fine
+        login(&mut w, "A", "A");
         let text = "Join me in Ahern\r\nhttp://maps.secondlife.com/secondlife/Ahern/128/64/22";
         w.on_im(im(im::LURE_USER, text, b"256000|256256|128|64|22|0|1|0|M"));
         let (id, data) = only_notification(&w);
@@ -650,6 +755,162 @@ mod tests {
         );
         assert_eq!(s.unread, unread);
         assert!(w.notifications.list.is_empty());
+        clean(&w, &root);
+    }
+
+    /// An account of ceiling `max` that wants `preferred` (login letters).
+    fn login(w: &mut World, max: &str, preferred: &str) {
+        use aurora_llsd::llsd_map;
+        w.login = Some(std::sync::Arc::new(aurora_net::LoginResponse {
+            agent_id: ME,
+            session_id: Uuid::nil(),
+            secure_session_id: Uuid::nil(),
+            first_name: String::new(),
+            last_name: String::new(),
+            sim_ip: std::net::Ipv4Addr::LOCALHOST,
+            sim_port: 0,
+            circuit_code: 0,
+            region_x: 0,
+            region_y: 0,
+            region_size_x: 256,
+            region_size_y: 256,
+            seed_capability: String::new(),
+            look_at: Vec3::X,
+            message: String::new(),
+            agent_appearance_service: String::new(),
+            inventory_root: Uuid::nil(),
+            mfa_hash: None,
+            raw: llsd_map! { "agent_access_max" => max, "agent_region_access" => preferred },
+        }));
+    }
+
+    const ADULT_REGION: &[u8] = b"256000|256256|128|64|22|0|1|0|A";
+
+    #[test]
+    fn a_region_is_allowed_above_the_preference_or_out_of_reach() {
+        use aurora_net::search::{AgentAccess, SIM_ACCESS_ADULT as A, SIM_ACCESS_MATURE as M, SIM_ACCESS_PG as PG};
+        let acc = |max, preferred| AgentAccess { max, preferred };
+        assert_eq!(rating_of(PG, acc(PG, PG)), Rating::Allowed);
+        assert_eq!(rating_of(0, acc(PG, PG)), Rating::Allowed);
+        assert_eq!(rating_of(M, acc(A, M)), Rating::Allowed);
+        assert_eq!(rating_of(M, acc(A, PG)), Rating::Exceeded(M));
+        assert_eq!(rating_of(A, acc(A, M)), Rating::Exceeded(A));
+        // a teen account cannot enter Moderate, a non-adult one Adult
+        assert_eq!(rating_of(M, acc(PG, PG)), Rating::Blocked(M));
+        assert_eq!(rating_of(A, acc(M, M)), Rating::Blocked(A));
+        assert_eq!(rating_of(A, acc(A, A)), Rating::Allowed);
+    }
+
+    #[test]
+    fn change_and_continue_sets_the_rating_then_teleports() {
+        let root = temp();
+        let mut w = world(&root);
+        login(&mut w, "A", "M");
+        w.on_im(im(im::LURE_USER, "Join me", ADULT_REGION));
+        let v = w.teleport_invites.list[0].clone();
+        assert_eq!(v.rating, Rating::Exceeded(aurora_net::search::SIM_ACCESS_ADULT));
+        let (_, data) = only_notification(&w);
+        assert!(matches!(data, Data::Lure { change_rating: true, .. }));
+        let note = rating_note(v.rating).unwrap();
+        assert!(w.notifications.list[0].body.contains("Join me") && w.notifications.list[0].body.ends_with(&note));
+        // the place arrives: the explanation stays under the message
+        w.map.sims.insert(
+            (1000, 1001),
+            super::super::worldmap::SimInfo {
+                name: "Ahern".into(),
+                access: 42,
+                flags: 0,
+                image: Uuid::nil(),
+                size_x: 256,
+                size_y: 256,
+            },
+        );
+        w.refresh_teleport_places();
+        let body = &w.notifications.list[0].body;
+        assert!(body.contains("Ahern (128, 64, 22)") && body.ends_with(&note), "{body}");
+        // the preference is asked for, the teleport is the lure's
+        let cmds = w.answer_teleport_invite(v.id, true);
+        assert!(matches!(
+            &cmds[..],
+            [NetCommand::AcceptLure {
+                lure_id: LURE,
+                godlike: false
+            }]
+        ));
+        assert!(matches!(
+            w.maturity.take_commands()[..],
+            [NetCommand::SetMaturityPreference(aurora_net::search::SIM_ACCESS_ADULT)]
+        ));
+        assert!(!w.maturity.synced());
+        // declining such an offer is the plain decline
+        w.on_im(im(im::LURE_USER, "Again", ADULT_REGION));
+        let id = w.teleport_invites.list[1].id;
+        let cmds = w.answer_teleport_invite(id, false);
+        assert!(matches!(
+            &cmds[..],
+            [NetCommand::SendImDialog {
+                dialog: im::LURE_DECLINED,
+                ..
+            }]
+        ));
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn a_region_out_of_reach_tells_the_sender_and_cannot_be_accepted() {
+        let root = temp();
+        let mut w = world(&root);
+        login(&mut w, "M", "M");
+        w.on_im(im(im::LURE_USER, "Join me", ADULT_REGION));
+        let v = w.teleport_invites.list[0].clone();
+        assert!(matches!(v.rating, Rating::Blocked(_)));
+        // a notice and a card without buttons, nothing left to answer
+        let (_, data) = only_notification(&w);
+        assert!(matches!(data, Data::None));
+        assert_eq!(v.answer, Answer::Declined);
+        assert!(w.answer_teleport_invite(v.id, true).is_empty());
+        // send_simple_im twice: the reason, then IM_LURE_DECLINED
+        let sent = w.teleport_invites.take_commands();
+        assert!(
+            matches!(
+                &sent[..],
+                [
+                    NetCommand::SendImDialog { to: JANE, dialog: 0, id: LURE, message, .. },
+                    NetCommand::SendImDialog { to: JANE, dialog: im::LURE_DECLINED, id: LURE, .. },
+                ] if !message.is_empty()
+            ),
+            "{sent:?}"
+        );
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn a_god_lure_above_the_rating_asks_like_an_offer() {
+        let root = temp();
+        let mut w = world(&root);
+        login(&mut w, "A", "PG");
+        w.on_im(im(im::GODLIKE_LURE_USER, "", ADULT_REGION));
+        assert!(w.teleport_invites.take_commands().is_empty());
+        let id = w.teleport_invites.list[0].id;
+        let cmds = w.answer_teleport_invite(id, true);
+        assert!(matches!(&cmds[..], [NetCommand::AcceptLure { godlike: true, .. }]));
+        // out of reach: refused for the god too
+        login(&mut w, "M", "M");
+        w.on_im(im(im::GODLIKE_LURE_USER, "", ADULT_REGION));
+        let sent = w.teleport_invites.take_commands();
+        assert!(
+            matches!(
+                &sent[..],
+                [
+                    _,
+                    NetCommand::SendImDialog {
+                        dialog: im::LURE_DECLINED,
+                        ..
+                    }
+                ]
+            ),
+            "{sent:?}"
+        );
         clean(&w, &root);
     }
 }

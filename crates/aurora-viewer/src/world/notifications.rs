@@ -77,6 +77,9 @@ pub enum Data {
     Lure {
         from: Uuid,
         invite: u64,
+        /// The region is above the content rating: accepting changes it
+        /// first ("Change and Continue").
+        change_rating: bool,
     },
     /// A teleport request (IM_TELEPORT_REQUEST): Yes offers a teleport.
     TeleportRequest {
