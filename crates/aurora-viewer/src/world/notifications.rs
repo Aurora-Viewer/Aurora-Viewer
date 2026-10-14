@@ -27,6 +27,7 @@ pub mod im {
     pub const GOTO_URL: u8 = 28;
     pub const FROM_TASK_AS_ALERT: u8 = 31;
     pub const GROUP_NOTICE: u8 = 32;
+    pub const GROUP_NOTICE_REQUESTED: u8 = 37;
     pub const GROUP_INVITATION_ACCEPT: u8 = 35;
     pub const GROUP_INVITATION_DECLINE: u8 = 36;
     pub const FRIENDSHIP_OFFERED: u8 = 38;

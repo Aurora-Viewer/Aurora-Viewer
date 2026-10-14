@@ -23,6 +23,9 @@ pub mod calls;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_chatlog.rs"]
 pub mod chatlog;
+/// The classifieds of the profile scenarios, ours kept for the run.
+#[path = "demo_classifieds.rs"]
+pub mod classifieds;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;
@@ -1123,6 +1126,8 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
         ];
         p.picks = DEMO_PICKS.iter().map(|(pick, _)| (*pick, demo_pick_name(*pick).into())).collect();
         p.notes = Some(aurora_i18n::tr!("demo-nova-notes").into());
+        p.fl_image = DEMO_FIRST_LIFE;
+        p.fl_about = aurora_i18n::tr!("demo-nova-first-life").into();
     }
     // AURORA_DEMO_PROFILE: the residents of the scenarios have a picture
     // (and so a banner in the Aurora window)
@@ -1137,18 +1142,9 @@ const DEMO_FIREFLIES: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_000
 
 /// The favorite places of the demo profiles and their snapshots.
 const DEMO_PICKS: [(Uuid, Uuid); 3] = [
-    (
-        Uuid::from_u128(0x91C0_0001),
-        Uuid::from_u128(0x5A90_0000_0000_0000_0000_0000_0000_0001),
-    ),
-    (
-        Uuid::from_u128(0x91C0_0003),
-        Uuid::from_u128(0x5A90_0000_0000_0000_0000_0000_0000_0003),
-    ),
-    (
-        Uuid::from_u128(0x91C0_0002),
-        Uuid::from_u128(0x5A90_0000_0000_0000_0000_0000_0000_0002),
-    ),
+    (Uuid::from_u128(0x91C0_0001), demo_snapshot(1)),
+    (Uuid::from_u128(0x91C0_0003), demo_snapshot(3)),
+    (Uuid::from_u128(0x91C0_0002), demo_snapshot(2)),
 ];
 
 fn demo_pick_name(pick: Uuid) -> &'static str {
@@ -1172,16 +1168,28 @@ fn url_path(name: &str) -> String {
     out
 }
 
-/// The snapshot of a demo favorite place: a sky gradient over three colors
-/// (the mock-up's pictures), 128 x 80.
+/// A demo snapshot (favorite places, classifieds, the first life picture):
+/// `0x5A90…n`.
+pub const fn demo_snapshot(n: u128) -> Uuid {
+    Uuid::from_u128(0x5A90_0000_0000_0000_0000_0000_0000_0000 | n)
+}
+
+/// The demo first life picture.
+const DEMO_FIRST_LIFE: Uuid = demo_snapshot(6);
+
+/// The snapshot of a demo favorite place, classified or first life: a sky
+/// gradient over three colors (the mock-up's pictures), 128 x 80.
 fn pick_snapshot(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
-    const SKIES: [[[f32; 3]; 3]; 3] = [
+    const SKIES: [[[f32; 3]; 3]; 6] = [
         [[255.0, 179.0, 107.0], [196.0, 93.0, 214.0], [42.0, 47.0, 107.0]],
-        [[125.0, 211.0, 252.0], [31.0, 95.0, 122.0], [11.0, 42.0, 58.0]],
         [[163.0, 230.0, 53.0], [63.0, 98.0, 18.0], [26.0, 46.0, 5.0]],
+        [[125.0, 211.0, 252.0], [31.0, 95.0, 122.0], [11.0, 42.0, 58.0]],
+        [[253.0, 230.0, 138.0], [180.0, 83.0, 9.0], [69.0, 26.0, 3.0]],
+        [[196.0, 181.0, 253.0], [99.0, 102.0, 241.0], [30.0, 27.0, 75.0]],
+        [[252.0, 211.0, 77.0], [249.0, 115.0, 22.0], [28.0, 25.0, 23.0]],
     ];
-    let n = DEMO_PICKS.iter().position(|(_, s)| s == id)?;
-    let sky = SKIES[n];
+    let n = id.as_u128() ^ demo_snapshot(0).as_u128();
+    let sky = *SKIES.get(usize::try_from(n).ok()?.checked_sub(1)?)?;
     let (w, h) = (128u32, 80u32);
     let mut px = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
@@ -1680,27 +1688,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 }))]
             }
         },
-        aurora_net::NetCommand::ClassifiedsRequest(id) if *id == DEMO_LOUP => vec![NetEvent::AvatarClassifieds {
-            target: *id,
-            list: vec![(
-                Uuid::from_u128(0xC1A5_0001),
-                aurora_i18n::tr!("demo-wolf-s-workshop-mesh-furniture").into(),
-            )],
-        }],
-        aurora_net::NetCommand::ClassifiedInfoRequest(id) => vec![NetEvent::ClassifiedInfo(Box::new(aurora_net::ClassifiedInfo {
-            id: *id,
-            creator: DEMO_LOUP,
-            creation_date: 1_759_000_000,
-            category: 2,
-            name: aurora_i18n::tr!("demo-wolf-s-workshop-mesh-furniture").into(),
-            desc: aurora_i18n::tr!("demo-lightweight-mesh-furniture-copyable-and-modifiable-come-visit-the").into(),
-            sim_name: aurora_i18n::tr!("common-aurora-demo").into(),
-            parcel_name: aurora_i18n::tr!("common-aurora-plaza").into(),
-            pos_global: glam::DVec3::new(256_000.0 + 128.0, 256_000.0 + 128.0, 30.0),
-            flags: aurora_net::profile::classified_flags::AUTO_RENEW,
-            price: 50,
-            ..Default::default()
-        }))],
+        cmd @ (aurora_net::NetCommand::ClassifiedsRequest(_)
+        | aurora_net::NetCommand::ClassifiedInfoRequest(_)
+        | aurora_net::NetCommand::ClassifiedUpdate(_)
+        | aurora_net::NetCommand::ClassifiedDelete(_)
+        | aurora_net::NetCommand::ClassifiedStatsRequest(_)
+        | aurora_net::NetCommand::ClassifiedClick { .. }) => classifieds::reply(cmd).unwrap_or_default(),
         aurora_net::NetCommand::MapBlockRequest {
             min_x,
             min_y,

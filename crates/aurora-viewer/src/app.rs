@@ -1311,6 +1311,13 @@ impl App {
                 self.world.inventory.add_items(vec![crate::demo::offered_item(parent, *owner)]);
                 return;
             }
+            // a new classified is paid when it is published, as the
+            // simulator does on the grid
+            if let Some(price) = crate::demo::classifieds::price_of_new(&cmd)
+                && let Some(balance) = self.world.balance
+            {
+                self.world.apply(NetEvent::Balance(balance - price));
+            }
             for mut ev in crate::demo::demo_reply(&cmd) {
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
                     crate::demo::hud::preserve_touch_transform(&self.world, &mut ev);
@@ -7223,6 +7230,30 @@ impl App {
                     self.world.group_data.refresh(group, member);
                 }
                 GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
+                GroupAction::RefreshNotices(group) => self.world.group_data.request_notices(group),
+                GroupAction::OpenNotice { group, notice } => {
+                    log::info!("group notice asked: {notice}");
+                    self.world.group_data.open_notice(group, notice);
+                }
+                GroupAction::SaveAttachment(group) => self.world.save_notice_attachment(group),
+                GroupAction::SendNotice {
+                    group,
+                    subject,
+                    message,
+                    item,
+                } => {
+                    // send_group_notice: an instant message to the group
+                    let (text, bucket) = aurora_net::groups::notice_to_send(&subject, &message, item);
+                    self.send(NetCommand::SendImDialog {
+                        to: group,
+                        dialog: crate::world::notifications::im::GROUP_NOTICE,
+                        id: uuid::Uuid::nil(),
+                        message: text,
+                        bucket,
+                    });
+                    let me = self.world.notifications.own_name.clone();
+                    self.world.group_data.add_sent_notice(group, subject, me, item.is_some());
+                }
                 GroupAction::Invite { group, invites } => {
                     log::info!("group invite: {} resident(s) invited", invites.len());
                     self.send(NetCommand::InviteToGroup { group, invites });
@@ -9321,6 +9352,10 @@ impl ApplicationHandler for App {
                 self.group_profile_ui.open(&mut self.world, crate::demo::group::shown_group());
                 if let Some(member) = crate::demo::group::members_tab() {
                     self.group_profile_ui.show_member(member);
+                }
+                if let Some((group, read, compose)) = crate::demo::group::notices_tab() {
+                    self.world.group_data.set_read(group, read);
+                    self.group_profile_ui.show_notices(compose);
                 }
                 if let Some(invitees) = crate::demo::group::invitees() {
                     self.group_profile_ui.invite.open(crate::demo::group::shown_group(), invitees);
