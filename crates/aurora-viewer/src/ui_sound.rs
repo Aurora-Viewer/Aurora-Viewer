@@ -42,6 +42,8 @@ pub enum UiSound {
     /// UISndPieMenuSliceHighlight0..7.
     PieMenuSlice(u8),
     Restart,
+    /// A photo taken (UISndSnapshot).
+    Snapshot,
     ScriptFloaterOpen,
     ScriptFloaterClose,
     StartIm,
@@ -91,7 +93,7 @@ use UiSound as S;
 
 /// Every interface sound, in the order of the preferences list.
 #[rustfmt::skip]
-pub const CATALOG: [Entry; 41] = [
+pub const CATALOG: [Entry; 42] = [
     e!(S::Click, "Click", aurora_i18n::tr!("ui-sound-click-button-pressed"), CLICK, true),
     e!(S::ClickRelease, "ClickRelease", aurora_i18n::tr!("ui-sound-click-button-released"), CLICK, true),
     e!(S::BadKeystroke, "BadKeystroke", aurora_i18n::tr!("ui-sound-key-rejected"), u(0x2ca849ba_2885_4bc3_90ef_d4987a5b983a), true),
@@ -133,6 +135,7 @@ pub const CATALOG: [Entry; 41] = [
     e!(S::ObjectRezIn, "ObjectRezIn", aurora_i18n::tr!("ui-sound-object-rezzed"), u(0x3c8fc726_1fd6_862d_fa01_16c5b2568db6), true),
     e!(S::MicToggle, "MicToggle", aurora_i18n::tr!("ui-sound-microphone-on-off"), PIE_SLICE_0, false),
     e!(S::TrackerBeacon, "TrackerBeacon", aurora_i18n::tr!("ui-sound-destination-beacon"), ALERT, false),
+    e!(S::Snapshot, "Snapshot", aurora_i18n::tr!("ui-sound-photo-taken"), u(0x3d09f582_3851_c0e0_f5ba_277ac5c73fb4), true),
 ];
 
 impl UiSound {
