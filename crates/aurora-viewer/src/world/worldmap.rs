@@ -139,6 +139,9 @@ pub struct WorldMap {
     pub agents: HashMap<(u32, u32), Vec<(u32, u32, i32)>>,
     agents_asked: HashMap<(u32, u32), Instant>,
     pub track: Option<Track>,
+    /// Centre the open map on `track` once its region is known
+    /// (llMapDestination's BEACON_FOCUS_MAP, LLFloaterWorldMap autofocus).
+    pub focus_track: bool,
     /// Region name search in progress (lowercase) and when it was sent.
     pub search: Option<(String, Instant)>,
     /// Place link waiting for its region by name (lowercase name, position in
@@ -455,6 +458,21 @@ impl WorldMap {
         }
     }
 
+    /// llMapDestination (process_script_teleport_request, then trackURL):
+    /// whole metres, the height kept within Second Life's 0..4096 m. Returns
+    /// whether the map opens (BEACON_SHOW_MAP); it centres on the place with
+    /// BEACON_FOCUS_MAP. Nothing teleports until the resident asks to.
+    pub fn map_destination(&mut self, region: &str, pos: glam::Vec3, flags: u32) -> bool {
+        use aurora_net::beacon;
+        let show = flags & beacon::SHOW_MAP != 0;
+        self.track_region(
+            region,
+            glam::Vec3::new(pos.x.trunc(), pos.y.trunc(), pos.z.trunc().clamp(0.0, 4096.0)),
+        );
+        self.focus_track = show && flags & beacon::FOCUS_MAP != 0;
+        show
+    }
+
     fn track_known_region(&mut self, lower: &str, pos: glam::Vec3) -> bool {
         let Some((sx, sy)) = self.region_by_name(lower) else {
             return false;
@@ -569,6 +587,57 @@ mod tests {
         m.track_region("ahern", glam::Vec3::new(1.0, 2.0, 3.0));
         assert!(m.take_commands().iter().all(|c| !matches!(c, NetCommand::MapNameRequest { .. })));
         assert!(m.track.is_some());
+    }
+
+    fn yiff() -> MapBlock {
+        MapBlock {
+            x: 1000,
+            y: 1001,
+            name: "YIFF".into(),
+            access: 21,
+            region_flags: 0,
+            water_height: 20,
+            agents: 0,
+            map_image_id: uuid::Uuid::nil(),
+            size_x: 256,
+            size_y: 256,
+        }
+    }
+
+    #[test]
+    fn map_destination_tracks_whole_metres_and_only_shows_the_map() {
+        use aurora_net::beacon::{FOCUS_MAP, SHOW_MAP};
+        let mut m = WorldMap::default();
+        m.apply_blocks(vec![yiff()]);
+        // trackURL: (S32) of each coordinate, height within 0..4096 m
+        assert!(m.map_destination("yiff", glam::Vec3::new(168.9, 149.6, 5000.7), SHOW_MAP | FOCUS_MAP));
+        let t = m.track.as_ref().expect("tracked");
+        assert_eq!((t.x, t.y, t.z, t.teleport), (256168.0, 256405.0, 4096.0, false));
+        assert!(m.focus_track);
+        assert!(m.take_commands().iter().all(|c| !matches!(c, NetCommand::TeleportTo { .. })));
+        // without BEACON_SHOW_MAP the place is tracked, the map stays closed
+        assert!(!m.map_destination("YIFF", glam::Vec3::new(10.0, 20.0, 30.0), FOCUS_MAP));
+        assert!(!m.focus_track);
+        assert_eq!(m.track.as_ref().map(|t| (t.x, t.y)), Some((256010.0, 256276.0)));
+        assert!(m.map_destination("YIFF", glam::Vec3::new(10.0, 20.0, -3.0), SHOW_MAP));
+        assert!(!m.focus_track);
+        assert_eq!(m.track.as_ref().map(|t| t.z), Some(0.0));
+    }
+
+    #[test]
+    fn map_destination_in_an_unknown_region_waits_for_it_before_centring() {
+        let mut m = WorldMap::default();
+        assert!(m.map_destination(
+            "YIFF",
+            glam::Vec3::new(168.0, 149.0, 118.0),
+            aurora_net::beacon::SHOW_MAP | aurora_net::beacon::FOCUS_MAP
+        ));
+        assert!(matches!(&m.take_commands()[..], [NetCommand::MapNameRequest { name }] if name == "yiff"));
+        assert!(m.track.is_none() && m.focus_track);
+        m.apply_blocks(vec![yiff()]);
+        let t = m.track.as_ref().expect("tracked once the region is known");
+        assert_eq!((t.x, t.y, t.z), (256168.0, 256405.0, 118.0));
+        assert!(m.focus_track, "the open map centres on it next frame");
     }
 
     #[test]
