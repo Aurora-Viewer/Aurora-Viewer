@@ -38,6 +38,9 @@ pub mod tphistory;
 pub mod transcripts;
 pub mod worldmap;
 
+#[cfg(test)]
+mod toasts_tests;
+
 use crate::agent::AgentState;
 use crate::scene::avatar::AvatarLibrary;
 use crate::scene::textures::TexSource;
@@ -2446,12 +2449,86 @@ impl World {
     /// Friends' online / offline notices once their names are known
     /// (LLAvatarNameCache::get with a callback).
     pub fn flush_online_notices(&mut self) {
-        for (n, online) in self.social.take_online_notices() {
+        for (id, n, online) in self.social.take_online_notices() {
             // FIRE-2731 (on_avatar_name_cache_notify)
             self.ui_sounds
                 .push(if online { UiSound::FriendOnline } else { UiSound::FriendOffline });
+            // the toast of LLNotificationTipHandler (ChatOnlineNotification),
+            // never in do not disturb nor for a blocked resident
+            if self.notifications.toasts.presence && !self.status.dnd && !self.mutes.is_muted_id(&id) {
+                self.notifications.push_presence(id, n.clone(), online);
+            }
+            // the line of nearby chat stays: Firestorm's own skin sends the
+            // notices there (OnlineOfflinetoNearbyChat)
             self.system_message(n);
         }
+    }
+
+    /// A message received in a conversation that is not in sight
+    /// (`in_sight`: its tab shown in the Conversations window): a toast and
+    /// an entry under the bell until the conversation is read, as
+    /// notify_of_message decides (llimview.cpp) — never in do not disturb,
+    /// group chats by their own preference.
+    pub fn notify_message(&mut self, m: &ImMessage, in_sight: bool) {
+        let prefs = self.notifications.toasts;
+        let wanted = match m.kind {
+            ImKind::Group => prefs.group_im,
+            ImKind::Private | ImKind::Conference => prefs.im,
+        };
+        if !wanted || in_sight || self.status.dnd {
+            return;
+        }
+        let Some(line) = self
+            .social
+            .ims
+            .iter()
+            .find(|s| s.other == m.session)
+            .and_then(|s| s.lines.back())
+        else {
+            return;
+        };
+        // only what a resident wrote (no system lines, no objects)
+        if line.source.is_nil() || line.kind != ChatKind::Im || self.mutes.is_muted_id(&line.source) {
+            return;
+        }
+        let (from, text) = (line.source, line.text.clone());
+        let group = m.kind != ImKind::Private;
+        let (title, body) = if group {
+            (self.session_title(&m.session), format!("{}: {text}", line.from))
+        } else {
+            (line.from.clone(), text)
+        };
+        self.notifications.push_message(m.session, from, title, body);
+    }
+
+    /// A friend's or a message's card clicked: it is acknowledged (gone from
+    /// the bell, the conversation read) and the conversation to show is
+    /// returned — the friend's IM (LLAvatarActions::startIM) or the session
+    /// of the messages (FSFloaterIM::show).
+    pub fn open_from_notification(&mut self, id: u64) -> Option<Uuid> {
+        let n = self.notifications.list.iter().find(|n| n.id == id)?;
+        let session = match n.data {
+            notifications::Data::Presence { who, online: true } => {
+                self.social.session_mut(who);
+                who
+            }
+            notifications::Data::Message { session, .. } => session,
+            _ => return None,
+        };
+        self.notifications.list.retain(|n| n.id != id);
+        if let Some(s) = self.social.ims.iter_mut().find(|s| s.other == session) {
+            s.unread = 0;
+        }
+        self.acknowledge_read_messages();
+        self.social.focus_im = Some(session);
+        Some(session)
+    }
+
+    /// The message entries whose conversation has been read leave the bell.
+    pub fn acknowledge_read_messages(&mut self) {
+        let ims = &self.social.ims;
+        self.notifications
+            .acknowledge_messages(|s| ims.iter().find(|i| i.other == *s).is_none_or(|i| i.unread == 0));
     }
 
     /// Complete name of an avatar ("Jane Doe (janedoe)"), else its legacy

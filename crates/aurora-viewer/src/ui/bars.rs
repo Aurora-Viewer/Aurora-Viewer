@@ -1121,7 +1121,7 @@ fn tool_button(
     tip: &str,
     active: bool,
     width: f32,
-    badge: bool,
+    unread: usize,
 ) -> bool {
     let size = Vec2::new(width, 22.0);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -1153,14 +1153,34 @@ fn tool_button(
         super::widgets::paint_ink_centered(painter, galley.clone(), rect.center(), color);
         super::widgets::paint_ink_centered(painter, galley, rect.center() + bold, color);
     }
-    if badge {
-        painter.circle_filled(
-            egui::pos2(rect.right() - (width * 0.18).clamp(4.0, 8.0), rect.center().y),
-            (width * 0.07).clamp(2.0, 3.0),
-            p.violet,
-        );
+    if unread > 0 {
+        paint_unread_pill(ui, p, rect, icon_size, unread);
     }
     resp.on_hover_text(tip).clicked()
+}
+
+/// The unread count of the Conversations button: the pill of the entries of
+/// the conversation list (violet, its number in `on_accent`), on the top
+/// right corner of the icon like the bell's count, inside the button so
+/// that nothing moves. A button too narrow for it keeps a dot.
+fn paint_unread_pill(ui: &egui::Ui, p: &Palette, rect: egui::Rect, icon: f32, unread: usize) {
+    let painter = ui.painter();
+    let text = if unread > 99 { "99+".to_owned() } else { unread.to_string() };
+    let galley = painter.layout_no_wrap(text, egui::FontId::proportional(9.5), p.on_accent);
+    const H: f32 = 13.0;
+    let w = (galley.size().x + 7.0).max(H);
+    if rect.width() < w + 4.0 {
+        painter.circle_filled(
+            egui::pos2(rect.right() - (rect.width() * 0.18).clamp(4.0, 8.0), rect.center().y),
+            (rect.width() * 0.07).clamp(2.0, 3.0),
+            p.violet,
+        );
+        return;
+    }
+    let left = (rect.center().x + icon * 0.2).min(rect.right() - 1.0 - w);
+    let pill = egui::Rect::from_min_size(egui::pos2(left, rect.top() - 1.0), Vec2::new(w, H));
+    painter.rect_filled(pill, ui.visuals().window_corner_radius, p.violet);
+    super::widgets::paint_ink_centered(painter, galley, pill.center(), p.on_accent);
 }
 
 /// Microphone button state (Firestorm "Speak" button with its arrow).
@@ -1557,12 +1577,13 @@ pub fn bottom_bar(
                     let badge = b.command == "conversations"
                         && unread > 0
                         && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
+                    let count = if badge { unread } else { 0 };
                     let tip = if badge {
                         aurora_i18n::tr!("ui-bars-unread", value0 = b.tooltip.to_string(), unread = format!("{}", unread))
                     } else {
                         b.tooltip.clone()
                     };
-                    if tool_button(ui, p, icons, &b.command, &b.icon, &tip, active, btn_w, badge) {
+                    if tool_button(ui, p, icons, &b.command, &b.icon, &tip, active, btn_w, count) {
                         let a = run_command(ui.ctx(), &b.command, panels);
                         if !matches!(a, BarAction::None) {
                             action = a;
@@ -1779,6 +1800,37 @@ mod tests {
         ctx.data_mut(|d| d.insert_persisted(egui::Id::new(("conversations", "minimized")), false));
         run_command(&ctx, "conversations", &mut panels);
         assert!(!panels.chat);
+    }
+
+    /// The texts and filled circles a button paints with its unread count.
+    fn painted_count(width: f32, unread: usize) -> (Vec<String>, usize) {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            let rect = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), Vec2::new(width, 22.0));
+            paint_unread_pill(ui, &p, rect, 16.0, unread);
+        });
+        out.textures_delta.clear();
+        let mut texts = Vec::new();
+        let mut dots = 0;
+        for s in &out.shapes {
+            match &s.shape {
+                egui::Shape::Text(t) => texts.push(t.galley.text().to_owned()),
+                egui::Shape::Circle(_) => dots += 1,
+                _ => {}
+            }
+        }
+        (texts, dots)
+    }
+
+    /// The Conversations button shows how many messages wait, "99+" beyond
+    /// 99; a button too narrow for the number keeps the dot.
+    #[test]
+    fn the_conversations_button_counts_the_unread_messages() {
+        assert_eq!(painted_count(60.0, 3), (vec!["3".to_owned()], 0));
+        assert_eq!(painted_count(60.0, 250), (vec!["99+".to_owned()], 0));
+        assert_eq!(painted_count(30.0, 250), (vec!["99+".to_owned()], 0));
+        assert_eq!(painted_count(14.0, 3), (Vec::new(), 1));
     }
 }
 
