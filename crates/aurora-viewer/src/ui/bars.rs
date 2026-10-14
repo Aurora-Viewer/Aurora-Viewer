@@ -1818,6 +1818,96 @@ mod tests {
         }
     }
 
+    /// The landmark star alone at `STAR`: a frame with `events`, its
+    /// action and its painted texts.
+    fn star_frame(
+        ctx: &egui::Context,
+        found: Option<&crate::ui::landmark_create::ParcelLandmark>,
+        events: Vec<egui::Event>,
+    ) -> (Option<StarAction>, Vec<(String, egui::Pos2)>) {
+        const STAR: egui::Pos2 = egui::pos2(300.0, 20.0);
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let mut action = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(900.0, 600.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let slot = egui::Rect::from_min_size(STAR, Vec2::new(40.0, 22.0));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                    action = landmark_star(ui, &p, &icons, found);
+                });
+            },
+        );
+        output.textures_delta.clear();
+        fn texts(shape: &egui::Shape, out: &mut Vec<(String, egui::Pos2)>) {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.pos + egui::vec2(3.0, 5.0))),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut found_texts = Vec::new();
+        for s in &output.shapes {
+            texts(&s.shape, &mut found_texts);
+        }
+        (action, found_texts)
+    }
+
+    fn click_events(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            },
+        ]
+    }
+
+    #[test]
+    fn the_outline_star_opens_its_menu_and_the_lit_one_edits_its_landmark() {
+        // the glyph's centre: the slot's left plus half a slot, its middle
+        use crate::ui::parcel_icons::{SLOT_HEIGHT, SLOT_WIDTH};
+        let star = egui::pos2(300.0 + SLOT_WIDTH / 2.0, 20.0 + SLOT_HEIGHT / 2.0);
+        let ctx = egui::Context::default();
+        let favorites = aurora_i18n::tr!("landmark-star-add-favorites");
+        let (_, painted) = star_frame(&ctx, None, vec![]);
+        assert!(painted.iter().all(|(t, _)| t != favorites), "menu closed at first");
+        let mut acted = Vec::new();
+        for pressed in [true, false] {
+            acted.push(star_frame(&ctx, None, click_events(star, pressed)).0);
+        }
+        // a new popup is laid out over two frames
+        star_frame(&ctx, None, vec![]);
+        let (_, painted) = star_frame(&ctx, None, vec![]);
+        let item = painted.iter().find(|(t, _)| t == favorites).map(|(_, pos)| *pos);
+        let item = item.expect("the click opens the menu");
+        assert!(acted.iter().all(Option::is_none), "opening the menu is no action");
+        let mut chosen = None;
+        for pressed in [true, false] {
+            chosen = chosen.or(star_frame(&ctx, None, click_events(item, pressed)).0);
+        }
+        assert_eq!(chosen, Some(StarAction::AddFavorite));
+
+        let lit = crate::ui::landmark_create::ParcelLandmark {
+            item: uuid::Uuid::from_u128(7),
+            name: "Plage".into(),
+            favorite: true,
+        };
+        let ctx = egui::Context::default();
+        star_frame(&ctx, Some(&lit), vec![]);
+        let mut edit = None;
+        for pressed in [true, false] {
+            edit = edit.or(star_frame(&ctx, Some(&lit), click_events(star, pressed)).0);
+        }
+        assert_eq!(edit, Some(StarAction::Edit(lit.item)));
+    }
+
     #[test]
     fn microphone_panel_stays_open_while_its_device_lists_are_used() {
         let default = aurora_i18n::tr!("ui-options-system-default");
