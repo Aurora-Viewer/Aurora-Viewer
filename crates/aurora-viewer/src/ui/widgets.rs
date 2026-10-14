@@ -479,7 +479,7 @@ impl<'a> Floater<'a> {
                 drag.finish(ctx, window_id, requested, response.response.rect);
             }
             if resizable {
-                resize::handles(ctx, &response.response);
+                resize::handles(ctx, p, &response.response);
             }
         }
         if close {
@@ -550,7 +550,7 @@ pub(crate) fn bare_window(
     if let (Some(drag), Some(requested)) = (drag, resized) {
         drag.finish(ctx, window_id, requested, shown.response.rect);
     }
-    resize::handles(ctx, &shown.response);
+    resize::handles(ctx, p, &shown.response);
 }
 
 const PLACE_POS: &str = "place_pos";
