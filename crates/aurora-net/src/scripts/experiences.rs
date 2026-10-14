@@ -117,19 +117,12 @@ pub async fn load(
         // Bound URI size and batch names as LLExperienceCache does. UUIDs
         // remain valid choices if a name lookup is temporarily unavailable.
         let names = async {
-            if let Some(cap) = info.and_then(|s| reqwest::Url::parse(s).ok()) {
-                for batch in choices.chunks_mut(30) {
-                    let mut url = cap.clone();
-                    {
-                        let mut query = url.query_pairs_mut();
-                        query.append_pair("page_size", &batch.len().to_string());
-                        for choice in batch.iter() {
-                            query.append_pair("public_id", &choice.id.to_string());
-                        }
-                    }
+            if let Some(cap) = info {
+                let ids: Vec<Uuid> = choices.iter().map(|c| c.id).collect();
+                for (url, _) in crate::experience::info_urls(cap, &ids) {
                     if let Ok(reply) = request(http.get(url)).await {
                         for value in reply["experience_keys"].as_array() {
-                            if let Some(choice) = batch.iter_mut().find(|e| e.id == value["public_id"].as_uuid()) {
+                            if let Some(choice) = choices.iter_mut().find(|e| e.id == value["public_id"].as_uuid()) {
                                 let name = value["name"].as_str();
                                 if !name.is_empty() {
                                     choice.name = name.to_owned();
@@ -200,7 +193,7 @@ mod tests {
                         }
                     } else if headers.starts_with("GET /creators ") {
                         llsd_map! { "experience_ids" => Llsd::Array(vec![creator.into()]) }
-                    } else if headers.starts_with("GET /info?") {
+                    } else if headers.starts_with("GET /info/id/?") {
                         assert!(headers.contains(&format!("public_id={creator}")));
                         if !associated_id.is_nil() {
                             assert!(headers.contains(&format!("public_id={associated_id}")));

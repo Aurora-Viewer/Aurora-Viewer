@@ -6,6 +6,7 @@ pub mod build;
 pub mod caps;
 pub mod circuit;
 pub mod currency;
+pub mod experience;
 pub mod fetch;
 pub mod inventory;
 pub mod land;

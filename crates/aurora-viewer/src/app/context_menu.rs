@@ -441,10 +441,20 @@ impl App {
             CtxAction::TeleportToPlace(region, pos) => self.teleport_to_location(region, pos),
             CtxAction::OpenUrl(url) => {
                 use crate::link_trust::Trust;
-                match crate::link_trust::classify(&url) {
-                    Trust::Dangerous(why) => self.url_confirm = Some((url, false, Some(why))),
-                    Trust::Unknown if self.settings.warn_external_links => self.url_confirm = Some((url, false, None)),
-                    _ => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                // LLWeb::loadURLInternal: a Marketplace page opens in the
+                // Marketplace window (Firestorm's default browser choice keeps
+                // the Second Life sites inside the viewer)
+                let marketplace = self.marketplace_home();
+                if marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home))
+                    && !matches!(crate::link_trust::classify(&url), Trust::Dangerous(_))
+                {
+                    self.marketplace_ui.open(Some(url));
+                } else {
+                    match crate::link_trust::classify(&url) {
+                        Trust::Dangerous(why) => self.url_confirm = Some((url, false, Some(why))),
+                        Trust::Unknown if self.settings.warn_external_links => self.url_confirm = Some((url, false, None)),
+                        _ => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                    }
                 }
             }
             CtxAction::TeleportToPlaceConfirmed(region, pos) => self.teleport_to_location(region, pos),
