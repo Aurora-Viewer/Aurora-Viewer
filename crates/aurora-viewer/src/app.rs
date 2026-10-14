@@ -7403,11 +7403,21 @@ impl App {
         for a in actions {
             match a {
                 GroupAction::Search(a) => search.push(a),
-                GroupAction::Load { group, member } => self.world.group_data.open(group, member),
+                GroupAction::Load { group, member } => {
+                    self.world.group_data.open(group, member);
+                    // LLPanelGroupExperiences::setGroupID → activate: the
+                    // tab's count is known before it is opened
+                    if member {
+                        self.world.experiences.request_group(group);
+                    }
+                }
                 GroupAction::Refresh { group, member } => {
                     self.send(NetCommand::GroupProfileRequest(group));
                     self.world.group_data.refresh(group, member);
                     self.world.group_money.refresh(group);
+                    if member {
+                        self.world.experiences.request_group(group);
+                    }
                 }
                 GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
                 GroupAction::Eject { group, members } | GroupAction::Ban { group, members } if members.is_empty() => {
@@ -7499,6 +7509,8 @@ impl App {
                     ui::land::LandUi::select_at_global(&mut self.world, x, y);
                     self.panels.about_land = true;
                 }
+                GroupAction::LoadExperiences(group) => self.world.experiences.request_group(group),
+                GroupAction::ExperienceProfile(experience) => self.world.experiences.open_profile(experience),
             }
         }
         self.apply_search_actions(ctx, search);
@@ -9645,6 +9657,9 @@ impl ApplicationHandler for App {
                 }
                 if crate::demo::group::admin_tab() {
                     self.group_profile_ui.show_admin();
+                }
+                if crate::demo::group::experiences_tab() {
+                    self.group_profile_ui.show_experiences();
                 }
                 if let Some(ledger) = crate::demo::group::land_tab() {
                     // the land we hold, for the most we may give

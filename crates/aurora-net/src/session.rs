@@ -1226,6 +1226,7 @@ impl Session<'_> {
                 }
             }
             NetCommand::ExperienceInfo(ids) => self.request_experiences(ids),
+            NetCommand::GroupExperiences(group) => self.request_group_experiences(group),
             NetCommand::ExperiencePermission { experience, change } => self.experience_permission(experience, change),
             NetCommand::Touch { local_id } => {
                 // a click is a grab immediately followed by a release (LLToolGrab)
@@ -2500,6 +2501,17 @@ impl Session<'_> {
         tokio::spawn(async move {
             let details = crate::experience::fetch_info(&http, base.as_deref(), &ids).await;
             let _ = events.send(NetEvent::ExperienceInfo(details));
+        });
+    }
+
+    /// LLExperienceCache::getGroupExperiences, on a task.
+    fn request_group_experiences(&self, group: Uuid) {
+        let cap = self.main_cap("GroupExperiences");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let ids = crate::experience::fetch_group_experiences(&http, cap.as_deref(), group).await;
+            let _ = events.send(NetEvent::GroupExperiences { group, ids });
         });
     }
 
