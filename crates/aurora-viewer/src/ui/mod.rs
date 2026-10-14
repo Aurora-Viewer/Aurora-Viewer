@@ -22,6 +22,7 @@ pub mod exit;
 pub mod find_shortcut;
 pub mod fonts;
 pub mod group_profile;
+pub mod hover_height;
 pub mod hud;
 pub mod icons;
 pub mod inspect;

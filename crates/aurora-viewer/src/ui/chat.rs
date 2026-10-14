@@ -1447,12 +1447,9 @@ pub fn show(
                         // leave exactly the emoji button + spacing (else the row overflows
                         // and the resizable window grows every frame)
                         let field_w = (ui.available_width() - EMOJI_BTN_W - ui.spacing().item_spacing.x - 2.0).max(40.0);
-                        let r = ui.add(
-                            egui::TextEdit::singleline(&mut st.conv_input)
-                                .id(conv_input)
-                                .hint_text(hint)
-                                .desired_width(field_w),
-                        );
+                        let r = emoji.text_field(ui, &mut st.conv_input, |edit| {
+                            edit.id(conv_input).hint_text(hint).desired_width(field_w)
+                        });
                         let b = tool_resp(ui, p, icons, "mood-smile-filled", st.emoji_open);
                         emoji_btn = Some(b.rect);
                         if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {

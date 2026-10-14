@@ -205,9 +205,9 @@ function Remove-AuroraRelease($Repo, $Releases) {
     $pick = Show-Menu 'Which release to delete?' $items { Show-Logo 'Delete a release' }
     if (-not $pick) { return }
     $tag = $pick.Release.tagName
-    # releases that hold assets (assets-1: the emoji font fetch-assets.ps1 downloads)
+    # releases that hold assets (assets-1: the 3D emoji font that older commits download)
     if ($tag -notmatch '^v\d') {
-        Write-Color "  $tag is not a version: it holds files the repository needs (the emoji font for assets-1). Protected." warn
+        Write-Color "  $tag is not a version: it holds files older commits need (the 3D emoji font for assets-1). Protected." warn
         Wait-Back; return
     }
     Write-Host ''

@@ -127,6 +127,7 @@ impl App {
             me: w.agent_id,
             seated: w.agent.is_sitting(),
             flying: w.agent.flying,
+            hover_height: w.hover_height_available(),
             edit_linked: self.settings.build.edit_linked,
             ..Facts::default()
         };
@@ -275,6 +276,7 @@ impl App {
                 self.panels.about_land = true;
             }
             CtxAction::DisplayName => self.display_name_ui.open(),
+            CtxAction::HoverHeight => self.hover_height_ui.open = true,
             CtxAction::OpenAppearance { tab, editing } => {
                 self.panels.appearance = true;
                 self.appearance_ui.open(tab, editing);

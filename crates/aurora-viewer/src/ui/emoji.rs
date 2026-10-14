@@ -1,11 +1,11 @@
-//! Color emoji from the Noto 3D emoji font (sbix PNG strikes, Apache 2.0 /
-//! OFL — see NOTICE.md). The font is memory-mapped (it is far
-//! too large to embed) and glyphs are decoded lazily into egui textures.
-//! Provides the emoji picker and inline emoji rendering for chat text.
+//! Color emoji from Google's Noto Color Emoji font (2D, CBDT PNG bitmaps,
+//! OFL — see NOTICE.md), built into the executable; glyphs are decoded
+//! lazily into egui textures. Provides the emoji picker and inline emoji
+//! rendering for chat text.
 
 use crate::theme::Palette;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Picker tabs: (label, Tabler icon, Unicode group).
 fn categories() -> &'static Vec<(&'static str, &'static str, emojis::Group)> {
@@ -101,56 +101,22 @@ pub struct Emoji {
     pub query: String,
 }
 
-/// The font of a published viewer, part of its executable (build.rs,
-/// `AURORA_EMBED_EMOJI`): no folder of the installation to lose or to be
-/// refused. The other builds read the file of the source tree.
-#[cfg(aurora_embedded_emoji)]
-static BUILT_IN: Option<&[u8]> = Some(include_bytes!("../../../../assets/emoji/Noto-3D-128.ttf"));
-#[cfg(not(aurora_embedded_emoji))]
-static BUILT_IN: Option<&[u8]> = None;
+/// The font is part of the executable (10.7 MB): no folder of the
+/// installation to lose or to be refused.
+static BUILT_IN: &[u8] = include_bytes!("../../../../assets/emoji/NotoColorEmoji.ttf");
 
-/// Font files tried when `AURORA_EMOJI_FONT` names none and none is built in.
-fn font_files() -> Vec<PathBuf> {
-    let mut v = Vec::new();
-    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
-        v.push(dir.join("assets").join("emoji").join("Noto-3D-128.ttf"));
-        v.push(dir.join("assets").join("emoji").join("Noto-3D-watch.ttf"));
-    }
-    // development tree: <repo>/assets/emoji (scripts/fetch-assets.ps1)
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/emoji");
-    v.push(dev.join("Noto-3D-128.ttf"));
-    v.push(dev.join("Noto-3D-watch.ttf"));
-    v
-}
-
-/// A font file mapped for the rest of the session.
-fn map_font(path: &Path) -> Option<&'static [u8]> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(e) => {
-            // A candidate that does not exist is normal; a file that is
-            // there and cannot be opened (rights, security software) is
-            // what a report needs to show.
-            if e.kind() != std::io::ErrorKind::NotFound {
-                log::warn!("emoji font {}: {e}", path.display());
-            }
-            return None;
-        }
-    };
-    // SAFETY: the font file is opened read-only and never modified
-    // while mapped; the mapping is leaked so the face can be 'static.
-    let map = unsafe { memmap2::Mmap::map(&file) }
+/// Another font to try (`AURORA_EMOJI_FONT`), kept for the session.
+fn read_font(path: &Path) -> Option<&'static [u8]> {
+    std::fs::read(path)
         .map_err(|e| log::warn!("emoji font {}: {e}", path.display()))
-        .ok()?;
-    let map: &'static memmap2::Mmap = Box::leak(Box::new(map));
-    Some(&map[..])
+        .ok()
+        .map(|bytes| &*Box::leak(bytes.into_boxed_slice()))
 }
 
 impl Emoji {
     pub fn load() -> Emoji {
-        // In order: the font asked for, the one of the executable, the files.
-        let asked = std::env::var_os("AURORA_EMOJI_FONT").map(PathBuf::from);
-        let files = font_files();
+        // The font asked for (to compare another one), else the built-in one.
+        let asked = std::env::var_os("AURORA_EMOJI_FONT");
         let parse = |bytes: &'static [u8], name: &str| match ttf_parser::Face::parse(bytes, 0) {
             Ok(f) => {
                 log::info!("emoji font: {name}");
@@ -161,18 +127,12 @@ impl Emoji {
                 None
             }
         };
-        let from_file = |path: &PathBuf| map_font(path).and_then(|bytes| parse(bytes, &path.display().to_string()));
         let face = asked
-            .as_ref()
-            .and_then(from_file)
-            .or_else(|| BUILT_IN.and_then(|bytes| parse(bytes, "built into the executable")))
-            .or_else(|| files.iter().find_map(from_file));
+            .map(std::path::PathBuf::from)
+            .and_then(|path| read_font(&path).and_then(|bytes| parse(bytes, &path.display().to_string())))
+            .or_else(|| parse(BUILT_IN, "Noto Color Emoji, built into the executable"));
         if face.is_none() {
-            let looked: Vec<String> = asked.iter().chain(&files).map(|p| p.display().to_string()).collect();
-            log::warn!(
-                "no emoji font found (Noto-3D, looked for {}); emoji use the monochrome fallback",
-                looked.join(", ")
-            );
+            log::warn!("no emoji font: emoji use the monochrome fallback");
         }
         let lists = categories()
             .iter()
@@ -297,6 +257,86 @@ impl Emoji {
         flush(ui, &mut run);
     }
 
+    /// A one-line text field (the conversation input) whose emoji show in
+    /// colour, as in the history. egui's text only has one-colour glyphs, so
+    /// the emoji are laid out blank (same size as in `inline`) and their
+    /// images drawn over them: editing, cursor and selection stay egui's.
+    /// `build` sets the field up (id, hint, width).
+    pub fn text_field(
+        &mut self,
+        ui: &mut egui::Ui,
+        text: &mut String,
+        build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>,
+    ) -> egui::Response {
+        // without emoji, egui's own layout
+        if !text.chars().any(|c| self.has(c)) {
+            return ui.add(build(egui::TextEdit::singleline(text)));
+        }
+        // what TextEdit uses when given no font nor colour
+        let font = egui::FontSelection::default().resolve(ui.style());
+        let color = ui
+            .visuals()
+            .override_text_color
+            .unwrap_or_else(|| ui.visuals().widgets.inactive.text_color());
+        let line_height = ui.fonts_mut(|f| f.row_height(&font)) + ui.spacing().extra_text_line_spacing;
+        // the size `inline` gives the emoji pictures
+        let side = font.size * 1.25;
+        let format = |blank: bool| {
+            let mut f = if blank {
+                egui::TextFormat::simple(egui::FontId::new(side, font.family.clone()), egui::Color32::TRANSPARENT)
+            } else {
+                egui::TextFormat::simple(font.clone(), color)
+            };
+            f.line_height = Some(line_height);
+            f.valign = egui::Align::Center;
+            f
+        };
+        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap_width: f32| {
+            let text = text.as_str();
+            let mut job = egui::text::LayoutJob {
+                keep_trailing_whitespace: true,
+                ..Default::default()
+            };
+            // runs of text and runs of emoji (with their variation selectors
+            // and joiners, which `inline` does not draw either)
+            let mut start = 0;
+            let mut blank_run = false;
+            for (i, c) in text.char_indices() {
+                let blank = self.has(c) || c == '\u{FE0F}' || c == '\u{200D}';
+                if blank != blank_run && i > start {
+                    job.append(&text[start..i], 0.0, format(blank_run));
+                    start = i;
+                }
+                blank_run = blank;
+            }
+            if start < text.len() {
+                job.append(&text[start..], 0.0, format(blank_run));
+            }
+            ui.fonts_mut(|f| f.layout_job(job))
+        };
+        let out = build(egui::TextEdit::singleline(text).layouter(&mut layouter)).show(ui);
+        let painter = ui.painter().with_clip_rect(out.text_clip_rect);
+        for placed in &out.galley.rows {
+            let mid_y = out.galley_pos.y + placed.pos.y + placed.row.size.y / 2.0;
+            for g in &placed.row.glyphs {
+                if !self.has(g.chr) {
+                    continue;
+                }
+                if let Some(t) = self.texture(ui.ctx(), g.chr) {
+                    let mid_x = out.galley_pos.x + placed.pos.x + g.pos.x + g.advance_width / 2.0;
+                    let size = t.size_vec2() * (side / t.size_vec2().max_elem());
+                    painter.image(
+                        t.id(),
+                        egui::Rect::from_center_size(egui::pos2(mid_x, mid_y), size),
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        crate::ui::widgets::PICTURE_TINT,
+                    );
+                }
+            }
+        }
+        out.response.response
+    }
+
     /// Emoji picker grid; returns the chosen emoji.
     pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons) -> Option<char> {
         if !self.available() {
@@ -368,7 +408,12 @@ impl Emoji {
                                 ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
                             }
                             if let Some(t) = self.texture(ui.ctx(), *c) {
-                                let ir = rect.shrink(3.0);
+                                // keep the image's proportions: the 2D font's
+                                // bitmaps are wider than tall (136 × 128)
+                                let slot = rect.shrink(3.0);
+                                let size = t.size_vec2();
+                                let ir =
+                                    egui::Rect::from_center_size(slot.center(), size * (slot.width() / size.x).min(slot.height() / size.y));
                                 ui.painter().image(
                                     t.id(),
                                     ir,
