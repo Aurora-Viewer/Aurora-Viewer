@@ -142,7 +142,7 @@ fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLi
 }
 
 /// One line of a conversation as a bubble. `names`: the sender's name opens
-/// each group (several people write here).
+/// each group (several people write here); an object's always does.
 pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLine, look: view::Look, mark: Option<Mark>, names: bool) {
     let (p, world) = (env.p, env.world);
     ui.spacing_mut().item_spacing.y = 2.0;
@@ -180,7 +180,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     let lead = if own { EDGE } else { PIC + PIC_GAP };
     let max_bubble = ((w - lead) * MAX_SHARE).max(80.0);
 
-    if names && look.header && !own {
+    if (names || object) && look.header && !own {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.add_space(lead + 2.0);
@@ -328,7 +328,7 @@ fn sender_picture(
     if !avatar.is_nil() {
         env.wanted.insert(avatar);
     }
-    super::super::widgets::avatar_picture(ui, p, rect, env.pics.get(&avatar).filter(|_| !logged), name, logged);
+    super::super::widgets::avatar_disc(ui, p, rect, env.pics.get(&avatar).filter(|_| !logged), name, logged);
     if !avatar.is_nil() {
         let status = presence::of(env.world, &avatar);
         presence::paint_dot(ui.painter(), p, rect, status, p.field);
@@ -353,5 +353,37 @@ mod tests {
         assert_eq!(day_label((2026, 2, 28), &today, &yesterday), DayLabel::Yesterday);
         assert_eq!(day_label((2026, 2, 27), &today, &yesterday), DayLabel::Date(2026, 2, 27));
         assert_eq!(day_label((2025, 3, 1), &today, &yesterday), DayLabel::Date(2025, 3, 1));
+    }
+
+    #[test]
+    fn the_first_message_of_another_day_says_its_day() {
+        use crate::world::{ChatLine, Origin};
+        use std::time::{Duration, UNIX_EPOCH};
+        let at = |secs: u64, kind, text: &str| ChatLine {
+            time: UNIX_EPOCH + Duration::from_secs(1_800_000_000 + secs),
+            from: "Nova".into(),
+            text: text.into(),
+            kind,
+            source: uuid::Uuid::from_u128(1),
+            origin: Origin::Live,
+        };
+        let day = 86_400;
+        // yesterday's two lines, then today's
+        let lines = [
+            at(0, ChatKind::Own, "concert?"),
+            at(180, ChatKind::Im, "can't"),
+            at(day, ChatKind::Im, "sorry"),
+        ];
+        let today = Slt::of(lines[2].time);
+        let yesterday = Slt::of(lines[0].time);
+        let mut g = view::Grouping::new(today);
+        let looks: Vec<view::Look> = lines.iter().map(|l| g.look(l)).collect();
+        // above the very first message: "Yesterday"
+        let first = looks[0].marker.expect("a day above the first message");
+        assert_eq!(day_label(first, &today, &yesterday), DayLabel::Yesterday);
+        assert_eq!(looks[1].marker, None);
+        // and "Today" above today's
+        let second = looks[2].marker.expect("a day between the two days");
+        assert_eq!(day_label(second, &today, &yesterday), DayLabel::Today);
     }
 }

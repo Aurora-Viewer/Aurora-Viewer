@@ -1179,7 +1179,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
-| `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|classic]` | Conversations as a messenger: bubbles, head with picture and status |
+| `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
@@ -1541,20 +1541,23 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CONV=bubbles[:busy|group|local|classic]`**: the Conversations
-  window as a messenger, placed at 700 x 460 px. Without a suffix, the
+- **`AURORA_DEMO_CONV=bubbles[:busy|group|local|legacy]`**: the Conversations
+  window as a messenger, placed at 700 x 560 px. Without a suffix, the
   conversation with an online friend over two days: their bubbles on the
   left with their picture and a green dot under the last one of each
   group, mine on the right on the violet to indigo gradient, the time under
-  each group, "Today" between the two days, the corner under the sender
-  square on the last bubble of a group; the head shows the picture, its
-  dot, the display name and the user name. `busy`: a resident in the
+  each group, "Yesterday" above the first message and "Today" between the
+  two days, the corner under the sender square on the last bubble of a
+  group; round pictures; the head shows the picture, its dot, the display
+  name and the user name. `busy`: a resident in the
   region playing the do not disturb animation, after their automatic
   response: red dot and "Do not disturb" pill in the head, red dot in the
   list. `group`: the demo group chat, the sender's name opening each group
-  of bubbles. `local`: the nearby chat in bubbles (residents, an object with
-  its box, the viewer's notices in centered pills); `classic`: the same
-  nearby chat in its classic lines, to compare.
+  of bubbles. `local`: the nearby chat (residents, an object with its box
+  and its name in its color above its group, the viewer's notices in
+  centered pills). `legacy`: the friend's conversation in the legacy lines
+  of the setting `chat_style` (`Legacy`; `Bubbles` by default), which the
+  demo does not save.
 - **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp[:sent|reject]`**: `1` opens the conversation of
   the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user

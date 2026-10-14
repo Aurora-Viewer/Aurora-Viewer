@@ -40,8 +40,21 @@ pub struct ChatUi {
     /// Laid-out rows of each conversation.
     views: HashMap<Option<uuid::Uuid>, view::View>,
     pub emoji_open: bool,
-    /// The nearby chat in bubbles too (otherwise its classic lines).
-    pub local_bubbles: bool,
+    /// The lines' style of the settings, given every frame by the app.
+    pub style: crate::settings::ChatStyle,
+    /// A demo scenario's style, which the settings do not keep.
+    pub demo_style: Option<crate::settings::ChatStyle>,
+}
+
+/// How a conversation's lines are drawn (`LineEnv::bubbles`): legacy lines,
+/// or bubbles with the sender's name opening each group where several
+/// people write (a group or conference, the nearby chat).
+pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>) -> Option<bool> {
+    match (style, group) {
+        (crate::settings::ChatStyle::Legacy, _) => None,
+        (_, None) => Some(true),
+        (_, Some(group)) => Some(group),
+    }
 }
 
 impl ChatUi {
@@ -956,7 +969,12 @@ fn list_entry(
     let mut x = rect.left() + 8.0;
     if let Some((tex, name)) = pic {
         let r = egui::Rect::from_min_size(egui::pos2(x, rect.center().y - LIST_PIC * 0.5), egui::Vec2::splat(LIST_PIC));
-        super::widgets::avatar_picture(ui, p, r, tex, name, false);
+        // a resident's picture is round (it has a status), a group's square
+        if status.is_some() {
+            super::widgets::avatar_disc(ui, p, r, tex, name, false);
+        } else {
+            super::widgets::avatar_picture(ui, p, r, tex, name, false);
+        }
         if let Some(s) = status {
             presence::paint_dot(ui.painter(), p, r, s, fill);
         }
@@ -1285,10 +1303,7 @@ pub fn show(
                             wanted: &mut st.wanted_pics,
                             own_name: &own_name,
                             plain_history: false,
-                            bubbles: match st.selected {
-                                None => st.local_bubbles.then_some(true),
-                                Some(id) => Some(w.is_group_session(&id)),
-                            },
+                            bubbles: line_style(st.demo_style.unwrap_or(st.style), st.selected.map(|id| w.is_group_session(&id))),
                         };
                         let wash = find::wash(p);
                         let current = search.find.as_ref().and_then(|f| f.current_line(view));
@@ -1719,6 +1734,22 @@ mod tests {
         assert!(matches!(links[1], ("Ahern (1,2,3)", Link::Place(..))));
         assert_eq!(links[2], ("@Loup Violet", &Link::Agent(id)));
         assert_eq!(links[3].1, &Link::Url("https://example.com/x".into()));
+    }
+
+    #[test]
+    fn bubbles_by_default_legacy_lines_on_demand() {
+        use crate::settings::ChatStyle;
+        assert_eq!(crate::settings::Settings::default().chat_style, ChatStyle::Bubbles);
+        // the nearby chat and the groups name their senders, a 1:1 does not
+        assert_eq!(line_style(ChatStyle::Bubbles, None), Some(true));
+        assert_eq!(line_style(ChatStyle::Bubbles, Some(true)), Some(true));
+        assert_eq!(line_style(ChatStyle::Bubbles, Some(false)), Some(false));
+        for group in [None, Some(true), Some(false)] {
+            assert_eq!(line_style(ChatStyle::Legacy, group), None);
+        }
+        // kept by the settings file
+        let legacy: ChatStyle = serde_json::from_str("\"Legacy\"").unwrap();
+        assert_eq!(legacy, ChatStyle::Legacy);
     }
 
     #[test]

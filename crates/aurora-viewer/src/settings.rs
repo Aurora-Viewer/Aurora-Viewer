@@ -4,6 +4,16 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// How the Conversations window draws its lines: as a messenger, in bubbles
+/// (the default), or in the lines of Firestorm's conversations (the legacy
+/// style, to be offered by a Preferences tab of its own).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ChatStyle {
+    #[default]
+    Bubbles,
+    Legacy,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum GridChoice {
     SecondLife,
@@ -228,6 +238,9 @@ pub struct Settings {
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
     /// lines of text on a flat tag, in the tag colors of the preferences.
     pub classic_name_tags: bool,
+    /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
+    /// legacy lines).
+    pub chat_style: ChatStyle,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// Our avatar's head and eyes follow the cursor and what we point at,
@@ -601,6 +614,7 @@ impl Default for Settings {
             chat_commands: Default::default(),
             name_tag_distance: 64.0,
             classic_name_tags: false,
+            chat_style: ChatStyle::Bubbles,
             invert_mouse: false,
             arrows_strafe: false,
             look_at: false,

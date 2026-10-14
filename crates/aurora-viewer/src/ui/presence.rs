@@ -141,11 +141,11 @@ impl Status {
     }
 }
 
-/// The dot at the bottom right of a picture, ringed in `ring` (the surface
-/// under the picture) so that it reads over any picture.
+/// The dot on the bottom right edge of a round picture, ringed in `ring`
+/// (the surface under the picture) so that it reads over any picture.
 pub fn paint_dot(painter: &egui::Painter, p: &Palette, picture: egui::Rect, status: Status, ring: Color32) {
     let r = (picture.width() * 0.16).clamp(3.0, 6.0);
-    let c = picture.right_bottom() - egui::vec2(r * 0.6, r * 0.6);
+    let c = picture.center() + egui::Vec2::splat(picture.width() * 0.5 * std::f32::consts::FRAC_1_SQRT_2);
     painter.circle_filled(c, r + 1.5, ring);
     painter.circle_filled(c, r, status.color(p));
 }

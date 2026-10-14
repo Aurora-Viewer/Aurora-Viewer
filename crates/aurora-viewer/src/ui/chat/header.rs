@@ -103,7 +103,7 @@ pub(super) fn show(
                 match (who.avatar, who.icon) {
                     (Some(a), _) => {
                         st.wanted_pics.insert(a);
-                        crate::ui::widgets::avatar_picture(ui, p, rect, pics.get(&a), &who.title, false);
+                        crate::ui::widgets::avatar_disc(ui, p, rect, pics.get(&a), &who.title, false);
                         if let Some(s) = status {
                             presence::paint_dot(ui.painter(), p, rect, s, p.bar);
                             pic_resp.clone().on_hover_text(s.label());

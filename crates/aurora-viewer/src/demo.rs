@@ -512,19 +512,19 @@ pub fn many_conversation_events(agent: Uuid) -> Vec<NetEvent> {
         .collect()
 }
 
-/// AURORA_DEMO_CONV=bubbles[:busy|:group|:local|:classic]: the
+/// AURORA_DEMO_CONV=bubbles[:busy|:group|:local|:legacy]: the
 /// Conversations window as a messenger (ui/chat/bubbles.rs). Without a
-/// suffix the conversation with an online friend, over two days; `busy`
-/// the one with a resident nearby in do not disturb, after their automatic
-/// response; `group` the demo group chat; `local` the nearby chat in
-/// bubbles, `classic` the same in its classic lines.
+/// suffix the conversation with an online friend, over two days; `busy` the
+/// one with a resident nearby in do not disturb, after their automatic
+/// response; `group` the demo group chat; `local` the nearby chat; `legacy`
+/// the friend's conversation in the legacy lines (`ChatStyle::Legacy`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bubbles {
     Friend,
     Busy,
     Group,
     Local,
-    Classic,
+    Legacy,
 }
 
 pub fn bubbles_scenario() -> Option<Bubbles> {
@@ -534,7 +534,7 @@ pub fn bubbles_scenario() -> Option<Bubbles> {
         ":busy" => Bubbles::Busy,
         ":group" => Bubbles::Group,
         ":local" => Bubbles::Local,
-        ":classic" => Bubbles::Classic,
+        ":legacy" => Bubbles::Legacy,
         _ => return None,
     })
 }
@@ -542,10 +542,10 @@ pub fn bubbles_scenario() -> Option<Bubbles> {
 /// The conversation of the scenario shown in the window.
 pub fn bubbles_conversation(view: Bubbles) -> Option<Uuid> {
     match view {
-        Bubbles::Friend => Some(DEMO_FRIEND),
+        Bubbles::Friend | Bubbles::Legacy => Some(DEMO_FRIEND),
         Bubbles::Busy => Some(DEMO_NOVA),
         Bubbles::Group => Some(DEMO_GROUP1),
-        Bubbles::Local | Bubbles::Classic => None,
+        Bubbles::Local => None,
     }
 }
 
@@ -619,7 +619,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         origin: Origin::Live,
     };
     match view {
-        Bubbles::Friend => {
+        Bubbles::Friend | Bubbles::Legacy => {
             let friend = DEMO_FRIEND;
             let name = "Nova Example";
             for l in [
@@ -652,7 +652,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             );
             world.conversation_line(DEMO_NOVA, line(now, "Tess Touch", DEMO_NOVA, ChatKind::Im, &reply));
         }
-        Bubbles::Group | Bubbles::Local | Bubbles::Classic => {}
+        Bubbles::Group | Bubbles::Local => {}
     }
 }
 
