@@ -1949,7 +1949,9 @@ What the inventory must show with these scenarios:
   the dark scene. The People window is closed.
   - `height`: Nova and Lune have a torso translation deformer (+0.8 m),
     animated head pitch and pelvis bobbing. Their tags stay above the taller
-    bodies, centred on their roots at a constant height through the cycle.
+    bodies, horizontally centred on their projected roots at a constant
+    height through the cycle. With a pitched camera, check avatars on both
+    sides of the view: raising a tag must not shift it sideways.
     Compare frames 660 and 780 at 60 fps; also use `AURORA_NAME_TAGS=classic`.
     A change of animation can change its height envelope; its individual
     frames never move the tag. Use a human-run grid session to verify real deformer assets.
