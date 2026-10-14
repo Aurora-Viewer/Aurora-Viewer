@@ -14,6 +14,12 @@ use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use std::path::{Path, PathBuf};
 
 pub const WINDOW: &str = "photo";
+/// Firestorm's floater (Preferences › Aurora › Photo window): its own
+/// place and size, kept apart from the panel's.
+pub const CLASSIC_WINDOW: &str = "photo_classic";
+/// Side of the classic window's preview (floater_snapshot.xml's
+/// thumbnail_placeholder, 420 x 420).
+const CLASSIC_PREVIEW: f32 = 420.0;
 const WIDTH: f32 = 340.0;
 /// Focal lengths of the slider and its presets (mm, full frame).
 const FOCAL_RANGE: std::ops::RangeInclusive<f32> = 10.0..=135.0;
@@ -121,21 +127,31 @@ impl SnapshotUi {
         fov: &mut f32,
         default_fov: f32,
         view: &View,
+        classic: bool,
     ) -> Vec<Action> {
         let mut out = Vec::new();
         let screen = ctx.content_rect();
         let mut full = false;
         let full_tip = aurora_i18n::tr!("photo-full-frame");
-        Floater::new(
-            WINDOW,
-            aurora_i18n::tr!("photo-title"),
-            Pos2::new(screen.right() - WIDTH - 24.0, screen.top() + 64.0),
-            Vec2::new(WIDTH, 640.0),
-        )
-        .fixed()
-        .auto_height()
-        .action("maximize", full_tip, &mut full)
-        .show(ctx, p, open, |ui| self.body(ui, p, s, fov, default_fov, view, &mut out));
+        if classic {
+            // a window of its own, placed and moved like Firestorm's floater
+            let size = Vec2::new(WIDTH + CLASSIC_PREVIEW + 8.0, CLASSIC_PREVIEW + 160.0);
+            Floater::new(CLASSIC_WINDOW, aurora_i18n::tr!("photo-title"), screen.center() - size * 0.5, size)
+                .auto_height()
+                .action("maximize", full_tip, &mut full)
+                .show(ctx, p, open, |ui| self.body_classic(ui, p, s, fov, default_fov, view, &mut out));
+        } else {
+            Floater::new(
+                WINDOW,
+                aurora_i18n::tr!("photo-title"),
+                Pos2::new(screen.right() - WIDTH - 24.0, screen.top() + 64.0),
+                Vec2::new(WIDTH, 640.0),
+            )
+            .fixed()
+            .auto_height()
+            .action("maximize", full_tip, &mut full)
+            .show(ctx, p, open, |ui| self.body(ui, p, s, fov, default_fov, view, &mut out));
+        }
         if full {
             self.full_frame = true;
         }
@@ -175,6 +191,14 @@ impl SnapshotUi {
             .max_height(room)
             .show(ui, |ui| self.settings(ui, p, s, fov, default_fov, view, out));
 
+        self.actions(ui, p, view, out);
+
+        changed(s, &before, out);
+    }
+
+    /// The shutter (or the destination's button), the progress or the last
+    /// outcome, and the latest photos.
+    fn actions(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
         ui.add_space(4.0);
         let busy = view.busy.is_some();
         ui.horizontal(|ui| match (&view.inventory, &view.profile) {
@@ -261,18 +285,57 @@ impl SnapshotUi {
             });
         }
         gallery(ui, p, view, out);
+    }
 
-        if *s != before {
-            let photo_changed = s.aspect != before.aspect
-                || s.resolution != before.resolution
-                || s.custom != before.custom
-                || s.inventory_size != before.inventory_size
-                || s.profile_size != before.profile_size
-                || s.dof != before.dof
-                || s.interface != before.interface
-                || s.huds != before.huds;
-            out.push(if photo_changed { Action::Changed } else { Action::Saved });
-        }
+    /// Firestorm's snapshot floater (floater_snapshot.xml, Preferences ›
+    /// Aurora › Photo window › Classic window): a floating window, the
+    /// controls in a column on the left (Refresh first, then the options and
+    /// the destination), the preview on the right; the same controls.
+    #[allow(clippy::too_many_arguments)]
+    fn body_classic(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        s: &mut Settings,
+        fov: &mut f32,
+        default_fov: f32,
+        view: &View,
+        out: &mut Vec<Action>,
+    ) {
+        let before = s.clone();
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(WIDTH - 24.0);
+                ui.spacing_mut().item_spacing.y = 6.0;
+                // new_snapshot_btn
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "refresh",
+                    aurora_i18n::tr!("photo-refresh"),
+                    ActionKind::Flat,
+                    Vec2::new(ui.available_width(), 28.0),
+                )
+                .clicked()
+                {
+                    out.push(Action::Refresh);
+                }
+                egui::ScrollArea::vertical()
+                    .id_salt("photo_settings_classic")
+                    .max_height(CLASSIC_PREVIEW + 40.0)
+                    .show(ui, |ui| self.settings(ui, p, s, fov, default_fov, view, out));
+                self.actions(ui, p, view, out);
+            });
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                ui.set_width(CLASSIC_PREVIEW);
+                ui.spacing_mut().item_spacing.y = 6.0;
+                if preview(ui, p, s, view) {
+                    out.push(Action::Refresh);
+                }
+            });
+        });
+        changed(s, &before, out);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -769,6 +832,22 @@ fn texture_sizes(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, inv: &Invento
     ui.label(RichText::new(aurora_i18n::tr!("photo-texture-size", width = w, height = h)).color(p.ink));
     if w != h {
         ui.label(RichText::new(aurora_i18n::tr!("photo-texture-hint")).size(11.5).color(p.muted));
+    }
+}
+
+/// What a change of the settings asks: a new preview when the photo
+/// changes, a save otherwise.
+fn changed(s: &Settings, before: &Settings, out: &mut Vec<Action>) {
+    if s != before {
+        let photo_changed = s.aspect != before.aspect
+            || s.resolution != before.resolution
+            || s.custom != before.custom
+            || s.inventory_size != before.inventory_size
+            || s.profile_size != before.profile_size
+            || s.dof != before.dof
+            || s.interface != before.interface
+            || s.huds != before.huds;
+        out.push(if photo_changed { Action::Changed } else { Action::Saved });
     }
 }
 

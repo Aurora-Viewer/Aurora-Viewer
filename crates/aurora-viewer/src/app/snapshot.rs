@@ -154,6 +154,9 @@ struct DemoPhoto {
     /// AURORA_DEMO_SNAPSHOT=dof | full-dof: the window's depth of field on,
     /// f/1.4, focused by hand on the own avatar (3.3 m).
     dof: bool,
+    /// AURORA_DEMO_SNAPSHOT=classic: Firestorm's floater for this run, the
+    /// setting itself left alone.
+    classic: bool,
 }
 
 /// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
@@ -1022,6 +1025,8 @@ impl App {
                 &mut self.settings.camera.fov,
                 crate::camera::DEFAULT_FOV,
                 &view,
+                self.settings.photo_window == crate::settings::PhotoWindowStyle::Legacy
+                    || self.snapshots.demo.as_ref().is_some_and(|d| d.classic),
             ));
             self.snapshots.ui = state;
             self.panels.snapshot = open;
@@ -1064,7 +1069,7 @@ impl App {
 
     /// AURORA_DEMO_SNAPSHOT=open | full[-<W>x<H> proportions, e.g. full-4x5] |
     /// save:<W>x<H>[:png|jpg|bmp][:<folder>] | inventory… | profile[-fail] |
-    /// dof | full-dof
+    /// dof | full-dof | classic
     /// (AURORA_DEMO_SNAPSHOT_FRAME, 700 by default): the window at frame
     /// 600, the photo saved, sent or posted at that frame.
     fn photo_demo(&mut self, renderer: &Renderer) {
@@ -1126,6 +1131,7 @@ impl App {
                 inventory,
                 profile: kind.starts_with("profile"),
                 dof: kind.ends_with("dof"),
+                classic: kind == "classic",
             });
         }
         let Some(demo) = self.snapshots.demo.as_ref() else {

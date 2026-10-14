@@ -176,6 +176,9 @@ PNG, caption "…", location true)` and the window "Posted to your profile".
 at 3.3 m, the own avatar), `full-dof` the full-frame view with the aperture
 in its strip: the view, the preview and the photos are blurred, while
 Preferences › Graphics › Depth of field stays off.
+`classic` shows Firestorm's floater instead of the panel for this run
+(Preferences › Aurora › Photo window, not saved): a floating window in the
+middle, Refresh and the controls on the left, the preview on the right.
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,

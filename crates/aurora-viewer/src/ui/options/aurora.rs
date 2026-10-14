@@ -5,7 +5,7 @@
 //! below keep the cards and controls of the other pages.
 
 use super::{group, toggle};
-use crate::settings::{ChatStyle, NotificationsStyle, PlateClick, Settings, WorldMapStyle};
+use crate::settings::{ChatStyle, NotificationsStyle, PhotoWindowStyle, PlateClick, Settings, WorldMapStyle};
 use crate::theme::Palette;
 use crate::ui::widgets::{self, ActionKind};
 use crate::world::lookat::{Aim, Style};
@@ -34,6 +34,11 @@ pub fn set_all(s: &mut Settings, look: Look) {
     };
     s.world_map_style = if aurora { WorldMapStyle::Aurora } else { WorldMapStyle::Legacy };
     s.classic_profiles = !aurora;
+    s.photo_window = if aurora {
+        PhotoWindowStyle::Aurora
+    } else {
+        PhotoWindowStyle::Legacy
+    };
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -378,6 +383,24 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             aurora_i18n::tr!("ui-options-aurora-profiles-classic"),
             &mut s.classic_profiles,
         );
+        between(ui, p);
+        let mut legacy = s.photo_window == PhotoWindowStyle::Legacy;
+        if look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-photo-window"),
+            aurora_i18n::tr!("ui-options-aurora-photo-window-help"),
+            aurora_i18n::tr!("ui-options-aurora-photo-panel"),
+            aurora_i18n::tr!("ui-options-aurora-photo-classic"),
+            &mut legacy,
+        ) {
+            s.photo_window = if legacy {
+                PhotoWindowStyle::Legacy
+            } else {
+                PhotoWindowStyle::Aurora
+            };
+            c = true;
+        }
     });
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-gaze"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -459,6 +482,7 @@ mod tests {
         assert_eq!(s.notifications_style, NotificationsStyle::Legacy);
         assert_eq!(s.world_map_style, WorldMapStyle::Legacy);
         assert!(s.classic_profiles);
+        assert_eq!(s.photo_window, PhotoWindowStyle::Legacy);
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
         set_all(&mut s, Look::Aurora);
         let fresh = Settings::default();
@@ -470,6 +494,8 @@ mod tests {
         assert_eq!(fresh.notifications_style, NotificationsStyle::Aurora);
         assert_eq!(s.world_map_style, fresh.world_map_style);
         assert_eq!(s.classic_profiles, fresh.classic_profiles);
+        assert_eq!(s.photo_window, PhotoWindowStyle::Aurora);
+        assert_eq!(fresh.photo_window, PhotoWindowStyle::Aurora);
         assert!(s.plates_friends_only_full);
     }
 
