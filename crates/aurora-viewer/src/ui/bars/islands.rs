@@ -1499,4 +1499,59 @@ mod tests {
             );
         }
     }
+
+    /// A network opening (the tooltip's network row, the traffic indicator,
+    /// "Network graph…") shows the full view for itself alone: closed, the
+    /// frame rate's click opens the view chosen with ⤢, compact by default,
+    /// and the choice saved stays as it was.
+    #[test]
+    fn a_network_opening_does_not_change_the_view_chosen() {
+        let ctx = egui::Context::default();
+        let mut open = false;
+        let mut t = 0.0;
+        let mut frame = |ctx: &egui::Context, open: &mut bool| {
+            t += 0.05;
+            perf_frame(ctx, 1536.0, open, t, vec![]);
+        };
+        frame(&ctx, &mut open);
+        frame(&ctx, &mut open);
+        let island = system_rect(&ctx);
+        let compact_w = crate::ui::perf::COMPACT_W + crate::ui::perf::SIDES;
+        let saved = |ctx: &egui::Context| ctx.data_mut(|d| d.get_persisted::<bool>(Id::new(("perf", "full"))));
+        // the network: full, under the island
+        crate::ui::perf::place_under(&ctx, island);
+        crate::ui::perf::show_network(&ctx);
+        open = true;
+        for _ in 0..3 {
+            frame(&ctx, &mut open);
+        }
+        assert!(
+            (perf_rect(&ctx).width() - island.width()).abs() <= 0.5,
+            "the full view under the island"
+        );
+        // closed during that full view
+        open = false;
+        frame(&ctx, &mut open);
+        assert_ne!(saved(&ctx), Some(true), "the network opening saved the full view");
+        // the frame rate's click: compact
+        crate::ui::perf::place_under(&ctx, island);
+        open = true;
+        for _ in 0..3 {
+            frame(&ctx, &mut open);
+        }
+        assert_eq!(perf_rect(&ctx).width(), compact_w, "the frame rate opens the compact view");
+        // with the full view chosen, the frame rate opens it, and a network
+        // opening leaves the choice as it was
+        open = false;
+        frame(&ctx, &mut open);
+        crate::ui::perf::set_full(&ctx, true);
+        crate::ui::perf::show_network(&ctx);
+        open = true;
+        for _ in 0..3 {
+            frame(&ctx, &mut open);
+        }
+        open = false;
+        frame(&ctx, &mut open);
+        assert_eq!(saved(&ctx), Some(true), "the choice kept");
+    }
 }
