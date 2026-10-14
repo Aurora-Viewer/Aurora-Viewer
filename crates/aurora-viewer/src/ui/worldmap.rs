@@ -128,6 +128,14 @@ impl WorldMapUi {
             self.target_zoom = self.zoom;
             world.map.reload_items(false);
         }
+        // llMapDestination's BEACON_FOCUS_MAP: centre on the place as soon as
+        // its region is known (LLFloaterWorldMap autofocus, centerOnTarget)
+        if world.map.focus_track
+            && let Some((x, y)) = world.map.track.as_ref().filter(|t| !t.pending).map(|t| (t.x, t.y))
+        {
+            world.map.focus_track = false;
+            self.center_on(world, cam, x, y);
+        }
         let screen = ctx.content_rect();
         let default_pos = pos2((screen.width() - 700.0).max(0.0) * 0.5, 60.0);
         Floater::new("worldmap", aurora_i18n::tr!("common-world-map"), default_pos, vec2(700.0, 600.0))
