@@ -584,6 +584,13 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             }
         });
         menu::separator(ui, p);
+        // Firestorm's View › Camera Controls and Movement Controls
+        if menu::item_keys(ui, p, "video-filled", aurora_i18n::tr!("controls-camera-title"), "Ctrl+Shift+C") {
+            panels.camera_controls = true;
+        }
+        if menu::item(ui, p, "walk", aurora_i18n::tr!("controls-movement-title")) {
+            panels.movement_controls = true;
+        }
         if menu::item(ui, p, "eye-filled", aurora_i18n::tr!("common-mouselook-m")) {
             *action = BarAction::ToggleMouselook;
         }
@@ -1192,6 +1199,9 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "performance" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
         "preferences" => toggle("options", &mut panels.settings),
+        // Firestorm's Move and View buttons open the controls
+        "move" => panels.movement_controls = !panels.movement_controls,
+        "view" => panels.camera_controls = !panels.camera_controls,
         "fly" => return BarAction::ToggleFly,
         "mouselook" => return BarAction::ToggleMouselook,
         "sit" => return BarAction::SitGround,
@@ -1215,6 +1225,8 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "performance" => panels.perf,
         "snapshot" => panels.snapshot,
         "preferences" => panels.settings,
+        "move" => panels.movement_controls,
+        "view" => panels.camera_controls,
         "fly" => flying,
         "sit" => seated,
         "mouselook" => mouselook,

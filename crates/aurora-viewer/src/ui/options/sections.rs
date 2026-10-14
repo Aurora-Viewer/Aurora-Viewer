@@ -90,7 +90,7 @@ sections! {
     ],
     TAB_AURORA => [
         chat_style, classic_name_tags, lookat.style, notifications_style, world_map_style, classic_profiles, photo_window, classic_about_land,
-        classic_pay_window,
+        classic_pay_window, classic_controls,
         lookat.aim, plates_hover_expand, plates_friends_only_full, plate_click,
     ],
 }

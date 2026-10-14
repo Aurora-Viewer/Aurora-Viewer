@@ -32,6 +32,7 @@ mod chat_commands;
 mod click_pick;
 mod color_picker;
 mod context_menu;
+mod controls;
 mod cursor_hold;
 mod dof;
 mod double_click;
@@ -225,6 +226,12 @@ pub struct App {
     temp_run: Option<u8>,
     /// "Always run" (Ctrl+R).
     always_run: bool,
+    /// The Controls window (`ui/controls.rs`), the keys its buttons and
+    /// joysticks hold this frame, and its "Object view": a left click in the
+    /// world focuses the camera, as with Alt (LLToolCamera).
+    controls_ui: ui::controls::ControlsUi,
+    controls_held: Vec<Action>,
+    object_view: bool,
     /// Double click on the ground (src/autopilot.rs): the presses of the
     /// left button on the world, whether the one being handled is the
     /// second of a double click, and the walk it may have started.
@@ -697,6 +704,9 @@ impl App {
             last_tap: None,
             temp_run: None,
             always_run: false,
+            controls_ui: Default::default(),
+            controls_held: Vec::new(),
+            object_view: false,
             double_click: Default::default(),
             double_press: false,
             autopilot: None,
@@ -2476,16 +2486,9 @@ impl App {
         };
         match action {
             Action::Fly => self.toggle_fly(),
-            Action::AlwaysRun => {
-                self.always_run = !self.always_run;
-                self.send(NetCommand::SetAlwaysRun(self.always_run || self.temp_run.is_some()));
-                self.world.system_message(if self.always_run {
-                    aurora_i18n::tr!("app-always-run-enabled")
-                } else {
-                    aurora_i18n::tr!("app-always-run-disabled")
-                });
-            }
+            Action::AlwaysRun => self.set_always_run(!self.always_run),
             Action::Mouselook => self.toggle_mouselook(),
+            Action::CameraControls => self.panels.camera_controls = !self.panels.camera_controls,
             Action::ResetCamera => {
                 if !self.photo_escape() {
                     self.reset_camera_view();
@@ -2682,7 +2685,9 @@ impl App {
         let on_avatar = avatar_hit.is_some();
         // a media face takes the click (LLToolPie::handleMediaClick)
         self.media.build_mode = self.build.open;
-        if !self.alt && !on_avatar {
+        // "Object view" of the Controls window: the click is Alt's
+        let alt = self.alt || self.object_view;
+        if !alt && !on_avatar {
             if let Some(ray) = ray {
                 let depth_t = hit.map(|p| (p - ray.0).dot(ray.1));
                 let mods = aurora_media::Modifiers {
@@ -2714,7 +2719,7 @@ impl App {
         // the click acts on the rigged mesh it lands on, as on any object:
         // also one we wear, like the scripted attachments Firestorm lets
         // us touch (its rigged ones are out of the left click's reach)
-        if !self.alt
+        if !alt
             && !self.ctrl
             && !self.shift
             && !self.build.open
@@ -2728,7 +2733,7 @@ impl App {
         }
         if !on_avatar
             && shown.is_none()
-            && !self.alt
+            && !alt
             && !self.ctrl
             && !self.shift
             && !self.build.open
@@ -2741,7 +2746,7 @@ impl App {
             self.activate_object_action(target, idx, point, ray);
             return;
         }
-        if self.alt {
+        if alt {
             // Alt+click (LLToolCamera): lock the camera on the clicked point
             // (our avatar too, to look at a part of it closely); keep holding
             // to zoom, Ctrl to orbit, Ctrl+Shift to pan
@@ -4043,6 +4048,27 @@ impl App {
         self.send(NetCommand::OneShotControl(f));
     }
 
+    /// "Always run" (Ctrl+R, the Controls window's Walk and Run).
+    fn set_always_run(&mut self, on: bool) {
+        if on == self.always_run {
+            return;
+        }
+        self.always_run = on;
+        self.send(NetCommand::SetAlwaysRun(self.always_run || self.temp_run.is_some()));
+        self.world.system_message(if self.always_run {
+            aurora_i18n::tr!("app-always-run-enabled")
+        } else {
+            aurora_i18n::tr!("app-always-run-disabled")
+        });
+    }
+
+    /// Preferences › Camera › "Reset all", and the Controls window's reset:
+    /// every camera setting back to its default, the view behind the avatar.
+    fn reset_camera_all(&mut self) {
+        self.settings.camera = crate::camera::CameraSettings::default();
+        self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+    }
+
     fn toggle_fly(&mut self) {
         self.world.agent.flying = !self.world.agent.flying;
         if !self.world.agent.flying {
@@ -4072,6 +4098,21 @@ impl App {
             // Page Down / C: crouch on the ground (crouch-walk while moving), descend in flight
             i.down = k(Action::Down);
         }
+        // the Controls window's buttons, held like their keys
+        let held = |a: Action| self.controls_held.contains(&a);
+        i.forward |= held(Action::Forward);
+        i.back |= held(Action::Back);
+        if self.shift != self.settings.arrows_strafe {
+            i.strafe_left |= held(Action::Left);
+            i.strafe_right |= held(Action::Right);
+        } else {
+            i.turn_left |= held(Action::Left);
+            i.turn_right |= held(Action::Right);
+        }
+        i.strafe_left |= held(Action::StrafeLeft);
+        i.strafe_right |= held(Action::StrafeRight);
+        i.up |= held(Action::Up);
+        i.down |= held(Action::Down);
         if self.mouse_mode == MouseMode::Steer {
             // left button held on the avatar (Firestorm): the avatar faces the
             // camera; the arrows are camera-relative and turn the avatar toward
@@ -4149,7 +4190,8 @@ impl App {
         ];
         let mut rate = [0.0f32; 10];
         for (n, a) in CAMERA_KEYS.into_iter().enumerate() {
-            if !typing && self.in_world() && self.settings.keybinds.held(a, &self.down, m) {
+            let key = !typing && self.settings.keybinds.held(a, &self.down, m);
+            if self.in_world() && (key || self.controls_held.contains(&a)) {
                 let held = self.cam_key_since[n].get_or_insert(now).elapsed().as_secs_f32();
                 rate[n] = if held < NUDGE_TIME { 0.05 + held * 0.95 / NUDGE_TIME } else { 1.0 };
             } else {
@@ -7651,7 +7693,7 @@ impl App {
             self.devices_listed = false;
         }
         if res.reset_camera {
-            self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+            self.reset_camera_all();
         }
         if res.reset {
             // the panels must not write the old time of day back
@@ -8572,6 +8614,7 @@ impl App {
                     self.world.experiences.change(experience, change);
                 }
                 self.photo_ui(&ctx, &p, renderer);
+                self.controls_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
                 if self.hover_height_ui.show(
