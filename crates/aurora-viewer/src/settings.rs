@@ -25,6 +25,16 @@ pub enum NotificationsStyle {
     Legacy,
 }
 
+/// The photo window: Aurora's panel anchored on the right, or Firestorm's
+/// floater (floater_snapshot.xml: a floating window, the controls on the
+/// left, the preview on the right). Preferences › Aurora.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PhotoWindowStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
 /// What a left click on another avatar's name plate does (Preferences ›
 /// Interface; the human's request of 2026-10-14). Each one is an entry of
 /// the avatar's menu; nothing, the default, leaves the click to the world.
@@ -299,6 +309,8 @@ pub struct Settings {
     pub chat_style: ChatStyle,
     /// The notification center's style (Preferences › Aurora).
     pub notifications_style: NotificationsStyle,
+    /// The photo window's layout (Preferences › Aurora).
+    pub photo_window: PhotoWindowStyle,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// What a double click on the ground does (Preferences › Controls, the
@@ -715,6 +727,7 @@ impl Default for Settings {
             plate_click: PlateClick::Nothing,
             chat_style: ChatStyle::Bubbles,
             notifications_style: NotificationsStyle::Aurora,
+            photo_window: PhotoWindowStyle::Aurora,
             invert_mouse: false,
             arrows_strafe: false,
             double_click: crate::autopilot::DoubleClick::Nothing,

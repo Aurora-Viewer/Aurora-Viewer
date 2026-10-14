@@ -172,6 +172,9 @@ answers like my.secondlife.com and its storage (session cookie, upload
 configuration, form, 303): the log gives `demo profile: photo posted (<KB>
 PNG, caption "…", location true)` and the window "Posted to your profile".
 `profile-fail` has the configuration refused: the window shows the failure.
+`classic` shows Firestorm's floater instead of the panel for this run
+(Preferences › Aurora › Photo window, not saved): a floating window in the
+middle, Refresh and the controls on the left, the preview on the right.
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
