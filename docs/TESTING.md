@@ -172,6 +172,10 @@ answers like my.secondlife.com and its storage (session cookie, upload
 configuration, form, 303): the log gives `demo profile: photo posted (<KB>
 PNG, caption "…", location true)` and the window "Posted to your profile".
 `profile-fail` has the configuration refused: the window shows the failure.
+`dof` opens the window with its depth of field on (f/1.4, focused by hand
+at 3.3 m, the own avatar), `full-dof` the full-frame view with the aperture
+in its strip: the view, the preview and the photos are blurred, while
+Preferences › Graphics › Depth of field stays off.
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,

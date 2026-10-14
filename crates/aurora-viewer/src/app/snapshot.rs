@@ -151,6 +151,9 @@ struct DemoPhoto {
     /// AURORA_DEMO_SNAPSHOT=profile | profile-fail: posted to the demo's
     /// web profile (which refuses it with -fail).
     profile: bool,
+    /// AURORA_DEMO_SNAPSHOT=dof | full-dof: the window's depth of field on,
+    /// f/1.4, focused by hand on the own avatar (3.3 m).
+    dof: bool,
 }
 
 /// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
@@ -1060,7 +1063,8 @@ impl App {
     }
 
     /// AURORA_DEMO_SNAPSHOT=open | full[-<W>x<H> proportions, e.g. full-4x5] |
-    /// save:<W>x<H>[:png|jpg|bmp][:<folder>] | inventory… | profile[-fail]
+    /// save:<W>x<H>[:png|jpg|bmp][:<folder>] | inventory… | profile[-fail] |
+    /// dof | full-dof
     /// (AURORA_DEMO_SNAPSHOT_FRAME, 700 by default): the window at frame
     /// 600, the photo saved, sent or posted at that frame.
     fn photo_demo(&mut self, renderer: &Renderer) {
@@ -1121,6 +1125,7 @@ impl App {
                 aspect,
                 inventory,
                 profile: kind.starts_with("profile"),
+                dof: kind.ends_with("dof"),
             });
         }
         let Some(demo) = self.snapshots.demo.as_ref() else {
@@ -1141,6 +1146,14 @@ impl App {
                 if inv.poor {
                     self.world.balance = Some(5);
                 }
+            }
+            if demo.dof {
+                self.settings.snapshot.dof = crate::dof::PhotoDof {
+                    enabled: true,
+                    f_number: 1.4,
+                    focus: crate::dof::PhotoFocus::Manual,
+                    distance: 3.3,
+                };
             }
             if demo.profile {
                 self.snapshots.ui.destination = Destination::Profile;
