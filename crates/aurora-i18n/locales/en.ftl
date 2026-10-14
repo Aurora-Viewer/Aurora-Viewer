@@ -4780,6 +4780,7 @@ marketplace-listings-tab-listed = Listed
 marketplace-listings-tab-unlisted = Unlisted
 marketplace-listings-tab-unassociated = Unassociated
 marketplace-listings-filter = Filter listings
+marketplace-listings-count = { $count } listings
 marketplace-listings-new-folder = New listing folder
 marketplace-listings-new-folder-name = New listing
 marketplace-listings-audit = Check all listings

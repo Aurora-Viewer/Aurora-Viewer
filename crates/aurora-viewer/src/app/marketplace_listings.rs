@@ -76,7 +76,9 @@ impl App {
         }
         let worn = self.worn_items();
         let home = self.marketplace_home();
-        let actions = self.listings_ui.show(ctx, p, &mut self.world.inventory, &worn, home.as_deref());
+        let actions = self
+            .listings_ui
+            .show(ctx, p, &self.skin.icons, &mut self.world.inventory, &worn, home.as_deref());
         for action in actions {
             match action {
                 Action::CreateRoot => {

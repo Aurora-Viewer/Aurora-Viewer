@@ -4780,6 +4780,7 @@ marketplace-listings-tab-listed = En vente
 marketplace-listings-tab-unlisted = Hors vente
 marketplace-listings-tab-unassociated = Non associées
 marketplace-listings-filter = Filtrer les annonces
+marketplace-listings-count = { $count } annonce(s)
 marketplace-listings-new-folder = Nouveau dossier d'annonce
 marketplace-listings-new-folder-name = Nouvelle annonce
 marketplace-listings-audit = Vérifier toutes les annonces

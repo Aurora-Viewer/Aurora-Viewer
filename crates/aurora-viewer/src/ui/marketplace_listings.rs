@@ -6,7 +6,8 @@
 //! LLMarketplaceFolderBridge, LLFloaterAssociateListing and
 //! LLFloaterMarketplaceValidation, originally LGPL 2.1.
 
-use super::inventory::{FolderDrag, InvDrag};
+use super::icons::Icons;
+use super::inventory::{FolderDrag, InvDrag, tree};
 use super::widgets::{self, ActionKind, Floater, Modal};
 use crate::theme::Palette;
 use crate::world::inventory::actions::{request_tree, under};
@@ -94,25 +95,35 @@ fn in_active_folder(data: &MarketplaceData, inv: &Inventory, root: Uuid, id: Uui
     data.activation_state(listing) && !version.is_nil() && under(inv, id, version)
 }
 
-/// The name suffix of a folder (LLMarketplaceFolderBridge::getLabelSuffix).
-fn suffix(data: &MarketplaceData, inv: &Inventory, root: Uuid, id: Uuid) -> String {
-    let mut out = String::new();
+/// How a badge reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Muted,
+    Good,
+    Bad,
+    Busy,
+}
+
+/// The listing badges of a folder (LLMarketplaceFolderBridge::getLabelSuffix):
+/// its listing ID, listed, the active version, the stock, an update running.
+fn badges(data: &MarketplaceData, inv: &Inventory, root: Uuid, id: Uuid) -> Vec<(String, Tone)> {
+    let mut out = Vec::new();
     if let Some(r) = data.record(id) {
-        if r.id == 0 {
-            out.push_str(&format!(" ({})", aurora_i18n::tr!("marketplace-suffix-no-id")));
+        let id_text = if r.id == 0 {
+            aurora_i18n::tr!("marketplace-suffix-no-id").to_owned()
         } else {
-            out.push_str(&format!(" ({})", r.id));
-        }
+            format!("#{}", r.id)
+        };
+        out.push((id_text, Tone::Muted));
         if r.listed {
-            out.push_str(&format!(" ({})", aurora_i18n::tr!("marketplace-suffix-listed")));
+            out.push((aurora_i18n::tr!("marketplace-suffix-listed").to_owned(), Tone::Good));
         }
     } else if data.is_version_folder(id) {
-        out.push_str(&format!(" ({})", aurora_i18n::tr!("marketplace-suffix-active")));
+        out.push((aurora_i18n::tr!("marketplace-suffix-active").to_owned(), Tone::Good));
     }
-    let updating = data.is_updating(inv, root, id);
     let count = data.stock_count(inv, root, id, false);
     if count == 0 {
-        out.push_str(&format!(" ({})", aurora_i18n::tr!("marketplace-suffix-out-of-stock")));
+        out.push((aurora_i18n::tr!("marketplace-suffix-out-of-stock").to_owned(), Tone::Bad));
     } else if count != STOCK_INFINITE {
         let label = if inv.folders.get(&id).is_some_and(|f| f.info.type_default == STOCK) {
             aurora_i18n::tr!("marketplace-suffix-stock")
@@ -120,15 +131,34 @@ fn suffix(data: &MarketplaceData, inv: &Inventory, root: Uuid, id: Uuid) -> Stri
             aurora_i18n::tr!("marketplace-suffix-max")
         };
         if count == STOCK_NOT_EVALUATED {
-            out.push_str(&format!(" ({label}={})", aurora_i18n::tr!("marketplace-suffix-updating")));
+            out.push((format!("{label}={}", aurora_i18n::tr!("marketplace-suffix-updating")), Tone::Busy));
         } else {
-            out.push_str(&format!(" ({label}={count})"));
+            out.push((format!("{label}={count}"), Tone::Muted));
         }
     }
-    if updating {
-        out.push_str(&format!(" ({})", aurora_i18n::tr!("marketplace-suffix-updating")));
+    if data.is_updating(inv, root, id) {
+        out.push((aurora_i18n::tr!("marketplace-suffix-updating").to_owned(), Tone::Busy));
     }
     out
+}
+
+/// A row label: the name in the inventory's row font, then the badges in the
+/// font and colours of the inventory's permission badges.
+fn row_label(name: &str, badges: &[(String, Tone)], p: &Palette) -> egui::text::LayoutJob {
+    let mut job = tree::name(name, p);
+    let font = egui::FontId::monospace(12.0);
+    for (i, (text, tone)) in badges.iter().enumerate() {
+        let gap = if i == 0 { "  " } else { " · " };
+        job.append(gap, 0.0, egui::TextFormat::simple(font.clone(), p.muted_dim));
+        let color = match tone {
+            Tone::Muted => p.muted,
+            Tone::Good => p.success,
+            Tone::Bad => p.danger,
+            Tone::Busy => p.amber,
+        };
+        job.append(text, 0.0, egui::TextFormat::simple(font.clone(), color));
+    }
+    job
 }
 
 /// LLMarketplaceData::getMarketplaceStringSubstitutions' dashboard.
@@ -178,7 +208,15 @@ impl ListingsUi {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, inv: &mut Inventory, worn: &HashSet<Uuid>, home: Option<&str>) -> Vec<Action> {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        icons: &Icons,
+        inv: &mut Inventory,
+        worn: &HashSet<Uuid>,
+        home: Option<&str>,
+    ) -> Vec<Action> {
         let mut actions = Vec::new();
         if !self.open {
             return actions;
@@ -189,7 +227,7 @@ impl ListingsUi {
         let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("marketplace-listings-title"), default.min, default.size());
         floater.min_size = MIN_SIZE;
         let mut open = self.open;
-        floater.show(ctx, p, &mut open, |ui| self.contents(ui, p, inv, worn, home, &mut actions));
+        floater.show(ctx, p, &mut open, |ui| self.contents(ui, p, icons, inv, worn, home, &mut actions));
         self.open = open;
         self.dialogs(ctx, p, inv, worn, &mut actions);
         self.audit_window(ctx, p);
@@ -197,10 +235,12 @@ impl ListingsUi {
     }
 
     /// LLFloaterMarketplaceListings::updateView.
+    #[allow(clippy::too_many_arguments)]
     fn contents(
         &mut self,
         ui: &mut egui::Ui,
         p: &Palette,
+        icons: &Icons,
         inv: &mut Inventory,
         worn: &HashSet<Uuid>,
         home: Option<&str>,
@@ -232,25 +272,26 @@ impl ListingsUi {
             ui.vertical_centered(|ui| ui.spinner());
             return;
         }
-        let root = root.filter(|_| merchant);
-        let has_listings = root.is_some_and(|r| !mp::subfolders(inv, r).is_empty() || !inv.folders[&r].items.is_empty());
-        if let Some(root) = root {
-            self.toolbar(ui, p, inv, worn, root, home, actions);
-            if has_listings {
-                self.tabs_and_tree(ui, p, inv, worn, root, actions);
-            } else {
-                let zone = ui.scope(|ui| {
-                    placeholder(
-                        ui,
-                        p,
-                        aurora_i18n::tr!("marketplace-listings-empty-title"),
-                        aurora_i18n::tr!("marketplace-listings-empty"),
-                    );
-                    ui.allocate_space(ui.available_size());
-                });
-                self.drop_target(ui, p, &zone.response, inv, worn, root, root, actions);
+        if let Some(root) = root.filter(|_| merchant) {
+            // the inventory window's order: filter, tabs, tree, footer
+            let clear = !self.filter.is_empty();
+            let hint = aurora_i18n::tr!("marketplace-listings-filter");
+            let width = ui.available_width();
+            let (_, cleared) = tree::search_field(ui, p, &mut self.filter, hint, width, clear, aurora_i18n::tr!("common-clear"));
+            if cleared {
+                self.filter.clear();
             }
-            self.status_line(ui, p);
+            ui.add_space(3.0);
+            let labels = [
+                (aurora_i18n::tr!("marketplace-listings-tab-all"), true),
+                (aurora_i18n::tr!("marketplace-listings-tab-listed"), true),
+                (aurora_i18n::tr!("marketplace-listings-tab-unlisted"), true),
+                (aurora_i18n::tr!("marketplace-listings-tab-unassociated"), true),
+            ];
+            widgets::tabs(ui, p, &mut self.tab, &labels);
+            ui.add_space(6.0);
+            let count = self.listings_tree(ui, p, icons, inv, worn, root, actions);
+            self.footer(ui, p, inv, worn, root, home, count, actions);
             return;
         }
         match status {
@@ -285,7 +326,88 @@ impl ListingsUi {
         }
     }
 
-    fn toolbar(
+    /// The listings of the tab, in the inventory's list frame; the number
+    /// shown.
+    #[allow(clippy::too_many_arguments)]
+    fn listings_tree(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        icons: &Icons,
+        inv: &mut Inventory,
+        worn: &HashSet<Uuid>,
+        root: Uuid,
+        actions: &mut Vec<Action>,
+    ) -> usize {
+        let tab = TABS[self.tab.min(3)];
+        // allowDropOnRoot: only the All and Unassociated tabs take a drop
+        let root_drop = matches!(tab, Tab::All | Tab::Unassociated);
+        let filter = self.filter.trim().to_lowercase();
+        let any = !mp::subfolders(inv, root).is_empty();
+        let listings: Vec<Uuid> = {
+            let mut l: Vec<(String, Uuid)> = mp::subfolders(inv, root)
+                .iter()
+                .filter(|id| match tab {
+                    Tab::All => true,
+                    Tab::Listed => self.data.activation_state(**id),
+                    Tab::Unlisted => self.data.is_listed(**id) && !self.data.activation_state(**id),
+                    Tab::Unassociated => !self.data.is_listed(**id),
+                })
+                .filter(|id| filter.is_empty() || matches(inv, **id, &filter, 0))
+                .map(|id| (inv.folders[id].info.name.to_lowercase(), *id))
+                .collect();
+            l.sort();
+            l.into_iter().map(|(_, id)| id).collect()
+        };
+        let count = listings.len();
+        let list_h = tree::height(ui);
+        let zone = tree::frame(ui, p, |ui| {
+            tree::scroll(ui, list_h).show(ui, |ui| {
+                tree::spacing(ui);
+                if !any {
+                    // InventoryMarketplaceListingsNoItems
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("marketplace-listings-empty-title"))
+                            .size(13.0)
+                            .color(p.ink),
+                    );
+                    ui.label(RichText::new(aurora_i18n::tr!("marketplace-listings-empty")).color(p.muted));
+                } else if listings.is_empty() {
+                    let text = if filter.is_empty() {
+                        aurora_i18n::tr!("marketplace-listings-no-listing")
+                    } else {
+                        aurora_i18n::tr!("marketplace-listings-no-match")
+                    };
+                    ui.label(RichText::new(text).color(p.muted));
+                }
+                for id in listings {
+                    self.folder_tree(ui, p, icons, inv, worn, root, id, 1, &filter, actions);
+                }
+                if root_drop && any {
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("marketplace-listings-drop"))
+                            .size(11.0)
+                            .color(p.muted_dim),
+                    );
+                }
+            });
+        });
+        if root_drop {
+            self.drop_target(ui, p, &zone.response, inv, worn, root, root, actions);
+        } else if zone.response.contains_pointer()
+            && (zone.response.dnd_release_payload::<InvDrag>().is_some() || zone.response.dnd_release_payload::<FolderDrag>().is_some())
+        {
+            // TooltipOutboxCannotDropOnRoot
+            self.message = aurora_i18n::tr!("marketplace-reason-cannot-drop-on-root").into();
+        }
+        count
+    }
+
+    /// The footer of the inventory window: the actions on the left, the
+    /// count or the last message on the right.
+    #[allow(clippy::too_many_arguments)]
+    fn footer(
         &mut self,
         ui: &mut egui::Ui,
         p: &Palette,
@@ -293,10 +415,10 @@ impl ListingsUi {
         worn: &HashSet<Uuid>,
         root: Uuid,
         home: Option<&str>,
+        count: usize,
         actions: &mut Vec<Action>,
     ) {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
             // LLPanelMarketplaceListings::onAddButtonClicked
             if widgets::icon_button(ui, p, "plus", aurora_i18n::tr!("marketplace-listings-new-folder"), true) {
                 let id = Uuid::new_v4();
@@ -321,92 +443,22 @@ impl ListingsUi {
             {
                 actions.push(Action::OpenMarketplace(dashboard(home)));
             }
-            ui.add_space(4.0);
-            let width = ui.available_width();
-            widgets::search_field(ui, &mut self.filter, aurora_i18n::tr!("marketplace-listings-filter"), width);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.message.is_empty() {
+                    tree::status_text(ui, &aurora_i18n::tr!("marketplace-listings-count", count = count), p.muted);
+                } else {
+                    tree::status_text(ui, &self.message, p.warn);
+                }
+            });
         });
-        ui.add_space(4.0);
-    }
-
-    fn tabs_and_tree(
-        &mut self,
-        ui: &mut egui::Ui,
-        p: &Palette,
-        inv: &mut Inventory,
-        worn: &HashSet<Uuid>,
-        root: Uuid,
-        actions: &mut Vec<Action>,
-    ) {
-        let labels = [
-            (aurora_i18n::tr!("marketplace-listings-tab-all"), true),
-            (aurora_i18n::tr!("marketplace-listings-tab-listed"), true),
-            (aurora_i18n::tr!("marketplace-listings-tab-unlisted"), true),
-            (aurora_i18n::tr!("marketplace-listings-tab-unassociated"), true),
-        ];
-        widgets::tabs(ui, p, &mut self.tab, &labels);
-        let tab = TABS[self.tab.min(3)];
-        // allowDropOnRoot: only the All and Unassociated tabs take a drop
-        let root_drop = matches!(tab, Tab::All | Tab::Unassociated);
-        if root_drop {
-            ui.label(
-                RichText::new(aurora_i18n::tr!("marketplace-listings-drop"))
-                    .size(11.5)
-                    .color(p.muted),
-            );
-        }
-        ui.add_space(2.0);
-        let filter = self.filter.trim().to_lowercase();
-        let listings: Vec<Uuid> = {
-            let mut l: Vec<(String, Uuid)> = mp::subfolders(inv, root)
-                .iter()
-                .filter(|id| match tab {
-                    Tab::All => true,
-                    Tab::Listed => self.data.activation_state(**id),
-                    Tab::Unlisted => self.data.is_listed(**id) && !self.data.activation_state(**id),
-                    Tab::Unassociated => !self.data.is_listed(**id),
-                })
-                .filter(|id| filter.is_empty() || matches(inv, **id, &filter, 0))
-                .map(|id| (inv.folders[id].info.name.to_lowercase(), *id))
-                .collect();
-            l.sort();
-            l.into_iter().map(|(_, id)| id).collect()
-        };
-        let zone = egui::Frame::NONE
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .max_height((ui.available_height() - 24.0).max(80.0))
-                    .show(ui, |ui| {
-                        if listings.is_empty() {
-                            let text = if filter.is_empty() {
-                                aurora_i18n::tr!("marketplace-listings-no-listing")
-                            } else {
-                                aurora_i18n::tr!("marketplace-listings-no-match")
-                            };
-                            ui.label(RichText::new(text).size(12.0).color(p.muted));
-                        }
-                        for id in listings {
-                            self.folder_row(ui, p, inv, worn, root, id, 1, &filter, actions);
-                        }
-                        ui.allocate_space(Vec2::new(ui.available_width(), (ui.available_height()).max(8.0)));
-                    });
-            })
-            .response;
-        if root_drop {
-            self.drop_target(ui, p, &zone, inv, worn, root, root, actions);
-        } else if zone.contains_pointer() && egui::DragAndDrop::has_any_payload(ui.ctx()) {
-            // TooltipOutboxCannotDropOnRoot
-            if zone.dnd_release_payload::<InvDrag>().is_some() || zone.dnd_release_payload::<FolderDrag>().is_some() {
-                self.message = aurora_i18n::tr!("marketplace-reason-cannot-drop-on-root").into();
-            }
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn folder_row(
+    fn folder_tree(
         &mut self,
         ui: &mut egui::Ui,
         p: &Palette,
+        icons: &Icons,
         inv: &mut Inventory,
         worn: &HashSet<Uuid>,
         root: Uuid,
@@ -415,52 +467,40 @@ impl ListingsUi {
         filter: &str,
         actions: &mut Vec<Action>,
     ) {
+        tree::spacing(ui);
+        if depth > 8 {
+            return;
+        }
         let Some(folder) = inv.folders.get(&id) else { return };
         let name = folder.info.name.clone();
         let kind = folder.info.type_default;
         let state = folder.state;
         let open = self.expanded.contains(&id) || !filter.is_empty();
-        let active = self.data.activation_state(id);
-        let label = format!("{name}{}", suffix(&self.data, inv, root, id));
+        let active = self.data.activation_state(id) && depth == 1;
+        let label = row_label(&name, &badges(&self.data, inv, root, id), p);
+        let selected = self.selected == Some(id);
         let response = ui
             .horizontal(|ui| {
-                ui.add_space((depth - 1) as f32 * 14.0);
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let (caret, caret_resp) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::click());
-                let c = caret.center();
-                let pts = if open {
-                    vec![c + egui::vec2(-4.0, -2.0), c + egui::vec2(4.0, -2.0), c + egui::vec2(0.0, 3.0)]
-                } else {
-                    vec![c + egui::vec2(-2.0, -4.0), c + egui::vec2(3.0, 0.0), c + egui::vec2(-2.0, 4.0)]
-                };
-                ui.painter().add(egui::Shape::convex_polygon(pts, p.muted, egui::Stroke::NONE));
-                if caret_resp.clicked() {
+                if tree::caret(ui, p, open).clicked() {
                     self.toggle(id);
                 }
-                // FT_MARKETPLACE_VERSION has its own icon at depth 2
+                // FT_MARKETPLACE_STOCK, and FT_MARKETPLACE_VERSION for the
+                // active version folder (LLMarketplaceFolderBridge::getIcon)
                 let (icon, tint) = if kind == STOCK {
-                    ("package", p.amber)
+                    ("package", Some(p.amber))
                 } else if depth == 2 && self.data.is_version_folder(id) {
-                    ("folder-filled", p.success)
-                } else if open {
-                    ("folder-open-filled", p.violet_light)
+                    (tree::folder_icon(-1, open), Some(p.success))
                 } else {
-                    ("folder-filled", p.violet_light)
+                    (tree::folder_icon(-1, open), None)
                 };
-                icon_image(ui, icon, tint);
-                let mut text = RichText::new(label).size(13.0).color(p.ink);
-                if active {
-                    // getLabelStyle: bold while listed
-                    text = text.strong();
-                }
-                ui.add(
-                    egui::Button::selectable(self.selected == Some(id), text)
-                        .wrap_mode(egui::TextWrapMode::Truncate)
-                        .sense(egui::Sense::click_and_drag()),
-                )
+                tree::icon(ui, icons, icon, p, tint);
+                // getLabelStyle: bold while listed
+                let bold = active.then(|| ui.painter().layout_no_wrap(name.clone(), tree::font(), p.ink));
+                tree::label(ui, label, selected, egui::Sense::click_and_drag(), bold)
             })
             .inner;
-        if response.drag_started() && depth >= 1 {
+        if depth >= 1 {
             response.dnd_set_drag_payload(FolderDrag(id));
         }
         if response.clicked() || response.secondary_clicked() {
@@ -477,41 +517,52 @@ impl ListingsUi {
         if matches!(state, FetchState::Unknown | FetchState::Failed) {
             inv.request(id);
         }
-        let mut children: Vec<(String, Uuid)> = mp::subfolders(inv, id)
-            .iter()
-            .filter(|c| filter.is_empty() || matches(inv, **c, filter, 0))
-            .map(|c| (inv.folders[c].info.name.to_lowercase(), *c))
-            .collect();
-        children.sort();
-        for (_, child) in children {
-            self.folder_row(ui, p, inv, worn, root, child, depth + 1, filter, actions);
-        }
-        let items: Vec<Uuid> = inv.folders.get(&id).map(|f| f.items.clone()).unwrap_or_default();
-        for item in items {
-            let Some(it) = inv.items.get(&item) else { continue };
-            if !filter.is_empty() && !it.name.to_lowercase().contains(filter) {
-                continue;
+        ui.indent(("marketplace_listing", id), |ui| {
+            let mut children: Vec<(String, Uuid)> = mp::subfolders(inv, id)
+                .iter()
+                .filter(|c| filter.is_empty() || matches(inv, **c, filter, 0))
+                .map(|c| (inv.folders[c].info.name.to_lowercase(), *c))
+                .collect();
+            children.sort();
+            let empty = children.is_empty() && inv.folders.get(&id).is_none_or(|f| f.items.is_empty());
+            for (_, child) in children {
+                self.folder_tree(ui, p, icons, inv, worn, root, child, depth + 1, filter, actions);
             }
-            let (name, icon) = (it.name.clone(), super::inventory::item_icon(it.asset_type, it.inv_type));
-            let response = ui
-                .horizontal(|ui| {
-                    ui.add_space(depth as f32 * 14.0 + 16.0);
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    icon_image(ui, icon, p.ink);
-                    ui.add(
-                        egui::Button::selectable(self.selected == Some(item), RichText::new(name).size(13.0).color(p.ink))
-                            .wrap_mode(egui::TextWrapMode::Truncate)
-                            .sense(egui::Sense::click_and_drag()),
-                    )
-                })
-                .inner;
-            response.dnd_set_drag_payload(InvDrag(item));
-            if response.clicked() {
-                self.selected = Some(item);
+            let items: Vec<Uuid> = inv.folders.get(&id).map(|f| f.items.clone()).unwrap_or_default();
+            for item in items {
+                let Some(it) = inv.items.get(&item) else { continue };
+                if !filter.is_empty() && !it.name.to_lowercase().contains(filter) {
+                    continue;
+                }
+                let icon = super::inventory::item_icon(it.asset_type, it.inv_type);
+                let mut label = tree::name(&it.name, p);
+                if let Some(permissions) = super::inventory::permissions::Permissions::inventory(inv, item) {
+                    permissions.append_suffix(&mut label, p);
+                }
+                let selected = self.selected == Some(item);
+                let response = ui
+                    .horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        tree::icon(ui, icons, icon, p, None);
+                        tree::label(ui, label, selected, egui::Sense::click_and_drag(), None)
+                    })
+                    .inner;
+                response.dnd_set_drag_payload(InvDrag(item));
+                if response.clicked() {
+                    self.selected = Some(item);
+                }
+                // a drop on an item goes to its folder
+                self.drop_target(ui, p, &response, inv, worn, root, id, actions);
             }
-            // a drop on an item goes to its folder
-            self.drop_target(ui, p, &response, inv, worn, root, id, actions);
-        }
+            if empty {
+                let text = if state == FetchState::Fetched {
+                    aurora_i18n::tr!("status-empty")
+                } else {
+                    aurora_i18n::tr!("ui-inventory-loading-folder")
+                };
+                ui.label(RichText::new(text).size(12.0).color(p.muted_dim));
+            }
+        });
     }
 
     fn toggle(&mut self, id: Uuid) {
@@ -709,13 +760,13 @@ impl ListingsUi {
             .or_else(|| r.dnd_hover_payload::<FolderDrag>().map(|d| d.0));
         let Some(id) = cargo else { return };
         let plan = validate::drop_plan(inv, root, dest, &[id], worn);
-        let stroke = if plan.is_ok() { p.violet_light } else { p.danger };
-        ui.painter().rect_stroke(
-            r.rect,
-            ui.visuals().window_corner_radius,
-            egui::Stroke::new(1.0, stroke),
-            egui::StrokeKind::Inside,
-        );
+        // the inventory's drop feedback: outline and cursor
+        tree::drop_outline(ui, p, r.rect, plan.is_ok());
+        ui.ctx().set_cursor_icon(if plan.is_ok() {
+            egui::CursorIcon::Move
+        } else {
+            egui::CursorIcon::NotAllowed
+        });
         let released = r.dnd_release_payload::<InvDrag>().is_some() || r.dnd_release_payload::<FolderDrag>().is_some();
         if !released {
             return;
@@ -750,12 +801,6 @@ impl ListingsUi {
                 actions.push(Action::Edit(change));
             }
             Err(reason) => self.message = reason,
-        }
-    }
-
-    fn status_line(&mut self, ui: &mut egui::Ui, p: &Palette) {
-        if !self.message.is_empty() {
-            ui.add(egui::Label::new(RichText::new(&self.message).size(11.5).color(p.warn)).truncate());
         }
     }
 
@@ -958,14 +1003,6 @@ fn matches(inv: &Inventory, id: Uuid, filter: &str, guard: usize) -> bool {
             || f.children.iter().any(|c| matches(inv, *c, filter, guard + 1)))
 }
 
-fn icon_image(ui: &mut egui::Ui, name: &str, tint: egui::Color32) {
-    if let Some(t) = super::icons::global(name) {
-        ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(tint));
-    } else {
-        ui.add_space(16.0);
-    }
-}
-
 fn placeholder(ui: &mut egui::Ui, p: &Palette, title: &str, text: &str) {
     ui.add_space(24.0);
     ui.vertical_centered(|ui| {
@@ -1024,15 +1061,13 @@ mod tests {
         let inv = demo_inventory();
         let ui = merchant(&inv);
         let root = mp::root(&inv).unwrap();
-        let hoodie = suffix(&ui.data, &inv, root, demo::HOODIE);
-        assert!(
-            hoodie.contains("(4101)") && hoodie.contains(aurora_i18n::tr!("marketplace-suffix-listed")),
-            "{hoodie}"
-        );
-        assert!(suffix(&ui.data, &inv, root, demo::HOODIE_V2).contains(aurora_i18n::tr!("marketplace-suffix-active")));
-        let poster = suffix(&ui.data, &inv, root, demo::POSTER);
-        assert!(poster.contains("=3)"), "{poster}");
-        assert!(suffix(&ui.data, &inv, root, demo::LANTERN).is_empty());
+        let text = |id| badges(&ui.data, &inv, root, id).into_iter().map(|(t, _)| t).collect::<Vec<_>>();
+        let hoodie = badges(&ui.data, &inv, root, demo::HOODIE);
+        assert_eq!(hoodie[0], ("#4101".to_owned(), Tone::Muted));
+        assert_eq!(hoodie[1], (aurora_i18n::tr!("marketplace-suffix-listed").to_owned(), Tone::Good));
+        assert!(text(demo::HOODIE_V2).contains(&aurora_i18n::tr!("marketplace-suffix-active").to_owned()));
+        assert!(text(demo::POSTER).iter().any(|t| t.ends_with("=3")), "{:?}", text(demo::POSTER));
+        assert!(text(demo::LANTERN).is_empty());
         assert!(in_active_folder(&ui.data, &inv, root, Uuid::from_u128(8_400_102)));
         assert!(!in_active_folder(&ui.data, &inv, root, Uuid::from_u128(8_400_101)));
     }
