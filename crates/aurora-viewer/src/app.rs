@@ -234,6 +234,8 @@ pub struct App {
     /// world focuses the camera, as with Alt (LLToolCamera).
     controls_ui: ui::controls::ControlsUi,
     controls_held: Vec<Action>,
+    /// Its free camera joysticks this frame: move, look.
+    controls_free: (egui::Vec2, egui::Vec2),
     object_view: bool,
     /// Double click on the ground (src/autopilot.rs): the presses of the
     /// left button on the world, whether the one being handled is the
@@ -716,6 +718,7 @@ impl App {
             always_run: false,
             controls_ui: Default::default(),
             controls_held: Vec::new(),
+            controls_free: (egui::Vec2::ZERO, egui::Vec2::ZERO),
             object_view: false,
             double_click: Default::default(),
             double_press: false,
@@ -2298,7 +2301,11 @@ impl App {
             if !self.right_gesture.motion(dx, dy, self.egui_ctx.pixels_per_point()) {
                 return; // maybe a click: do not move the camera yet
             }
-            self.camera.orbit_drag(dx, dy, s, &mut self.world.agent);
+            match self.camera.free_mut() {
+                // the free camera looks around instead of orbiting
+                Some(free) => free.drag(dx, dy, s),
+                None => self.camera.orbit_drag(dx, dy, s, &mut self.world.agent),
+            }
         }
     }
 
@@ -4140,6 +4147,18 @@ impl App {
         i.strafe_right |= held(Action::StrafeRight);
         i.up |= held(Action::Up);
         i.down |= held(Action::Down);
+        if self.camera.free().is_some() {
+            // the photo's free camera takes the movement keys: the avatar
+            // stays where it is (no walk, turn, jump or flight start)
+            self.photo_free_move(&i, dt);
+            self.input = MoveInput::default();
+            self.fb_since = None;
+            self.lr_since = None;
+            self.up_since = None;
+            self.turn_since = None;
+            self.cam_key_since = [None; 10];
+            return;
+        }
         if self.mouse_mode == MouseMode::Steer {
             // left button held on the avatar (Firestorm): the avatar faces the
             // camera; the arrows are camera-relative and turn the avatar toward
@@ -10831,7 +10850,9 @@ impl ApplicationHandler for App {
                     }
                     None => false,
                 };
-                if !on_media {
+                // (the free camera has no zoom: the wheel would change the
+                // avatar's view behind it, or enter mouselook)
+                if !on_media && self.camera.free().is_none() {
                     // SL wheel clicks: positive zooms out
                     let was = self.camera.mouselook();
                     self.camera

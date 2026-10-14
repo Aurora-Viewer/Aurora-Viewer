@@ -144,6 +144,10 @@ pub(super) struct Snapshots {
     detail_ready: bool,
     /// The time of day the photo's light shows over the user's.
     light_time: Option<snapshot::light::HeldTime>,
+    /// The free camera flies, started by the window.
+    free_flying: bool,
+    /// The Controls window was opened by the free camera: it closes with it.
+    free_opened_controls: bool,
     /// The photo quality raised or restored the settings: applied like a
     /// change made in Preferences (renderer, draw distance sent to the
     /// region…).
@@ -217,6 +221,8 @@ impl Default for Snapshots {
             detail_wait: None,
             detail_ready: false,
             light_time: None,
+            free_flying: false,
+            free_opened_controls: false,
             settings_changed: false,
             web_auth: Default::default(),
             demo_profile: None,
@@ -786,6 +792,7 @@ impl App {
         self.photo_demo(renderer);
         self.photo_quality(renderer);
         self.photo_light();
+        self.photo_free_camera();
         if let Some(t) = self.snapshots.detail_wait {
             let pending = self.scene.textures.pending_in_view();
             if pending == 0 || t.elapsed() >= snapshot::quality::DETAIL_WAIT || self.settings.photo_held.is_none() {
@@ -979,6 +986,14 @@ impl App {
             }
             Action::CloseAfford => self.snapshots.short = None,
             Action::PersonalLighting => self.panels.personal_lighting = true,
+            Action::Controls => {
+                if !self.panels.camera_controls && !self.panels.movement_controls {
+                    self.panels.camera_controls = true;
+                }
+                crate::ui::widgets::expand_floater(&self.egui_ctx, crate::ui::controls::WINDOW);
+                // opened by hand: it stays when the flight ends
+                self.snapshots.free_opened_controls = false;
+            }
             Action::ShowItem => {
                 if let Some(id) = self.snapshots.message_item {
                     self.panels.inventory = true;
@@ -1105,6 +1120,7 @@ impl App {
                 profile,
                 profile_posted: s.message_profile,
                 exposure: self.settings.exposure,
+                back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
             };
             let mut open = self.panels.snapshot;
             actions.extend(state.show(
@@ -1148,13 +1164,124 @@ impl App {
         self.panels.snapshot && self.snapshots.ui.full_frame
     }
 
-    /// Escape leaves the full-frame view instead of resetting the camera.
+    /// Escape leaves the full-frame view, then brings the free camera back,
+    /// instead of resetting the camera.
     pub(super) fn photo_escape(&mut self) -> bool {
         if self.photo_full_frame() {
             self.snapshots.ui.full_frame = false;
             return true;
         }
+        if self.camera.free().is_some() {
+            self.snapshots.ui.free.on = false;
+            self.photo_free_camera();
+            return true;
+        }
         false
+    }
+
+    /// The free camera follows the window's switch while the window is
+    /// open: it leaves the avatar where it is and the Controls window opens
+    /// to drive it; the switch off, the window closed or Escape bring it
+    /// back. Mouselook and a teleport end it too (`Camera::free`), which
+    /// turns the switch off.
+    pub(super) fn photo_free_camera(&mut self) {
+        let flying = self.camera.free().is_some();
+        if self.snapshots.free_flying && !flying {
+            log::info!("free camera: ended by the camera (mouselook or teleport)");
+            self.photo_free_finish();
+            return;
+        }
+        if !self.panels.snapshot {
+            // the next opening of the window starts on the avatar
+            self.snapshots.ui.free.on = false;
+        }
+        let want = self.panels.snapshot && self.snapshots.ui.free.on && self.in_world();
+        if want && !flying {
+            let mouselook = self.camera.mouselook();
+            self.camera.start_free(&mut self.world.agent, &self.settings.camera);
+            if mouselook {
+                self.set_mouselook_grab(false);
+            }
+            // the Controls window drives it, on its camera tab
+            self.snapshots.free_opened_controls = !self.panels.camera_controls && !self.panels.movement_controls;
+            self.panels.camera_controls = true;
+            self.panels.movement_controls = false;
+            self.snapshots.free_flying = true;
+            log::info!("free camera: on at {:.1?}", self.camera.position);
+        } else if !want && flying {
+            self.camera.end_free(&self.settings.camera);
+            log::info!("free camera: back to the avatar");
+            self.photo_free_finish();
+        }
+    }
+
+    /// After a flight: the switch off for the next one, the Controls window
+    /// closed again if the flight opened it.
+    fn photo_free_finish(&mut self) {
+        self.snapshots.free_flying = false;
+        self.snapshots.ui.free.on = false;
+        if std::mem::take(&mut self.snapshots.free_opened_controls) {
+            self.panels.camera_controls = false;
+            self.panels.movement_controls = false;
+        }
+    }
+
+    /// The free camera this frame: the movement keys, the Controls window's
+    /// buttons (`i`, held like the keys) and its joysticks move it, Shift
+    /// faster, Ctrl slower; with collisions it stops short of the objects
+    /// and the ground and slides along them.
+    pub(super) fn photo_free_move(&mut self, i: &crate::agent::MoveInput, dt: f32) {
+        use crate::camera::free::{self, FreeMove};
+        let Some(mut cam) = self.camera.free().copied() else {
+            return;
+        };
+        let (stick, look) = self.controls_free;
+        let axis = |pos: bool, neg: bool| f32::from(u8::from(pos)) - f32::from(u8::from(neg));
+        let m = FreeMove {
+            forward: axis(i.forward, i.back) + stick.y,
+            // the turn keys slide: the free camera turns with the mouse
+            left: axis(i.turn_left || i.strafe_left, i.turn_right || i.strafe_right) - stick.x,
+            up: axis(i.up, i.down),
+            fast: self.shift,
+            slow: self.ctrl,
+        };
+        cam.turn(-look.x * free::LOOK_RATE * dt, look.y * free::LOOK_RATE * dt);
+        let flight = self.snapshots.ui.free;
+        if !m.is_still() {
+            let delta = cam.step(m, flight.speed, dt);
+            cam.position += if flight.no_collisions {
+                delta
+            } else {
+                self.photo_free_collide(cam.position, delta)
+            };
+        }
+        if let Some(f) = self.camera.free_mut() {
+            *f = cam;
+        }
+    }
+
+    /// `delta` from `from`, stopped short of the objects (their real
+    /// triangles, the ones a click finds, phantom ones included) and of the
+    /// ground.
+    fn photo_free_collide(&self, from: glam::Vec3, delta: glam::Vec3) -> glam::Vec3 {
+        use crate::camera::free::{CLEARANCE, collide};
+        let (world, scene) = (&self.world, &self.scene);
+        let moved = collide(from, delta, |at, dir, length| {
+            let (hit, _) = scene.selection_pick(world, Some((at, dir)), None, true, length);
+            let mut room = hit.map_or(length, |p| (p - at).dot(dir).clamp(0.0, length));
+            if dir.z < 0.0
+                && let Some(land) = world.ground_height(at)
+            {
+                room = room.min(((at.z - land) / -dir.z).max(0.0));
+            }
+            room
+        });
+        // a slope under a level move
+        let mut to = from + moved;
+        if let Some(land) = world.ground_height(to) {
+            to.z = to.z.max(land + CLEARANCE);
+        }
+        to - from
     }
 
     /// The photo's quick light (`snapshot::light`) while the window is open;

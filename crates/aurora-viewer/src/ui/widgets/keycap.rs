@@ -8,7 +8,8 @@ use egui::{Color32, Vec2};
 
 /// Height of a keycap, and of the square of Tabler's key icons.
 pub(crate) const HEIGHT: f32 = 14.0;
-const GAP: f32 = 3.0;
+/// Room between two caps of a row.
+pub(crate) const GAP: f32 = 3.0;
 
 /// Width taken by the mouse icon of a mouse button's cap.
 const MOUSE: f32 = 12.0;
