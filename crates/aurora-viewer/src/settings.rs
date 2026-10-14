@@ -381,6 +381,10 @@ pub struct Settings {
     /// (missing in older files: 0).
     #[serde(default)]
     pub settings_version: u32,
+    /// No settings file existed: the graphics level is chosen for the
+    /// graphics card once it is known (`graphics_presets::for_machine`).
+    #[serde(skip)]
+    pub new_profile: bool,
 }
 
 const SETTINGS_VERSION: u32 = 11;
@@ -710,6 +714,7 @@ impl Default for Settings {
             keybinds: Default::default(),
             legacy_hud_drag_key: None,
             settings_version: SETTINGS_VERSION,
+            new_profile: false,
         }
     }
 }
@@ -862,8 +867,9 @@ impl Settings {
     pub fn load() -> Settings {
         // what the file says of the window: nothing on a first launch
         let mut saved_window = (None, false);
-        let mut s = std::fs::read(Self::path())
-            .ok()
+        let file = std::fs::read(Self::path()).ok();
+        let new_profile = file.is_none();
+        let mut s = file
             .and_then(|b| {
                 let value: serde_json::Value = serde_json::from_slice(&b).ok()?;
                 saved_window = saved_window_state(&value);
@@ -878,6 +884,7 @@ impl Settings {
             .unwrap_or_default();
         let forced = std::env::var_os("AURORA_CAPTURE").is_some();
         s.window_maximized = window_starts_maximized(saved_window.0, saved_window.1, forced);
+        s.new_profile = new_profile;
         s.sanitized()
     }
 
