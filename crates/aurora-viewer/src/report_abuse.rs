@@ -18,6 +18,20 @@ pub enum ReportTarget {
     Object(uuid::Uuid),
     /// A chat line (showFromChat): its speaker, time and text.
     Chat { avatar: uuid::Uuid, time: String, text: String },
+    /// An experience's profile (showFromExperience): its owner is the
+    /// abuser, the details name the experience.
+    Experience(uuid::Uuid),
+}
+
+/// getExperienceInfo's details: the experience's id, or that its details
+/// could not be read (sent to the grid as they are, in English, like the
+/// other lines gatherReport writes).
+pub fn experience_details(experience: uuid::Uuid, known: bool) -> String {
+    if known {
+        format!("Experience id: {experience}")
+    } else {
+        format!("Unable to retrieve details for id: {experience}")
+    }
 }
 
 /// The categories of floater_report_abuse.xml, kept until the region's
@@ -330,6 +344,13 @@ mod tests {
         assert!(details(&form, "0.4.0").starts_with("V0.4.0\n\nObject: Spammer box\nOwner: nova.exemple\nAbuser name: "));
         assert_eq!(position_text(Vec3::new(128.06, 64.0, 22.44)), "{128.1, 64.0, 22.4}");
         assert!(version_string("0.4.0", "CPU", "GPU", "1.2").starts_with("0.4.0 "));
+    }
+
+    #[test]
+    fn an_experience_report_names_the_experience_in_its_details() {
+        let id = uuid::Uuid::from_u128(0xE);
+        assert_eq!(experience_details(id, true), format!("Experience id: {id}"));
+        assert_eq!(experience_details(id, false), format!("Unable to retrieve details for id: {id}"));
     }
 
     #[test]

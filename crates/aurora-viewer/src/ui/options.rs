@@ -222,6 +222,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("common-command-line") || value == aurora_i18n::text("common-other-commands") => "terminal-2",
         value if value == aurora_i18n::text("common-teleport-commands") => "map-pin-filled",
         value if value == aurora_i18n::text("common-teleport-2") => "location-filled",
+        value if value == aurora_i18n::text("ui-options-region-restart") => "refresh",
         value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera-filled",
         value if value == aurora_i18n::text("common-windows") => "layout-grid-filled",
         value if value == aurora_i18n::text("ui-options-aurora-appearance") => "paint-filled",
@@ -1717,6 +1718,13 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-reduce-motion"),
+                    aurora_i18n::tr!("ui-options-reduce-motion-help"),
+                    |ui| toggle(ui, p, &mut s.reduce_motion),
+                );
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("ui-options-name-distance"),
                     aurora_i18n::tr!("ui-options-0-hide-avatar-names"),
                     |ui| slider(ui, &mut s.name_tag_distance, 0.0..=128.0, " m"),
@@ -1784,6 +1792,63 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-confirm-no-transfer-settings-help"),
                     |ui| toggle(ui, p, &mut s.confirm_no_transfer_settings),
                 );
+            });
+            // FSUseNewRegionRestartNotification, FSNoScreenShakeOnRegionRestart,
+            // FSReportRegionRestartToChat / FSRegionRestartAnnounceChannel
+            // (Firestorm: Preferences › Interface › Toasts)
+            group(ui, p, aurora_i18n::tr!("ui-options-region-restart"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-region-restart-alert"),
+                    aurora_i18n::tr!("ui-options-region-restart-alert-help"),
+                    |ui| toggle(ui, p, &mut s.region_restart.show_alert),
+                );
+                ui.add_enabled_ui(s.region_restart.show_alert, |ui| {
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-region-restart-shake"),
+                        aurora_i18n::tr!("ui-options-region-restart-shake-help"),
+                        |ui| {
+                            use crate::world::region_restart::Shake;
+                            let options = [
+                                (aurora_i18n::tr!("ui-options-region-restart-shake-alert"), false),
+                                (aurora_i18n::tr!("ui-options-region-restart-shake-view"), false),
+                                (aurora_i18n::tr!("ui-options-region-restart-shake-none"), false),
+                            ];
+                            let mut i = match s.region_restart.shake {
+                                Shake::Alert => 0,
+                                Shake::View => 1,
+                                Shake::None => 2,
+                            };
+                            let changed = super::widgets::segmented(ui, p, &mut i, &options);
+                            s.region_restart.shake = [Shake::Alert, Shake::View, Shake::None][i.min(2)];
+                            changed
+                        },
+                    );
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-region-restart-announce"),
+                        aurora_i18n::tr!("ui-options-region-restart-announce-help"),
+                        |ui| {
+                            let mut changed = toggle(ui, p, &mut s.region_restart.announce);
+                            ui.add_enabled_ui(s.region_restart.announce, |ui| {
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(&mut s.region_restart.channel)
+                                            .custom_parser(aurora_i18n::parse_number)
+                                            .range(i32::MIN..=i32::MAX)
+                                            .speed(1.0),
+                                    )
+                                    .on_hover_text(aurora_i18n::tr!("ui-options-region-restart-channel"))
+                                    .changed();
+                            });
+                            changed
+                        },
+                    );
+                });
             });
             // FSConfirmPayments / FSPaymentConfirmationThreshold
             // (panel_preferences_firestorm.xml)

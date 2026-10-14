@@ -35,6 +35,21 @@ fn a_card_unrolls_then_folds_into_the_bell() {
     assert_eq!(c.ring_at, Some(t));
 }
 
+/// The region restart's card (show_toast="false") waits under the bell
+/// without unrolling, and the bell counts it at once.
+#[test]
+fn a_quiet_card_never_unrolls() {
+    let mut list = Notifications::default();
+    let mut c = CenterUi::default();
+    let id = list.push(Kind::Alert, "Region restart", "", Data::RegionRestart);
+    if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
+        n.quiet = true;
+    }
+    update(&list, &mut c, at(0.0), 30.0);
+    assert!(c.peek.is_empty());
+    assert_eq!(bell_count(&list, &c), 1);
+}
+
 /// Hovering the panel stops the time; an offer waiting for an answer stays
 /// longer than information.
 #[test]

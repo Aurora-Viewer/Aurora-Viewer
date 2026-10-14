@@ -13,6 +13,7 @@ pub mod env_apply;
 pub mod env_day_edit;
 pub mod env_edit;
 pub mod env_select;
+pub mod estate;
 pub mod experiences;
 pub mod group_data;
 pub mod group_money;
@@ -38,6 +39,7 @@ pub mod parked;
 pub mod place_details;
 pub mod profiles;
 pub mod radar;
+pub mod region_restart;
 pub mod script_debug;
 pub mod search;
 pub mod social;
@@ -194,6 +196,8 @@ pub struct World {
     shape_preview: Option<Vec<u8>>,
     shape_preview_generation: u64,
     pub alerts: VecDeque<String>,
+    /// The announced restart of the agent's region (region_restart.rs).
+    pub region_restart: region_restart::Tracker,
     pub movement_complete: bool,
     pub avatar_lib: Arc<AvatarLibrary>,
     /// Animated joint matrices (skeleton space, rest -> posed) of the avatars
@@ -293,6 +297,8 @@ pub struct World {
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
+    /// The Region / Estate window's region and estate.
+    pub estate: estate::Estate,
     /// Media texture overrides and parcel media messages (media module).
     pub media: crate::media::WorldMedia,
     /// Avatar profiles and the ids still to request.
@@ -369,6 +375,18 @@ fn saved_prefix(timestamp: u32) -> String {
 }
 
 impl World {
+    /// LLFloaterRegionInfo::refreshFromRegion on `handle`: the panels ask
+    /// (estate, access, covenant, experiences, environment), then, when the
+    /// window opens, RequestRegionInfo (requestRegionInfo).
+    pub fn refresh_region_window(&mut self, handle: RegionHandle, request_info: bool) {
+        self.estate.open(handle);
+        let covenant = self.land.covenant_request(handle);
+        self.estate.push(covenant);
+        if request_info {
+            self.estate.request_region_info(handle);
+        }
+    }
+
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
         World {
             hud_aspect: 1.0,
@@ -407,6 +425,7 @@ impl World {
             shape_preview: None,
             shape_preview_generation: 0,
             alerts: VecDeque::new(),
+            region_restart: Default::default(),
             movement_complete: false,
             avatar_lib,
             teleporting: false,
@@ -451,6 +470,7 @@ impl World {
             parcel_name: String::new(),
             parcel: None,
             land: land::Land::default(),
+            estate: estate::Estate::default(),
             media: Default::default(),
             tp_history: tphistory::TeleportHistory::default(),
             tp_storage: Default::default(),
@@ -1983,6 +2003,14 @@ impl World {
                         .push((*local_id, result.as_ref().map(|_| ()).map_err(Clone::clone)));
                 }
                 self.land.apply(ev, &ctx);
+                None
+            }
+            NetEvent::Estate(ev) => {
+                if self.estate.apply(ev)
+                    && let Some(handle) = self.estate.open
+                {
+                    self.refresh_region_window(handle, false);
+                }
                 None
             }
             NetEvent::Health(health) => {

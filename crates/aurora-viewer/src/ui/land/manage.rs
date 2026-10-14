@@ -14,13 +14,17 @@ use super::dialogs::{Confirm, SellForm};
 use super::options::{self, Shown};
 use super::{Dialog, LandUi, View};
 use crate::theme::Palette;
+use crate::ui::sheet::{self, editable, fold_link, fold_row, line, lock_line, srow, why};
 use crate::ui::{menu, widgets};
+
+/// The cards and the banner the other pages share.
+pub(super) use crate::ui::sheet::{card_begin, card_end, lock_bar};
 use crate::world::World;
 use crate::world::land::{EnvState, PrimUsage, powers};
 use aurora_net::land::{AL_ALLOW_EXPERIENCE, AL_BLOCK_EXPERIENCE, LandCommand, OS_LEASED, PARCEL_MAX_EXPERIENCE_LIST};
 use aurora_net::land::{RT_GROUP, RT_OTHER, RT_OWNER};
 use aurora_net::{ParcelInfo, parcel_flags as pf, region_flags as rf};
-use egui::{FontId, Pos2, Rect, RichText, Sense, Shape, Vec2};
+use egui::{Pos2, Rect, RichText, Sense, Vec2};
 use glam::Vec3;
 use uuid::Uuid;
 
@@ -160,171 +164,9 @@ pub(super) fn missing_power(v: &View, power: u64) -> Option<String> {
     (!v.can(power)).then(|| aurora_i18n::tr!("ui-land-manage-missing-power", power = power_name(power).to_owned()))
 }
 
-/// Controls greyed (and faded like the mockup's read-only rows) unless
-/// `editable`.
-fn editable<R>(ui: &mut egui::Ui, editable: bool, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.scope(|ui| {
-        if !editable {
-            ui.disable();
-            ui.multiply_opacity(0.6);
-        }
-        body(ui)
-    })
-    .inner
-}
-
-/// A card being drawn: its face is painted once its height is known.
-pub(super) struct Card {
-    top: Pos2,
-    width: f32,
-    face: egui::layers::ShapeIdx,
-    pub(super) child: egui::Ui,
-}
-
-const CARD_PAD: Vec2 = Vec2::new(12.0, 10.0);
-
-pub(super) fn card_begin(ui: &mut egui::Ui) -> Card {
-    let width = ui.available_width();
-    let top = ui.cursor().min;
-    let face = ui.painter().add(Shape::Noop);
-    let inner = Rect::from_min_size(top + CARD_PAD, Vec2::new(width - CARD_PAD.x * 2.0, 100_000.0));
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(inner)
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-    );
-    child.spacing_mut().item_spacing.y = 0.0;
-    child.spacing_mut().interact_size.y = 16.0;
-    Card { top, width, face, child }
-}
-
-pub(super) fn card_end(ui: &mut egui::Ui, p: &Palette, card: Card) -> Rect {
-    let rect = Rect::from_min_size(card.top, Vec2::new(card.width, card.child.min_rect().height() + CARD_PAD.y * 2.0));
-    ui.painter()
-        .set(card.face, Shape::rect_filled(rect, ui.visuals().window_corner_radius, p.field));
-    ui.allocate_rect(rect, Sense::hover());
-    ui.add_space(10.0);
-    rect
-}
-
 /// The title of a section: its icon and name, and `right` at the right end.
 fn title(ui: &mut egui::Ui, p: &Palette, sec: Section, right: impl FnOnce(&mut egui::Ui)) {
-    ui.horizontal(|ui| {
-        ui.set_min_height(26.0);
-        ui.spacing_mut().item_spacing.x = 8.0;
-        widgets::glyph(ui, sec.icon(), p.violet_light, 16.0);
-        ui.label(semibold(ui, sec.label(), 13.5, p.ink));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
-    });
-}
-
-/// The sentence under a title.
-fn why(ui: &mut egui::Ui, p: &Palette, text: &str) {
-    ui.add_space(3.0);
-    ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.muted)).wrap());
-    ui.add_space(6.0);
-}
-
-/// An amber line with a lock: why the rows under it are greyed.
-fn lock_line(ui: &mut egui::Ui, p: &Palette, text: &str) {
-    ui.add_space(2.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 5.0;
-        widgets::glyph(ui, "lock-filled", p.amber, 13.0);
-        ui.add(egui::Label::new(RichText::new(text).size(11.5).color(p.amber)).wrap());
-    });
-    ui.add_space(4.0);
-}
-
-/// The amber banner over the page.
-pub(super) fn lock_bar(ui: &mut egui::Ui, p: &Palette, text: &str) {
-    egui::Frame::new()
-        .fill(p.amber.gamma_multiply(0.08))
-        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
-        .inner_margin(egui::Margin::symmetric(10, 7))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                widgets::glyph(ui, "lock-filled", p.amber, 14.0);
-                ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.amber)).wrap());
-            });
-        });
-    ui.add_space(10.0);
-}
-
-/// The faint line between two rows.
-fn line(ui: &mut egui::Ui, p: &Palette) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().hline(
-        rect.x_range(),
-        rect.center().y,
-        egui::Stroke::new(1.0, p.raised.gamma_multiply(0.35)),
-    );
-}
-
-/// A setting: its name over its explanation on the left, its controls at
-/// the right end, centred on the text. `controls_w` is the room they take
-/// (the text wraps before it); they are drawn right to left, the last one
-/// first.
-fn srow(ui: &mut egui::Ui, p: &Palette, name: &str, desc: &str, controls_w: f32, controls: impl FnOnce(&mut egui::Ui)) {
-    const PAD: f32 = 7.0;
-    const GAP: f32 = 14.0;
-    let width = ui.available_width();
-    let text_w = (width - controls_w - GAP).max(120.0);
-    let mut job = semibold(ui, name, 12.5, p.ink);
-    job.wrap.max_width = text_w;
-    let name_g = ui.painter().layout_job(job);
-    let desc_g = (!desc.is_empty()).then(|| ui.painter().layout(desc.to_owned(), FontId::proportional(11.5), p.muted, text_w));
-    let text_h = name_g.size().y + desc_g.as_ref().map_or(0.0, |g| 1.0 + g.size().y);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, text_h.max(26.0) + PAD * 2.0), Sense::hover());
-    let top = rect.center().y - text_h / 2.0;
-    let name_h = name_g.size().y;
-    ui.painter().galley(egui::pos2(rect.left(), top), name_g, p.ink);
-    if let Some(g) = desc_g {
-        ui.painter().galley(egui::pos2(rect.left(), top + name_h + 1.0), g, p.muted);
-    }
-    let slot = Rect::from_min_max(egui::pos2(rect.left() + text_w + GAP, rect.top()), rect.max);
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(slot)
-            .layout(egui::Layout::right_to_left(egui::Align::Center)),
-    );
-    child.spacing_mut().item_spacing.x = 8.0;
-    controls(&mut child);
-}
-
-/// "Show" / "Hide" (or `label`) with its chevron: folds a part of a section.
-fn fold_link(ui: &mut egui::Ui, p: &Palette, open: &mut bool, label: &str) {
-    let r = ui
-        .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 5.0;
-            let text = ui.add(egui::Label::new(semibold(ui, label, 12.0, p.violet_light)).sense(Sense::click()));
-            let icon = if *open { "chevron-down" } else { "chevron-right" };
-            widgets::glyph(ui, icon, p.violet_light, 13.0);
-            text
-        })
-        .inner;
-    if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-        *open = !*open;
-    }
-}
-
-/// A fold link at the left of a row (the "Advanced" of a section).
-fn fold_row(ui: &mut egui::Ui, p: &Palette, open: &mut bool, label: &str) {
-    ui.add_space(6.0);
-    let r = ui
-        .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 5.0;
-            let icon = if *open { "chevron-down" } else { "chevron-right" };
-            widgets::glyph(ui, icon, p.violet_light, 13.0);
-            ui.add(egui::Label::new(semibold(ui, label, 12.0, p.violet_light)).sense(Sense::click()))
-        })
-        .inner;
-    if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-        *open = !*open;
-    }
-    ui.add_space(2.0);
+    sheet::section_title(ui, p, sec.icon(), sec.label(), right);
 }
 
 fn button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, enabled: bool) -> egui::Response {
@@ -374,75 +216,30 @@ pub(super) fn show(
         .filter(|sec| *sec != Section::Experiences || has_xp)
         .collect();
     let mut streams_changed = false;
-    let height = ui.available_height();
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
-        ui.allocate_ui_with_layout(Vec2::new(200.0, height), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(200.0);
-            ui.spacing_mut().item_spacing.y = 2.0;
-            for sec in &sections {
-                let count = nav_count(v, world, *sec);
-                let mut r = widgets::navigation_wrapped(ui, p, sec.icon(), sec.label(), count.as_deref(), s.manage_section == *sec);
-                if banner.is_none()
-                    && let Some(m) = missing_power(v, sec.power())
-                {
-                    r = r.on_hover_text(m);
-                }
-                if r.clicked() {
-                    s.manage_section = *sec;
-                    s.manage_jump = Some(*sec);
-                }
-            }
-        });
-        ui.vertical(|ui| {
-            ui.set_width(ui.available_width());
-            let out = egui::ScrollArea::vertical()
-                .id_salt("about_land_manage")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width() - 6.0);
-                    let view_top = ui.clip_rect().top();
-                    let mut current = None;
-                    let lock = banner.is_some();
-                    for sec in &sections {
-                        let mut c = card_begin(ui);
-                        let ui2 = &mut c.child;
-                        match sec {
-                            Section::Access => access(ui2, p, s, v, world, &parcel, lock, &group),
-                            Section::Rules => rules(ui2, p, s, v, world, &parcel, lock),
-                            Section::Objects => objects(ui2, p, s, v, world, &parcel, lock),
-                            Section::Visibility => visibility(ui2, p, s, v, world, &parcel, images, lock),
-                            Section::Media => streams_changed |= media(ui2, p, s, v, world, &parcel, images, streams, lock),
-                            Section::Environment => environment(ui2, p, s, v, world, &parcel, lock),
-                            Section::Experiences => experiences(ui2, p, s, v, world, lock),
-                            Section::Sale => sale(ui2, p, s, v, world, &parcel, lock),
-                        }
-                        let rect = card_end(ui, p, c);
-                        if s.manage_jump == Some(*sec) {
-                            ui.scroll_to_rect(rect, Some(egui::Align::TOP));
-                            s.manage_jump = None;
-                            s.manage_jumped_at = ui.input(|i| i.time);
-                        } else if rect.top() <= view_top + 24.0 {
-                            current = Some(*sec);
-                        }
-                    }
-                    current
-                });
-            // the section in view follows the scrolling, not a jump that
-            // could not bring the last sections to the top
-            let offset = out.state.offset.y;
-            let settling = ui.input(|i| i.time) - s.manage_jumped_at < 0.8;
-            if (offset - s.manage_scroll).abs() > 0.5 {
-                s.manage_scroll = offset;
-                if s.manage_jump.is_none()
-                    && !settling
-                    && let Some(sec) = out.inner
-                {
-                    s.manage_section = sec;
-                }
-            }
-        });
+    let lock = banner.is_some();
+    let counts: Vec<Option<String>> = sections.iter().map(|sec| nav_count(v, world, *sec)).collect();
+    let nav = |ui: &mut egui::Ui, sec: Section, lit: bool| {
+        let count = sections.iter().position(|x| *x == sec).and_then(|i| counts[i].as_deref());
+        let mut r = widgets::navigation_wrapped(ui, p, sec.icon(), sec.label(), count, lit);
+        if banner.is_none()
+            && let Some(m) = missing_power(v, sec.power())
+        {
+            r = r.on_hover_text(m);
+        }
+        r
+    };
+    let mut nav_state = std::mem::take(&mut s.manage_nav);
+    sheet::sections(ui, p, "about_land_manage", &sections, &mut nav_state, nav, |ui2, sec| match sec {
+        Section::Access => access(ui2, p, s, v, world, &parcel, lock, &group),
+        Section::Rules => rules(ui2, p, s, v, world, &parcel, lock),
+        Section::Objects => objects(ui2, p, s, v, world, &parcel, lock),
+        Section::Visibility => visibility(ui2, p, s, v, world, &parcel, images, lock),
+        Section::Media => streams_changed |= media(ui2, p, s, v, world, &parcel, images, streams, lock),
+        Section::Environment => environment(ui2, p, s, v, world, &parcel, lock),
+        Section::Experiences => experiences(ui2, p, s, v, world, lock),
+        Section::Sale => sale(ui2, p, s, v, world, &parcel, lock),
     });
+    s.manage_nav = nav_state;
     streams_changed
 }
 

@@ -1,4 +1,14 @@
 language-name = English
+toolbar-edit = Edit toolbar buttons
+toolbar-remove = Remove this button
+toolbar-locked = Lock toolbar
+toolbar-help = Drag a button onto the bottom toolbar. Drag buttons along the bar to reorder them, or click an available button here to add it at the end.
+toolbar-remove-help = Drop a toolbar button back here to remove it.
+toolbar-already-placed = This button is already on the toolbar.
+toolbar-restore = Restore defaults
+toolbar-clear = Clear toolbar
+toolbar-confirm-restore = Restore the skin's default toolbar buttons?
+toolbar-confirm-clear = Remove all buttons from the toolbar?
 login-accounts-title = Choose your account
 login-accounts-first-title = Add your first account
 login-accounts-last-place = Last visited place
@@ -1033,6 +1043,7 @@ build-ui-object-bias = Bias
 common-library = Library
 app-welcome = Welcome!
 demo-welcome-to-the-aurora-viewer-demo = Welcome to the Aurora Viewer demo! 🐺✨❤️
+demo-region-day-cycle = Nordic Dawn
 demo-land-welcome-to-the-aurora-demo-estate-by-buying-land = { "Welcome to the Aurora Demo estate.\u000A\u000ABy buying land on this estate, you agree to the following rules:\u000A\u000A1. Builds must fit the estate's Nordic theme.\u000A2. No advertising boards visible from neighboring parcels.\u000A3. Background sounds (radios, sound scripts) must stay within your parcel.\u000A4. Parcels left unused for 90 days may be reclaimed.\u000A\u000AThank you for keeping Aurora's plaza welcoming to everyone." }
 app-welcome-2 = { "Welcome, " }{ $value0 }{ " " }{ $value1 }.
 build-ui-object-bevel = Bevel
@@ -1834,6 +1845,19 @@ keybinds-left-arrow = Left arrow
 keybinds-up-arrow = Up arrow
 ui-options-arrows-strafe = Arrows: strafe
 ui-options-loading-backdrop = Loading backdrop
+ui-options-reduce-motion = Reduce animations
+ui-options-reduce-motion-help = Pulses, shakes and spinning indicators stand still (the region restart alert).
+ui-options-region-restart = Region restart
+ui-options-region-restart-alert = Show the restart alert
+ui-options-region-restart-alert-help = Countdown, Home and landmarks. Off: a simple toast at each notice of the simulator.
+ui-options-region-restart-shake = Shake when it appears
+ui-options-region-restart-shake-help = The alert trembles once. "The view" shakes the camera like Firestorm.
+ui-options-region-restart-shake-alert = The alert
+ui-options-region-restart-shake-view = The view
+ui-options-region-restart-shake-none = None
+ui-options-region-restart-announce = Announce on a channel
+ui-options-region-restart-announce-help = For HUDs and scripts: whispers region_restart_in:<seconds> on this channel.
+ui-options-region-restart-channel = Channel (473405 by default)
 ui-options-environment-fade = Environment fade
 demo-fountain = Fountain
 build-ui-tools-force = Force
@@ -3051,6 +3075,63 @@ keybinds-move-backward = Move backward
 build-ui-floaters-automatically-resize-media-to-the-object-face = Automatically resize media to the object face
 world-mod-redirecting-to-another-location = Redirecting to another location…
 ui-sound-region-restart = Region restart
+ui-sound-region-restart-opensim = Region restart (OpenSim)
+region-restart-title = Region restart
+region-restart-before = until the restart
+region-restart-seconds = seconds
+region-restart-seconds-short = { $seconds } s
+region-restart-calm-title = { $region } will restart
+region-restart-calm-text = If you stay in the region, you will be logged out.
+region-restart-near-title = One minute left
+region-restart-near-text = Leave { $elide ->
+       *[other] { $region }
+    } to stay connected.
+region-restart-red-title = Leave now
+region-restart-red-text = { $region } restarts in less than 30 seconds.
+region-restart-final-title = Restart imminent
+region-restart-final-text = Stay in { $region } and you will be logged out.
+region-restart-zero-title = { $region } is restarting
+region-restart-zero-text = If you are still here, your connection will be cut.
+region-restart-cancelled-title = Restart cancelled
+region-restart-cancelled-text = A manager cancelled the restart of { $elide ->
+       *[other] { $region }
+    }.
+region-restart-left-title = You left { $region }
+region-restart-left-text = Arrived: { $arrival }. The alert closes.
+region-restart-minimize = Minimize
+region-restart-show = Show the alert
+region-restart-search = Search a landmark…
+region-restart-recent = Recent
+region-restart-no-landmark = No landmark found
+region-restart-neighbour = Neighbour region: { $region }
+region-restart-suggestion = suggestion
+region-restart-last-place = Last place: { $place }
+region-restart-all-landmarks = All landmarks…
+region-restart-manager = You manage this region
+region-restart-cancel = Cancel the restart
+region-restart-region-estate = Region / Estate ›
+region-restart-cancel-confirm-title = Cancel the restart?
+region-restart-cancel-confirm-text = { $region } will not restart, and the residents there will be told.
+region-restart-keep = Keep the restart
+region-restart-pinned = pinned
+region-restart-chat = The region you are in now is about to restart. If you stay in this region you will be logged out.
+region-restart-chat-zero = The region is restarting.
+region-restart-chat-cancelled = The region restart was cancelled.
+region-restart-toast-minutes = The region "{ $region }" will restart in { $count } { $count ->
+        [one] minute
+       *[other] minutes
+    }. If you stay in this region when it shuts down, you will be logged out.
+region-restart-toast-seconds = The region "{ $region }" will restart in { $count } { $count ->
+        [one] second
+       *[other] seconds
+    }. If you stay in this region when it shuts down, you will be logged out.
+region-restart-disconnected = { $region } restarted: the connection was closed.
+region-restart-legacy-text =
+    The region you are in now ({ $region }) is about to restart.
+    If you stay in this region you will be logged out.
+region-restart-legacy-seconds = Seconds until restart
+region-restart-legacy-landmarks = My Landmarks
+region-restart-legacy-teleport = Teleport to Landmark
 ui-options-planar-scene-reflection-high-and-ultra-are-costly = Planar scene reflection; High and Ultra are costly
 ui-options-reflections = Reflections
 ui-options-water-reflections = Water reflections
@@ -3328,6 +3409,7 @@ build-ui-object-sculptie = Sculptie
 ui-perf-scene = Scene
 ui-options-entire-scene = Entire scene
 ui-login-log-in = Log in
+ui-login-reconnect = Reconnect
 ui-bars-log-out = Log out
 common-stand-up = Stand up
 ui-login-remember-me = Remember me
@@ -3783,6 +3865,7 @@ ui-profile-real-life = Real life
 ui-profile-second-life = Second Life
 demo-come-see-the-lagoon-at-sunset = Come see the lagoon at sunset!
 demo-toast-hello = Hi! I'm at the plaza 😄
+demo-restart-toast = Are you coming to the concert tonight?
 demo-toast-are-you-there = Are you there? Come and see the new fountain ✨
 demo-toast-group-message = The meeting starts in ten minutes at the stage
 demo-notifs-lantern = A paper lantern
@@ -5290,6 +5373,8 @@ ui-options-aurora-about-land = About Land
 ui-options-aurora-about-land-help = An overview and settings grouped by what you want to do, or Firestorm's 9 tabs.
 ui-options-aurora-about-land-aurora = Aurora
 ui-options-aurora-about-land-classic = Classic window (Firestorm)
+ui-options-aurora-region-estate-help = An overview, settings grouped by what you want to do and the interventions together, or Firestorm's 8 tabs.
+ui-options-aurora-region-estate-soon = The classic window is coming soon: until then, Region / Estate opens in its Aurora version.
 ui-options-aurora-pay-window = Pay window
 ui-options-aurora-pay-window-help = Paying residents, groups and objects.
 ui-options-aurora-pay-aurora = Aurora
@@ -5298,6 +5383,10 @@ ui-options-aurora-controls = Camera and movement controls
 ui-options-aurora-controls-help = The Camera and Movement windows.
 ui-options-aurora-controls-aurora = Aurora
 ui-options-aurora-controls-classic = Classic windows (Firestorm)
+ui-options-aurora-restart-alert = Restart alert
+ui-options-aurora-restart-alert-help = A card with a countdown, or Firestorm's yellow box in the middle.
+ui-options-aurora-restart-card = Card
+ui-options-aurora-restart-classic = Yellow box (Firestorm)
 ui-options-aurora-gaze = Gaze
 ui-options-aurora-aim = Where your gaze goes
 ui-options-aurora-aim-help = Your avatar looks at the exact point under the cursor, or turns its head toward the cursor's side like Firestorm.
@@ -5680,6 +5769,77 @@ ui-land-overview-visitor = Visitor
 ui-land-overview-officer = Officer
 ui-land-overview-view-as = View as
 ui-land-overview-view-as-tip = See the parcel as a visitor sees it: nothing can be changed while this is on
+region-title = Region / Estate
+region-help = The region you are in and its estate: rules, simulator health, covenant
+region-people-tab = People
+region-role-owner = Estate owner
+region-role-manager = Manager
+region-role-resident = Resident
+region-view-as-tip = See the region as a resident sees it: nothing can be changed while this is on
+region-estate-id-tip = Estate no. { $id }
+region-position-server = position ({ $x }, { $y }) · server { $version }
+region-managers = { $n ->
+    [one] manager: { $names }
+   *[other] managers: { $names }
+    }
+region-avatars = Avatars
+region-avatars-most = { $max } at most
+region-simulator = Simulator
+region-health-smooth = Smooth
+region-health-slowed = Slowed
+region-health-struggling = Struggling
+region-dilation = dilation { $value }
+region-restart-schedule = Scheduled restart
+region-schedule-at = { $days } at { $time } UTC
+region-schedule-every-day = Every day
+region-schedule-none = None
+region-weekday = { $day ->
+    [0] Sunday
+    [1] Monday
+    [2] Tuesday
+    [3] Wednesday
+    [4] Thursday
+    [5] Friday
+   *[6] Saturday
+    }
+region-open-to-all = Open to all
+region-open-to-all-tip = Anyone may come to the estate, except the banned
+region-lists-only = Lists only
+region-lists-only-tip = Only the estate's allowed residents and groups may come
+region-terraform = Terraforming
+region-terraform-tip = Parcel owners may change the ground of their land
+region-terraform-blocked = Terraforming blocked
+region-terraform-blocked-tip = Nobody can change the ground, even on their own parcel
+region-map = Map
+region-message = Message to all…
+region-top-scripts = Top scripts
+region-restart = Restart…
+region-copy-region-id = Copy the region ID
+region-day-cycle = Day cycle
+region-day-cycle-value = “{ $name }”, { $hours } h day
+region-day-length = { $hours } h day
+region-default-environment = Default environment
+region-parcels = Parcels
+region-parcels-own-environment = May have their own
+region-parcels-region-environment = Keep the region's
+region-health = Simulator health
+region-top-scripts-link = Top scripts ›
+region-time-dilation = Time dilation
+region-frames = Frames per second
+region-frames-value = { $fps } · physics { $physics }
+region-script-time = Script time
+region-script-time-value = { $ms } ms · { $n ->
+    [one] { $count } active script
+   *[other] { $count } active scripts
+    }
+region-spare-time = Spare time
+region-spare-time-value = { $spare } ms of { $frame }
+region-type = Type
+region-type-unknown = (unknown)
+region-estate-id = Estate ID
+region-grid-position = Position
+region-server = Server
+region-experiences-value = { $trusted } trusted · { $allowed } allowed
 ui-land-manage-access = Who can come
 ui-land-manage-rules = What visitors can do
 ui-land-manage-objects = Objects and prims

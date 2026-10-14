@@ -351,6 +351,7 @@ mod tests {
             social: Default::default(),
             tasks: Default::default(),
             land: Default::default(),
+            estate_invoice: uuid::Uuid::nil(),
             decode_failures: HashMap::new(),
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),

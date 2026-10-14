@@ -51,6 +51,7 @@ mod marketplace_listings;
 mod object_actions;
 mod pay;
 mod plate_click;
+mod region_restart;
 mod report_abuse;
 mod reset_skeleton;
 mod scripts;
@@ -176,6 +177,7 @@ pub struct App {
     demo_mfa_challenge: Option<std::time::Instant>,
     panels: Panels,
     chat_ui: ChatUi,
+    toolbar_ui: ui::toolbar::ToolbarUi,
     /// The History window (a conversation's whole transcript).
     history_ui: ui::chat::history::HistoryUi,
     perf: PerfData,
@@ -392,6 +394,8 @@ pub struct App {
     options_ui: ui::options::OptionsUi,
     audio_ui: ui::audio::AudioUi,
     notif_ui: ui::notifications::NotifUi,
+    /// The region restart alert (app/region_restart.rs).
+    region_restart: region_restart::State,
     /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
     demo_lookups: Vec<(Instant, NetCommand)>,
     /// Parcel music stream on (radio toggle).
@@ -478,6 +482,7 @@ pub struct App {
     place_groups: std::collections::HashSet<uuid::Uuid>,
     /// "About Land".
     land_ui: ui::land::LandUi,
+    region_ui: ui::region::RegionUi,
     group_profile_ui: ui::group_profile::GroupProfileUi,
     /// Environment selector and "Personal lighting".
     env_ui: ui::environment::EnvironmentUi,
@@ -685,6 +690,7 @@ impl App {
             demo_mfa_challenge: None,
             panels,
             chat_ui: ChatUi::default(),
+            toolbar_ui: Default::default(),
             history_ui: Default::default(),
             perf: PerfData::default(),
             frame_profile: FrameProfile::default(),
@@ -811,6 +817,7 @@ impl App {
             options_ui: Default::default(),
             audio_ui: Default::default(),
             notif_ui: Default::default(),
+            region_restart: Default::default(),
             demo_lookups: Vec::new(),
             music_playing: false,
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
@@ -865,6 +872,7 @@ impl App {
             lod_infos: Vec::new(),
             place_groups: Default::default(),
             land_ui: Default::default(),
+            region_ui: Default::default(),
             group_profile_ui: Default::default(),
             env_ui: Default::default(),
             env_scan: false,
@@ -1643,7 +1651,12 @@ impl App {
         self.login_form.pending_connect = None;
         self.login_form.focused = false;
         self.login_form.error = error;
+        self.login_form.reconnect = false;
         self.login_progress = None;
+        // the alert belonged to the session (the demo's scenario stays played)
+        let demo = self.region_restart.take_demo();
+        self.region_restart = region_restart::State::default();
+        self.region_restart.put_demo(demo);
         self.move_complete_at = None;
         self.static_eyes_sent = None;
         self.set_mouselook_grab(false);
@@ -2119,8 +2132,16 @@ impl App {
                 force_mouselook,
             } => self.camera.on_sit_response(object, camera_eye, camera_at, force_mouselook),
             NetEvent::CameraConstraint(plane) => self.camera.set_collide_plane(plane, &self.settings.camera),
+            NetEvent::RegionRestart(notice) => self.on_region_restart(notice),
+            NetEvent::RegionRestartCancelled => self.on_region_restart_cancelled(),
             NetEvent::Disconnected { reason } => {
-                self.back_to_login(Some(aurora_i18n::tr!("app-disconnected", reason = reason.to_string())));
+                // cut by the region's restart: say so, and offer to reconnect
+                let restart = self.restart_disconnect();
+                let reconnect = restart.is_some();
+                self.back_to_login(Some(
+                    restart.unwrap_or_else(|| aurora_i18n::tr!("app-disconnected", reason = reason.to_string())),
+                ));
+                self.login_form.reconnect = reconnect;
             }
             // ---- sounds (process_sound_trigger, setAttachedSound)
             NetEvent::SoundTrigger {
@@ -2534,6 +2555,7 @@ impl App {
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
             Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
             Action::TeleportHistory => self.toggle_teleport_history(),
+            Action::RegionEstate => ui::widgets::toggle_floater(&self.egui_ctx, ui::region::WINDOW, &mut self.panels.region_estate),
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
@@ -4453,6 +4475,7 @@ impl App {
         wanted.extend(self.people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
         wanted.extend(self.land_ui.wanted_pics.drain());
+        wanted.extend(self.region_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -4703,6 +4726,10 @@ impl App {
         // About Land requests (selection and its refresh, lists, covenant...)
         self.world.land.tick(Instant::now());
         for c in self.world.land.take_commands() {
+            self.send(c);
+        }
+        // Region / Estate requests, in the panels' order
+        for c in self.world.estate.take_commands() {
             self.send(c);
         }
         self.update_places();
@@ -5041,6 +5068,7 @@ impl App {
         }
         self.update_voice();
         self.update_radar();
+        self.update_region_restart();
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
@@ -5791,6 +5819,8 @@ impl App {
             self.gesture_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            raw.events
+                .extend(ui::toolbar::demo_events(&ctx, self.frame_count, &mut self.toolbar_ui));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::resize_events(&ctx, self.frame_count));
@@ -8122,11 +8152,15 @@ impl App {
                     output_devices: &self.options_ui.output_devices,
                     ..Default::default()
                 };
+                let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
+                let toolbar_settings = self.settings.toolbar.get_or_insert_default();
                 let (chat, bar2, bottom_top, chat_width_set) = ui::bars::bottom_bar(
                     ui,
                     &p,
                     icons,
                     layout,
+                    &mut self.toolbar_ui,
+                    toolbar_settings,
                     &mut self.panels,
                     &mut self.chat_ui,
                     &self.gesture_state.manager,
@@ -8138,13 +8172,14 @@ impl App {
                     &mut mic,
                     self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused,
                 );
-                if chat_width_set {
-                    self.settings.save();
-                }
                 // what the bars leave: where the windows are laid out, moved
                 // and snapped this frame
                 ui::layout::set_work_area(ui.ctx(), ui.available_rect_before_wrap());
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
+                self.toolbar_ui.show(ui.ctx(), &p, layout, toolbar_settings);
+                if self.toolbar_ui.commit(layout, toolbar_settings) || chat_width_set || toolbar_migrated {
+                    self.settings.save();
+                }
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
                 if mic.mode_changed || mic.devices_changed {
@@ -8622,11 +8657,13 @@ impl App {
                 let dnd = self.world.status.dnd;
                 let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || (dnd && !aurora);
                 self.world.notifications.aurora = aurora;
+                let restart = self.restart_bell_info(&p);
                 let mut toast_env = ui::notifications::ToastEnv {
                     pics: &self.avatar_pics,
                     emoji: &mut self.emoji,
                     hidden: toasts_hidden,
                     message_seconds: f64::from(self.settings.im_toast_seconds),
+                    restart,
                 };
                 let (answers, asks) = if aurora {
                     ui::notification_center::show(
@@ -8652,10 +8689,16 @@ impl App {
                         &mut toast_env,
                     )
                 };
+                // the region restart over the toasts, under the open list
+                self.show_region_restart(&ctx, &p);
+                self.order_region_restart(&ctx, aurora);
                 for ask in asks {
                     self.on_notification_ask(&ctx, ask);
                 }
                 for (id, r) in answers {
+                    if self.region_restart_bell_answer(id, &r) {
+                        continue;
+                    }
                     if matches!(r, crate::world::notifications::Response::Open) {
                         let presence = self
                             .world
@@ -8709,6 +8752,23 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.about_land = open;
+                // Region / Estate: asked by About Land or the restart notice
+                if ui::region::take_open_request(&ctx) {
+                    ui::widgets::open_floater(&ctx, ui::region::WINDOW, &mut self.panels.region_estate);
+                }
+                let mut open = self.panels.region_estate;
+                let region_map = open
+                    .then_some(self.world.main_region)
+                    .flatten()
+                    .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
+                self.region_ui
+                    .show(&ctx, &p, &mut self.world, &self.avatar_pics, region_map.as_ref(), &mut open);
+                self.panels.region_estate = open;
+                match self.region_ui.action.take() {
+                    Some(ui::region::RegionAction::AboutLand) => self.panels.about_land = true,
+                    Some(ui::region::RegionAction::WorldMap) => ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map),
+                    None => {}
+                }
                 if std::mem::take(&mut self.land_ui.custom_day) {
                     self.open_parcel_day_editor();
                 }
@@ -9698,6 +9758,17 @@ impl ApplicationHandler for App {
                 };
                 self.profile_ui.open(&mut self.world, id);
                 self.profile_ui.demo(&self.egui_ctx, id, option);
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_REGION=overview[:owner|:manager|:resident]: Region /
+            // Estate on that page
+            if let Some(scenario) = crate::demo::region::scenario() {
+                self.region_ui.demo(scenario.page, scenario.preview);
+                if scenario.compact {
+                    let pos = egui::pos2(560.0, 80.0);
+                    ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(480.0, 720.0));
+                }
+                self.panels.region_estate = true;
                 self.panels.perf = false;
             }
             // AURORA_DEMO_LAND=<tab>[:role][:classic]: About Land on that tab
