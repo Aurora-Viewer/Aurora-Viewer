@@ -35,6 +35,7 @@ mod context_menu;
 mod cursor_hold;
 mod dof;
 mod double_click;
+mod env_day_editor;
 mod env_editor;
 mod gestures;
 mod hover_height;
@@ -476,6 +477,10 @@ pub struct App {
     env_editor: ui::env_editor::EnvEditorUi,
     /// A Windlight preset being read for "Import" (bytes and preset name).
     env_import: Option<std::sync::mpsc::Receiver<Option<(Vec<u8>, String)>>>,
+    /// Day cycle editor (LLFloaterEditExtDayCycle).
+    day_editor: ui::env_day_editor::DayEditorUi,
+    /// A sky, water or day item the day editor waits for, and what for.
+    day_fetch: Option<(uuid::Uuid, env_day_editor::DayFetch)>,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
     gesture_state: gestures::State,
@@ -843,6 +848,8 @@ impl App {
             lighting_was_open: false,
             env_editor: Default::default(),
             env_import: None,
+            day_editor: Default::default(),
+            day_fetch: None,
             demo: false,
             inventory_ui: Default::default(),
             gesture_state: Default::default(),
@@ -1577,6 +1584,8 @@ impl App {
         self.panels.personal_lighting = false;
         self.env_editor.close();
         self.env_import = None;
+        self.day_editor.close();
+        self.day_fetch = None;
         self.world.eep.clear_edit();
         self.world.save_inventory_cache();
         self.world.save_mute_cache();
@@ -1682,6 +1691,10 @@ impl App {
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
             if self.env_editor.saving == Some(request) {
                 self.env_editor_saved(result);
+                return;
+            }
+            if self.day_editor.saving == Some(request) {
+                self.day_editor_saved(result);
                 return;
             }
             if self.gesture_save_pending(request, item) {
@@ -4411,6 +4424,7 @@ impl App {
         images.extend(self.inventory_ui.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
+        images.extend(self.day_editor.wanted_images.drain());
         for note in self.task_notecards.values_mut() {
             images.extend(note.state.wanted_images.drain());
         }
@@ -6216,7 +6230,9 @@ impl App {
                 self.demo_env_step(step);
             }
             if let Some(scenario) = crate::demo::env::editor() {
-                if self.frame_count == 400 {
+                if scenario.starts_with("day") {
+                    self.demo_day_editor(scenario, self.frame_count);
+                } else if self.frame_count == 400 {
                     self.demo_env_editor(scenario);
                 } else if scenario == "item-save" {
                     self.demo_env_editor_step(self.frame_count);
@@ -8857,6 +8873,7 @@ impl App {
                     }
                 }
                 self.draw_env_editor(&ctx, &p);
+                self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
                 self.settings.show_chat = self.panels.chat;
                 self.settings.show_perf = self.panels.perf;
