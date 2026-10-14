@@ -7240,6 +7240,10 @@ impl App {
                 self.settings.place_bar_rights_text = rights_text;
                 self.settings.save();
             }
+            BarAction::ShowBugButton(shown) => {
+                self.settings.show_bug_report = shown;
+                self.settings.save();
+            }
             BarAction::OpenFavorites => {
                 // Places › Favorites, the first tab
                 self.places_ui.tab = 0;
@@ -8032,7 +8036,11 @@ impl App {
                     .map(|i| ui::bars::maturity_name(i.sim_access))
                     .unwrap_or("");
                 let status = ui::bars::StatusInfo {
-                    show_bug_report: self.settings.show_bug_report,
+                    show_bug_report: if self.demo {
+                        ui::bars::demo::get().bug.unwrap_or(self.settings.show_bug_report)
+                    } else {
+                        self.settings.show_bug_report
+                    },
                     show_huds: self.settings.show_huds,
                     hud_zoom: self.world.hud_zoom,
                     ban_lines: self.settings.maps.ban_lines,

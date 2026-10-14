@@ -3,8 +3,9 @@
 //! separated by commas: `legacy` (Firestorm's bars), `compact` (the place
 //! island as wide as its content), `rights` (the rights named), and one
 //! menu opened at frame 300: `menu` (the place), `options` (the place
-//! island's right click), `favorites`, `star`, `status`. `normal` or
-//! nothing else: the islands as set.
+//! island's right click), `favorites`, `star`, `status`; `nobug` / `bug`:
+//! the bug report button hidden / shown. `normal` or nothing else: the
+//! islands as set.
 
 use std::sync::OnceLock;
 
@@ -25,6 +26,7 @@ pub struct DemoBars {
     pub classic: Option<bool>,
     pub stretch: Option<bool>,
     pub rights_text: Option<bool>,
+    pub bug: Option<bool>,
     pub open: Option<Open>,
 }
 
@@ -41,6 +43,8 @@ pub fn parse(value: &str) -> DemoBars {
             "stretch" => d.stretch = Some(true),
             "rights" => d.rights_text = Some(true),
             "icons" => d.rights_text = Some(false),
+            "bug" => d.bug = Some(true),
+            "nobug" => d.bug = Some(false),
             "menu" => d.open = Some(Open::Place),
             "options" => d.open = Some(Open::PlaceOptions),
             "favorites" => d.open = Some(Open::Favorites),
@@ -50,7 +54,7 @@ pub fn parse(value: &str) -> DemoBars {
         }
     }
     // a menu or a look of the islands: the islands, whatever is saved
-    if d.classic.is_none() && (d.open.is_some() || d.stretch.is_some() || d.rights_text.is_some()) {
+    if d.classic.is_none() && (d.open.is_some() || d.stretch.is_some() || d.rights_text.is_some() || d.bug.is_some()) {
         d.classic = Some(false);
     }
     d

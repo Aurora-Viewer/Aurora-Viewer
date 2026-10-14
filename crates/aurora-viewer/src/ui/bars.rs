@@ -81,6 +81,8 @@ pub enum BarAction {
     },
     /// Places › Favorites (the Favorites button of the place island).
     OpenFavorites,
+    /// The bug report button shown or hidden (the menu island's right click).
+    ShowBugButton(bool),
 }
 
 /// How the islands of Aurora's top bar are set (Preferences › Interface).

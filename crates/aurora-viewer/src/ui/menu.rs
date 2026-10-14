@@ -112,9 +112,20 @@ pub fn glaze(ctx: &egui::Context, p: &Palette) {
 /// Right-click menu of a widget (replaces `Response::context_menu`).
 /// Returns whether the menu is open.
 pub fn context_menu(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
+    context_menu_popup(Popup::context_menu(resp), p, body)
+}
+
+/// [`context_menu`] of a widget that also opens a [`dropdown`] on a left
+/// click: the right-click menu needs an id of its own (egui keys both on
+/// the widget's).
+pub fn context_menu_of_button(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
+    context_menu_popup(Popup::context_menu(resp).id(resp.id.with("context_menu")), p, body)
+}
+
+fn context_menu_popup(popup: Popup<'_>, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
     // below-right of the pointer like the world menu, pushed back into the
     // window by the area's constraint instead of flipping above it
-    Popup::context_menu(resp)
+    popup
         .align(egui::RectAlign::BOTTOM_START)
         .align_alternatives(&[])
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)

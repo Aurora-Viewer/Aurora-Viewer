@@ -207,11 +207,15 @@ pub fn top(
     });
     area(&ctx, p, "account", acc_rect, |ui| account(ui, p, st, acc_rect, &mut action));
     area(&ctx, p, "menu", menu_rect, |ui| {
+        // a right click on the island or its buttons: show the bug button
+        let back = ui.interact(menu_rect, Id::new("bars_island_menu_back"), Sense::click());
+        menu_options(&back, p, st, &mut action);
         let wolf = Rect::from_min_size(
             Pos2::new(menu_rect.left() + PAD, menu_rect.center().y - SLOT / 2.0),
             Vec2::splat(SLOT),
         );
         let resp = ui.interact(wolf, Id::new("bars_island_menu"), Sense::click());
+        menu_options(&resp, p, st, &mut action);
         let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
         slot_face(ui, p, wolf, resp.hovered() || open, false);
         paint_icon(ui, icons, "wolf", wolf, 18.0, p.ink);
@@ -225,13 +229,13 @@ pub fn top(
             },
         );
         resp.on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
-        // the bug report next to it, when shown
+        // the bug report: a button of its own next to the wolf, when shown
+        // (the island is then one slot wider, never a hole without it)
         if st.show_bug_report {
             let bug = wolf.translate(Vec2::new(SLOT + GAP, 0.0));
-            if icon_slot(ui, p, icons, bug, Id::new("bars_island_bug"), "bug-filled", true)
-                .on_hover_text(aurora_i18n::tr!("bug-title"))
-                .clicked()
-            {
+            let resp = icon_slot(ui, p, icons, bug, Id::new("bars_island_bug"), "bug-filled", true);
+            menu_options(&resp, p, st, &mut action);
+            if resp.on_hover_text(aurora_i18n::tr!("bug-title")).clicked() {
                 action = BarAction::ReportBug;
             }
         }
@@ -242,6 +246,17 @@ pub fn top(
         }
     });
     (action, audio_action)
+}
+
+/// Right-click menu of the menu island: the bug report button, also in
+/// Preferences › Interface ("Report a bug in the top bar", on by default
+/// during the alpha).
+fn menu_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
+    menu::context_menu_of_button(resp, p, |ui| {
+        if menu::check(ui, p, "bug-filled", aurora_i18n::tr!("bug-toolbar"), st.show_bug_report, true) {
+            *action = BarAction::ShowBugButton(!st.show_bug_report);
+        }
+    });
 }
 
 /// One island in an area of its own at `rect`, its surface under what
@@ -443,9 +458,9 @@ mod tests {
     use super::super::{IslandsLook, StatusInfo};
     use super::*;
 
-    fn status(stretch: bool) -> StatusInfo<'static> {
+    fn status(stretch: bool, bug: bool) -> StatusInfo<'static> {
         StatusInfo {
-            show_bug_report: false,
+            show_bug_report: bug,
             show_huds: true,
             hud_zoom: 1.0,
             region: "Aurora Demo",
@@ -479,9 +494,9 @@ mod tests {
         }
     }
 
-    /// Two frames of the islands in a 1536 × 864 screen, the pointer at
-    /// `pointer`; the areas' rectangles by name.
-    fn frames(stretch: bool, pointer: Pos2) -> (egui::Context, impl Fn(&str) -> Rect) {
+    /// Two frames of the islands in a screen `width` wide (16:9), the
+    /// pointer at `pointer`; the areas' rectangles by name.
+    fn frames(width: f32, stretch: bool, bug: bool, pointer: Pos2) -> (egui::Context, impl Fn(&str) -> Rect) {
         let ctx = egui::Context::default();
         let p = crate::theme::Theme::default().palette();
         let icons = Icons::default();
@@ -490,10 +505,10 @@ mod tests {
         let mut audio = settings.audio.clone();
         let mut audio_ui = crate::ui::audio::AudioUi::default();
         let mut notif = crate::ui::notifications::NotifUi::default();
-        let st = status(stretch);
+        let st = status(stretch, bug);
         for _ in 0..2 {
             let input = egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1536.0, 864.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, width * 9.0 / 16.0))),
                 events: vec![egui::Event::PointerMoved(pointer)],
                 ..Default::default()
             };
@@ -521,16 +536,34 @@ mod tests {
         (ctx, rect)
     }
 
-    /// The islands stand 8 px from the edges and from each other; stretched,
-    /// the place reaches the account island.
+    /// The islands stand 8 px from the edges and from each other, with or
+    /// without the bug button (no hole where it was), at the three widths of
+    /// the mockup; stretched, the place reaches the account island, and it
+    /// follows the menu island 8 px away either way.
     #[test]
     fn the_islands_line_up_8_px_apart() {
-        let (_, rect) = frames(true, Pos2::new(700.0, 400.0));
-        let (menu, place, account, system, bell) = (rect("menu"), rect("place"), rect("account"), rect("system"), rect("bell"));
-        assert_eq!((menu.left(), menu.top(), menu.height()), (MARGIN, MARGIN, HEIGHT));
-        assert_eq!(bell.right(), 1536.0 - MARGIN);
-        for (a, b) in [(menu, place), (place, account), (account, system), (system, bell)] {
-            assert_eq!(b.left() - a.right(), MARGIN, "{a:?} {b:?}");
+        for width in [1280.0, 1536.0, 1920.0] {
+            for bug in [true, false] {
+                for stretch in [true, false] {
+                    let (_, rect) = frames(width, stretch, bug, Pos2::new(700.0, 400.0));
+                    let (menu, place, account, system, bell) = (rect("menu"), rect("place"), rect("account"), rect("system"), rect("bell"));
+                    let case = format!("{width} bug {bug} stretch {stretch}");
+                    assert_eq!((menu.left(), menu.top(), menu.height()), (MARGIN, MARGIN, HEIGHT), "{case}");
+                    let slots = if bug { 2.0 } else { 1.0 };
+                    assert_eq!(menu.width(), PAD * 2.0 + SLOT * slots + GAP * (slots - 1.0), "{case}");
+                    assert_eq!(bell.right(), width - MARGIN, "{case}");
+                    assert_eq!(place.left() - menu.right(), MARGIN, "{case}");
+                    let pairs = [(account, system), (system, bell)];
+                    for (a, b) in pairs {
+                        assert_eq!(b.left() - a.right(), MARGIN, "{case}: {a:?} {b:?}");
+                    }
+                    if stretch {
+                        assert_eq!(account.left() - place.right(), MARGIN, "{case}");
+                    } else {
+                        assert!(account.left() - place.right() >= MARGIN, "{case}");
+                    }
+                }
+            }
         }
         assert_eq!(
             work_area(Rect::from_min_size(Pos2::ZERO, Vec2::new(1536.0, 864.0)), 834.0).top(),
@@ -542,11 +575,11 @@ mod tests {
     /// islands (the place not stretched), over the world.
     #[test]
     fn an_island_takes_the_pointer_the_gap_between_them_does_not() {
-        let (ctx, rect) = frames(true, Pos2::new(20.0, 20.0));
+        let (ctx, rect) = frames(1536.0, true, true, Pos2::new(20.0, 20.0));
         assert!(ctx.is_pointer_over_egui(), "the menu island");
-        let (account, place) = (rect("account"), rect("place"));
-        let (ctx, rect) = frames(false, Pos2::new(account.left() - 30.0, 20.0));
-        assert!(rect("place").right() < account.left() - 30.0, "{place:?}");
+        let account = rect("account");
+        let (ctx, rect) = frames(1536.0, false, true, Pos2::new(account.left() - 30.0, 20.0));
+        assert!(rect("place").right() < account.left() - 30.0);
         assert!(!ctx.is_pointer_over_egui(), "between the place and the account");
     }
 }

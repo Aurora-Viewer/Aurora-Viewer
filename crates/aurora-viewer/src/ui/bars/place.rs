@@ -247,7 +247,7 @@ pub fn island(
 /// Right-click menu of the place island: its two settings, also in
 /// Preferences › Interface.
 fn place_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mut Option<BarAction>) {
-    menu::context_menu(resp, p, |ui| options_body(ui, p, st, action));
+    menu::context_menu_of_button(resp, p, |ui| options_body(ui, p, st, action));
 }
 
 fn options_body(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut Option<BarAction>) {
