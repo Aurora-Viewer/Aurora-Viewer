@@ -4,11 +4,13 @@
 //! size (`Renderer::snapshot_request`), stitched when it is drawn in tiles,
 //! then a preview, a held freeze frame, a file written on a worker, or a
 //! texture encoded on a worker and uploaded to the Photo Album
-//! (LLPanelSnapshotInventory::onSend, LLSnapshotLivePreview::saveTexture).
+//! (LLPanelSnapshotInventory::onSend, LLSnapshotLivePreview::saveTexture),
+//! or a PNG posted to the profile feed (LLPanelSnapshotProfile::onSend,
+//! LLWebProfile::uploadImage).
 
 use super::App;
-use crate::snapshot::{self, Tile, gallery, inventory, save};
-use crate::ui::snapshot::{Action, Destination, InventoryView};
+use crate::snapshot::{self, Tile, gallery, inventory, profile, save};
+use crate::ui::snapshot::{Action, Destination, InventoryView, ProfileView};
 use crate::ui_sound::UiSound;
 use aurora_net::NetCommand;
 use aurora_net::inventory::upload::{self as upload, Kind, Prices, Receipt};
@@ -39,9 +41,11 @@ enum Purpose {
     Hold,
     /// To the inventory, at the confirmed price.
     Inventory(i32),
+    /// To the profile feed.
+    Profile,
 }
 
-/// A photo on its way to the inventory.
+/// A photo on its way to the inventory or the profile feed.
 enum Upload {
     /// Scaled and encoded on a worker.
     Encoding {
@@ -50,6 +54,18 @@ enum Upload {
     },
     /// Sent (`NetCommand::UploadAsset`), its answer awaited.
     Sent(Uuid),
+    /// Encoded, then posted to the web profile on the network's runtime.
+    Profile {
+        rx: crossbeam_channel::Receiver<ProfileStep>,
+        /// The PNG's size, once encoded.
+        bytes: Option<usize>,
+    },
+}
+
+/// How a profile post goes.
+enum ProfileStep {
+    Encoded(usize),
+    Done(Result<(), profile::Error>),
 }
 
 struct Job {
@@ -115,6 +131,13 @@ pub(super) struct Snapshots {
     upload: Option<Upload>,
     /// The message tells of this item, saved to the inventory.
     message_item: Option<Uuid>,
+    /// The message tells of a post to the profile feed ("View").
+    message_profile: bool,
+    /// The web profile's session cookie, for the OpenID cookie it was
+    /// asked with (getOpenIDCookieCoro gives it once per login).
+    web_auth: std::sync::Arc<parking_lot::Mutex<Option<(String, String)>>>,
+    /// The demo's web profile.
+    demo_profile: Option<profile::demo::Server>,
     demo: Option<DemoPhoto>,
 }
 
@@ -125,6 +148,9 @@ struct DemoPhoto {
     full_frame: bool,
     aspect: Option<snapshot::Aspect>,
     inventory: Option<DemoInventory>,
+    /// AURORA_DEMO_SNAPSHOT=profile | profile-fail: posted to the demo's
+    /// web profile (which refuses it with -fail).
+    profile: bool,
 }
 
 /// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
@@ -161,6 +187,9 @@ impl Default for Snapshots {
             short: None,
             upload: None,
             message_item: None,
+            message_profile: false,
+            web_auth: Default::default(),
+            demo_profile: None,
             demo: None,
         }
     }
@@ -277,6 +306,7 @@ impl App {
             }
             Purpose::Save(path) => self.photo_save(job.size, job.pixels, path),
             Purpose::Inventory(cost) => self.photo_encode(job.size, job.pixels, cost),
+            Purpose::Profile => self.photo_post(job.size, job.pixels),
         }
     }
 
@@ -287,7 +317,106 @@ impl App {
         match self.snapshots.ui.destination {
             Destination::Disk => s.size(window),
             Destination::Inventory => inventory::capture_size(s.aspect, s.inventory_size, window),
+            Destination::Profile => profile::capture_size(s.aspect, s.profile_size, window),
         }
+    }
+
+    /// The web profile a post goes to: the grid's with the login's OpenID
+    /// cookie, or the demo's server.
+    fn photo_profile_web(&mut self) -> Option<profile::Web> {
+        let user_agent = crate::media::user_agent();
+        if self.demo {
+            if self.snapshots.demo_profile.is_none() {
+                let fail = std::env::var("AURORA_DEMO_SNAPSHOT").is_ok_and(|m| m == "profile-fail");
+                match profile::demo::start(fail) {
+                    Ok(server) => self.snapshots.demo_profile = Some(server),
+                    Err(e) => log::warn!("photo: demo web profile not started: {e}"),
+                }
+            }
+            let server = self.snapshots.demo_profile.as_ref()?;
+            return Some(profile::Web {
+                profile: server.url.clone(),
+                openid: profile::demo::OPENID.into(),
+                user_agent,
+            });
+        }
+        let login = self.world.login.as_ref()?;
+        let base = profile::grid_web_profile(&self.settings.grid, &login.raw["web_profile_url"].to_string_value())?;
+        Some(profile::Web {
+            profile: profile::profile_url(&base)?,
+            openid: self.media.openid.raw()?,
+            user_agent,
+        })
+    }
+
+    /// What the window shows of a photo for the profile feed.
+    fn photo_profile_view(&mut self, window: (u32, u32)) -> ProfileView {
+        ProfileView {
+            connected: self.demo || self.world.login.is_some(),
+            ready: self.demo || (self.world.login.is_some() && self.media.openid.raw().is_some()),
+            size: self.photo_size(window),
+        }
+    }
+
+    /// "Post" (LLPanelSnapshotProfile::onSend): the held photo or a new one.
+    fn photo_to_profile(&mut self, renderer: &Renderer) {
+        if self.photo_busy() {
+            return;
+        }
+        if let Some(held) = &self.snapshots.held {
+            let (size, rgba) = ((held.width, held.height), held.rgba.clone());
+            self.photo_post(size, rgba);
+            return;
+        }
+        self.photo_job(Purpose::Profile, renderer);
+    }
+
+    /// Encode the PNG and post it, off the main thread: the session cookie
+    /// of the web profile first when it is not known for this login.
+    fn photo_post(&mut self, size: (u32, u32), rgba: Vec<u8>) {
+        let Some(web) = self.photo_profile_web() else {
+            self.snapshots.message = Some((aurora_i18n::tr!("photo-profile-not-ready").to_owned(), true));
+            return;
+        };
+        let caption: String = self.snapshots.ui.caption.chars().take(profile::MAX_CAPTION).collect();
+        let add_location = self.settings.snapshot.profile_location;
+        let auth = self.snapshots.web_auth.clone();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        self.net.runtime().spawn(async move {
+            let encoded = tokio::task::spawn_blocking(move || profile::encode_png(size.0, size.1, &rgba)).await;
+            let png = match encoded {
+                Ok(Ok(png)) => png,
+                Ok(Err(e)) => {
+                    log::warn!("photo: PNG not encoded: {e}");
+                    let _ = tx.send(ProfileStep::Done(Err(profile::Error::ConfigData)));
+                    return;
+                }
+                Err(_) => return,
+            };
+            let _ = tx.send(ProfileStep::Encoded(png.len()));
+            let known = auth
+                .lock()
+                .as_ref()
+                .filter(|(openid, _)| *openid == web.openid)
+                .map(|(_, a)| a.clone());
+            let cookie = match known {
+                Some(cookie) => cookie,
+                None => match profile::auth_cookie(&web).await {
+                    Ok(cookie) => {
+                        *auth.lock() = Some((web.openid.clone(), cookie.clone()));
+                        cookie
+                    }
+                    Err(e) => {
+                        let _ = tx.send(ProfileStep::Done(Err(e)));
+                        return;
+                    }
+                },
+            };
+            let result = profile::post(&web, &cookie, png, &caption, add_location).await;
+            let _ = tx.send(ProfileStep::Done(result));
+        });
+        self.snapshots.upload = Some(Upload::Profile { rx, bytes: None });
+        self.photo_shutter();
     }
 
     /// Start a photo of the destination's size.
@@ -350,6 +479,7 @@ impl App {
             }
         };
         self.snapshots.message_item = None;
+        self.snapshots.message_profile = false;
         self.snapshots.saving = Some(save::Saving::start(save::Job {
             width: size.0,
             height: size.1,
@@ -507,6 +637,7 @@ impl App {
                 self.inventory_ui.show_original(&self.world.inventory, id);
                 self.snapshots.message = Some((aurora_i18n::tr!("photo-uploaded").to_owned(), false));
                 self.snapshots.message_item = Some(id);
+                self.snapshots.message_profile = false;
             }
             Err(e) => {
                 log::warn!("photo: upload failed: {e}");
@@ -520,6 +651,45 @@ impl App {
                 };
                 self.snapshots.message = Some((text, true));
                 self.snapshots.message_item = None;
+            }
+        }
+    }
+
+    /// The profile post's progress and outcome (reportImageUploadStatus).
+    fn photo_profile_poll(&mut self) {
+        let Some(Upload::Profile { rx, bytes }) = &mut self.snapshots.upload else {
+            return;
+        };
+        let mut done = None;
+        while let Ok(step) = rx.try_recv() {
+            match step {
+                ProfileStep::Encoded(n) => *bytes = Some(n),
+                ProfileStep::Done(result) => done = Some(result),
+            }
+        }
+        let Some(result) = done else {
+            return;
+        };
+        let too_big = bytes.is_some_and(|n| n > profile::MAX_WEB_DATASIZE);
+        self.snapshots.upload = None;
+        let s = &mut self.snapshots;
+        s.message_item = None;
+        match result {
+            Ok(()) => {
+                log::info!("photo: posted to the profile feed");
+                s.message = Some((aurora_i18n::tr!("photo-profile-posted").to_owned(), false));
+                s.message_profile = true;
+            }
+            Err(e) => {
+                log::warn!("photo: not posted to the profile feed: {e}");
+                // CannotUploadSnapshotWebTooBig when the PNG is over the limit
+                let text = if too_big {
+                    aurora_i18n::tr!("photo-profile-too-big")
+                } else {
+                    aurora_i18n::tr!("photo-profile-failed")
+                };
+                s.message = Some((text.to_owned(), true));
+                s.message_profile = false;
             }
         }
     }
@@ -565,6 +735,7 @@ impl App {
                 }
             }
         }
+        self.photo_profile_poll();
         let s = &mut self.snapshots;
         // the save on its worker
         if let Some(r) = s.saving.as_ref().and_then(|saving| saving.poll()) {
@@ -705,6 +876,7 @@ impl App {
                 match self.snapshots.ui.destination {
                     Destination::Disk => self.photo_take(renderer, None),
                     Destination::Inventory => self.photo_to_inventory(renderer),
+                    Destination::Profile => self.photo_to_profile(renderer),
                 }
             }
             Action::Confirm(yes) => {
@@ -720,6 +892,11 @@ impl App {
                     self.panels.inventory = true;
                     self.inventory_ui.show_original(&self.world.inventory, id);
                 }
+            }
+            // our profile, whose Feed tab shows the post
+            Action::ShowProfile => {
+                let me = self.world.agent_id;
+                self.profile_ui.open(&mut self.world, me);
             }
             Action::SaveAs | Action::ChooseFolder => {
                 if self.snapshots.dialog.is_some() {
@@ -790,6 +967,7 @@ impl App {
             ));
         } else if self.panels.snapshot {
             let inventory = (self.snapshots.ui.destination == Destination::Inventory).then(|| self.photo_inventory_view(window));
+            let profile = (self.snapshots.ui.destination == Destination::Profile).then(|| self.photo_profile_view(window));
             let mut state = std::mem::take(&mut self.snapshots.ui);
             let max_pixels = renderer.video_memory.read(&renderer.device).map_or(DEFAULT_MAX_PIXELS, |m| {
                 m.budget.saturating_sub(m.usage) / 2 / TARGET_BYTES_PER_PIXEL
@@ -802,6 +980,8 @@ impl App {
                 Some(match upload {
                     Upload::Encoding { .. } => (0.6, aurora_i18n::tr!("photo-encoding").to_owned()),
                     Upload::Sent(_) => (0.85, aurora_i18n::tr!("photo-uploading").to_owned()),
+                    Upload::Profile { bytes: None, .. } => (0.6, aurora_i18n::tr!("photo-profile-encoding").to_owned()),
+                    Upload::Profile { bytes: Some(_), .. } => (0.85, aurora_i18n::tr!("photo-profile-posting").to_owned()),
                 })
             } else {
                 s.job.as_ref().filter(|j| j.purpose != Purpose::Preview).map(|j| {
@@ -827,6 +1007,8 @@ impl App {
                 folder: self.settings.snapshot.folder(),
                 inventory,
                 item_saved: s.message_item.is_some(),
+                profile,
+                profile_posted: s.message_profile,
             };
             let mut open = self.panels.snapshot;
             actions.extend(state.show(
@@ -878,9 +1060,9 @@ impl App {
     }
 
     /// AURORA_DEMO_SNAPSHOT=open | full[-<W>x<H> proportions, e.g. full-4x5] |
-    /// save:<W>x<H>[:png|jpg|bmp][:<folder>]
+    /// save:<W>x<H>[:png|jpg|bmp][:<folder>] | inventory… | profile[-fail]
     /// (AURORA_DEMO_SNAPSHOT_FRAME, 700 by default): the window at frame
-    /// 600, the photo saved at that frame.
+    /// 600, the photo saved, sent or posted at that frame.
     fn photo_demo(&mut self, renderer: &Renderer) {
         if !self.demo {
             return;
@@ -938,6 +1120,7 @@ impl App {
                 full_frame: kind.starts_with("full"),
                 aspect,
                 inventory,
+                profile: kind.starts_with("profile"),
             });
         }
         let Some(demo) = self.snapshots.demo.as_ref() else {
@@ -959,6 +1142,17 @@ impl App {
                     self.world.balance = Some(5);
                 }
             }
+            if demo.profile {
+                self.snapshots.ui.destination = Destination::Profile;
+                self.snapshots.ui.caption = aurora_i18n::tr!("demo-photo-caption").to_owned();
+            }
+        }
+        if demo.profile {
+            if self.frame_count == demo.frame {
+                self.snapshots.quiet = false;
+                self.photo_to_profile(renderer);
+            }
+            return;
         }
         if let Some(inv) = &demo.inventory {
             let (frame, confirm) = (demo.frame, inv.confirm);

@@ -17,6 +17,7 @@ mod crash;
 mod credentials;
 mod cursors;
 mod demo;
+mod dof;
 mod frame_par;
 mod frame_profile;
 mod gestures;

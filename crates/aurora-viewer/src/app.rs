@@ -32,6 +32,7 @@ mod click_pick;
 mod color_picker;
 mod context_menu;
 mod cursor_hold;
+mod dof;
 mod double_click;
 mod gestures;
 mod hover_height;
@@ -41,6 +42,7 @@ mod inspect;
 mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
+mod marketplace_listings;
 mod object_actions;
 mod plate_click;
 mod reset_skeleton;
@@ -336,12 +338,18 @@ pub struct App {
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// The depth of field's focus distance and its transition.
+    dof_focus: crate::dof::Focus,
     /// Photos: the window, the frames drawn at their size, the saves.
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
+    /// Me › Marketplace listings (LLFloaterMarketplaceListings).
+    listings_ui: ui::marketplace_listings::ListingsUi,
+    /// The demo's SLM server (AURORA_DEMO_MARKETPLACE_LISTINGS).
+    demo_slm: Option<crate::world::marketplace::demo::DemoSlm>,
     people_map_ui: ui::minimap::MiniMap,
     worldmap_ui: ui::worldmap::WorldMapUi,
     map_tiles: ui::map_tiles::MapTiles,
@@ -723,10 +731,13 @@ impl App {
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
             hover_height_ui: Default::default(),
+            dof_focus: Default::default(),
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
             marketplace_ui: Default::default(),
+            listings_ui: Default::default(),
+            demo_slm: None,
             people_map_ui: Default::default(),
             worldmap_ui: Default::default(),
             map_tiles: ui::map_tiles::MapTiles::new(),
@@ -1016,7 +1027,7 @@ impl App {
                 }
                 return;
             }
-            if self.demo_script_command(&cmd) || self.demo_currency_command(&cmd) {
+            if self.demo_script_command(&cmd) || self.demo_currency_command(&cmd) || self.demo_marketplace_command(&cmd) {
                 return;
             }
             if matches!(cmd, NetCommand::RequestInventoryMerchant) {
@@ -1434,6 +1445,9 @@ impl App {
         self.buy_currency_ui = Default::default();
         // the next session signs in with its own cookie (the browser stops)
         self.marketplace_ui = Default::default();
+        // the listings belong to the account (LLMarketplaceData)
+        self.listings_ui = Default::default();
+        self.demo_slm = None;
         self.task_notecards.clear();
         self.script_editors.disconnected();
         self.demo_script_sources.clear();
@@ -1519,6 +1533,9 @@ impl App {
                 self.gesture_state.new_editor = false;
                 self.gesture_action(ui::gestures::Action::Open(id));
             }
+            return;
+        }
+        if self.marketplace_listings_event(&ev) {
             return;
         }
         if let NetEvent::InventoryMerchant(result) = ev {
@@ -1787,6 +1804,13 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.world.notification_history = if self.demo {
+                    Default::default()
+                } else {
+                    crate::world::notification_history::History::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::notification_history::FILE),
+                    )
+                };
                 self.world.hover_height = if self.demo {
                     Default::default()
                 } else {
@@ -2888,6 +2912,50 @@ impl App {
             // RUST_LOG=info,ui_sound=debug (Firestorm UISndDebugSpamToggle)
             log::debug!(target: "ui_sound", "UISnd{} ({id})", s.entry().name);
             self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
+        }
+    }
+
+    /// Aurora's notification center (Preferences › Aurora › Notifications),
+    /// or Firestorm's toasts; AURORA_DEMO_NOTIFS=legacy shows the latter for
+    /// the session without saving it.
+    fn notifications_aurora(&self) -> bool {
+        if self.demo && crate::demo::notifs::mode().is_some_and(|m| m.starts_with("legacy")) {
+            return false;
+        }
+        self.settings.notifications_style == crate::settings::NotificationsStyle::Aurora
+    }
+
+    /// A click in the center besides an answer: the paused bell's banner, an
+    /// entry of the history.
+    fn on_notification_ask(&mut self, ctx: &egui::Context, ask: ui::notification_center::Ask) {
+        use crate::world::notification_history::Follow;
+        match ask {
+            ui::notification_center::Ask::EndDnd => self.world.set_dnd(false),
+            ui::notification_center::Ask::Follow(e) => match e.follow.clone() {
+                Follow::None => {}
+                Follow::Restore => {
+                    self.world.notifications.restore(&e);
+                }
+                Follow::Conversation(session) => {
+                    if !self.world.social.ims.iter().any(|s| s.other == session) {
+                        self.world.social.session_mut(session);
+                    }
+                    self.world.social.focus_im = Some(session);
+                    self.notif_ui.open = false;
+                    ui::notifications::open_conversations(ctx, &mut self.panels.chat);
+                }
+                Follow::Place(link) => {
+                    if let Some(l) = crate::slurl::parse(&link) {
+                        self.notif_ui.open = false;
+                        ui::context::request(ctx, ui::context::CtxAction::ShowPlace(l.region, l.pos));
+                    }
+                }
+                Follow::Inventory(item) => {
+                    self.inventory_ui.show_original(&self.world.inventory, item);
+                    self.panels.inventory = true;
+                    self.notif_ui.open = false;
+                }
+            },
         }
     }
 
@@ -4436,6 +4504,7 @@ impl App {
                 self.send(cmd);
             }
             // refused offers: to the Trash, whatever the inventory window does
+            self.update_marketplace_listings();
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
                 self.world_edits.insert(request);
@@ -5220,6 +5289,16 @@ impl App {
             all_lights: self.frame_profile.all_lights(),
             probe_walk_list: self.frame_profile.probe_walk_list(),
             debug: self.settings.debug.render(),
+            dof: {
+                // the image's own vertical field of view (a photo's may be
+                // wider than the window's)
+                let lens_proj = match &photo {
+                    Some(f) => self.camera.photo_proj(f.aspect, window_aspect),
+                    None => self.camera.proj(aspect),
+                };
+                let fov = 2.0 * (1.0 / lens_proj.y_axis.y.max(1e-6)).atan();
+                self.dof_frame(&mut gfx.renderer, dt, fov, lod_height, h)
+            },
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -5771,6 +5850,49 @@ impl App {
             }
             if let Some((avatar, animations)) = crate::demo::deform::reset_at(self.frame_count, mode) {
                 self.on_ctx_action(ui::context::CtxAction::ResetSkeleton { avatar, animations });
+            }
+        }
+        if self.demo
+            && let Some(mode) = crate::demo::notifs::mode()
+        {
+            let agent = self.world.agent_id;
+            if self.frame_count == crate::demo::notifs::DND_AT && mode == "dnd" {
+                self.world.set_dnd(true);
+            }
+            for event in crate::demo::notifs::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+            if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
+                // a few cards answered or closed: they go to the history
+                let ids: Vec<(u64, bool)> = self.world.notifications.listed().map(|n| (n.id, n.interactive())).collect();
+                for (id, interactive) in ids.into_iter().take(4) {
+                    // the teleport offer refused (its place stays), the rest kept or read
+                    let lure = self
+                        .world
+                        .notifications
+                        .list
+                        .iter()
+                        .any(|n| n.id == id && matches!(n.data, crate::world::notifications::Data::Lure { .. }));
+                    let r = if lure {
+                        crate::world::notifications::Response::Decline
+                    } else if interactive {
+                        crate::world::notifications::Response::Accept
+                    } else {
+                        crate::world::notifications::Response::Dismiss
+                    };
+                    let (cmds, _) = self.world.respond_notification(id, r);
+                    for c in cmds.into_iter().filter(|c| !matches!(c, NetCommand::AcceptLure { .. })) {
+                        self.send(c);
+                    }
+                }
+            }
+            if self.frame_count == crate::demo::notifs::LIST_AT && matches!(mode.as_str(), "list" | "history" | "dnd" | "legacy-history") {
+                self.notif_ui.open = true;
+                if mode.ends_with("history") {
+                    self.notif_ui.center.tab = ui::notification_center::Tab::History;
+                }
             }
         }
         if self.demo
@@ -6716,6 +6838,7 @@ impl App {
             }
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
+            BarAction::MarketplaceListings => self.open_marketplace_listings(),
             BarAction::ChatPrefs => {
                 self.panels.settings = true;
                 self.options_ui.tab = ui::options::TAB_CHAT;
@@ -7299,7 +7422,8 @@ impl App {
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
                     double_click: self.double_click_action(),
-                    marketplace: self.marketplace_home().is_some(),
+                    marketplace: self.marketplace_home().is_some()
+                        || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -7318,6 +7442,16 @@ impl App {
                         && self.world.parcel.as_ref().is_some_and(|pc| !pc.media_url.trim().is_empty()),
                     media_playing: self.media.parcel_playing(),
                 };
+                let aurora = self.notifications_aurora();
+                let bell = ui::bars::BellState {
+                    unread: if aurora {
+                        ui::notification_center::bell_count(&self.world.notifications, &self.notif_ui.center)
+                    } else {
+                        self.world.notifications.unread()
+                    },
+                    aurora,
+                    dnd: self.world.status.dnd,
+                };
                 let (bar, audio_action) = ui::bars::top_bars(
                     ui,
                     &p,
@@ -7329,7 +7463,7 @@ impl App {
                     &mut self.audio_ui,
                     media,
                     &mut self.notif_ui,
-                    self.world.notifications.unread(),
+                    bell,
                 );
                 a.bar = bar;
                 a.audio = Some(audio_action);
@@ -7817,23 +7951,45 @@ impl App {
                         n.read = true;
                     }
                 }
-                // nothing over the view in mouselook or the photo's full frame
-                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame();
+                // nothing over the view in mouselook or the photo's full frame;
+                // Firestorm's toasts wait in the bell in do not disturb too
+                let aurora = self.notifications_aurora();
+                let dnd = self.world.status.dnd;
+                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || (dnd && !aurora);
+                self.world.notifications.aurora = aurora;
                 let mut toast_env = ui::notifications::ToastEnv {
                     pics: &self.avatar_pics,
                     emoji: &mut self.emoji,
                     hidden: toasts_hidden,
                     message_seconds: f64::from(self.settings.im_toast_seconds),
                 };
-                let answers = ui::notifications::show(
-                    &ctx,
-                    &p,
-                    &self.skin.icons,
-                    &self.world.map.ratings,
-                    &mut self.world.notifications,
-                    &mut self.notif_ui,
-                    &mut toast_env,
-                );
+                let (answers, asks) = if aurora {
+                    ui::notification_center::show(
+                        &ctx,
+                        &p,
+                        &self.skin.icons,
+                        &self.world.map.ratings,
+                        &mut self.world.notifications,
+                        &mut self.world.notification_history,
+                        &mut self.notif_ui,
+                        &mut toast_env,
+                        dnd,
+                    )
+                } else {
+                    ui::notifications::show(
+                        &ctx,
+                        &p,
+                        &self.skin.icons,
+                        &self.world.map.ratings,
+                        &mut self.world.notifications,
+                        &mut self.world.notification_history,
+                        &mut self.notif_ui,
+                        &mut toast_env,
+                    )
+                };
+                for ask in asks {
+                    self.on_notification_ask(&ctx, ask);
+                }
                 for (id, r) in answers {
                     if matches!(r, crate::world::notifications::Response::Open) {
                         let presence = self
@@ -7862,6 +8018,7 @@ impl App {
                         ctx.open_url(egui::OpenUrl::new_tab(u));
                     }
                 }
+                self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
                 let mut open = self.panels.about_land;
                 // the mini-map's image of the selection's region, for the header
@@ -7924,14 +8081,15 @@ impl App {
                 let profile_base = match self.settings.grid {
                     // AURORA_DEMO_FEED=<page>: the feed browser on a local page
                     _ if self.demo => std::env::var("AURORA_DEMO_FEED").ok(),
-                    crate::settings::GridChoice::SecondLife => Some("https://my.secondlife.com/".to_owned()),
-                    crate::settings::GridChoice::SecondLifeBeta => Some("https://my.secondlife-beta.com/".to_owned()),
-                    crate::settings::GridChoice::Custom => self
-                        .world
-                        .login
-                        .as_ref()
-                        .map(|l| l.raw["web_profile_url"].to_string_value())
-                        .filter(|u| !u.trim().is_empty()),
+                    ref grid => crate::snapshot::profile::grid_web_profile(
+                        grid,
+                        &self
+                            .world
+                            .login
+                            .as_ref()
+                            .map(|l| l.raw["web_profile_url"].to_string_value())
+                            .unwrap_or_default(),
+                    ),
                 };
                 // World › SL Marketplace: the same plugins, browser settings
                 // and OpenID cookie (LLFloaterMarketplace::postBuild)
@@ -7946,6 +8104,7 @@ impl App {
                         home: marketplace_home.as_deref(),
                     },
                 );
+                self.show_marketplace_listings(&ctx, &p);
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
                     browser: &browser,
@@ -8746,6 +8905,12 @@ impl ApplicationHandler for App {
                 self.marketplace_ui.open(None);
                 self.panels.perf = false;
             }
+            // AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit:
+            // Me › Marketplace listings open on the demo SLM server
+            if crate::world::marketplace::demo::Mode::from_env().is_some() {
+                self.demo_marketplace_listings();
+                self.panels.perf = false;
+            }
             // AURORA_DEMO_TP_CONFIRM=link|landmark: a teleport confirmation on
             // screen, asked whatever the saved setting says (not saved)
             if let Some(confirm) = crate::demo::place::teleport_confirm_scenario() {
@@ -8887,6 +9052,12 @@ impl ApplicationHandler for App {
             // captures: AURORA_DEMO_NOTIF=1 opens the notification list
             if std::env::var_os("AURORA_DEMO_NOTIF").is_some() {
                 self.notif_ui.open = true;
+            }
+            // AURORA_DEMO_NOTIFS: nothing else open over the corners
+            if crate::demo::notifs::mode().is_some() {
+                self.panels.perf = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
             }
             // AURORA_DEMO_TOASTS: the toasts arrive with the Conversations
             // window closed, or minimized for `minimized`

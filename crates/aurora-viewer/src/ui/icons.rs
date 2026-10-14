@@ -128,6 +128,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "barrier-block",
     "bell",
     "bell-ringing",
+    "bell-z",
     "bone",
     "book",
     "brand-discord",

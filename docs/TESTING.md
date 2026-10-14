@@ -135,7 +135,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
-| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size or sent to the inventory |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 
@@ -166,6 +166,12 @@ loses L$ 10 (the log gives `photo: texture <W> x <H> encoded in <ms>` and
 `photo: saved to the inventory`). `inventory-ask` leaves the price's
 confirmation on screen; `inventory-poor` sets the balance to L$ 5 and shows
 the "cannot afford" message instead.
+`profile` opens the window on the Profile destination with a caption and
+posts the photo at `AURORA_DEMO_SNAPSHOT_FRAME` to a local web profile that
+answers like my.secondlife.com and its storage (session cookie, upload
+configuration, form, 303): the log gives `demo profile: photo posted (<KB>
+PNG, caption "…", location true)` and the window "Posted to your profile".
+`profile-fail` has the configuration refused: the window shows the failure.
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
@@ -982,9 +988,22 @@ To check with these scenarios:
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
+| `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 
 ### Details
 
+- **`AURORA_DEMO_DOF=<f-number>:<distance>[:debug]`**: the depth of field on
+  whatever Preferences say, at that aperture, focused at that distance (m,
+  along the view axis, no transition). At frame 600 the log gives the
+  scene's distances: `dof demo: … own avatar at 3.3 m, other avatars at
+  7.9 m` (the foreground, the subject with its panels; the sphere and the
+  hills are the background, 15 to 40 m). Compare `1.4:3.3` (the avatar
+  sharp, the rest blurred), `1.4:7.9` (the subject sharp, the avatar a soft
+  blur that spreads over it) and `8:7.9` (barely any blur), under MSAA
+  (`AURORA_AA=3`) and SMAA (`AURORA_AA=6`): no halo around a sharp edge in
+  front of a blurred background, no staircase on a blurred foreground's
+  edge. `:debug` paints the circle of confusion: near red, far blue, sharp
+  grey.
 - **`AURORA_DEMO_PARTICLES=wind|smoke|both|legacy`**: wind streaks of the
   motorbike and parameters of the smoke script received through compressed
   updates, in front of a dark panel; extended glow format (`legacy`:
@@ -1269,6 +1288,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MAP=1`, `mini` or `search:<text>` | World map and mini-map, the region search |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
+| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
@@ -1300,6 +1320,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab, search done |
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
+| `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
 | `AURORA_DEMO_BAN=1` | Ban lines |
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
 
@@ -1469,6 +1490,26 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the inventory opens on the received object and the offer is still to be
   answered; `offer-reject` rejects it at frame 700, then shows the object in
   the Trash. Take the screenshot after frame 900.
+- **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
+  center's mockup, at 60 frames a second. An IM from Nova at frame 700
+  unrolls from the bell at the right end of the top bar (violet bar of the
+  time left, 6 s for information, 12 s for what waits for an answer), folds
+  back into it around frame 1180 and the red count bounces; Orion comes
+  online at 1190 (small toast at the top left, never in the center), a
+  teleport offer at 1270 and an inventory offer at 1325 stack under the
+  bell; a burst of five arrives from 2110, 0.45 s apart: three cards and
+  "+ 2 more — see all". `dnd` turns do not disturb on at frame 640: grey
+  bell with its moon, nothing unrolls nor rings, everything still lands in
+  "To do", and the list opened at 2700 shows the banner. `list` opens the
+  list at 2700; `history` answers four entries at 2650 (the teleport offer
+  declined, the inventory offer kept, information read), then shows the
+  History tab (day headings, states, "Show the place", "Show in
+  inventory", "Put back in To do"). `legacy` plays the same with
+  Firestorm's toasts (Preferences › Aurora › Notifications), for this
+  session only; `legacy-history` opens its list on the History tab like
+  `history`. A script menu (`AURORA_DEMO_DIALOG=12`) stays rolled out
+  until answered. Hover the cards to see them pause. The history is kept in
+  memory in demo; on the grid it is saved per account.
 - **`AURORA_DEMO_TOASTS=1|click|minimized`**: a friend goes offline at
   frame 700 and comes back at 760 (two presence toasts, round picture with
   its status dot), two IMs from the same resident arrive at 820 and 880 (one
@@ -1895,6 +1936,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   at start on it, the menu entry shows, and a link to an address under it
   opens in the window instead of the system browser. Without it the demo
   has no Marketplace (the entry is hidden, as on a grid without one).
+- **`AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit`**:
+  Me › Marketplace listings open at start, answered by an SLM server
+  simulated in the viewer (nothing is sent). `merchant` (any other
+  value too) adds sample listings to the inventory: a listed hoodie with
+  two versions, an unlisted poster sold from a stock folder of three
+  no-copy items, a lantern folder never associated (loose items, which
+  the audit reports), an unfinished listing the server refuses to list
+  (the 422 alert), and a "Products to sell" folder to drag in.
+  Listing a listing without stock leaves it unlisted (the "could not
+  be updated" alert). `not-merchant`: Firestorm's explanation and the
+  link to open a store. `error`: the connection error with its reason.
+  `audit`: `merchant`, with the audit window of every listing open.
 - **`AURORA_DEMO_PLACE_WINDOW=1`**: with `AURORA_DEMO_PLACE`, the separate
   place windows instead of "Places" ("Landmarks and place
   profiles" option, not saved).

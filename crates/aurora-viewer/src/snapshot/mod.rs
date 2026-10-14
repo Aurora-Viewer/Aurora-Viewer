@@ -4,11 +4,13 @@
 //! sizes and proportions a photo can have, how it is split when the card
 //! cannot draw it in one pass, its file name, and the settings kept between
 //! sessions. Saving runs on a worker (`save`), the recent photos are listed
-//! by `gallery`, a photo for the inventory is prepared by `inventory`; the
-//! window is `ui::snapshot`, the frames `app::snapshot`.
+//! by `gallery`, a photo for the inventory is prepared by `inventory`, one
+//! for the profile feed posted by `profile`; the window is `ui::snapshot`,
+//! the frames `app::snapshot`.
 
 pub mod gallery;
 pub mod inventory;
+pub mod profile;
 pub mod save;
 
 use glam::{Mat4, Vec4};
@@ -225,6 +227,10 @@ pub struct Settings {
     pub sound: bool,
     /// Size of a photo for the inventory (LastSnapshotToInventoryResolution).
     pub inventory_size: inventory::TextureSize,
+    /// Size of a photo for the profile feed (LastSnapshotToProfileResolution).
+    pub profile_size: profile::ProfileSize,
+    /// The place in the profile post (SnapshotToProfileIncludeLocation).
+    pub profile_location: bool,
 }
 
 impl Default for Settings {
@@ -246,6 +252,8 @@ impl Default for Settings {
             guide: Guide::Thirds,
             sound: true,
             inventory_size: inventory::TextureSize::S512,
+            profile_size: profile::ProfileSize::S640,
+            profile_location: true,
         }
     }
 }
