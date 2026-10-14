@@ -83,16 +83,18 @@ pub fn sender_color(line: &ChatLine) -> Color32 {
     }
 }
 
-/// Name tag color of an avatar (own, Linden, friend, else match / mismatch).
+/// Name tag color of an avatar (own, Linden, friend while the names are
+/// colored by relation, else match / mismatch).
 pub fn tag_color(world: &World, id: &Uuid, name: &str, custom_display_name: bool) -> Color32 {
     let k = get();
-    let v = if *id == world.agent_id {
+    let relation = k.relation_names;
+    let v = if relation && *id == world.agent_id {
         k.tag_me
-    } else if is_linden(name) {
+    } else if relation && is_linden(name) {
         k.tag_linden
-    } else if is_friend(world, id) {
+    } else if relation && is_friend(world, id) {
         k.tag_friend
-    } else if world.is_avatar_blocked(id) {
+    } else if relation && world.is_avatar_blocked(id) {
         k.tag_muted
     } else if custom_display_name {
         k.tag_mismatch

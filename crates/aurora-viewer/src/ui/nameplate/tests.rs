@@ -255,42 +255,66 @@ fn badges_and_status_dot_by_state_and_level() {
         presence: Presence::Away,
         ..content()
     };
-    let order = [Badge::Voice, Badge::Typing, Badge::Friend, Badge::TooComplex, Badge::Blocked];
+    let order = [Badge::Voice, Badge::Typing, Badge::TooComplex, Badge::Blocked];
     for level in [Level::Full, Level::Compact] {
         assert_eq!(badges(level, &everything).iter().collect::<Vec<_>>(), order);
     }
     assert_eq!(badges(Level::Far, &everything).len(), 0);
     // a blocked resident's status is hidden
     assert_eq!(status_dot(Level::Full, &everything), None);
-    // the green microphone takes the red one's place, never both
+    // the green microphone takes the red one's place, never both; a friend
+    // has no badge of its own, but a ring around the picture
     let friend = Content { friend: true, ..content() };
-    assert_eq!(
-        badges(Level::Full, &friend).iter().collect::<Vec<_>>(),
-        [Badge::NoVoice, Badge::Friend]
-    );
+    assert_eq!(badges(Level::Full, &friend).iter().collect::<Vec<_>>(), [Badge::NoVoice]);
     let in_voice = Content { in_voice: true, ..friend };
-    assert_eq!(
-        badges(Level::Compact, &in_voice).iter().collect::<Vec<_>>(),
-        [Badge::Voice, Badge::Friend]
-    );
+    assert_eq!(badges(Level::Compact, &in_voice).iter().collect::<Vec<_>>(), [Badge::Voice]);
 }
 
 #[test]
-fn roles_and_their_fixed_colors() {
+fn only_a_friend_s_picture_is_ringed() {
+    let friend = Content { friend: true, ..content() };
+    assert!(friend_ring(Level::Full, &friend));
+    // no picture below the full level, no ring
+    assert!(!friend_ring(Level::Compact, &friend));
+    assert!(!friend_ring(Level::Far, &friend));
+    assert!(!friend_ring(Level::Full, &content()));
+    // the status dot stays the status, friend or not
+    let away = Content {
+        presence: Presence::Away,
+        ..friend
+    };
+    assert_eq!(status_dot(Level::Full, &away), Some(Presence::Away));
+}
+
+#[test]
+fn roles_and_their_name_colors() {
     assert_eq!(Role::of(true, true, true, true), Role::Own);
     assert_eq!(Role::of(false, true, true, true), Role::Blocked);
     assert_eq!(Role::of(false, false, true, true), Role::Linden);
     assert_eq!(Role::of(false, false, false, true), Role::Friend);
     assert_eq!(Role::of(false, false, false, false), Role::Resident);
     let p = Theme::default().palette();
-    assert_eq!(Role::Resident.name_color(&p), p.ink);
-    assert_eq!(Role::Own.name_color(&p), p.ink);
-    assert_eq!(Role::Friend.name_color(&p), p.violet_light);
-    assert_eq!(Role::Linden.name_color(&p), p.rose);
-    assert_eq!(Role::Blocked.name_color(&p), p.muted_dim);
+    let roles = [Role::Resident, Role::Own, Role::Friend, Role::Linden, Role::Blocked];
+    // by default every name is in the theme's ink
+    let off = crate::settings::ColorSettings::default();
+    assert!(!off.relation_names);
+    for role in roles {
+        assert_eq!(role.name_color(&p, &off), p.ink);
+    }
+    // switched on: the colors of the preferences, shared with the classic tags
+    let on = crate::settings::ColorSettings {
+        relation_names: true,
+        ..off
+    };
+    let c = crate::ui::colors::c;
+    assert_eq!(Role::Resident.name_color(&p, &on), p.ink);
+    assert_eq!(Role::Own.name_color(&p, &on), c(on.tag_me));
+    assert_eq!(Role::Friend.name_color(&p, &on), c(on.tag_friend));
+    assert_eq!(Role::Linden.name_color(&p, &on), c(on.tag_linden));
+    assert_eq!(Role::Blocked.name_color(&p, &on), c(on.tag_muted));
     // a Linden and a friend are told apart, and both from a resident
-    assert_ne!(Role::Linden.name_color(&p), Role::Friend.name_color(&p));
-    assert_ne!(Role::Friend.name_color(&p), Role::Resident.name_color(&p));
+    assert_ne!(Role::Linden.name_color(&p, &on), Role::Friend.name_color(&p, &on));
+    assert_ne!(Role::Friend.name_color(&p, &on), Role::Resident.name_color(&p, &on));
 }
 
 #[test]
@@ -626,7 +650,7 @@ fn only_the_nearest_plates_blur_the_world() {
 }
 
 #[test]
-fn the_plate_colors_ignore_the_tag_color_settings() {
+fn the_plate_names_follow_the_relation_switch() {
     let ctx = egui::Context::default();
     let p = Theme::default().palette();
     let friend = "Orion le Grand";
@@ -668,11 +692,9 @@ fn the_plate_colors_ignore_the_tag_color_settings() {
             },
         ),
     ];
-    let before = colors(&frame(&ctx, &mut Plates::default(), &tags, 1.0).1);
-    // the settings of the classic tags, all changed
     let saved = crate::ui::colors::get();
     let odd = [255, 0, 255, 255];
-    crate::ui::colors::set(&crate::settings::ColorSettings {
+    let changed = crate::settings::ColorSettings {
         tag_me: odd,
         tag_friend: odd,
         tag_muted: odd,
@@ -680,15 +702,29 @@ fn the_plate_colors_ignore_the_tag_color_settings() {
         tag_match: odd,
         tag_mismatch: odd,
         ..saved
+    };
+    // the colors by relation off (the default): every name in ink, whatever
+    // the colors of the preferences
+    crate::ui::colors::set(&crate::settings::ColorSettings {
+        relation_names: false,
+        ..changed
     });
-    let (_, shapes) = frame(&ctx, &mut Plates::default(), &tags, 1.0);
+    let (_, off) = frame(&ctx, &mut Plates::default(), &tags, 1.0);
+    // switched on: the colors of the preferences
+    crate::ui::colors::set(&crate::settings::ColorSettings {
+        relation_names: true,
+        ..changed
+    });
+    let (_, on) = frame(&ctx, &mut Plates::default(), &tags, 1.0);
     crate::ui::colors::set(&saved);
-    assert_eq!(colors(&shapes), before);
-    assert!(!before.contains(&Color32::from_rgb(255, 0, 255)));
-    // and they are the theme's
-    assert_eq!(text_color(&shapes, friend), Some(p.violet_light));
-    assert_eq!(text_color(&shapes, "Nova Exemple"), Some(p.muted));
-    assert_eq!(text_color(&shapes, "Loups du Nord"), Some(p.teal));
+    assert!(!colors(&off).contains(&Color32::from_rgb(255, 0, 255)));
+    assert_eq!(text_color(&off, friend), Some(p.ink));
+    assert_eq!(text_color(&on, friend), Some(Color32::from_rgb(255, 0, 255)));
+    // the other lines keep the theme's colors either way
+    for shapes in [&off, &on] {
+        assert_eq!(text_color(shapes, "Nova Exemple"), Some(p.muted));
+        assert_eq!(text_color(shapes, "Loups du Nord"), Some(p.teal));
+    }
 }
 
 #[test]

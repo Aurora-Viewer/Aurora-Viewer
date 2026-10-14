@@ -10,6 +10,7 @@
 //! disturb, typing, muted, friend, too complex. The presentation is
 //! Aurora's own: Firestorm writes them in a status line above the name.
 
+use crate::settings::ColorSettings;
 use crate::theme::Palette;
 use egui::{Color32, Pos2, Rect, Vec2};
 use std::collections::{HashMap, HashSet};
@@ -132,14 +133,20 @@ impl Role {
         }
     }
 
-    /// Color of the display name. Fixed by the theme: the tag colors of the
-    /// preferences belong to the classic tags (the human's choice).
-    pub fn name_color(self, p: &Palette) -> Color32 {
+    /// Color of the display name: the theme's ink for everyone, unless the
+    /// names are colored by relation (Preferences › Colors, off by default,
+    /// shared with the classic tags; the human's choice of 2026-10-14).
+    pub fn name_color(self, p: &Palette, k: &ColorSettings) -> Color32 {
+        use crate::ui::colors::c;
+        if !k.relation_names {
+            return p.ink;
+        }
         match self {
-            Role::Resident | Role::Own => p.ink,
-            Role::Friend => p.violet_light,
-            Role::Linden => p.rose,
-            Role::Blocked => p.muted_dim,
+            Role::Resident => p.ink,
+            Role::Own => c(k.tag_me),
+            Role::Friend => c(k.tag_friend),
+            Role::Linden => c(k.tag_linden),
+            Role::Blocked => c(k.tag_muted),
         }
     }
 }
@@ -151,7 +158,6 @@ pub enum Badge {
     /// Not in it, or we are not in voice ourselves: every plate says so.
     NoVoice,
     Typing,
-    Friend,
     /// Drawn as a silhouette: over the complexity or surface limit.
     TooComplex,
     Blocked,
@@ -241,7 +247,6 @@ pub fn badges(level: Level, c: &Content) -> Badges {
     for (on, badge) in [
         (true, if c.in_voice { Badge::Voice } else { Badge::NoVoice }),
         (c.typing, Badge::Typing),
-        (c.friend, Badge::Friend),
         (c.too_complex, Badge::TooComplex),
         (c.blocked, Badge::Blocked),
     ] {
@@ -255,6 +260,13 @@ pub fn badges(level: Level, c: &Content) -> Badges {
 /// The status dot: on the picture only, and not for a blocked resident.
 pub fn status_dot(level: Level, c: &Content) -> Option<Presence> {
     (level == Level::Full && !c.blocked).then_some(c.presence)
+}
+
+/// A friend's picture has a light violet ring, in place of the heart badge
+/// it replaces (the human's choice of 2026-10-14): only where there is a
+/// picture.
+pub fn friend_ring(level: Level, c: &Content) -> bool {
+    level == Level::Full && c.friend
 }
 
 /// Measures of a plate in points, from the mockup's pixels.

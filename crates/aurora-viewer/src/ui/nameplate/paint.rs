@@ -136,6 +136,7 @@ struct MarksKey {
     scale: f32,
     placeholder: bool,
     dot: Option<Presence>,
+    friend_ring: bool,
     badges: usize,
     loading: Option<f32>,
     pixels_per_point: f32,
@@ -164,6 +165,7 @@ struct Face {
     subs: [Option<Line>; 2],
     badges: Badges,
     dot: Option<Presence>,
+    friend_ring: bool,
 }
 
 fn lerp(range: (f32, f32), t: f32) -> f32 {
@@ -181,7 +183,7 @@ fn line(env: &Env<'_>, text: &str, format: TextFormat, max_width: f32) -> Arc<Ga
 fn face(env: &Env<'_>, level: Level, c: &Content) -> Face {
     let p = env.p;
     let m = Metrics::of(level, SCALE);
-    let color = c.role.name_color(p);
+    let color = c.role.name_color(p, &crate::ui::colors::get());
     let mut format = match level {
         // the far pill's name is a regular weight
         Level::Far => TextFormat::simple(FontId::proportional(m.name_pt), color),
@@ -220,6 +222,7 @@ fn face(env: &Env<'_>, level: Level, c: &Content) -> Face {
         subs,
         badges,
         dot: super::status_dot(level, c),
+        friend_ring: super::friend_ring(level, c),
     }
 }
 
@@ -329,7 +332,6 @@ fn badge_icon(p: &Palette, badge: Badge) -> Option<(&'static str, Color32)> {
         Badge::Voice => ("microphone-filled", p.success),
         // as the classic tag's (`ui::hud`)
         Badge::NoVoice => ("microphone-off", p.danger),
-        Badge::Friend => ("heart-filled", p.violet_light),
         Badge::TooComplex => ("alert-triangle-filled", p.amber),
         Badge::Blocked => ("forbid-filled", p.danger),
         Badge::Typing => return None,
@@ -348,7 +350,12 @@ fn marks(env: &Env<'_>, key: &MarksKey) -> Mesh {
         if key.placeholder {
             disc.dot(&mut mesh, p.raised);
         }
-        disc.stroke(&mut mesh, 2.0 * s, p.ink.gamma_multiply(0.22));
+        let ring = if key.friend_ring {
+            p.violet_light
+        } else {
+            p.ink.gamma_multiply(0.22)
+        };
+        disc.stroke(&mut mesh, 2.0 * s, ring);
     }
     if let (Some(dot), Some(presence)) = (l.dot, key.dot) {
         let color = match presence {
@@ -422,6 +429,7 @@ fn contents(
         scale: s,
         placeholder: picture.is_none(),
         dot: face.dot,
+        friend_ring: face.friend_ring,
         badges: face.badges.len(),
         loading: tag.loading,
         pixels_per_point: ppp,
