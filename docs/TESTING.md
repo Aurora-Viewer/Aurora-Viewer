@@ -738,12 +738,12 @@ grid.
   161.1%, including the child and floating text. Profiles are isolated in
   memory for these scenarios; unit tests cover saving and restarting.
   Suggested screenshots: 710,760,920.
-- `drag`: grabs the child with ALT (frame 720), moves the whole HUD,
-  releases ALT before the click (frame 800), then saves the position on
+- `drag`: grabs the child with Ctrl (frame 720), moves the whole HUD,
+  releases Ctrl before the click (frame 800), then saves the position on
   left release (frame 840) without touching any script.
 - `drag-zoom`: the same at 50%; `drag-ignore`: on a child with the
-  IGNORE action; `drag-ctrl`: Ctrl instead of ALT; `drag-key`: the B key
-  instead of ALT; `drag-secondary`: ALT as primary key and Ctrl as
+  IGNORE action; `drag-ctrl`: explicitly binds Ctrl; `drag-key`: the B key
+  instead of Ctrl; `drag-secondary`: ALT as primary key and Ctrl as
   secondary key, moving with the latter.
 - `menu`, `edit`, `edit-zoom`: right click on the child, Edit and
   moving the linkset by the Y handle, also at 50%.
@@ -785,10 +785,12 @@ around frames 720 (menu), 770 (edit, inspect) and 850 (move).
 
 To check with these scenarios:
 
-- ALT + left click held on the visible geometry moves the HUD without
+- Ctrl + left click held on the visible geometry moves the HUD without
   opening the tools; grab hand on hover and while moving.
+- Alt and Shift+Alt do not start a HUD move. A camera drag started in the
+  world continues when the pointer crosses a HUD.
 - Preferences › Shortcuts › HUDs, between Windows and Debug: two keys
-  configurable like the other shortcuts (ALT as primary by default,
+  configurable like the other shortcuts (Ctrl as primary by default,
   secondary empty), click to capture, right click to clear and Esc to
   cancel. To choose Ctrl, ALT or Shift alone, press then release;
   combinations and assignable mouse buttons are also accepted.
@@ -1153,6 +1155,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_WINDOWS=<mode>` | Collapse, move and restore of the inventory title bar |
+| `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: guide, snap, grouped move, resize |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
@@ -1337,6 +1340,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Take screenshots at `620,740,900,1120` to check content, collapse, move and
   restored dimensions. The "−" button stays usable; the other
   title bar buttons and the content do not trigger the title bar double-click.
+- **`AURORA_DEMO_MINIMIZED=1|expand`**: double-clicks the real title bar of
+  Conversations at frames 600–605; the window becomes a bar 200 points wide
+  at most, outlined in the accent while messages are unread (the demo group
+  message), and the toolbar button keeps its dot. `expand` then clicks the
+  real Conversations toolbar button at frames 900–901: the window expands
+  instead of closing (issue #269). Capture with `AURORA_FPS_LIMIT=60` at
+  `560,760,1000`.
 - **`AURORA_DEMO_SNAP=1|group|size`**: drags the real Conversations
   window by its title bar to next to People (both must be
   open: first-launch layout, or `AURORA_DEMO_UI`). Frame
