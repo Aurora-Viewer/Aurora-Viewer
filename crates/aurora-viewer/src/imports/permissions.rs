@@ -7,6 +7,11 @@ pub struct NextOwner {
     pub modify: bool,
     pub copy: bool,
     pub transfer: bool,
+    /// Missing values inherit the legacy common sharing preferences.
+    #[serde(default)]
+    pub share_group: Option<bool>,
+    #[serde(default)]
+    pub everyone_copy: Option<bool>,
 }
 impl NextOwner {
     pub fn mask(self) -> u32 {
@@ -59,12 +64,25 @@ impl Preferences {
             modify: self.next_modify,
             copy: self.next_copy,
             transfer: self.next_transfer,
+            share_group: None,
+            everyone_copy: None,
         })
     }
     pub fn permissions_for(&self, kind: Kind) -> Permissions {
+        use aurora_net::build::perm;
+        let row = self.next_owner_for(kind);
         Permissions {
-            next_owner: self.next_owner_for(kind).mask(),
-            ..self.permissions()
+            next_owner: row.mask(),
+            group: if row.share_group.unwrap_or(self.share_group) {
+                perm::COPY | perm::MOVE | perm::MODIFY
+            } else {
+                0
+            },
+            everyone: if row.everyone_copy.unwrap_or(self.everyone_copy) {
+                perm::COPY
+            } else {
+                0
+            },
         }
     }
 }

@@ -576,6 +576,29 @@ pub(crate) fn bare_window(
 
 const PLACE_POS: &str = "place_pos";
 
+/// Movable toolbar without a common face. The body supplies its individual
+/// button surfaces and close action; layout placement remains shared.
+pub(crate) fn toolstrip<R>(ctx: &egui::Context, id: &str, pos: egui::Pos2, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let window_id = egui::Id::new(id);
+    super::sound_cues::floater_shown(ctx, window_id);
+    let slot = super::layout::slot(ctx, window_id);
+    let mut area = egui::Area::new(window_id)
+        .order(egui::Order::Middle)
+        .fade_in(false)
+        .movable(true)
+        .default_pos(pos)
+        .constrain_to(slot.limits.unwrap_or_else(|| super::layout::work_area(ctx)));
+    let asked = ctx
+        .data_mut(|data| data.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS)))
+        .or(slot.pos);
+    if let Some(pos) = asked {
+        area = area.current_pos(pos);
+    }
+    let shown = area.show(ctx, body);
+    slot.shown(ctx, shown.response.rect, false);
+    shown.inner
+}
+
 /// Move a dependent floater without changing its size or minimized state.
 pub fn move_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::new(id).with(PLACE_POS), pos));
@@ -658,7 +681,19 @@ const EXPAND: &str = "expand";
 
 /// Title bar button with a Tabler icon (drawn by hand if it is missing).
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::click());
+    title_button_sized(ui, p, icon, Vec2::splat(16.0))
+}
+
+/// The standard plain close glyph, with a toolbar-sized hit target.
+pub(crate) fn close_button(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
+    let label = aurora_i18n::tr!("common-close");
+    let response = title_button_sized(ui, p, "x", Vec2::new(24.0, 36.0));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    response.on_hover_text(label).on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn title_button_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, size: Vec2) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let col = if resp.hovered() { p.ink } else { p.muted };
     let c = rect.center();
     let stroke = Stroke::new(1.4, col);
@@ -1483,6 +1518,66 @@ pub fn dialog_buttons(ui: &mut egui::Ui, p: &Palette, buttons: &[DialogButton<'_
         }
     });
     clicked
+}
+
+/// Individual frosted glass with the theme's tint, border, shadow and radius.
+/// The native button retains input and accessibility without painting a face.
+pub fn glass_action_icon(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, size: Vec2, icon_color: Color32) -> egui::Response {
+    let response = ui.add_sized(size, egui::Button::new("").frame(false));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    if ui.is_rect_visible(response.rect) {
+        let rect = response.rect;
+        let pressed = response.is_pointer_button_down_on();
+        let hot = response.hovered() || response.has_focus();
+        let base = if pressed {
+            p.indigo
+        } else if hot {
+            p.raised
+        } else {
+            p.panel
+        };
+        let alpha = if p.panel_alpha == 255 {
+            255
+        } else {
+            (f32::from(p.panel_alpha)
+                * if pressed {
+                    0.88
+                } else if hot {
+                    0.72
+                } else {
+                    0.55
+                }) as u8
+        };
+        let tint = Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
+        let mut frame = overlay_frame(ui.ctx(), p);
+        frame.fill = tint;
+        frame.corner_radius = ui.visuals().widgets.inactive.corner_radius;
+        frame.stroke = Stroke::new(
+            1.0,
+            if hot {
+                p.violet_light.gamma_multiply(0.65)
+            } else {
+                p.ink.gamma_multiply(0.18)
+            },
+        );
+        ui.painter().add(frame.paint(rect.shrink(frame.stroke.width)));
+        if p.panel_alpha < 255 {
+            ui.painter().add(aurora_render::glass_panel(
+                rect.shrink(1.0),
+                f32::from(frame.corner_radius.nw),
+                tint,
+            ));
+        }
+        if let Some(texture) = super::icons::global(icon) {
+            ui.painter().image(
+                texture.id(),
+                egui::Rect::from_center_size(rect.center(), Vec2::splat(22.0)),
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                if pressed { p.on_accent } else { icon_color },
+            );
+        }
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Primary action using the Aurora accent and the flat button geometry.

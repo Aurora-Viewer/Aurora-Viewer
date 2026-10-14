@@ -152,15 +152,14 @@ fn preview(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry, prefs: &mut Prefer
         if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("import-preview-reset-view"), true) {
             entry.view.reset_camera();
         }
-        widgets::icon_menu(ui, p, "palette-filled", aurora_i18n::tr!("import-preview-colors"), |ui| {
-            preview_colors_fields(ui, p, prefs)
-        });
+        preview_colors_button(ui, p, entry.id, prefs);
         ui.label(RichText::new(aurora_i18n::tr!("import-preview")).strong().color(p.ink));
         let (spinner, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
         if entry.preview_pending || entry.preview_not_before.is_some() {
             ui.put(spinner, egui::Spinner::new().size(12.0));
         }
     });
+    apply_preview_colors(&mut entry.view, p, prefs);
     entry.view.material = draft.preview_physics.then(|| aurora_render::preview::Material {
         color: linear_color(prefs.preview_physics_fill.unwrap_or_else(|| palette_color(p.teal))),
         alpha_mode: u32::from(prefs.preview_physics_fill.is_some_and(|color| color[3] < 1.0)),

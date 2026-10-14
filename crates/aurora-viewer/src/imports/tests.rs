@@ -21,6 +21,8 @@ fn per_type_permissions_preserve_old_settings_and_transfer_without_copy() {
             modify: false,
             copy: true,
             transfer: false,
+            share_group: None,
+            everyone_copy: None,
         },
     );
     prefs.permissions_by_type.set(
@@ -29,6 +31,8 @@ fn per_type_permissions_preserve_old_settings_and_transfer_without_copy() {
             modify: true,
             copy: false,
             transfer: false,
+            share_group: None,
+            everyone_copy: None,
         },
     );
     assert_eq!(prefs.permissions_for(Kind::Texture).next_owner, perm::MOVE | perm::COPY);
@@ -39,6 +43,29 @@ fn per_type_permissions_preserve_old_settings_and_transfer_without_copy() {
     assert_eq!(prefs.permissions_for(Kind::Material), old);
     let saved = serde_json::to_vec(&prefs).expect("settings");
     let restored: Preferences = serde_json::from_slice(&saved).expect("saved settings");
+    assert_eq!(restored, prefs);
+}
+
+#[test]
+fn legacy_sharing_migrates_to_each_type_and_new_rows_remain_independent() {
+    use aurora_net::build::perm;
+    let mut prefs: Preferences = serde_json::from_str(
+        r#"{"share_group":true,"everyone_copy":true,"permissions_by_type":{"texture":{"modify":false,"copy":true,"transfer":false}}}"#,
+    )
+    .expect("legacy sharing");
+    for kind in [Kind::Texture, Kind::Sound, Kind::Animation, Kind::Mesh, Kind::Material] {
+        assert_eq!(prefs.permissions_for(kind).group, perm::COPY | perm::MOVE | perm::MODIFY);
+        assert_eq!(prefs.permissions_for(kind).everyone, perm::COPY);
+    }
+    let mut sound = prefs.next_owner_for(Kind::Sound);
+    sound.share_group = Some(false);
+    sound.everyone_copy = Some(false);
+    prefs.permissions_by_type.set(Kind::Sound, sound);
+    assert_eq!(prefs.permissions_for(Kind::Sound).group, 0);
+    assert_eq!(prefs.permissions_for(Kind::Sound).everyone, 0);
+    assert_ne!(prefs.permissions_for(Kind::Texture).group, 0);
+    assert_ne!(prefs.permissions_for(Kind::Mesh).everyone, 0);
+    let restored: Preferences = serde_json::from_slice(&serde_json::to_vec(&prefs).expect("save")).expect("restore");
     assert_eq!(restored, prefs);
 }
 
@@ -82,6 +109,14 @@ fn mixed_uploads_freeze_each_type_and_material_textures_use_texture_permissions(
     for (name, source) in [
         ("Texture", Source::Texture(image(4, 4))),
         (
+            "Sound",
+            Source::Sound(Arc::new(Sound {
+                source_channels: 1,
+                source_bits: 16,
+                mono: vec![0.8; 44100],
+            })),
+        ),
+        (
             "Material",
             Source::Material {
                 value: Default::default(),
@@ -92,6 +127,14 @@ fn mixed_uploads_freeze_each_type_and_material_textures_use_texture_permissions(
     ] {
         let mut entry = Entry::new(name.into(), Ok(source), Default::default());
         entry.folder = folder;
+        if matches!(entry.source, Some(Source::Sound(_))) {
+            entry.sound.options = sound::Options {
+                gain: 0.5,
+                start: 0.25,
+                end: Some(0.75),
+                ..Default::default()
+            };
+        }
         imports.entries.push(entry);
     }
     let mut prefs = Preferences::default();
@@ -101,6 +144,8 @@ fn mixed_uploads_freeze_each_type_and_material_textures_use_texture_permissions(
             modify: false,
             copy: true,
             transfer: false,
+            share_group: None,
+            everyone_copy: None,
         },
     );
     prefs.permissions_by_type.set(
@@ -109,13 +154,17 @@ fn mixed_uploads_freeze_each_type_and_material_textures_use_texture_permissions(
             modify: true,
             copy: true,
             transfer: false,
+            share_group: Some(false),
+            everyone_copy: Some(false),
         },
     );
+    prefs.share_group = true;
+    prefs.everyone_copy = true;
     imports.start(&world, &Default::default(), &prefs, &prices());
     assert_eq!(
         imports.queue.len(),
-        4,
-        "three assets and their material's texture: {}",
+        5,
+        "four assets and their material's texture: {}",
         imports.message
     );
     prefs.permissions_by_type.set(
@@ -124,13 +173,35 @@ fn mixed_uploads_freeze_each_type_and_material_textures_use_texture_permissions(
             modify: false,
             copy: false,
             transfer: true,
+            share_group: None,
+            everyone_copy: None,
         },
     );
+    prefs.share_group = false;
+    prefs.everyone_copy = false;
+    for entry in &mut imports.entries {
+        entry.sound.options = Default::default();
+    }
     for step in &imports.queue {
+        assert_eq!(
+            step.permissions.group,
+            if step.kind == Kind::Material {
+                0
+            } else {
+                perm::COPY | perm::MOVE | perm::MODIFY
+            }
+        );
+        assert_eq!(step.permissions.everyone, if step.kind == Kind::Material { 0 } else { perm::COPY });
+        if let Source::Sound(source) = &step.source {
+            let edited = step.sound_options.render(source).expect("frozen sound edit");
+            assert_eq!(edited.duration(), 0.5);
+            assert_eq!(edited.mono[0], 0.4);
+            assert_eq!(source.mono.len(), 44100);
+        }
         let expected = match step.kind {
             Kind::Texture => perm::MOVE | perm::COPY,
             Kind::Material => perm::MOVE | perm::COPY | perm::MODIFY,
-            Kind::Mesh => perm::MOVE | perm::TRANSFER,
+            Kind::Mesh | Kind::Sound => perm::MOVE | perm::TRANSFER,
             _ => panic!("unexpected fixture"),
         };
         assert_eq!(
@@ -138,6 +209,100 @@ fn mixed_uploads_freeze_each_type_and_material_textures_use_texture_permissions(
             "the confirmed queue retains the rights for its type"
         );
     }
+}
+
+#[test]
+fn sound_split_cost_names_snapshots_and_partial_retry_match_the_real_queue() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::InvFolder;
+    let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.balance = Some(1000);
+    let folder = Uuid::from_u128(730);
+    world.inventory.root = folder;
+    world.inventory.folders.insert(
+        folder,
+        Folder {
+            info: InvFolder {
+                id: folder,
+                type_default: 8,
+                name: "Inventory".into(),
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    let source = Arc::new(Sound {
+        source_channels: 1,
+        source_bits: 16,
+        mono: vec![0.3; 44100 * 7],
+    });
+    let mut entry = Entry::new("Track.wav".into(), Ok(Source::Sound(source.clone())), Default::default());
+    entry.folder = folder;
+    entry.sound.options = sound::Options {
+        gain: 2.0,
+        start: 0.5,
+        end: Some(6.0),
+        segment: Some(2.0),
+        ..Default::default()
+    };
+    let edit = entry.sound.options;
+    let mut imports = Imports {
+        choice: Choice::Sound,
+        entries: vec![entry],
+        ..Default::default()
+    };
+    assert_eq!(imports.total(&prices()), Some(30));
+    imports.start(&world, &Default::default(), &Default::default(), &prices());
+    assert_eq!(
+        imports.queue.iter().map(|step| step.name.as_str()).collect::<Vec<_>>(),
+        ["Track_01", "Track_02", "Track_03"]
+    );
+    imports.entries[0].sound.options.gain = 1.0;
+    for step in &imports.queue {
+        let Source::Sound(sound) = &step.source else { panic!("sound") };
+        assert!(
+            Arc::ptr_eq(sound, &source),
+            "pieces share the original instead of copying it on the UI thread"
+        );
+        let rendered = step.sound_options.render(sound).expect("piece");
+        assert!(rendered.duration() <= 2.0);
+        assert_eq!(rendered.mono[0], 0.6, "confirmed gain remains frozen");
+    }
+    imports.entries[0].sound.options = edit;
+    let request = Uuid::new_v4();
+    let first = imports.queue.pop_front().expect("first piece");
+    imports.current = Some((request, first));
+    assert!(
+        imports
+            .uploaded(
+                request,
+                Ok(Receipt {
+                    item: aurora_net::inventory::InvItem::default(),
+                    cost: 10
+                })
+            )
+            .is_some()
+    );
+    assert!(
+        matches!(imports.entries[0].status, Status::Preparing),
+        "a partial success keeps its parent draft"
+    );
+    let request = Uuid::new_v4();
+    let second = imports.queue.pop_front().expect("second piece");
+    imports.current = Some((request, second));
+    imports.uploaded(request, Err(Error::Verification));
+    assert!(!imports.busy());
+    imports.restore_draft(imports.entries[0].id);
+    assert_eq!(imports.total(&prices()), Some(20), "acknowledged pieces are not charged again");
+    imports.start(&world, &Default::default(), &Default::default(), &prices());
+    assert_eq!(
+        imports.queue.iter().map(|step| step.name.as_str()).collect::<Vec<_>>(),
+        ["Track_02", "Track_03"]
+    );
+    assert_eq!(source.mono[0], 0.3);
 }
 
 #[test]
@@ -551,6 +716,7 @@ fn cancelling_future_uploads_retains_the_in_flight_receipt() {
         description: String::new(),
         source: entry.source.clone().expect("source"),
         options: entry.options,
+        sound_options: Default::default(),
         cost: 10,
         permissions: Permissions::default(),
     };
@@ -652,6 +818,7 @@ fn acknowledged_uploads_leave_local_previews_and_unfinished_drafts_untouched() {
                 description: entry.description.clone(),
                 source: entry.source.clone().expect("source"),
                 options: entry.options,
+                sound_options: Default::default(),
                 cost: 10,
                 permissions: Default::default(),
             },
@@ -714,6 +881,7 @@ fn retiring_material_rows_keeps_texture_receipts_for_the_rest_of_the_batch() {
             description: String::new(),
             source: source.clone(),
             options: entry.options,
+            sound_options: Default::default(),
             cost: 0,
             permissions: Default::default(),
         });
@@ -732,6 +900,7 @@ fn retiring_material_rows_keeps_texture_receipts_for_the_rest_of_the_batch() {
             description: String::new(),
             source: Source::Texture(map.pixels.clone()),
             options: Default::default(),
+            sound_options: Default::default(),
             cost: 10,
             permissions: Default::default(),
         },

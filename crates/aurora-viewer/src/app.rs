@@ -2559,7 +2559,7 @@ impl App {
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
-            Action::Import => self.imports.open_file_picker(crate::imports::Choice::Bulk),
+            Action::Import => self.imports.toggle_launcher(&self.egui_ctx),
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
                 d.show_alpha = !d.show_alpha;
@@ -7229,12 +7229,8 @@ impl App {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.bug_report.requested = true,
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
-            BarAction::Import { choice, pick_files } => {
-                if pick_files {
-                    self.imports.open_file_picker(choice);
-                } else {
-                    self.imports.open(choice);
-                }
+            BarAction::Import => {
+                self.imports.toggle_launcher(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
             }
             BarAction::ShowHuds(visible) => {

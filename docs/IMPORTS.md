@@ -22,7 +22,12 @@ Reference consulted: Firestorm `d942e1118d01c3383ef7d6b64f248af77452b0dc`
 - Compact list: one line per file, without a "Ready" mention; progress,
   success, cancellation and error shown by an icon with a tooltip.
 - Upload permissions: next owner (modify, copy, transfer), group and
-  everyone; do not grant rights that the server has not confirmed.
+  everyone, independently per type in Settings; do not grant rights that
+  the server has not confirmed. Settings contains only this table and payment.
+  Saved common sharing flags migrate as per-type fallbacks until a row is edited.
+- Type icons open the disk picker when their list is empty, otherwise their
+  existing draft. Clicking the displayed type closes its inspector while
+  leaving the launcher visible.
 - Price taken from the account benefits and the region capabilities;
   sufficient balance; explicit confirmation before each paid operation.
 - Analysis, conversion and encoding in the background; progress,
@@ -62,6 +67,20 @@ Sources: `llfloaterimagepreview.cpp`, `floater_image_preview.xml`,
   parameters.
 - Name/description, fee and destination; local sound preview.
   The Play and Stop controls are placed side by side.
+- Aurora extension requested by the human: edit the selected interval and
+  import gain (0–400%) without changing the source. Amplified PCM is clipped
+  to the digital ceiling, with orange waveform peaks and an explicit indicator.
+  Audition uses the same processed PCM as upload; committing a gain adjustment
+  restarts the current audition with that result.
+- Optional maximum piece length creates consecutive `_01`, `_02`, … inventory
+  sound assets from the selected interval. Boundaries use sample indices, with
+  no gaps or duplicated samples; the last piece can be shorter. The confirmation
+  includes every piece's fee. Each verified receipt is kept, so restoring a
+  failed split draft does not upload its acknowledged pieces again.
+- Long sources up to 600 seconds and 16 MiB can be decoded for editing;
+  sources above the grid limit automatically enable splitting. Each resulting
+  asset retains the grid's 30-second (SL) or 60-second limit. WAV format,
+  mono conversion and Vorbis codec rules are unchanged.
 
 Sources: `llfloaternamedesc.cpp`, `llaudio/llvorbisencode.cpp`,
 `floater_sound_preview.xml`.
@@ -80,8 +99,8 @@ Sources: `llfloaternamedesc.cpp`, `llaudio/llvorbisencode.cpp`,
   Clicking an animation in the list restarts its playback from the
   beginning, including if it had already been played or stopped.
   "Also play on my avatar" is shared by all the animations and saved in the
-  viewer settings, enabled or disabled. The checkbox is placed to the right
-  of the playback controls.
+  viewer settings, enabled or disabled. The checkbox is placed below
+  the playback controls.
   Pause and the slider also drive the preview on our avatar; the ends of
   these local motions produce no network stop.
 - Bulk imports: `.anim` accepted, BVH excluded like Firestorm.
@@ -302,17 +321,29 @@ missing/found source, explicit deletion and corrupted save file kept.
 
 ### Human tests
 
-Clicking **Contents → Import…** opens the window on **Texture**. Hovering
-**Import…** shows the asset types: clicking a type opens its tab and
-immediately offers to choose the files. The tabs of the window then allow
-changing type without opening the picker.
+Clicking **Build → Import** toggles the compact import chooser, exactly like
+the configurable Import shortcut (Ctrl+U by default). It is not in Contents.
+The chooser has individually frosted icon buttons without a common bar
+background. Clicking a type opens its dedicated window and filtered file
+picker: a file list at the left, metadata, preview and relevant controls at
+the right. The icon bar stays visible and clickable after choosing a type;
+Ctrl+U, Build → Import or its close cross can hide it independently of the
+inspector. Dedicated windows have their own saved sizes and positions,
+without unrelated type tabs or permissions controls. All permissions are
+edited in Settings, with per-type next-owner rights and common Share with
+group / Everyone can copy options. First-opened windows use the same corner
+at the left; windows previously shown retain their saved positions.
+**Multiple** (formerly Bulk) retains the complete window and all its tabs;
+changing a tab inside it never reopens the picker or changes window identity.
 
-Go through the tabs:
+Go through the type buttons and the tabs inside Multiple:
 
 - **Textures / materials**: choose a file, check dimensions and alpha,
   edit the PBR maps and factors, rotate and zoom the preview. Inventory
   materials use glTF/GLB; the JSON recipes of an assembly package are not
   importable glTF assets.
+  Dedicated materials show the preview and four map cards in one column;
+  the right pane scrolls while the file list remains fixed.
 - **Meshes**: open a HIGH, choose its LODs and its physics, check counters,
   dimensions, normals, convex analysis and colours. For the automatic
   associations, set the five suffixes in the import preferences before
@@ -321,7 +352,16 @@ Go through the tabs:
 - **Animations / sounds**: play, stop and reload; for an animation, pause,
   slider, loop and preview on our avatar. The pose must follow the slider
   immediately and stay still during the pause.
-- **Bulk / local**: check the total and the confirmation, cancel the
+  Animation settings sit beside the preview: labelled hand pose and
+  expression, aligned loop values in seconds / percent / frames, then easing.
+  Sound has a cached waveform, a synchronized playhead, 0–400% import gain
+  and start / end crop markers with numeric entry. Committing gain changes
+  restarts the audition; crop changes stop it so replay uses the new interval. Reset
+  restores the original. The crop and gain affect the uploaded audio and
+  are frozen at confirmation; source files and PCM remain unchanged.
+  Enable splitting and choose the maximum duration: inspect `_01`, `_02`,
+  `_03`, … names, division markers, the shorter tail and the total fee.
+- **Multiple / local**: check the total and the confirmation, cancel the
   remaining files, keep the receipts already obtained. For a local mesh,
   apply then remove on a selected object; the removal gives back its
   original appearance. Test a change to the file with watching enabled.
