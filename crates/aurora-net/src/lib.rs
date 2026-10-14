@@ -10,6 +10,7 @@ pub mod experience;
 pub mod fetch;
 pub mod inventory;
 pub mod land;
+pub mod land_tool;
 pub mod login;
 pub mod objcache;
 pub mod objects;

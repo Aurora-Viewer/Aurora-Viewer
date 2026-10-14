@@ -13,6 +13,9 @@ use uuid::Uuid;
 const SL_MAIN_HELPER: &str = "https://secondlife.com/helpers/";
 const SL_BETA_HELPER: &str = "https://secondlife.aditi.lindenlab.com/helpers/";
 
+/// The helper page of the L$ purchases.
+pub(crate) const PAGE: &str = "currency.php";
+
 /// LLXMLRPCTransaction's default timeout (llxmlrpctransaction.cpp).
 const TIMEOUT: Duration = Duration::from_secs(40);
 
@@ -98,7 +101,8 @@ pub(crate) fn buy_params(agent_id: Uuid, secure_session_id: Uuid, quote: &Curren
     Llsd::Map(p)
 }
 
-fn refusal(result: &Llsd) -> Result<(), CurrencyError> {
+/// The helper's `success: false` answer (both helper pages use it).
+pub(crate) fn refusal(result: &Llsd) -> Result<(), CurrencyError> {
     if result["success"].as_bool() {
         return Ok(());
     }
@@ -125,10 +129,16 @@ pub(crate) fn parse_buy(result: &Llsd) -> Result<(), CurrencyError> {
     refusal(result)
 }
 
-/// One XML-RPC exchange with the helper. Sent once: a purchase is never
-/// retried. Neither the parameters (session, password) nor the answer are
-/// logged.
-pub(crate) async fn call(http: &reqwest::Client, helper: &str, method: &str, params: Llsd) -> Result<Llsd, CurrencyError> {
+/// One XML-RPC exchange with the helper's `page` (`currency.php`,
+/// `landtool.php`). Sent once: a purchase is never retried. Neither the
+/// parameters (session, password) nor the answer are logged.
+pub(crate) async fn call(
+    http: &reqwest::Client,
+    helper: &str,
+    page: &str,
+    method: &str,
+    params: Llsd,
+) -> Result<Llsd, CurrencyError> {
     let failed = |detail: String| {
         log::warn!("{method}: {detail}");
         CurrencyError {
@@ -137,7 +147,7 @@ pub(crate) async fn call(http: &reqwest::Client, helper: &str, method: &str, par
         }
     };
     let response = http
-        .post(format!("{helper}currency.php"))
+        .post(format!("{helper}{page}"))
         .header("Content-Type", "text/xml")
         .timeout(TIMEOUT)
         .body(xmlrpc::build_call(method, &params))

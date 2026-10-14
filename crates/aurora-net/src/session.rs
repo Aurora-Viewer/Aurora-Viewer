@@ -1653,6 +1653,12 @@ impl Session<'_> {
             }
             NetCommand::CurrencyQuote { helper, amount } => self.currency_quote(helper, amount),
             NetCommand::BuyCurrency { helper, quote, password } => self.buy_currency(helper, quote, password),
+            NetCommand::LandToolPreflight {
+                helper,
+                billable_area,
+                currency_buy,
+            } => self.land_tool_preflight(helper, billable_area, currency_buy),
+            NetCommand::LandToolBuy { helper, request } => self.land_tool_buy(helper, request),
             NetCommand::FetchInventoryThumbnail { request, asset, resize } => {
                 let cap = self.main_cap("ViewerAsset");
                 let http = self.sh.caps_http.clone();
@@ -3661,6 +3667,13 @@ impl Session<'_> {
             let m: MoneyBalanceReply = pkt.decode()?;
             self.asset_imports.balance = Some(m.money_data.money_balance);
             emit(self.sh, NetEvent::Balance(m.money_data.money_balance));
+            emit(
+                self.sh,
+                NetEvent::LandHoldings {
+                    credit: m.money_data.square_meters_credit,
+                    committed: m.money_data.square_meters_committed,
+                },
+            );
         } else if id == TeleportStart::ID {
             emit(self.sh, NetEvent::TeleportStarted);
         } else if id == TeleportProgress::ID {
@@ -3852,6 +3865,7 @@ impl Session<'_> {
             owner: r.sim_owner,
             is_estate_manager: r.is_estate_manager,
             product_name: field_str(&m.region_info3.product_name),
+            billable_factor: r.billable_factor,
         };
         emit(self.sh, NetEvent::RegionHandshake(Arc::new(info)));
         if is_main {

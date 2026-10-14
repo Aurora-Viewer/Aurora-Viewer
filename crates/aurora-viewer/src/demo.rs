@@ -2213,6 +2213,7 @@ pub fn events() -> Vec<NetEvent> {
             owner: DEMO_LOUP,
             is_estate_manager: false,
             product_name: "Estate / Full Region".into(),
+            billable_factor: 1.0,
         })),
     ];
     // parcel overlay (mini-map property lines): four parcels split at

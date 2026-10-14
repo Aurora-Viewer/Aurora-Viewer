@@ -238,6 +238,30 @@ pub enum LandCommand {
     DeedToGroup { handle: RegionHandle, local_id: i32, group: Uuid },
     /// buyPass.
     BuyPass { handle: RegionHandle, local_id: i32 },
+    /// sendParcelBuy, ParcelBuy form: buy a parcel for sale at the price
+    /// and area it was shown with (the simulator refuses it if either moved).
+    Buy {
+        handle: RegionHandle,
+        local_id: i32,
+        /// The buyer's active group, and whether the land goes to it.
+        group: Uuid,
+        for_group: bool,
+        /// A group seller's land: take back the group's contribution.
+        remove_contribution: bool,
+        price: i32,
+        area: i32,
+    },
+    /// sendParcelBuy, ParcelClaim form: claim public land in a rectangle of
+    /// region coordinates.
+    Claim {
+        handle: RegionHandle,
+        group: Uuid,
+        for_group: bool,
+        west: f32,
+        south: f32,
+        east: f32,
+        north: f32,
+    },
     /// EstateCovenantRequest (LLPanelLandCovenant::refresh).
     CovenantRequest { handle: RegionHandle },
     /// RemoteParcelRequest capability: the parcel UUID of a point.
@@ -374,6 +398,9 @@ pub fn parse_parcel_properties(b: &Llsd) -> ParcelInfo {
         },
         sim_max_prims: pd["SimWideMaxPrims"].as_i32(),
         sim_total_prims: pd["SimWideTotalPrims"].as_i32(),
+        self_count: pd["SelfCount"].as_i32(),
+        other_count: pd["OtherCount"].as_i32(),
+        public_count: pd["PublicCount"].as_i32(),
         other_clean_time: pd["OtherCleanTime"].as_i32(),
         flags: u32_of(&pd["ParcelFlags"]),
         sale_price: pd["SalePrice"].as_i32(),
