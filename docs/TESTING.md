@@ -230,7 +230,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
 | `AURORA_DEMO_CLICKS=<ms>` | Clicks on the world at a regular rate |
 | `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs |
-| `AURORA_DEMO_KEYBOARD=<layout>` | Movement keys according to the layout |
+| `AURORA_DEMO_KEYBOARD=<layout>` | Default movement and letter shortcut keys according to the layout |
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
 ### Details
@@ -396,10 +396,15 @@ when unfocused") is ignored during a screenshot.
   `AURORA_DEMO_CAMERA=close,1180,380,35`, `AURORA_FPS_LIMIT=60` and a capture
   at frame 860: crosshairs, names and lines among the crowd, hidden by the
   avatars in front of them.
-- **`AURORA_DEMO_KEYBOARD=system|wasd|zqsd|fallback`**: fresh default values
-  of the movement keys with the Windows layout, a simulated QWERTY / AZERTY,
-  or a failed detection; combine with `AURORA_DEMO_OPTIONS=8` to examine the
-  secondary shortcuts.
+- **`AURORA_DEMO_KEYBOARD=system|wasd|zqsd|qwertz|fallback`**: fresh default
+  values of the movement keys and of the letter shortcuts with the Windows
+  layout, a simulated US QWERTY / French AZERTY / German QWERTZ, or a failed
+  detection (US QWERTY places); combine with `AURORA_DEMO_OPTIONS=8` to
+  examine the shortcuts. With `zqsd`, Mouselook shows M, World map Ctrl+M
+  and Snapshot to disk Ctrl+Ù (the AZERTY keys they are bound to); with
+  `qwertz`, Snapshot to disk shows Ctrl+Ö. Saved bindings keep their keys,
+  except the one-time move of the former US QWERTY defaults (settings
+  version 12).
 - **`AURORA_DEMO_CHATCMD="calc 2+2;rolld 2 20"`**: lines typed in the chat
   bar at frame 240, separated by `;` (chat bar commands: `calc`, `rolld`,
   `gtp`…).

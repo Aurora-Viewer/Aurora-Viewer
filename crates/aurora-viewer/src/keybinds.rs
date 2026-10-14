@@ -1,7 +1,9 @@
 //! Rebindable controls (Firestorm "Controls > Shortcuts"): each action
 //! has up to two bindings, a keyboard key or a mouse button (middle, back,
 //! forward, others) with optional modifiers. Keys are stored by their winit
-//! physical code name so the layout does not matter (ZQSD on AZERTY = WASD).
+//! physical code name, so a saved binding keeps its key. The defaults are
+//! chosen for the active layout (`layout`): movement by place (ZQSD on
+//! AZERTY = WASD), letter shortcuts by letter (M is the M key on AZERTY).
 
 mod layout;
 
@@ -495,10 +497,48 @@ impl Default for KeyBindings {
     }
 }
 
+/// Walking, strafing, jumping and crouching keep the places of the table
+/// (layout-aware WASD / ZQSD, E and C beside them): they are chosen for the
+/// hand, not for their letter.
+fn walks(a: Action) -> bool {
+    matches!(
+        a,
+        Action::Forward
+            | Action::Back
+            | Action::Left
+            | Action::Right
+            | Action::StrafeLeft
+            | Action::StrafeRight
+            | Action::Up
+            | Action::Down
+    )
+}
+
 impl KeyBindings {
+    /// The defaults for a keyboard layout. Like Firestorm, a shortcut named
+    /// after its letter (M for mouselook, Ctrl+Shift+A for People, Ctrl+`)
+    /// is bound to the key that carries that name in the layout: the table
+    /// writes it at its US QWERTY place and `layout::named_key` moves it.
     fn for_layout(layout: &layout::KeyboardLayout) -> Self {
+        let mut kb = Self::us_places(layout.movement_keys());
+        for (action, binds) in &mut kb.map {
+            if walks(*action) {
+                continue;
+            }
+            for b in binds.iter_mut().flatten() {
+                if let Input::Key(code) = &b.input
+                    && let Some(us_key) = layout::named_code(code)
+                {
+                    b.input = Input::key(layout.named_key(us_key));
+                }
+            }
+        }
+        kb
+    }
+
+    /// The default table, every shortcut letter at its US QWERTY place.
+    fn us_places([forward, back, left, right]: [KeyCode; 4]) -> Self {
         use KeyCode as K;
-        let [forward, back, left, right] = layout.movement_keys();
         let defaults: Vec<(Action, [Option<Binding>; 2])> = vec![
             (Action::Forward, [k(K::ArrowUp), k(forward)]),
             (Action::Back, [k(K::ArrowDown), k(back)]),
@@ -692,6 +732,30 @@ impl KeyBindings {
                 if binds[0].is_none() {
                     binds.swap(0, 1);
                 }
+            }
+        }
+    }
+
+    /// Settings-version 12 migration: a shortcut still on its former default,
+    /// the US QWERTY place of its letter, moves to the key of that letter in
+    /// the active layout (`for_layout`). A slot the user changed or cleared
+    /// stays, and so does a default whose new key another action already uses.
+    pub fn follow_layout_letters(&mut self) {
+        self.follow_letters_of(layout::current());
+    }
+
+    fn follow_letters_of(&mut self, layout: &layout::KeyboardLayout) {
+        let before = Self::us_places(layout.movement_keys());
+        let after = Self::for_layout(layout);
+        for ((action, old), (_, new)) in before.map.iter().zip(&after.map) {
+            for slot in 0..2 {
+                let (Some(old), Some(new)) = (&old[slot], &new[slot]) else {
+                    continue;
+                };
+                if old == new || self.get(*action)[slot].as_ref() != Some(old) || self.users(new).iter().any(|a| a != action) {
+                    continue;
+                }
+                self.set(*action, slot, Some(new.clone()));
             }
         }
     }
@@ -989,42 +1053,125 @@ mod tests {
 
     #[test]
     fn triggers_respect_modifiers() {
-        let kb = KeyBindings::default();
-        let m = Input::key(KeyCode::KeyM);
-        assert_eq!(kb.triggered(&m, Mods::default()), Some(Action::Mouselook));
-        assert_eq!(
-            kb.triggered(
-                &m,
-                Mods {
-                    ctrl: true,
-                    shift: true,
-                    alt: false
-                }
+        let mods = |ctrl, shift, alt| Mods { ctrl, shift, alt };
+        for (layout, m_key) in [
+            (layout::KeyboardLayout::wasd(), KeyCode::KeyM),
+            (layout::KeyboardLayout::zqsd(), KeyCode::Semicolon),
+            (layout::KeyboardLayout::qwertz(), KeyCode::KeyM),
+        ] {
+            let kb = KeyBindings::for_layout(&layout);
+            let m = Input::key(m_key);
+            assert_eq!(kb.triggered(&m, Mods::default()), Some(Action::Mouselook));
+            assert_eq!(kb.triggered(&m, mods(true, true, false)), Some(Action::Minimap));
+            assert_eq!(kb.triggered(&m, mods(true, false, false)), Some(Action::WorldMap));
+            assert_eq!(kb.triggered(&m, mods(false, true, true)), None);
+        }
+    }
+
+    /// Firestorm binds a letter shortcut to the key Windows names that way
+    /// in the active layout (LLKeyboardWin32): the M of AZERTY is right of L,
+    /// its ` (VK_OEM_3) is ù, and QWERTZ's ` is ö.
+    #[test]
+    fn letter_shortcuts_follow_the_layout_and_movement_keeps_its_places() {
+        use KeyCode as K;
+        let us = layout::KeyboardLayout::wasd();
+        let fr = layout::KeyboardLayout::zqsd();
+        let be = layout::KeyboardLayout::belgian();
+        let de = layout::KeyboardLayout::qwertz();
+        // action, its modifiers, then its key on US, French, Belgian, German
+        let expected = [
+            (
+                Action::Mouselook,
+                (false, false, false),
+                [K::KeyM, K::Semicolon, K::Semicolon, K::KeyM],
             ),
-            Some(Action::Minimap)
-        );
-        assert_eq!(
-            kb.triggered(
-                &m,
-                Mods {
-                    ctrl: true,
-                    shift: false,
-                    alt: false
-                }
+            (
+                Action::WorldMap,
+                (true, false, false),
+                [K::KeyM, K::Semicolon, K::Semicolon, K::KeyM],
             ),
-            Some(Action::WorldMap)
-        );
-        assert_eq!(
-            kb.triggered(
-                &m,
-                Mods {
-                    ctrl: false,
-                    shift: true,
-                    alt: true
-                }
+            (Action::Minimap, (true, true, false), [K::KeyM, K::Semicolon, K::Semicolon, K::KeyM]),
+            (Action::People, (true, true, false), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),
+            (
+                Action::PhotoToDisk,
+                (true, false, false),
+                [K::Backquote, K::Quote, K::Quote, K::Semicolon],
             ),
-            None
-        );
+            (Action::Fly, (false, false, false), [K::KeyF; 4]),
+            (Action::CameraControls, (true, true, false), [K::KeyC; 4]),
+            (Action::AlwaysRun, (true, false, false), [K::KeyR; 4]),
+            (Action::Conversations, (true, false, false), [K::KeyT; 4]),
+            (Action::Inventory, (true, false, false), [K::KeyI; 4]),
+            (Action::Gestures, (true, false, false), [K::KeyG; 4]),
+            (Action::TeleportHistory, (false, false, true), [K::KeyH; 4]),
+            (Action::Search, (true, false, false), [K::KeyF; 4]),
+            (Action::Performance, (true, true, false), [K::Digit1; 4]),
+            (Action::Preferences, (true, false, false), [K::KeyP; 4]),
+            (Action::Import, (true, false, false), [K::KeyU; 4]),
+            (Action::ShowTransparency, (true, false, true), [K::KeyT; 4]),
+            (Action::Rebake, (true, false, true), [K::KeyR; 4]),
+            (Action::PhotoWindow, (true, true, false), [K::KeyS; 4]),
+        ];
+        for (i, layout) in [&us, &fr, &be, &de].into_iter().enumerate() {
+            let kb = KeyBindings::for_layout(layout);
+            for (action, (ctrl, shift, alt), keys) in expected {
+                let binding = Binding {
+                    input: Input::key(keys[i]),
+                    ctrl,
+                    shift,
+                    alt,
+                };
+                assert!(kb.get(action).contains(&Some(binding)), "{action:?} on layout {i}");
+            }
+            // movement keeps the places under the hand: WASD / ZQSD, E and C
+            for (action, key) in [
+                (Action::Forward, K::KeyW),
+                (Action::Back, K::KeyS),
+                (Action::Left, K::KeyA),
+                (Action::Right, K::KeyD),
+                (Action::Up, K::KeyE),
+                (Action::Down, K::KeyC),
+            ] {
+                assert_eq!(kb.get(action)[1], k(key), "{action:?} on layout {i}");
+            }
+            // and no default steals another's key
+            for (action, binds) in &kb.map {
+                for b in binds.iter().flatten() {
+                    assert_eq!(kb.users(b), vec![*action], "{b:?} on layout {i}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn former_letter_defaults_move_once_and_choices_stay() {
+        use KeyCode as K;
+        let fr = layout::KeyboardLayout::zqsd();
+        // a profile saved on AZERTY before the fix: letters at their US places
+        let mut kb = KeyBindings::us_places(fr.movement_keys());
+        kb.set(Action::People, 0, kmod(K::KeyK, true, true)); // the user's own key
+        kb.set(Action::WorldMap, 0, None); // cleared by the user
+        kb.set(Action::Inventory, 1, kmod(K::Quote, true, false)); // ù already taken
+        kb.follow_letters_of(&fr);
+        assert_eq!(kb.get(Action::Mouselook)[0], k(K::Semicolon));
+        assert_eq!(kb.get(Action::Minimap)[0], kmod(K::Semicolon, true, true));
+        assert_eq!(kb.get(Action::People)[0], kmod(K::KeyK, true, true));
+        assert_eq!(kb.get(Action::WorldMap), [None, None]);
+        assert_eq!(kb.get(Action::PhotoToDisk)[0], kmod(K::Backquote, true, false));
+        assert_eq!(kb.get(Action::Forward)[1], k(K::KeyW));
+        let migrated = kb.clone();
+        kb.follow_letters_of(&fr);
+        assert_eq!(kb, migrated);
+
+        // a QWERTY profile has nothing to move
+        let us = layout::KeyboardLayout::wasd();
+        let mut kb = KeyBindings::us_places(us.movement_keys());
+        kb.follow_letters_of(&us);
+        assert_eq!(kb, KeyBindings::for_layout(&us));
+        // and an AZERTY profile with untouched defaults ends on the new ones
+        let mut kb = KeyBindings::us_places(fr.movement_keys());
+        kb.follow_letters_of(&fr);
+        assert_eq!(kb, KeyBindings::for_layout(&fr));
     }
 
     #[test]
@@ -1064,7 +1211,12 @@ mod tests {
 
     #[test]
     fn fresh_defaults_bind_movement_in_the_secondary_slots() {
-        for layout in [layout::KeyboardLayout::wasd(), layout::KeyboardLayout::zqsd(), Default::default()] {
+        for layout in [
+            layout::KeyboardLayout::wasd(),
+            layout::KeyboardLayout::zqsd(),
+            layout::KeyboardLayout::qwertz(),
+            Default::default(),
+        ] {
             let kb = KeyBindings::for_layout(&layout);
             for (action, arrow, letter) in [
                 (Action::Forward, KeyCode::ArrowUp, KeyCode::KeyW),
