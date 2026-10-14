@@ -1082,6 +1082,7 @@ mod tests {
                 [K::Backquote, K::Quote, K::Quote, K::Semicolon],
             ),
             (Action::Fly, (false, false, false), [K::KeyF; 4]),
+            (Action::CameraControls, (true, true, false), [K::KeyC; 4]),
             (Action::AlwaysRun, (true, false, false), [K::KeyR; 4]),
             (Action::Conversations, (true, false, false), [K::KeyT; 4]),
             (Action::Inventory, (true, false, false), [K::KeyI; 4]),
