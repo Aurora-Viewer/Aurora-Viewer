@@ -111,6 +111,7 @@ pub struct Settings {
     /// Friends tab of the People window.
     pub friends_list: crate::ui::people::FriendsSettings,
     pub inventory: crate::ui::inventory::InventoryPreferences,
+    pub gestures: crate::ui::gestures::Settings,
     pub imports: crate::imports::Preferences,
     pub ao: crate::ao::Settings,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
@@ -530,6 +531,7 @@ impl Default for Settings {
             radar: Default::default(),
             friends_list: Default::default(),
             inventory: Default::default(),
+            gestures: Default::default(),
             imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),

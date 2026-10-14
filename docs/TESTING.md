@@ -1187,6 +1187,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
+| `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -1705,6 +1706,38 @@ and that Esc creates nothing. Online, validate real objects, forbidden land,
 the Trash / Library, neighbouring regions, the group of the land and
 objects already worn; the human logs in and carries out these tests.
 
+**`AURORA_DEMO_GESTURES=manager|editor|play|completion|completion-send|communicate|communicate-open`** — three synthetic gestures:
+chat with a replacement and F8 shortcut, an animated pose on F9, and an
+inactive chime on F10. `manager` opens the list; `editor` also opens the
+chat gesture's editor; `play` starts the chat and animation at frame 650.
+Capture at frame 620 for the list/editor, 680 during playback and 800
+after the explicit pause. Sounds stay muted unless `AURORA_DEMO_SOUND=1`.
+`completion` gives the chat gesture the `/eject` trigger, focuses nearby
+chat at frame 540 and types `/ej` at frame 550: capture frame 620 to see
+`/eject` with the added `ect` selected. `completion-send` also presses
+Enter at frame 650: capture frame 800 to see the gesture's chat steps and
+the cleared input. Typing replaces the selected suffix; Backspace removes
+it without immediately completing it again. Only active, enabled gestures
+participate; ambiguous prefixes extend only to their common suffix. The
+same completion is available in the conversations window's local chat,
+with instant messages and numeric channel prefixes keeping their input.
+`communicate` starts with the gesture manager closed, clicks the wolf menu
+at frame 540 and hovers Communicate at frame 560: capture frame 620 to see
+the Gestures entry below Conversations, with Ctrl+G in the shortcut column.
+`communicate-open` also
+clicks that entry at frame 650: capture frame 800 to check that the manager
+opens through the actual menu control.
+Check Ctrl+G, filtering and active-only/enabled switches, sorting and
+multiple selection, inventory Open/Play/Activate/Deactivate, all four step
+types, stock/inventory animation choices, Shift/Ctrl and key choices,
+preview/stop, reordering, saving and discard confirmation. Chat steps keep
+their channel prefixes (`/28574 T4`); the demo never connects to a grid.
+Online validation is performed by the human: activate and play existing
+gestures, chat/key triggers on the real keyboard, save/reopen modified
+gestures, permissions, outfit switching, teleport and restoration after
+relogging. A rejected save must keep the draft, and deactivation must stop
+only the gesture's requested motions.
+
 **`AURORA_DEMO_INVENTORY`** — opens a synthetic inventory: personal
 folder, subfolder, outfits, objects, documents, texture, sound, gesture,
 sky, material, link and varied permissions; library in the tree,
@@ -1917,7 +1950,9 @@ What the inventory must show with these scenarios:
   the dark scene. The People window is closed.
   - `height`: Nova and Lune have a torso translation deformer (+0.8 m),
     animated head pitch and pelvis bobbing. Their tags stay above the taller
-    bodies, centred on their roots at a constant height through the cycle.
+    bodies, horizontally centred on their projected roots at a constant
+    height through the cycle. With a pitched camera, check avatars on both
+    sides of the view: raising a tag must not shift it sideways.
     Compare frames 660 and 780 at 60 fps; also use `AURORA_NAME_TAGS=classic`.
     A change of animation can change its height envelope; its individual
     frames never move the tag. Use a human-run grid session to verify real deformer assets.

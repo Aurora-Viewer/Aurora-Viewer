@@ -21,6 +21,12 @@ fn submit(st: &mut InventoryUi, actions: &mut Vec<InvAction>, plan: Result<Mutat
     }
 }
 pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &InventoryPreferences, actions: &mut Vec<InvAction>) {
+    if let Some(original) = rules::original(inv, id)
+        && inv.items.get(&original).is_some_and(|it| it.asset_type == 21)
+    {
+        actions.push(InvAction::Gesture(crate::ui::gestures::Action::Open(original)));
+        return;
+    }
     if st.preview_dirty || st.save_pending {
         st.message = aurora_i18n::tr!("ui-inventory-context-save-or-close-the-open-document-before-opening-another").into();
         return;
@@ -633,6 +639,31 @@ pub(super) fn show(
                     );
                 }
                 let selected_items: Vec<_> = ids.iter().filter_map(|id| rules::original(inv, *id)).collect();
+                if kind == 21 {
+                    let active = selected_items.iter().all(|id| facts.active_gestures.contains(id));
+                    entry(
+                        ui,
+                        p,
+                        "player-play-filled",
+                        aurora_i18n::tr!("common-play"),
+                        single && ready,
+                        InvAction::Gesture(crate::ui::gestures::Action::Play(target.unwrap_or(id))),
+                        actions,
+                    );
+                    entry(
+                        ui,
+                        p,
+                        "check",
+                        if active {
+                            aurora_i18n::tr!("gesture-deactivate")
+                        } else {
+                            aurora_i18n::tr!("gesture-activate")
+                        },
+                        ready && !selected_items.is_empty() && selected_items.iter().all(|id| !rules::library(inv, *id)),
+                        InvAction::Gesture(crate::ui::gestures::Action::Active(selected_items.clone(), !active)),
+                        actions,
+                    );
+                }
                 let wear = ready
                     && !facts.appearance_busy
                     && selected_items.len() == ids.len()
@@ -831,6 +862,7 @@ mod tests {
                                 worn_labels: Default::default(),
                                 points: Vec::new(),
                                 appearance_busy: false,
+                                active_gestures: Default::default(),
                                 touchable: Default::default(),
                                 names: Default::default(),
                             },
@@ -984,6 +1016,7 @@ mod tests {
             let facts = Facts {
                 agent: Uuid::nil(),
                 worn: HashSet::from([item]),
+                active_gestures: Default::default(),
                 worn_labels: Default::default(),
                 points: Vec::new(),
                 appearance_busy: false,
@@ -1072,6 +1105,7 @@ mod tests {
                 worn_labels: Default::default(),
                 points: Vec::new(),
                 appearance_busy: false,
+                active_gestures: Default::default(),
                 touchable: Default::default(),
                 names: Default::default(),
             };

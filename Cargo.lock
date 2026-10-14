@@ -586,6 +586,7 @@ dependencies = [
 name = "aurora-net"
 version = "0.1.0"
 dependencies = [
+ "aurora-assets",
  "aurora-i18n",
  "aurora-llsd",
  "aurora-msg",
