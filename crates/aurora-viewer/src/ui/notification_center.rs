@@ -264,15 +264,13 @@ pub fn bell(
     if unread > 0 && island {
         super::bars::islands::count(ui, p, rect, unread, s, dnd);
     } else if unread > 0 {
-        let text = if unread > 99 { "99+".to_owned() } else { unread.to_string() };
-        let (fill, ink) = if dnd { (p.raised, p.muted) } else { (p.danger, p.on_accent) };
-        let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(9.5 * s), ink);
-        let h = 14.0 * s;
-        let w = (galley.size().x + 7.0 * s).max(h);
-        // pinned by its top right corner: the bounce grows inside the bar
-        let badge = Rect::from_min_size(egui::pos2(rect.right() + 3.0 - w, rect.top() - 1.0), Vec2::new(w, h));
-        ui.painter().rect_filled(badge, h / 2.0, fill);
-        super::widgets::paint_ink_centered(ui.painter(), galley, badge.center(), ink);
+        // the interface's one counter, pinned by its top right corner: the
+        // bounce grows inside the bar
+        let anchor = rect.right_top() + Vec2::new(3.0, -1.0);
+        super::widgets::UnreadCount::new(unread, super::widgets::CountSize::Bar)
+            .scale(s)
+            .paused(dnd)
+            .paint(ui.painter(), p, anchor, egui::Align2::RIGHT_TOP);
     }
     let tip = if dnd {
         aurora_i18n::tr!("ui-notifications-bell-paused").to_owned()

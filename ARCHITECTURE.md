@@ -524,6 +524,8 @@ the window, its tabs, and the simple Friends, Groups and Blocked lists of Firest
 redrawn windows (group profile, About Land, People).
 The "Invisible" status (right to see us online withdrawn from each friend, then given back to those who had it)
 is in `world/status.rs`.
+`ui/widgets/unread.rs` is the one unread counter (islands, dock, Firestorm's
+bars, Conversations list): dark red, its digits' ink centred to the pixel.
 `ui/widgets/keycap.rs` draws the keys of a shortcut (list of
 shortcuts, microphone panel). `ui/widgets/color.rs` is the compact colour picker (`color_button`,
 `color_panel`, RGB / HSV / hexadecimal conversions) and the eyedropper it shares
