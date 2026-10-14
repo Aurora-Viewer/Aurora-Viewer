@@ -1597,7 +1597,11 @@ impl World {
             NetEvent::ScriptDialog {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
-            NetEvent::ScriptQuestion { task_id, object_name, .. } if self.object_blocked(&task_id, &object_name) => None,
+            // process_script_question drops only the questions of a blocked
+            // object (LLMuteList::isMuted(taskid)): not those of a blocked
+            // owner, nor on any other condition (no click needed, object out
+            // of view or unknown, another region, Do Not Disturb)
+            NetEvent::ScriptQuestion { task_id, .. } if self.mutes.is_muted_id(&task_id) => None,
             NetEvent::LoadUrl {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
@@ -3752,6 +3756,37 @@ mod motion_tests {
         let count = world.notifications.list.len();
         world.apply(experience_question(xp, 1 << 12));
         assert_eq!(world.notifications.list.len(), count);
+    }
+
+    #[test]
+    fn a_question_shows_without_a_click_from_an_unknown_object_of_another_region() {
+        let (mut world, _, _) = fixture();
+        let xp = Uuid::from_u128(0xE3E3);
+        // nothing selected, the object never seen, a neighbouring region:
+        // a collision, a sensor or the parcel's arrival script asks
+        world.apply(NetEvent::ScriptQuestion {
+            task_id: Uuid::from_u128(0x5EE),
+            item_id: Uuid::from_u128(0x5EF),
+            object_name: "Greeter".into(),
+            owner_name: "Land Owner".into(),
+            questions: 1 << 18,
+            experience: xp,
+            region: 0xABCD,
+        });
+        world.apply(NetEvent::ExperienceInfo(vec![aurora_net::experience::ExperienceDetails::unknown(
+            xp,
+        )]));
+        let n = world.notifications.list.last().expect("shown");
+        assert!(matches!(
+            &n.data,
+            notifications::Data::Permissions {
+                region: 0xABCD,
+                experience: Some(_),
+                ..
+            }
+        ));
+        let (cmds, _) = world.respond_notification(n.id, notifications::Response::Accept);
+        assert!(matches!(&cmds[..], [aurora_net::NetCommand::ScriptAnswer { region: 0xABCD, .. }]));
     }
 
     #[test]

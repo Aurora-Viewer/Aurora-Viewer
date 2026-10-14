@@ -401,7 +401,7 @@ pub struct App {
     stream_demo: Option<crate::demo::stream::StreamDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
-    /// AURORA_DEMO_EXPERIENCE: an experience's teleport door.
+    /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_GEOMETRY: meshes filling the geometry arena.
     geometry_demo: Option<crate::demo::geometry::GeometryDemo>,
@@ -788,6 +788,21 @@ impl App {
         })
     }
 
+    /// What the experience demo's simulator answers or does on its own.
+    fn apply_experience_demo(&mut self, reply: crate::demo::experience::Reply) {
+        match reply {
+            crate::demo::experience::Reply::Events(events) => {
+                for ev in events {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+            }
+            crate::demo::experience::Reply::Say(text) => self.world.system_message(text),
+            crate::demo::experience::Reply::Nothing => {}
+        }
+    }
+
     fn send(&mut self, cmd: NetCommand) {
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
         // preference is not in sync with the server (TELEPORT_PENDING)
@@ -805,21 +820,11 @@ impl App {
             self.world.maturity.hold(cmd);
             return;
         }
-        // AURORA_DEMO_EXPERIENCE: the door's simulator and capabilities
+        // AURORA_DEMO_EXPERIENCE: the simulator and the capabilities
         if self.demo
             && let Some(reply) = self.experience_demo.as_mut().and_then(|demo| demo.reply(&cmd))
         {
-            match reply {
-                crate::demo::experience::Reply::Events(events) => {
-                    for ev in events {
-                        if let Some(e) = self.world.apply(ev) {
-                            self.on_app_event(e);
-                        }
-                    }
-                }
-                crate::demo::experience::Reply::Say(text) => self.world.system_message(text),
-                crate::demo::experience::Reply::Nothing => {}
-            }
+            self.apply_experience_demo(reply);
             return;
         }
         // AURORA_DEMO_MATURITY: the server agrees, keeps its value or fails
@@ -5840,9 +5845,14 @@ impl App {
         {
             self.refresh_object_textures(object);
         }
-        // AURORA_DEMO_EXPERIENCE: the door, and in `auto` its question
-        if let Some(demo) = &mut self.experience_demo {
-            demo.tick(self.frame_count, &mut self.world);
+        // AURORA_DEMO_EXPERIENCE: the door or the pad, and what asks
+        // without a click (walking into the pad, arriving)
+        if let Some(reply) = self
+            .experience_demo
+            .as_mut()
+            .and_then(|demo| demo.tick(self.frame_count, &mut self.world))
+        {
+            self.apply_experience_demo(reply);
         }
         // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back
         if self.demo
