@@ -1285,7 +1285,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent |
-| `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout and clickable 3D beacon |
+| `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
@@ -1781,14 +1781,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the
   bright column stays visible up to the screen edge, with a pin and a
   readable location / distance label. Hover the pin or its label for
-  "Click to remove waypoint"; click either to remove it from the scene
+  "Click to remove beacon"; click either to remove it from the scene
   and mini-map. `beacon-offscreen` puts the destination behind the camera:
   a clickable direction arrow and its label stay within the screen.
   `beacon-click` presses the pin at frame 700 through the normal mouse
   input path; the log must say `cleared=true`, `mouse_mode=None`,
   `pending_pick=false`. Capture frames 650 and 780 for before / after.
-  With `1`, "Remove waypoint" is the first button of the right panel;
-  its tooltip explains that it removes the marker from all three views.
+  With `1`, "Remove beacon" is in the position actions, at the former
+  "Clear" button's location. Its tooltip explains removal from all three
+  views. `coordinates` opens the map without a beacon: X / Y / Z show our
+  current position and remain editable. Commit a new value with Enter or
+  by leaving the field: a destination appears without teleporting. Remove
+  it: the coordinates return to our position and can be edited again.
 - **`AURORA_DEMO_SLURLS=1|offer`**: Tess Touch's conversation, the chat
   console and the notification list show the same place links, one per
   SLURL form: the plaza (General), the lagoon (Moderate), Nordheim (Adult),

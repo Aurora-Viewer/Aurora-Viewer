@@ -9096,7 +9096,9 @@ impl ApplicationHandler for App {
                     "beacon-offscreen" => (80.0, 128.0, 30.0),
                     _ => (200.0, 150.0, 25.0),
                 };
-                self.world.map.track_location(256000.0 + x, 256000.0 + y, z, false);
+                if mode != "coordinates" {
+                    self.world.map.track_location(256000.0 + x, 256000.0 + y, z, false);
+                }
                 // words separated by commas: search:<text> (the search with its
                 // suggestions), drawer:<landmarks|history|friends>, landmarks
                 // (212 of them, the drawer open), friend (Nova followed),
