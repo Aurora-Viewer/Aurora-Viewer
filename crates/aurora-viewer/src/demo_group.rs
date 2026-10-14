@@ -52,9 +52,14 @@ pub fn scenario() -> Scenario {
     }
 }
 
-/// `<scenario>:admin`: the window opens on the Administration tab.
+/// `<scenario>:admin`: the window opens on the Administration tab
+/// (`:identity` on its Group identity section).
 pub fn admin_tab() -> bool {
-    std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').nth(1) == Some("admin"))
+    std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| matches!(v.split(':').nth(1), Some("admin" | "identity")))
+}
+
+pub fn identity_section() -> bool {
+    std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').nth(1) == Some("identity"))
 }
 
 /// `<scenario>:land`: the window opens on the "Land and L$" tab, on the
@@ -246,6 +251,22 @@ fn spec(group: &Uuid) -> Option<Spec> {
     let officer_title = aurora_i18n::tr!("demo-group-officer");
     let member_title = aurora_i18n::tr!("demo-group-member");
     let builder_title = aurora_i18n::tr!("demo-builder");
+    // a group created during the run: us, its owner, and the three roles a
+    // new group gets
+    if created(group).is_some() {
+        let mut roles = vec![
+            role(Uuid::nil(), "Everyone", member_title, "", DEFAULT_MEMBER),
+            role(OWNERS, "Owners", founder_title, "", u64::MAX),
+            role(OFFICERS, "Officers", officer_title, "", DEFAULT_OFFICER),
+        ];
+        roles[0].members = 1;
+        roles[1].members = 1;
+        return Some(Spec {
+            members: vec![member(DEMO_AGENT, founder_title, LastSeen::Online, u64::MAX, true, 0)],
+            roles,
+            pairs: vec![(OWNERS, DEMO_AGENT)],
+        });
+    }
     let count = super::search::member_count(group)?.max(1) as usize;
     let founder = super::search::founder(group)?;
     let mut members = Vec::new();
@@ -619,8 +640,156 @@ fn charter() -> String {
     )
 }
 
+/// `AURORA_DEMO_GROUP_CREATE=<mode>[:classic]`: the "Create a group" window
+/// - `form`: empty, as opened from People › Groups;
+/// - `cost`: filled, "Create" clicked: the fee to confirm;
+/// - `refused`: sent with the name of a demo group: the server refuses it;
+/// - `limit`: the account at its group limit (its three groups);
+/// - `created`: sent: the new group's profile, the fee taken from the balance.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CreateScenario {
+    Form,
+    Cost,
+    Refused,
+    Limit,
+    Created,
+}
+
+pub fn create_scenario() -> Option<CreateScenario> {
+    let v = std::env::var("AURORA_DEMO_GROUP_CREATE").ok()?;
+    Some(match v.split(':').next().unwrap_or_default() {
+        "cost" | "cout" | "coût" => CreateScenario::Cost,
+        "refused" | "refuse" | "refusé" => CreateScenario::Refused,
+        "limit" | "limite" => CreateScenario::Limit,
+        "created" | "cree" | "créé" => CreateScenario::Created,
+        _ => CreateScenario::Form,
+    })
+}
+
+/// `<mode>:classic`: the classic look (Firestorm's creation panel, and the
+/// classic profile of the new group).
+pub fn create_classic() -> bool {
+    std::env::var("AURORA_DEMO_GROUP_CREATE").is_ok_and(|v| v.split(':').any(|p| p == "classic"))
+}
+
+/// The fee of a new group by membership in the creation scenarios (the
+/// login's `premium_packages`; the demo's own figures).
+const CREATE_COSTS: [(&str, i32, i32); 3] = [("Base", 100, 42), ("Premium", 50, 70), ("Premium_Plus", 0, 140)];
+
+/// What the login says of the account in the creation scenarios: a Base
+/// membership, its fee and group limit (the demo's three groups for
+/// `limit`), and the other memberships.
+pub fn login_benefits() -> Option<Vec<(&'static str, aurora_llsd::Llsd)>> {
+    use aurora_llsd::llsd_map;
+    let scenario = create_scenario()?;
+    let benefits = |cost: i32, limit: i32| llsd_map! { "create_group_cost" => cost, "group_membership_limit" => limit };
+    let (_, cost, limit) = CREATE_COSTS[0];
+    let limit = if scenario == CreateScenario::Limit { 3 } else { limit };
+    let mut packages = aurora_llsd::Llsd::new_map();
+    for (name, cost, limit) in CREATE_COSTS {
+        packages.insert(name, llsd_map! { "benefits" => benefits(cost, limit) });
+    }
+    Some(vec![
+        ("account_type", "Base".into()),
+        ("account_level_benefits", benefits(cost, limit)),
+        ("premium_packages", packages),
+    ])
+}
+
+/// The name the scenarios type: a new one, or a demo group's (`refused`).
+pub fn create_name(scenario: CreateScenario) -> &'static str {
+    match scenario {
+        CreateScenario::Refused => "Aurora Builders",
+        _ => "Lagoon Painters",
+    }
+}
+
+/// The groups created during the run (their profile).
+static CREATED: Mutex<Vec<aurora_net::search::GroupProfile>> = Mutex::new(Vec::new());
+
+fn created(group: &Uuid) -> Option<aurora_net::search::GroupProfile> {
+    CREATED.lock().ok()?.iter().find(|g| g.id == *group).cloned()
+}
+
+/// The dataserver's answer to CreateGroupRequest: refused when a group has
+/// the name already, at the group limit or without the fee in the balance;
+/// else the group is ours (its only member, an owner), the fee taken.
+pub fn create(name: &str, info: &aurora_net::groups::GroupInfo, balance: i32, fee: i32, can_join: bool) -> Vec<NetEvent> {
+    let taken = super::search::group_named(name)
+        || [
+            "Aurora Builders",
+            aurora_i18n::tr!("demo-northern-wolves"),
+            aurora_i18n::tr!("common-plaza-market"),
+        ]
+        .iter()
+        .any(|n| n.eq_ignore_ascii_case(name))
+        || CREATED.lock().is_ok_and(|c| c.iter().any(|g| g.name.eq_ignore_ascii_case(name)));
+    let refused = if taken {
+        Some(aurora_i18n::tr!("demo-group-create-taken"))
+    } else if !can_join {
+        Some(aurora_i18n::tr!("demo-group-create-limit"))
+    } else if balance < fee {
+        Some(aurora_i18n::tr!("demo-group-create-funds"))
+    } else {
+        None
+    };
+    if let Some(message) = refused {
+        log::info!("demo group: creation of \"{name}\" refused");
+        return vec![NetEvent::GroupCreated {
+            group: Uuid::nil(),
+            success: false,
+            message: message.to_owned(),
+        }];
+    }
+    let mut store = CREATED.lock().unwrap_or_else(|e| e.into_inner());
+    let id = Uuid::from_u128(0x6E00_C4EA_7E00_0000_0000_0000_0000_0000 | (store.len() as u128 + 1));
+    store.push(aurora_net::search::GroupProfile {
+        id,
+        name: name.to_owned(),
+        charter: info.charter.clone(),
+        show_in_list: info.show_in_list,
+        member_title: aurora_i18n::tr!("demo-group-founder").into(),
+        powers: u64::MAX,
+        insignia: info.insignia,
+        founder: DEMO_AGENT,
+        membership_fee: info.membership_fee,
+        open_enrollment: info.open_enrollment,
+        members: 1,
+        roles: 3,
+        allow_publish: info.allow_publish,
+        mature_publish: info.mature_publish,
+        owner_role: OWNERS,
+    });
+    drop(store);
+    let g = GroupMembership {
+        id,
+        name: name.to_owned(),
+        insignia: info.insignia,
+        powers: u64::MAX,
+        accept_notices: true,
+        list_in_profile: true,
+        contribution: 0,
+    };
+    if let Ok(mut joined) = JOINED.lock() {
+        joined.push(g.clone());
+    }
+    log::info!("demo group: \"{name}\" created for L$ {fee}");
+    vec![
+        NetEvent::Groups(vec![g]),
+        NetEvent::Balance(balance - fee),
+        NetEvent::GroupCreated {
+            group: id,
+            success: true,
+            message: String::new(),
+        },
+    ]
+}
+
 pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
     Some(match cmd {
+        NetCommand::GroupProfileRequest(group) if created(group).is_some() => {
+            vec![NetEvent::GroupProfile(Box::new(created(group)?))]
+        }
         NetCommand::GroupProfileRequest(group) if *group == DEMO_GROUP1 => {
             let mut events = super::search::reply(cmd)?;
             for e in &mut events {
@@ -853,6 +1022,34 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_dataserver_creates_a_group_and_takes_its_fee() {
+        let info = aurora_net::groups::GroupInfo {
+            show_in_list: true,
+            ..Default::default()
+        };
+        let refused = |events: Vec<NetEvent>| matches!(events.as_slice(), [NetEvent::GroupCreated { success: false, .. }]);
+        assert!(refused(create("aurora builders", &info, 1000, 100, true)), "a demo group's name");
+        assert!(refused(create("Test Fee Group", &info, 50, 100, true)), "not enough L$");
+        assert!(refused(create("Test Limit Group", &info, 1000, 100, false)), "the group limit");
+        let events = create("Test Created Group", &info, 1000, 100, true);
+        let Some(NetEvent::GroupCreated { group, success: true, .. }) = events.last() else {
+            panic!("created: {events:?}");
+        };
+        assert!(events.iter().any(|e| matches!(e, NetEvent::Balance(900))));
+        assert!(events.iter().any(|e| matches!(e, NetEvent::Groups(g) if g[0].id == *group)));
+        // its profile and its data: us, its owner
+        let profile = reply(&NetCommand::GroupProfileRequest(*group)).expect("profile");
+        assert!(matches!(&profile[0], NetEvent::GroupProfile(g) if g.name == "Test Created Group" && g.founder == DEMO_AGENT));
+        let s = spec(group).expect("roles and members");
+        assert_eq!(s.members.len(), 1);
+        assert!(s.members[0].is_owner);
+        assert!(
+            refused(create("Test Created Group", &info, 1000, 100, true)),
+            "the name is taken now"
+        );
+    }
 
     #[test]
     fn aurora_builders_has_its_named_members_among_all() {

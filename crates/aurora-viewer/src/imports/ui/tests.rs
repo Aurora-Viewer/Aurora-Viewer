@@ -1,6 +1,202 @@
 use super::*;
 
 #[test]
+fn settings_only_show_permissions_and_payment_and_sharing_clicks_are_per_type() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut imports = Imports {
+        settings_open: true,
+        ..Default::default()
+    };
+    let mut prefs = Preferences::default();
+    let frame = |imports: &mut Imports, prefs: &mut Preferences, events| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                show(ui.ctx(), &theme.palette(), imports, prefs, &world, &Default::default());
+            },
+        );
+        output.textures_delta.clear();
+        output
+    };
+    for _ in 0..8 {
+        drop(frame(&mut imports, &mut prefs, Vec::new()));
+    }
+    let output = frame(&mut imports, &mut prefs, Vec::new());
+    for label in [
+        aurora_i18n::tr!("import-permissions-group"),
+        aurora_i18n::tr!("import-permissions-everyone"),
+        aurora_i18n::tr!("import-show-payment"),
+    ] {
+        assert!(
+            output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text)
+            if text.galley.text() == label && shape.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))),
+            "visible Settings field: {label}"
+        );
+    }
+    for label in [
+        aurora_i18n::tr!("import-max-size"),
+        aurora_i18n::tr!("import-lossless"),
+        aurora_i18n::tr!("import-preview-own-avatar"),
+        aurora_i18n::tr!("import-auto-weights"),
+        aurora_i18n::tr!("import-local-settings"),
+        aurora_i18n::tr!("import-preview-colors"),
+    ] {
+        assert!(
+            !output
+                .shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == label))
+        );
+    }
+    for (kind, column) in [(Kind::Sound, 3usize), (Kind::Mesh, 4usize)] {
+        let pos = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("import_permission", kind, column))))
+            .expect("permission cell")
+            .center();
+        for pressed in [true, false] {
+            drop(frame(
+                &mut imports,
+                &mut prefs,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            ));
+        }
+    }
+    assert_ne!(prefs.permissions_for(Kind::Sound).group, 0);
+    assert_eq!(prefs.permissions_for(Kind::Texture).group, 0);
+    assert_ne!(prefs.permissions_for(Kind::Mesh).everyone, 0);
+    assert_eq!(prefs.permissions_for(Kind::Sound).everyone, 0);
+    assert!(!prefs.share_group && !prefs.everyone_copy, "legacy fallbacks remain unchanged");
+}
+
+#[test]
+fn mesh_palette_uses_the_shared_picker_and_applies_every_color_without_rebuilding() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let mut draft = crate::imports::tests::mesh_fixture();
+    draft.preview_physics = true;
+    let mut entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+    entry.model = Some(Arc::new(aurora_render::preview::Model {
+        parts: Vec::new(),
+        center: glam::Vec3::ZERO,
+        radius: 1.0,
+    }));
+    let id = entry.id;
+    let mut imports = Imports {
+        open: true,
+        demo_started: true,
+        choice: Choice::Mesh,
+        active: Some(id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    let mut prefs = Preferences::default();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let frame = |imports: &mut Imports, prefs: &mut Preferences, events| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                show(ui.ctx(), &theme.palette(), imports, prefs, &world, &Default::default());
+            },
+        );
+        output.textures_delta.clear();
+        output
+    };
+    let events = |pos, pressed| {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    };
+    for _ in 0..6 {
+        drop(frame(&mut imports, &mut prefs, Vec::new()));
+    }
+    let pos = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("import_preview_palette", id))))
+        .expect("palette button")
+        .center();
+    for pressed in [true, false] {
+        drop(frame(&mut imports, &mut prefs, events(pos, pressed)));
+    }
+    for label in [
+        aurora_i18n::tr!("import-preview-background"),
+        aurora_i18n::tr!("import-edges"),
+        aurora_i18n::tr!("import-preview-physics-fill"),
+        aurora_i18n::tr!("import-preview-physics-edges"),
+        aurora_i18n::tr!("import-preview-degenerate-fill"),
+        aurora_i18n::tr!("import-preview-degenerate-edges"),
+    ] {
+        for _ in 0..4 {
+            drop(frame(&mut imports, &mut prefs, Vec::new()));
+        }
+        let (swatch, rect) = ctx
+            .data(|data| data.get_temp::<(egui::Id, egui::Rect)>(egui::Id::new(("import_preview_swatch", label))))
+            .expect("shared swatch");
+        for pressed in [true, false] {
+            drop(frame(&mut imports, &mut prefs, events(rect.center(), pressed)));
+        }
+        for _ in 0..3 {
+            drop(frame(&mut imports, &mut prefs, Vec::new()));
+        }
+        let picker = ctx
+            .data(|data| data.get_temp::<widgets::color::ColorPickState>(swatch))
+            .unwrap_or_else(|| panic!("common viewer picker remains open for {label}"));
+        let sample = picker.field.lerp_inside(Vec2::new(0.65, 0.3));
+        for pressed in [true, false] {
+            drop(frame(&mut imports, &mut prefs, events(sample, pressed)));
+        }
+        // Close the current picker before clicking a swatch it may cover.
+        let title = egui::AreaState::load(&ctx, egui::Id::new("import_preview_colors"))
+            .expect("palette window")
+            .left_top_pos()
+            + Vec2::new(80.0, 16.0);
+        for pressed in [true, false] {
+            drop(frame(&mut imports, &mut prefs, events(title, pressed)));
+        }
+    }
+    let view = &imports.entries[0].view;
+    assert_eq!(view.background, prefs.preview_background.expect("background"));
+    assert_eq!(view.edge_color, prefs.preview_physics_edges.expect("physics edges"));
+    assert_eq!(
+        view.material.expect("physics fill").color,
+        linear_color(prefs.preview_physics_fill.expect("physics color"))
+    );
+    assert_eq!(
+        view.diagnostic_colors,
+        [
+            linear_color(prefs.preview_degenerate_fill.expect("diagnostic fill")),
+            prefs.preview_degenerate_edges.expect("diagnostic edges")
+        ]
+    );
+    assert!(prefs.preview_edges.is_some());
+    assert_eq!(imports.entries[0].preview_generation, 0, "colors update render uniforms only");
+}
+
+#[test]
 fn an_empty_batch_cannot_be_confirmed_when_local_previews_are_selected() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
@@ -200,6 +396,7 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
                 &mut Preferences::default(),
                 entry.model.as_ref(),
                 &mut entry.view,
+                true,
             );
         },
     );
@@ -209,7 +406,7 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
             thumbnails_output
                 .shapes
                 .iter()
-                .any(|shape| matches!(&shape.shape, egui::epaint::Shape::Mesh(mesh) if mesh.texture_id == texture && (mesh.calc_bounds().width() - 88.0).abs() < 0.1 && (mesh.calc_bounds().height() - 44.0).abs() < 0.1)),
+                .any(|shape| matches!(&shape.shape, egui::epaint::Shape::Mesh(mesh) if mesh.texture_id == texture && (mesh.calc_bounds().width() - 95.2).abs() < 0.1 && (mesh.calc_bounds().height() - 47.6).abs() < 0.1)),
             "a rectangular map keeps its aspect inside the square thumbnail"
         );
     }
@@ -234,7 +431,6 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
     let original_canvas = ctx
         .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("material_canvas", imports.entries[0].id))))
         .expect("material canvas");
-    let original_hint = position(&output, aurora_i18n::tr!("import-preview-gestures"));
     let sphere = position(&output, aurora_i18n::tr!("import-preview-sphere"));
     for pressed in [true, false] {
         drop(frame(click(sphere, pressed), &mut imports));
@@ -247,27 +443,101 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
     assert!(imports.entries[0].material_shape == preview::MaterialShape::Cube);
     assert_eq!(imports.entries[0].preview_generation, 1);
     assert!(imports.entries[0].model.is_none());
-    let pending = frame(Vec::new(), &mut imports);
+    drop(frame(Vec::new(), &mut imports));
     let pending_canvas = ctx
         .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("material_canvas", imports.entries[0].id))))
         .expect("pending canvas");
     assert_eq!(pending_canvas, original_canvas, "loading a new shape retains the exact canvas");
-    assert_eq!(
-        position(&pending, aurora_i18n::tr!("import-preview-gestures")),
-        original_hint,
-        "gestures remain under the canvas while it is loading"
-    );
+    assert_eq!(pending_canvas.size(), Vec2::splat(176.0));
     let cards = [0, 2, 3, 1].map(|slot| {
         ctx.data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("material_card", imports.entries[0].id, slot))))
             .expect("map card")
     });
-    assert_eq!(cards[0].top(), cards[1].top());
-    assert_eq!(cards[2].top(), cards[3].top());
-    assert!(cards[1].left() > cards[0].right() && cards[2].top() > cards[0].bottom());
-    assert!(
-        cards[3].bottom() <= 790.0,
-        "all four maps fit below the shared metadata without scrolling"
+    for pair in cards.windows(2) {
+        assert_eq!(pair[0].left(), pair[1].left(), "one column of maps");
+        assert!(pair[1].top() > pair[0].bottom());
+    }
+    drop(frame(
+        vec![
+            egui::Event::PointerMoved(cards[1].center()),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: Vec2::new(0.0, -200.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+        &mut imports,
+    ));
+    for _ in 0..60 {
+        drop(frame(Vec::new(), &mut imports));
+    }
+    let output = frame(Vec::new(), &mut imports);
+    for slot in [0, 2, 3, 1] {
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text)
+            if text.galley.text() == map_label(slot) && shape.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))),
+            "all four map headings remain reachable with enlarged thumbnails");
+    }
+}
+
+#[test]
+fn sound_split_and_amplification_controls_fit_inside_the_first_opened_window() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut entry = Entry::new(
+        "Track.wav".into(),
+        Ok(Source::Sound(Arc::new(Sound {
+            source_channels: 1,
+            source_bits: 16,
+            mono: vec![0.8; 44100 * 6],
+        }))),
+        Default::default(),
     );
+    entry.sound.options = sound::Options {
+        gain: 2.0,
+        start: 0.25,
+        end: Some(5.5),
+        segment: Some(2.0),
+        ..Default::default()
+    };
+    let mut imports = Imports {
+        open: true,
+        choice: Choice::Sound,
+        active: Some(entry.id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    let mut prefs = Preferences::default();
+    let mut frame = || {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                ..Default::default()
+            },
+            |ui| {
+                show(ui.ctx(), &theme.palette(), &mut imports, &mut prefs, &world, &Default::default());
+            },
+        );
+        output.textures_delta.clear();
+        output
+    };
+    for _ in 0..60 {
+        drop(frame());
+    }
+    let output = frame();
+    for label in [
+        aurora_i18n::tr!("import-sound-volume"),
+        aurora_i18n::tr!("import-sound-split"),
+        aurora_i18n::tr!("import-sound-clipping"),
+    ] {
+        assert!(
+            output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text)
+            if text.galley.text() == label && shape.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))),
+            "sound control must be visible without scrolling: {label}"
+        );
+    }
 }
 
 #[test]
@@ -514,9 +784,8 @@ fn every_local_asset_exposes_the_same_three_actions_without_a_footer_close_butto
 }
 
 #[test]
-fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() {
+fn compact_importers_keep_their_size_and_filtered_files_without_permissions() {
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    let mut metadata_positions = None;
     for choice in [Choice::Texture, Choice::Mesh, Choice::Material, Choice::Bulk] {
         let ctx = egui::Context::default();
         let theme = crate::theme::Theme::default();
@@ -575,11 +844,18 @@ fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() 
         for _ in 0..60 {
             drop(frame(&mut imports, Vec::new()));
         }
+        let window_id = egui::Id::new(choice.window_id());
+        assert_eq!(
+            egui::AreaState::load(&ctx, window_id).expect("dedicated window").left_top_pos(),
+            egui::pos2(48.0, 80.0),
+            "every first-opened importer has the same top-left corner"
+        );
+        let maximum = inspector::dimensions(choice).0 + Vec2::splat(2.0);
         let size = ctx
-            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v6").with("expanded_size")))
+            .data_mut(|data| data.get_persisted::<Vec2>(window_id.with("expanded_size")))
             .expect("window size");
         assert!(
-            size.x <= 902.0 && size.y <= 762.0,
+            size.x <= maximum.x && size.y <= maximum.y,
             "compact window grew for {}: {size:?}",
             choice.label()
         );
@@ -601,10 +877,6 @@ fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() 
             assert_eq!(positions.len(), 1, "one shared metadata row for {label}");
             positions[0]
         });
-        if let Some(previous) = metadata_positions {
-            assert_eq!(positions, previous, "metadata keeps the same layout across asset panels");
-        }
-        metadata_positions = Some(positions);
         assert!(positions[0].y < positions[1].y && positions[1].y < positions[2].y);
         if matches!(choice, Choice::Mesh | Choice::Bulk) {
             for section in [2, 1, 0] {
@@ -613,9 +885,9 @@ fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() 
                     drop(frame(&mut imports, Vec::new()));
                 }
                 let size = ctx
-                    .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v6").with("expanded_size")))
+                    .data_mut(|data| data.get_persisted::<Vec2>(window_id.with("expanded_size")))
                     .expect("mesh section size");
-                assert!(size.x <= 902.0 && size.y <= 762.0, "mesh section {section} grew: {size:?}");
+                assert!(size.x <= maximum.x && size.y <= maximum.y, "mesh section {section} grew: {size:?}");
                 let output = frame(&mut imports, Vec::new());
                 for (index, label) in [
                     aurora_i18n::tr!("common-name"),
@@ -637,53 +909,63 @@ fn compact_importers_do_not_grow_over_time_and_permissions_keep_the_file_list() 
                 }
             }
         }
-        let permissions = output
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::epaint::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-permissions-tab") => {
-                    Some(text.pos + text.galley.size() * 0.5)
-                }
-                _ => None,
-            })
-            .expect("main Permissions tab");
-        for pressed in [true, false] {
-            drop(frame(
-                &mut imports,
-                vec![
-                    egui::Event::PointerMoved(permissions),
-                    egui::Event::PointerButton {
-                        pos: permissions,
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ],
-            ));
+        assert!(
+            !output.shapes.iter().any(
+                |shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-permissions-tab"))
+            ),
+            "rights are edited only in Settings"
+        );
+        for (name, file_type) in [("mesh", Choice::Mesh), ("pbr", Choice::Material), ("texture", Choice::Texture)] {
+            assert_eq!(
+                output
+                    .shapes
+                    .iter()
+                    .any(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.text() == name)),
+                choice == Choice::Bulk || choice == file_type,
+                "the file list stays scoped in dedicated windows and complete in Multiple"
+            );
         }
-        assert!(imports.permissions_open);
-        assert!(imports.choice == choice, "permissions are independent of the asset type");
+        imports.open(choice);
         assert_eq!(imports.active, Some(active));
-        for _ in 0..20 {
-            drop(frame(&mut imports, Vec::new()));
-        }
-        let size = ctx
-            .data_mut(|data| data.get_persisted::<Vec2>(egui::Id::new("asset_imports_v6").with("expanded_size")))
-            .expect("permissions size");
-        assert!(size.x <= 902.0 && size.y <= 762.0, "permissions table grew: {size:?}");
-        let output = frame(&mut imports, Vec::new());
-        for name in ["mesh", "pbr"] {
+        if choice == Choice::Bulk {
+            let output = frame(&mut imports, Vec::new());
+            let tab = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == Choice::Texture.label() => Some(text.pos + text.galley.size() * 0.5),
+                    _ => None,
+                })
+                .expect("Texture tab in Multiple");
+            for pressed in [true, false] {
+                drop(frame(
+                    &mut imports,
+                    vec![
+                        egui::Event::PointerMoved(tab),
+                        egui::Event::PointerButton {
+                            pos: tab,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                ));
+            }
+            assert_eq!(imports.choice, Choice::Texture);
+            assert_eq!(
+                imports.window_choice(),
+                Choice::Bulk,
+                "Multiple remains the complete window after changing a tab"
+            );
+            assert!(!imports.choose_files_on_open);
+            let output = frame(&mut imports, Vec::new());
             assert!(
                 output
                     .shapes
                     .iter()
-                    .any(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.text().starts_with(name))),
-                "all files remain selectable in Permissions"
+                    .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == Choice::Bulk.label()))
             );
         }
-        imports.open(choice);
-        assert!(!imports.permissions_open);
-        assert_eq!(imports.active, Some(active));
     }
 }
 
@@ -837,10 +1119,22 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
                     .expect("transport control visible")
             };
             let pause = location(aurora_i18n::tr!("import-pause"));
+            let active = imports.active.expect("active animation");
+            let canvas = ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("animation_canvas", active))))
+                .expect("canvas");
+            let reset = ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("animation_reset", active))))
+                .expect("reset");
+            assert!(reset.top() >= canvas.bottom() && reset.height() >= 26.0);
+            assert!(
+                location(aurora_i18n::tr!("common-play")).y > reset.bottom(),
+                "transport stays below the complete reset row"
+            );
             let avatar = location(aurora_i18n::tr!("import-preview-own-avatar"));
             assert!(
-                avatar.x > pause.x && (avatar.y - pause.y).abs() < 2.0,
-                "common avatar option belongs to the playback row"
+                avatar.y > pause.y && (avatar.x - pause.x).abs() < 230.0,
+                "common avatar option stays under the preview's transport controls"
             );
         }
         position = output

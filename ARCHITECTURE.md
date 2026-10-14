@@ -316,7 +316,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `aurora-net/src/outfits.rs`, `aurora-net/src/outfits/categories.rs` | Writing of the outfit links, favourites, names and images through AIS InventoryAPIv3, move to the trash; confirmation and read-back of the folders / items |
 | `slurl.rs`, `link_trust.rs` | Links in texts: SLURL (navigation bar, "Region (x,y,z)" labels of the place links); trust of web links (trusted site, unknown, dangerous: shorteners, fake official names, IP addresses…), judged locally on the URL |
 | `ui/search.rs`, `ui/search/details.rs`, `world/search.rs`, `aurora-net/src/search.rs`, `aurora-net/src/session_search.rs`, `demo_search.rs` | "Search" (Firestorm's legacy search): directory queries and their flags, reading of the replies and of the event / group details (`aurora-net/src/search.rs`, pure; sending and receiving in `session_search.rs`); one result list per tab with the pending query, pages of 100, statuses, sorting and selection (`world/search.rs`); window with seven tabs, forms, sortable list and web page in the built-in browser (`ui/search.rs`), detail cards and their actions (`ui/search/details.rs`); offline directory of the demo (`demo_search.rs`, AURORA_DEMO_SEARCH) |
-| `ui/group_profile.rs`, `ui/group_profile/`, `world/group_data.rs`, `aurora-net/src/groups.rs`, `aurora-net/src/session_groups.rs`, `demo_group.rs` | Group profile: LLGroupMgr's data of a group (members by the GroupMemberData capability or GroupMembersRequest, roles, role / member pairs, titles, notice list; replies and request ids in `aurora-net/src/groups.rs`, pure; sending and receiving in `session_groups.rs`), kept per group with stale replies dropped (`world/group_data.rs`); window in the Aurora look (`group_profile/view.rs` header and tabs, `home.rs`, `members.rs` with `admin_members.rs` and the abilities catalogue `abilities.rs`, `notices.rs`, `invite.rs`, `administration.rs`) or the classic one; demo group server (`demo_group.rs`, AURORA_DEMO_GROUP_PROFILE) |
+| `ui/group_profile.rs`, `ui/group_profile/`, `world/group_data.rs`, `aurora-net/src/groups.rs`, `aurora-net/src/session_groups.rs`, `demo_group.rs` | Group profile: LLGroupMgr's data of a group (members by the GroupMemberData capability or GroupMembersRequest, roles, role / member pairs, titles, notice list; replies and request ids in `aurora-net/src/groups.rs`, pure; sending and receiving in `session_groups.rs`), kept per group with stale replies dropped (`world/group_data.rs`); window in the Aurora look (`group_profile/view.rs` header and tabs, `home.rs`, `members.rs` with `admin_members.rs` and the abilities catalogue `abilities.rs`, `notices.rs`, `invite.rs`, `administration.rs`) or the classic one; "Create a group" (`create.rs`: LLPanelGroupCreate's rules, the profile's header and the identity cards of `administration.rs`, or Firestorm's creation panel; CreateGroupRequest and its name rules in `aurora-net/src/groups.rs`); demo group server (`demo_group.rs`, AURORA_DEMO_GROUP_PROFILE, AURORA_DEMO_GROUP_CREATE) |
 | `ui/find_shortcut.rs` | Ctrl+F requested by three features: the single rule (`owner`) that gives it to the window one of whose fields has the keyboard (script editor, conversation), otherwise to the conversation under the pointer, otherwise to the viewer's shortcut ("Search"); the windows with a search bar declare themselves to it every frame (`take`), the application queries it before running its shortcut (`window_takes_it`) |
 | `ui/widgets.rs`, `ui/widgets/resize.rs`, `ui/widgets/demo.rs` | Shared widgets and floating windows; collapsing by double-clicking the title or by a button, expanded size kept and collapsed bar movable; offline gestures on the real title; resize handles bounded before the move, opposite edge fixed, limits of the content and of the visible area; position and size kept by egui; names longer than their space cut with "…" with the whole name on hover (`elided_label`, `paint_elided`) for the lists of residents, groups and conversations |
 | `ui/layout.rs`, `ui/layout/gesture.rs` | Interface layout: egui's memory (positions, sizes, collapsed windows) written to `ui_layout.ron` on exit and read back at startup; work area left by the bars (`work_area`) and common gap `GAP` of the default layout and of snapping (none: the windows touch); `Slot`, through which `widgets::Floater` and the minimap (`widgets::bare_window`) go, records where each window stood and in which screen, and makes it follow its nearest edges when the viewer window changes size, during the session or from one session to the next (`follow_edges`; a group of windows stuck together follows as a block). `gesture.rs`: the gestures of the frame (`layout::frame`, `layout::resizing`): window dragged by its title together with those stuck to it, block kept within the screen, snapping proposed then applied on release (under the pointer for a resize), sticking links created, saved with the layout and removed when they no longer hold (window closed, collapsed, moved apart, Alt) |
@@ -371,6 +371,48 @@ calibrated on the WebRTC scale (red from 0.58, the local microphone peaking
 around 0.63), struck-through Tabler microphone (`microphone-off`) for the
 avatars outside voice. `voice.rs` guarantees the entry of our avatar from the
 local microphone, even without an echo of its presence from the voice server.
+
+The configurable Import shortcut and Build › Import both toggle
+`imports/ui/launcher.rs`: seven type-specific actions, Settings and a plain
+close cross in a horizontal toolstrip, without title, shortcut text, help
+footer or common background. Each button uses `widgets::glass_action_icon`
+for independent world blur, a translucent palette tint and the theme's
+border, shadow and radius; opaque skins remain opaque. `widgets::toolstrip`
+retains movable layout placement without painting a group surface. The
+filtered file picker is scheduled when the chosen type has no listed file;
+otherwise its inspector opens directly. Choosing the displayed type closes
+its window. The chooser stays open above overlapping inspectors. Newly shown import
+windows and Settings share the same top-left default; saved placement wins.
+Settings contains only permissions and payment. Its five independent columns
+per type cover next-owner modify/copy/transfer, group sharing and everyone-copy.
+Missing sharing fields in saved rows inherit the legacy common flags; explicit
+per-type overrides are saved without resetting other rows.
+`imports/ui/inspector.rs` draws dedicated Texture, Sound, Animation,
+Material, Mesh and Local floaters, each with its own saved geometry and a
+filtered file list at the left. The right pane keeps the shared metadata,
+the current asset panel. `imports/sound.rs` retains the original PCM, a cached
+amplitude envelope and non-destructive crop / gain / segmentation options. `ui/sound_panel.rs`
+draws the waveform and a playhead started when the audio engine receives the
+prepared clip; gain commits restart audition with the processed PCM, while
+cropping stops stale audio. Gain is applied once, with a digital ceiling and
+waveform clipping indication; preview and upload use the same renderer.
+PCM cropping, upload encoding and preview preparation stay on workers, and
+each confirmed queue step freezes the sound options with its permissions.
+Optional splitting plans exact consecutive sample ranges, suffixed inventory
+names and per-piece costs. The parent draft stays until the last receipt;
+acknowledged indices survive a failed draft's explicit restoration, so a retry
+does not charge its successful pieces again. Bounded long WAV sources are
+accepted for editing; each output still obeys the grid's asset duration limit.
+Animations pair the preview with labelled metadata, loop units and easing
+grids in a narrow inspector, with a full reserved reset-button row below the
+preview. Dedicated materials use a narrow vertical arrangement with a larger
+preview and unframed map rows in one column. Mesh and material palettes open
+a separate small floater, so clicking the shared `widgets::color_button`
+does not dismiss a parent menu. Colors update the preview's render uniforms
+immediately, without rebuilding geometry or changing imported data.
+Multiple keeps the complete inspector and its type tabs;
+`Imports::inspector` keeps that window identity independent of its active
+type tab. Parsing, preview jobs and the confirmed upload queue stay shared.
 
 ## Life of a frame
 

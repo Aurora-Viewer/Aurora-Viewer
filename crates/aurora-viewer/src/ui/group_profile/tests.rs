@@ -625,3 +625,81 @@ fn a_guest_has_no_experiences_tab() {
     assert!(!actions.iter().any(|a| matches!(a, GroupAction::LoadExperiences(_))));
     assert!(!has(&texts, "ui-group-experiences-loading"));
 }
+
+#[test]
+fn the_creation_window_shows_the_identity_cards_and_the_fees() {
+    let world = world(true, MEMBER);
+    let mut st = GroupProfileUi::default();
+    st.create.open(&world);
+    let (texts, actions) = texts(&mut st, &world, false);
+    assert!(actions.is_empty());
+    for key in [
+        "ui-group-create-title",
+        "ui-group-create-create",
+        "ui-group-profile-charter",
+        "ui-group-admin-settings",
+        "ui-group-create-rating",
+        "ui-group-create-rating-to-choose",
+        "ui-group-create-fee-title",
+        "ui-group-create-members-title",
+    ] {
+        assert!(has(&texts, key), "{key} in {texts:?}");
+    }
+    // the insignia is chosen on the header, not in a card
+    assert!(!has(&texts, "ui-group-admin-insignia-change"));
+}
+
+#[test]
+fn the_classic_creation_window_is_firestorm_s_panel() {
+    let world = world(true, MEMBER);
+    let mut st = GroupProfileUi::default();
+    st.create.open(&world);
+    let (texts, _) = texts(&mut st, &world, true);
+    for key in [
+        "ui-group-create-classic-title",
+        "ui-group-create-classic-name",
+        "ui-group-create-anyone-can-join",
+        "ui-group-create-cost-to-join",
+        "ui-group-create-select-rating",
+        "ui-group-create-classic-note",
+    ] {
+        assert!(has(&texts, key), "{key} in {texts:?}");
+    }
+}
+
+#[test]
+fn create_asks_the_rating_then_sends_the_trimmed_name() {
+    use create::{DemoStart, DemoThen, Draft};
+    let world = world(true, MEMBER);
+    let mut st = GroupProfileUi::default();
+    let draft = Draft {
+        name: "  Lagoon Painters ".into(),
+        ..Default::default()
+    };
+    st.create.demo(DemoStart {
+        draft: Some(draft.clone()),
+        then: DemoThen::Press,
+    });
+    let (texts, actions) = texts(&mut st, &world, false);
+    assert!(has(&texts, "ui-group-create-moderate-question"), "{texts:?}");
+    assert!(actions.is_empty(), "nothing leaves before the rating");
+
+    let mut st = GroupProfileUi::default();
+    st.create.demo(DemoStart {
+        draft: Some(Draft {
+            rating: Some(true),
+            ..draft
+        }),
+        then: DemoThen::Send,
+    });
+    let (texts, actions) = self::texts(&mut st, &world, false);
+    let sent: Vec<_> = actions
+        .iter()
+        .filter_map(|a| match a {
+            GroupAction::Create { name, info } => Some((name.clone(), info.mature_publish, info.show_in_list)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, vec![("Lagoon Painters".to_owned(), true, true)], "sent once");
+    assert!(has(&texts, "ui-group-create-creating"), "Create waits for the reply");
+}

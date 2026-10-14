@@ -785,103 +785,15 @@ fn identity(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
         .max_height((ui.available_height() - 40.0).max(80.0))
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 10.0;
-            view::card(
-                ui,
-                p,
-                "photo-filled",
-                p.muted_dim,
-                aurora_i18n::tr!("ui-group-admin-insignia"),
-                None,
-                |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 12.0;
-                        if !info.insignia.is_nil() {
-                            c.wanted_images.insert(info.insignia);
-                        }
-                        widgets::picture(ui, p, c.images.get(&info.insignia), Vec2::splat(96.0), "users-group", "");
-                        ui.vertical(|ui| {
-                            if widgets::action_button_if(
-                                ui,
-                                p,
-                                "photo-filled",
-                                aurora_i18n::tr!("ui-group-admin-insignia-change"),
-                                ActionKind::Flat,
-                                Vec2::new(0.0, 26.0),
-                                ident,
-                            )
-                            .clicked()
-                            {
-                                st.admin.texture.open(aurora_i18n::tr!("ui-group-admin-insignia"), info.insignia);
-                            }
-                        });
-                    });
-                },
-            );
-            view::card(
-                ui,
-                p,
-                "file-text-filled",
-                p.muted_dim,
-                aurora_i18n::tr!("ui-group-profile-charter"),
-                None,
-                |ui| {
-                    ui.add_enabled_ui(ident, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut info.charter)
-                                .char_limit(1023)
-                                .desired_rows(6)
-                                .desired_width(f32::INFINITY),
-                        );
-                    });
-                },
-            );
-            view::card(
-                ui,
-                p,
-                "adjustments-filled",
-                p.muted_dim,
-                aurora_i18n::tr!("ui-group-admin-settings"),
-                None,
-                |ui| {
-                    switch_row(
-                        ui,
-                        p,
-                        "search-filled",
-                        aurora_i18n::tr!("ui-group-admin-show-in-search"),
-                        &mut info.show_in_list,
-                        ident,
-                    );
-                    switch_row(
-                        ui,
-                        p,
-                        "alert-triangle-filled",
-                        aurora_i18n::tr!("ui-group-admin-moderate"),
-                        &mut info.mature_publish,
-                        ident,
-                    );
-                    switch_row(
-                        ui,
-                        p,
-                        "door-enter",
-                        aurora_i18n::tr!("ui-group-profile-open-enrollment"),
-                        &mut info.open_enrollment,
-                        options,
-                    );
-                    // the fee: on with an amount, as Firestorm's check box and field
-                    let mut paid = info.membership_fee > 0;
-                    if switch_row(ui, p, "coin-filled", aurora_i18n::tr!("ui-group-admin-fee"), &mut paid, options) {
-                        info.membership_fee = if paid { 1.max(info.membership_fee) } else { 0 };
-                    }
-                    if paid {
-                        ui.horizontal(|ui| {
-                            ui.add_space(23.0);
-                            ui.label(egui::RichText::new("L$").size(12.5).color(p.muted));
-                            ui.add_enabled(options, egui::DragValue::new(&mut info.membership_fee).range(1..=99_999));
-                        });
-                    }
-                },
-            );
+            let fields = IdentityFields {
+                ident,
+                options,
+                charter_limit: 1023,
+                insignia_card: true,
+            };
+            if identity_cards(ui, c, info, Rating::Switch, fields) {
+                st.admin.texture.open(aurora_i18n::tr!("ui-group-admin-insignia"), info.insignia);
+            }
         });
     let dirty = *info != saved;
     let (mut save, mut cancel) = (false, false);
@@ -911,6 +823,175 @@ fn identity(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
     if save || cancel {
         st.admin.identity = None;
     }
+}
+
+/// How the identity cards ask the content rating.
+pub(super) enum Rating<'a> {
+    /// A "Moderate content" switch on `mature_publish` (the identity of a
+    /// group).
+    Switch,
+    /// General or Moderate, neither chosen at first (the group being
+    /// created: LLPanelGroupCreate's "- Select maturity rating -").
+    Choice(&'a mut Option<bool>),
+}
+
+/// Which parts of the identity the cards let us change.
+pub(super) struct IdentityFields {
+    /// GP_GROUP_CHANGE_IDENTITY: insignia, charter, search, rating.
+    pub ident: bool,
+    /// GP_MEMBER_OPTIONS: enrollment and fee.
+    pub options: bool,
+    /// Characters of the charter.
+    pub charter_limit: usize,
+    /// The insignia's card (the creation picks it on the header instead).
+    pub insignia_card: bool,
+}
+
+/// The cards of a group's identity (LLPanelGroupGeneral's editable part,
+/// the creation panel's fields): the insignia, the charter, then search,
+/// rating, enrollment and fee. True when "Change the insignia" was clicked.
+pub(super) fn identity_cards(ui: &mut egui::Ui, c: &mut Ctx, info: &mut GroupInfo, rating: Rating, fields: IdentityFields) -> bool {
+    let p = c.p;
+    let IdentityFields {
+        ident,
+        options,
+        charter_limit,
+        insignia_card,
+    } = fields;
+    let mut change = false;
+    ui.spacing_mut().item_spacing.y = 10.0;
+    if insignia_card {
+        view::card(
+            ui,
+            p,
+            "photo-filled",
+            p.muted_dim,
+            aurora_i18n::tr!("ui-group-admin-insignia"),
+            None,
+            |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    if !info.insignia.is_nil() {
+                        c.wanted_images.insert(info.insignia);
+                    }
+                    widgets::picture(ui, p, c.images.get(&info.insignia), Vec2::splat(96.0), "users-group", "");
+                    ui.vertical(|ui| {
+                        change = widgets::action_button_if(
+                            ui,
+                            p,
+                            "photo-filled",
+                            aurora_i18n::tr!("ui-group-admin-insignia-change"),
+                            ActionKind::Flat,
+                            Vec2::new(0.0, 26.0),
+                            ident,
+                        )
+                        .clicked();
+                    });
+                });
+            },
+        );
+    }
+    view::card(
+        ui,
+        p,
+        "file-text-filled",
+        p.muted_dim,
+        aurora_i18n::tr!("ui-group-profile-charter"),
+        None,
+        |ui| {
+            ui.add_enabled_ui(ident, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut info.charter)
+                        .char_limit(charter_limit)
+                        .desired_rows(6)
+                        .desired_width(f32::INFINITY),
+                );
+            });
+        },
+    );
+    view::card(
+        ui,
+        p,
+        "adjustments-filled",
+        p.muted_dim,
+        aurora_i18n::tr!("ui-group-admin-settings"),
+        None,
+        |ui| {
+            switch_row(
+                ui,
+                p,
+                "search-filled",
+                aurora_i18n::tr!("ui-group-admin-show-in-search"),
+                &mut info.show_in_list,
+                ident,
+            );
+            match rating {
+                Rating::Switch => {
+                    switch_row(
+                        ui,
+                        p,
+                        "alert-triangle-filled",
+                        aurora_i18n::tr!("ui-group-admin-moderate"),
+                        &mut info.mature_publish,
+                        ident,
+                    );
+                }
+                Rating::Choice(chosen) => rating_choice(ui, p, chosen, info, ident),
+            }
+            switch_row(
+                ui,
+                p,
+                "door-enter",
+                aurora_i18n::tr!("ui-group-profile-open-enrollment"),
+                &mut info.open_enrollment,
+                options,
+            );
+            // the fee: on with an amount, as Firestorm's check box and field
+            let mut paid = info.membership_fee > 0;
+            if switch_row(ui, p, "coin-filled", aurora_i18n::tr!("ui-group-admin-fee"), &mut paid, options) {
+                info.membership_fee = if paid { 1.max(info.membership_fee) } else { 0 };
+            }
+            if paid {
+                ui.horizontal(|ui| {
+                    ui.add_space(23.0);
+                    ui.label(egui::RichText::new("L$").size(12.5).color(p.muted));
+                    ui.add_enabled(options, egui::DragValue::new(&mut info.membership_fee).range(1..=99_999));
+                });
+            }
+        },
+    );
+    change
+}
+
+/// The content rating to choose: General or Moderate, with the maturity
+/// badges, in an amber line until one is chosen.
+fn rating_choice(ui: &mut egui::Ui, p: &Palette, chosen: &mut Option<bool>, info: &mut GroupInfo, enabled: bool) {
+    ui.horizontal(|ui| {
+        ui.set_min_height(26.0);
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let ink = if chosen.is_none() { p.amber } else { p.muted };
+        widgets::glyph(ui, "alert-triangle-filled", ink, 15.0);
+        let label = egui::RichText::new(aurora_i18n::tr!("ui-group-create-rating")).size(12.5);
+        ui.label(if chosen.is_none() {
+            label.color(p.amber)
+        } else {
+            label.color(p.ink)
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                for (moderate, text) in [
+                    (true, aurora_i18n::tr!("ui-group-profile-moderate-content")),
+                    (false, aurora_i18n::tr!("ui-group-profile-general-content")),
+                ] {
+                    if widgets::radio(ui, p, *chosen == Some(moderate), text).clicked() {
+                        *chosen = Some(moderate);
+                    }
+                }
+            });
+        });
+    });
+    info.mature_publish = *chosen == Some(true);
 }
 
 /// Who has which ability (LLPanelGroupActionsSubTab): the abilities by

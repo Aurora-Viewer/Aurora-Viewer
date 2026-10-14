@@ -46,6 +46,12 @@ pub fn founder(group: &Uuid) -> Option<Uuid> {
     Some(if i % 2 == 0 { DEMO_LOUP } else { DEMO_NOVA })
 }
 
+/// A demo group has this name already (the dataserver's check of a new
+/// group's name; case ignored).
+pub fn group_named(name: &str) -> bool {
+    groups().iter().any(|g| g.1.eq_ignore_ascii_case(name.trim()))
+}
+
 /// (name, members) of the demo groups; the first two are the demo's own.
 fn groups() -> Vec<(Uuid, String, i32)> {
     vec![

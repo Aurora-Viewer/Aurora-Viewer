@@ -348,7 +348,14 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "bulk_perms" => "lock-filled",
         "region_restarting" => "alert-triangle-filled",
         "task_item_props" => "file-info-filled",
-        "asset_imports_v3" | "asset_imports_v4" | "asset_imports_v5" | "asset_imports_v6" => "file-upload-filled",
+        "asset_imports_v3" | "asset_imports_v4" | "asset_imports_v5" | "asset_imports_v6" | "import_launcher" => "file-upload-filled",
+        "import_textures" => "photo-filled",
+        "import_sounds" => "file-music-filled",
+        "import_animations" => "run",
+        "import_materials" => "droplet-filled",
+        "import_meshes" => "cube-3d-sphere",
+        "import_local" => "eye-filled",
+        "import_settings" => "settings-filled",
         _ => "layout-grid-filled",
     }
 }

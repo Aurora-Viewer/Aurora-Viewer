@@ -177,7 +177,21 @@ impl App {
             );
         }
         self.imports.watch_local(&self.scene.jobs, ctx);
-        for Playback::Audio(clip) in self.imports.playback.drain(..) {
+        for Playback::Audio { entry, clip, duration } in self.imports.playback.drain(..) {
+            let editor = self
+                .imports
+                .entries
+                .iter_mut()
+                .find(|sound| sound.id == entry)
+                .map(|entry| &mut entry.sound);
+            if let Some(editor) = editor {
+                editor.preparing = false;
+                if self.audio_engine.is_some() {
+                    editor.started = Some(std::time::Instant::now());
+                    editor.playing_duration = duration;
+                    self.imports.sound_playing = Some(entry);
+                }
+            }
             if let Some(engine) = &self.audio_engine {
                 engine.play_world(SOUND_PREVIEW, aurora_audio::Channel::Ui, &clip, false, (1.0, 1.0));
             }
@@ -235,7 +249,9 @@ impl App {
             }
             for entry in &mut self.imports.entries {
                 entry.player.playing = false;
+                entry.sound.stop();
             }
+            self.imports.sound_playing = None;
         }
         for action in actions {
             match action {
@@ -275,6 +291,10 @@ impl App {
                     }
                 }
                 Action::Play(id, start) => {
+                    for entry in &mut self.imports.entries {
+                        entry.sound.stop();
+                    }
+                    self.imports.sound_playing = None;
                     if let Some(previous) = self.imports.play_request.take() {
                         self.world.preview_animation(previous, false);
                     }
@@ -285,7 +305,35 @@ impl App {
                         self.imports.play(id, &self.scene.jobs, ctx, self.scene.avatar_lib.rig.clone());
                     }
                 }
-                Action::Reload(id) => self.imports.reload(id, &self.scene.jobs, ctx),
+                Action::SoundGain(id) => {
+                    if self.imports.sound_playing == Some(id)
+                        || self.imports.entries.iter().any(|entry| entry.id == id && entry.sound.preparing)
+                    {
+                        if let Some(engine) = &self.audio_engine {
+                            engine.stop_world(SOUND_PREVIEW);
+                        }
+                        if let Some(entry) = self.imports.entries.iter_mut().find(|entry| entry.id == id) {
+                            entry.sound.stop();
+                        }
+                        self.imports.sound_playing = None;
+                        self.imports.play(id, &self.scene.jobs, ctx, self.scene.avatar_lib.rig.clone());
+                    }
+                }
+                Action::Reload(id) => {
+                    if self
+                        .imports
+                        .entries
+                        .iter()
+                        .any(|entry| entry.id == id && matches!(entry.source, Some(Source::Sound(_))))
+                    {
+                        self.imports.play_request = None;
+                        self.imports.sound_playing = None;
+                        if let Some(engine) = &self.audio_engine {
+                            engine.stop_world(SOUND_PREVIEW);
+                        }
+                    }
+                    self.imports.reload(id, &self.scene.jobs, ctx);
+                }
                 Action::RestoreDraft(id) => self.imports.restore_draft(id),
                 Action::ResetMesh(id) => {
                     if let Some(entry) = self.imports.entries.iter_mut().find(|e| e.id == id) {
@@ -408,6 +456,18 @@ impl App {
                     }
                 }
                 Action::Remove(id) => {
+                    if self
+                        .imports
+                        .entries
+                        .iter()
+                        .any(|entry| entry.id == id && matches!(entry.source, Some(Source::Sound(_))))
+                    {
+                        self.imports.play_request = None;
+                        self.imports.sound_playing = None;
+                        if let Some(engine) = &self.audio_engine {
+                            engine.stop_world(SOUND_PREVIEW);
+                        }
+                    }
                     let targets: Vec<_> = self
                         .imports
                         .local_targets

@@ -1468,7 +1468,14 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
         st.dialog = Some(Dialog::LeaveGroup(sel));
     }
     ui.add_space(6.0);
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-create-2"), soon, false);
+    // FSFloaterContacts: under the group limit only
+    let can_create = super::group_profile::create::can_join_groups(world);
+    if side_button_resp(ui, p, aurora_i18n::tr!("ui-contacts-create-2"), can_create)
+        .on_disabled_hover_text(aurora_i18n::tr!("ui-group-profile-too-many-groups"))
+        .clicked()
+    {
+        super::group_profile::request_create(ui.ctx());
+    }
     side_button(ui, p, aurora_i18n::tr!("ui-contacts-search"), soon, false);
     side_button(ui, p, aurora_i18n::tr!("ui-contacts-invite"), soon, false);
 }
