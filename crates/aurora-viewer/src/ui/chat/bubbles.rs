@@ -21,8 +21,6 @@ use egui::{Color32, RichText};
 /// Side of the sender's picture, and the column it takes on the left.
 const PIC: f32 = 26.0;
 const PIC_GAP: f32 = 6.0;
-/// Room between my bubbles and the right edge of the conversation.
-const EDGE: f32 = 8.0;
 /// Share of the row a bubble may take.
 const MAX_SHARE: f32 = 0.78;
 /// Room between the edge of a bubble and its text.
@@ -176,8 +174,10 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
         line.source
     };
     let w = ui.available_width();
-    // mine keep off the scroll bar at the right edge
-    let lead = if own { EDGE } else { PIC + PIC_GAP };
+    // the same inset of the theme's spacing on both sides: the pictures off
+    // the left edge, my bubbles off the right one (and its scroll bar)
+    let inset = ui.spacing().item_spacing.x;
+    let lead = if own { inset } else { inset + PIC + PIC_GAP };
     let max_bubble = ((w - lead) * MAX_SHARE).max(80.0);
 
     if (names || object) && look.header && !own {

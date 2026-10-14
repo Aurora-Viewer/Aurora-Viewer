@@ -113,6 +113,30 @@ fn read_font(path: &Path) -> Option<&'static [u8]> {
         .map(|bytes| &*Box::leak(bytes.into_boxed_slice()))
 }
 
+/// Rows of text with pictures in them (emoji, link badges), as tall as the
+/// rows of a label of that `size`: a wrapped layout's rows are at least
+/// `interact_size.y` tall (26 in the theme), which made a line with an
+/// emoji taller than one without.
+pub fn text_rows<R>(ui: &mut egui::Ui, size: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let row = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(size)));
+    let before = ui.spacing().interact_size.y;
+    ui.spacing_mut().interact_size.y = row;
+    let out = ui
+        .horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+            add(ui)
+        })
+        .inner;
+    ui.spacing_mut().interact_size.y = before;
+    out
+}
+
+/// Side of an emoji picture in a text of `size`: a little larger than the
+/// letters, as the color emoji fonts draw them.
+pub fn emoji_side(size: f32) -> f32 {
+    size * 1.25
+}
+
 impl Emoji {
     pub fn load() -> Emoji {
         // The font asked for (to compare another one), else the built-in one.
@@ -205,10 +229,7 @@ impl Emoji {
             ui.add(egui::Label::new(rt).wrap().selectable(true));
             return;
         }
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
-            self.inline(ui, text, size, color, italics);
-        });
+        text_rows(ui, size, |ui| self.inline(ui, text, size, color, italics));
     }
 
     /// Text with color emoji added to the current (wrapping) layout.
@@ -248,8 +269,13 @@ impl Emoji {
                 && let Some(t) = self.texture(ui.ctx(), c)
             {
                 flush(ui, &mut run);
-                let s = size * 1.25;
-                ui.add(egui::Image::new(&t).fit_to_exact_size(egui::vec2(s, s)));
+                // a little larger than the letters, the picture keeps the
+                // height of a row of text: centered on it, it overflows the
+                // row instead of making a line with an emoji taller
+                let s = emoji_side(size);
+                let row = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(size)));
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(s, row), egui::Sense::hover());
+                egui::Image::new(&t).paint_at(ui, egui::Rect::from_center_size(rect.center(), egui::vec2(s, s)));
                 continue;
             }
             run.push(c);
@@ -280,7 +306,7 @@ impl Emoji {
             .unwrap_or_else(|| ui.visuals().widgets.inactive.text_color());
         let line_height = ui.fonts_mut(|f| f.row_height(&font)) + ui.spacing().extra_text_line_spacing;
         // the size `inline` gives the emoji pictures
-        let side = font.size * 1.25;
+        let side = emoji_side(font.size);
         let format = |blank: bool| {
             let mut f = if blank {
                 egui::TextFormat::simple(egui::FontId::new(side, font.family.clone()), egui::Color32::TRANSPARENT)

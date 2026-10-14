@@ -569,8 +569,7 @@ pub(crate) fn chat_text_marked(
         return;
     }
     let k = super::colors::get();
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+    super::emoji::text_rows(ui, size, |ui| {
         for s in segs {
             match s {
                 Seg::Text(t) => marked_run(ui, emoji, t, size, color, italics, mark),
@@ -652,12 +651,13 @@ pub(crate) fn chat_text_marked(
     });
 }
 
-/// Icon button returning its response (emoji button next to the input).
-/// Width of the toolbar buttons with a response (emoji).
-const EMOJI_BTN_W: f32 = 28.0;
+/// Height of the input row: the emoji button, the field and the send button
+/// stand on one line, all as tall.
+const INPUT_H: f32 = 28.0;
 
+/// Icon button returning its response (the emoji button before the input).
 fn tool_resp(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: &str, active: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(EMOJI_BTN_W, 22.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(INPUT_H), egui::Sense::click());
     let radius = ui.visuals().window_corner_radius;
     if active {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.3));
@@ -678,12 +678,12 @@ fn tool_resp(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: 
 }
 
 /// Width of the send button at the end of the input.
-const SEND_BTN_W: f32 = 30.0;
+const SEND_BTN_W: f32 = 32.0;
 
 /// The send button: the accent face of the window's main action, greyed
 /// while there is nothing to send (Enter sends too).
 fn send_button(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, enabled: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(SEND_BTN_W, 24.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(SEND_BTN_W, INPUT_H), egui::Sense::click());
     let face = match (enabled, resp.hovered()) {
         (false, _) => p.violet.gamma_multiply(0.35),
         (true, true) => p.violet_light,
@@ -1252,7 +1252,7 @@ pub fn show(
                         });
                     ui.add_space(4.0);
                 }
-                let input_h = 30.0;
+                let input_h = INPUT_H;
                 // Ctrl+F opens the find bar of the conversation shown, when
                 // the keyboard is in this window, or nowhere with the
                 // pointer over it
@@ -1268,7 +1268,10 @@ pub fn show(
                 } else {
                     0.0
                 };
-                let lines_h = (ui.available_height() - input_h - find_h - 8.0).clamp(60.0, h);
+                // exactly what the input row takes under them: the spacing after
+                // the lines, the 4 points before the row and the row itself (a
+                // row that overflows makes the resizable window grow every frame)
+                let lines_h = (ui.available_height() - input_h - find_h - 4.0 - ui.spacing().item_spacing.y - 1.0).clamp(60.0, h);
                 let filter = search.filter.as_deref().unwrap_or("").to_lowercase();
                 let needle = search.find.as_ref().map(|f| f.text.to_lowercase()).unwrap_or_default();
                 let view = st.views.entry(st.selected).or_default();
@@ -1365,6 +1368,8 @@ pub fn show(
                 let mut send_clicked = false;
                 let resp = ui
                     .horizontal(|ui| {
+                        // the edges of the lines above, half the theme's spacing between
+                        ui.spacing_mut().item_spacing.x *= 0.5;
                         let b = tool_resp(ui, p, icons, "mood-smile-filled", st.emoji_open);
                         emoji_btn = Some(b.rect);
                         if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
@@ -1372,9 +1377,13 @@ pub fn show(
                         }
                         // leave exactly the send button + spacing (else the row overflows
                         // and the resizable window grows every frame)
-                        let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x - 2.0).max(40.0);
+                        let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
                         let r = emoji.text_field(ui, &mut st.conv_input, |edit| {
-                            edit.id(conv_input).hint_text(hint).desired_width(field_w)
+                            edit.id(conv_input)
+                                .hint_text(hint)
+                                .desired_width(field_w)
+                                .min_size(egui::vec2(field_w, INPUT_H))
+                                .vertical_align(egui::Align::Center)
                         });
                         let has_text = !st.conv_input.trim().is_empty();
                         send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
@@ -1734,6 +1743,29 @@ mod tests {
         assert!(matches!(links[1], ("Ahern (1,2,3)", Link::Place(..))));
         assert_eq!(links[2], ("@Loup Violet", &Link::Agent(id)));
         assert_eq!(links[3].1, &Link::Url("https://example.com/x".into()));
+    }
+
+    #[test]
+    fn an_emoji_does_not_make_its_line_taller() {
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        assert!(emoji.available());
+        let mut frames = Frames::new();
+        let (mut plain, mut with) = (0.0, 0.0);
+        let p = crate::theme::Theme::default().palette();
+        frames.run(Vec::new(), |ui| {
+            plain = ui
+                .scope(|ui| emoji.rich_text(ui, "On my way!", 13.5, p.ink, false))
+                .response
+                .rect
+                .height();
+            with = ui
+                .scope(|ui| emoji.rich_text(ui, "On my way 😄", 13.5, p.ink, false))
+                .response
+                .rect
+                .height();
+        });
+        assert!(plain > 0.0);
+        assert!((with - plain).abs() < 0.5, "a line of text is {plain} tall, with an emoji {with}");
     }
 
     #[test]
