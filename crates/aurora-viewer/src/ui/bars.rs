@@ -764,7 +764,7 @@ fn landmark_star(
         if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-star-add-landmarks")) {
             out = Some(StarAction::AddLandmark);
         }
-        if menu::item(ui, p, "dots", aurora_i18n::tr!("landmark-star-more")) {
+        if menu::item(ui, p, "dots-filled", aurora_i18n::tr!("landmark-star-more")) {
             out = Some(StarAction::MoreOptions);
         }
     })

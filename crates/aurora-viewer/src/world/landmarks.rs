@@ -239,6 +239,27 @@ impl Landmarks {
     }
 }
 
+/// The folders of the Favorites and Landmarks trees never fetched yet: the
+/// landmark lookups only see fetched folders, where Firestorm has the whole
+/// inventory loaded in the background after login.
+pub fn unfetched_folders(inv: &Inventory) -> Vec<Uuid> {
+    let mut stack: Vec<Uuid> = [FOLDER_FAVORITES, FOLDER_LANDMARKS]
+        .into_iter()
+        .filter_map(|kind| crate::world::appearance::system_folder(inv, kind))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    while let Some(id) = stack.pop() {
+        if let Some(folder) = inv.folders.get(&id).filter(|_| seen.insert(id)) {
+            stack.extend(folder.children.iter().copied());
+            if folder.state == crate::world::inventory::FetchState::Unknown {
+                out.push(id);
+            }
+        }
+    }
+    out
+}
+
 /// FT_FAVORITE and FT_LANDMARK, the two folders landmarks are looked for in.
 const FOLDER_FAVORITES: i32 = 23;
 const FOLDER_LANDMARKS: i32 = 3;

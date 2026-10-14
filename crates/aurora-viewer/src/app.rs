@@ -339,6 +339,8 @@ pub struct App {
     display_name_ui: ui::display_name::DisplayNameUi,
     /// World › Landmark this Place (LLFloaterCreateLandmark).
     create_landmark_ui: ui::landmark_create::CreateLandmarkUi,
+    /// Inventory generation whose Favorites / Landmarks folders were asked for.
+    landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
     /// The depth of field's focus distance and its transition.
     dof_focus: crate::dof::Focus,
@@ -733,6 +735,7 @@ impl App {
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
             create_landmark_ui: Default::default(),
+            landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
             dof_focus: Default::default(),
             snapshots: Default::default(),
@@ -1185,15 +1188,12 @@ impl App {
             if let NetCommand::CreateInventoryItem { parent, kind, name } = &cmd {
                 let (asset, inventory, subtype) = kind.types();
                 // a landmark's asset is written by the server from where the
-                // agent stands (Landmark version 2)
-                let asset_id = match (kind, self.world.main().and_then(|r| r.info.as_ref())) {
-                    (aurora_net::inventory::operations::NewItem::Landmark, Some(info)) => {
+                // agent stands (the demo region has no id: a version 1
+                // landmark, with the global position)
+                let asset_id = match (kind, self.world.agent_global()) {
+                    (aurora_net::inventory::operations::NewItem::Landmark, Some(g)) => {
                         let id = uuid::Uuid::new_v4();
-                        let p = self.world.agent.position;
-                        let text = format!(
-                            "Landmark version 2\nregion_id {}\nlocal_pos {} {} {}\n",
-                            info.region_id, p.x, p.y, p.z
-                        );
+                        let text = format!("Landmark version 1\nposition {} {} {}\n", g.x, g.y, g.z);
                         self.world.landmarks.on_data(id, Some(text.as_bytes()));
                         id
                     }
@@ -4251,8 +4251,19 @@ impl App {
         }
         // AURORA_DEMO_LANDMARK: World › Landmark this place, or a landmark of
         // the plaza already made, once the agent stands on a parcel
+        let folder_ready = |kind: i32| {
+            let inv = &self.world.inventory;
+            crate::world::appearance::system_folder(inv, kind)
+                .and_then(|f| inv.folders.get(&f))
+                .is_some_and(|f| f.state == crate::world::inventory::FetchState::Fetched)
+        };
+        let ready = match self.create_landmark_ui.demo_pending {
+            Some(ui::landmark_create::DemoStart::Quick(kind)) => folder_ready(kind),
+            _ => true,
+        };
         if self.world.movement_complete
             && self.world.parcel.is_some()
+            && ready
             && let Some(start) = self.create_landmark_ui.demo_pending.take()
         {
             match start {
@@ -6963,6 +6974,14 @@ impl App {
     /// hasParcelLandmark: the landmark lying on the agent's parcel (the lit
     /// star; the "add landmark" entries are greyed out meanwhile).
     fn parcel_landmark(&mut self) -> Option<ui::landmark_create::ParcelLandmark> {
+        // the Favorites and Landmarks folders are fetched for it, as
+        // Firestorm has them after its background inventory fetch
+        if self.world.inventory.generation != self.landmark_folders_checked {
+            for id in crate::world::landmarks::unfetched_folders(&self.world.inventory) {
+                self.world.inventory.request(id);
+            }
+            self.landmark_folders_checked = self.world.inventory.generation;
+        }
         let origin = self.world.main_origin();
         self.create_landmark_ui
             .parcel_landmark(&self.world.inventory, &mut self.world.landmarks, self.world.parcel.as_ref(), origin)
