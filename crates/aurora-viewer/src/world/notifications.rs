@@ -20,6 +20,8 @@ pub mod im {
     pub const LURE_USER: u8 = 22;
     pub const LURE_ACCEPTED: u8 = 23;
     pub const LURE_DECLINED: u8 = 24;
+    pub const GODLIKE_LURE_USER: u8 = 25;
+    pub const TELEPORT_REQUEST: u8 = 26;
     pub const GOTO_URL: u8 = 28;
     pub const FROM_TASK_AS_ALERT: u8 = 31;
     pub const GROUP_NOTICE: u8 = 32;
@@ -71,9 +73,15 @@ pub enum Kind {
 #[derive(Debug, Clone)]
 pub enum Data {
     None,
+    /// A teleport offer (IM_LURE_USER), answered by `World::answer_teleport_invite`.
     Lure {
         from: Uuid,
-        lure: Uuid,
+        invite: u64,
+    },
+    /// A teleport request (IM_TELEPORT_REQUEST): Yes offers a teleport.
+    TeleportRequest {
+        from: Uuid,
+        invite: u64,
     },
     Friend {
         from: Uuid,
@@ -230,7 +238,6 @@ impl Notifications {
             (_, Response::Dismiss) => {
                 // closing an offer declines it, like Firestorm's toasts
                 match &n.data {
-                    Data::Lure { from, lure } => out.push(decline_lure(*from, *lure)),
                     Data::Friend { from, tx, offline } => out.push(self.friend_answer(*from, *tx, *offline, false, calling_cards)),
                     // Closing a resident's offer refuses nothing: what it
                     // delivered stays (inventory_offer_callback, "close
@@ -251,13 +258,6 @@ impl Notifications {
                     Data::Group { group, tx, offline } => out.push(group_answer(*group, *tx, *offline, false)),
                     Data::Dialog { .. } | Data::TextBox { .. } => {} // ignore = no reply
                     _ => {}
-                }
-            }
-            (Data::Lure { from, lure }, _) => {
-                if accept {
-                    out.push(NetCommand::AcceptLure { lure_id: *lure });
-                } else {
-                    out.push(decline_lure(*from, *lure));
                 }
             }
             (Data::Friend { from, tx, offline }, _) => out.push(self.friend_answer(*from, *tx, *offline, accept, calling_cards)),
@@ -332,16 +332,6 @@ impl Notifications {
         } else {
             NetCommand::DeclineFriendship { transaction: tx }
         }
-    }
-}
-
-fn decline_lure(from: Uuid, lure: Uuid) -> NetCommand {
-    NetCommand::SendImDialog {
-        to: from,
-        dialog: im::LURE_DECLINED,
-        id: lure,
-        message: String::new(),
-        bucket: Vec::new(),
     }
 }
 

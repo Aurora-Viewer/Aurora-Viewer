@@ -3858,6 +3858,14 @@ impl App {
             self.send(c);
         }
         self.update_places();
+        // where the teleport offers lead, and the gods' lures accepted at once
+        self.world.refresh_teleport_places();
+        for c in self.world.teleport_invites.take_commands() {
+            if matches!(c, NetCommand::AcceptLure { .. }) {
+                self.begin_teleport(String::new(), false);
+            }
+            self.send(c);
+        }
         for c in self.world.map.take_commands() {
             if let NetCommand::TeleportTo { handle, .. } = &c {
                 let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
@@ -8073,6 +8081,21 @@ impl ApplicationHandler for App {
             // captures: AURORA_DEMO_NOTIF=1 opens the notification list
             if std::env::var_os("AURORA_DEMO_NOTIF").is_some() {
                 self.notif_ui.open = true;
+            }
+            // AURORA_DEMO_LURE: teleports received, with the notification list
+            // (and the conversation the answers go to)
+            if let Some(scene) = crate::demo::lure_scene() {
+                use crate::demo::LureScene;
+                self.notif_ui.open = true;
+                self.panels.perf = false;
+                if scene == LureScene::Reject {
+                    self.world.status.cfg.reject_teleports = true;
+                }
+                if scene == LureScene::Answers {
+                    self.panels.chat = true;
+                    self.chat_ui.open(crate::demo::DEMO_NOVA);
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
+                }
             }
             // AURORA_DEMO_TALK=1: microphone on (voice dot of our avatar)
             if std::env::var_os("AURORA_DEMO_TALK").is_some() {

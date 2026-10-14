@@ -1179,6 +1179,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
+| `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
@@ -1567,6 +1568,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (that notice only goes to the resident's transcript, when instant messages
   are logged). `tp:reject`: "Request teleport" while teleports are rejected
   only shows the warning, with OK and no message to type.
+- **`AURORA_DEMO_LURE=offer|request|god|answers|reject`**: teleports received
+  from Tess Touch, with the notification list open (issue #280, part B1).
+  `offer`: "Tess Touch offers you a teleport", the place ("Location: Aurora
+  Demo (128, 130, 25)") above her invitation, Teleport / Decline; nothing in
+  the nearby chat and no conversation opened. `request`: "Tess Touch is
+  requesting to be teleported to your location", her message, "Offer a
+  teleport?", Yes / No; Yes writes "Teleport offer sent to Tess …" (in her
+  transcript, she has no conversation). `god`: no notification, the
+  teleport starts at once and fails offline (two lines in the nearby chat).
+  `answers`: her conversation is open with "Tess … declined your teleport
+  offer" as a system line, without a notification; Nova's acceptance goes to
+  her transcript only. `reject`: "Reject teleport offers and requests" is on
+  for the session: an offer and a request arrive, nothing is shown (each
+  sender gets the automatic answer). The demo writes transcripts only with
+  `AURORA_DEMO_CHATLOG`.
 - **`AURORA_DEMO_RADAR=1|tp|friends|groups|profile`**: the People window.
   `1`: residents at every range in "Near you" (with
   `AURORA_DEMO_TAGS=1`, those of the name plates, several of whom have a

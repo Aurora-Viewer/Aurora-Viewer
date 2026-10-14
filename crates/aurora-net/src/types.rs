@@ -1063,9 +1063,11 @@ pub enum NetCommand {
         message: String,
         bucket: Vec<u8>,
     },
-    /// Accept a teleport offer (TeleportLureRequest, via lure).
+    /// Accept a teleport offer (TeleportLureRequest, LLAgent::doTeleportViaLure):
+    /// a god's lure cannot be cancelled.
     AcceptLure {
         lure_id: Uuid,
+        godlike: bool,
     },
     AcceptFriendship {
         transaction: Uuid,
