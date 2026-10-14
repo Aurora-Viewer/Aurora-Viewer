@@ -1443,7 +1443,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 |---|---|
 | `AURORA_DEMO_WINDOWS=<mode>` | Collapse, move and restore of the inventory title bar |
 | `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
-| `AURORA_DEMO_SNAP=<mode>` | Window snapping: guide, snap, grouped move, resize |
+| `AURORA_DEMO_SNAP=<mode>` | Window snapping: Alt attachment, free move, detachment, grouped move, resize |
 | `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner dragged |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
@@ -1721,19 +1721,24 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   real Conversations toolbar button at frames 900–901: the window expands
   instead of closing (issue #269). Capture with `AURORA_FPS_LIMIT=60` at
   `560,760,1000`.
-- **`AURORA_DEMO_SNAP=1|group|size`**: drags the real Conversations
+- **`AURORA_DEMO_SNAP=1|group|size|free|detach`**: drags the real Conversations
   window by its title bar to next to People (both must be
   open: first-launch layout, or `AURORA_DEMO_UI`). Frame
-  700: press on the title bar; until frame 900 the window is held 6 px
+  700: press on the title bar with Alt held; until frame 900 the window is held 6 px
   from the right edge of People and 5 px below the line of its top: the
   violet guide (the two edges that are going to touch, the line of the tops,
-  the outline of the place where it is going to land) and the hint "Alt: do
-  not snap" appear, the window stays under the pointer; frame 900: released,
-  it snaps against People, with no gap, tops aligned. `group` then moves
+  the outline of the place where it is going to land) appear, the window
+  stays under the pointer; frame 900: released with Alt still held,
+  it snaps against People, with no gap, tops aligned. Alt is released at
+  frame 901. `group` then moves
   People by 70 × 50 between frames 1000 and 1100: Conversations follows, the
   hint says "Alt: detach this window". `size` instead drags the
   bottom edge of Conversations to 4 px from the bottom line of People: the
-  edge snaps to it under the pointer, with its guide line. Take screenshots at
+  edge snaps to it under the pointer, with its guide line. `free` omits Alt
+  throughout: Conversations stays where dropped with the "Alt: snap and
+  attach" hint during its drag; moving People afterwards leaves Conversations
+  in place. `detach` attaches first, then moves People with Alt held:
+  Conversations stays behind and the link is removed. Take screenshots at
   `800,960,1060,1160` with `AURORA_FPS_LIMIT=60`.
 - **`AURORA_DEMO_RESIZE=corner|edge|drag[,<window>]`**: from frame 600,
   the pointer rests 6 points inside the bottom-right corner of a real

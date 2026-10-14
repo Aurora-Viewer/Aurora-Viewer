@@ -550,7 +550,7 @@ impl<'a> Floater<'a> {
 /// A window without a title bar, dragged by its whole surface (the
 /// mini-map): `frame` around `body`, which fills it. Like a floater it is
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
-/// moved or resized, and is resized by the same edge handles.
+/// moved with Alt or resized, and is resized by the same edge handles.
 pub(crate) fn bare_window(
     ctx: &egui::Context,
     p: &Palette,

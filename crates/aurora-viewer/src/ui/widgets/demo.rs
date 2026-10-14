@@ -189,24 +189,29 @@ pub fn resize_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     }
 }
 
-/// AURORA_DEMO_SNAP=1|group|size: the Conversations window dragged by its
+/// AURORA_DEMO_SNAP=1|group|size|free|detach: Conversations dragged by its
 /// title next to the People window, on the real windows. Frame 700: the
 /// title is pressed; until 900 it is held 6 px short of the right side of
-/// People and 5 px under the line of its top (the guide and the Alt hint
-/// show); 900: released, the window snaps and the two are glued. `group`
+/// People and 5 px under the line of its top, with Alt held (the guide
+/// shows); 900: released, the window snaps and the two are glued. `group`
 /// then drags People by 70 x 50 from frame 1000 to 1100: Conversations
 /// follows. `size` drags the bottom edge of Conversations to 4 px from
 /// the line of the bottom of People instead: the edge snaps under the
-/// pointer.
+/// pointer. `free` omits Alt and then moves People alone. `detach` attaches
+/// first, then drags People with Alt so that Conversations stays behind.
 pub fn snap_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let Ok(mode) = std::env::var("AURORA_DEMO_SNAP") else {
         return Vec::new();
+    };
+    let modifiers = egui::Modifiers {
+        alt: (700..=900).contains(&frame) && mode != "free" || (1000..=1100).contains(&frame) && mode == "detach",
+        ..Default::default()
     };
     let button = |pos, pressed| egui::Event::PointerButton {
         pos,
         button: egui::PointerButton::Primary,
         pressed,
-        modifiers: egui::Modifiers::NONE,
+        modifiers,
     };
     let (chat, people) = (egui::Id::new("conversations"), egui::Id::new("people"));
     let rect = |window: egui::Id| ctx.memory(|m| m.area_rect(window));
@@ -222,14 +227,14 @@ pub fn snap_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     };
     let held = ctx.data(|d| d.get_temp::<(egui::Pos2, egui::Pos2)>(path));
     let gap = crate::ui::layout::GAP;
-    match (frame, mode.as_str()) {
+    let mut events = match (frame, mode.as_str()) {
         (700, _) => {
             let (Some(from), Some(c), Some(r)) = (title(chat), rect(chat), rect(people)) else {
                 return Vec::new();
             };
             begin(from, from + (egui::pos2(r.right() + gap + 6.0, r.top() + 5.0) - c.min))
         }
-        (1000, "group" | "groupe") => match title(people) {
+        (1000, "group" | "groupe" | "free" | "detach") => match title(people) {
             Some(from) => begin(from, from + egui::vec2(70.0, 50.0)),
             None => Vec::new(),
         },
@@ -249,5 +254,9 @@ pub fn snap_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
             None => Vec::new(),
         },
         _ => Vec::new(),
+    };
+    if matches!(frame, 700..=901 | 1000..=1101) {
+        events.insert(0, egui::Event::ModifiersChanged(modifiers));
     }
+    events
 }
