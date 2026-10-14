@@ -466,6 +466,7 @@ pub struct App {
     place_groups: std::collections::HashSet<uuid::Uuid>,
     /// "About Land".
     land_ui: ui::land::LandUi,
+    region_ui: ui::region::RegionUi,
     group_profile_ui: ui::group_profile::GroupProfileUi,
     /// Environment selector and "Personal lighting".
     env_ui: ui::environment::EnvironmentUi,
@@ -842,6 +843,7 @@ impl App {
             lod_infos: Vec::new(),
             place_groups: Default::default(),
             land_ui: Default::default(),
+            region_ui: Default::default(),
             group_profile_ui: Default::default(),
             env_ui: Default::default(),
             env_scan: false,
@@ -2505,6 +2507,7 @@ impl App {
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
             Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
             Action::TeleportHistory => self.toggle_teleport_history(),
+            Action::RegionEstate => ui::widgets::toggle_floater(&self.egui_ctx, ui::region::WINDOW, &mut self.panels.region_estate),
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
@@ -4615,6 +4618,10 @@ impl App {
         // About Land requests (selection and its refresh, lists, covenant...)
         self.world.land.tick(Instant::now());
         for c in self.world.land.take_commands() {
+            self.send(c);
+        }
+        // Region / Estate requests, in the panels' order
+        for c in self.world.estate.take_commands() {
             self.send(c);
         }
         self.update_places();
@@ -8563,6 +8570,23 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.about_land = open;
+                // Region / Estate: asked by About Land or the restart notice
+                if ui::region::take_open_request(&ctx) {
+                    ui::widgets::open_floater(&ctx, ui::region::WINDOW, &mut self.panels.region_estate);
+                }
+                let mut open = self.panels.region_estate;
+                let region_map = open
+                    .then_some(self.world.main_region)
+                    .flatten()
+                    .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
+                self.region_ui
+                    .show(&ctx, &p, &mut self.world, &self.avatar_pics, region_map.as_ref(), &mut open);
+                self.panels.region_estate = open;
+                match self.region_ui.action.take() {
+                    Some(ui::region::RegionAction::AboutLand) => self.panels.about_land = true,
+                    Some(ui::region::RegionAction::WorldMap) => ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map),
+                    None => {}
+                }
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
                 for cmd in self.create_landmark_ui.show(&ctx, &p, &self.world.inventory) {
                     self.send(cmd);
@@ -9517,6 +9541,17 @@ impl ApplicationHandler for App {
                 };
                 self.profile_ui.open(&mut self.world, id);
                 self.profile_ui.demo(&self.egui_ctx, id, option);
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_REGION=overview[:owner|:manager|:resident]: Region /
+            // Estate on that page
+            if let Some(scenario) = crate::demo::region::scenario() {
+                self.region_ui.demo(scenario.page, scenario.preview);
+                if scenario.compact {
+                    let pos = egui::pos2(560.0, 80.0);
+                    ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(480.0, 720.0));
+                }
+                self.panels.region_estate = true;
                 self.panels.perf = false;
             }
             // AURORA_DEMO_LAND=<tab>[:role][:classic]: About Land on that tab

@@ -53,6 +53,9 @@ pub mod hud;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
+/// Region / Estate answers (AURORA_DEMO_REGION).
+#[path = "demo_region.rs"]
+pub mod region;
 /// The notification center's mockup scenario, in either style
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
@@ -1279,6 +1282,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             }]
         }
         aurora_net::NetCommand::Land(l) => land::reply(l),
+        aurora_net::NetCommand::Estate(e) => region::reply(e),
         aurora_net::NetCommand::RequestNames(ids) => {
             let names = [
                 aurora_i18n::tr!("demo-nova-example"),
@@ -2407,8 +2411,9 @@ pub fn events() -> Vec<NetEvent> {
             size_x: 256,
             size_y: 256,
             is_main: true,
-            owner: DEMO_LOUP,
-            is_estate_manager: false,
+            // AURORA_DEMO_REGION: the avatar may own the estate or manage it
+            owner: region::estate_owner(),
+            is_estate_manager: region::is_manager(),
             product_name: "Estate / Full Region".into(),
             billable_factor: 1.0,
         })),

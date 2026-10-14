@@ -507,6 +507,15 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "places",
             &mut panels.places,
         );
+        // menu_viewer.xml: Parcel Details (About Land), then Region Details
+        // (Region / Estate, Alt+R)
+        // (About Land's floater has an id per layout: the flag alone)
+        if menu::check(ui, p, "info-circle-filled", aurora_i18n::tr!("common-about-land"), panels.about_land, true) {
+            panels.about_land = !panels.about_land;
+        }
+        if menu::item_keys(ui, p, "building-castle", aurora_i18n::tr!("region-title"), "Alt+R") {
+            super::widgets::toggle_floater(ui.ctx(), super::region::WINDOW, &mut panels.region_estate);
+        }
         // menu_viewer.xml: Search (Ctrl+F)
         if menu::item_keys(ui, p, "search-filled", aurora_i18n::tr!("search-title"), "Ctrl+F") {
             super::widgets::toggle_floater(ui.ctx(), super::search::WINDOW, &mut panels.search);

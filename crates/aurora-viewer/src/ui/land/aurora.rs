@@ -374,7 +374,12 @@ pub(super) fn show(
         label: page.label(),
         disabled: None,
     });
-    let role = role.map(|r| (r, aurora_i18n::tr!("ui-land-overview-visitor")));
+    let role = role.map(|mine| sheet::ViewAs {
+        mine,
+        other: aurora_i18n::tr!("ui-land-overview-visitor"),
+        tip: aurora_i18n::tr!("ui-land-overview-view-as-tip"),
+        accent: false,
+    });
     sheet::page_tabs(ui, p, &tabs, &mut s.page, role, &mut s.view_as_visitor);
     ui.add_space(8.0);
     let Some(parcel) = v.parcel.clone() else {

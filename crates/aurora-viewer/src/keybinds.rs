@@ -307,6 +307,8 @@ pub enum Action {
     WorldMap,
     /// World › Teleport history (Firestorm Alt+H).
     TeleportHistory,
+    /// World › Region / Estate (Firestorm's "Region Details", Alt+R).
+    RegionEstate,
     /// "Search" (Firestorm Ctrl+F, menu_viewer.xml).
     Search,
     Performance,
@@ -408,6 +410,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
                     (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
                     (Action::TeleportHistory, aurora_i18n::tr!("common-teleport-history")),
+                    (Action::RegionEstate, aurora_i18n::tr!("region-title")),
                     (Action::Search, aurora_i18n::tr!("search-title")),
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
                     (Action::Preferences, aurora_i18n::tr!("common-preferences")),
@@ -536,6 +539,19 @@ impl KeyBindings {
                 [
                     Some(Binding {
                         input: Input::key(K::KeyH),
+                        ctrl: false,
+                        shift: false,
+                        alt: true,
+                    }),
+                    None,
+                ],
+            ),
+            // menu_viewer.xml: RegionEstate, shortcut="alt|R"
+            (
+                Action::RegionEstate,
+                [
+                    Some(Binding {
+                        input: Input::key(K::KeyR),
                         ctrl: false,
                         shift: false,
                         alt: true,

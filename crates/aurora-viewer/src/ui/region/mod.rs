@@ -1,0 +1,276 @@
+//! "Region / Estate" in Aurora's look (LLFloaterRegionInfo,
+//! newview/llfloaterregioninfo.cpp, floater_region_info.xml, originally
+//! LGPL 2.1): the agent's region and its estate at a glance in a header
+//! shared by three pages, "Overview" for everyone, "Manage" for the
+//! settings grouped by intent and "People" for the estate's lists (hidden
+//! from a resident, whom the simulator does not send them). The pieces are
+//! About Land's (`ui/sheet.rs`); the data are `world/estate.rs`'s. Who may
+//! manage the estate can look at it as a resident would ("View as").
+//! Manage and People come with the next steps of the redesign.
+
+mod overview;
+
+use crate::theme::Palette;
+use crate::ui::sheet::{self, PageTab};
+use crate::ui::widgets::{self, Floater};
+use crate::world::World;
+use crate::world::estate::{self, Role};
+use aurora_net::RegionHandle;
+use egui::Vec2;
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
+
+/// Id of the window (its place and size are kept by the layout).
+pub const WINDOW: &str = "region_estate";
+
+/// The three pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Page {
+    #[default]
+    Overview,
+    Manage,
+    People,
+}
+
+impl Page {
+    const ALL: [Page; 3] = [Page::Overview, Page::Manage, Page::People];
+
+    fn label(self) -> &'static str {
+        match self {
+            Page::Overview => aurora_i18n::tr!("ui-land-overview-tab"),
+            Page::Manage => aurora_i18n::tr!("ui-land-overview-manage-tab"),
+            Page::People => aurora_i18n::tr!("region-people-tab"),
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Page::Overview => "eye-filled",
+            Page::Manage => "adjustments-horizontal-filled",
+            Page::People => "users",
+        }
+    }
+}
+
+/// Default size: About Land's, the mockup's 1000 × 720.
+const SIZE: Vec2 = Vec2::new(1000.0, 720.0);
+/// The compact layout (no picture, one column) goes down to this.
+const MIN_SIZE: Vec2 = Vec2::new(480.0, 480.0);
+/// Below this width the window is laid out compact.
+const COMPACT_W: f32 = 620.0;
+
+/// The name of a role, as "View as" and the header say it.
+pub(crate) fn role_name(role: Role) -> &'static str {
+    match role {
+        Role::Owner => aurora_i18n::tr!("region-role-owner"),
+        Role::Manager => aurora_i18n::tr!("region-role-manager"),
+        Role::Resident => aurora_i18n::tr!("region-role-resident"),
+    }
+}
+
+/// What the pages read about the region, its estate and the agent.
+pub(crate) struct View {
+    pub handle: RegionHandle,
+    /// The agent's real role, and the one the window shows ("View as").
+    pub role: Role,
+    pub shown: Role,
+    pub name: String,
+    pub sim_access: u8,
+    /// Region flags: RegionInfo's once answered, else the handshake's.
+    pub flags: u64,
+    /// The estate owner: `estateupdateinfo`'s, else the covenant's, else
+    /// the region's (RegionHandshake SimOwner).
+    pub owner: Uuid,
+    pub product: String,
+    pub same_region: bool,
+}
+
+impl View {
+    /// What a resident does not see: the estate's access, its managers and
+    /// the interventions.
+    pub fn manages(&self) -> bool {
+        self.shown != Role::Resident
+    }
+
+    pub fn region_flag(&self, flag: u32) -> bool {
+        self.flags & u64::from(flag) != 0
+    }
+}
+
+/// What the window asks the app to open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegionAction {
+    AboutLand,
+    WorldMap,
+}
+
+#[derive(Default)]
+pub struct RegionUi {
+    page: Page,
+    /// The owner (or a manager) looks at the region as a resident would.
+    as_resident: bool,
+    /// The covenant shown in full.
+    covenant_open: bool,
+    was_open: bool,
+    /// Residents whose profile picture the header waits for.
+    pub wanted_pics: HashSet<Uuid>,
+    /// An action button was pressed (taken by the app).
+    pub action: Option<RegionAction>,
+}
+
+/// The menus' and About Land's request to open the window.
+pub fn request_open(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("aurora_open_region_estate"), true));
+}
+
+pub fn take_open_request(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new("aurora_open_region_estate")))
+        .unwrap_or(false)
+}
+
+impl RegionUi {
+    /// AURORA_DEMO_REGION: the page and "View as" of a capture.
+    pub fn demo(&mut self, page: Page, as_resident: bool) {
+        self.page = page;
+        self.as_resident = as_resident;
+    }
+
+    /// Show the floater; `open` is the panel flag, `map` the mini-map's
+    /// image of the region, `avatars` the profile pictures.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &mut World,
+        avatars: &HashMap<Uuid, egui::TextureHandle>,
+        map: Option<&egui::TextureHandle>,
+        open: &mut bool,
+    ) {
+        let handle = world.main_region.filter(|_| *open);
+        let Some(handle) = handle else {
+            if self.was_open {
+                self.was_open = false;
+                world.estate.close();
+            }
+            return;
+        };
+        // a single window: reopened, or after a teleport, it shows the
+        // region the agent is in (onOpen, onRegionChanged)
+        if !self.was_open || world.estate.open != Some(handle) {
+            self.was_open = true;
+            world.refresh_region_window(handle, true);
+        }
+        let view = self.view(world, handle);
+        if view.role == Role::Resident {
+            self.as_resident = false;
+        }
+        let screen = ctx.content_rect();
+        let mut floater = Floater::new(
+            WINDOW,
+            aurora_i18n::tr!("region-title"),
+            egui::pos2(screen.center().x - SIZE.x / 2.0, 80.0),
+            SIZE,
+        )
+        .help(aurora_i18n::tr!("region-help"));
+        floater.min_size = MIN_SIZE;
+        floater.show(ctx, p, open, |ui| {
+            let compact = ui.available_width() < COMPACT_W;
+            // a resident is not sent the lists: no People page
+            let pages: Vec<Page> = Page::ALL
+                .into_iter()
+                .filter(|pg| *pg != Page::People || view.role != Role::Resident)
+                .collect();
+            let later = aurora_i18n::tr!("common-not-available-in-aurora-yet");
+            let tabs: Vec<PageTab<'_, Page>> = pages
+                .iter()
+                .map(|pg| PageTab {
+                    page: *pg,
+                    icon: pg.icon(),
+                    label: pg.label(),
+                    disabled: (*pg != Page::Overview).then_some(later),
+                })
+                .collect();
+            let role = (view.role != Role::Resident && !compact).then(|| sheet::ViewAs {
+                mine: role_name(view.role),
+                other: role_name(Role::Resident),
+                tip: aurora_i18n::tr!("region-view-as-tip"),
+                // the mockup lights the choice in the accent
+                accent: true,
+            });
+            // Manage and People come with the next steps
+            self.page = Page::Overview;
+            sheet::page_tabs(ui, p, &tabs, &mut self.page, role, &mut self.as_resident);
+            ui.add_space(8.0);
+            let view = View {
+                shown: if self.as_resident { Role::Resident } else { view.role },
+                ..view
+            };
+            let pics = overview::Pictures { avatars, map };
+            egui::ScrollArea::vertical()
+                .id_salt("region_estate_overview")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width() - 6.0);
+                    overview::header(ui, p, self, &view, world, &pics, compact);
+                    overview::show(ui, p, self, &view, world, compact);
+                    ui.add_space(4.0);
+                });
+        });
+    }
+
+    fn view(&self, world: &World, handle: RegionHandle) -> View {
+        let info = world.regions.get(&handle).and_then(|r| r.info.clone());
+        let details = world.estate.region.as_ref();
+        let covenant_owner = world
+            .land
+            .covenant
+            .as_ref()
+            .filter(|c| c.handle == handle && !c.estate_owner.is_nil())
+            .map(|c| c.estate_owner);
+        let owner = world
+            .estate
+            .estate
+            .as_ref()
+            .map(|e| e.owner)
+            .filter(|o| !o.is_nil())
+            .or(covenant_owner)
+            .or_else(|| info.as_ref().map(|i| i.owner))
+            .unwrap_or_default();
+        let manager = info.as_ref().is_some_and(|i| i.is_estate_manager);
+        let role = estate::role(world.agent_id, owner, manager);
+        View {
+            handle,
+            role,
+            shown: role,
+            name: details
+                .map(|d| d.name.clone())
+                .or_else(|| info.as_ref().map(|i| i.name.clone()))
+                .unwrap_or_default(),
+            sim_access: details.map_or_else(|| info.as_ref().map_or(0, |i| i.sim_access), |d| d.sim_access),
+            flags: details.map_or_else(|| info.as_ref().map_or(0, |i| u64::from(i.region_flags)), |d| d.flags),
+            owner,
+            product: details
+                .map(|d| d.product_name.clone())
+                .filter(|p| !p.is_empty())
+                .or_else(|| info.as_ref().map(|i| i.product_name.clone()))
+                .unwrap_or_default(),
+            same_region: true,
+        }
+    }
+}
+
+/// A flat button of the window, greyed when `enabled` is false.
+fn action(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, kind: widgets::ActionKind, enabled: bool) -> egui::Response {
+    widgets::action_button_if(ui, p, icon, label, kind, Vec2::new(0.0, overview::ACTION_H), enabled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_role_is_named() {
+        assert_eq!(role_name(Role::Owner), aurora_i18n::tr!("region-role-owner"));
+        assert_eq!(role_name(Role::Resident), aurora_i18n::tr!("region-role-resident"));
+    }
+}

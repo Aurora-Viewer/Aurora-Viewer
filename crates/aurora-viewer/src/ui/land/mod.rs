@@ -27,6 +27,7 @@ mod scripts;
 mod sound;
 
 use aurora::Page;
+pub(crate) use overview::day;
 
 use super::avatar_picker::AvatarPicker;
 use super::texture_picker::TexturePicker;

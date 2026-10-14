@@ -1033,6 +1033,7 @@ build-ui-object-bias = Bias
 common-library = Library
 app-welcome = Welcome!
 demo-welcome-to-the-aurora-viewer-demo = Welcome to the Aurora Viewer demo! 🐺✨❤️
+demo-region-day-cycle = Nordic Dawn
 demo-land-welcome-to-the-aurora-demo-estate-by-buying-land = { "Welcome to the Aurora Demo estate.\u000A\u000ABy buying land on this estate, you agree to the following rules:\u000A\u000A1. Builds must fit the estate's Nordic theme.\u000A2. No advertising boards visible from neighboring parcels.\u000A3. Background sounds (radios, sound scripts) must stay within your parcel.\u000A4. Parcels left unused for 90 days may be reclaimed.\u000A\u000AThank you for keeping Aurora's plaza welcoming to everyone." }
 app-welcome-2 = { "Welcome, " }{ $value0 }{ " " }{ $value1 }.
 build-ui-object-bevel = Bevel
@@ -5162,6 +5163,8 @@ ui-options-aurora-about-land = About Land
 ui-options-aurora-about-land-help = An overview and settings grouped by what you want to do, or Firestorm's 9 tabs.
 ui-options-aurora-about-land-aurora = Aurora
 ui-options-aurora-about-land-classic = Classic window (Firestorm)
+ui-options-aurora-region-estate-help = An overview, settings grouped by what you want to do and the interventions together, or Firestorm's 8 tabs.
+ui-options-aurora-region-estate-soon = The classic window is coming soon: until then, Region / Estate opens in its Aurora version.
 ui-options-aurora-pay-window = Pay window
 ui-options-aurora-pay-window-help = Paying residents, groups and objects.
 ui-options-aurora-pay-aurora = Aurora
@@ -5546,6 +5549,77 @@ ui-land-overview-visitor = Visitor
 ui-land-overview-officer = Officer
 ui-land-overview-view-as = View as
 ui-land-overview-view-as-tip = See the parcel as a visitor sees it: nothing can be changed while this is on
+region-title = Region / Estate
+region-help = The region you are in and its estate: rules, simulator health, covenant
+region-people-tab = People
+region-role-owner = Estate owner
+region-role-manager = Manager
+region-role-resident = Resident
+region-view-as-tip = See the region as a resident sees it: nothing can be changed while this is on
+region-estate-id-tip = Estate no. { $id }
+region-position-server = position ({ $x }, { $y }) · server { $version }
+region-managers = { $n ->
+    [one] manager: { $names }
+   *[other] managers: { $names }
+    }
+region-avatars = Avatars
+region-avatars-most = { $max } at most
+region-simulator = Simulator
+region-health-smooth = Smooth
+region-health-slowed = Slowed
+region-health-struggling = Struggling
+region-dilation = dilation { $value }
+region-restart-schedule = Scheduled restart
+region-schedule-at = { $days } at { $time } UTC
+region-schedule-every-day = Every day
+region-schedule-none = None
+region-weekday = { $day ->
+    [0] Sunday
+    [1] Monday
+    [2] Tuesday
+    [3] Wednesday
+    [4] Thursday
+    [5] Friday
+   *[6] Saturday
+    }
+region-open-to-all = Open to all
+region-open-to-all-tip = Anyone may come to the estate, except the banned
+region-lists-only = Lists only
+region-lists-only-tip = Only the estate's allowed residents and groups may come
+region-terraform = Terraforming
+region-terraform-tip = Parcel owners may change the ground of their land
+region-terraform-blocked = Terraforming blocked
+region-terraform-blocked-tip = Nobody can change the ground, even on their own parcel
+region-map = Map
+region-message = Message to all…
+region-top-scripts = Top scripts
+region-restart = Restart…
+region-copy-region-id = Copy the region ID
+region-day-cycle = Day cycle
+region-day-cycle-value = “{ $name }”, { $hours } h day
+region-day-length = { $hours } h day
+region-default-environment = Default environment
+region-parcels = Parcels
+region-parcels-own-environment = May have their own
+region-parcels-region-environment = Keep the region's
+region-health = Simulator health
+region-top-scripts-link = Top scripts ›
+region-time-dilation = Time dilation
+region-frames = Frames per second
+region-frames-value = { $fps } · physics { $physics }
+region-script-time = Script time
+region-script-time-value = { $ms } ms · { $n ->
+    [one] { $count } active script
+   *[other] { $count } active scripts
+    }
+region-spare-time = Spare time
+region-spare-time-value = { $spare } ms of { $frame }
+region-type = Type
+region-type-unknown = (unknown)
+region-estate-id = Estate ID
+region-grid-position = Position
+region-server = Server
+region-experiences-value = { $trusted } trusted · { $allowed } allowed
 ui-land-manage-access = Who can come
 ui-land-manage-rules = What visitors can do
 ui-land-manage-objects = Objects and prims
