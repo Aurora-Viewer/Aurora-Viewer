@@ -45,6 +45,7 @@ pub mod teleport_invites;
 pub mod terrain;
 pub mod tphistory;
 pub mod transcripts;
+pub mod windlight_presets;
 pub mod worldmap;
 
 #[cfg(test)]

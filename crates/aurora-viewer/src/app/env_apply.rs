@@ -19,6 +19,7 @@ use crate::world::env_day_edit::{self, DayDoc, LegacyError, LegacyFolder};
 use crate::world::env_select::SettingsKind;
 use crate::world::land::{AgentRights, EnvState};
 use crate::world::notifications::{Data, Kind};
+use crate::world::windlight_presets;
 use aurora_llsd::Llsd;
 use aurora_net::land::LandCommand;
 use aurora_net::{NetCommand, ParcelInfo};
@@ -560,8 +561,8 @@ impl App {
 
 /// LLEnvironment::createDayCycleFromLegacyPreset on a file: the preset name
 /// is the file's, the skies and water are read from the `skies` and `water`
-/// folders beside its folder (Firestorm falls back on its own bundled
-/// presets, which Aurora does not ship).
+/// folders beside its folder, or from Firestorm's built-in presets when a
+/// folder is missing.
 fn import_day_file(path: &Path) -> Result<DayDoc, String> {
     let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let shown = path.display().to_string();
@@ -584,6 +585,13 @@ fn import_day_file(path: &Path) -> Result<DayDoc, String> {
             LegacyFolder::Water => "water",
         });
         let names = env_day_edit::legacy_file_names(preset);
+        // no such folder beside the day: Firestorm's own presets, built in
+        if !dir.is_dir() {
+            return names
+                .iter()
+                .find_map(|n| windlight_presets::file(folder, n).map(|d| (d, windlight_presets::shown_path(folder, n))))
+                .ok_or_else(|| windlight_presets::shown_path(folder, &names[0]));
+        }
         for file in &names {
             let p = dir.join(file);
             if let Ok(data) = std::fs::read(&p) {
