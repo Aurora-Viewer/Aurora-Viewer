@@ -1134,7 +1134,7 @@ To check with these scenarios:
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
   (2500).
-- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save|day|day-play|day-edit|parcel|region|custom`**: sky,
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame
   400: midnight, the purple sky at 25 %, noon, sunset), the ground track and
@@ -1169,7 +1169,15 @@ To check with these scenarios:
   (400): the day cycle editor in the parcel context, "Apply To Parcel" as
   the main button, left to the tester. Add `-refused` (`parcel-refused`…)
   and the simulator refuses inline days: Firestorm's WLRegionApplyFail
-  alert with the demo's reason.
+  alert with the demo's reason. `custom-follow`: as `custom`, then the
+  library's "Dynamic Day" is applied to the parcel (900): the open editor
+  follows it (two ground frames instead of four, logged `the editor follows
+  it`). `day-notrans`: as `day`, then the library's no-transfer "Annan
+  Adored Pink Sky" is loaded at 60 % (900): Firestorm's question about
+  making the day no-transfer comes first. `beacons`: the sky editor on its
+  Sun & Moon tab with both beacons on: a line from the avatar towards the
+  sun (amber) and the moon (violet); they go off again when the editor
+  closes (a capture's exit skips that: the demo profile keeps them on).
 
 ## Load and smoothness
 
