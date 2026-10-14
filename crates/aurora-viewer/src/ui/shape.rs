@@ -496,6 +496,14 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn run_headless(ctx: &egui::Context, input: egui::RawInput, draw: impl FnMut(&mut egui::Ui)) -> egui::FullOutput {
+        let mut output = ctx.run_ui(input, draw);
+        // These tests inspect layout/input without a renderer. Explicitly
+        // discard font/icon uploads as required by egui's debug assertions.
+        output.textures_delta.clear();
+        output
+    }
+
     fn draw(ctx: &egui::Context, world: &mut World, state: &mut State, events: Vec<egui::Event>) -> Vec<Action> {
         let mut actions = Vec::new();
         let input = egui::RawInput {
@@ -503,7 +511,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| {
+        let _ = run_headless(ctx, input, |ui| {
             actions = show(ui.ctx(), &crate::theme::Theme::default().palette(), world, state).0;
         });
         actions
@@ -527,7 +535,7 @@ mod tests {
         };
         let mut output = Default::default();
         for _ in 0..3 {
-            output = ctx.run_ui(input.clone(), |ui| {
+            output = run_headless(&ctx, input.clone(), |ui| {
                 let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, &mut state);
             });
         }
@@ -597,7 +605,7 @@ mod tests {
                 ..Default::default()
             };
             let mut frame = |state: &mut State| {
-                ctx.run_ui(input.clone(), |ui| {
+                run_headless(&ctx, input.clone(), |ui| {
                     let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, state);
                 })
             };
@@ -678,7 +686,7 @@ mod tests {
         };
         let mut output = Default::default();
         for _ in 0..4 {
-            output = ctx.run_ui(input.clone(), |ui| {
+            output = run_headless(&ctx, input.clone(), |ui| {
                 let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, &mut state);
             });
         }
