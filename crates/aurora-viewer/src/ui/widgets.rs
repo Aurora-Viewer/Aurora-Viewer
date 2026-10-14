@@ -1281,6 +1281,36 @@ pub fn action_button_if(
     action_button_keyed(ui, p, icon, label, kind, size, enabled, None)
 }
 
+const KEYED_ICON: f32 = 15.0;
+const KEYED_GAP: f32 = 7.0;
+/// Room around the content of a button that takes its content's width.
+const KEYED_PAD: f32 = 24.0;
+
+/// An `action_button_keyed`'s icon with its gap, label and keycaps widths.
+fn keyed_parts(ui: &egui::Ui, icon: &str, label: &str, key: Option<&crate::keybinds::Binding>) -> (f32, f32, f32) {
+    let text = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.5), Color32::PLACEHOLDER)
+        .size()
+        .x;
+    // an icon alone (empty label) sits in the middle, without the gap
+    let lead = match (icon.is_empty(), label.is_empty()) {
+        (true, _) => 0.0,
+        (false, true) => KEYED_ICON,
+        (false, false) => KEYED_ICON + KEYED_GAP,
+    };
+    let caps = key.map_or(0.0, |b| KEYED_GAP + keycap::row_width(&keycap::caps(ui, b, Color32::PLACEHOLDER)));
+    (lead, text, caps)
+}
+
+/// The width of an `action_button_keyed`'s content (icon, label, keys):
+/// to give the button its own padding, or lay out what sits beside it
+/// before it is drawn.
+pub fn action_button_keyed_content(ui: &egui::Ui, icon: &str, label: &str, key: Option<&crate::keybinds::Binding>) -> f32 {
+    let (lead, text, caps) = keyed_parts(ui, icon, label, key);
+    lead + text + caps
+}
+
 /// `action_button_if` with the keycaps of its shortcut after the label
 /// ("Stop flying F"); in a button too narrow for all three, the icon goes.
 #[allow(clippy::too_many_arguments)]
@@ -1294,31 +1324,19 @@ pub fn action_button_keyed(
     enabled: bool,
     key: Option<&crate::keybinds::Binding>,
 ) -> egui::Response {
-    const ICON: f32 = 15.0;
-    const GAP: f32 = 7.0;
+    const ICON: f32 = KEYED_ICON;
+    const GAP: f32 = KEYED_GAP;
     let enabled = enabled && ui.is_enabled();
     let font = egui::FontId::proportional(12.5);
-    let width = |ui: &egui::Ui| {
-        ui.painter()
-            .layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER)
-            .size()
-            .x
-    };
-    // an icon alone (empty label) sits in the middle, without the gap
-    let lead = match (icon.is_empty(), label.is_empty()) {
-        (true, _) => 0.0,
-        (false, true) => ICON,
-        (false, false) => ICON + GAP,
-    };
-    let caps_w = key.map_or(0.0, |b| GAP + keycap::row_width(&keycap::caps(ui, b, Color32::PLACEHOLDER)));
-    let icon = if key.is_some() && size.x > 0.0 && lead + width(ui) + caps_w + 2.0 * GAP > size.x {
+    let (lead, text_w, caps_w) = keyed_parts(ui, icon, label, key);
+    let icon = if key.is_some() && size.x > 0.0 && lead + text_w + caps_w + 2.0 * GAP > size.x {
         ""
     } else {
         icon
     };
     let lead = if icon.is_empty() { 0.0 } else { lead };
-    let content = lead + width(ui) + caps_w;
-    let desired = Vec2::new(if size.x > 0.0 { size.x } else { content + 24.0 }, size.y);
+    let content = lead + text_w + caps_w;
+    let desired = Vec2::new(if size.x > 0.0 { size.x } else { content + KEYED_PAD }, size.y);
     let (rect, resp) = ui.allocate_exact_size(desired, if enabled { Sense::click() } else { Sense::hover() });
     let hot = enabled && (resp.hovered() || resp.has_focus());
     let (fill, ink) = match kind {

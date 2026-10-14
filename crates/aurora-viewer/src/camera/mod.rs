@@ -14,9 +14,11 @@
 pub mod demo;
 mod focus;
 pub(crate) mod follow;
+pub mod free;
 mod settings;
 
 pub use focus::FocusObject;
+pub use free::FreeCamera;
 pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE};
 
 use crate::agent::AgentState;
@@ -56,7 +58,7 @@ const SLOP_RANGE: f32 = 4.0;
 /// CAMERA_POSITION_THRESHOLD_SQUARED (llviewermessage.cpp).
 const SIT_CAMERA_THRESHOLD_SQUARED: f32 = 0.001 * 0.001;
 /// Aurora's right-drag orbit rate (radians per pixel at sensitivity 1).
-const DRAG_RATE: f32 = 0.0042;
+pub(crate) const DRAG_RATE: f32 = 0.0042;
 
 /// LLSmoothInterpolation::getInterpolant.
 fn interpolant(half_life: f32, dt: f32) -> f32 {
@@ -251,6 +253,9 @@ pub struct Camera {
     own: Uuid,
     dt: f32,
     initialized: bool,
+    /// The photo window's free camera: while set, the view is its own and
+    /// the rest of the camera waits behind the avatar (`free.rs`).
+    free: Option<FreeCamera>,
     /// A passing pan of the view only (the region restart's shake,
     /// `world::region_restart::view_shake`): the eye and what it looks at
     /// move together, the camera itself does not.
@@ -311,6 +316,7 @@ impl Default for Camera {
             own: Uuid::nil(),
             dt: 0.0,
             initialized: false,
+            free: None,
             shake: Vec3::ZERO,
         }
     }
@@ -409,6 +415,8 @@ impl Camera {
         if !s.enable_mouselook || self.mouselook() {
             return;
         }
+        // mouselook ends the free camera (the flycam's toggle the other way)
+        self.free = None;
         // the view keeps its direction: the avatar turns to it
         agent.yaw += self.orbit_yaw;
         self.orbit_yaw = 0.0;
@@ -694,6 +702,37 @@ impl Camera {
         self.reset_view(agent, s, true, true, false, false);
     }
 
+    /// The free camera, while it flies.
+    pub fn free(&self) -> Option<&FreeCamera> {
+        self.free.as_ref()
+    }
+
+    pub fn free_mut(&mut self) -> Option<&mut FreeCamera> {
+        self.free.as_mut()
+    }
+
+    /// The camera leaves the avatar where it is, looking where it looks
+    /// (moveFlycam's reset); mouselook ends first, like toggleFlycam's
+    /// changeCameraToDefault.
+    pub fn start_free(&mut self, agent: &mut AgentState, s: &CameraSettings) {
+        if self.free.is_some() {
+            return;
+        }
+        if self.mouselook() {
+            self.change_to_default(agent, s);
+        }
+        self.free = Some(FreeCamera::from_view(self.position, self.target));
+    }
+
+    /// Back to the avatar, gliding from where the free camera was.
+    pub fn end_free(&mut self, s: &CameraSettings) {
+        if self.free.take().is_some() {
+            // the smoothing restarts from here, not from before the flight
+            self.smoothing_stop = true;
+            self.start_animation(s);
+        }
+    }
+
     /// Back to the default view without animation (login, teleport).
     pub fn snap(&mut self) {
         self.initialized = false;
@@ -719,6 +758,9 @@ impl Camera {
         ] {
             *p += delta;
         }
+        if let Some(free) = &mut self.free {
+            free.position += delta;
+        }
         if let Some(a) = &mut self.anim {
             a.start_camera += delta;
             a.start_focus += delta;
@@ -734,6 +776,8 @@ impl Camera {
     /// back on the avatar without animation; FSResetCameraOnTP also drops
     /// the orbit, the pitch and the zoom (resetView of process_teleport_local).
     pub fn on_teleport_arrival(&mut self, s: &CameraSettings) {
+        // a free camera stays in the region it left
+        self.free = None;
         self.focus_on_avatar = true;
         self.focus_object = None;
         self.focus_geom = None;
@@ -1123,6 +1167,14 @@ impl Camera {
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
         self.sync_seat(&mut world.agent, s);
+        if let Some(free) = self.free {
+            // the free camera's own view; the avatar's waits for its return
+            self.position = free.position;
+            self.target = free.target();
+            self.fov_y = s.fov / (1.0 + self.current_fov_zoom);
+            self.anim = None;
+            return;
+        }
         self.follow_available = world.scripted_camera.active().is_some();
         if self.third_person() && self.focus_on_avatar && self.follow_available {
             self.change_to_follow(&world.agent, s);
@@ -1845,6 +1897,42 @@ mod tests {
         assert!(cam.sit_camera.is_none());
         assert!(cam.position.distance(locked) > 1.0);
         assert!(cam.view().is_finite());
+    }
+
+    #[test]
+    fn the_free_camera_leaves_the_avatar_and_glides_back() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let behind = (cam.position, cam.target);
+        cam.start_free(&mut w.agent, &s);
+        // it starts where the view was
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!(cam.position.distance(behind.0) < 1e-4);
+        assert!(cam.forward().dot((behind.1 - behind.0).normalize()) > 0.9999);
+        // it flies on its own; the avatar walking away does not take it
+        if let Some(f) = cam.free_mut() {
+            f.position += Vec3::new(0.0, 5.0, 2.0);
+        }
+        w.agent.position += Vec3::new(3.0, 0.0, 0.0);
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.position.distance(behind.0 + Vec3::new(0.0, 5.0, 2.0)) < 1e-4);
+        // back: from there, gliding to behind the avatar
+        cam.end_free(&s);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!(cam.free().is_none());
+        assert!(cam.position.distance(behind.0 + Vec3::new(0.0, 5.0, 2.0)) < 1.0);
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.position.distance(behind.0 + Vec3::new(3.0, 0.0, 0.0)) < 0.01);
+        // mouselook and a teleport end it
+        cam.start_free(&mut w.agent, &s);
+        cam.toggle_mouselook(&mut w.agent, &s);
+        assert!(cam.free().is_none() && cam.mouselook());
+        cam.toggle_mouselook(&mut w.agent, &s);
+        cam.start_free(&mut w.agent, &s);
+        cam.on_teleport_arrival(&s);
+        assert!(cam.free().is_none());
     }
 
     #[test]

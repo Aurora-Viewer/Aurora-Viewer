@@ -38,6 +38,8 @@ pub struct SnapshotUi {
     pub caption: String,
     /// The quick light, for the photo only (never saved).
     pub light: crate::snapshot::light::PhotoLight,
+    /// The free camera's switch and flight (never saved).
+    pub free: crate::camera::free::FreeSettings,
 }
 
 /// Where a photo goes (Firestorm's snapshot panels; the profile feed
@@ -92,6 +94,8 @@ pub struct View<'a> {
     pub profile_posted: bool,
     /// Preferences' exposure, under the photo's own.
     pub exposure: f32,
+    /// The key that brings the free camera back (Escape by default).
+    pub back_key: Option<crate::keybinds::Binding>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -114,6 +118,8 @@ pub enum Action {
     ShowProfile,
     /// Open the personal lighting window.
     PersonalLighting,
+    /// Open the Controls window (it drives the free camera).
+    Controls,
     /// The upload's price was confirmed (true) or not.
     Confirm(bool),
     /// The "cannot afford" message was closed.
@@ -499,6 +505,23 @@ impl SnapshotUi {
         section(ui, p, "camera-filled", aurora_i18n::tr!("photo-section-camera"));
         if focal(ui, p, fov, default_fov) {
             out.push(Action::Saved);
+        }
+        row(ui, p, aurora_i18n::tr!("photo-free-camera"), None, |ui| {
+            widgets::switch(ui, p, &mut self.free.on);
+        });
+        free_camera_hint(ui, p, view.back_key.as_ref());
+        if widgets::action_button(
+            ui,
+            p,
+            "video-filled",
+            aurora_i18n::tr!("photo-free-camera-controls"),
+            ActionKind::Flat,
+            Vec2::new(0.0, 26.0),
+        )
+        .on_hover_text(aurora_i18n::tr!("photo-free-camera-controls-tip"))
+        .clicked()
+        {
+            out.push(Action::Controls);
         }
 
         section(ui, p, "focus-centered", aurora_i18n::tr!("photo-section-dof"));
@@ -1156,6 +1179,28 @@ fn focal(ui: &mut egui::Ui, p: &Palette, fov: &mut f32, default_fov: f32) -> boo
         }
     });
     changed
+}
+
+/// Under the free camera's switch: the avatar stays, and what brings the
+/// camera back, its key drawn as a keycap in the sentence.
+fn free_camera_hint(ui: &mut egui::Ui, p: &Palette, key: Option<&crate::keybinds::Binding>) {
+    const MARK: &str = "\u{1}";
+    let text = aurora_i18n::tr!("photo-free-camera-hint", key = MARK);
+    let (before, after) = text.split_once(MARK).unwrap_or((text.as_str(), ""));
+    let style = |t: &str| RichText::new(t).size(11.0).color(p.muted);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.label(style(before.trim_end()));
+        if let Some(b) = key {
+            let caps = widgets::keycap::caps(ui, b, p.panel);
+            let (rect, _) = ui.allocate_exact_size(
+                Vec2::new(widgets::keycap::row_width(&caps), widgets::keycap::HEIGHT),
+                Sense::hover(),
+            );
+            widgets::keycap::paint_row(ui, p, &caps, egui::pos2(rect.left(), rect.center().y), p.panel);
+        }
+        ui.label(style(after.trim_start()));
+    });
 }
 
 fn section(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str) {

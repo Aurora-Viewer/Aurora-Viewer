@@ -144,7 +144,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
-| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic` | The Controls window open on a tab, or Firestorm's two windows |
+| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
 
 `AURORA_CAPTURE_LAYOUT`: a screenshot otherwise starts from the default
 layout, to be reproducible. With this variable it reloads that of the
@@ -203,7 +203,16 @@ reset, saved positions, the alt-camera keys), `movement` on its Movement tab
 (the eight buttons with the keys of the keyboard's layout, walk / run / fly),
 `compact` the window minimized (its joysticks and zoom only),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
-not saved).
+not saved). `free` opens the photo window with its "Free camera" switch on:
+the Controls window opens by itself on its camera tab, which drives the free
+camera (the "Free camera / The avatar stays put" banner with Back and its
+key, the move and look joysticks with up / down and their keys between them,
+the speed at 2 m/s, "No collisions" on, the keys); at frame 640 the camera
+has flown 2 m to the left and 1 m up and turned, the avatar where it was
+(the log gives `free camera: on at …` and `demo free camera: flown to …`).
+`free-compact` is the same window minimized: its title is "Free camera", the
+two joysticks with up / down, the speed and Back. Escape, Back or closing the
+photo window brings the camera back (`free camera: back to the avatar`).
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
