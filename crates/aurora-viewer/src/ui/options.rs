@@ -337,6 +337,19 @@ fn swatches(ui: &mut egui::Ui, p: &Palette, id: &str, items: &mut [(&str, &mut c
     changed
 }
 
+/// The name of a plate click action in its drop-down list.
+fn plate_click_label(action: crate::settings::PlateClick) -> &'static str {
+    use crate::settings::PlateClick;
+    // the names of the avatar menu's entries they run
+    match action {
+        PlateClick::Nothing => aurora_i18n::tr!("ui-options-plate-click-nothing"),
+        PlateClick::Profile => aurora_i18n::tr!("common-view-profile"),
+        PlateClick::InstantMessage => aurora_i18n::tr!("ui-context-send-im"),
+        PlateClick::OfferTeleport => aurora_i18n::tr!("common-offer-teleport"),
+        PlateClick::Menu => aurora_i18n::tr!("ui-options-plate-click-menu"),
+    }
+}
+
 /// The colors of a display name that matches or not the username belong to
 /// the classic tags: a plate writes every name in the theme's ink.
 fn tag_colors_used(s: &Settings) -> bool {
@@ -1497,6 +1510,30 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         aurora_i18n::tr!("ui-options-full-plates-friends-only"),
                         aurora_i18n::tr!("ui-options-full-plates-friends-only-help"),
                         |ui| toggle(ui, p, &mut s.plates_friends_only_full),
+                    );
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-plates-hover-expand"),
+                        aurora_i18n::tr!("ui-options-plates-hover-expand-help"),
+                        |ui| toggle(ui, p, &mut s.plates_hover_expand),
+                    );
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-plate-click"),
+                        aurora_i18n::tr!("ui-options-plate-click-help"),
+                        |ui| {
+                            let mut changed = false;
+                            egui::ComboBox::from_id_salt("plate-click")
+                                .selected_text(plate_click_label(s.plate_click))
+                                .show_ui(ui, |ui| {
+                                    for action in crate::settings::PlateClick::ALL {
+                                        changed |= ui.selectable_value(&mut s.plate_click, action, plate_click_label(action)).changed();
+                                    }
+                                });
+                            changed
+                        },
                     );
                 }
                 c |= row(

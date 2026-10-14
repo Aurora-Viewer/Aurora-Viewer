@@ -1,4 +1,5 @@
-//! Shared login information, community links and version footer.
+//! Shared login information, community links, version footer and the
+//! preferences button.
 use super::{LoginAction, LoginForm};
 use crate::theme::Palette;
 use crate::ui::{
@@ -80,6 +81,18 @@ pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sideb
             .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-25.0, -59.0))
             .show(ctx, |ui| version(ui, p));
     }
+    // The preferences before login (Firestorm opens them from the menu bar of
+    // its login screen, menu_login.xml): one cogwheel in the top right corner.
+    egui::Area::new(Id::new("login_settings"))
+        .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-25.0, 20.0))
+        .show(ctx, |ui| {
+            if widgets::action_button(ui, p, "settings-filled", "", ActionKind::Flat, Vec2::splat(30.0))
+                .on_hover_text(aurora_i18n::tr!("common-preferences"))
+                .clicked()
+            {
+                action = LoginAction::Preferences;
+            }
+        });
     egui::Area::new(Id::new("login_quit"))
         .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-25.0, -20.0))
         .show(ctx, |ui| {

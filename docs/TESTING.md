@@ -1415,6 +1415,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   for example `8:Ctrl` for assigned keys or `8:HUD` for a category;
   `8:zzzz` shows the empty result. The field stays above the scrolling list,
   and its clear button restores all actions. Search follows the selected language.
+  With `AURORA_DEMO_LOGIN` (for example `empty` or `cards`) the preferences
+  open over the login screen, as its top right cogwheel does: every page
+  works before login, and Chat › Conversation logs says that the folder
+  belongs to an account.
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
   drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Colors): the
@@ -2031,6 +2035,8 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
+| `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
+| `AURORA_DEMO_PLATE_CLICK=profile`, `im`, `tp` or `menu` | "Click on a plate" for this run, without saving it |
 
 ### Details
 
@@ -2088,6 +2094,16 @@ What the inventory must show with these scenarios:
     "Full plates for friends only" for this run, not saved): only Orion, the
     friend, and our own plate are complete; Nova, Tess, Lune and La Brume are
     compact pills however near; the far pills do not change.
+  - `AURORA_DEMO_PLATE_HOVER=x,y` holds the pointer at x, y (points) for
+    the plates only: the plate there shows full ("Expand a plate on hover",
+    on by default), a pill or a far name included; with `,click` the plate
+    is clicked at frame 700. `AURORA_DEMO_PLATE_CLICK=profile|im|tp|menu`
+    sets "Click on a plate" for the run (not saved): the pointer turns into
+    the hand of a clickable object over another avatar's plate, and the click
+    opens the profile, the conversation, the teleport offer box or the
+    avatar's menu. For example, with `AURORA_DEMO_TAGS=voice`, `580,316` is
+    Orion's plate and `198,334` Nova's pill once the friends-only option is on
+    (`AURORA_DEMO_FRIEND_PLATES=1`).
   - The pictures are generated gradients (`demo_tags::picture_pixels`),
     requested as on the grid: profile, then texture, at most four per
     second, the nearest first; our avatar and La Brume have the same one.
