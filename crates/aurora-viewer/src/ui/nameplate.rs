@@ -148,6 +148,8 @@ impl Role {
 pub enum Badge {
     /// In the voice channel.
     Voice,
+    /// Not in it, or we are not in voice ourselves: every plate says so.
+    NoVoice,
     Typing,
     Friend,
     /// Drawn as a silhouette: over the complexity or surface limit.
@@ -229,14 +231,15 @@ pub fn sub_lines(level: Level, c: &Content) -> [Option<SubLine<'_>>; 2] {
     }
 }
 
-/// The badges of a plate: none on the far pill.
+/// The badges of a plate: none on the far pill; a microphone, green in the
+/// voice channel and struck through in red outside it, always first.
 pub fn badges(level: Level, c: &Content) -> Badges {
     let mut b = Badges::default();
     if level == Level::Far {
         return b;
     }
     for (on, badge) in [
-        (c.in_voice, Badge::Voice),
+        (true, if c.in_voice { Badge::Voice } else { Badge::NoVoice }),
         (c.typing, Badge::Typing),
         (c.friend, Badge::Friend),
         (c.too_complex, Badge::TooComplex),
@@ -446,17 +449,21 @@ impl VoiceEnvelope {
                 blur: (3.0 + 11.0 * l) * scale,
                 spread: 2.0 * l * scale,
                 alpha: self.gate * (0.30 + 0.55 * l),
+                gate: self.gate,
             }
         })
     }
 }
 
-/// A tight glow around the plate, in points.
+/// A tight glow around the plate, in points, and the green outline that
+/// comes and goes with it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Halo {
     pub blur: f32,
     pub spread: f32,
     pub alpha: f32,
+    /// 0..1: how far the outline has turned green.
+    pub gate: f32,
 }
 
 /// One of the three typing dots at `time` seconds: (opacity, lift in mockup

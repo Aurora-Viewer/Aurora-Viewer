@@ -31,6 +31,7 @@ mod chat_commands;
 mod click_pick;
 mod color_picker;
 mod context_menu;
+mod hover_height;
 mod hud_drag;
 mod imports;
 mod inspect;
@@ -303,6 +304,7 @@ pub struct App {
     /// Mini-map and world map state, map server tiles.
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
+    hover_height_ui: ui::hover_height::HoverHeightUi,
     inspect_ui: ui::inspect::InspectUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     people_map_ui: ui::minimap::MiniMap,
@@ -353,7 +355,7 @@ pub struct App {
     sound_changes: Vec<usize>,
     /// Audio devices listed for the preferences.
     devices_listed: bool,
-    /// Color emoji (Noto 3D) for chat and the picker.
+    /// Color emoji (Noto Color Emoji) for chat and the picker.
     emoji: ui::emoji::Emoji,
     /// The system's fallback fonts were still being looked for when the
     /// fonts were installed: installed again once they are there.
@@ -654,6 +656,7 @@ impl App {
             contacts_ui: Default::default(),
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
+            hover_height_ui: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
             people_map_ui: Default::default(),
@@ -750,6 +753,14 @@ impl App {
     }
 
     fn send(&mut self, cmd: NetCommand) {
+        if self.demo
+            && let NetCommand::SetHoverHeight { region, request, value } = &cmd
+        {
+            let success = !std::env::var("AURORA_DEMO_HOVER_HEIGHT").is_ok_and(|mode| mode == "failure");
+            log::info!("demo hover height: committed {value:.3}, success {success}");
+            self.world.hover_height.reply(*request, *region, success);
+            return;
+        }
         if self.demo
             && let NetCommand::UploadAsset { request, upload } = cmd
         {
@@ -1563,6 +1574,13 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.world.hover_height = if self.demo {
+                    Default::default()
+                } else {
+                    crate::world::hover_height::HoverHeight::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::hover_height::FILE),
+                    )
+                };
                 self.net_profile.reset();
                 self.login_form.transition = None;
                 self.login_form.busy = false;
@@ -3988,6 +4006,7 @@ impl App {
         }
         self.world.poll_inventory_cache();
         self.world.poll_transcripts();
+        self.update_hover_height();
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
@@ -7103,6 +7122,16 @@ impl App {
                 }
                 self.panels.about_land = open;
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
+                let hover_enabled = self.world.hover_height_available();
+                if self.hover_height_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.world.hover_height,
+                    hover_enabled,
+                    &mut self.settings.camera.hover_affects_camera,
+                ) {
+                    self.settings.save();
+                }
                 if self.inspect_ui.open {
                     let (rows, totals) = self.inspect_rows();
                     let mut columns = self.settings.inspect_columns;
@@ -7834,7 +7863,12 @@ impl ApplicationHandler for App {
             if std::env::var_os("AURORA_DEMO_OPTIONS").is_some() {
                 self.panels.settings = true;
                 self.panels.perf = false;
-                self.options_ui.tab = std::env::var("AURORA_DEMO_OPTIONS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+                let value = std::env::var("AURORA_DEMO_OPTIONS").unwrap_or_default();
+                let (tab, filter) = value.split_once(':').unwrap_or((&value, ""));
+                self.options_ui.tab = tab.parse().unwrap_or(0);
+                if self.options_ui.tab == 8 {
+                    self.options_ui.shortcut_filter = filter.to_owned();
+                }
             }
             // AURORA_DEMO_PERF=compact|full|network: the performance window in
             // that view (network: full, with its Network section open)
@@ -8510,6 +8544,16 @@ impl ApplicationHandler for App {
                 self.panels.inventory = false;
                 self.panels.minimap = false;
                 self.panels.perf = false;
+            }
+            // AURORA_DEMO_EMOJI_PICKER=1|<text>: the conversation window open
+            // on its emoji picker (colour emoji font); a text is put in the
+            // input field, as if picked
+            if let Ok(text) = std::env::var("AURORA_DEMO_EMOJI_PICKER") {
+                self.panels.chat = true;
+                self.chat_ui.emoji_open = true;
+                if text.trim() != "1" {
+                    self.chat_ui.conv_input = text;
+                }
             }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)

@@ -21,6 +21,7 @@ pub struct OptionsUi {
     pub tab: usize,
     system_fonts: Option<Vec<SystemFont>>,
     font_filter: String,
+    pub shortcut_filter: String,
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
     pub cache_usage: u64,
     pub cache_clearing: bool,
@@ -564,10 +565,19 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                         .color(p.ink),
                 );
                 ui.add_space(6.0);
-                egui::ScrollArea::vertical()
+                let mut scroll_height = h - 34.0;
+                let mut scroll = egui::ScrollArea::vertical();
+                if st.tab == 8 {
+                    let search = shortcut_search(ui, p, st);
+                    scroll_height -= search.response.rect.height() + ui.spacing().item_spacing.y;
+                    if search.inner {
+                        scroll = scroll.vertical_scroll_offset(0.0);
+                    }
+                }
+                scroll
                     .auto_shrink([false, false])
-                    .max_height(h - 34.0)
-                    .min_scrolled_height(h - 34.0)
+                    .max_height(scroll_height)
+                    .min_scrolled_height(scroll_height)
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width() - 8.0);
                         r.changed |= match st.tab {
@@ -2353,7 +2363,43 @@ fn binding_cell(
     resp.on_hover_text(tip);
 }
 
-/// "Shortcuts": every rebindable action, two bindings each.
+fn shortcut_search(ui: &mut egui::Ui, p: &Palette, st: &mut OptionsUi) -> egui::InnerResponse<bool> {
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - 28.0 - ui.spacing().item_spacing.x).max(80.0);
+        let search = super::widgets::search_field(ui, &mut st.shortcut_filter, aurora_i18n::tr!("ui-options-search-shortcuts"), width);
+        if search.clicked() || search.gained_focus() {
+            st.take_capture();
+        }
+        let clear = super::widgets::icon_button(
+            ui,
+            p,
+            "x",
+            aurora_i18n::tr!("ui-options-clear-shortcut-search"),
+            !st.shortcut_filter.is_empty(),
+        );
+        if clear {
+            st.shortcut_filter.clear();
+            st.take_capture();
+            search.request_focus();
+        }
+        search.changed() || clear
+    })
+}
+
+/// Firestorm's LLFloaterPreference::onUpdateFilterTerm folds case. This
+/// local filter also searches the shortcut's section and both current bindings.
+fn shortcut_matches(query: &str, section: &str, label: &str, kb: &crate::keybinds::KeyBindings, action: crate::keybinds::Action) -> bool {
+    query.is_empty()
+        || section.to_lowercase().contains(query)
+        || label.to_lowercase().contains(query)
+        || kb
+            .get(action)
+            .iter()
+            .flatten()
+            .any(|binding| binding.label().to_lowercase().contains(query))
+}
+
+/// "Shortcuts": every matching rebindable action, two bindings each.
 fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
     let mut c = false;
     ui.label(
@@ -2363,21 +2409,40 @@ fn keys_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsU
     );
     ui.add_space(6.0);
     let kb = s.keybinds.clone();
+    let query = st.shortcut_filter.trim().to_lowercase();
+    let mut any_matches = false;
     for (section, actions) in crate::keybinds::sections() {
-        group(ui, p, section, |ui| {
-            if actions.iter().any(|(action, _)| *action == crate::keybinds::Action::HudDrag) {
-                ui.label(RichText::new(aurora_i18n::tr!("hud-local-scale-help")).size(12.0).color(p.muted));
-                ui.add_space(4.0);
-            }
-            for (a, label) in actions.iter() {
-                ui.horizontal(|ui| {
-                    row_label(ui, p, label);
-                    for slot in 0..2 {
-                        binding_cell(ui, p, &kb, st, *a, slot);
-                    }
-                });
-            }
+        let actions: Vec<_> = actions
+            .iter()
+            .filter(|(a, label)| shortcut_matches(&query, section, label, &kb, *a))
+            .collect();
+        if actions.is_empty() {
+            continue;
+        }
+        any_matches = true;
+        ui.push_id(section, |ui| {
+            group(ui, p, section, |ui| {
+                if actions.iter().any(|(action, _)| *action == crate::keybinds::Action::HudDrag) {
+                    ui.label(RichText::new(aurora_i18n::tr!("hud-local-scale-help")).size(12.0).color(p.muted));
+                    ui.add_space(4.0);
+                }
+                for (a, label) in actions {
+                    // Keep each binding's widget identity when earlier rows disappear.
+                    ui.push_id(a, |ui| {
+                        ui.horizontal(|ui| {
+                            row_label(ui, p, label);
+                            for slot in 0..2 {
+                                binding_cell(ui, p, &kb, st, *a, slot);
+                            }
+                        })
+                    });
+                }
+            })
         });
+    }
+    if !any_matches {
+        ui.label(RichText::new(aurora_i18n::tr!("ui-options-no-matching-shortcuts")).color(p.muted));
+        ui.add_space(6.0);
     }
     if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-restore-default-shortcuts")).clicked() {
         s.keybinds = Default::default();
@@ -2534,6 +2599,33 @@ mod tests {
     use super::*;
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn shortcut_search_follows_rebinding_and_keeps_unbound_actions_searchable() {
+        use crate::keybinds::{Binding, KeyBindings};
+        let mut kb = KeyBindings::default();
+        let matches = |query: &str, kb: &KeyBindings| {
+            shortcut_matches(&query.trim().to_lowercase(), "Caméra", "Déplacer la vue", kb, Action::CamPanLeft)
+        };
+        kb.set(Action::CamPanLeft, 0, None);
+        kb.set(Action::CamPanLeft, 1, None);
+        assert!(matches("  DÉPLACER  ", &kb));
+        assert!(matches("CAMÉRA", &kb));
+        assert!(matches("   ", &kb));
+        assert!(!matches("Ctrl+F12", &kb));
+        let binding = Binding {
+            input: Input::key(KeyCode::F12),
+            ctrl: true,
+            shift: false,
+            alt: false,
+        };
+        for slot in 0..2 {
+            kb.set(Action::CamPanLeft, slot, Some(binding.clone()));
+            assert!(matches(" CTRL+F12 ", &kb));
+            kb.set(Action::CamPanLeft, slot, None);
+            assert!(!matches("Ctrl+F12", &kb));
+        }
+    }
 
     #[test]
     fn hud_modifier_alone_waits_for_release_but_a_combination_captures_its_key() {

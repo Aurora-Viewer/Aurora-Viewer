@@ -7,8 +7,8 @@
 /work/
 /RELEASE/
 
-# Large or local-only assets (fetched by scripts/fetch-assets.ps1)
-/assets/emoji/*.ttf
+# The 3D emoji font that older commits downloaded (the 2D one is in git)
+/assets/emoji/Noto-3D-*.ttf
 
 # Firestorm sources: cloned next to the repository, never inside it
 /phoenix-firestorm/

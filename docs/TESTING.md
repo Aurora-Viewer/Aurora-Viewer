@@ -80,7 +80,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
-| `AURORA_EMOJI_FONT=<path>` | Uses another emoji font |
+| `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
 
 The demo shows no sample offer or dialog by default. The fountain menu,
@@ -147,6 +147,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details) |
+| `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Avatar hover-height adjustment and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
@@ -163,6 +164,22 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
 ### Details
+
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure`**:
+  opens the hover-height floater at frame 600. A number sets the height;
+  `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
+  repeats the cycle with "Affect camera view" enabled; otherwise the camera
+  stays at its original height. Capture at 660, 750, 840 and 1020; include
+  719, 720 and 721 to catch a camera jump on the first adjusted frame.
+  With the toggle off, drag continuously in both directions: the background
+  must stay fixed throughout, also when seated or using a scripted camera.
+  `unsupported`
+  disables adjustment as on a region without AvatarHoverHeightEnabled;
+  `failure` simulates a rejected update and exposes Retry. Demo changes stay
+  in memory and never contact a grid. Use the slider, its editable value,
+  +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
+  switch for the manual check. On the grid, also verify other viewers see
+  the committed adjustment, then teleport and reconnect to check persistence.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
@@ -1161,6 +1178,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
+| `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -1348,7 +1366,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `AURORA_DEMO_LOGIN=empty` for the login screen: Log out is
   disabled. The choices are simulated offline, with no login request.
 - **`AURORA_DEMO_OPTIONS=<section>`**: for example `8` for Shortcuts
-  (HUD move key).
+  (HUD move key). `8:<query>` opens Shortcuts with its search filled in,
+  for example `8:Ctrl` for assigned keys or `8:HUD` for a category;
+  `8:zzzz` shows the empty result. The field stays above the scrolling list,
+  and its clear button restores all actions. Search follows the selected language.
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
   drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Colors): the
@@ -1375,6 +1396,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
+- **`AURORA_DEMO_EMOJI_PICKER=1|<text>`**: the Conversations window open on
+  local chat with its emoji picker shown (first tab, smileys); any value
+  other than `1` is put in the input field, as if picked. With
+  `AURORA_DEMO_GLYPHS=1`, the emoji line of the chat is visible beside it;
+  with `AURORA_DEMO_CHATCMD=<same text>`, the line is sent.
+  What to see: colour emojis in every cell, centred, with their
+  proportions (the 2D font's images are wider than tall), and the same
+  colour emojis, same size, in the input field and in the sent line.
+  `AURORA_EMOJI_FONT=<file>` compares two fonts.
 - **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery`**, only
   with `AURORA_DEMO`: triggers a Rust panic, a native Windows
   exception, an abnormal exit without a trace, a normal close or an
@@ -1870,17 +1900,19 @@ What the inventory must show with these scenarios:
     Compare frames 660 and 780 at 60 fps; also use `AURORA_NAME_TAGS=classic`.
     A change of animation can change its height envelope; its individual
     frames never move the tag. Use a human-run grid session to verify real deformer assets.
-  - `voice`: Nova out of the voice channel; Tess in the channel, silent
-    (green outline, microphone badge) and without a profile picture (the
-    icon stays); Orion, a friend, is speaking (halo that follows the level,
-    light violet name, microphone, heart and triangle badges: he is shown
-    as too complex); Lune is typing (three animated dots) and has no
-    display name (two lines); La Brume is blocked (dimmed plate, name in
-    italics, forbidden badge, no status dot). Farther away, Sol is speaking
-    and Iris is typing; beyond, Vega is in the channel (green outline) and
-    Atlas is not.
+  - `voice`: Nova out of the voice channel (red struck-through microphone);
+    Tess in the channel, silent (green microphone badge, no outline) and
+    without a profile picture (the icon stays); Orion, a friend, is speaking
+    (green outline and halo that follows the level, light violet name,
+    microphone, heart and triangle badges: he is shown as too complex); Lune
+    is typing (three animated dots) and has no display name (two lines); La
+    Brume is blocked (dimmed plate, name in italics, forbidden badge, no
+    status dot). Farther away, Sol is speaking (green outline) and Iris is
+    typing; beyond, Vega is in the channel and Atlas is not (the far pill
+    has no badge).
   - `status`: Nova away (amber dot), Tess do not disturb (red dot), Orion
-    out of the channel (heart and triangle only), Lune typing while away.
+    out of the channel (red microphone, heart and triangle), Lune typing
+    while away.
   - `cycle`: switches from one to the other every six seconds.
   - `wall`: the states of `voice`, with the wall in front of Nova and Tess
     instead of behind them, and two violet boxes that carry the same
