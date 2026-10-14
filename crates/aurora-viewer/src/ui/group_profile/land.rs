@@ -100,9 +100,11 @@ fn tile(ui: &mut egui::Ui, p: &Palette, width: f32, body: impl FnOnce(&mut egui:
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(width - 20.0);
-            ui.set_height(42.0);
-            ui.spacing_mut().item_spacing.y = 1.0;
-            body(ui);
+            ui.set_height(40.0);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                body(ui);
+            });
         });
 }
 
@@ -462,7 +464,6 @@ fn money(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, data
             }
         },
         |ui| {
-            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 5.0;
                 for (l, label) in [
@@ -499,13 +500,27 @@ fn money(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, data
 
 /// One line of the accounts: its name at the left, its amount at the right.
 fn kv(ui: &mut egui::Ui, p: &Palette, key: &str, value: &str, color: Color32, strong: bool) {
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(key).size(12.5).color(if strong { p.ink } else { p.muted }));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let text = egui::RichText::new(value).size(12.5).color(color);
-            ui.label(if strong { text.strong() } else { text });
-        });
-    });
+    let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 16.0), Sense::hover());
+    let font = if strong {
+        FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()))
+    } else {
+        FontId::proportional(12.5)
+    };
+    let value = ui.painter().layout_no_wrap(value.to_owned(), font.clone(), color);
+    let value_w = value.size().x;
+    ui.painter().galley(
+        Pos2::new(row.right() - value_w, row.center().y - value.size().y / 2.0).round(),
+        value,
+        color,
+    );
+    widgets::paint_elided(
+        ui,
+        key,
+        Pos2::new(row.left(), row.center().y),
+        row.width() - value_w - 12.0,
+        font,
+        if strong { p.ink } else { p.muted },
+    );
 }
 
 fn amount_color(p: &Palette, n: i32) -> Color32 {
@@ -574,42 +589,39 @@ fn sales(ui: &mut egui::Ui, p: &Palette, list: &[Transaction]) {
         ui.label(egui::RichText::new(aurora_i18n::tr!("ui-group-land-none")).size(12.5).color(p.muted));
         return;
     }
+    const TIME_W: f32 = 128.0;
     for t in shown {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
-            let (time, _) = ui.allocate_exact_size(Vec2::new(118.0, 16.0), Sense::hover());
-            widgets::paint_elided(
-                ui,
-                &t.time,
-                Pos2::new(time.left(), time.center().y),
-                time.width(),
-                FontId::proportional(11.5),
-                p.muted_dim,
-            );
-            let what = [t.user.as_str(), verb(t.kind), t.item.as_str()]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ");
-            let amount = lindens(t.amount);
-            let amount_w = ui
-                .painter()
-                .layout_no_wrap(amount.clone(), FontId::proportional(12.5), p.ink)
-                .size()
-                .x;
-            let (cell, _) = ui.allocate_exact_size(Vec2::new((ui.available_width() - amount_w - 10.0).max(40.0), 16.0), Sense::hover());
-            widgets::paint_elided(
-                ui,
-                &what,
-                Pos2::new(cell.left(), cell.center().y),
-                cell.width(),
-                FontId::proportional(12.5),
-                p.ink,
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new(amount).size(12.5).color(amount_color(p, t.amount)));
-            });
-        });
+        let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 16.0), Sense::hover());
+        let mid = row.center().y;
+        widgets::paint_elided(
+            ui,
+            &t.time,
+            Pos2::new(row.left(), mid),
+            TIME_W - 10.0,
+            FontId::proportional(11.5),
+            p.muted_dim,
+        );
+        let color = amount_color(p, t.amount);
+        let amount = ui.painter().layout_no_wrap(lindens(t.amount), FontId::proportional(12.5), color);
+        let amount_w = amount.size().x;
+        ui.painter().galley(
+            Pos2::new(row.right() - amount_w, mid - amount.size().y / 2.0).round(),
+            amount,
+            color,
+        );
+        let what = [t.user.as_str(), verb(t.kind), t.item.as_str()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        widgets::paint_elided(
+            ui,
+            &what,
+            Pos2::new(row.left() + TIME_W, mid),
+            row.width() - TIME_W - amount_w - 12.0,
+            FontId::proportional(12.5),
+            p.ink,
+        );
     }
 }
 

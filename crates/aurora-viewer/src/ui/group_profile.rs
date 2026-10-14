@@ -318,6 +318,10 @@ impl GroupProfileUi {
             Some(view::Header::Invite) => self.open_invite(v.id),
             None => {}
         }
+        // members only: back home after leaving the group
+        if self.tab == Tab::Land && !land::visible(v) {
+            self.tab = Tab::Home;
+        }
         // the tab is activated again each time it is shown
         if self.tab != Tab::Land {
             self.land.active = None;

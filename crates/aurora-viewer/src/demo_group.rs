@@ -463,12 +463,17 @@ fn group_land(group: Uuid, transaction: Uuid) -> Vec<NetEvent> {
     ]
 }
 
-/// Days since 1970 (SLT) of the Monday `weeks` back.
-fn week_start(weeks: i32) -> i64 {
+/// Days since 1970, in SLT.
+fn today() -> i64 {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
-    let today = (now - 8 * 3600).div_euclid(86_400);
+    (now - 8 * 3600).div_euclid(86_400)
+}
+
+/// Days since 1970 (SLT) of the Monday `weeks` back.
+fn week_start(weeks: i32) -> i64 {
+    let today = today();
     // 1970-01-01 was a Thursday
     today - (today + 3).rem_euclid(7) - 7 * i64::from(weeks)
 }
@@ -518,7 +523,8 @@ fn group_account(r: &AccountRequest) -> Vec<NetEvent> {
             ]))]
         }
         Ledger::Sales => {
-            let at = |day: i64, time: &str| format!("{} {time}", date(start + day));
+            // this week's sales are not later than today
+            let at = |day: i64, time: &str| format!("{} {time}", date((start + day).min(today())));
             let sale = |time: String, user: String, kind: i32, item: &str, amount: i32| Transaction {
                 time,
                 user,
