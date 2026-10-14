@@ -457,6 +457,15 @@ impl SnapshotUi {
         row(
             ui,
             p,
+            aurora_i18n::tr!("photo-quality"),
+            Some(aurora_i18n::tr!("photo-quality-hint")),
+            |ui| {
+                widgets::switch(ui, p, &mut s.quality);
+            },
+        );
+        row(
+            ui,
+            p,
             aurora_i18n::tr!("photo-freeze"),
             Some(aurora_i18n::tr!("photo-freeze-hint")),
             |ui| {

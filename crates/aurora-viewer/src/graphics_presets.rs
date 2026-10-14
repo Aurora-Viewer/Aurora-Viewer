@@ -255,7 +255,7 @@ impl Values {
         }
     }
 
-    fn read(s: &Settings) -> Values {
+    pub(crate) fn read(s: &Settings) -> Values {
         Values {
             draw_distance: s.draw_distance,
             lod_factor: s.lod_factor,
@@ -277,7 +277,7 @@ impl Values {
         }
     }
 
-    fn write(self, s: &mut Settings) {
+    pub(crate) fn write(self, s: &mut Settings) {
         s.draw_distance = self.draw_distance;
         s.lod_factor = self.lod_factor;
         s.max_avatars = self.max_avatars;

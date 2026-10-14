@@ -11,6 +11,7 @@
 pub mod gallery;
 pub mod inventory;
 pub mod profile;
+pub mod quality;
 pub mod save;
 
 use glam::{Mat4, Vec4};
@@ -233,6 +234,9 @@ pub struct Settings {
     pub profile_location: bool,
     /// The window's depth of field (the Preferences' own is left alone).
     pub dof: crate::dof::PhotoDof,
+    /// "Photo quality": the graphics raised while the window is open
+    /// (`quality`), the user's settings back once it closes.
+    pub quality: bool,
 }
 
 impl Default for Settings {
@@ -257,6 +261,7 @@ impl Default for Settings {
             profile_size: profile::ProfileSize::S640,
             profile_location: true,
             dof: Default::default(),
+            quality: false,
         }
     }
 }

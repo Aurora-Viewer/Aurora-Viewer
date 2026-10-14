@@ -157,6 +157,8 @@ struct DemoPhoto {
     /// AURORA_DEMO_SNAPSHOT=classic: Firestorm's floater for this run, the
     /// setting itself left alone.
     classic: bool,
+    /// AURORA_DEMO_SNAPSHOT=quality: the window with its photo quality on.
+    quality: bool,
 }
 
 /// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
@@ -727,6 +729,7 @@ impl App {
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
     pub(super) fn photo_update(&mut self, renderer: &Renderer) {
         self.photo_demo(renderer);
+        self.photo_quality();
         // the texture encoded on its worker: its upload
         if let Some(Upload::Encoding { rx, cost }) = &self.snapshots.upload
             && let Ok(encoded) = rx.try_recv()
@@ -1067,6 +1070,32 @@ impl App {
         false
     }
 
+    /// "Photo quality": raised while the window is open and the switch on,
+    /// the user's values back as soon as either is off (they are also what
+    /// a save in the meantime writes, `Settings::to_saved`).
+    fn photo_quality(&mut self) {
+        let want = self.panels.snapshot && self.settings.snapshot.quality;
+        match (&self.settings.photo_held, want) {
+            (None, true) => {
+                let held = snapshot::quality::boost(&mut self.settings);
+                log::info!(
+                    "photo quality: on (draw distance {} m, shadows {}, LOD {})",
+                    self.settings.draw_distance,
+                    self.settings.shadow_quality,
+                    self.settings.lod_factor
+                );
+                self.settings.photo_held = Some(held);
+            }
+            (Some(_), false) => {
+                if let Some(held) = self.settings.photo_held.take() {
+                    held.restore(&mut self.settings);
+                }
+                log::info!("photo quality: off, the user's settings back");
+            }
+            _ => {}
+        }
+    }
+
     /// AURORA_DEMO_SNAPSHOT=open | full[-<W>x<H> proportions, e.g. full-4x5] |
     /// save:<W>x<H>[:png|jpg|bmp][:<folder>] | inventory… | profile[-fail] |
     /// dof | full-dof | classic
@@ -1132,6 +1161,7 @@ impl App {
                 profile: kind.starts_with("profile"),
                 dof: kind.ends_with("dof"),
                 classic: kind == "classic",
+                quality: kind == "quality",
             });
         }
         let Some(demo) = self.snapshots.demo.as_ref() else {
@@ -1152,6 +1182,9 @@ impl App {
                 if inv.poor {
                     self.world.balance = Some(5);
                 }
+            }
+            if demo.quality {
+                self.settings.snapshot.quality = true;
             }
             if demo.dof {
                 self.settings.snapshot.dof = crate::dof::PhotoDof {
