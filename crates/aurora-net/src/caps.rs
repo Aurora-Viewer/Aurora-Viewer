@@ -22,7 +22,13 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "CopyInventoryFromNotecard",
     "DeclineFriendship",
     "DeclineGroupInvite",
+    // the Region / Estate window (llviewerregion.cpp buildCapabilityNames):
+    // the General panel's "Apply", the estate lists, the Estate panel's
+    // "Apply", the region's experiences and its restart schedule
+    "DispatchRegionInfo",
     "EnvironmentSettings",
+    "EstateAccess",
+    "EstateChangeInfo",
     "EventQueueGet",
     // allow, block and forget an experience (LLExperienceCache::setExperiencePermission)
     "ExperiencePreferences",
@@ -71,6 +77,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ProvisionVoiceAccountRequest",
     // instant messages kept while offline (LLIMProcessing::requestOfflineMessages)
     "ReadOfflineMsgs",
+    "RegionExperiences",
+    "RegionSchedule",
     "RenderMaterials",
     "RequestTaskInventory",
     "ResourceCostSelected",
@@ -150,6 +158,21 @@ mod language_tests {
         }
         assert!(hover_height_body(f32::NAN).is_none());
         assert!(hover_height_body(f32::INFINITY).is_none());
+    }
+
+    /// The Region / Estate window's capabilities: without them the lists,
+    /// the schedule and the experiences are never read.
+    #[test]
+    fn the_region_estate_capabilities_are_requested() {
+        for cap in [
+            "DispatchRegionInfo",
+            "EstateAccess",
+            "EstateChangeInfo",
+            "RegionExperiences",
+            "RegionSchedule",
+        ] {
+            assert!(REQUESTED_CAPS.contains(&cap), "{cap}");
+        }
     }
 
     #[test]

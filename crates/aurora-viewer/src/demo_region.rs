@@ -6,17 +6,21 @@
 //! IsEstateManager), or a resident, who is not answered `getinfo` nor the
 //! estate's lists, as the simulator does. `preview` looks at
 //! the region as a resident ("View as"), `compact` opens the window 480 px
-//! wide.
+//! wide. On `manage`, `access`, `rules` or `terrain` scrolls to that
+//! section, `pending` makes changes there that wait for "Apply", and
+//! `ask-override`, `ask-linden`, `ask-bonus`, `ask-maturity`, `ask-heights`
+//! or `ask-bake` shows that question. The simulator keeps what "Apply"
+//! sends and answers with it, as RegionInfo and `estateupdateinfo` do.
 
 use super::{DEMO_AGENT, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
-use crate::ui::region::Page;
+use crate::ui::region::{Ask, ManageDemo, Page};
 use aurora_llsd::Llsd;
 use aurora_net::estate::{
     EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RestartSchedule, SimStats, estate_flags as ef,
     sim_stat,
 };
 use aurora_net::{NetEvent, region_flags as rf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 /// Who the avatar is to the demo estate.
@@ -34,6 +38,7 @@ pub struct Scenario {
     pub role: Role,
     pub preview: bool,
     pub compact: bool,
+    pub manage: ManageDemo,
 }
 
 fn parse(v: &str) -> Scenario {
@@ -42,6 +47,7 @@ fn parse(v: &str) -> Scenario {
         role: Role::Owner,
         preview: false,
         compact: false,
+        manage: ManageDemo::default(),
     };
     for part in v.split(':').map(str::trim) {
         match part {
@@ -52,6 +58,25 @@ fn parse(v: &str) -> Scenario {
             "owner" => s.role = Role::Owner,
             "preview" => s.preview = true,
             "compact" => s.compact = true,
+            "access" => s.manage.section = Some(0),
+            "rules" => s.manage.section = Some(1),
+            "terrain" => s.manage.section = Some(2),
+            "pending" => s.manage.pending = true,
+            "ask-override" => s.manage.ask = Some(Ask::AccessOverride),
+            "ask-linden" => s.manage.ask = Some(Ask::LindenEstate),
+            "ask-bonus" => {
+                s.manage.section = Some(1);
+                s.manage.ask = Some(Ask::ObjectBonus { dont_ask: false });
+            }
+            "ask-maturity" => s.manage.ask = Some(Ask::MaturityChanged),
+            "ask-heights" => {
+                s.manage.section = Some(2);
+                s.manage.ask = Some(Ask::TextureHeights);
+            }
+            "ask-bake" => {
+                s.manage.section = Some(2);
+                s.manage.ask = Some(Ask::Bake);
+            }
             _ => {}
         }
     }
@@ -144,27 +169,96 @@ fn environment() -> Llsd {
     env
 }
 
+/// What "Apply" sent: the demo simulator keeps the region and the estate's
+/// flags it was given.
+static SENT: Mutex<Option<(RegionDetails, u64)>> = Mutex::new(None);
+
+fn with_sent<R>(f: impl FnOnce(&mut (RegionDetails, u64)) -> R) -> R {
+    let mut sent = SENT.lock().unwrap_or_else(|e| e.into_inner());
+    let state = sent.get_or_insert_with(|| {
+        (
+            region_details(),
+            ef::EXTERNALLY_VISIBLE
+                | ef::ALLOW_DIRECT_TELEPORT
+                | ef::ALLOW_VOICE
+                | ef::ALLOW_ACCESS_OVERRIDE
+                | ef::ALLOW_ENVIRONMENT_OVERRIDE,
+        )
+    });
+    f(state)
+}
+
+fn estate_info() -> EstateInfo {
+    EstateInfo {
+        name: aurora_i18n::tr!("common-aurora-demo").into(),
+        owner: estate_owner(),
+        id: ESTATE_ID,
+        flags: with_sent(|s| s.1),
+        sun_hour: 0.0,
+    }
+}
+
+/// The region with the General panel's rules applied, as the simulator
+/// stores them.
+fn with_rules(mut d: RegionDetails, r: &aurora_net::estate::RegionRules) -> RegionDetails {
+    let mut set = |flag: u32, on: bool| {
+        if on {
+            d.flags |= u64::from(flag);
+        } else {
+            d.flags &= !u64::from(flag);
+        }
+    };
+    set(rf::BLOCK_TERRAFORM, r.block_terraform);
+    set(rf::BLOCK_FLY, r.block_fly);
+    set(rf::BLOCK_FLYOVER, r.block_fly_over);
+    set(rf::ALLOW_DAMAGE, r.allow_damage);
+    set(rf::RESTRICT_PUSHOBJECT, r.restrict_pushobject);
+    set(rf::BLOCK_LAND_RESELL, !r.allow_land_resell);
+    set(rf::ALLOW_PARCEL_CHANGES, r.allow_parcel_changes);
+    set(rf::BLOCK_PARCEL_SEARCH, r.block_parcel_search);
+    d.max_agents = r.agent_limit.round() as u32;
+    d.object_bonus = r.object_bonus;
+    d.sim_access = r.sim_access;
+    d
+}
+
 /// The simulator's answers to the window.
 pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
     let ev = NetEvent::Estate;
+    let region_info = |handle| {
+        vec![ev(EstateEvent::RegionInfo {
+            handle,
+            info: Arc::new(with_sent(|s| s.0.clone())),
+        })]
+    };
     match c {
+        EstateCommand::SetRegionInfo { handle, rules } => {
+            with_sent(|s| s.0 = with_rules(s.0.clone(), rules));
+            region_info(*handle)
+        }
+        EstateCommand::SetEstateInfo { handle, info } => {
+            with_sent(|s| s.1 = info.flags);
+            vec![ev(EstateEvent::EstateInfo {
+                handle: *handle,
+                info: Arc::new(estate_info()),
+            })]
+        }
+        EstateCommand::SetTerrain { handle, terrain, .. } => {
+            with_sent(|s| {
+                s.0.water_height = terrain.water_height;
+                s.0.terrain_raise_limit = terrain.raise_limit;
+                s.0.terrain_lower_limit = terrain.lower_limit;
+            });
+            region_info(*handle)
+        }
+        EstateCommand::BakeTerrain { .. } => Vec::new(),
         EstateCommand::Refresh { handle } => {
             let handle = *handle;
             let mut out = Vec::new();
             if manages() {
                 out.push(ev(EstateEvent::EstateInfo {
                     handle,
-                    info: Arc::new(EstateInfo {
-                        name: aurora_i18n::tr!("common-aurora-demo").into(),
-                        owner: estate_owner(),
-                        id: ESTATE_ID,
-                        flags: ef::EXTERNALLY_VISIBLE
-                            | ef::ALLOW_DIRECT_TELEPORT
-                            | ef::ALLOW_VOICE
-                            | ef::ALLOW_ACCESS_OVERRIDE
-                            | ef::ALLOW_ENVIRONMENT_OVERRIDE,
-                        sun_hour: 0.0,
-                    }),
+                    info: Arc::new(estate_info()),
                 }));
             }
             out.push(ev(EstateEvent::Access {
@@ -221,10 +315,7 @@ pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
             }));
             out
         }
-        EstateCommand::RequestRegionInfo { handle } => vec![ev(EstateEvent::RegionInfo {
-            handle: *handle,
-            info: Arc::new(region_details()),
-        })],
+        EstateCommand::RequestRegionInfo { handle } => region_info(*handle),
     }
 }
 
@@ -241,12 +332,26 @@ mod tests {
                 role: Role::Owner,
                 preview: false,
                 compact: false,
+                manage: ManageDemo::default(),
             }
         );
         assert_eq!(parse("overview:resident").role, Role::Resident);
         assert_eq!(parse("overview:manager").role, Role::Manager);
         let s = parse("overview:owner:preview:compact");
         assert!(s.preview && s.compact);
+        let m = parse("manage:manager:rules:pending");
+        assert_eq!((m.page, m.manage.section, m.manage.pending), (Page::Manage, Some(1), true));
+        assert_eq!(parse("manage:ask-heights").manage.ask, Some(Ask::TextureHeights));
+    }
+
+    /// What "Apply" sends comes back in the next RegionInfo.
+    #[test]
+    fn the_demo_simulator_keeps_the_rules() {
+        let mut r = aurora_net::estate::RegionRules::of(&region_details());
+        r.block_fly = true;
+        r.agent_limit = 50.0;
+        let d = with_rules(region_details(), &r);
+        assert_eq!(aurora_net::estate::RegionRules::of(&d), r);
     }
 
     #[test]
