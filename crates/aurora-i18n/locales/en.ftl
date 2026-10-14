@@ -5789,6 +5789,45 @@ ui-group-admin-can-do = { $count ->
    *[other] What they can do · { $shown }
     }
 ui-group-admin-abilities-note = The details are set in Administration › Roles.
+ui-group-admin-tab = Administration
+ui-group-admin-roles = Roles
+ui-group-admin-identity = Group identity
+ui-group-admin-abilities = Abilities
+ui-group-admin-bans = Banned residents
+ui-group-admin-invitations = Invitations
+ui-group-admin-new-role = New
+ui-group-admin-copy-role = Copy
+ui-group-admin-delete-role = Delete the role
+ui-group-admin-max-roles = A group has { $count } roles at most.
+ui-group-admin-role-name = Name
+ui-group-admin-role-title = Title
+ui-group-admin-role-description = Description
+ui-group-admin-role-visible = Members visible outside the group
+ui-group-admin-role-abilities = Abilities · { $count } of { $total }
+ui-group-admin-dangerous-action = You are about to add the ability '{ $action }' to the role '{ $role }'. Members in a role with this ability can assign themselves -- and any other member -- to roles with more powers than they currently have, potentially elevating themselves to near-Owner power. Be sure you know what you're doing before assigning this ability.
+ui-group-admin-dangerous-ability = You are about to add the ability '{ $action }' to the role '{ $role }'. Members in a role with this ability can assign themselves -- and any other member -- every ability, potentially elevating themselves to near-Owner power. Be sure you know what you're doing before assigning this ability.
+ui-group-admin-ban-ability-given = You are about to add the ability '{ $action }' to the role '{ $role }'. The abilities '{ $eject }' and '{ $remove }' are given with it.
+ui-group-admin-ban-ability-taken = You are about to remove the ability '{ $action }' from the role '{ $role }'. The abilities '{ $eject }' and '{ $remove }' it brought stay.
+ui-group-admin-insignia = Insignia
+ui-group-admin-insignia-change = Change the insignia
+ui-group-admin-settings = Settings
+ui-group-admin-show-in-search = Show in search
+ui-group-admin-moderate = Moderate content
+ui-group-admin-fee = Enrollment fee
+ui-group-admin-pick-ability = Choose an ability to see who has it.
+ui-group-admin-roles-with = Roles with this ability
+ui-group-admin-members-with = { $count ->
+    [one] 1 member with this ability
+   *[other] { $count } members with this ability
+    }
+ui-group-admin-nobody = No role has this ability.
+ui-group-admin-bans-count = { $count } banned of { $max } at most
+ui-group-admin-ban-residents = Ban residents
+ui-group-admin-no-bans = Nobody is banned from this group.
+ui-group-admin-unban = Unban
+ui-group-admin-already-banned = Already banned: { $names }
+ui-group-admin-cannot-ban-yourself = You cannot ban yourself.
+ui-group-admin-ban-limit = Not banned, the ban list is full: { $names }
 group-abilities-membership = Membership
 group-abilities-membership-help = These Abilities include powers to add and remove group Members, and allow new Members to join without an invitation.
 group-ability-member-invite = Invite People to this Group

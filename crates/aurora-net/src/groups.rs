@@ -7,8 +7,8 @@
 //! replies repeat: a reply to an older request is dropped by the viewer.
 
 use aurora_llsd::{Llsd, llsd_map};
-use aurora_msg::{field_str, str_field};
 use aurora_msg::msgs;
+use aurora_msg::{field_str, str_field};
 use uuid::Uuid;
 
 /// Group abilities (roles_constants.h GP_*), the bits of a role's or a
@@ -817,7 +817,12 @@ mod tests {
             Uuid::from_u128(1),
             Uuid::nil(),
             Uuid::from_u128(9),
-            &[u(1, role_change::CREATE), u(2, role_change::DATA), u(3, role_change::POWERS), u(4, role_change::DELETE)],
+            &[
+                u(1, role_change::CREATE),
+                u(2, role_change::DATA),
+                u(3, role_change::POWERS),
+                u(4, role_change::DELETE),
+            ],
         );
         assert_eq!(v.len(), 2);
         assert_eq!(v[0].agent_data.group_id, Uuid::from_u128(9));

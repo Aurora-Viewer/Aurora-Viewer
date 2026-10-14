@@ -7304,6 +7304,23 @@ impl App {
         }
     }
 
+    /// LLPanelGroupBulkBan::submit's reasons: who was not banned, and why.
+    fn tell_bulk_ban(&mut self, done: &crate::world::group_data::BulkBan) {
+        let names =
+            |ids: &[uuid::Uuid], world: &crate::world::World| ids.iter().map(|id| world.social.name_of(id)).collect::<Vec<_>>().join(", ");
+        if !done.already.is_empty() {
+            let text = aurora_i18n::tr!("ui-group-admin-already-banned", names = names(&done.already, &self.world));
+            self.world.system_message(text);
+        }
+        if done.myself {
+            self.world.system_message(aurora_i18n::tr!("ui-group-admin-cannot-ban-yourself"));
+        }
+        if !done.over_limit.is_empty() {
+            let text = aurora_i18n::tr!("ui-group-admin-ban-limit", names = names(&done.over_limit, &self.world));
+            self.world.system_message(text);
+        }
+    }
+
     /// sendEjectNotifications: "You ejected X from the group Y", for each.
     fn notify_ejected(&mut self, group: uuid::Uuid, members: &[uuid::Uuid]) {
         let group_name = self.world.search.groups.get(&group).map(|g| g.name.clone()).unwrap_or_default();
@@ -7340,6 +7357,19 @@ impl App {
                     self.world.group_data.ban(group, members, self.world.agent_id);
                 }
                 GroupAction::ChangeRoles { group, changes } => self.world.group_data.change_roles(group, changes),
+                GroupAction::UpdateRoles { group, updates } => self.world.group_data.update_roles(group, updates),
+                GroupAction::UpdateInfo { group, info } => {
+                    self.world.group_data.update_info(group, info);
+                    // the profile again, to show what the server kept
+                    self.send(NetCommand::GroupProfileRequest(group));
+                }
+                GroupAction::RequestBans(group) => self.world.group_data.request_bans(group),
+                GroupAction::Unban { group, ids } => self.world.group_data.unban(group, ids),
+                GroupAction::BanResidents { group, ids } => {
+                    let me = self.world.agent_id;
+                    let done = self.world.group_data.ban_residents(group, ids, me);
+                    self.tell_bulk_ban(&done);
+                }
                 GroupAction::RefreshNotices(group) => self.world.group_data.request_notices(group),
                 GroupAction::OpenNotice { group, notice } => {
                     log::info!("group notice asked: {notice}");
@@ -8719,7 +8749,8 @@ impl App {
                 self.panels.search = open;
                 self.apply_search_actions(&ctx, search_acts);
                 self.apply_group_actions(&ctx, group_acts);
-                self.group_profile_ui.dialogs(&ctx, &p, &mut self.world);
+                let wanted = self.group_profile_ui.dialogs(&ctx, &p, &mut self.world, &self.ui_images);
+                self.place_images.extend(wanted);
                 if let Some(id) = ui::group_profile::take_open_request(&ctx) {
                     self.group_profile_ui.open(&mut self.world, id);
                 }
@@ -9467,6 +9498,9 @@ impl ApplicationHandler for App {
                 if let Some((group, read, compose)) = crate::demo::group::notices_tab() {
                     self.world.group_data.set_read(group, read);
                     self.group_profile_ui.show_notices(compose);
+                }
+                if crate::demo::group::admin_tab() {
+                    self.group_profile_ui.show_admin();
                 }
                 if let Some(invitees) = crate::demo::group::invitees() {
                     self.group_profile_ui.invite.open(crate::demo::group::shown_group(), invitees);

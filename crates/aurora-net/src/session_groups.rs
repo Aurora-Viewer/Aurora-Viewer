@@ -65,7 +65,12 @@ impl Session<'_> {
                     self.send_main(&m, true);
                 }
             }
-            NetCommand::GroupBans { group, action, ids, refresh } => self.group_bans(*group, *action, ids.clone(), *refresh),
+            NetCommand::GroupBans {
+                group,
+                action,
+                ids,
+                refresh,
+            } => self.group_bans(*group, *action, ids.clone(), *refresh),
             NetCommand::GroupRoleUpdate { group, updates } => {
                 for m in groups::role_update_messages(self.agent_id(), self.session_id(), *group, updates) {
                     self.send_main(&m, true);

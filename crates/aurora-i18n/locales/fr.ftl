@@ -5789,6 +5789,45 @@ ui-group-admin-can-do = { $count ->
    *[other] Ce que ces membres peuvent faire · { $shown }
     }
 ui-group-admin-abilities-note = Le détail se règle dans Administration › Rôles.
+ui-group-admin-tab = Administration
+ui-group-admin-roles = Rôles
+ui-group-admin-identity = Identité du groupe
+ui-group-admin-abilities = Capacités
+ui-group-admin-bans = Bannis
+ui-group-admin-invitations = Invitations
+ui-group-admin-new-role = Nouveau
+ui-group-admin-copy-role = Copier
+ui-group-admin-delete-role = Supprimer le rôle
+ui-group-admin-max-roles = Un groupe a { $count } rôles au plus.
+ui-group-admin-role-name = Nom
+ui-group-admin-role-title = Titre
+ui-group-admin-role-description = Description
+ui-group-admin-role-visible = Membres visibles hors du groupe
+ui-group-admin-role-abilities = Capacités · { $count } sur { $total }
+ui-group-admin-dangerous-action = Vous êtes sur le point d'ajouter le pouvoir « { $action } » au rôle « { $role } ». Les membres ayant ce pouvoir peuvent s'assigner eux-mêmes, ainsi que tout autre membre, à des rôles disposant de pouvoirs plus importants, ce qui leur permet d'avoir des pouvoirs presque équivalents à ceux d'un propriétaire. Soyez sûr de ce que vous faites avant d'assigner ce pouvoir.
+ui-group-admin-dangerous-ability = Vous êtes sur le point d'ajouter le pouvoir « { $action } » au rôle « { $role } ». Les membres ayant ce pouvoir peuvent s'assigner eux-mêmes, ainsi que tout autre membre, tous les pouvoirs, ce qui leur permet d'avoir des pouvoirs presque équivalents à ceux d'un propriétaire. Soyez sûr de ce que vous faites avant d'assigner ce pouvoir.
+ui-group-admin-ban-ability-given = Vous êtes sur le point d'ajouter le pouvoir « { $action } » au rôle « { $role } ». Les pouvoirs « { $eject } » et « { $remove } » sont donnés avec lui.
+ui-group-admin-ban-ability-taken = Vous êtes sur le point de retirer le pouvoir « { $action } » au rôle « { $role } ». Les pouvoirs « { $eject } » et « { $remove } » qu'il avait apportés restent.
+ui-group-admin-insignia = Insigne
+ui-group-admin-insignia-change = Changer l'insigne
+ui-group-admin-settings = Réglages
+ui-group-admin-show-in-search = Afficher dans la recherche
+ui-group-admin-moderate = Contenu modéré
+ui-group-admin-fee = Frais d'inscription
+ui-group-admin-pick-ability = Choisissez une capacité pour voir qui l'a.
+ui-group-admin-roles-with = Rôles ayant cette capacité
+ui-group-admin-members-with = { $count ->
+    [one] 1 membre a cette capacité
+   *[other] { $count } membres ont cette capacité
+    }
+ui-group-admin-nobody = Aucun rôle n'a cette capacité.
+ui-group-admin-bans-count = { $count } bannis sur { $max } au plus
+ui-group-admin-ban-residents = Bannir des résidents
+ui-group-admin-no-bans = Personne n'est banni de ce groupe.
+ui-group-admin-unban = Débannir
+ui-group-admin-already-banned = Déjà bannis : { $names }
+ui-group-admin-cannot-ban-yourself = Vous ne pouvez pas vous bannir vous-même.
+ui-group-admin-ban-limit = Non bannis, la liste des bannis est pleine : { $names }
 group-abilities-membership = Membres
 group-abilities-membership-help = Ces pouvoirs permettent d'ajouter et de supprimer des membres du groupe et permettent aux nouveaux membres de rejoindre le groupe sans recevoir d'invitation.
 group-ability-member-invite = Inviter des membres dans ce groupe

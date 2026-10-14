@@ -20,6 +20,7 @@
 
 mod abilities;
 mod admin_members;
+mod administration;
 mod home;
 mod invite;
 mod members;
@@ -71,6 +72,19 @@ pub enum GroupAction {
         message: String,
         item: Option<(Uuid, Uuid)>,
     },
+    /// GroupRoleUpdate: the role changes saved.
+    UpdateRoles {
+        group: Uuid,
+        updates: Vec<aurora_net::groups::RoleUpdate>,
+    },
+    /// UpdateGroupInfo: the identity saved.
+    UpdateInfo { group: Uuid, info: aurora_net::groups::GroupInfo },
+    /// The ban list asked (GroupAPIv1).
+    RequestBans(Uuid),
+    /// Bans lifted.
+    Unban { group: Uuid, ids: Vec<Uuid> },
+    /// Residents banned by name (LLPanelGroupBulkBan).
+    BanResidents { group: Uuid, ids: Vec<Uuid> },
     /// EjectGroupMemberRequest, confirmed.
     Eject { group: Uuid, members: Vec<Uuid> },
     /// The ban (GroupAPIv1), then the ejection, confirmed.
@@ -106,6 +120,7 @@ pub enum Tab {
     Home,
     Members,
     Notices,
+    Admin,
 }
 
 /// The confirmation of "Join" (LLGroupActions::join's notifications).
@@ -130,6 +145,7 @@ pub struct GroupProfileUi {
     loaded: Option<(Uuid, bool)>,
     pub(super) members: members::MembersState,
     pub(super) notices: notices::NoticesState,
+    pub(super) admin: administration::AdminState,
     confirm: Option<Confirm>,
     /// "Invite to the group".
     pub invite: invite::InviteUi,
@@ -166,6 +182,11 @@ impl GroupProfileUi {
         self.group = Some(id);
         self.open = true;
         self.raise = true;
+    }
+
+    /// Open the Administration tab (the demo's captures).
+    pub fn show_admin(&mut self) {
+        self.tab = Tab::Admin;
     }
 
     /// Open the Notices tab (the demo's captures), on a new notice when
@@ -239,8 +260,15 @@ impl GroupProfileUi {
 
     /// The resident picker of the invitation window (it searches the
     /// world), after the windows.
-    pub fn dialogs(&mut self, ctx: &egui::Context, p: &crate::theme::Palette, world: &mut World) {
+    pub fn dialogs(
+        &mut self,
+        ctx: &egui::Context,
+        p: &crate::theme::Palette,
+        world: &mut World,
+        images: &HashMap<Uuid, egui::TextureHandle>,
+    ) -> HashSet<Uuid> {
         self.invite.picker(ctx, p, world);
+        self.admin.dialogs(ctx, p, world, images)
     }
 
     /// "Invite" of the head and of the Members tab (LLGroupActions::invite).
@@ -259,6 +287,7 @@ impl GroupProfileUi {
             Tab::Home => home::show(self, ui, c, env, v, actions),
             Tab::Members => members::show(self, ui, c, env, v, actions),
             Tab::Notices => notices::show(self, ui, c, v, actions),
+            Tab::Admin => administration::show(self, ui, c, v, actions),
         }
     }
 
