@@ -922,6 +922,10 @@ pub enum NetEvent {
     CofVersionIncremented(Option<i32>),
     /// ObjectProperties / ObjectPropertiesFamily (build tools: selection).
     ObjectProperties(Vec<crate::build::ObjectProps>),
+    /// The region's abuse categories: (value, localized label).
+    AbuseCategories(Vec<(i32, String)>),
+    /// Outcome of `SendAbuseReport` (`Err`: the text to show).
+    AbuseReportSent(Result<(), String>),
     /// llSetPayPrice values for the clicked object.
     PayPrice {
         object: Uuid,
@@ -1256,6 +1260,20 @@ pub enum NetCommand {
         handle: RegionHandle,
         object: Uuid,
     },
+    /// RequestObjectPropertiesFamily with COMPLAINT_REPORT_REQUEST, for the
+    /// object an abuse report is about (LLFloaterReporter::getObjectInfo).
+    RequestReportObjectProperties {
+        handle: RegionHandle,
+        object: Uuid,
+    },
+    /// The abuse categories in this language (AbuseCategories); answered by
+    /// `AbuseCategories`, nothing when the region has no such capability.
+    RequestAbuseCategories {
+        language: String,
+    },
+    /// Send an abuse report (sendReportViaCaps, else UserReport after the
+    /// screenshot's upload); answered by `AbuseReportSent`.
+    SendAbuseReport(Box<crate::abuse_report::AbuseReport>),
     RequestPayPrice {
         handle: RegionHandle,
         object: Uuid,
