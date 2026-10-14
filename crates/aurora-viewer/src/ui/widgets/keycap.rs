@@ -47,7 +47,14 @@ impl Keycap {
                     ui.painter().image(texture.id(), image, uv, behind);
                     text.min.x += MOUSE;
                 }
-                ui.painter().galley(text.center() - galley.size() / 2.0, galley.clone(), behind);
+                let mut pos = text.center() - galley.size() / 2.0;
+                // The accent of a capital (Ù on AZERTY, Ö on QWERTZ) rises
+                // past the line box of this small font: lower the name until
+                // its ink fits in the cap, written in the colour behind.
+                let above = rect.top() + 1.0 - (pos.y + galley.mesh_bounds.top());
+                let below = rect.bottom() - 1.0 - (pos.y + galley.mesh_bounds.bottom());
+                pos.y += above.min(below).max(0.0);
+                ui.painter().galley(pos, galley.clone(), behind);
             }
         }
     }
