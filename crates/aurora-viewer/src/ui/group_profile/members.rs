@@ -740,7 +740,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
             if widgets::action_button_if(
                 ui,
                 p,
-                "message-filled",
+                "message-circle-filled",
                 aurora_i18n::tr!("ui-group-profile-conversation"),
                 ActionKind::Flat,
                 size,

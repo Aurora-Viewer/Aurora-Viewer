@@ -338,7 +338,7 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         CtxAction::AddFriend(id),
     );
     ui.todo("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
-    ui.item("message-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
+    ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
     ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
     ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
     ui.todo("users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
@@ -420,7 +420,7 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         CtxAction::AddFriend(id),
     );
     ui.todo("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
-    ui.item("message-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
+    ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
     ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
     ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
     ui.todo("users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));

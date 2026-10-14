@@ -967,7 +967,7 @@ fn friend_menu(
     if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
         actions.push(ContactsAction::Profile(id));
     }
-    if menu::item(ui, p, "message-filled", aurora_i18n::tr!("ui-contacts-send-im")) {
+    if menu::item(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-contacts-send-im")) {
         actions.push(ContactsAction::Im(id));
     }
     if menu::item_if(
@@ -1400,7 +1400,7 @@ fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
     if menu::item_if(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl-2"), real) {
         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
     }
-    if menu::item_if(ui, p, "message-filled", aurora_i18n::tr!("common-chat"), real) {
+    if menu::item_if(ui, p, "message-circle-filled", aurora_i18n::tr!("common-chat"), real) {
         actions.push(ContactsAction::GroupChat(id));
     }
     if menu::item_if(
@@ -1669,7 +1669,7 @@ fn sets_tab(
                                 if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
                                     actions.push(ContactsAction::Profile(*id));
                                 }
-                                if menu::item(ui, p, "message-filled", aurora_i18n::tr!("ui-contacts-send-im")) {
+                                if menu::item(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-contacts-send-im")) {
                                     actions.push(ContactsAction::Im(*id));
                                 }
                                 if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), *on) {

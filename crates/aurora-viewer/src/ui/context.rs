@@ -439,7 +439,7 @@ fn avatar_menu_reporting(
         }
     };
     let im = |ui: &mut egui::Ui| {
-        if menu::item(ui, p, "message-filled", aurora_i18n::tr!("ui-context-send-im")) {
+        if menu::item(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-context-send-im")) {
             act(CtxAction::Im(id));
         }
     };
@@ -616,7 +616,7 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl-2")) {
         ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
     }
-    if menu::item(ui, p, "message-filled", aurora_i18n::tr!("common-chat")) {
+    if menu::item(ui, p, "message-circle-filled", aurora_i18n::tr!("common-chat")) {
         act(CtxAction::GroupChat(id));
     }
     // LLGroupActions::startCall (enabled with voice, isVoiceCallEnabled)

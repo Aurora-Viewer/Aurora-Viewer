@@ -4321,6 +4321,7 @@ ui-parcel-icons-name-isolated = Isolated parcel
 ui-worldmap-l-unknown-area = { $value0 }{ "\u000AL$ " }{ $price }{ " (unknown area)" }
 ui-worldmap-at-utc = { $value0 }{ "\u000AAt " }{ $h }:{ $m }{ " UTC" }
 ui-appearance-worn = { $value0 }{ " (worn)" }
+ui-bars-nearby-chat-and-conversations = Nearby chat and conversations
 ui-bars-unread = { $value0 }{ " (" }{ $unread }{ " unread)" }
 ui-perf-in-progress = { $value0 }{ " (" }{ $value1 }{ " in progress)" }
 ui-options-mb-of-video-memory-detected = { $value0 }{ " MB of video memory detected" }

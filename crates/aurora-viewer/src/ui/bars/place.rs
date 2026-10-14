@@ -45,8 +45,8 @@ pub enum Detail {
 /// The widths the choice needs, measured once per frame.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Widths {
-    /// What every level shows: the buttons, the place's frame and chevron,
-    /// the rating badge, the rights' icons.
+    /// What every level shows: the buttons, the place's frame, the rating
+    /// badge, the rights' icons.
     pub fixed: f32,
     pub parcel: f32,
     pub region: f32,
@@ -145,7 +145,7 @@ fn measure(ui: &egui::Ui, st: &StatusInfo) -> Widths {
         width(format!("{region} {steady}"), FontId::proportional(12.0))
     };
     let buttons = PAD + SLOT * 3.0 + FAV_W + SLOT + GAP * 5.0 + PAD;
-    let place = LOC_LEFT + BADGE + LOC_GAP + LOC_GAP + LOC_GAP * 2.0 + LOC_GAP + ICON + LOC_RIGHT;
+    let place = LOC_LEFT + BADGE + LOC_GAP + LOC_GAP + LOC_GAP * 2.0 + LOC_RIGHT;
     let icons = rights_width(ui, &st.parcel_icons, Detail::Bare);
     let rights_gap = if st.parcel_icons.is_empty() { 0.0 } else { LOC_GAP };
     Widths {
@@ -350,8 +350,9 @@ fn star_slot(ui: &mut egui::Ui, p: &Palette, icons: &Icons, rect: Rect, st: &Sta
     out
 }
 
-/// The place: rating, parcel, region (and position), the rights, the
-/// chevron of its menu.
+/// The place: rating, parcel, region (and position), the rights. A click
+/// on it opens its menu: no chevron says so (the human's request, the
+/// mockup has one).
 fn place(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -370,11 +371,9 @@ fn place(
     let painter = ui.painter_at(rect);
     let cy = rect.center().y;
 
-    // from the right: the chevron, the rights
-    let chevron = Rect::from_center_size(Pos2::new(rect.right() - LOC_RIGHT - ICON / 2.0, cy), Vec2::splat(ICON));
-    paint_icon(ui, icons, "chevron-down", chevron, ICON, p.muted);
+    // from the right: the rights
     let rights_w = rights_width(ui, &st.parcel_icons, detail);
-    let rights_left = chevron.left() - LOC_GAP - rights_w;
+    let rights_left = rect.right() - LOC_RIGHT - rights_w;
 
     // from the left: the badge, the parcel, the region
     let mut x = rect.left() + LOC_LEFT;

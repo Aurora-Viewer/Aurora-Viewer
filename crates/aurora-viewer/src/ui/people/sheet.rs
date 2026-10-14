@@ -221,7 +221,7 @@ fn buttons(
         if widgets::action_button(
             ui,
             p,
-            "message-filled",
+            "message-circle-filled",
             aurora_i18n::tr!("people-sheet-im"),
             ActionKind::Primary,
             size,
