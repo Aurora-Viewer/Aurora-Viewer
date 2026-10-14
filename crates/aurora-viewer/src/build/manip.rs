@@ -34,9 +34,7 @@ pub(super) const PLANE_OFFSET: f32 = 0.52;
 const PLANE_HALF: f32 = 0.15;
 const PLANE_PICK_SCALE: f32 = 1.3;
 /// Arrow head: height and radius, in arrow lengths.
-const ARROW_HEAD: (f32, f32) = (0.30, 0.15);
-/// A square stop marks the negative direction; the positive side is an arrow.
-const AXIS_STOP_PX: f32 = 12.0;
+const ARROW_HEAD: (f32, f32) = (0.26, 0.12);
 /// Aurora: thicker than LLManipTranslate's 2 px shafts, with the same
 /// axis length and picking tolerance; shared by the rotation rings.
 const STROKE_PX: (f32, f32) = (4.0, 6.0);
@@ -553,8 +551,8 @@ impl Manip {
     }
 
     /// Aurora look of LLManipTranslate::renderTranslationHandles: pale axes
-    /// with positive arrowheads and negative square stops, signed axis
-    /// labels, square plane handles, and the theme's accent under the cursor.
+    /// with heads in the color of their axis, square plane handles in the
+    /// color of their normal, and the accent of the theme under the cursor.
     fn draw_translate(&self, p: &mut Painter3d, s: &BuildSettings, f: &Frame, drag: Option<&Drag>) {
         let cam = p.cam;
         let pal = p.pal;
@@ -594,7 +592,7 @@ impl Manip {
                 p.line(q[k], q[(k + 1) % 4], color, if hl { 3.5 } else { 2.5 });
             }
         }
-        // Axis handles, farthest first; only the positive end has an arrowhead.
+        // arrows, farthest first; the heads point away from the pivot
         let mut arrows: Vec<(f32, usize, f32)> = Vec::new();
         for i in 0..3 {
             for sgn in [1.0f32, -1.0] {
@@ -604,21 +602,6 @@ impl Manip {
         }
         arrows.sort_by(|a, b| b.0.total_cmp(&a.0));
         let (head_h, head_r) = (len * ARROW_HEAD.0, len * ARROW_HEAD.1);
-        let names = [
-            [
-                aurora_i18n::tr!("build-manip-x-negative"),
-                aurora_i18n::tr!("build-manip-x-positive"),
-            ],
-            [
-                aurora_i18n::tr!("build-manip-y-negative"),
-                aurora_i18n::tr!("build-manip-y-positive"),
-            ],
-            [
-                aurora_i18n::tr!("build-manip-z-negative"),
-                aurora_i18n::tr!("build-manip-z-positive"),
-            ],
-        ];
-        let mut labels = Vec::with_capacity(6);
         for (_, i, sgn) in arrows {
             let selected = active == Some(Part::Arrow(i)) || self.hover == Some(Part::Arrow(i));
             if active.is_some() && !selected {
@@ -633,33 +616,15 @@ impl Manip {
             };
             let a = g * unit(i) * sgn;
             let sc = self.arrow_scale[i].max(1.0);
-            let positive = sgn > 0.0;
-            let base = piv + a * if positive { len - head_h * 0.5 * sc } else { len };
+            let base = piv + a * (len - head_h * 0.5 * sc);
             p.line_cased(piv, base, shaft, width);
-            let tip = if positive {
-                p.cone(base, a, head_r * sc, head_h * sc, head);
-                p.flush();
-                base + a * head_h * sc
-            } else {
-                p.square(base, AXIS_STOP_PX * sc, head, Stroke::new(2.0, fade(pal.navy, 0.5)));
-                base
-            };
-            if let (Some(origin), Some(end)) = (cam.project(piv), cam.project(tip)) {
-                let direction = end - origin;
-                // An axis viewed end-on has overlapping ends: avoid labels at the pivot.
-                if direction.length() >= 8.0 {
-                    let gap = if positive { 16.0 } else { AXIS_STOP_PX * sc * 0.5 + 12.0 };
-                    labels.push((end + direction.normalized() * gap, names[i][usize::from(positive)]));
-                }
-            }
+            p.cone(base, a, head_r * sc, head_h * sc, head);
+            p.flush();
         }
         if active.is_none()
             && let Some(c) = cam.project(piv)
         {
             p.painter.circle(c, 5.5, pal.violet_light, Stroke::new(2.0, fade(pal.navy, 0.5)));
-        }
-        for (pos, name) in labels {
-            p.screen_text(pos, name, 13.0, pal.ink);
         }
     }
 
