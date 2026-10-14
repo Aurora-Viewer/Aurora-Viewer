@@ -237,6 +237,13 @@ impl<'a> Floater<'a> {
 
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
+        if window_hidden(ctx, egui::Id::new(self.id), *open) {
+            // still open: no close sound, nor an open one when it comes back
+            if !self.silent {
+                super::sound_cues::floater_shown(ctx, egui::Id::new(self.id));
+            }
+            return None;
+        }
         if !*open {
             return None;
         }
@@ -562,6 +569,9 @@ pub(crate) fn bare_window(
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let window_id = egui::Id::new(id);
+    if window_hidden(ctx, window_id, true) {
+        return;
+    }
     let drag = resize::Drag::prepare(ctx, window_id, min_size);
     let mut w = egui::Window::new(title)
         .id(window_id)
@@ -600,6 +610,63 @@ pub(crate) fn bare_window(
 }
 
 const PLACE_POS: &str = "place_pos";
+
+/// The windows the hidden interface keeps out of sight (Alt+Shift+U,
+/// LLFloaterView::hideAllFloaters / showHiddenFloaters): those open on the
+/// frame it was hidden. A window opened afterwards shows; one closed in the
+/// meantime is forgotten.
+#[derive(Clone, Default)]
+struct HiddenWindows {
+    /// The frame whose open windows are hidden.
+    capture: Option<u64>,
+    ids: std::collections::HashSet<egui::Id>,
+}
+
+fn hidden_windows_id() -> egui::Id {
+    egui::Id::new("aurora_hidden_windows")
+}
+
+/// The interface is hidden (`hide_windows`).
+pub fn interface_hidden(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<HiddenWindows>(hidden_windows_id()).is_some())
+}
+
+/// Hide the windows open now (on the next frame), or show them back. Called
+/// between two frames.
+pub fn hide_windows(ctx: &egui::Context, hide: bool) {
+    let state = HiddenWindows {
+        capture: hide.then(|| ctx.cumulative_frame_nr()),
+        ids: Default::default(),
+    };
+    ctx.data_mut(|d| {
+        if hide {
+            d.insert_temp(hidden_windows_id(), state);
+        } else {
+            d.remove::<HiddenWindows>(hidden_windows_id());
+        }
+    });
+}
+
+/// The window `id` (`open` or not) is kept hidden this frame.
+fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool) -> bool {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| {
+        let Some(mut state) = d.get_temp::<HiddenWindows>(hidden_windows_id()) else {
+            return false;
+        };
+        let hidden = if !open {
+            state.ids.remove(&id);
+            false
+        } else if state.capture == Some(frame) {
+            state.ids.insert(id);
+            true
+        } else {
+            state.ids.contains(&id)
+        };
+        d.insert_temp(hidden_windows_id(), state);
+        hidden
+    })
+}
 
 /// Movable toolbar without a common face. The body supplies its individual
 /// button surfaces and close action; layout placement remains shared.

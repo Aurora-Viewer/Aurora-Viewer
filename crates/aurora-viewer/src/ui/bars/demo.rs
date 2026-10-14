@@ -16,7 +16,10 @@
 //! (its detailed tooltip shown), `sysmenu` (its right click),
 //! `netgraph` (Firestorm's traffic indicator shown), `sysperf` /
 //! `sysnet` (Performance opened from the island at frame 300, by its frame
-//! rate / its network, under the island). `normal` or nothing
+//! rate / its network, under the island). The hidden interface: `hidden`
+//! (hidden at frame 600, its hint shown), `peek` (hidden, the pointer held at
+//! the top edge: the top islands back); with `legacy`, Firestorm's question.
+//! `normal` or nothing
 //! else: the
 //! islands as set. With any word the voice light is the mockup's
 //! (connected).
@@ -64,6 +67,8 @@ pub struct DemoBars {
     pub net_stats: Option<bool>,
     /// Performance opened from the system island.
     pub perf: Option<Perf>,
+    /// The interface hidden at frame 600; true: the pointer at the top edge.
+    pub hidden: Option<bool>,
 }
 
 /// How the demo opens Performance from the system island.
@@ -125,6 +130,8 @@ pub fn parse(value: &str) -> DemoBars {
             "netgraph" => d.net_stats = Some(true),
             "sysperf" => d.perf = Some(Perf::Fps),
             "sysnet" => d.perf = Some(Perf::Network),
+            "hidden" => d.hidden = Some(false),
+            "peek" => d.hidden = Some(true),
             "rowdrag" => {
                 d.access = Some(crate::settings::FavoritesAccess::Row);
                 d.row_drag = true;
@@ -144,7 +151,8 @@ pub fn parse(value: &str) -> DemoBars {
         || d.click_name
         || d.tip
         || d.net_stats.is_some()
-        || d.perf.is_some();
+        || d.perf.is_some()
+        || d.hidden.is_some();
     if d.classic.is_none() && (islands_only || d.chat_width.is_some()) {
         d.classic = Some(false);
     }

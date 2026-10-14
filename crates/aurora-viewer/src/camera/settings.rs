@@ -94,6 +94,10 @@ pub struct CameraSettings {
     pub wheel_exits_mouselook: bool,
     /// FSShowMouselookInstructions: "Press Esc to return to world view".
     pub show_mouselook_instructions: bool,
+    /// FSShowInterfaceInMouselook (FIRE-8868, off): the bars stay in
+    /// mouselook; otherwise they go (LLAgent::changeCameraToMouselook) and
+    /// the chat bar only shows with text in it.
+    pub show_interface_in_mouselook: bool,
 }
 
 impl Default for CameraSettings {
@@ -120,6 +124,7 @@ impl Default for CameraSettings {
             enable_mouselook: true,
             wheel_exits_mouselook: true,
             show_mouselook_instructions: true,
+            show_interface_in_mouselook: false,
         }
     }
 }

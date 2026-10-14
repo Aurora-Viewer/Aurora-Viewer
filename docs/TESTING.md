@@ -1469,7 +1469,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
-| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
@@ -2259,7 +2259,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   frame 300, by its frame rate / its network: the full view 8 px under the
   island, its left and right edges on the island's, down to the work
   area's bottom; the compact view where it stands). In demo the network's graphs show a synthetic minute of
-  traffic (about 1.2 Mb/s in, waves), no packet lost.
+  traffic (about 1.2 Mb/s in, waves), no packet lost. The hidden interface:
+  `hidden` (hidden at frame 600 as Alt+Shift+U does: the bars and the
+  windows go, the hint at the top in the middle for 6 s; with `legacy`,
+  Firestorm's question instead), `peek` (hidden, the pointer held at the
+  top edge: the top islands back, no hint under them).
   Capture at
   `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
   at frame 780: at 1280 the place shows the parcel and the region, at

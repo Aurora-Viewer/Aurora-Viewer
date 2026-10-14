@@ -318,6 +318,9 @@ pub enum Action {
     Search,
     Performance,
     Preferences,
+    /// Hide or show the interface (Firestorm's View › Show User Interface,
+    /// Alt+Shift+U, `View.ToggleUI`).
+    ToggleInterface,
     /// Open Aurora's batch importer and its native file picker.
     Import,
     /// Aurora's held shortcut for dragging a visible HUD with the left button.
@@ -420,6 +423,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Search, aurora_i18n::tr!("search-title")),
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
                     (Action::Preferences, aurora_i18n::tr!("common-preferences")),
+                    (Action::ToggleInterface, aurora_i18n::tr!("keybinds-hide-interface")),
                     (Action::Import, aurora_i18n::tr!("keybinds-import-files")),
                 ],
             ),
@@ -607,6 +611,8 @@ impl KeyBindings {
             (Action::Search, [kmod(K::KeyF, true, false), None]),
             (Action::Performance, [kmod(K::Digit1, true, true), None]),
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
+            // menu_viewer.xml: Show User Interface, shortcut="alt|shift|U"
+            (Action::ToggleInterface, [kalt(K::KeyU, false, true), None]),
             (Action::Import, [kmod(K::KeyU, true, false), None]),
             // Aurora's direct HUD gesture must leave Alt to Firestorm's camera (#266).
             (Action::HudDrag, [k(K::ControlLeft), None]),

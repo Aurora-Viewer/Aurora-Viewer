@@ -95,6 +95,9 @@ pub enum BarAction {
     NetworkGraph,
     /// The toolbar's "Toolbar buttons" window.
     CustomizeBars,
+    /// Show User Interface (Alt+Shift+U), and hiding it once confirmed.
+    ToggleInterface,
+    HideInterface,
 }
 
 /// How the islands of Aurora's top bar are set (Preferences › Interface).
@@ -172,6 +175,10 @@ pub struct StatusInfo<'a> {
     /// The graphics and camera presets in use (None: custom).
     pub graphics_preset: Option<crate::graphics_presets::Preset>,
     pub camera_preset: crate::camera::CameraPreset,
+    /// The interface hidden (an edge brought the islands back), and the
+    /// keys of its shortcut.
+    pub interface_hidden: bool,
+    pub interface_keys: String,
 }
 
 /// The navigation bar's star (LLLocationInputCtrl's add landmark button).
@@ -292,6 +299,17 @@ fn status_name(m: &crate::world::status::StatusModes) -> &'static str {
 
 /// Check row of a menu that flips `on`; true when it was clicked (the menu
 /// closes, as it did on a stock checkbox).
+/// "Hide the interface" with its keys, "Show the interface" while it is
+/// hidden (an edge brought the islands back); true when clicked.
+pub(super) fn interface_item(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo) -> bool {
+    let (icon, label) = if st.interface_hidden {
+        ("eye-filled", aurora_i18n::tr!("ui-bars-show-interface"))
+    } else {
+        ("eye-off", aurora_i18n::tr!("ui-bars-hide-interface"))
+    };
+    menu::item_keys(ui, p, icon, label, &st.interface_keys)
+}
+
 fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, enabled: bool) -> bool {
     let clicked = menu::check(ui, p, icon, label, *on, enabled);
     if clicked {
@@ -522,6 +540,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         menu::separator(ui, p);
         if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-preferences")) {
             super::widgets::open_floater(ui.ctx(), "options", &mut panels.settings);
+        }
+        // menu_viewer.xml: Show User Interface (alt|shift|U), after
+        // Preferences, Toolbar Buttons and Show HUD Attachments
+        if interface_item(ui, p, st) {
+            *action = BarAction::ToggleInterface;
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "logout", aurora_i18n::tr!("ui-bars-log-out")) {

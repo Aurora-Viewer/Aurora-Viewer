@@ -188,6 +188,8 @@ pub struct App {
     /// The History window (a conversation's whole transcript).
     history_ui: ui::chat::history::HistoryUi,
     perf: PerfData,
+    /// The interface hidden (Alt+Shift+U) and the bars in mouselook.
+    interface: ui::interface::Interface,
     /// AURORA_PROFILE: frame laps and the summary line in the log.
     frame_profile: FrameProfile,
     /// What the network did each second: Performance window, and the
@@ -703,6 +705,7 @@ impl App {
             favorite_images: Default::default(),
             history_ui: Default::default(),
             perf: PerfData::default(),
+            interface: Default::default(),
             frame_profile: FrameProfile::default(),
             net_profile: crate::net_profile::NetProfile::default(),
             sync_alt: 0,
@@ -2591,6 +2594,7 @@ impl App {
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
+            Action::ToggleInterface => self.toggle_interface(),
             Action::Import => self.imports.toggle_launcher(&self.egui_ctx),
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
@@ -7396,6 +7400,8 @@ impl App {
                 self.settings.save();
             }
             BarAction::Favorite(f) => self.favorite_action(f),
+            BarAction::ToggleInterface => self.toggle_interface(),
+            BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
             BarAction::SystemIsland(shown) => {
                 self.settings.system_island = shown;
                 self.settings.save();
@@ -7430,6 +7436,31 @@ impl App {
             }
             BarAction::CustomizeBars => self.toolbar_ui.open = true,
         }
+    }
+
+    /// Alt+Shift+U, Show User Interface (LLViewToggleUI): nothing in
+    /// mouselook; shown, hidden at once with the islands, after Firestorm's
+    /// ConfirmHideUI with its bars (unless unticked); hidden, shown at once.
+    fn toggle_interface(&mut self) {
+        if self.camera.mouselook() {
+            return;
+        }
+        if self.interface.hidden {
+            self.interface.set_hidden(&self.egui_ctx, false);
+        } else if self.bars_look().0 && self.settings.confirm_hide_interface {
+            self.interface.confirm = true;
+            self.interface.confirm_again = true;
+        } else {
+            self.interface.set_hidden(&self.egui_ctx, true);
+        }
+    }
+
+    /// The keys of Show User Interface, as the menus write them.
+    fn interface_keys(&self) -> String {
+        self.settings.keybinds.get(crate::keybinds::Action::ToggleInterface)[0]
+            .as_ref()
+            .map(|b| b.label())
+            .unwrap_or_default()
     }
 
     /// Places › Favorites, the first tab.
@@ -8184,6 +8215,9 @@ impl App {
                 &mut self.settings,
                 self.net.runtime(),
             );
+        if !matches!(self.screen, Screen::World) && self.interface.hidden {
+            self.interface.set_hidden(&ctx, false);
+        }
         match self.screen {
             Screen::Login => {
                 if let Some(demo) = &mut self.update_demo {
@@ -8459,6 +8493,8 @@ impl App {
                     net_loss: crate::net_profile::loss_percent(&self.net_profile.last),
                     graphics_preset: crate::graphics_presets::Preset::matching(&self.settings),
                     camera_preset: self.settings.camera.preset,
+                    interface_hidden: self.interface.hidden,
+                    interface_keys: self.interface_keys(),
                 };
                 let media = ui::audio::MediaState {
                     music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
@@ -8477,21 +8513,44 @@ impl App {
                     aurora,
                     dnd: self.world.status.dnd,
                 };
-                let (bar, audio_action) = ui::bars::top_bars(
-                    ui,
-                    &p,
-                    icons,
-                    layout,
-                    &mut self.panels,
-                    &status,
-                    &mut self.settings.audio,
-                    &mut self.audio_ui,
-                    media,
-                    &mut self.notif_ui,
-                    bell,
-                );
-                a.bar = bar;
-                a.audio = Some(audio_action);
+                // the bars this frame: hidden with the interface (an edge
+                // brings the islands back) and in mouselook, like Firestorm's
+                let screen_rect = ctx.content_rect();
+                let demo_hidden = if self.demo { ui::bars::demo::get().hidden } else { None };
+                let chrome = self.interface.bars(&ui::interface::Frame {
+                    classic: classic_bars,
+                    mouselook: self.camera.mouselook(),
+                    show_in_mouselook: self.settings.camera.show_interface_in_mouselook,
+                    chat_active: self.chat_ui.has_focus || self.chat_ui.focus_request || !self.chat_ui.input.trim().is_empty(),
+                    // AURORA_DEMO_BARS=peek: the pointer at the top edge
+                    pointer: if demo_hidden == Some(true) {
+                        Some(egui::pos2(screen_rect.center().x, screen_rect.top()))
+                    } else {
+                        ctx.input(|i| i.pointer.hover_pos())
+                    },
+                    screen: screen_rect,
+                    top_rows: ui::bars::islands::favorites_row_bottom(&ctx)
+                        .unwrap_or(screen_rect.top() + ui::bars::islands::MARGIN + ui::bars::islands::HEIGHT),
+                    bottom_top: self.interface.last_room.map_or(screen_rect.bottom() - 56.0, |(_, bottom)| bottom),
+                    menu_open: egui::Popup::is_any_open(&ctx),
+                });
+                if chrome.top {
+                    let (bar, audio_action) = ui::bars::top_bars(
+                        ui,
+                        &p,
+                        icons,
+                        layout,
+                        &mut self.panels,
+                        &status,
+                        &mut self.settings.audio,
+                        &mut self.audio_ui,
+                        media,
+                        &mut self.notif_ui,
+                        bell,
+                    );
+                    a.bar = bar;
+                    a.audio = Some(audio_action);
+                }
                 // AURORA_DEMO_BARS: the mockup's voice (connected; talking
                 // with `voice`) and chat island width, for this run only and
                 // with the islands (Firestorm's bars stay as they were)
@@ -8554,38 +8613,49 @@ impl App {
                 };
                 // the dock leaves the Conversations button out of its default
                 let bar_layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
-                let (chat, bar2, bottom_top, chat_width_set) = ui::bars::bottom_bar(
-                    ui,
-                    &p,
-                    icons,
-                    bar_layout,
-                    &mut self.toolbar_ui,
-                    toolbar_settings,
-                    &mut self.panels,
-                    &mut self.chat_ui,
-                    &self.gesture_state.manager,
-                    if demo_bars.read { 0 } else { self.world.conversations_badge() },
-                    self.world.social.latest_unread(),
-                    self.world.agent.flying,
-                    self.world.agent.is_sitting(),
-                    self.camera.mouselook(),
-                    match demo_chat_width.as_mut() {
-                        Some(width) => width,
-                        None if classic_bars => &mut self.settings.chat_bar_width,
-                        None => &mut self.settings.chat_island_width,
-                    },
-                    &mut mic,
-                    self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused,
-                    !classic_bars,
-                    Some(&mut self.emoji),
-                    &favorites,
-                );
+                let (chat, bar2, bottom_top, chat_width_set) = if !chrome.bottom {
+                    // hidden: the chat lines go down to the screen's bottom
+                    (None, BarAction::None, screen_rect.bottom() - ui::bars::islands::MARGIN, false)
+                } else {
+                    ui::bars::bottom_bar(
+                        ui,
+                        &p,
+                        icons,
+                        bar_layout,
+                        &mut self.toolbar_ui,
+                        toolbar_settings,
+                        &mut self.panels,
+                        &mut self.chat_ui,
+                        &self.gesture_state.manager,
+                        if demo_bars.read { 0 } else { self.world.conversations_badge() },
+                        self.world.social.latest_unread(),
+                        self.world.agent.flying,
+                        self.world.agent.is_sitting(),
+                        self.camera.mouselook(),
+                        match demo_chat_width.as_mut() {
+                            Some(width) => width,
+                            None if classic_bars => &mut self.settings.chat_bar_width,
+                            None => &mut self.settings.chat_island_width,
+                        },
+                        &mut mic,
+                        self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused,
+                        !classic_bars,
+                        Some(&mut self.emoji),
+                        &favorites,
+                    )
+                };
                 // what the bars leave: where the windows are laid out, moved
                 // and snapped this frame (above the dock with the islands)
                 let mut area = ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic_bars);
                 // the favourites' row under the islands keeps the windows under it
                 if !classic_bars && let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
                     area.min.y = area.min.y.max(row + ui::bars::islands::MARGIN);
+                }
+                // without the bars, the windows keep the room they left
+                if chrome.top && chrome.bottom {
+                    self.interface.last_room = Some((area, bottom_top));
+                } else if let Some((room, _)) = self.interface.last_room {
+                    area = room;
                 }
                 ui::layout::set_work_area(ui.ctx(), area);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
@@ -8685,6 +8755,33 @@ impl App {
                         self.settings.chat_timestamps,
                         !classic_bars,
                     );
+                }
+                // the hidden interface: how to bring it back (the islands), or
+                // Firestorm's question before hiding it (its bars)
+                let now = ctx.input(|i| i.time);
+                if !classic_bars
+                    && !chrome.top
+                    && let Some(left) = self.interface.hint_left(now)
+                {
+                    let binding = self.settings.keybinds.get(crate::keybinds::Action::ToggleInterface)[0].clone();
+                    ui::interface::hint(&ctx, &p, binding.as_ref());
+                    ctx.request_repaint_after_secs(left as f32);
+                }
+                if self.interface.confirm {
+                    let keys = self.interface_keys();
+                    if let Some(hide) = ui::interface::confirm(&ctx, &p, &keys, &mut self.interface.confirm_again) {
+                        self.interface.confirm = false;
+                        if hide {
+                            self.settings.confirm_hide_interface = self.interface.confirm_again;
+                            self.settings.save();
+                            a.bar = BarAction::HideInterface;
+                        }
+                    }
+                }
+                // AURORA_DEMO_BARS=hidden / peek: hidden at frame 600 (asked
+                // first with Firestorm's bars)
+                if demo_hidden.is_some() && ctx.cumulative_frame_nr() == 600 && !self.interface.hidden {
+                    a.bar = BarAction::ToggleInterface;
                 }
                 t = self.ui_parts.lap(Part::UiOverlays, t);
                 let map_cam = {

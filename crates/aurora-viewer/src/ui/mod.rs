@@ -33,6 +33,7 @@ pub mod hover_height;
 pub mod hud;
 pub mod icons;
 pub mod inspect;
+pub mod interface;
 pub mod inventory;
 pub mod land;
 pub mod landmark_create;

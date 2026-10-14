@@ -169,6 +169,8 @@ fn status(classic: bool) -> StatusInfo<'static> {
         net_loss: 0.0,
         graphics_preset: None,
         camera_preset: Default::default(),
+        interface_hidden: false,
+        interface_keys: String::new(),
     }
 }
 
