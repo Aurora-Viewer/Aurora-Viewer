@@ -4863,6 +4863,7 @@ marketplace-error-not-accepted = Cannot move item in that folder.
 marketplace-demo-hoodie = Mesh hoodie
 marketplace-demo-poster = Sunset poster
 marketplace-demo-lantern = Garden lantern
+marketplace-demo-lantern-no-copy = Garden lantern (no copy)
 marketplace-demo-draft = Unfinished listing
 marketplace-demo-products = Products to sell
 marketplace-demo-instructions = Instructions

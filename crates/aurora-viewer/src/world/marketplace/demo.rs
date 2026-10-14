@@ -45,6 +45,8 @@ const DEMO_ROOT: Uuid = Uuid::from_u128(8_400_000);
 /// The simulated SLM server.
 pub struct DemoSlm {
     pub mode: Mode,
+    /// The sample listings are in the inventory.
+    pub seeded: bool,
     listings: Vec<Listing>,
     next: i32,
 }
@@ -66,6 +68,7 @@ impl DemoSlm {
         };
         DemoSlm {
             mode,
+            seeded: false,
             listings: vec![
                 listing(4101, HOODIE, HOODIE_V2, true, -1),
                 listing(4102, POSTER, POSTER_VERSION, false, 3),
@@ -179,7 +182,12 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
     };
     let mut folders = Vec::new();
     if root == DEMO_ROOT {
-        folders.push(folder(root, inv.root, aurora_i18n::tr!("common-marketplace-listings").into(), LISTINGS));
+        folders.push(folder(
+            root,
+            inv.root,
+            aurora_i18n::tr!("common-marketplace-listings").into(),
+            LISTINGS,
+        ));
     }
     folders.extend([
         folder(HOODIE, root, tr("hoodie"), -1),
@@ -220,8 +228,8 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
         item(4, POSTER_STOCK, format!("{poster} #1"), 6, 6, false),
         item(5, POSTER_STOCK, format!("{poster} #2"), 6, 6, false),
         item(6, POSTER_STOCK, format!("{poster} #3"), 6, 6, false),
-        item(7, LANTERN, lantern.clone(), 6, 6, true),
-        item(8, LANTERN, format!("{lantern} (no copy)"), 6, 6, false),
+        item(7, LANTERN, lantern, 6, 6, true),
+        item(8, LANTERN, aurora_i18n::tr!("marketplace-demo-lantern-no-copy").into(), 6, 6, false),
         item(9, DRAFT_VERSION, draft, 6, 6, true),
         item(10, PRODUCTS, aurora_i18n::tr!("marketplace-demo-chair").into(), 6, 6, true),
         item(11, PRODUCTS, aurora_i18n::tr!("marketplace-demo-vase").into(), 6, 6, false),

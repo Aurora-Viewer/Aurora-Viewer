@@ -384,8 +384,11 @@ impl<'a> Tree<'a> {
             item_count += items_n;
             stock_count += stock_n;
         }
-        let (folders_total, items_total, stock_total) =
-            (folder_count + dragged_folders, item_count + dragged_items, stock_count + dragged_stock);
+        let (folders_total, items_total, stock_total) = (
+            folder_count + dragged_folders,
+            item_count + dragged_items,
+            stock_count + dragged_stock,
+        );
         if folders_total > MAX_FOLDER_COUNT {
             return Err(aurora_i18n::tr!("marketplace-reason-too-many-folders", amount = MAX_FOLDER_COUNT));
         }
@@ -619,11 +622,7 @@ impl<'a> Tree<'a> {
             if kind == STOCK && (count >= 2 || !subfolders.is_empty()) {
                 report.split = true;
             }
-            if count > 1
-                || depth == 1
-                || (kind == STOCK && unique == COPYABLE_KEY)
-                || (kind != STOCK && unique != COPYABLE_KEY)
-            {
+            if count > 1 || depth == 1 || (kind == STOCK && unique == COPYABLE_KEY) || (kind != STOCK && unique != COPYABLE_KEY) {
                 for (key, ids) in groups {
                     let parent = if depth > 2 { self.parent(cat) } else { cat };
                     let new_kind = if key == COPYABLE_KEY { -1 } else { STOCK };
@@ -747,7 +746,11 @@ pub fn drop_plan(inv: &Inventory, root: Uuid, dest: Uuid, ids: &[Uuid], worn: &H
     if ids.is_empty() {
         return Err(aurora_i18n::tr!("world-inventory-actions-empty-selection").into());
     }
-    let master = if dest == root { None } else { tree.first_descendant_of(root, dest).or(Some(dest)) };
+    let master = if dest == root {
+        None
+    } else {
+        tree.first_descendant_of(root, dest).or(Some(dest))
+    };
     let bundle = ids.len();
     let mut audit = Vec::new();
     for id in ids {

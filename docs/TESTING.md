@@ -1299,6 +1299,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab, search done |
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
+| `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
 | `AURORA_DEMO_BAN=1` | Ban lines |
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
 
@@ -1880,6 +1881,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   at start on it, the menu entry shows, and a link to an address under it
   opens in the window instead of the system browser. Without it the demo
   has no Marketplace (the entry is hidden, as on a grid without one).
+- **`AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit`**:
+  Me › Marketplace listings open at start, answered by an SLM server
+  simulated in the viewer (nothing is sent). `merchant` (any other
+  value too) adds sample listings to the inventory: a listed hoodie with
+  two versions, an unlisted poster sold from a stock folder of three
+  no-copy items, a lantern folder never associated (loose items, which
+  the audit reports), an unfinished listing the server refuses to list
+  (the 422 alert), and a "Products to sell" folder to drag in.
+  Listing a listing without stock leaves it unlisted (the "could not
+  be updated" alert). `not-merchant`: Firestorm's explanation and the
+  link to open a store. `error`: the connection error with its reason.
+  `audit`: `merchant`, with the audit window of every listing open.
 - **`AURORA_DEMO_PLACE_WINDOW=1`**: with `AURORA_DEMO_PLACE`, the separate
   place windows instead of "Places" ("Landmarks and place
   profiles" option, not saved).

@@ -185,10 +185,7 @@ impl ListingsUi {
         }
         let work = super::layout::work_area(ctx);
         let size = DEFAULT_SIZE.min(work.size() - Vec2::splat(2.0 * super::layout::GAP)).max(MIN_SIZE);
-        let default = Rect::from_min_size(
-            (work.right_top() + Vec2::new(-size.x - super::layout::GAP, super::layout::GAP)).round(),
-            size,
-        );
+        let default = Rect::from_min_size((work.center() - size * 0.5).round(), size);
         let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("marketplace-listings-title"), default.min, default.size());
         floater.min_size = MIN_SIZE;
         let mut open = self.open;
@@ -200,7 +197,15 @@ impl ListingsUi {
     }
 
     /// LLFloaterMarketplaceListings::updateView.
-    fn contents(&mut self, ui: &mut egui::Ui, p: &Palette, inv: &mut Inventory, worn: &HashSet<Uuid>, home: Option<&str>, actions: &mut Vec<Action>) {
+    fn contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        inv: &mut Inventory,
+        worn: &HashSet<Uuid>,
+        home: Option<&str>,
+        actions: &mut Vec<Action>,
+    ) {
         let merchant = self.data.is_merchant();
         let root = mp::root(inv);
         if merchant && root.is_none() && !inv.root.is_nil() && !self.root_requested {
@@ -218,7 +223,12 @@ impl ListingsUi {
         let loading = matches!(status, Status::NotInitialized | Status::Initializing)
             || (merchant && (root.is_none() || matches!(self.data.fetch(), Fetch::NotDone | Fetch::Loading)));
         if loading {
-            placeholder(ui, p, aurora_i18n::tr!("marketplace-listings-initializing-title"), aurora_i18n::tr!("marketplace-listings-initializing"));
+            placeholder(
+                ui,
+                p,
+                aurora_i18n::tr!("marketplace-listings-initializing-title"),
+                aurora_i18n::tr!("marketplace-listings-initializing"),
+            );
             ui.vertical_centered(|ui| ui.spinner());
             return;
         }
@@ -230,7 +240,12 @@ impl ListingsUi {
                 self.tabs_and_tree(ui, p, inv, worn, root, actions);
             } else {
                 let zone = ui.scope(|ui| {
-                    placeholder(ui, p, aurora_i18n::tr!("marketplace-listings-empty-title"), aurora_i18n::tr!("marketplace-listings-empty"));
+                    placeholder(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("marketplace-listings-empty-title"),
+                        aurora_i18n::tr!("marketplace-listings-empty"),
+                    );
                     ui.allocate_space(ui.available_size());
                 });
                 self.drop_target(ui, p, &zone.response, inv, worn, root, root, actions);
@@ -248,7 +263,12 @@ impl ListingsUi {
                 placeholder(ui, p, aurora_i18n::tr!("marketplace-listings-error-title"), &text);
             }
             Status::Known(MerchantStatus::NotMerchant) => {
-                placeholder(ui, p, aurora_i18n::tr!("marketplace-listings-not-merchant-title"), aurora_i18n::tr!("marketplace-listings-not-merchant"));
+                placeholder(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("marketplace-listings-not-merchant-title"),
+                    aurora_i18n::tr!("marketplace-listings-not-merchant"),
+                );
                 ui.vertical_centered(|ui| {
                     let label = aurora_i18n::tr!("marketplace-listings-create-store");
                     if widgets::action_button(ui, p, "building-store", label, ActionKind::Primary, Vec2::new(0.0, 28.0)).clicked() {
@@ -256,11 +276,25 @@ impl ListingsUi {
                     }
                 });
             }
-            _ => placeholder(ui, p, aurora_i18n::tr!("marketplace-listings-error-title"), aurora_i18n::tr!("marketplace-listings-error")),
+            _ => placeholder(
+                ui,
+                p,
+                aurora_i18n::tr!("marketplace-listings-error-title"),
+                aurora_i18n::tr!("marketplace-listings-error"),
+            ),
         }
     }
 
-    fn toolbar(&mut self, ui: &mut egui::Ui, p: &Palette, inv: &Inventory, worn: &HashSet<Uuid>, root: Uuid, home: Option<&str>, actions: &mut Vec<Action>) {
+    fn toolbar(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        inv: &Inventory,
+        worn: &HashSet<Uuid>,
+        root: Uuid,
+        home: Option<&str>,
+        actions: &mut Vec<Action>,
+    ) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             // LLPanelMarketplaceListings::onAddButtonClicked
@@ -294,7 +328,15 @@ impl ListingsUi {
         ui.add_space(4.0);
     }
 
-    fn tabs_and_tree(&mut self, ui: &mut egui::Ui, p: &Palette, inv: &mut Inventory, worn: &HashSet<Uuid>, root: Uuid, actions: &mut Vec<Action>) {
+    fn tabs_and_tree(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        inv: &mut Inventory,
+        worn: &HashSet<Uuid>,
+        root: Uuid,
+        actions: &mut Vec<Action>,
+    ) {
         let labels = [
             (aurora_i18n::tr!("marketplace-listings-tab-all"), true),
             (aurora_i18n::tr!("marketplace-listings-tab-listed"), true),
@@ -306,7 +348,11 @@ impl ListingsUi {
         // allowDropOnRoot: only the All and Unassociated tabs take a drop
         let root_drop = matches!(tab, Tab::All | Tab::Unassociated);
         if root_drop {
-            ui.label(RichText::new(aurora_i18n::tr!("marketplace-listings-drop")).size(11.5).color(p.muted));
+            ui.label(
+                RichText::new(aurora_i18n::tr!("marketplace-listings-drop"))
+                    .size(11.5)
+                    .color(p.muted),
+            );
         }
         ui.add_space(2.0);
         let filter = self.filter.trim().to_lowercase();
@@ -476,29 +522,75 @@ impl ListingsUi {
 
     /// The marketplace entries of the folder menu, by listing depth.
     #[allow(clippy::too_many_arguments)]
-    fn folder_menu(&mut self, ui: &mut egui::Ui, p: &Palette, inv: &Inventory, worn: &HashSet<Uuid>, root: Uuid, id: Uuid, depth: i32, actions: &mut Vec<Action>) {
+    fn folder_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        inv: &Inventory,
+        worn: &HashSet<Uuid>,
+        root: Uuid,
+        id: Uuid,
+        depth: i32,
+        actions: &mut Vec<Action>,
+    ) {
         use super::menu;
         let updating = self.data.is_updating(inv, root, id);
         if depth == 1 {
             let listed = self.data.is_listed(id);
             let version = self.data.version_folder(id);
             let live = self.data.activation_state(id);
-            if menu::item_if(ui, p, "tag-filled", aurora_i18n::tr!("marketplace-action-create"), !updating && !listed) {
+            if menu::item_if(
+                ui,
+                p,
+                "tag-filled",
+                aurora_i18n::tr!("marketplace-action-create"),
+                !updating && !listed,
+            ) {
                 self.create_listing(inv, worn, root, id, actions);
             }
-            if menu::item_if(ui, p, "link", aurora_i18n::tr!("marketplace-action-associate"), !updating && !listed) {
+            if menu::item_if(
+                ui,
+                p,
+                "link",
+                aurora_i18n::tr!("marketplace-action-associate"),
+                !updating && !listed,
+            ) {
                 self.associate = Some((id, String::new()));
             }
-            if menu::item_if(ui, p, "clipboard-text-filled", aurora_i18n::tr!("marketplace-action-check"), !updating) {
+            if menu::item_if(
+                ui,
+                p,
+                "clipboard-text-filled",
+                aurora_i18n::tr!("marketplace-action-check"),
+                !updating,
+            ) {
                 self.run_audit(inv, worn, root, id);
             }
-            if menu::item_if(ui, p, "circle-check-filled", aurora_i18n::tr!("marketplace-action-list"), !updating && listed && !version.is_nil() && !live) {
+            if menu::item_if(
+                ui,
+                p,
+                "circle-check-filled",
+                aurora_i18n::tr!("marketplace-action-list"),
+                !updating && listed && !version.is_nil() && !live,
+            ) {
                 self.list(inv, worn, root, id, actions);
             }
-            if menu::item_if(ui, p, "eye-off", aurora_i18n::tr!("marketplace-action-unlist"), !updating && listed && !version.is_nil() && live) {
+            if menu::item_if(
+                ui,
+                p,
+                "eye-off",
+                aurora_i18n::tr!("marketplace-action-unlist"),
+                !updating && listed && !version.is_nil() && live,
+            ) {
                 self.data.activate_listing(inv, root, id, false);
             }
-            if menu::item_if(ui, p, "unlink", aurora_i18n::tr!("marketplace-action-disassociate"), !updating && listed) {
+            if menu::item_if(
+                ui,
+                p,
+                "unlink",
+                aurora_i18n::tr!("marketplace-action-disassociate"),
+                !updating && listed,
+            ) {
                 self.data.clear_listing(inv, root, id);
             }
         }
@@ -506,10 +598,22 @@ impl ListingsUi {
             let parent = inv.folders.get(&id).map_or(Uuid::nil(), |f| f.info.parent);
             if self.data.is_listed(parent) {
                 let is_version = self.data.is_version_folder(id);
-                if menu::item_if(ui, p, "circle-check-filled", aurora_i18n::tr!("marketplace-action-activate"), !updating && !is_version) {
+                if menu::item_if(
+                    ui,
+                    p,
+                    "circle-check-filled",
+                    aurora_i18n::tr!("marketplace-action-activate"),
+                    !updating && !is_version,
+                ) {
                     self.activate(inv, worn, root, id, actions);
                 }
-                if menu::item_if(ui, p, "x", aurora_i18n::tr!("marketplace-action-deactivate"), !updating && is_version && !self.data.activation_state(id)) {
+                if menu::item_if(
+                    ui,
+                    p,
+                    "x",
+                    aurora_i18n::tr!("marketplace-action-deactivate"),
+                    !updating && is_version && !self.data.activation_state(id),
+                ) {
                     self.data.set_version_folder(inv, root, parent, Uuid::nil());
                 }
             }
@@ -559,7 +663,10 @@ impl ListingsUi {
         if report.ok {
             self.data.activate_listing(inv, root, id, true);
         } else {
-            actions.push(notify(&aurora_i18n::tr!("marketplace-alert-listing-failed", error = report.errors())));
+            actions.push(notify(&aurora_i18n::tr!(
+                "marketplace-alert-listing-failed",
+                error = report.errors()
+            )));
         }
     }
 
@@ -570,7 +677,10 @@ impl ListingsUi {
             let parent = inv.folders.get(&id).map_or(Uuid::nil(), |f| f.info.parent);
             self.data.set_version_folder(inv, root, parent, id);
         } else {
-            actions.push(notify(&aurora_i18n::tr!("marketplace-alert-activation-failed", error = report.errors())));
+            actions.push(notify(&aurora_i18n::tr!(
+                "marketplace-alert-activation-failed",
+                error = report.errors()
+            )));
         }
     }
 
@@ -582,7 +692,17 @@ impl ListingsUi {
 
     /// A row (or the root area) that takes inventory dropped on it.
     #[allow(clippy::too_many_arguments)]
-    fn drop_target(&mut self, ui: &mut egui::Ui, p: &Palette, r: &egui::Response, inv: &Inventory, worn: &HashSet<Uuid>, root: Uuid, dest: Uuid, actions: &mut Vec<Action>) {
+    fn drop_target(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        r: &egui::Response,
+        inv: &Inventory,
+        worn: &HashSet<Uuid>,
+        root: Uuid,
+        dest: Uuid,
+        actions: &mut Vec<Action>,
+    ) {
         let cargo = r
             .dnd_hover_payload::<InvDrag>()
             .map(|d| d.0)
@@ -590,7 +710,12 @@ impl ListingsUi {
         let Some(id) = cargo else { return };
         let plan = validate::drop_plan(inv, root, dest, &[id], worn);
         let stroke = if plan.is_ok() { p.violet_light } else { p.danger };
-        ui.painter().rect_stroke(r.rect, ui.visuals().window_corner_radius, egui::Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(
+            r.rect,
+            ui.visuals().window_corner_radius,
+            egui::Stroke::new(1.0, stroke),
+            egui::StrokeKind::Inside,
+        );
         let released = r.dnd_release_payload::<InvDrag>().is_some() || r.dnd_release_payload::<FolderDrag>().is_some();
         if !released {
             return;
@@ -598,9 +723,14 @@ impl ListingsUi {
         match plan {
             Ok(_) => {
                 let from_listings = mp::depth(inv, root, id) >= 0;
-                let active = in_active_folder(&self.data, inv, root, dest) || (from_listings && in_active_folder(&self.data, inv, root, id));
+                let active =
+                    in_active_folder(&self.data, inv, root, dest) || (from_listings && in_active_folder(&self.data, inv, root, id));
                 if active || !from_listings {
-                    self.confirm = Some(Confirm::Drop { dest, ids: vec![id], active });
+                    self.confirm = Some(Confirm::Drop {
+                        dest,
+                        ids: vec![id],
+                        active,
+                    });
                 } else {
                     self.apply_drop(inv, worn, root, dest, &[id], actions);
                 }
@@ -645,15 +775,38 @@ impl ListingsUi {
             let mut answer = None;
             Modal::new(egui::Id::new("marketplace_listings_confirm")).show(ctx, |ui| {
                 ui.set_max_width(380.0);
-                ui.label(RichText::new(aurora_i18n::tr!("marketplace-listings-title")).size(15.0).strong().color(p.ink));
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("marketplace-listings-title"))
+                        .size(15.0)
+                        .strong()
+                        .color(p.ink),
+                );
                 ui.add_space(8.0);
                 ui.label(RichText::new(text).color(p.ink));
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if widgets::action_button(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, Vec2::new(0.0, 28.0)).clicked() {
+                    if widgets::action_button(
+                        ui,
+                        p,
+                        "check",
+                        aurora_i18n::tr!("common-ok"),
+                        ActionKind::Primary,
+                        Vec2::new(0.0, 28.0),
+                    )
+                    .clicked()
+                    {
                         answer = Some(true);
                     }
-                    if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, Vec2::new(0.0, 28.0)).clicked() {
+                    if widgets::action_button(
+                        ui,
+                        p,
+                        "x",
+                        aurora_i18n::tr!("common-cancel"),
+                        ActionKind::Flat,
+                        Vec2::new(0.0, 28.0),
+                    )
+                    .clicked()
+                    {
                         answer = Some(false);
                     }
                 });
@@ -676,7 +829,12 @@ impl ListingsUi {
         let mut answer = None;
         Modal::new(egui::Id::new("marketplace_associate_listing")).show(ctx, |ui| {
             ui.set_max_width(340.0);
-            ui.label(RichText::new(aurora_i18n::tr!("marketplace-associate-title")).size(15.0).strong().color(p.ink));
+            ui.label(
+                RichText::new(aurora_i18n::tr!("marketplace-associate-title"))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink),
+            );
             ui.add_space(8.0);
             ui.label(RichText::new(aurora_i18n::tr!("marketplace-associate-prompt")).color(p.ink));
             let edit = ui.add(egui::TextEdit::singleline(&mut text).desired_width(200.0));
@@ -688,10 +846,27 @@ impl ListingsUi {
             }
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if widgets::action_button(ui, p, "link", aurora_i18n::tr!("common-ok"), ActionKind::Primary, Vec2::new(0.0, 28.0)).clicked() {
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "link",
+                    aurora_i18n::tr!("common-ok"),
+                    ActionKind::Primary,
+                    Vec2::new(0.0, 28.0),
+                )
+                .clicked()
+                {
                     answer = Some(true);
                 }
-                if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, Vec2::new(0.0, 28.0)).clicked()
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "x",
+                    aurora_i18n::tr!("common-cancel"),
+                    ActionKind::Flat,
+                    Vec2::new(0.0, 28.0),
+                )
+                .clicked()
                     || ui.input(|i| i.key_pressed(egui::Key::Escape))
                 {
                     answer = Some(false);
@@ -776,7 +951,10 @@ fn matches(inv: &Inventory, id: Uuid, filter: &str, guard: usize) -> bool {
         return true;
     }
     guard < 8
-        && (f.items.iter().any(|i| inv.items.get(i).is_some_and(|it| it.name.to_lowercase().contains(filter)))
+        && (f
+            .items
+            .iter()
+            .any(|i| inv.items.get(i).is_some_and(|it| it.name.to_lowercase().contains(filter)))
             || f.children.iter().any(|c| matches(inv, *c, filter, guard + 1)))
 }
 
@@ -847,7 +1025,10 @@ mod tests {
         let ui = merchant(&inv);
         let root = mp::root(&inv).unwrap();
         let hoodie = suffix(&ui.data, &inv, root, demo::HOODIE);
-        assert!(hoodie.contains("(4101)") && hoodie.contains(aurora_i18n::tr!("marketplace-suffix-listed")), "{hoodie}");
+        assert!(
+            hoodie.contains("(4101)") && hoodie.contains(aurora_i18n::tr!("marketplace-suffix-listed")),
+            "{hoodie}"
+        );
         assert!(suffix(&ui.data, &inv, root, demo::HOODIE_V2).contains(aurora_i18n::tr!("marketplace-suffix-active")));
         let poster = suffix(&ui.data, &inv, root, demo::POSTER);
         assert!(poster.contains("=3)"), "{poster}");
@@ -864,9 +1045,15 @@ mod tests {
         ui.run_audit(&inv, &HashSet::new(), root, root);
         let lines = ui.audit.clone().unwrap();
         let lantern = aurora_i18n::tr!("marketplace-demo-lantern");
-        assert!(lines.iter().any(|l| l.level == Level::Error && l.text.contains(lantern)), "{lines:?}");
+        assert!(
+            lines.iter().any(|l| l.level == Level::Error && l.text.contains(lantern)),
+            "{lines:?}"
+        );
         // the clean listings are left out
-        assert!(!lines.iter().any(|l| l.text.contains(aurora_i18n::tr!("marketplace-demo-hoodie"))), "{lines:?}");
+        assert!(
+            !lines.iter().any(|l| l.text.contains(aurora_i18n::tr!("marketplace-demo-hoodie"))),
+            "{lines:?}"
+        );
     }
 
     #[test]
@@ -891,6 +1078,9 @@ mod tests {
             description: "no price".into(),
         }));
         assert!(text.contains("'Bad Request'") && text.contains("no price"), "{text}");
-        assert_eq!(dashboard("https://marketplace.secondlife.com/"), "https://marketplace.secondlife.com/merchants/store/dashboard");
+        assert_eq!(
+            dashboard("https://marketplace.secondlife.com/"),
+            "https://marketplace.secondlife.com/merchants/store/dashboard"
+        );
     }
 }

@@ -4863,6 +4863,7 @@ marketplace-error-not-accepted = Impossible de déplacer l'article dans ce dossi
 marketplace-demo-hoodie = Sweat à capuche mesh
 marketplace-demo-poster = Affiche coucher de soleil
 marketplace-demo-lantern = Lanterne de jardin
+marketplace-demo-lantern-no-copy = Lanterne de jardin (non copiable)
 marketplace-demo-draft = Annonce inachevée
 marketplace-demo-products = Produits à vendre
 marketplace-demo-instructions = Mode d'emploi

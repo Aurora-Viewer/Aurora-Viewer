@@ -651,7 +651,11 @@ fn folder_row(
             egui::Button::selectable(state.selection.contains(&id), "")
                 .left_text(RichText::new(label).size(13.0).color(p.ink))
                 .wrap_mode(egui::TextWrapMode::Extend)
-                .sense(if draggable { egui::Sense::click_and_drag() } else { egui::Sense::click() }),
+                .sense(if draggable {
+                    egui::Sense::click_and_drag()
+                } else {
+                    egui::Sense::click()
+                }),
         );
         if draggable {
             r.dnd_set_drag_payload(FolderDrag(id));

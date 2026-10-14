@@ -93,8 +93,17 @@ fn merchant_with(inv: &Inventory, listings: Vec<Listing>) -> MarketplaceData {
     data.set_status(MerchantStatus::Merchant);
     assert!(data.fetch_contents(id(LISTINGS_ROOT)));
     assert_eq!(data.take_requests(Instant::now()), vec![SlmRequest::Listings]);
-    assert!(data.is_updating(inv, id(LISTINGS_ROOT), id(10)), "everything waits for GET /listings");
-    data.apply(inv, id(LISTINGS_ROOT), &SlmRequest::Listings, SlmReply::Listings(listings), Instant::now());
+    assert!(
+        data.is_updating(inv, id(LISTINGS_ROOT), id(10)),
+        "everything waits for GET /listings"
+    );
+    data.apply(
+        inv,
+        id(LISTINGS_ROOT),
+        &SlmRequest::Listings,
+        SlmReply::Listings(listings),
+        Instant::now(),
+    );
     assert_eq!(data.fetch(), Fetch::Done);
     assert!(!data.is_updating(inv, id(LISTINGS_ROOT), id(10)));
     data
@@ -171,7 +180,13 @@ fn create_listing_takes_the_only_version_folder() {
             count: 0
         }
     );
-    data.apply(&inv, root, &request, SlmReply::Listings(vec![listing(9, 10, 11, false, 0)]), Instant::now());
+    data.apply(
+        &inv,
+        root,
+        &request,
+        SlmReply::Listings(vec![listing(9, 10, 11, false, 0)]),
+        Instant::now(),
+    );
     assert_eq!(data.listing_id(id(10)), 9);
     assert!(!data.is_updating(&inv, root, id(10)));
     assert!(!data.create_listing(&inv, root, id(10)), "a folder has one listing");
@@ -197,15 +212,30 @@ fn list_unlist_and_answers_that_differ() {
         }
     );
     // SLM kept it unlisted: AlertMerchantListingNotUpdated with its page
-    data.apply(&inv, root, &request, SlmReply::Listings(vec![listing(7, 10, 11, false, 3)]), Instant::now());
+    data.apply(
+        &inv,
+        root,
+        &request,
+        SlmReply::Listings(vec![listing(7, 10, 11, false, 3)]),
+        Instant::now(),
+    );
     assert_eq!(data.take_alerts(), vec![Alert::NotUpdated { url: "https://m/7".into() }]);
     // an empty answer: the listing is read back five seconds later
     let now = Instant::now();
     data.apply(&inv, root, &request, SlmReply::Listings(Vec::new()), now);
     assert!(data.take_requests(now).is_empty());
-    assert_eq!(data.take_requests(now + Duration::from_secs(5)), vec![SlmRequest::Listing { id: 7 }]);
+    assert_eq!(
+        data.take_requests(now + Duration::from_secs(5)),
+        vec![SlmRequest::Listing { id: 7 }]
+    );
     assert!(data.is_updating(&inv, root, id(10)));
-    data.apply(&inv, root, &SlmRequest::Listing { id: 7 }, SlmReply::Listings(vec![listing(7, 10, 11, true, 3)]), now);
+    data.apply(
+        &inv,
+        root,
+        &SlmRequest::Listing { id: 7 },
+        SlmReply::Listings(vec![listing(7, 10, 11, true, 3)]),
+        now,
+    );
     assert!(data.activation_state(id(10)));
     // a failure becomes the transaction alert
     let error = SlmError::Transaction {
@@ -249,7 +279,13 @@ fn associate_delete_and_missing_listings() {
     assert_eq!(data.take_alerts(), vec![Alert::ActivateRequired]);
     let request = data.take_requests(Instant::now()).remove(0);
     assert!(data.is_updating(&inv, root, id(10)));
-    data.apply(&inv, root, &request, SlmReply::Listings(vec![listing(7, 10, 0, false, -1)]), Instant::now());
+    data.apply(
+        &inv,
+        root,
+        &request,
+        SlmReply::Listings(vec![listing(7, 10, 0, false, -1)]),
+        Instant::now(),
+    );
     assert!(!data.is_listed(id(12)), "an id belongs to one folder");
     assert_eq!(data.listing_id(id(10)), 7);
     // a listing SLM no longer has is forgotten
@@ -261,7 +297,13 @@ fn associate_delete_and_missing_listings() {
     let request = data.take_requests(Instant::now()).remove(0);
     assert_eq!(request, SlmRequest::Delete { id: 8 });
     assert!(data.is_updating(&inv, root, id(10)));
-    data.apply(&inv, root, &request, SlmReply::Listings(vec![listing(8, 10, 11, false, 3)]), Instant::now());
+    data.apply(
+        &inv,
+        root,
+        &request,
+        SlmReply::Listings(vec![listing(8, 10, 11, false, 3)]),
+        Instant::now(),
+    );
     assert!(!data.is_listed(id(10)));
     assert!(!data.is_updating(&inv, root, id(10)));
     assert!(!data.clear_listing(&inv, root, id(10)), "no listing left to clear");
@@ -278,7 +320,10 @@ fn reconcile_keeps_slm_in_step_with_the_inventory() {
     inv.remove(&[id(104)]);
     data.reconcile(&inv, root);
     assert_eq!(data.take_alerts(), vec![Alert::VersionEmpty]);
-    assert!(matches!(data.take_requests(Instant::now())[..], [SlmRequest::Update { is_listed: false, .. }]));
+    assert!(matches!(
+        data.take_requests(Instant::now())[..],
+        [SlmRequest::Update { is_listed: false, .. }]
+    ));
     data.reconcile(&inv, root);
     assert!(data.take_requests(Instant::now()).is_empty(), "not sent again while it runs");
     // the listing folder taken out of the listings: disassociated
@@ -377,7 +422,10 @@ fn audit_fixes_the_hierarchy_like_firestorm() {
     assert!(!report.ok, "Firestorm fails the pass that nests a stock folder");
     let wrapper = report.change.operations.iter().find_map(|op| match op {
         Operation::Folder {
-            id: new, parent, type_default: -1, ..
+            id: new,
+            parent,
+            type_default: -1,
+            ..
         } if *parent == id(10) => Some(*new),
         _ => None,
     });
@@ -404,7 +452,12 @@ fn audit_limits_and_mixed_stock() {
     inv.add_items(vec![other]);
     let report = validate::validate(&inv, root, id(10), false, -1, &worn);
     assert!(!report.ok);
-    assert!(report.messages.iter().any(|m| m.level == Level::Error && m.text.contains("Hoodie stock")));
+    assert!(
+        report
+            .messages
+            .iter()
+            .any(|m| m.level == Level::Error && m.text.contains("Hoodie stock"))
+    );
     // more than 20 folders in a version folder
     let mut inv = inventory();
     let folders = (0..21)
@@ -452,7 +505,12 @@ fn dropping_inventory_builds_the_listing_folders() {
     // a folder is moved, then the destination is fixed: Products holds a
     // no-copy vase, which gets its stock folder
     let change = validate::drop_plan(&inv, root, root, &[id(20)], &HashSet::new()).expect("drop accepted");
-    assert!(change.operations.iter().any(|op| matches!(op, Operation::Folder { type_default: STOCK, .. })));
+    assert!(
+        change
+            .operations
+            .iter()
+            .any(|op| matches!(op, Operation::Folder { type_default: STOCK, .. }))
+    );
 }
 
 #[test]

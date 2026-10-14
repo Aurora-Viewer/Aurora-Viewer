@@ -28,6 +28,9 @@ impl App {
             let (text, url) = ui::marketplace_listings::alert_text(&alert);
             self.marketplace_alert(text, url);
         }
+        if self.demo {
+            self.demo_marketplace_seed();
+        }
         if self.demo && std::env::var("AURORA_DEMO_MARKETPLACE_LISTINGS").is_ok_and(|v| v == "audit") {
             let worn = self.worn_items();
             self.listings_ui.demo_audit(&self.world.inventory, &worn);
@@ -73,9 +76,7 @@ impl App {
         }
         let worn = self.worn_items();
         let home = self.marketplace_home();
-        let actions = self
-            .listings_ui
-            .show(ctx, p, &mut self.world.inventory, &worn, home.as_deref());
+        let actions = self.listings_ui.show(ctx, p, &mut self.world.inventory, &worn, home.as_deref());
         for action in actions {
             match action {
                 Action::CreateRoot => {
@@ -109,10 +110,24 @@ impl App {
         let Some(mode) = demo::Mode::from_env() else {
             return;
         };
-        if mode == demo::Mode::Merchant {
-            demo::seed(&mut self.world.inventory, self.world.agent_id);
-            self.listings_ui.demo_expand(&[demo::HOODIE, demo::POSTER, demo::POSTER_VERSION, demo::LANTERN]);
+        self.demo_slm = Some(demo::DemoSlm::new(mode));
+        // a merchant's window opens once the sample listings are in the
+        // inventory (`demo_marketplace_seed`)
+        if mode != demo::Mode::Merchant {
+            self.open_marketplace_listings();
         }
+    }
+
+    /// The sample listings, once the demo inventory has its root.
+    fn demo_marketplace_seed(&mut self) {
+        let Some(slm) = self.demo_slm.as_mut() else { return };
+        if slm.mode != demo::Mode::Merchant || slm.seeded || self.world.inventory.root.is_nil() {
+            return;
+        }
+        slm.seeded = true;
+        demo::seed(&mut self.world.inventory, self.world.agent_id);
+        self.listings_ui
+            .demo_expand(&[demo::HOODIE, demo::POSTER, demo::POSTER_VERSION, demo::LANTERN]);
         self.open_marketplace_listings();
     }
 
