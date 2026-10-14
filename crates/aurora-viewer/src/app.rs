@@ -8989,7 +8989,7 @@ impl App {
                 // (LLGroupActions::show)
                 let group_env = ui::group_profile::Env {
                     avatar_pics: &self.avatar_pics,
-                    classic: self.settings.classic_profiles,
+                    classic: self.settings.classic_profiles || (self.demo && crate::demo::group::create_classic()),
                     now: ctx.input(|i| i.time),
                     group_calls: self.settings.audio.voice_enabled,
                 };
@@ -9795,7 +9795,7 @@ impl ApplicationHandler for App {
                     self.group_profile_ui.show_notices(compose);
                 }
                 if crate::demo::group::admin_tab() {
-                    self.group_profile_ui.show_admin();
+                    self.group_profile_ui.show_admin(crate::demo::group::identity_section());
                 }
                 if crate::demo::group::experiences_tab() {
                     self.group_profile_ui.show_experiences();

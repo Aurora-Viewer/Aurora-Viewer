@@ -192,6 +192,9 @@ pub struct GroupCreateUi {
     texture: TexturePicker,
     /// The demo scenario, started once the group list is in.
     demo: Option<DemoStart>,
+    /// The last edit of the name was refused (an accent, a leading space,
+    /// too long): the rule is shown.
+    refused_key: bool,
 }
 
 /// How a demo scenario starts.
@@ -319,7 +322,7 @@ impl GroupCreateUi {
             let screen = ctx.content_rect();
             let mut open = self.open;
             if env.classic {
-                let size = Vec2::new(330.0, 600.0);
+                let size = Vec2::new(330.0, 640.0);
                 let mut floater = Floater::new(
                     WINDOW,
                     aurora_i18n::tr!("ui-group-create-classic-title"),
@@ -356,8 +359,11 @@ impl GroupCreateUi {
             edit = edit.font(font);
         }
         let resp = ui.add(edit);
-        if resp.changed() && !name::accepts(&self.draft.name) {
-            self.draft.name = before;
+        if resp.changed() {
+            self.refused_key = !name::accepts(&self.draft.name);
+            if self.refused_key {
+                self.draft.name = before;
+            }
         }
         resp
     }
@@ -427,22 +433,26 @@ impl GroupCreateUi {
         who_ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             let small = |t: String| egui::RichText::new(t).size(12.0).color(p.muted);
+            // the founder and the count, or the rule in amber when a key was
+            // refused or the name is too short
+            let len = self.draft.name.trim().len();
+            let rule = self.refused_key || (len > 0 && name::checked(&self.draft.name).is_none());
             let me = c.world.agent_id;
-            if !me.is_nil() {
+            if !me.is_nil() && !rule {
                 c.want_names.insert(me);
                 ui.label(small(aurora_i18n::tr!("ui-group-profile-founded-by").to_owned() + " "));
                 ui.label(egui::RichText::new(c.world.social.display_name_of(&me)).size(12.0).color(p.violet_light));
                 ui.label(small(" · ".into()));
             }
-            let len = self.draft.name.trim().len();
-            let short = len > 0 && name::checked(&self.draft.name).is_none();
-            let rule = aurora_i18n::tr!(
-                "ui-group-create-name-rule",
-                count = format!("{len}"),
-                min = format!("{}", name::MIN),
-                max = format!("{}", name::MAX)
-            );
-            ui.label(egui::RichText::new(rule).size(12.0).color(if short { p.amber } else { p.muted }));
+            ui.label(small(format!("{len} / {}", name::MAX)));
+            if rule {
+                let rule = aurora_i18n::tr!(
+                    "ui-group-create-name-rule",
+                    min = format!("{}", name::MIN),
+                    max = format!("{}", name::MAX)
+                );
+                ui.label(egui::RichText::new(format!(" · {rule}")).size(12.0).color(p.amber));
+            }
         });
         view::insignia(ui, p, insignia_rect, tex, &self.draft.name);
         // the insignia opens the texture picker, as Firestorm's: a photo
@@ -494,10 +504,12 @@ impl GroupCreateUi {
             .show(ui, |ui| {
                 let enabled = !self.sending;
                 let mut cards = |ui: &mut egui::Ui, c: &mut Ctx| {
+                    // the insignia is chosen on the header's
                     let fields = IdentityFields {
                         ident: enabled,
                         options: enabled,
                         charter_limit: CHARTER_BYTES,
+                        insignia_card: false,
                     };
                     change = administration::identity_cards(ui, c, &mut draft.info, Rating::Choice(&mut draft.rating), fields);
                     clip_bytes(&mut draft.info.charter, CHARTER_BYTES);
@@ -799,7 +811,7 @@ fn levels_list(ui: &mut egui::Ui, p: &Palette, world: &World, classic: bool) {
             let text = egui::RichText::new(name).size(12.5).color(ink);
             ui.label(if l.current { text.strong() } else { text });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let cost = format!("L$ {}", aurora_i18n::integer(i64::from(l.cost)));
+                let cost = aurora_i18n::tr!("ui-group-create-amount", cost = aurora_i18n::integer(i64::from(l.cost)));
                 let text = egui::RichText::new(cost).size(12.5).color(ink);
                 ui.label(if l.current { text.strong() } else { text });
             });
@@ -828,7 +840,7 @@ fn fees_card(ui: &mut egui::Ui, c: &mut Ctx) {
                     ui.label(egui::RichText::new(aurora_i18n::tr!("ui-group-create-balance")).size(12.0).color(p.muted));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let short = balance < fee(c.world);
-                        let text = format!("L$ {}", aurora_i18n::integer(i64::from(balance)));
+                        let text = aurora_i18n::tr!("ui-group-create-amount", cost = aurora_i18n::integer(i64::from(balance)));
                         ui.label(egui::RichText::new(text).size(12.0).color(if short { p.amber } else { p.muted }));
                     });
                 });

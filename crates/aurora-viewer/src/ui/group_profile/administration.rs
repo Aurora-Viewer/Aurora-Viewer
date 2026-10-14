@@ -789,6 +789,7 @@ fn identity(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
                 ident,
                 options,
                 charter_limit: 1023,
+                insignia_card: true,
             };
             if identity_cards(ui, c, info, Rating::Switch, fields) {
                 st.admin.texture.open(aurora_i18n::tr!("ui-group-admin-insignia"), info.insignia);
@@ -842,6 +843,8 @@ pub(super) struct IdentityFields {
     pub options: bool,
     /// Characters of the charter.
     pub charter_limit: usize,
+    /// The insignia's card (the creation picks it on the header instead).
+    pub insignia_card: bool,
 }
 
 /// The cards of a group's identity (LLPanelGroupGeneral's editable part,
@@ -853,38 +856,41 @@ pub(super) fn identity_cards(ui: &mut egui::Ui, c: &mut Ctx, info: &mut GroupInf
         ident,
         options,
         charter_limit,
+        insignia_card,
     } = fields;
     let mut change = false;
     ui.spacing_mut().item_spacing.y = 10.0;
-    view::card(
-        ui,
-        p,
-        "photo-filled",
-        p.muted_dim,
-        aurora_i18n::tr!("ui-group-admin-insignia"),
-        None,
-        |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
-                if !info.insignia.is_nil() {
-                    c.wanted_images.insert(info.insignia);
-                }
-                widgets::picture(ui, p, c.images.get(&info.insignia), Vec2::splat(96.0), "users-group", "");
-                ui.vertical(|ui| {
-                    change = widgets::action_button_if(
-                        ui,
-                        p,
-                        "photo-filled",
-                        aurora_i18n::tr!("ui-group-admin-insignia-change"),
-                        ActionKind::Flat,
-                        Vec2::new(0.0, 26.0),
-                        ident,
-                    )
-                    .clicked();
+    if insignia_card {
+        view::card(
+            ui,
+            p,
+            "photo-filled",
+            p.muted_dim,
+            aurora_i18n::tr!("ui-group-admin-insignia"),
+            None,
+            |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    if !info.insignia.is_nil() {
+                        c.wanted_images.insert(info.insignia);
+                    }
+                    widgets::picture(ui, p, c.images.get(&info.insignia), Vec2::splat(96.0), "users-group", "");
+                    ui.vertical(|ui| {
+                        change = widgets::action_button_if(
+                            ui,
+                            p,
+                            "photo-filled",
+                            aurora_i18n::tr!("ui-group-admin-insignia-change"),
+                            ActionKind::Flat,
+                            Vec2::new(0.0, 26.0),
+                            ident,
+                        )
+                        .clicked();
+                    });
                 });
-            });
-        },
-    );
+            },
+        );
+    }
     view::card(
         ui,
         p,

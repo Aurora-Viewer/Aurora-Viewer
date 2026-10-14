@@ -236,9 +236,13 @@ impl GroupProfileUi {
         self.raise = true;
     }
 
-    /// Open the Administration tab (the demo's captures).
-    pub fn show_admin(&mut self) {
+    /// Open the Administration tab, on Group identity when `identity` (the
+    /// demo's captures).
+    pub fn show_admin(&mut self, identity: bool) {
         self.tab = Tab::Admin;
+        if identity {
+            self.admin.section = administration::Section::Identity;
+        }
     }
 
     /// Open the Experiences tab (the demo's captures).
