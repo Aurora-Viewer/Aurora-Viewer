@@ -6,12 +6,17 @@
 //! from a resident, whom the simulator does not send them). The pieces are
 //! About Land's (`ui/sheet.rs`); the data are `world/estate.rs`'s. Who may
 //! manage the estate can look at it as a resident would ("View as").
-//! Manage and People come with the next steps of the redesign.
+//! People comes with the next steps of the redesign.
 
+mod confirm;
+mod draft;
+mod manage;
 mod overview;
 
+pub(crate) use confirm::Ask;
 use crate::theme::Palette;
 use crate::ui::sheet::{self, PageTab};
+use crate::ui::texture_picker::TexturePicker;
 use crate::ui::widgets::{self, Floater};
 use crate::world::World;
 use crate::world::estate::{self, Role};
@@ -69,6 +74,7 @@ pub(crate) fn role_name(role: Role) -> &'static str {
 }
 
 /// What the pages read about the region, its estate and the agent.
+#[derive(Clone)]
 pub(crate) struct View {
     pub handle: RegionHandle,
     /// The agent's real role, and the one the window shows ("View as").
@@ -114,8 +120,32 @@ pub struct RegionUi {
     was_open: bool,
     /// Residents whose profile picture the header waits for.
     pub wanted_pics: HashSet<Uuid>,
+    /// Textures the terrain's swatches and the picker wait for.
+    pub wanted_images: HashSet<Uuid>,
     /// An action button was pressed (taken by the app).
     pub action: Option<RegionAction>,
+    /// "Manage": its sections' changes and navigation, for `manage_region`.
+    manage: manage::ManageState,
+    manage_region: Option<RegionHandle>,
+    /// The question or notice on screen.
+    ask: Option<Ask>,
+    /// The terrain textures' picker.
+    texture: TexturePicker,
+    /// Preferences read for this frame (ChangeObjectBonusFactor's
+    /// "ignore", RegionCheckTextureHeights) and written back by the dialogs.
+    confirm_object_bonus: bool,
+    check_texture_heights: bool,
+}
+
+/// What AURORA_DEMO_REGION opens on Manage (`demo_region.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ManageDemo {
+    /// The section scrolled to: access, rules or terrain.
+    pub section: Option<u8>,
+    /// Changes waiting for "Apply" in that section.
+    pub pending: bool,
+    /// The question shown.
+    pub ask: Option<Ask>,
 }
 
 /// The menus' and About Land's request to open the window.
@@ -129,30 +159,38 @@ pub fn take_open_request(ctx: &egui::Context) -> bool {
 }
 
 impl RegionUi {
-    /// AURORA_DEMO_REGION: the page and "View as" of a capture.
-    pub fn demo(&mut self, page: Page, as_resident: bool) {
+    /// AURORA_DEMO_REGION: the page and "View as" of a capture, and on
+    /// Manage its section, changes and question.
+    pub fn demo(&mut self, page: Page, as_resident: bool, manage: ManageDemo) {
         self.page = page;
         self.as_resident = as_resident;
+        self.manage.demo = Some(manage);
     }
 
     /// Show the floater; `open` is the panel flag, `map` the mini-map's
-    /// image of the region, `avatars` the profile pictures.
+    /// image of the region, `avatars` the profile pictures, `images` the
+    /// textures. True when `settings` changed.
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ctx: &egui::Context,
         p: &Palette,
         world: &mut World,
         avatars: &HashMap<Uuid, egui::TextureHandle>,
+        images: &HashMap<Uuid, egui::TextureHandle>,
         map: Option<&egui::TextureHandle>,
+        settings: &mut crate::settings::Settings,
         open: &mut bool,
-    ) {
+    ) -> bool {
         let handle = world.main_region.filter(|_| *open);
         let Some(handle) = handle else {
             if self.was_open {
                 self.was_open = false;
+                self.ask = None;
+                self.texture.open = false;
                 world.estate.close();
             }
-            return;
+            return false;
         };
         // a single window: reopened, or after a teleport, it shows the
         // region the agent is in (onOpen, onRegionChanged)
@@ -160,6 +198,18 @@ impl RegionUi {
             self.was_open = true;
             world.refresh_region_window(handle, true);
         }
+        // what was being changed belongs to the region it was changed for
+        if self.manage_region != Some(handle) {
+            let demo = self.manage.demo.take();
+            self.manage = manage::ManageState {
+                demo,
+                ..Default::default()
+            };
+            self.manage_region = Some(handle);
+            self.ask = None;
+        }
+        self.confirm_object_bonus = settings.confirm_object_bonus;
+        self.check_texture_heights = settings.region_check_texture_heights;
         let view = self.view(world, handle);
         if view.role == Role::Resident {
             self.as_resident = false;
@@ -187,7 +237,7 @@ impl RegionUi {
                     page: *pg,
                     icon: pg.icon(),
                     label: pg.label(),
-                    disabled: (*pg != Page::Overview).then_some(later),
+                    disabled: (*pg == Page::People).then_some(later),
                 })
                 .collect();
             let role = (view.role != Role::Resident && !compact).then(|| sheet::ViewAs {
@@ -197,25 +247,52 @@ impl RegionUi {
                 // the mockup lights the choice in the accent
                 accent: true,
             });
-            // Manage and People come with the next steps
-            self.page = Page::Overview;
+            // People comes with the next steps
+            if self.page == Page::People {
+                self.page = Page::Overview;
+            }
             sheet::page_tabs(ui, p, &tabs, &mut self.page, role, &mut self.as_resident);
             ui.add_space(8.0);
             let view = View {
                 shown: if self.as_resident { Role::Resident } else { view.role },
-                ..view
+                ..view.clone()
             };
             let pics = overview::Pictures { avatars, map };
-            egui::ScrollArea::vertical()
-                .id_salt("region_estate_overview")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width() - 6.0);
-                    overview::header(ui, p, self, &view, world, &pics, compact);
-                    overview::show(ui, p, self, &view, world, compact);
-                    ui.add_space(4.0);
-                });
+            match self.page {
+                Page::Manage => {
+                    // compact, the header keeps only the region's name
+                    overview::header(ui, p, self, &view, world, &pics, compact, compact);
+                    ui.add_space(12.0);
+                    manage::demo(self, &view, world);
+                    manage::show(ui, p, self, &view, world, images, compact);
+                }
+                _ => {
+                    egui::ScrollArea::vertical()
+                        .id_salt("region_estate_overview")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width() - 6.0);
+                            overview::header(ui, p, self, &view, world, &pics, compact, false);
+                            overview::show(ui, p, self, &view, world, compact);
+                            ui.add_space(4.0);
+                        });
+                }
+            }
         });
+        let view = View {
+            shown: if self.as_resident { Role::Resident } else { view.role },
+            ..view
+        };
+        if let Some(asset) = self.texture.show(ctx, p, world, images) {
+            manage::picked_texture(self, &view, world, asset);
+        }
+        self.wanted_images.extend(self.texture.wanted_images.drain());
+        let changed = confirm::show(ctx, p, self, &view, world);
+        if changed {
+            settings.confirm_object_bonus = self.confirm_object_bonus;
+            settings.region_check_texture_heights = self.check_texture_heights;
+        }
+        changed
     }
 
     fn view(&self, world: &World, handle: RegionHandle) -> View {

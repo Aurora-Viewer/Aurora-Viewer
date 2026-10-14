@@ -161,23 +161,45 @@ fn tile(ui: &mut egui::Ui, p: &Palette, v: &View, world: &World, pics: &Pictures
     ui.painter().galley(at, galley, p.ink);
 }
 
-/// The region at a glance, over the pages.
-pub(super) fn header(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World, pics: &Pictures, compact: bool) {
+/// The region at a glance, over the pages; `slim` (a compact window's
+/// settings) keeps only its name, rating, type and estate.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn header(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut RegionUi,
+    v: &View,
+    world: &mut World,
+    pics: &Pictures,
+    compact: bool,
+    slim: bool,
+) {
     sheet::hero(ui, p, |ui| {
         if !compact {
             tile(ui, p, v, world, pics);
         }
-        sheet::hero_column(ui, |ui| main_column(ui, p, s, v, world, pics, compact));
+        sheet::hero_column(ui, |ui| main_column(ui, p, s, v, world, pics, compact, slim));
     });
 }
 
-fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World, pics: &Pictures, compact: bool) {
+#[allow(clippy::too_many_arguments)]
+fn main_column(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut RegionUi,
+    v: &View,
+    world: &mut World,
+    pics: &Pictures,
+    compact: bool,
+    slim: bool,
+) {
     let details = world.estate.region.clone();
     let stats = world.estate.stats_of(v.handle).cloned();
     // name, rating and type
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        ui.add(egui::Label::new(semibold(ui, &v.name, 19.0, p.ink)).truncate());
+        let size = if slim { 15.0 } else { 19.0 };
+        ui.add(egui::Label::new(semibold(ui, &v.name, size, p.ink)).truncate());
         widgets::maturity_badge_of(ui, p, v.sim_access, 15.0);
         if !v.product.is_empty() {
             egui::Frame::new()
@@ -220,6 +242,9 @@ fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world
             );
         }
     });
+    if slim {
+        return;
+    }
     owner(ui, p, s, v, world, pics);
     // agents, objects, simulator, schedule
     let gauge_w = if compact { COMPACT_GAUGE_W } else { REGION_GAUGE_W };

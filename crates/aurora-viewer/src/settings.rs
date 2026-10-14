@@ -248,6 +248,13 @@ pub struct Settings {
     /// SettingsMakeNoTrans is asked (its "ignore" box turns it off; shown
     /// by default like the notification).
     pub confirm_no_transfer_settings: bool,
+    /// ChangeObjectBonusFactor is asked before Region / Estate sends a new
+    /// object bonus (its "ignore" box turns it off; shown by default).
+    pub confirm_object_bonus: bool,
+    /// RegionCheckTextureHeights: Region / Estate asks before sending
+    /// elevation ranges whose low end is above the high one ("Don't ask"
+    /// turns it off; on by default).
+    pub region_check_texture_heights: bool,
     /// Ask before a payment above `payment_confirm_threshold` L$
     /// (FSConfirmPayments, on by default).
     pub confirm_payments: bool,
@@ -752,6 +759,8 @@ impl Default for Settings {
             landmarks_by_date: true,
             confirm_teleports: true,
             confirm_no_transfer_settings: true,
+            confirm_object_bonus: true,
+            region_check_texture_heights: true,
             confirm_payments: true,
             payment_confirm_threshold: 200,
             maps: MapSettings::default(),

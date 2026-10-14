@@ -313,44 +313,48 @@ fn access(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut 
         });
     });
     why(ui, p, aurora_i18n::tr!("ui-land-manage-access-why"));
+    // what the estate imposes links to where it is decided
+    let see = aurora_i18n::tr!("ui-land-manage-see-in-region");
+    let mut see_region = false;
     if !override_ok {
-        lock_line(ui, p, aurora_i18n::tr!("ui-land-manage-access-estate"));
+        see_region |= sheet::lock_line_link(ui, p, aurora_i18n::tr!("ui-land-manage-access-estate"), see);
     } else if !lock && let Some(m) = missing_power(v, powers::LAND_MANAGE_ALLOWED) {
         lock_line(ui, p, &m);
     }
     let estate = aurora_i18n::tr!("ui-land-manage-set-by-estate");
-    srow(
-        ui,
-        p,
-        aurora_i18n::tr!("ui-land-manage-age"),
-        if parcel.region_deny_age_unverified {
+    let age = sheet::RowText {
+        name: aurora_i18n::tr!("ui-land-manage-age"),
+        lock: None,
+        desc: if parcel.region_deny_age_unverified {
             estate
         } else {
             aurora_i18n::tr!("ui-land-manage-age-desc")
         },
-        40.0,
-        |ui| {
-            editable(ui, now.public && can && !parcel.region_deny_age_unverified, |ui| {
-                widgets::switch(ui, p, &mut now.age)
-                    .on_hover_text(aurora_i18n::tr!("ui-land-access-residents-must-be-at-least-18-to-access-this"));
-            });
-        },
-    );
+        link: parcel.region_deny_age_unverified.then_some(see),
+    };
+    see_region |= sheet::srow_ext(ui, p, &age, 40.0, |ui| {
+        editable(ui, now.public && can && !parcel.region_deny_age_unverified, |ui| {
+            widgets::switch(ui, p, &mut now.age)
+                .on_hover_text(aurora_i18n::tr!("ui-land-access-residents-must-be-at-least-18-to-access-this"));
+        });
+    });
     line(ui, p);
-    srow(
-        ui,
-        p,
-        aurora_i18n::tr!("ui-land-manage-payment"),
-        if parcel.region_deny_anonymous { estate } else { "" },
-        40.0,
-        |ui| {
-            editable(ui, now.public && can && !parcel.region_deny_anonymous, |ui| {
-                widgets::switch(ui, p, &mut now.payment).on_hover_text(aurora_i18n::tr!(
-                    "ui-land-access-residents-must-have-payment-info-on-file-to-access"
-                ));
-            });
-        },
-    );
+    let payment = sheet::RowText {
+        name: aurora_i18n::tr!("ui-land-manage-payment"),
+        lock: None,
+        desc: if parcel.region_deny_anonymous { estate } else { "" },
+        link: parcel.region_deny_anonymous.then_some(see),
+    };
+    see_region |= sheet::srow_ext(ui, p, &payment, 40.0, |ui| {
+        editable(ui, now.public && can && !parcel.region_deny_anonymous, |ui| {
+            widgets::switch(ui, p, &mut now.payment).on_hover_text(aurora_i18n::tr!(
+                "ui-land-access-residents-must-have-payment-info-on-file-to-access"
+            ));
+        });
+    });
+    if see_region {
+        crate::ui::region::request_open(ui.ctx());
+    }
     line(ui, p);
     let group_label = aurora_i18n::tr!(
         "ui-land-manage-group-enters",
@@ -1206,15 +1210,20 @@ fn sound(
     line(ui, p);
     let voice_region = v.region_flag(rf::ALLOW_VOICE);
     let allow_voice = flags & pf::ALLOW_VOICE_CHAT != 0;
-    srow(
-        ui,
-        p,
-        aurora_i18n::tr!("ui-land-sound-enable-voice-chat"),
-        if voice_region {
+    let voice = sheet::RowText {
+        name: aurora_i18n::tr!("ui-land-sound-enable-voice-chat"),
+        lock: None,
+        desc: if voice_region {
             ""
         } else {
             aurora_i18n::tr!("ui-land-sound-enable-voice-controlled-by-estate")
         },
+        link: (!voice_region).then_some(aurora_i18n::tr!("ui-land-manage-see-in-region")),
+    };
+    let see_region = sheet::srow_ext(
+        ui,
+        p,
+        &voice,
         40.0,
         |ui| {
             editable(ui, can_media && voice_region, |ui| {
@@ -1226,6 +1235,9 @@ fn sound(
             });
         },
     );
+    if see_region {
+        crate::ui::region::request_open(ui.ctx());
+    }
     line(ui, p);
     srow(
         ui,

@@ -58,7 +58,7 @@ sections! {
     1 => [
         language, language_is_public, update_mode, ui_scale, use_pie_menu, snap_windows, show_perf,
         show_minimap, show_bug_report, standalone_place_details, loading_backdrop, confirm_teleports,
-        confirm_no_transfer_settings,
+        confirm_no_transfer_settings, confirm_object_bonus, region_check_texture_heights,
         confirm_payments, payment_confirm_threshold,
         name_tag_distance, use_display_names, show_usernames, legacy_username_format, trim_resident,
         display_name_notices, tag_complexity, tag_complexity_too_complex_only, tag_complexity_own,

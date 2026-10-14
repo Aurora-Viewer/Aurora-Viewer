@@ -9,7 +9,8 @@
 
 use super::land::EnvSummary;
 use aurora_net::estate::{
-    EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RestartSchedule, SimStats,
+    EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RegionRules, RegionSun, RestartSchedule,
+    SimStats, TerrainSettings,
 };
 use aurora_net::{NetCommand, RegionHandle};
 use std::collections::HashMap;
@@ -83,6 +84,31 @@ impl Estate {
 
     pub fn close(&mut self) {
         self.open = None;
+    }
+
+    /// The General panel's "Apply" (LLPanelRegionGeneralInfo::sendUpdate).
+    pub fn set_region_rules(&mut self, handle: RegionHandle, rules: RegionRules) {
+        self.out.push(NetCommand::Estate(EstateCommand::SetRegionInfo { handle, rules }));
+    }
+
+    /// The Estate panel's "Apply": the model takes the new estate first,
+    /// then sends it (callbackChangeLindenEstate → sendEstateInfo), and the
+    /// panel shows the model.
+    pub fn set_estate(&mut self, handle: RegionHandle, info: EstateInfo) {
+        self.estate = Some(Arc::new(info.clone()));
+        self.out.push(NetCommand::Estate(EstateCommand::SetEstateInfo { handle, info }));
+    }
+
+    /// The Terrain panel's "Apply", with the region's sun as RegionInfo
+    /// last told it (LLRegionInfoModel::sendRegionTerrain).
+    pub fn set_terrain(&mut self, handle: RegionHandle, terrain: TerrainSettings) {
+        let sun = self.region.as_deref().map(RegionSun::of).unwrap_or_default();
+        self.out.push(NetCommand::Estate(EstateCommand::SetTerrain { handle, terrain, sun }));
+    }
+
+    /// "Bake Terrain", once confirmed.
+    pub fn bake_terrain(&mut self, handle: RegionHandle) {
+        self.out.push(NetCommand::Estate(EstateCommand::BakeTerrain { handle }));
     }
 
     fn clear(&mut self) {

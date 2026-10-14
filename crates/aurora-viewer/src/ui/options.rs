@@ -1785,6 +1785,24 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     |ui| toggle(ui, p, &mut s.confirm_no_transfer_settings),
                 );
             });
+            // the "ignore" box of ChangeObjectBonusFactor and the "Don't ask"
+            // of ConfirmTextureHeights (RegionCheckTextureHeights)
+            group(ui, p, aurora_i18n::tr!("region-title"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-confirm-object-bonus"),
+                    aurora_i18n::tr!("ui-options-confirm-object-bonus-help"),
+                    |ui| toggle(ui, p, &mut s.confirm_object_bonus),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-check-texture-heights"),
+                    aurora_i18n::tr!("ui-options-check-texture-heights-help"),
+                    |ui| toggle(ui, p, &mut s.region_check_texture_heights),
+                );
+            });
             // FSConfirmPayments / FSPaymentConfirmationThreshold
             // (panel_preferences_firestorm.xml)
             group(ui, p, aurora_i18n::tr!("ui-options-payments"), |ui| {

@@ -435,6 +435,53 @@ pub fn lock_line(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add_space(4.0);
 }
 
+/// `lock_line` ending on a link to where it is decided; true when the link
+/// is clicked.
+pub fn lock_line_link(ui: &mut egui::Ui, p: &Palette, text: &str, link: &str) -> bool {
+    ui.add_space(2.0);
+    let clicked = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
+            widgets::glyph(ui, "lock-filled", p.amber, 13.0);
+            let width = ui.available_width();
+            let (galley, at) = linked_text(ui, p, text, p.amber, 11.5, link, width);
+            let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+            paint_linked(ui, galley, rect.min, at, p.amber)
+        })
+        .inner;
+    ui.add_space(4.0);
+    clicked
+}
+
+/// `text` then a violet `link` in one wrapped paragraph, and where the
+/// link starts (in characters).
+fn linked_text(ui: &egui::Ui, p: &Palette, text: &str, color: Color32, size: f32, link: &str, width: f32) -> (std::sync::Arc<egui::Galley>, usize) {
+    let mut job = egui::text::LayoutJob::default();
+    let plain = format!("{text} ");
+    job.append(&plain, 0.0, egui::TextFormat::simple(FontId::proportional(size), color));
+    let family = crate::ui::fonts::semibold(ui.ctx());
+    job.append(link, 0.0, crate::ui::fonts::semibold_format(&family, size, p.violet_light));
+    job.wrap.max_width = width;
+    (ui.painter().layout_job(job), plain.chars().count())
+}
+
+/// Paint a `linked_text` at `pos`; true when its link is clicked (the
+/// pointer's hand over it).
+fn paint_linked(ui: &mut egui::Ui, galley: std::sync::Arc<egui::Galley>, pos: Pos2, link_at: usize, color: Color32) -> bool {
+    let rect = Rect::from_min_size(pos, galley.size());
+    let id = ui.id().with(("linked_text", pos.x as i32, pos.y as i32));
+    let r = ui.interact(rect, id, Sense::click());
+    let on_link = r.hover_pos().is_some_and(|at| {
+        galley.cursor_from_pos(at - pos).index >= egui::text::CharIndex(link_at)
+            && galley.rows.iter().any(|row| row.rect().translate(pos.to_vec2()).contains(at))
+    });
+    ui.painter().galley(pos, galley, color);
+    if on_link {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    on_link && r.clicked()
+}
+
 /// The amber banner over a page.
 pub fn lock_bar(ui: &mut egui::Ui, p: &Palette, text: &str) {
     egui::Frame::new()
@@ -467,21 +514,65 @@ pub fn line(ui: &mut egui::Ui, p: &Palette) {
 /// (the text wraps before it); they are drawn right to left, the last one
 /// first.
 pub fn srow(ui: &mut egui::Ui, p: &Palette, name: &str, desc: &str, controls_w: f32, controls: impl FnOnce(&mut egui::Ui)) {
+    let text = RowText {
+        name,
+        lock: None,
+        desc,
+        link: None,
+    };
+    srow_ext(ui, p, &text, controls_w, controls);
+}
+
+/// The texts of a setting's row.
+pub struct RowText<'a> {
+    pub name: &'a str,
+    /// An amber lock and who may change it, after the name ("estate owner").
+    pub lock: Option<&'a str>,
+    pub desc: &'a str,
+    /// A link ending the explanation ("See in Region / Estate ›").
+    pub link: Option<&'a str>,
+}
+
+/// `srow` with a lock after the name and a link after the explanation; true
+/// when the link is clicked.
+pub fn srow_ext(ui: &mut egui::Ui, p: &Palette, text: &RowText<'_>, controls_w: f32, controls: impl FnOnce(&mut egui::Ui)) -> bool {
     const PAD: f32 = 7.0;
     const GAP: f32 = 14.0;
     let width = ui.available_width();
     let text_w = (width - controls_w - GAP).max(120.0);
-    let mut job = semibold(ui, name, 12.5, p.ink);
+    let mut job = semibold(ui, text.name, 12.5, p.ink);
     job.wrap.max_width = text_w;
     let name_g = ui.painter().layout_job(job);
-    let desc_g = (!desc.is_empty()).then(|| ui.painter().layout(desc.to_owned(), FontId::proportional(11.5), p.muted, text_w));
-    let text_h = name_g.size().y + desc_g.as_ref().map_or(0.0, |g| 1.0 + g.size().y);
+    let desc_g = match text.link {
+        Some(link) => Some(linked_text(ui, p, text.desc, p.muted, 11.5, link, text_w)),
+        None => (!text.desc.is_empty()).then(|| {
+            let g = ui.painter().layout(text.desc.to_owned(), FontId::proportional(11.5), p.muted, text_w);
+            (g, usize::MAX)
+        }),
+    };
+    let text_h = name_g.size().y + desc_g.as_ref().map_or(0.0, |(g, _)| 1.0 + g.size().y);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, text_h.max(26.0) + PAD * 2.0), Sense::hover());
     let top = rect.center().y - text_h / 2.0;
     let name_h = name_g.size().y;
+    let name_end = name_g.rows.last().map_or(0.0, |r| r.rect().right());
+    let first_row_h = name_g.rows.first().map_or(name_h, |r| r.rect().height());
     ui.painter().galley(egui::pos2(rect.left(), top), name_g, p.ink);
-    if let Some(g) = desc_g {
-        ui.painter().galley(egui::pos2(rect.left(), top + name_h + 1.0), g, p.muted);
+    if let Some(who) = text.lock {
+        // the mockup's amber "owner only" tag after the name
+        let at = egui::pos2(rect.left() + name_end + 6.0, top + first_row_h / 2.0);
+        icon_at(ui, "lock-filled", egui::pos2(at.x + 6.0, at.y), 11.0, p.amber);
+        let tag = ui.painter().layout_job(semibold(ui, who, 11.0, p.amber));
+        ui.painter()
+            .galley(egui::pos2(at.x + 16.0, at.y - tag.size().y / 2.0).round(), tag, p.amber);
+    }
+    let mut clicked = false;
+    if let Some((g, link_at)) = desc_g {
+        let pos = egui::pos2(rect.left(), top + name_h + 1.0);
+        if link_at == usize::MAX {
+            ui.painter().galley(pos, g, p.muted);
+        } else {
+            clicked = paint_linked(ui, g, pos, link_at, p.muted);
+        }
     }
     let slot = Rect::from_min_max(egui::pos2(rect.left() + text_w + GAP, rect.top()), rect.max);
     let mut child = ui.new_child(
@@ -491,6 +582,75 @@ pub fn srow(ui: &mut egui::Ui, p: &Palette, name: &str, desc: &str, controls_w: 
     );
     child.spacing_mut().item_spacing.x = 8.0;
     controls(&mut child);
+    clicked
+}
+
+/// The bar under a section whose settings wait for "Apply", like
+/// Firestorm's tabs that send all their settings at once: "N changes not
+/// sent yet", Cancel and Apply. Some(true) for Apply, Some(false) for
+/// Cancel.
+pub fn pending_bar(ui: &mut egui::Ui, p: &Palette, count: usize) -> Option<bool> {
+    const H: f32 = 24.0;
+    ui.add_space(8.0);
+    let mut out = None;
+    egui::Frame::new()
+        .fill(p.violet.gamma_multiply(0.12))
+        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
+        .inner_margin(egui::Margin::symmetric(10, 5))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                widgets::glyph(ui, "pencil-filled", p.violet_pale, 13.0);
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("sheet-pending-changes", n = count as i64))
+                        .size(12.0)
+                        .color(p.violet_pale),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let apply = aurora_i18n::tr!("common-apply");
+                    let w = ui.painter().layout_job(semibold(ui, apply, 12.0, p.on_accent)).size().x + 20.0;
+                    if widgets::primary_button_sized(ui, p, apply, Vec2::new(w, H)).clicked() {
+                        out = Some(true);
+                    }
+                    let cancel = aurora_i18n::tr!("common-cancel");
+                    if widgets::action_button(ui, p, "", cancel, widgets::ActionKind::Flat, Vec2::new(0.0, H)).clicked() {
+                        out = Some(false);
+                    }
+                });
+            });
+        });
+    out
+}
+
+/// A compact navigation entry: its icon, and its name only while it is
+/// the lit one (the mockup's row of icons above the sections).
+pub fn nav_compact(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, lit: bool) -> egui::Response {
+    const H: f32 = 31.0;
+    const ICON: f32 = 15.0;
+    let ink = if lit { p.ink } else { p.muted };
+    let galley = lit.then(|| {
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), FontId::proportional(12.5), ink)
+    });
+    let w = 16.0 + ICON + galley.as_ref().map_or(0.0, |g| 9.0 + g.size().x);
+    let (rect, r) = ui.allocate_exact_size(Vec2::new(w, H), Sense::click());
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    if lit {
+        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
+        ui.painter()
+            .vline(rect.left() + 1.0, rect.top() + 6.0..=rect.bottom() - 6.0, egui::Stroke::new(2.0, p.violet));
+    } else if r.hovered() {
+        ui.painter().rect_filled(rect, radius, p.raised);
+    }
+    let icon_tint = if lit { p.violet_pale } else { p.muted };
+    icon_at(ui, icon, egui::pos2(rect.left() + 8.0 + ICON / 2.0, rect.center().y), ICON, icon_tint);
+    if let Some(g) = galley {
+        let pos = egui::pos2(rect.left() + 8.0 + ICON + 9.0, rect.center().y - g.size().y / 2.0).round();
+        ui.painter().galley(pos, g, ink);
+    }
+    r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, lit, label));
+    r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(label)
 }
 
 /// "Show" / "Hide" (or `label`) with its chevron: folds a part of a section.
@@ -559,9 +719,42 @@ pub fn sections<S: Copy + PartialEq>(
     id: &str,
     list: &[S],
     state: &mut SectionScroll<S>,
-    mut nav: impl FnMut(&mut egui::Ui, S, bool) -> egui::Response,
-    mut body: impl FnMut(&mut egui::Ui, S),
+    nav: impl FnMut(&mut egui::Ui, S, bool) -> egui::Response,
+    body: impl FnMut(&mut egui::Ui, S),
 ) {
+    sections_with(ui, p, id, list, state, false, nav, |_| {}, body);
+}
+
+/// `sections` with `tail` drawn after the navigation's entries (entries
+/// that are not sections yet), and in a `compact` window the navigation as
+/// a row above the column (`nav_compact`).
+#[allow(clippy::too_many_arguments)]
+pub fn sections_with<S: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id: &str,
+    list: &[S],
+    state: &mut SectionScroll<S>,
+    compact: bool,
+    mut nav: impl FnMut(&mut egui::Ui, S, bool) -> egui::Response,
+    tail: impl FnOnce(&mut egui::Ui),
+    body: impl FnMut(&mut egui::Ui, S),
+) {
+    if compact {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+            for sec in list {
+                if nav(ui, *sec, state.current == *sec).clicked() {
+                    state.go(*sec);
+                }
+            }
+            tail(ui);
+        });
+        ui.add_space(10.0);
+        section_column(ui, p, id, list, state, body);
+        return;
+    }
     let height = ui.available_height();
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 12.0;
@@ -573,42 +766,53 @@ pub fn sections<S: Copy + PartialEq>(
                     state.go(*sec);
                 }
             }
+            tail(ui);
         });
-        ui.vertical(|ui| {
-            ui.set_width(ui.available_width());
-            let out = egui::ScrollArea::vertical().id_salt(id).auto_shrink([false, false]).show(ui, |ui| {
-                ui.set_width(ui.available_width() - 6.0);
-                let view_top = ui.clip_rect().top();
-                let mut current = None;
-                for sec in list {
-                    let mut c = card_begin(ui);
-                    body(&mut c.child, *sec);
-                    let rect = card_end(ui, p, c);
-                    if state.jump == Some(*sec) {
-                        ui.scroll_to_rect(rect, Some(egui::Align::TOP));
-                        state.jump = None;
-                        state.jumped_at = ui.input(|i| i.time);
-                    } else if rect.top() <= view_top + 24.0 {
-                        current = Some(*sec);
-                    }
-                }
-                current
-            });
-            // the section in view follows the scrolling, not a jump that
-            // could not bring the last sections to the top
-            let offset = out.state.offset.y;
-            let settling = ui.input(|i| i.time) - state.jumped_at < 0.8;
-            if (offset - state.scroll).abs() > 0.5 {
-                state.scroll = offset;
-                if state.jump.is_none()
-                    && !settling
-                    && let Some(sec) = out.inner
-                {
-                    state.current = sec;
-                }
-            }
-        });
+        ui.vertical(|ui| section_column(ui, p, id, list, state, body));
     });
+}
+
+/// The scrolling column of `sections`, each section on its card.
+fn section_column<S: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id: &str,
+    list: &[S],
+    state: &mut SectionScroll<S>,
+    mut body: impl FnMut(&mut egui::Ui, S),
+) {
+    ui.set_width(ui.available_width());
+    let out = egui::ScrollArea::vertical().id_salt(id).auto_shrink([false, false]).show(ui, |ui| {
+        ui.set_width(ui.available_width() - 6.0);
+        let view_top = ui.clip_rect().top();
+        let mut current = None;
+        for sec in list {
+            let mut c = card_begin(ui);
+            body(&mut c.child, *sec);
+            let rect = card_end(ui, p, c);
+            if state.jump == Some(*sec) {
+                ui.scroll_to_rect(rect, Some(egui::Align::TOP));
+                state.jump = None;
+                state.jumped_at = ui.input(|i| i.time);
+            } else if rect.top() <= view_top + 24.0 {
+                current = Some(*sec);
+            }
+        }
+        current
+    });
+    // the section in view follows the scrolling, not a jump that could not
+    // bring the last sections to the top
+    let offset = out.state.offset.y;
+    let settling = ui.input(|i| i.time) - state.jumped_at < 0.8;
+    if (offset - state.scroll).abs() > 0.5 {
+        state.scroll = offset;
+        if state.jump.is_none()
+            && !settling
+            && let Some(sec) = out.inner
+        {
+            state.current = sec;
+        }
+    }
 }
 
 /// The head of a list card: its icon, title and count (`count` as "2 / 20"),
