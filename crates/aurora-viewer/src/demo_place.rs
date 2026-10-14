@@ -19,6 +19,40 @@ pub const LANDMARKS_FOLDER: u128 = 12;
 pub const FAVORITES_FOLDER: u128 = 20;
 /// A sub-folder of the landmarks.
 pub const SHOPS_FOLDER: u128 = 30;
+/// Two more of `AURORA_DEMO_MAP=landmarks`.
+pub const CLUBS_FOLDER: u128 = 32;
+pub const BEACHES_FOLDER: u128 = 33;
+pub const WALKS_FOLDER: u128 = 34;
+pub const MARKETS_FOLDER: u128 = 35;
+/// Landmarks `AURORA_DEMO_MAP=landmarks` adds to the table's: 212 in all,
+/// the count of a well-travelled inventory, for the world map's drawer and
+/// pins.
+const GENERATED: usize = 204;
+
+/// AURORA_DEMO_MAP=…,landmarks.
+pub fn many_landmarks() -> bool {
+    std::env::var("AURORA_DEMO_MAP").is_ok_and(|v| v.split(',').any(|w| w.trim() == "landmarks"))
+}
+
+/// The n-th landmark `many_landmarks` adds: (folder, name, region grid,
+/// position), spread over the regions of the demo map and four folders.
+fn generated(n: usize) -> (u128, String, (u32, u32), [f32; 3]) {
+    let (folder, name) = match n % 4 {
+        0 => (CLUBS_FOLDER, aurora_i18n::tr!("demo-map-club", n = (n / 4 + 1) as i64)),
+        1 => (BEACHES_FOLDER, aurora_i18n::tr!("demo-map-beach", n = (n / 4 + 1) as i64)),
+        2 => (MARKETS_FOLDER, aurora_i18n::tr!("demo-map-shop", n = (n / 4 + 1) as i64)),
+        _ => (WALKS_FOLDER, aurora_i18n::tr!("demo-map-spot", n = (n / 4 + 1) as i64)),
+    };
+    // scattered like real ones: a hash of n, not a pattern
+    let mut h = (n as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h = (h ^ (h >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h = (h ^ (h >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    h ^= h >> 31;
+    let sims = demo_sims();
+    let s = &sims[(h >> 40) as usize % sims.len()];
+    let pos = [((h >> 8) % 232 + 12) as f32, ((h >> 20) % 232 + 12) as f32, 25.0];
+    (folder, name.to_string(), (s.0 as u32, s.1 as u32), pos)
+}
 
 /// One demo parcel per region (grid x, y in region units, as DEMO_SIMS).
 struct DemoParcel {
@@ -291,7 +325,20 @@ pub(crate) fn landmark_ids(n: usize) -> (Uuid, Uuid) {
 
 /// The landmark asset text (LLLandmark version 2) of a demo landmark.
 pub fn landmark_asset(asset: Uuid) -> Option<String> {
-    let (_, _, grid, pos, _) = landmarks().iter().enumerate().find(|(n, _)| landmark_ids(*n).1 == asset)?.1;
+    let table = landmarks()
+        .iter()
+        .enumerate()
+        .find(|(n, _)| landmark_ids(*n).1 == asset)
+        .map(|(_, l)| (l.2, l.3));
+    let (grid, pos) = match table {
+        Some((grid, pos)) => (grid, pos),
+        None => {
+            let n = (0..GENERATED).find(|n| landmark_ids(landmarks().len() + n).1 == asset)?;
+            let (_, _, grid, pos) = generated(n);
+            (grid, pos)
+        }
+    };
+    let (grid, pos) = (&grid, &pos);
     Some(format!(
         "Landmark version 2\nregion_id {}\nlocal_pos {} {} {}\n",
         region_id(*grid),
@@ -303,18 +350,61 @@ pub fn landmark_asset(asset: Uuid) -> Option<String> {
 
 /// FetchInventoryDescendents2 answer for the landmark folders.
 pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
-    let n = [LANDMARKS_FOLDER, FAVORITES_FOLDER, SHOPS_FOLDER]
-        .into_iter()
-        .find(|n| u(*n) == folder_id)?;
+    let n = [
+        LANDMARKS_FOLDER,
+        FAVORITES_FOLDER,
+        SHOPS_FOLDER,
+        CLUBS_FOLDER,
+        BEACHES_FOLDER,
+        WALKS_FOLDER,
+        MARKETS_FOLDER,
+    ]
+    .into_iter()
+    .find(|n| u(*n) == folder_id)?;
+    let sub = |id: u128, name: &str| InvFolder {
+        id: u(id),
+        parent: folder_id,
+        name: name.into(),
+        type_default: -1,
+        version: 2,
+        ..Default::default()
+    };
     let folders = if n == LANDMARKS_FOLDER {
-        vec![InvFolder {
-            id: u(SHOPS_FOLDER),
+        let mut v = vec![sub(SHOPS_FOLDER, aurora_i18n::tr!("common-shopping"))];
+        if many_landmarks() {
+            v.push(sub(CLUBS_FOLDER, aurora_i18n::tr!("demo-map-clubs")));
+            v.push(sub(BEACHES_FOLDER, aurora_i18n::tr!("demo-map-beaches")));
+            v.push(sub(WALKS_FOLDER, aurora_i18n::tr!("demo-map-walks")));
+            v.push(sub(MARKETS_FOLDER, aurora_i18n::tr!("demo-map-markets")));
+        }
+        v
+    } else {
+        Vec::new()
+    };
+    let item = |i: usize, name: &str, created: i64| {
+        let (id, asset) = landmark_ids(i);
+        InvItem {
+            id,
             parent: folder_id,
-            name: aurora_i18n::tr!("common-shopping").into(),
-            type_default: -1,
-            version: 2,
+            name: name.into(),
+            desc: String::new(),
+            asset_type: 3,
+            inv_type: 3,
+            asset_id: asset,
+            creator: DEMO_LOUP,
+            created_at: created,
+            owner,
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
             ..Default::default()
-        }]
+        }
+    };
+    let extra: Vec<InvItem> = if many_landmarks() {
+        (0..GENERATED)
+            .map(|g| (g, generated(g)))
+            .filter(|(_, l)| l.0 == n)
+            .map(|(g, l)| item(landmarks().len() + g, &l.1, 1_700_000_000 + g as i64 * 86_400))
+            .collect()
     } else {
         Vec::new()
     };
@@ -349,6 +439,7 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
                 ..Default::default()
             }
         })
+        .chain(extra)
         .collect();
     Some(FolderContents {
         folder_id,

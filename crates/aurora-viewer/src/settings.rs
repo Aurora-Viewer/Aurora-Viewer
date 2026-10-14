@@ -25,6 +25,16 @@ pub enum NotificationsStyle {
     Legacy,
 }
 
+/// How the world map lays out its controls: over a map filling the window
+/// (the default), or in Firestorm's side panel next to the map (the legacy
+/// style, Preferences › Aurora).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum WorldMapStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
 /// The photo window: Aurora's panel anchored on the right, or Firestorm's
 /// floater (floater_snapshot.xml: a floating window, the controls on the
 /// left, the preview on the right). Preferences › Aurora.
@@ -309,6 +319,8 @@ pub struct Settings {
     pub chat_style: ChatStyle,
     /// The notification center's style (Preferences › Aurora).
     pub notifications_style: NotificationsStyle,
+    /// The world map's layout (`ui/worldmap/overlay.rs` or the side panel).
+    pub world_map_style: WorldMapStyle,
     /// The photo window's layout (Preferences › Aurora).
     pub photo_window: PhotoWindowStyle,
     pub invert_mouse: bool,
@@ -727,6 +739,7 @@ impl Default for Settings {
             plate_click: PlateClick::Nothing,
             chat_style: ChatStyle::Bubbles,
             notifications_style: NotificationsStyle::Aurora,
+            world_map_style: WorldMapStyle::Aurora,
             photo_window: PhotoWindowStyle::Aurora,
             invert_mouse: false,
             arrows_strafe: false,
@@ -1310,6 +1323,9 @@ pub struct MapSettings {
     pub world_events: bool,
     pub world_mature_events: bool,
     pub world_adult_events: bool,
+    /// The inventory's landmarks as pins (the full-frame map's layer; not
+    /// in Firestorm).
+    pub world_landmarks: bool,
     /// MapShowGridCoords.
     pub world_grid_coords: bool,
     /// FSWorldMapDoubleclickTeleport.
@@ -1341,6 +1357,7 @@ impl Default for MapSettings {
             world_events: true,
             world_mature_events: true,
             world_adult_events: false,
+            world_landmarks: true,
             world_grid_coords: false,
             world_double_click_tp: true,
             ban_lines: 1,

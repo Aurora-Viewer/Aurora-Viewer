@@ -42,6 +42,12 @@ struct State<J, R> {
     /// The owner asked the worker to stop.
     closed: bool,
     worker_gone: bool,
+    /// Tests: an owner / the worker is blocked in its wait, so that a test
+    /// can time a wait from a moment it knows the wait had begun.
+    #[cfg(test)]
+    owner_waiting: usize,
+    #[cfg(test)]
+    worker_waiting: usize,
 }
 
 struct Shared<J, R> {
@@ -60,6 +66,10 @@ pub fn handoff<J, R>() -> (Owner<J, R>, Worker<J, R>) {
             result: None,
             closed: false,
             worker_gone: false,
+            #[cfg(test)]
+            owner_waiting: 0,
+            #[cfg(test)]
+            worker_waiting: 0,
         }),
         to_worker: Condvar::new(),
         to_owner: Condvar::new(),
@@ -84,8 +94,16 @@ impl<J, R> Owner<J, R> {
         let mut waited = Duration::ZERO;
         if (s.busy || s.job.is_some()) && !s.worker_gone {
             let t = Instant::now();
+            #[cfg(test)]
+            {
+                s.owner_waiting += 1;
+            }
             while (s.busy || s.job.is_some()) && !s.worker_gone {
                 self.0.to_owner.wait(s);
+            }
+            #[cfg(test)]
+            {
+                s.owner_waiting -= 1;
             }
             waited = t.elapsed();
         }
@@ -148,8 +166,16 @@ impl<J, R> Worker<J, R> {
     pub fn next(&self) -> Option<(J, Duration)> {
         let mut s = self.0.state.lock();
         let t = Instant::now();
+        #[cfg(test)]
+        {
+            s.worker_waiting += 1;
+        }
         while s.job.is_none() && !s.closed {
             self.0.to_worker.wait(&mut s);
+        }
+        #[cfg(test)]
+        {
+            s.worker_waiting -= 1;
         }
         if s.closed {
             return None;
@@ -293,6 +319,17 @@ mod tests {
 
     const TICK: Duration = Duration::from_millis(40);
 
+    /// Wait for a state the other thread reaches, without assuming how long
+    /// the scheduler takes to run it (CI runners and busy PCs can hold a
+    /// thread back for tens of milliseconds).
+    fn until<J, R>(owner: &Owner<J, R>, what: &str, reached: impl Fn(&State<J, R>) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !reached(&owner.0.state.lock()) {
+            assert!(Instant::now() < deadline, "never reached: {what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     #[test]
     fn the_switch_only_turns_the_thread_off_explicitly() {
         assert!(thread_wanted(None));
@@ -340,10 +377,17 @@ mod tests {
         // nothing handed over: nothing to take
         assert_eq!(owner.take_ready(), Ok(None));
         owner.submit(1).expect("worker alive");
-        // the frame is still being drawn: no wait, no result
-        let t0 = Instant::now();
-        assert_eq!(owner.take_ready(), Ok(None));
-        assert!(t0.elapsed() < TICK, "waited for the worker");
+        until(&owner, "worker on frame 1", |s| s.busy);
+        // the frame is still being drawn (held until released below): no
+        // result, and no wait. A take_ready that waited would never return
+        // here, so it runs on its own thread with a generous bound.
+        let owner = Arc::new(owner);
+        let (o, (sent, got)) = (owner.clone(), mpsc::channel());
+        std::thread::spawn(move || {
+            let _ = sent.send(o.take_ready());
+        });
+        let early = got.recv_timeout(Duration::from_secs(10)).expect("take_ready waited for the worker");
+        assert_eq!(early, Ok(None));
         release.send(()).expect("worker on its job");
         finished.recv().expect("job done");
         // done: its result now, and not a second time with the next job
@@ -374,9 +418,10 @@ mod tests {
                 worker.complete(job);
             }
         });
-        // frame 1 is handed over at once
+        // frame 1 is handed over at once: nothing was in the worker's hands
         let first = owner.submit(1).expect("worker alive");
-        assert!(first.waited < TICK, "{first:?}");
+        assert_eq!(first.waited, Duration::ZERO, "{first:?}");
+        until(&owner, "worker on frame 1", |s| s.busy);
         // frame 2 must wait for frame 1: nothing is queued behind it
         let owner = Arc::new(owner);
         let handed = Arc::new(AtomicBool::new(false));
@@ -386,12 +431,15 @@ mod tests {
             h2.store(true, Ordering::SeqCst);
             s
         });
+        // from the moment frame 2 is known to wait, hold frame 1 one more
+        // tick: the wait it measures cannot be shorter than that
+        until(&*owner, "frame 2 waiting", |s| s.owner_waiting == 1);
         std::thread::sleep(TICK);
         assert!(!handed.load(Ordering::SeqCst), "frame 2 handed over while frame 1 is being drawn");
         release.send(()).expect("worker waiting");
         let s = second.join().expect("second submit");
         assert_eq!(s.previous, Some(1));
-        assert!(s.waited >= TICK / 2, "back-pressure not measured: {s:?}");
+        assert!(s.waited >= TICK, "back-pressure not measured: {s:?}");
         release.send(()).expect("worker waiting");
         assert_eq!(owner.finish(), Ok(Some(2)));
         assert_eq!(most.load(Ordering::SeqCst), 1, "the worker held two jobs");
@@ -408,10 +456,13 @@ mod tests {
                 worker.complete(idle);
             }
         });
+        // the worker is known to wait for a job, then the owner takes one
+        // more tick: the idle time it reports cannot be shorter than that
+        until(&owner, "worker waiting for a job", |s| s.worker_waiting == 1);
         std::thread::sleep(TICK);
         owner.submit(1).expect("worker alive");
         let idle = owner.finish().expect("worker alive").expect("result");
-        assert!(idle >= TICK / 2, "{idle:?}");
+        assert!(idle >= TICK, "{idle:?}");
         drop(owner);
         t.join().expect("worker");
     }
@@ -482,7 +533,8 @@ mod tests {
             }
         });
         owner.submit(1).expect("worker alive");
-        std::thread::sleep(TICK);
+        // closing drops a job not taken yet: wait until it is in hand
+        until(&owner, "worker on the job", |s| s.busy);
         owner.close();
         release.send(()).expect("worker on its job");
         t.join().expect("worker");

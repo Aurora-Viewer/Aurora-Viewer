@@ -172,6 +172,10 @@ answers like my.secondlife.com and its storage (session cookie, upload
 configuration, form, 303): the log gives `demo profile: photo posted (<KB>
 PNG, caption "…", location true)` and the window "Posted to your profile".
 `profile-fail` has the configuration refused: the window shows the failure.
+`dof` opens the window with its depth of field on (f/1.4, focused by hand
+at 3.3 m, the own avatar), `full-dof` the full-frame view with the aperture
+in its strip: the view, the preview and the photos are blurred, while
+Preferences › Graphics › Depth of field stays off.
 `classic` shows Firestorm's floater instead of the panel for this run
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
@@ -1288,7 +1292,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent |
-| `AURORA_DEMO_MAP=1`, `mini` or `search:<text>` | World map and mini-map, the region search |
+| `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy` | World map and mini-map, the search, the drawer, 204 more landmarks, a followed friend, the side panel layout |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
@@ -1759,10 +1763,27 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (that notice only goes to the resident's transcript, when instant messages
   are logged). `tp:reject`: "Request teleport" while teleports are rejected
   only shows the warning, with OK and no message to type.
-- **`AURORA_DEMO_MAP=search:<text>`**: the world map with the region
-  search already typed (`search:o` lists several demo regions). What to see:
-  each result has the navigation bar's rating badge (G / M / A) before its
+- **`AURORA_DEMO_MAP=search:<text>`**: the world map with the search
+  already typed (`search:o` lists several demo regions). What to see: in the
+  full-frame layout (the default), the suggestions grouped under the search:
+  Regions (rating badge, people), Landmarks, Online friends, History; ↑ / ↓
+  move the highlight, Enter picks, Esc clears. With `legacy` the side panel's
+  results, each with the navigation bar's rating badge (G / M / A) before its
   name; a region offline or unknown keeps its state in text.
+- **`AURORA_DEMO_MAP=` words separated by commas** (full-frame layout):
+  `drawer:landmarks|history|friends` opens the drawer under the search on
+  that tab; `landmarks` adds 204 landmarks in four folders (Clubs, Beaches,
+  Walks, Markets) spread over the demo regions and opens the drawer: the
+  folders fold, the search filters them, each one is a pink pin on the map
+  (layer "Landmarks"); zooming and panning must stay smooth (AURORA_PROFILE=1:
+  the `maps` part). `friend` follows Nova: the card shows "Loading…" then her
+  region, the drawer's Friends tab lights her line; Orion, who does not share
+  his position, is greyed. `legacy` shows the side panel layout without
+  touching the setting (Preferences › Aurora › World map). What to see: the
+  place card at the bottom left (rating, people, X / Y / Z, distance, five
+  buttons on one line), the layer pills at the top right (greyed when zoomed
+  out), zoom / my position / home at the bottom right; the panels fade while
+  the map is dragged and never let a click through to the map.
 - **`AURORA_DEMO_SLURLS=1|offer`**: Tess Touch's conversation, the chat
   console and the notification list show the same place links, one per
   SLURL form: the plaza (General), the lagoon (Moderate), Nordheim (Adult),
