@@ -105,6 +105,18 @@ pub enum Presence {
     Busy,
 }
 
+impl Presence {
+    /// The same status as the Conversations window's dot (`ui/presence.rs`).
+    pub fn status(self) -> crate::ui::presence::Status {
+        use crate::ui::presence::Status;
+        match self {
+            Presence::Online => Status::Online,
+            Presence::Away => Status::Away,
+            Presence::Busy => Status::Busy,
+        }
+    }
+}
+
 /// Who the avatar is to us: the color and style of its display name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {

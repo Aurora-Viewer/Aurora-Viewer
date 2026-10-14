@@ -1985,6 +1985,8 @@ impl World {
             return;
         }
         if im.dialog == 0 && !im.from_agent_id.is_nil() {
+            // an ordinary message: their automatic response is behind them
+            self.social.auto_responded.remove(&im.from_agent_id);
             if !im.from_name.is_empty() {
                 self.social.names.entry(im.from_agent_id).or_insert_with(|| im.from_name.clone());
             }

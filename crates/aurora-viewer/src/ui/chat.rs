@@ -4,10 +4,10 @@ mod bubbles;
 mod find;
 mod header;
 pub mod history;
-mod presence;
 mod view;
 
 use super::context::CtxAction;
+use super::presence;
 use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
 use crate::world::{ChatKind, Origin, World};

@@ -358,6 +358,7 @@ impl World {
             }
             AUTO_RESPONSE => {
                 // someone's automatic response, in their conversation
+                self.social.auto_responded.insert(from);
                 if !im.message.is_empty() {
                     if !im.from_name.is_empty() {
                         self.social.names.entry(from).or_insert_with(|| im.from_name.clone());
@@ -468,6 +469,29 @@ mod tests {
         let stale = Invisible::load(path, &world.social.friends);
         assert!(!stale.on && stale.restore.is_empty());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_automatic_response_marks_its_sender_until_their_next_message() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let tess = Uuid::from_u128(7);
+        let im = |dialog: u8, message: &str| InstantMessage {
+            from_agent_id: tess,
+            from_name: "Tess Touch".into(),
+            to_agent_id: Uuid::nil(),
+            dialog,
+            session_id: Uuid::nil(),
+            message: message.into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: Vec::new(),
+            timestamp: 0,
+        };
+        world.on_im(im(AUTO_RESPONSE, "Busy"));
+        assert!(world.social.auto_responded.contains(&tess));
+        // her next ordinary message: the hint is gone
+        world.on_im(im(0, "back!"));
+        assert!(!world.social.auto_responded.contains(&tess));
     }
 
     #[test]

@@ -351,11 +351,7 @@ fn marks(env: &Env<'_>, key: &MarksKey) -> Mesh {
         disc.stroke(&mut mesh, 2.0 * s, p.ink.gamma_multiply(0.22));
     }
     if let (Some(dot), Some(presence)) = (l.dot, key.dot) {
-        let color = match presence {
-            Presence::Online => p.success,
-            Presence::Away => p.amber,
-            Presence::Busy => p.danger,
-        };
+        let color = crate::ui::presence::color(p, presence.status());
         Outline::circle(dot.center, dot.radius, ppp).dot(&mut mesh, env.tint);
         Outline::circle(dot.center, dot.radius - 3.0 * s, ppp).dot(&mut mesh, color);
     }
