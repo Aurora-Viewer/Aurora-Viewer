@@ -87,6 +87,22 @@ fn spot_priority(position: Vec3, direction: Vec3, radius: f32, view: &LightView)
     (radius * 3f32.sqrt() / dist.max(1e-4)).atan()
 }
 
+/// Worn by an avatar: a parent up its link is one (the attachment's root,
+/// or the prim itself; LLViewerObject::isAttachment).
+fn worn(world: &World, o: &crate::world::objects::Object) -> bool {
+    let mut current = o;
+    for _ in 0..4 {
+        let Some(parent) = world.objects.parent_of(current).and_then(|i| world.objects.get(i)) else {
+            return false;
+        };
+        if parent.is_avatar() {
+            return true;
+        }
+        current = parent;
+    }
+    false
+}
+
 impl Scene {
     /// The lights nearest to the eye, nearest first, and those of them
     /// that cast shadows.
@@ -106,7 +122,7 @@ impl Scene {
             let Some((center, hud)) = self.gpu.get(idx).map(|g| (g.center, g.hud)) else {
                 continue;
             };
-            if hud {
+            if hud || (!self.attached_lights && worn(world, o)) {
                 continue;
             }
             let d = center.distance(eye);

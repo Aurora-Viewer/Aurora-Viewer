@@ -5464,8 +5464,11 @@ impl App {
         // with crossfades; the simulator sun only for regions without EEP
         self.world.eep.set_manual_transition(self.settings.env_manual_transition);
         let (sky_frame, water_frame) = self.world.environment_frames(&mut self.panels.time_of_day);
-        // cloud scroll (LLEnvironment::updateCloudScroll: rate / 100 per second)
-        self.world.cloud_scroll += sky_frame.cloud_scroll_rate * dt / 100.0;
+        // cloud scroll (LLEnvironment::updateCloudScroll: rate / 100 per
+        // second), held still by the photo's light (pauseCloudScroll)
+        if !self.photo_clouds_paused() {
+            self.world.cloud_scroll += sky_frame.cloud_scroll_rate * dt / 100.0;
+        }
         self.world.cloud_scroll = glam::Vec2::new(
             self.world.cloud_scroll.x.rem_euclid(1024.0),
             self.world.cloud_scroll.y.rem_euclid(1024.0),
@@ -5562,7 +5565,7 @@ impl App {
             ground_color: env.ground,
             fog_color: env.fog_color,
             fog_density: env.fog_density,
-            exposure: self.settings.exposure,
+            exposure: self.photo_exposure(),
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,
             water_height: self.world.main_water_height(),
@@ -8883,7 +8886,8 @@ impl App {
                 self.settings.show_inventory = self.panels.inventory;
                 self.settings.show_appearance = self.panels.appearance;
                 self.settings.show_ao = self.panels.ao;
-                if self.panels.time_of_day != self.settings.time_of_day {
+                // (not the photo's time of day, which is never saved)
+                if self.panels.time_of_day != self.settings.time_of_day && !self.photo_time_held() {
                     self.settings.time_of_day = self.panels.time_of_day;
                 }
                 if let Some(msg) = self.world.alerts.pop_front() {

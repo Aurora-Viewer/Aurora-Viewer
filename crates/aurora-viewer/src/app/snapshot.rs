@@ -142,6 +142,8 @@ pub(super) struct Snapshots {
     detail_wait: Option<Instant>,
     /// The wait is over: the next "Take" goes ahead.
     detail_ready: bool,
+    /// The time of day the photo's light shows over the user's.
+    light_time: Option<snapshot::light::HeldTime>,
     /// The photo quality raised or restored the settings: applied like a
     /// change made in Preferences (renderer, draw distance sent to the
     /// region…).
@@ -172,6 +174,9 @@ struct DemoPhoto {
     classic: bool,
     /// AURORA_DEMO_SNAPSHOT=quality: the window with its photo quality on.
     quality: bool,
+    /// AURORA_DEMO_SNAPSHOT=light: sunset, a brighter exposure, the clouds
+    /// still and the worn lights off.
+    light: bool,
 }
 
 /// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
@@ -211,6 +216,7 @@ impl Default for Snapshots {
             message_profile: false,
             detail_wait: None,
             detail_ready: false,
+            light_time: None,
             settings_changed: false,
             web_auth: Default::default(),
             demo_profile: None,
@@ -779,6 +785,7 @@ impl App {
     pub(super) fn photo_update(&mut self, renderer: &Renderer) {
         self.photo_demo(renderer);
         self.photo_quality(renderer);
+        self.photo_light();
         if let Some(t) = self.snapshots.detail_wait {
             let pending = self.scene.textures.pending_in_view();
             if pending == 0 || t.elapsed() >= snapshot::quality::DETAIL_WAIT || self.settings.photo_held.is_none() {
@@ -971,6 +978,7 @@ impl App {
                 }
             }
             Action::CloseAfford => self.snapshots.short = None,
+            Action::PersonalLighting => self.panels.personal_lighting = true,
             Action::ShowItem => {
                 if let Some(id) = self.snapshots.message_item {
                     self.panels.inventory = true;
@@ -1096,6 +1104,7 @@ impl App {
                 item_saved: s.message_item.is_some(),
                 profile,
                 profile_posted: s.message_profile,
+                exposure: self.settings.exposure,
             };
             let mut open = self.panels.snapshot;
             actions.extend(state.show(
@@ -1146,6 +1155,36 @@ impl App {
             return true;
         }
         false
+    }
+
+    /// The photo's quick light (`snapshot::light`) while the window is open;
+    /// the user's own as soon as it closes.
+    fn photo_light(&mut self) {
+        if !self.panels.snapshot {
+            self.snapshots.ui.light = snapshot::light::PhotoLight::default();
+        }
+        let light = &mut self.snapshots.ui.light;
+        let was = self.snapshots.light_time.is_some();
+        snapshot::light::apply_time(&mut self.snapshots.light_time, &mut light.time, &mut self.panels.time_of_day);
+        if was != self.snapshots.light_time.is_some() {
+            log::info!("photo light: time of day {}", self.panels.time_of_day);
+        }
+        self.scene.attached_lights = light.attached_lights;
+    }
+
+    /// The exposure the frame is drawn with: the photo's, else Preferences'.
+    pub(super) fn photo_exposure(&self) -> f32 {
+        self.snapshots.ui.light.exposure.unwrap_or(self.settings.exposure)
+    }
+
+    /// The photo's light holds the clouds still.
+    pub(super) fn photo_clouds_paused(&self) -> bool {
+        self.snapshots.ui.light.clouds_paused
+    }
+
+    /// The time of day shown is the photo's, not one to save.
+    pub(super) fn photo_time_held(&self) -> bool {
+        self.snapshots.light_time.is_some()
     }
 
     /// "Photo quality": raised while the window is open and the switch on,
@@ -1255,6 +1294,7 @@ impl App {
                 dof: kind.ends_with("dof"),
                 classic: kind == "classic",
                 quality: kind.ends_with("quality"),
+                light: kind == "light",
             });
         }
         let Some(demo) = self.snapshots.demo.as_ref() else {
@@ -1278,6 +1318,14 @@ impl App {
             }
             if demo.quality {
                 self.settings.snapshot.quality = true;
+            }
+            if demo.light {
+                self.snapshots.ui.light = snapshot::light::PhotoLight {
+                    time: Some(3),
+                    exposure: Some(1.6),
+                    clouds_paused: true,
+                    attached_lights: false,
+                };
             }
             if demo.dof {
                 self.settings.snapshot.dof = crate::dof::PhotoDof {

@@ -634,6 +634,9 @@ pub struct Scene {
     pub hide_loading: bool,
     /// Progress bars under the names of loading avatars.
     pub loading_bars: bool,
+    /// Lights worn by avatars light the scene (LLPipeline::
+    /// sRenderAttachedLights; off by the photo's light).
+    pub attached_lights: bool,
     /// Surface area of the generated sculpts (attachment area limit).
     pub sculpt_area: HashMap<GeomKey, f32>,
     /// LOD triangle counts by prim shape (complexity.rs).
@@ -981,6 +984,7 @@ impl Scene {
             loading: Default::default(),
             hide_loading: true,
             loading_bars: true,
+            attached_lights: true,
             sculpt_area: HashMap::new(),
             prim_triangles: Default::default(),
             avatar_area: HashMap::new(),

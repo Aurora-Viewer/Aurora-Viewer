@@ -189,6 +189,9 @@ settings keep the user's own values (`draw_distance` unchanged in
 `photo quality: details loaded in … ms` and is drawn at twice its size
 (`photo: reduced to …`); `save-quality:<W>x<H>…` takes such a photo like
 `save`.
+`light` opens the window with its quick light set: sunset, exposure 1.6,
+the clouds still and the worn lights off (the log gives `photo light: time
+of day 3`); the saved `time_of_day` and `exposure` stay the user's.
 `classic` shows Firestorm's floater instead of the panel for this run
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
