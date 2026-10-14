@@ -2152,6 +2152,7 @@ impl Session<'_> {
             | NetCommand::GroupTitlesRequest { .. }
             | NetCommand::GroupTitleUpdate { .. }
             | NetCommand::GroupNoticesListRequest(_)
+            | NetCommand::GroupNoticeRequest(_)
             | NetCommand::JoinGroup(_)
             | NetCommand::InviteToGroup { .. } => {}
             // handled by on_search_command

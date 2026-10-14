@@ -1072,6 +1072,12 @@ demo-group-notice-workshop = Atelier textures samedi 20 h
 demo-group-notice-sandbox = Nouveau bac à sable ouvert
 demo-group-notice-rules = Règles de construction mises à jour
 demo-group-notice-photos = Concours photo : les gagnants
+demo-group-notice-workshop-body = Rendez-vous au bac à sable pour un atelier sur les textures PBR. Le kit est joint : copiez-le dans votre inventaire avant samedi.
+demo-group-notice-workshop-kit = Kit de textures
+demo-group-notice-sandbox-body = Un nouveau bac à sable est ouvert à l'est de la place, les objets sont renvoyés au bout de 4 heures.
+demo-group-notice-rules-body = Les règles de construction sont à jour : restez sous 500 prims par parcelle et demandez avant de poser près de la place.
+demo-group-notice-photos-body = Merci à tous les participants ! Les photos gagnantes sont dans l'album joint.
+demo-group-notice-photos-album = Photos gagnantes
 world-profiles-original-beta-tester = Bêta-testeur originel
 ui-options-disk-cache = Cache disque
 ui-perf-hidden-occlusion = Cachés (occlusion)
@@ -5603,6 +5609,23 @@ ui-group-profile-roles = Rôles
 ui-group-profile-roles-of = { $name } · rôles
 ui-group-profile-pick-a-member = Choisissez un membre pour voir ses rôles.
 ui-group-profile-fixed = fixe
+ui-group-profile-all-notices = Tous les avis ›
+ui-group-notices-search = Chercher…
+ui-group-notices-new = Nouvel avis
+ui-group-notices-kept = Les avis restent 14 jours sur le serveur.
+ui-group-notices-pick = Choisissez un avis pour le lire.
+ui-group-notices-save = Enregistrer dans l'inventaire
+ui-group-notices-saved = Enregistré
+ui-group-notices-attachment = Pièce jointe
+ui-group-notices-subject = Sujet
+ui-group-notices-message = Message…
+ui-group-notices-drop = Glisser un objet de l'inventaire (copie + transfert)
+ui-group-notices-not-attachable = Cet objet ne peut pas être joint : il doit être copiable et transférable, et ne pas être porté.
+ui-group-notices-remove-attachment = Retirer la pièce jointe
+ui-group-notices-send = { $count ->
+    [one] Envoyer à { $shown } membre
+   *[other] Envoyer à { $shown } membres
+    }
 ui-group-invite-title = Inviter dans { $group }
 ui-group-invite-help = Vous pouvez choisir plusieurs résidents à inviter dans le groupe : choisissez-les avec le sélecteur de résidents.
 ui-group-invite-choose = Choisir des résidents
