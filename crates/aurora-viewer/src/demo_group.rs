@@ -15,12 +15,15 @@
 //! `:notices` the Notices tab, its two latest notices unread (`:compose`
 //! with a new notice open); `:land` the "Land and L$" tab (`:land-details`,
 //! `:land-sales` on those pages): two parcels, our 512 m² given out of the
-//! 1 024 we may give, and eight weeks of accounts.
+//! 1 024 we may give, and eight weeks of accounts; `:experiences` the
+//! Experiences tab: the group owns the sandbox's doors, whose profile reads
+//! and changes our permission.
 //!
 //! The other demo groups get generated members and the three roles every
 //! group has.
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
+use aurora_net::experience::{ExperienceDetails, ExperiencePermission, ExperiencePermissionChange};
 use aurora_net::group_money::{
     AccountBody, AccountLine, AccountReply, AccountRequest, AccountSummary, GroupLandReply, GroupParcel, LandTotals, Ledger, Transaction,
     trans,
@@ -63,6 +66,30 @@ pub fn land_tab() -> Option<Ledger> {
         "land-details" => Some(Ledger::Details),
         "land-sales" => Some(Ledger::Sales),
         _ => None,
+    }
+}
+
+/// `<scenario>:experiences`: the window opens on the Experiences tab.
+pub fn experiences_tab() -> bool {
+    std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').nth(1) == Some("experiences"))
+}
+
+/// The experience "Aurora Builders" owns: the sandbox's doors, land-scope.
+pub const GROUP_EXPERIENCE: Uuid = Uuid::from_u128(0x6E60_0000_0000_4000_8000_0000_0000_0001);
+
+/// The agent's permission for the group's experience during the run.
+static GROUP_EXPERIENCE_PERMISSION: Mutex<Option<ExperiencePermission>> = Mutex::new(None);
+
+fn group_experience() -> ExperienceDetails {
+    ExperienceDetails {
+        id: GROUP_EXPERIENCE,
+        name: aurora_i18n::tr!("demo-group-experience").into(),
+        description: aurora_i18n::tr!("demo-group-experience-description").into(),
+        properties: 0,
+        maturity: aurora_net::search::SIM_ACCESS_PG,
+        owner: DEMO_LOUP,
+        group: DEMO_GROUP1,
+        slurl: "secondlife://Aurora%20D%C3%A9mo/64/200/24".into(),
     }
 }
 
@@ -718,6 +745,44 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
             Vec::new()
         }
         NetCommand::GroupLandQuery { group, transaction } => group_land(*group, *transaction),
+        // getGroupExperiencesCoro: "Aurora Builders" owns one
+        NetCommand::GroupExperiences(group) => vec![NetEvent::GroupExperiences {
+            group: *group,
+            ids: if *group == DEMO_GROUP1 {
+                vec![GROUP_EXPERIENCE]
+            } else {
+                Vec::new()
+            },
+        }],
+        NetCommand::ExperienceInfo(ids) if ids.contains(&GROUP_EXPERIENCE) => vec![NetEvent::ExperienceInfo(
+            ids.iter()
+                .map(|id| {
+                    if *id == GROUP_EXPERIENCE {
+                        group_experience()
+                    } else {
+                        ExperienceDetails::unknown(*id)
+                    }
+                })
+                .collect(),
+        )],
+        NetCommand::ExperiencePermission { experience, change } if *experience == GROUP_EXPERIENCE => {
+            let mut stored = GROUP_EXPERIENCE_PERMISSION.lock().ok();
+            let permission = match change {
+                ExperiencePermissionChange::Query => stored.as_ref().and_then(|s| **s).unwrap_or(ExperiencePermission::Unset),
+                ExperiencePermissionChange::Allow => ExperiencePermission::Allowed,
+                ExperiencePermissionChange::Block => ExperiencePermission::Blocked,
+                ExperiencePermissionChange::Forget => ExperiencePermission::Unset,
+            };
+            if let Some(s) = stored.as_mut() {
+                **s = Some(permission);
+            }
+            log::info!("demo group: experience permission {change:?} -> {permission:?}");
+            vec![NetEvent::ExperiencePermission {
+                experience: *experience,
+                change: *change,
+                result: Ok(permission),
+            }]
+        }
         NetCommand::GroupAccount(r) => group_account(r),
         // the dataserver keeps it and answers nothing
         NetCommand::SetGroupContribution { contribution, .. } => {

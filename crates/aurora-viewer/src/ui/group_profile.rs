@@ -22,6 +22,7 @@
 mod abilities;
 mod admin_members;
 mod administration;
+mod experiences;
 mod home;
 mod invite;
 mod land;
@@ -136,6 +137,10 @@ pub enum GroupAction {
     ShowOnMap { x: f64, y: f64 },
     /// "About Land" on a parcel of a region nearby.
     AboutLand { x: f64, y: f64 },
+    /// The experiences the group owns asked (LLPanelGroupExperiences::activate).
+    LoadExperiences(Uuid),
+    /// "Profile" of an experience: the experience profile window.
+    ExperienceProfile(Uuid),
 }
 
 /// The tabs of the Aurora look.
@@ -146,6 +151,7 @@ pub enum Tab {
     Members,
     Notices,
     Land,
+    Experiences,
     Admin,
 }
 
@@ -172,6 +178,7 @@ pub struct GroupProfileUi {
     pub(super) members: members::MembersState,
     pub(super) notices: notices::NoticesState,
     pub(super) land: land::LandState,
+    pub(super) experiences: experiences::ExperiencesState,
     pub(super) admin: administration::AdminState,
     confirm: Option<Confirm>,
     /// "Invite to the group".
@@ -205,6 +212,7 @@ impl GroupProfileUi {
             self.tab = Tab::Home;
             self.members = Default::default();
             self.land = Default::default();
+            self.experiences = Default::default();
             self.loaded = None;
         }
         self.group = Some(id);
@@ -215,6 +223,11 @@ impl GroupProfileUi {
     /// Open the Administration tab (the demo's captures).
     pub fn show_admin(&mut self) {
         self.tab = Tab::Admin;
+    }
+
+    /// Open the Experiences tab (the demo's captures).
+    pub fn show_experiences(&mut self) {
+        self.tab = Tab::Experiences;
     }
 
     /// Open the "Land and L$" tab on a page of the accounts (the demo's
@@ -319,18 +332,22 @@ impl GroupProfileUi {
             None => {}
         }
         // members only: back home after leaving the group
-        if self.tab == Tab::Land && !land::visible(v) {
+        if (self.tab == Tab::Land && !land::visible(v)) || (self.tab == Tab::Experiences && !experiences::visible(v)) {
             self.tab = Tab::Home;
         }
-        // the tab is activated again each time it is shown
+        // the tabs are activated again each time they are shown
         if self.tab != Tab::Land {
             self.land.active = None;
+        }
+        if self.tab != Tab::Experiences {
+            self.experiences.active = None;
         }
         match self.tab {
             Tab::Home => home::show(self, ui, c, env, v, actions),
             Tab::Members => members::show(self, ui, c, env, v, actions),
             Tab::Notices => notices::show(self, ui, c, v, actions),
             Tab::Land => land::show(self, ui, c, v, actions),
+            Tab::Experiences => experiences::show(self, ui, c, v, actions),
             Tab::Admin => administration::show(self, ui, c, v, actions),
         }
     }
@@ -382,6 +399,19 @@ impl GroupProfileUi {
                                 .layout(egui::Layout::top_down(egui::Align::Min)),
                         );
                         land::show(self, &mut part, c, v, actions);
+                    });
+                }
+                // and its "Experiences" accordion
+                if experiences::visible(v) {
+                    let title = aurora_i18n::tr!("ui-group-profile-experiences");
+                    widgets::collapsing(ui, c.p, "group_profile_classic_experiences", title, false, |ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 220.0), egui::Sense::hover());
+                        let mut part = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(rect)
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                        );
+                        experiences::show(self, &mut part, c, v, actions);
                     });
                 }
             });

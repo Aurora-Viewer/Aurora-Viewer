@@ -1758,6 +1758,10 @@ impl World {
                 self.experiences.permission(experience, result);
                 None
             }
+            NetEvent::GroupExperiences { group, ids } => {
+                self.experiences.group_arrived(group, ids);
+                None
+            }
             NetEvent::LoadUrl {
                 object_name, message, url, ..
             } => {
