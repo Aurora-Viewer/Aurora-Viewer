@@ -171,7 +171,7 @@ impl App {
             Command::OfferTeleport(to) => {
                 // "Join me!" stays in English: it is what the other avatar reads.
                 self.send(NetCommand::OfferTeleport {
-                    to,
+                    to: vec![to],
                     message: aurora_i18n::tr!("extra-join-me").into(),
                 });
                 let name = self.world.person_name(&to).unwrap_or_else(|| to.to_string());

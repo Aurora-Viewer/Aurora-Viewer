@@ -75,9 +75,27 @@ pub fn agent_language_body(language: &str, public: bool) -> Llsd {
     llsd_map! { "language" => language, "language_is_public" => public }
 }
 
+/// LLVOAvatarSelf::sendHoverHeight, including MIN/MAX_HOVER_Z (-3..3 m).
+pub fn hover_height_body(value: f32) -> Option<Llsd> {
+    value.is_finite().then(|| llsd_map! { "hover_height" => value.clamp(-3.0, 3.0) })
+}
+
 #[cfg(test)]
 mod language_tests {
     use super::*;
+
+    #[test]
+    fn hover_height_payload_is_one_finite_bounded_real() {
+        assert!(REQUESTED_CAPS.contains(&"AgentPreferences"));
+        for value in [-4.0_f32, -0.125, 0.0, 0.75, 4.0] {
+            let body = hover_height_body(value).unwrap();
+            let decoded = aurora_llsd::from_xml(&aurora_llsd::to_xml(&body)).unwrap();
+            assert_eq!(decoded["hover_height"].as_f32(), value.clamp(-3.0, 3.0));
+            assert_eq!(decoded.as_map().unwrap().len(), 1);
+        }
+        assert!(hover_height_body(f32::NAN).is_none());
+        assert!(hover_height_body(f32::INFINITY).is_none());
+    }
 
     #[test]
     fn language_capability_is_requested_and_payload_keeps_protocol_fields() {

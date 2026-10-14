@@ -399,8 +399,8 @@ impl PluginPaths {
         self.plugin_file(basename).is_file()
     }
 
-    /// A folder holding `llplugin\` and SLPlugin (either next to it, as in a
-    /// Firestorm / SL install, or inside `llplugin\`).
+    /// A folder holding `llplugin\` and SLPlugin (either inside `llplugin\`,
+    /// as in Aurora's pack, or next to it, as in a Firestorm / SL install).
     pub fn in_dir(dir: &Path) -> Option<PluginPaths> {
         let plugin_dir = dir.join("llplugin");
         if !plugin_dir.is_dir() {
@@ -420,45 +420,51 @@ impl PluginPaths {
         None
     }
 
-    /// Search order: an explicit folder, the viewer's own folder, then
-    /// installed Firestorm / Second Life viewers.
-    pub fn discover(explicit: Option<&Path>) -> Option<PluginPaths> {
-        if let Some(p) = explicit.and_then(PluginPaths::in_dir) {
-            return Some(p);
-        }
-        if let Some(p) = std::env::current_exe()
-            .ok()
-            .as_deref()
-            .and_then(Path::parent)
-            .and_then(PluginPaths::in_dir)
-        {
-            return Some(p);
-        }
-        let mut roots = Vec::new();
-        for var in ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
-            if let Ok(v) = std::env::var(var) {
-                roots.push(PathBuf::from(v));
-            }
-        }
-        let mut candidates = Vec::new();
-        for root in roots {
-            let Ok(rd) = std::fs::read_dir(&root) else {
-                continue;
-            };
-            for e in rd.flatten() {
-                let name = e.file_name().to_string_lossy().to_lowercase();
-                // Firestorm first (same plugins as the viewer we mirror)
-                let rank = if name.starts_with("firestorm") {
-                    0
-                } else if name.starts_with("secondlife") || name.starts_with("second life") {
-                    1
-                } else {
-                    continue;
-                };
-                candidates.push((rank, e.path()));
-            }
-        }
-        candidates.sort();
-        candidates.into_iter().find_map(|(_, p)| PluginPaths::in_dir(&p))
+    /// Search order: the folder chosen by the user, the viewer's own folder,
+    /// then Aurora's media plugins pack. The plugins of another program are
+    /// only used when the user names its folder: an installed Firestorm or
+    /// Second Life viewer is not looked for.
+    pub fn discover(explicit: Option<&Path>, pack: Option<&Path>) -> Option<PluginPaths> {
+        let own = std::env::current_exe().ok();
+        let own = own.as_deref().and_then(Path::parent);
+        [explicit, own, pack].into_iter().flatten().find_map(PluginPaths::in_dir)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn folder(root: &Path, name: &str, launcher_inside: bool) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir_all(dir.join("llplugin")).expect("fixture");
+        let launcher = if launcher_inside { dir.join("llplugin") } else { dir.clone() }.join("SLPlugin.exe");
+        std::fs::write(launcher, b"").expect("fixture");
+        dir
+    }
+
+    #[test]
+    fn the_chosen_folder_comes_before_the_pack_and_nothing_else_is_searched() {
+        let root = std::env::temp_dir().join(format!("aurora-media-paths-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let chosen = folder(&root, "chosen", false);
+        let pack = folder(&root, "pack", true);
+        let empty = root.join("empty");
+        std::fs::create_dir_all(&empty).expect("fixture");
+
+        let found = PluginPaths::discover(Some(&chosen), Some(&pack)).expect("chosen folder");
+        assert_eq!(found.launcher, chosen.join("SLPlugin.exe"));
+        // a folder without plugins falls through to the pack
+        let found = PluginPaths::discover(Some(&empty), Some(&pack)).expect("pack");
+        assert_eq!(found.launcher, pack.join("llplugin").join("SLPlugin.exe"));
+        assert_eq!(found.plugin_dir, pack.join("llplugin"));
+        assert_eq!(
+            found.plugin_file("media_plugin_cef"),
+            pack.join("llplugin").join("media_plugin_cef.dll")
+        );
+        // no pack: nothing, even on a PC where another viewer is installed
+        assert!(PluginPaths::discover(Some(&empty), None).is_none());
+        assert!(PluginPaths::discover(None, None).is_none());
+        std::fs::remove_dir_all(&root).expect("cleanup");
     }
 }

@@ -127,6 +127,7 @@ impl App {
             me: w.agent_id,
             seated: w.agent.is_sitting(),
             flying: w.agent.flying,
+            hover_height: w.hover_height_available(),
             edit_linked: self.settings.build.edit_linked,
             ..Facts::default()
         };
@@ -275,6 +276,7 @@ impl App {
                 self.panels.about_land = true;
             }
             CtxAction::DisplayName => self.display_name_ui.open(),
+            CtxAction::HoverHeight => self.hover_height_ui.open = true,
             CtxAction::OpenAppearance { tab, editing } => {
                 self.panels.appearance = true;
                 self.appearance_ui.open(tab, editing);
@@ -391,13 +393,7 @@ impl App {
                 self.settings.set_render_exception(id, mode);
                 self.settings.save();
             }
-            CtxAction::OfferTeleport(id) => {
-                self.send(NetCommand::OfferTeleport {
-                    to: id,
-                    message: aurora_i18n::tr!("common-join-me").into(),
-                });
-                self.world.system_message(aurora_i18n::tr!("common-teleport-offer-sent"));
-            }
+            CtxAction::OfferTeleport(id) => self.contacts_ui.ask_teleport_offer(vec![id], &self.world.region_name()),
             CtxAction::OpenPeople(tab) => {
                 self.panels.people = true;
                 self.panels.people_tab = tab;
@@ -441,7 +437,7 @@ impl App {
             }
             CtxAction::AddFriend(id) => self.contacts_ui.ask_friendship(id),
             CtxAction::RemoveFriend(id) => self.contacts_ui.ask_remove_friend(id),
-            CtxAction::RequestTeleport(id) => self.contacts_ui.ask_teleport_request(id),
+            CtxAction::RequestTeleport(id) => self.contacts_ui.ask_teleport_request(id, self.world.status.cfg.reject_teleports),
             CtxAction::ActivateGroup(id) => self.send(NetCommand::ActivateGroup(id)),
             CtxAction::PinGroup(id) => self.world.groups.toggle_favorite(id),
             CtxAction::LeaveGroup(id) => self.contacts_ui.ask_leave_group(id),

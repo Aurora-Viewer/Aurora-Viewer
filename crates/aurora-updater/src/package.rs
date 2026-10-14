@@ -19,7 +19,7 @@ pub async fn download(
     release: &Release,
     work: &Path,
     cancel: &Cancel,
-    progress: impl Fn(Progress) + Send + 'static,
+    progress: impl Fn(Progress) + Send + Sync + 'static,
 ) -> std::result::Result<PathBuf, Failure> {
     cancel.check().map_err(|_| Failure::Network)?;
     let client = source.client().map_err(|e| failure(Failure::Network, e))?;
@@ -30,52 +30,13 @@ pub async fn download(
         .await
         .map_err(|e| failure(Failure::Network, e))?;
     let expected = parse_checksum(&expected, &archive.name).map_err(|e| failure(Failure::Integrity, e))?;
-    source
-        .validate_url(&archive.browser_download_url)
-        .map_err(|e| failure(Failure::Network, e))?;
-    let mut response = client
-        .get(&archive.browser_download_url)
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| failure(Failure::Network, e.into()))?;
     let path = work.join("download.zip");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(|e| failure(Failure::Filesystem, e.into()))?;
-    let mut hash = Sha256::new();
-    let mut received = 0_u64;
-    loop {
-        cancel.check().map_err(|_| Failure::Network)?;
-        let chunk = tokio::select! {
-            chunk = response.chunk() => chunk.map_err(|e| failure(Failure::Network, e.into()))?,
-            _ = cancel.cancelled() => return Err(Failure::Network),
-        };
-        let Some(chunk) = chunk else { break };
-        received = received.saturating_add(chunk.len() as u64);
-        if received > archive.size {
-            return Err(Failure::Integrity);
-        }
-        file.write_all(&chunk).map_err(|e| failure(Failure::Filesystem, e.into()))?;
-        hash.update(&chunk);
-        progress(Progress {
-            received,
-            total: archive.size,
-            preparing: false,
-        });
-    }
-    if received != archive.size || hash.finalize().as_slice() != expected {
-        return Err(Failure::Integrity);
-    }
-    file.sync_all().map_err(|e| failure(Failure::Filesystem, e.into()))?;
-    drop(file);
-    progress(Progress {
-        received,
-        total: archive.size,
-        preparing: true,
-    });
+    let fetch = Fetch {
+        url: &archive.browser_download_url,
+        size: archive.size,
+        sha256: expected,
+    };
+    fetch.to_file(source, &client, &path, cancel, &progress).await?;
     let root = work.join("prepared");
     let cancel = cancel.clone();
     let tag = release.tag.clone();
@@ -85,7 +46,69 @@ pub async fn download(
         .map_err(|e| failure(Failure::Package, e))
 }
 
-fn failure(kind: Failure, error: anyhow::Error) -> Failure {
+/// One archive to download: nothing is kept unless its size and SHA-256 match.
+pub(crate) struct Fetch<'a> {
+    pub url: &'a str,
+    pub size: u64,
+    pub sha256: [u8; 32],
+}
+
+impl Fetch<'_> {
+    pub(crate) async fn to_file(
+        &self,
+        source: &Source,
+        client: &reqwest::Client,
+        path: &Path,
+        cancel: &Cancel,
+        progress: &(impl Fn(Progress) + Send + Sync),
+    ) -> std::result::Result<(), Failure> {
+        source.validate_url(self.url).map_err(|e| failure(Failure::Network, e))?;
+        let mut response = client
+            .get(self.url)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+            .map_err(|e| failure(Failure::Network, e.into()))?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|e| failure(Failure::Filesystem, e.into()))?;
+        let mut hash = Sha256::new();
+        let mut received = 0_u64;
+        loop {
+            cancel.check().map_err(|_| Failure::Network)?;
+            let chunk = tokio::select! {
+                chunk = response.chunk() => chunk.map_err(|e| failure(Failure::Network, e.into()))?,
+                _ = cancel.cancelled() => return Err(Failure::Network),
+            };
+            let Some(chunk) = chunk else { break };
+            received = received.saturating_add(chunk.len() as u64);
+            if received > self.size {
+                return Err(Failure::Integrity);
+            }
+            file.write_all(&chunk).map_err(|e| failure(Failure::Filesystem, e.into()))?;
+            hash.update(&chunk);
+            progress(Progress {
+                received,
+                total: self.size,
+                preparing: false,
+            });
+        }
+        if received != self.size || hash.finalize().as_slice() != self.sha256 {
+            return Err(Failure::Integrity);
+        }
+        file.sync_all().map_err(|e| failure(Failure::Filesystem, e.into()))?;
+        progress(Progress {
+            received,
+            total: self.size,
+            preparing: true,
+        });
+        Ok(())
+    }
+}
+
+pub(crate) fn failure(kind: Failure, error: anyhow::Error) -> Failure {
     log::warn!("update {kind:?}: {error:#}");
     kind
 }
@@ -94,15 +117,17 @@ fn parse_checksum(bytes: &[u8], filename: &str) -> Result<[u8; 32]> {
     let text = std::str::from_utf8(bytes)?;
     let fields: Vec<&str> = text.split_whitespace().collect();
     ensure!(
-        fields.len() == 2
-            && fields[0].len() == 64
-            && fields[0].bytes().all(|b| b.is_ascii_hexdigit())
-            && fields[1].trim_start_matches('*') == filename,
+        fields.len() == 2 && fields[1].trim_start_matches('*') == filename,
         "invalid checksum sidecar"
     );
+    parse_sha256(fields[0])
+}
+
+pub(crate) fn parse_sha256(hex: &str) -> Result<[u8; 32]> {
+    ensure!(hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()), "invalid SHA-256");
     let mut hash = [0_u8; 32];
     for (i, byte) in hash.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&fields[0][i * 2..i * 2 + 2], 16).context("invalid SHA-256")?;
+        *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).context("invalid SHA-256")?;
     }
     Ok(hash)
 }
@@ -135,10 +160,25 @@ fn components(name: &str) -> Result<Vec<&str>> {
 }
 
 pub fn extract(path: &Path, root: &Path, tag: &str, cancel: &Cancel) -> Result<PathBuf> {
+    unpack(path, root, &format!("Aurora-Viewer-{tag}-windows-x64"), cancel)?;
+    let manifest: InstallManifest = serde_json::from_slice(&fs::read(root.join("aurora-install.json"))?)?;
+    ensure!(
+        manifest.schema == 1 && manifest.version == tag.trim_start_matches('v'),
+        "package version mismatch"
+    );
+    ensure!(
+        root.join("aurora-viewer.exe").is_file() && root.join("assets").is_dir() && root.join("LICENSE").is_file(),
+        "incomplete viewer package"
+    );
+    Ok(root.to_path_buf())
+}
+
+/// Extract an archive whose every entry sits under the folder `prefix` into
+/// the new directory `root`, without that folder.
+pub(crate) fn unpack(path: &Path, root: &Path, prefix: &str, cancel: &Cancel) -> Result<()> {
     ensure!(!root.exists(), "staging directory already exists");
     let mut zip = zip::ZipArchive::new(File::open(path)?)?;
     ensure!(!zip.is_empty() && zip.len() <= 50_000, "invalid ZIP entry count");
-    let prefix = format!("Aurora-Viewer-{tag}-windows-x64");
     let mut names = HashSet::new();
     let mut expanded = 0_u64;
     // Validate every entry before any extraction, including case collisions.
@@ -188,16 +228,7 @@ pub fn extract(path: &Path, root: &Path, tag: &str, cancel: &Cancel) -> Result<P
         ensure!(size == entry.size(), "truncated ZIP member");
         out.sync_all()?;
     }
-    let manifest: InstallManifest = serde_json::from_slice(&fs::read(root.join("aurora-install.json"))?)?;
-    ensure!(
-        manifest.schema == 1 && manifest.version == tag.trim_start_matches('v'),
-        "package version mismatch"
-    );
-    ensure!(
-        root.join("aurora-viewer.exe").is_file() && root.join("assets").is_dir() && root.join("LICENSE").is_file(),
-        "incomplete viewer package"
-    );
-    Ok(root.to_path_buf())
+    Ok(())
 }
 
 #[derive(serde::Deserialize)]

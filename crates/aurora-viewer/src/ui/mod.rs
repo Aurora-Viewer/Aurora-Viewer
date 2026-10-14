@@ -21,7 +21,9 @@ pub mod environment;
 pub mod exit;
 pub mod find_shortcut;
 pub mod fonts;
+pub mod gestures;
 pub mod group_profile;
+pub mod hover_height;
 pub mod hud;
 pub mod icons;
 pub mod inspect;
@@ -78,6 +80,7 @@ pub struct Panels {
     /// "Personal lighting" (LLFloaterEnvironmentAdjust).
     pub personal_lighting: bool,
     pub inventory: bool,
+    pub gestures: bool,
     pub appearance: bool,
     pub ao: bool,
     pub people_tab: u8,
@@ -111,6 +114,7 @@ impl Panels {
             environment: false,
             personal_lighting: false,
             inventory: settings.show_inventory,
+            gestures: false,
             appearance: settings.show_appearance,
             ao: settings.show_ao,
             people_tab: settings.people_tab.min(1),

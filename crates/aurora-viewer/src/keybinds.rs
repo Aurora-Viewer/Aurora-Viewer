@@ -302,6 +302,7 @@ pub enum Action {
     Conversations,
     People,
     Inventory,
+    Gestures,
     Minimap,
     WorldMap,
     /// World › Teleport history (Firestorm Alt+H).
@@ -396,6 +397,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Conversations, aurora_i18n::tr!("common-conversations")),
                     (Action::People, aurora_i18n::tr!("common-people")),
                     (Action::Inventory, aurora_i18n::tr!("common-inventory")),
+                    (Action::Gestures, aurora_i18n::tr!("gesture-title")),
                     (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
                     (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
                     (Action::TeleportHistory, aurora_i18n::tr!("common-teleport-history")),
@@ -508,6 +510,7 @@ impl KeyBindings {
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
             (Action::Inventory, [kmod(K::KeyI, true, false), None]),
+            (Action::Gestures, [kmod(K::KeyG, true, false), None]),
             (Action::Minimap, [kmod(K::KeyM, true, true), None]),
             (Action::WorldMap, [kmod(K::KeyM, true, false), None]),
             (
@@ -526,7 +529,8 @@ impl KeyBindings {
             (Action::Performance, [kmod(K::Digit1, true, true), None]),
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
             (Action::Import, [kmod(K::KeyU, true, false), None]),
-            (Action::HudDrag, [k(K::AltLeft), None]),
+            // Aurora's direct HUD gesture must leave Alt to Firestorm's camera (#266).
+            (Action::HudDrag, [k(K::ControlLeft), None]),
             (
                 Action::ShowTransparency,
                 [
@@ -824,8 +828,35 @@ mod tests {
     }
 
     #[test]
+    fn default_hud_gesture_leaves_alt_and_shift_alt_to_the_camera() {
+        let kb = KeyBindings::default();
+        let down = HashSet::new();
+        for shift in [false, true] {
+            assert!(!kb.held(
+                Action::HudDrag,
+                &down,
+                Mods {
+                    alt: true,
+                    shift,
+                    ctrl: false
+                }
+            ));
+            assert!(kb.held(
+                Action::HudDrag,
+                &down,
+                Mods {
+                    ctrl: true,
+                    shift,
+                    alt: false
+                }
+            ));
+        }
+    }
+
+    #[test]
     fn either_hud_slot_can_hold_the_gesture_and_cleared_slots_stay_inactive() {
         let mut kb = KeyBindings::default();
+        kb.set(Action::HudDrag, 0, Some(HoldKey::Alt.into_binding()));
         let ctrl = Mods {
             ctrl: true,
             ..Default::default()

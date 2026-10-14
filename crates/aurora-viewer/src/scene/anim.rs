@@ -899,6 +899,11 @@ impl AnimStreamer {
         e.anim.clone()
     }
 
+    /// Gestures wait for preloads to succeed or fail before running steps.
+    pub fn asset_settled(&self, id: &Uuid) -> bool {
+        self.entries.get(id).is_some_and(|entry| entry.state >= 3)
+    }
+
     /// Register an already-built animation (demo / built-in motions).
     pub fn insert(&mut self, id: Uuid, anim: Arc<BoundAnim>) {
         self.entries.insert(

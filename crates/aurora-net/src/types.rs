@@ -438,10 +438,16 @@ pub enum NetEvent {
     SimulatorFeatures {
         handle: RegionHandle,
         voice_server_type: String,
+        avatar_hover_height: bool,
         /// "RenderMaterialsCapability": requests per second.
         materials_rate: Option<f32>,
         /// "MaxMaterialsPerTransaction": material ids per request.
         materials_max: Option<u32>,
+    },
+    HoverHeightUpdated {
+        region: RegionHandle,
+        request: u64,
+        success: bool,
     },
     ObjectUpdates {
         handle: RegionHandle,
@@ -743,6 +749,11 @@ pub enum NetEvent {
         asset: Uuid,
         result: Result<Vec<u8>, String>,
     },
+    GestureLoaded {
+        item: Uuid,
+        asset: Uuid,
+        result: Result<aurora_assets::gesture::Gesture, String>,
+    },
     TaskNotecardPreview {
         object: Uuid,
         item: Uuid,
@@ -943,6 +954,12 @@ impl Default for TouchSurface {
 pub enum NetCommand {
     /// Send the current language and visibility through its capability.
     UpdateAgentLanguage,
+    /// LLVOAvatarSelf::sendHoverHeight: final value, scoped to its region.
+    SetHoverHeight {
+        region: RegionHandle,
+        request: u64,
+        value: f32,
+    },
     /// Ask for the mute list (MuteListRequest; CRC of our cached copy, 0 if none).
     RequestMuteList {
         crc: u32,
@@ -1204,8 +1221,9 @@ pub enum NetCommand {
         to: Uuid,
         message: String,
     },
+    /// StartLure: one message for every invitee (send_lures).
     OfferTeleport {
-        to: Uuid,
+        to: Vec<Uuid>,
         message: String,
     },
     TeleportLandmark(Uuid),
@@ -1344,6 +1362,19 @@ pub enum NetCommand {
         item: Uuid,
         asset_type: i32,
         data: Vec<u8>,
+    },
+    LoadGesture {
+        item: Uuid,
+        asset: Uuid,
+    },
+    SetGestureActive {
+        item: Uuid,
+        asset: Uuid,
+        active: bool,
+    },
+    GestureSound {
+        asset: Uuid,
+        position: Vec3,
     },
     CopyNotecardInventory {
         editor: Uuid,

@@ -22,7 +22,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{Window, WindowId};
 
 mod ao;
 mod bug_report;
@@ -31,6 +31,9 @@ mod chat_commands;
 mod click_pick;
 mod color_picker;
 mod context_menu;
+mod cursor_hold;
+mod gestures;
+mod hover_height;
 mod hud_drag;
 mod imports;
 mod inspect;
@@ -179,9 +182,8 @@ pub struct App {
     prev_dt: f32,
     start: Instant,
     right_drag: bool,
-    cursor_grabbed: bool,
-    /// Where the cursor was when the camera took it (physical pixels).
-    grab_origin: Option<(f32, f32)>,
+    /// The system cursor hidden and locked by mouselook or a camera drag.
+    cursor_hold: cursor_hold::CursorHold,
     numeric_drag: ui::numeric_drag::NumericDrag,
     alt: bool,
     left_down: bool,
@@ -316,6 +318,7 @@ pub struct App {
     /// Mini-map and world map state, map server tiles.
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
+    hover_height_ui: ui::hover_height::HoverHeightUi,
     inspect_ui: ui::inspect::InspectUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     people_map_ui: ui::minimap::MiniMap,
@@ -349,6 +352,8 @@ pub struct App {
     login_info: ui::news::LoginInfo,
     update_demo: Option<ui::update::UpdateDemo>,
     updater: crate::updater::Updater,
+    /// Aurora's media plugins pack: installed, downloading or missing.
+    plugin_pack: crate::media::pack::PluginPack,
     update_acknowledged: bool,
     /// Smoothed speaking outlines of the avatar name tags.
     voice_tags: ui::voice_tag::VoiceTags,
@@ -364,7 +369,7 @@ pub struct App {
     sound_changes: Vec<usize>,
     /// Audio devices listed for the preferences.
     devices_listed: bool,
-    /// Color emoji (Noto 3D) for chat and the picker.
+    /// Color emoji (Noto Color Emoji) for chat and the picker.
     emoji: ui::emoji::Emoji,
     /// The system's fallback fonts were still being looked for when the
     /// fonts were installed: installed again once they are there.
@@ -407,6 +412,7 @@ pub struct App {
     lighting_was_open: bool,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    gesture_state: gestures::State,
     imports: crate::imports::Imports,
     task_transfer: Option<ui::inventory::task_drop::PendingTransfer>,
     /// Inventory edits asked by the world (`World::take_inventory_edits`),
@@ -492,6 +498,9 @@ impl App {
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
         let updater = crate::updater::Updater::new(net.runtime());
+        let plugin_pack = crate::media::pack::PluginPack::new(crate::settings::media_plugins_dir());
+        let mut media = crate::media::MediaManager::default();
+        media.set_pack_dir(plugin_pack.dir());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
         let lib = Arc::new(AvatarLibrary::load());
         let cache = crate::settings::cache_dir();
@@ -585,8 +594,7 @@ impl App {
             prev_dt: 0.0,
             start: Instant::now(),
             right_drag: false,
-            cursor_grabbed: false,
-            grab_origin: None,
+            cursor_hold: Default::default(),
             numeric_drag: Default::default(),
             alt: false,
             left_down: false,
@@ -666,6 +674,7 @@ impl App {
             contacts_ui: Default::default(),
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
+            hover_height_ui: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
             people_map_ui: Default::default(),
@@ -691,13 +700,14 @@ impl App {
             music_parcel_url: String::new(),
             music_override: None,
             key_to_name: Vec::new(),
-            media: Default::default(),
+            media,
             media_ui: Default::default(),
             media_cursor: None,
             voice: Default::default(),
             voice_http,
             update_demo,
             updater,
+            plugin_pack,
             update_acknowledged: false,
             login_info,
             voice_tags: Default::default(),
@@ -728,6 +738,7 @@ impl App {
             lighting_was_open: false,
             demo: false,
             inventory_ui: Default::default(),
+            gesture_state: Default::default(),
             imports: Default::default(),
             task_transfer: None,
             world_edits: Default::default(),
@@ -761,6 +772,17 @@ impl App {
     }
 
     fn send(&mut self, cmd: NetCommand) {
+        if self.demo && self.gesture_demo_command(&cmd) {
+            return;
+        }
+        if self.demo
+            && let NetCommand::SetHoverHeight { region, request, value } = &cmd
+        {
+            let success = !std::env::var("AURORA_DEMO_HOVER_HEIGHT").is_ok_and(|mode| mode == "failure");
+            log::info!("demo hover height: committed {value:.3}, success {success}");
+            self.world.hover_height.reply(*request, *region, success);
+            return;
+        }
         if self.demo
             && let NetCommand::UploadAsset { request, upload } = cmd
         {
@@ -1269,6 +1291,7 @@ impl App {
         self.scene.jobs.discard(imports);
         self.record_inventory_logout();
         self.inventory_ui = Default::default();
+        self.gesture_state = Default::default();
         self.buy_currency_ui = Default::default();
         self.task_notecards.clear();
         self.script_editors.disconnected();
@@ -1335,10 +1358,15 @@ impl App {
             return;
         }
         if let NetEvent::InventoryCreated(item) = ev {
+            let gesture = item.asset_type == 21;
             let id = item.id;
             self.world.inventory.add_items(vec![item]);
             self.inventory_ui.show_original(&self.world.inventory, id);
             self.inventory_ui.begin_rename(&self.world.inventory, id);
+            if gesture && self.gesture_state.new_editor {
+                self.gesture_state.new_editor = false;
+                self.gesture_action(ui::gestures::Action::Open(id));
+            }
             return;
         }
         if let NetEvent::InventoryMerchant(result) = ev {
@@ -1349,6 +1377,10 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if self.gesture_save_pending(request, item) {
+                self.gesture_saved(request, item, result);
+                return;
+            }
             self.inventory_content_saved(request, item, result);
             return;
         }
@@ -1367,6 +1399,7 @@ impl App {
             return;
         }
         if let NetEvent::InventoryOperationFailed(reason) = ev {
+            self.gesture_state.new_editor = false;
             self.inventory_ui.message = reason;
             return;
         }
@@ -1375,6 +1408,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.gesture_metadata_result(request, &result) {
+                return;
+            }
             if self.build.replacement_inventory_result(request, &result) {
                 return;
             }
@@ -1401,6 +1437,10 @@ impl App {
                 self.ao_import_result(item, result.clone());
             }
             self.inventory_preview(item, asset, result);
+            return;
+        }
+        if let NetEvent::GestureLoaded { item, asset, result } = ev {
+            self.gesture_loaded(item, asset, result);
             return;
         }
         if let NetEvent::TaskNotecardPreview {
@@ -1575,6 +1615,14 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.world.hover_height = if self.demo {
+                    Default::default()
+                } else {
+                    crate::world::hover_height::HoverHeight::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::hover_height::FILE),
+                    )
+                };
+                self.restore_gestures(&l.raw);
                 self.net_profile.reset();
                 self.login_form.transition = None;
                 self.login_form.busy = false;
@@ -1786,43 +1834,6 @@ impl App {
         } else {
             ToolMode::from_mods(self.ctrl, self.shift)
         })
-    }
-
-    fn set_mouselook_grab(&mut self, on: bool) {
-        let Some(g) = &self.gfx else {
-            return;
-        };
-        if on == self.cursor_grabbed {
-            return;
-        }
-        if on && self.clicks.scripted() {
-            // AURORA_DEMO_CLICKS: several camera drags a second must not
-            // take the real cursor of someone using the PC
-            return;
-        }
-        if on {
-            let ok = g
-                .window
-                .set_cursor_grab(CursorGrabMode::Locked)
-                .or_else(|_| g.window.set_cursor_grab(CursorGrabMode::Confined))
-                .is_ok();
-            g.window.set_cursor_visible(false);
-            self.cursor_grabbed = ok;
-            self.grab_origin = ok.then_some(self.cursor_pos);
-        } else {
-            let _ = g.window.set_cursor_grab(CursorGrabMode::None);
-            // LLToolCamera::handleMouseUp (lltoolfocus.cpp) puts the cursor
-            // back where the drag started: a confined cursor moved while
-            // hidden.
-            if let Some((x, y)) = self.grab_origin.take() {
-                let _ = g
-                    .window
-                    .set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
-                self.cursor_pos = (x, y);
-            }
-            g.window.set_cursor_visible(true);
-            self.cursor_grabbed = false;
-        }
     }
 
     fn toggle_mouselook(&mut self) {
@@ -2082,18 +2093,21 @@ impl App {
             Action::ResetCamera => self.reset_camera_view(),
             Action::Chat => self.chat_ui.focus_request = true,
             Action::ToggleMic => self.mic_on = !self.mic_on,
-            Action::Conversations => self.panels.chat = !self.panels.chat,
+            // the shortcuts of the windows, like their toolbar buttons: a
+            // minimized window expands (LLFloaterReg::toggleInstance)
+            Action::Conversations => ui::widgets::toggle_floater(&self.egui_ctx, "conversations", &mut self.panels.chat),
             Action::People => {
-                self.panels.people = !self.panels.people;
+                ui::widgets::toggle_floater(&self.egui_ctx, "people", &mut self.panels.people);
                 self.panels.people_tab = 0;
             }
-            Action::Inventory => self.panels.inventory = !self.panels.inventory,
+            Action::Inventory => ui::widgets::toggle_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
+            Action::Gestures => ui::widgets::toggle_floater(&self.egui_ctx, "gestures", &mut self.panels.gestures),
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
-            Action::WorldMap => self.panels.world_map = !self.panels.world_map,
+            Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
             Action::TeleportHistory => self.toggle_teleport_history(),
-            Action::Search => self.panels.search = !self.panels.search,
-            Action::Performance => self.panels.perf = !self.panels.perf,
-            Action::Preferences => self.panels.settings = !self.panels.settings,
+            Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
+            Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
+            Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
             Action::Import => self.imports.open_file_picker(crate::imports::Choice::Bulk),
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
@@ -3763,6 +3777,10 @@ impl App {
             }
             ContactsAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
             ContactsAction::OfferTeleport(id) => a.offer_tp.push(id),
+            ContactsAction::SendTeleportOffer { to, message } => {
+                let cmd = self.world.offer_teleport(to, &message);
+                self.send(cmd);
+            }
             ContactsAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.start_group_chat(id);
@@ -4044,6 +4062,17 @@ impl App {
             self.shutdown(event_loop);
             return;
         }
+        // Aurora's media plugins: downloaded once, when none are found (the
+        // web pages of the profiles need them even with media disabled)
+        let plugins_wanted = self.media.plugins(&self.settings.media).is_none();
+        if std::mem::take(&mut self.options_ui.media_pack_retry) {
+            self.plugin_pack.retry(self.net.runtime());
+        }
+        if self.plugin_pack.poll(plugins_wanted, self.net.runtime()) {
+            self.media.set_pack_dir(self.plugin_pack.dir());
+        }
+        self.options_ui.media_pack = self.plugin_pack.state();
+        ui::web_view::set_plugins_status(&self.egui_ctx, self.plugin_pack.state());
         self.poll_inventory_images();
         // a click whose depth is back already (the render thread finished
         // the last frame while this thread waited for its next one)
@@ -4060,7 +4089,7 @@ impl App {
                 ui::exit::Action::Cancel => {}
             }
         }
-        if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_grabbed {
+        if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_hold.held() {
             self.set_mouselook_grab(true);
         }
         let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
@@ -4117,6 +4146,7 @@ impl App {
         }
         self.world.poll_inventory_cache();
         self.world.poll_transcripts();
+        self.update_hover_height();
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
@@ -4153,6 +4183,7 @@ impl App {
                 self.auto_away = false;
             }
             self.world.tick_social();
+            self.update_gestures();
             for cmd in self.world.take_social_commands() {
                 self.send(cmd);
             }
@@ -5024,9 +5055,11 @@ impl App {
         }
         let ctx = self.egui_ctx.clone();
         if self.demo {
+            self.gesture_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
+            raw.events.extend(ui::widgets::demo::minimized_events(&ctx, self.frame_count));
             raw.events.extend(ui::color_picker::demo::events(
                 &self.egui_ctx,
                 &self.build.ui.color_picker,
@@ -5136,7 +5169,7 @@ impl App {
         if let Some(anchor) = self.numeric_drag.after(
             &ctx,
             &full.platform_output.events,
-            self.focused && !self.cursor_grabbed && !self.exit_prompt.open,
+            self.focused && !self.cursor_hold.held() && !self.exit_prompt.open,
         ) {
             let position = winit::dpi::PhysicalPosition::new(anchor.x * ctx.pixels_per_point(), anchor.y * ctx.pixels_per_point());
             if (self.cursor_pos.0 - position.x).abs() > 0.5 || (self.cursor_pos.1 - position.y).abs() > 0.5 {
@@ -5263,7 +5296,7 @@ impl App {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
             full.platform_output.cursor_image = self.cursors.pipette();
         }
-        if self.cursor_grabbed {
+        if self.cursor_hold.held() {
             // the camera holds the hidden cursor: a cursor change from egui
             // would show it again in the middle of the drag
             full.platform_output.cursor_icon = egui::CursorIcon::None;
@@ -6173,7 +6206,14 @@ impl App {
 
     /// Local chat from the chat bar or the conversations window: a chat bar
     /// command (FSCmdLine) or a line sent on its channel.
-    fn send_local_chat(&mut self, c: ui::chat::OutgoingChat) {
+    fn send_local_chat(&mut self, mut c: ui::chat::OutgoingChat) {
+        if c.channel == 0 {
+            let (revised, gesture) = self.gesture_state.manager.revise(&c.message);
+            c.message = revised;
+            if let Some(id) = gesture {
+                self.gesture_play(id, None);
+            }
+        }
         if c.message.is_empty() || (c.channel == 0 && self.chat_command(&c.message)) {
             return;
         }
@@ -6239,12 +6279,9 @@ impl App {
         for cmd in a.currency {
             self.send(cmd);
         }
-        for to in a.offer_tp {
-            self.net.send(NetCommand::OfferTeleport {
-                to,
-                message: aurora_i18n::tr!("common-join-me").into(),
-            });
-            self.world.system_message(aurora_i18n::tr!("common-teleport-offer-sent"));
+        // the invitation to edit first (handle_lure), for all those chosen
+        if !a.offer_tp.is_empty() {
+            self.contacts_ui.ask_teleport_offer(a.offer_tp, &self.world.region_name());
         }
         if let Some(asset) = a.landmark {
             self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
@@ -6846,6 +6883,7 @@ impl App {
                     layout,
                     &mut self.panels,
                     &mut self.chat_ui,
+                    &self.gesture_state.manager,
                     self.world.chat_unread + self.world.social.total_unread(),
                     self.world.agent.flying,
                     self.world.agent.is_sitting(),
@@ -6920,6 +6958,20 @@ impl App {
                     let c = ctx.content_rect().center();
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("xhair")));
                     painter.circle_stroke(c, 4.0, egui::Stroke::new(1.5, p.ink));
+                    if self.settings.camera.show_mouselook_instructions {
+                        // LLViewerWindow::drawMouselookInstructions: the way
+                        // out, half transparent above the bottom bar (the
+                        // hidden cursor cannot reach its button)
+                        let key = self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0]
+                            .as_ref()
+                            .map_or_else(|| aurora_i18n::tr!("keybinds-esc").to_string(), |b| b.label());
+                        let text = aurora_i18n::tr!("app-mouselook-leave", key = key);
+                        let at = egui::pos2(c.x, bottom_top - 16.0);
+                        let font = egui::FontId::proportional(18.0);
+                        let shadow = at + egui::vec2(1.0, 1.0);
+                        painter.text(shadow, egui::Align2::CENTER_BOTTOM, &text, font.clone(), p.navy.gamma_multiply(0.6));
+                        painter.text(at, egui::Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.6));
+                    }
                 }
                 if self.skin.layout.chat_toasts && !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)) {
                     ui::chat::toasts(
@@ -6956,6 +7008,7 @@ impl App {
                     &self.avatar_pics,
                     &self.ui_images,
                     &mut self.world,
+                    &self.gesture_state.manager,
                     &mut self.chat_ui,
                     &mut self.contacts_ui,
                     &mut self.settings.contacts,
@@ -7123,6 +7176,7 @@ impl App {
                     }
                 }
                 self.panels.inventory = open;
+                self.show_gestures(&ctx, &p);
                 if self.settings.inventory != inventory_preferences {
                     self.settings.save();
                 }
@@ -7280,6 +7334,16 @@ impl App {
                 }
                 self.panels.about_land = open;
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
+                let hover_enabled = self.world.hover_height_available();
+                if self.hover_height_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.world.hover_height,
+                    hover_enabled,
+                    &mut self.settings.camera.hover_affects_camera,
+                ) {
+                    self.settings.save();
+                }
                 if self.inspect_ui.open {
                     let (rows, totals) = self.inspect_rows();
                     let mut columns = self.settings.inspect_columns;
@@ -8216,6 +8280,11 @@ impl ApplicationHandler for App {
                 self.chat_ui
                     .open(crate::demo::many_conversation(crate::demo::MANY_CONVERSATIONS - 1));
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
+            } else if crate::demo::teleport_offer_scene().is_some() {
+                self.panels.chat = true;
+                self.panels.perf = false;
+                self.chat_ui.open(crate::demo::DEMO_NOVA);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
             } else if std::env::var_os("AURORA_DEMO_CONV").is_some() {
                 self.panels.chat = true;
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
@@ -8251,6 +8320,24 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            // AURORA_DEMO_CONV=tp[:sent|reject]: the avatar menu's teleport
+            // offer (its invitation, or sent as invited to the resident whose
+            // conversation is open and to one without any), or a request
+            // while we reject teleports
+            {
+                use crate::demo::{DEMO_NOVA, DEMO_TESS, TeleportOfferScene};
+                use ui::context::CtxAction;
+                match crate::demo::teleport_offer_scene() {
+                    Some(TeleportOfferScene::Invitation) => self.on_ctx_action(CtxAction::OfferTeleport(DEMO_NOVA)),
+                    Some(TeleportOfferScene::Sent) => {
+                        let invitation = aurora_i18n::tr!("common-join-me-in", region = self.world.region_name());
+                        let cmd = self.world.offer_teleport(vec![DEMO_NOVA, DEMO_TESS], &invitation);
+                        self.send(cmd);
+                    }
+                    Some(TeleportOfferScene::Reject) => self.contacts_ui.ask_teleport_request(DEMO_NOVA, true),
+                    None => {}
                 }
             }
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces")) {
@@ -8693,6 +8780,16 @@ impl ApplicationHandler for App {
                 self.panels.minimap = false;
                 self.panels.perf = false;
             }
+            // AURORA_DEMO_EMOJI_PICKER=1|<text>: the conversation window open
+            // on its emoji picker (colour emoji font); a text is put in the
+            // input field, as if picked
+            if let Ok(text) = std::env::var("AURORA_DEMO_EMOJI_PICKER") {
+                self.panels.chat = true;
+                self.chat_ui.emoji_open = true;
+                if text.trim() != "1" {
+                    self.chat_ui.conv_input = text;
+                }
+            }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)
             if std::env::var_os("AURORA_DEMO_SOUND").is_some() {
@@ -8791,9 +8888,9 @@ impl ApplicationHandler for App {
                 }
                 if mode.starts_with("drag") || mode.starts_with("scale") || mode == "edit-scroll" {
                     let code = match mode.as_str() {
-                        "drag-ctrl" | "scale-ctrl" => KeyCode::ControlLeft,
+                        "drag-secondary" | "scale-secondary" => KeyCode::AltLeft,
                         "drag-key" | "scale-key" => KeyCode::KeyB,
-                        _ => KeyCode::AltLeft,
+                        _ => KeyCode::ControlLeft,
                     };
                     self.settings.keybinds.set(
                         Action::HudDrag,
@@ -8894,6 +8991,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => {
+                self.gesture_state.manager.release(None);
                 self.numeric_drag.cancel();
                 self.build.reset_selection_wheel();
                 self.focused = false;
@@ -8905,6 +9003,9 @@ impl ApplicationHandler for App {
                 self.mic_button_held = false;
                 self.drop_clicks();
                 self.on_left_release();
+                // LLViewerWindow::handleFocusLost: the cursor shown and free
+                // again, also in mouselook (taken back with the focus)
+                self.release_cursor(true);
                 if self.temp_run.take().is_some() && !self.always_run {
                     self.send(NetCommand::SetAlwaysRun(false));
                 }
@@ -8955,6 +9056,27 @@ impl ApplicationHandler for App {
                     }
                     // Releases always go through so keys never get stuck.
                     let typing = self.egui_ctx.egui_wants_keyboard_input();
+                    use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+                    let gesture_key = crate::gestures::keys::from_key(code, &ke.key_without_modifiers());
+                    if !pressed && let Some(key) = gesture_key {
+                        self.gesture_state.manager.release(Some(key));
+                    }
+                    if pressed
+                        && !ke.repeat
+                        && !typing
+                        && self.in_world()
+                        && !self.alt
+                        && self.profile_ui.focused_web().is_none()
+                        && self.search_ui.focused_web().is_none()
+                        && let Some(key) = gesture_key
+                        && let Some(id) = self
+                            .gesture_state
+                            .manager
+                            .key_trigger(key, u32::from(self.ctrl) | if self.shift { 4 } else { 0 })
+                    {
+                        self.gesture_play(id, Some(key));
+                        return;
+                    }
                     // a profile's web page that was clicked gets the keyboard
                     let web = match self.profile_ui.focused_web() {
                         Some(p) => Some(p),

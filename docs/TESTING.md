@@ -80,7 +80,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
-| `AURORA_EMOJI_FONT=<path>` | Uses another emoji font |
+| `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
 
 The demo shows no sample offer or dialog by default. The fountain menu,
@@ -147,6 +147,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details) |
+| `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Avatar hover-height adjustment and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
@@ -164,6 +165,22 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure`**:
+  opens the hover-height floater at frame 600. A number sets the height;
+  `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
+  repeats the cycle with "Affect camera view" enabled; otherwise the camera
+  stays at its original height. Capture at 660, 750, 840 and 1020; include
+  719, 720 and 721 to catch a camera jump on the first adjusted frame.
+  With the toggle off, drag continuously in both directions: the background
+  must stay fixed throughout, also when seated or using a scripted camera.
+  `unsupported`
+  disables adjustment as on a region without AvatarHoverHeightEnabled;
+  `failure` simulates a rejected update and exposes Retry. Demo changes stay
+  in memory and never contact a grid. Use the slider, its editable value,
+  +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
+  switch for the manual check. On the grid, also verify other viewers see
+  the committed adjustment, then teleport and reconnect to check persistence.
+
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
 - **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|wheel|fly|sit|scripted|scripted-sit`**:
@@ -173,7 +190,8 @@ when unfocused") is ignored during a screenshot.
   fixed camera, to compare consecutive screenshots); `drift`: the same
   close-up, then a very slow orbit (one fiftieth of a mouse pixel per frame)
   until frame 1200; press on our own name plate then drag (steering);
-  entering / leaving mouselook; wheel; pulling back in flight; sitting on a
+  entering / leaving mouselook (frame 650 shows "Press Esc to return to
+  world view" above the bottom bar); wheel; pulling back in flight; sitting on a
   seat that rotates, with a seat camera and an animation started by a linked
   prim (frame 300), then standing up and a request to stop it (frame 700;
   `camera/demo.rs`).
@@ -739,12 +757,12 @@ grid.
   161.1%, including the child and floating text. Profiles are isolated in
   memory for these scenarios; unit tests cover saving and restarting.
   Suggested screenshots: 710,760,920.
-- `drag`: grabs the child with ALT (frame 720), moves the whole HUD,
-  releases ALT before the click (frame 800), then saves the position on
+- `drag`: grabs the child with Ctrl (frame 720), moves the whole HUD,
+  releases Ctrl before the click (frame 800), then saves the position on
   left release (frame 840) without touching any script.
 - `drag-zoom`: the same at 50%; `drag-ignore`: on a child with the
-  IGNORE action; `drag-ctrl`: Ctrl instead of ALT; `drag-key`: the B key
-  instead of ALT; `drag-secondary`: ALT as primary key and Ctrl as
+  IGNORE action; `drag-ctrl`: explicitly binds Ctrl; `drag-key`: the B key
+  instead of Ctrl; `drag-secondary`: ALT as primary key and Ctrl as
   secondary key, moving with the latter.
 - `menu`, `edit`, `edit-zoom`: right click on the child, Edit and
   moving the linkset by the Y handle, also at 50%.
@@ -786,10 +804,12 @@ around frames 720 (menu), 770 (edit, inspect) and 850 (move).
 
 To check with these scenarios:
 
-- ALT + left click held on the visible geometry moves the HUD without
+- Ctrl + left click held on the visible geometry moves the HUD without
   opening the tools; grab hand on hover and while moving.
+- Alt and Shift+Alt do not start a HUD move. A camera drag started in the
+  world continues when the pointer crosses a HUD.
 - Preferences › Shortcuts › HUDs, between Windows and Debug: two keys
-  configurable like the other shortcuts (ALT as primary by default,
+  configurable like the other shortcuts (Ctrl as primary by default,
   secondary empty), click to capture, right click to clear and Esc to
   cancel. To choose Ctrl, ALT or Shift alone, press then release;
   combinations and assignable mouse buttons are also accepted.
@@ -1154,6 +1174,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_WINDOWS=<mode>` | Collapse, move and restore of the inventory title bar |
+| `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: guide, snap, grouped move, resize |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
@@ -1179,10 +1200,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
+| `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
+| `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -1337,6 +1360,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Take screenshots at `620,740,900,1120` to check content, collapse, move and
   restored dimensions. The "−" button stays usable; the other
   title bar buttons and the content do not trigger the title bar double-click.
+- **`AURORA_DEMO_MINIMIZED=1|expand`**: double-clicks the real title bar of
+  Conversations at frames 600–605; the window becomes a bar 200 points wide
+  at most, outlined in the accent while messages are unread (the demo group
+  message), and the toolbar button keeps its dot. `expand` then clicks the
+  real Conversations toolbar button at frames 900–901: the window expands
+  instead of closing (issue #269). Capture with `AURORA_FPS_LIMIT=60` at
+  `560,760,1000`.
 - **`AURORA_DEMO_SNAP=1|group|size`**: drags the real Conversations
   window by its title bar to next to People (both must be
   open: first-launch layout, or `AURORA_DEMO_UI`). Frame
@@ -1396,6 +1426,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
+- **`AURORA_DEMO_EMOJI_PICKER=1|<text>`**: the Conversations window open on
+  local chat with its emoji picker shown (first tab, smileys); any value
+  other than `1` is put in the input field, as if picked. With
+  `AURORA_DEMO_GLYPHS=1`, the emoji line of the chat is visible beside it;
+  with `AURORA_DEMO_CHATCMD=<same text>`, the line is sent.
+  What to see: colour emojis in every cell, centred, with their
+  proportions (the 2D font's images are wider than tall), and the same
+  colour emojis, same size, in the input field and in the sent line.
+  `AURORA_EMOJI_FONT=<file>` compares two fonts.
 - **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery`**, only
   with `AURORA_DEMO`: triggers a Rust panic, a native Windows
   exception, an abnormal exit without a trace, a normal close or an
@@ -1520,7 +1559,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many`**: `1` opens the conversation of
+- **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp[:sent|reject]`**: `1` opens the conversation of
   the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user
   name, wide and accented letters) and a conference with a long title
@@ -1537,7 +1576,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   keeps its size, Contacts and Nearby chat stay at the top of the list, the
   conversations scroll under them (wheel, or the bar that shows at the
   right edge of the list under the pointer) and the list is scrolled to the
-  conversation that is open.
+  conversation that is open. `tp` (issue #280): a message from Tess Touch
+  opens her conversation, then the avatar menu's "Offer teleport" asks for
+  the invitation: "Join me in Aurora Demo" (or the French text) to edit,
+  Send / Cancel. `tp:sent`: that invitation is sent to her and to a resident
+  who has no conversation. What to see: "Teleport offer sent to Tess …" (a
+  link to her name) at the end of her conversation, without an unread badge;
+  no new conversation for the other resident and nothing in the nearby chat
+  (that notice only goes to the resident's transcript, when instant messages
+  are logged). `tp:reject`: "Request teleport" while teleports are rejected
+  only shows the warning, with OK and no message to type.
 - **`AURORA_DEMO_RADAR=1|tp|friends|groups|profile`**: the People window.
   `1`: residents at every range in "Near you" (with
   `AURORA_DEMO_TAGS=1`, those of the name plates, several of whom have a
@@ -1675,6 +1723,38 @@ disappears from the inventory, that Ctrl adds to the contents without a new cube
 and that Esc creates nothing. Online, validate real objects, forbidden land,
 the Trash / Library, neighbouring regions, the group of the land and
 objects already worn; the human logs in and carries out these tests.
+
+**`AURORA_DEMO_GESTURES=manager|editor|play|completion|completion-send|communicate|communicate-open`** — three synthetic gestures:
+chat with a replacement and F8 shortcut, an animated pose on F9, and an
+inactive chime on F10. `manager` opens the list; `editor` also opens the
+chat gesture's editor; `play` starts the chat and animation at frame 650.
+Capture at frame 620 for the list/editor, 680 during playback and 800
+after the explicit pause. Sounds stay muted unless `AURORA_DEMO_SOUND=1`.
+`completion` gives the chat gesture the `/eject` trigger, focuses nearby
+chat at frame 540 and types `/ej` at frame 550: capture frame 620 to see
+`/eject` with the added `ect` selected. `completion-send` also presses
+Enter at frame 650: capture frame 800 to see the gesture's chat steps and
+the cleared input. Typing replaces the selected suffix; Backspace removes
+it without immediately completing it again. Only active, enabled gestures
+participate; ambiguous prefixes extend only to their common suffix. The
+same completion is available in the conversations window's local chat,
+with instant messages and numeric channel prefixes keeping their input.
+`communicate` starts with the gesture manager closed, clicks the wolf menu
+at frame 540 and hovers Communicate at frame 560: capture frame 620 to see
+the Gestures entry below Conversations, with Ctrl+G in the shortcut column.
+`communicate-open` also
+clicks that entry at frame 650: capture frame 800 to check that the manager
+opens through the actual menu control.
+Check Ctrl+G, filtering and active-only/enabled switches, sorting and
+multiple selection, inventory Open/Play/Activate/Deactivate, all four step
+types, stock/inventory animation choices, Shift/Ctrl and key choices,
+preview/stop, reordering, saving and discard confirmation. Chat steps keep
+their channel prefixes (`/28574 T4`); the demo never connects to a grid.
+Online validation is performed by the human: activate and play existing
+gestures, chat/key triggers on the real keyboard, save/reopen modified
+gestures, permissions, outfit switching, teleport and restoration after
+relogging. A rejected save must keep the draft, and deactivation must stop
+only the gesture's requested motions.
 
 **`AURORA_DEMO_INVENTORY`** — opens a synthetic inventory: personal
 folder, subfolder, outfits, objects, documents, texture, sound, gesture,
@@ -1859,8 +1939,10 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_PARCEL_MEDIA=<url>` or `1` | Parcel media |
 | `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2]"` | Clicks on the media |
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Starting frame of these clicks |
+| `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
+| `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
-| `AURORA_DEMO_SOUND=1` | World and interface sounds audible |
+| `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 
@@ -1885,7 +1967,9 @@ What the inventory must show with these scenarios:
   the dark scene. The People window is closed.
   - `height`: Nova and Lune have a torso translation deformer (+0.8 m),
     animated head pitch and pelvis bobbing. Their tags stay above the taller
-    bodies, centred on their roots at a constant height through the cycle.
+    bodies, horizontally centred on their projected roots at a constant
+    height through the cycle. With a pitched camera, check avatars on both
+    sides of the view: raising a tag must not shift it sideways.
     Compare frames 660 and 780 at 60 fps; also use `AURORA_NAME_TAGS=classic`.
     A change of animation can change its height envelope; its individual
     frames never move the tag. Use a human-run grid session to verify real deformer assets.
@@ -1923,11 +2007,34 @@ What the inventory must show with these scenarios:
   after, then "aurora" is typed. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
   the starting frame to let the plugin load; also works with
   `AURORA_DEMO_HUDS=media`.
+- **Media plugins.** The media scenarios need Aurora's media plugins pack
+  (SLPlugin, CEF, LibVLC). A viewer that finds no plugins downloads it once
+  from the Aurora release `media-plugins-<n>` into
+  `%LOCALAPPDATA%\Aurora\AuroraViewer\data\media-plugins\<n>`, in demo mode
+  too; every later run and every worktree reuses it. The media wait for it
+  and start by themselves; the log says `media: downloading the plugins
+  pack` then `media: plugins in …`. An installed Firestorm is no longer
+  used, unless its folder is set in Preferences › Sound and voice › Media.
+- **`AURORA_DEMO_MEDIA_PACK`**, with `AURORA_DEMO=1`: shows a state of that
+  download without the network, whatever is installed (the media then have
+  no plugins). `downloading` is at 45 %, `installing` is the extraction,
+  `failed` shows the error and its "Retry" button. To look at with
+  `AURORA_DEMO_OPTIONS`, in the Media group of the "Sound and voice" tab,
+  and in the "Feed" tab of a profile, which shows the same progress
+  instead of the page.
+- **`AURORA_MEDIA_PACK_FEED`**: to try a pack before it is published (the
+  artifact of a "Media plugins" workflow run). The viewer asks
+  `<feed origin>/download/media-plugins-<n>/Aurora-Media-Plugins-<n>-windows-x64.zip`
+  instead of the GitHub release; only a loopback address is accepted, and
+  the archive must still have the size and the SHA-256 written in
+  `crates/aurora-updater/src/media_pack.rs`. A pack installed that way is
+  replaced when these two values change.
 - **`AURORA_DEMO_MUSIC`**: `1` designates an unreachable dummy address; the
   music waits for the radio button.
 - **`AURORA_DEMO_SOUND=1`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
-  tick per sound).
+  tick per sound). Without it the media play muted too: the viewer sends
+  them a volume of 0, so a video in the demo is silent unless this is set.
 
 ## Forced settings and diagnostics
 

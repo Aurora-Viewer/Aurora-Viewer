@@ -201,6 +201,15 @@ fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, 
     clicked
 }
 
+/// Check row of a menu for the floater `id`, ticked while it is open: it
+/// closes the window shown, expands it minimized, opens it closed
+/// (LLFloaterReg::toggleInstance, as the toolbar button).
+fn flip_window(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, id: &str, open: &mut bool) {
+    if menu::check(ui, p, icon, label, *open, true) {
+        super::widgets::toggle_floater(ui.ctx(), id, open);
+    }
+}
+
 /// Entries of Communicate > Online status (Firestorm's menu).
 fn status_menu(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::StatusModes, action: &mut BarAction) {
     let mut m = status;
@@ -345,13 +354,13 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
 /// function has in the bottom toolbar and in the world menus.
 fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusInfo, action: &mut BarAction, advanced: bool) {
     menu::submenu(ui, p, "user-filled", aurora_i18n::tr!("common-me"), true, |ui| {
-        flip(
+        flip_window(
             ui,
             p,
             "shirt-filled",
             aurora_i18n::tr!("ui-bars-appearance"),
+            "appearance",
             &mut panels.appearance,
-            true,
         );
         if menu::item(ui, p, "user-filled", aurora_i18n::tr!("ui-bars-profile")) {
             *action = BarAction::MyProfile;
@@ -380,7 +389,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-preferences")) {
-            panels.settings = true;
+            super::widgets::open_floater(ui.ctx(), "options", &mut panels.settings);
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "logout", aurora_i18n::tr!("ui-bars-log-out")) {
@@ -391,14 +400,17 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
     });
     menu::submenu(ui, p, "messages-filled", aurora_i18n::tr!("ui-bars-communicate"), true, |ui| {
-        flip(
+        flip_window(
             ui,
             p,
             "messages-filled",
             aurora_i18n::tr!("common-conversations"),
+            "conversations",
             &mut panels.chat,
-            true,
         );
+        if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), "Ctrl+G") {
+            super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
+        }
         for (tab, icon, label) in [
             (1, "users", aurora_i18n::tr!("common-friends")),
             (0, "radar-filled", aurora_i18n::tr!("common-nearby-people")),
@@ -406,7 +418,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             (4, "forbid-filled", aurora_i18n::tr!("ui-bars-block-list")),
         ] {
             if menu::item(ui, p, icon, label) {
-                panels.people = true;
+                super::widgets::open_floater(ui.ctx(), "people", &mut panels.people);
                 panels.people_tab = tab;
             }
         }
@@ -436,10 +448,17 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), "Alt+H") {
             *action = BarAction::TeleportHistory;
         }
-        flip(ui, p, "map-pin-filled", aurora_i18n::tr!("common-places"), &mut panels.places, true);
+        flip_window(
+            ui,
+            p,
+            "map-pin-filled",
+            aurora_i18n::tr!("common-places"),
+            "places",
+            &mut panels.places,
+        );
         // menu_viewer.xml: Search (Ctrl+F)
         if menu::item_keys(ui, p, "search-filled", aurora_i18n::tr!("search-title"), "Ctrl+F") {
-            panels.search = !panels.search;
+            super::widgets::toggle_floater(ui.ctx(), super::search::WINDOW, &mut panels.search);
         }
         flip(
             ui,
@@ -449,7 +468,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             &mut panels.minimap,
             true,
         );
-        flip(ui, p, "map", aurora_i18n::tr!("common-world-map"), &mut panels.world_map, true);
+        flip_window(
+            ui,
+            p,
+            "map",
+            aurora_i18n::tr!("common-world-map"),
+            "worldmap",
+            &mut panels.world_map,
+        );
         menu::submenu(ui, p, "barrier-block-filled", aurora_i18n::tr!("ui-bars-ban-lines"), true, |ui| {
             for (v, icon, label) in [
                 (0u8, "eye-off", aurora_i18n::tr!("ui-bars-hidden")),
@@ -513,22 +539,25 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
-        flip(
+        flip_window(
             ui,
             p,
             "briefcase-filled",
             aurora_i18n::tr!("common-inventory"),
+            "inventory",
             &mut panels.inventory,
-            true,
         );
         import_menu(ui, p, action);
+        if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), "Ctrl+G") {
+            super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
+        }
     });
     if advanced {
         menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("common-advanced"), true, |ui| {
             let perf = aurora_i18n::tr!("ui-bars-performance-ctrl-shift-1");
-            flip(ui, p, "gauge-filled", perf, &mut panels.perf, true);
+            flip_window(ui, p, "gauge-filled", perf, "perf", &mut panels.perf);
             let graphics = aurora_i18n::tr!("ui-bars-graphics-preferences");
-            flip(ui, p, "settings-filled", graphics, &mut panels.settings, true);
+            flip_window(ui, p, "settings-filled", graphics, "options", &mut panels.settings);
         });
     }
     menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {
@@ -986,26 +1015,29 @@ pub fn top_bars(
 }
 
 /// Execute a toolbar command; returns an action for the app.
-pub fn run_command(cmd: &str, panels: &mut Panels) -> BarAction {
+pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAction {
+    // a window shown closes, a minimized one expands (LLFloaterReg::toggleInstance)
+    let toggle = |id: &str, open: &mut bool| super::widgets::toggle_floater(ctx, id, open);
     match cmd {
-        "conversations" => panels.chat = !panels.chat,
+        "conversations" => toggle("conversations", &mut panels.chat),
         "people" => {
-            panels.people = !panels.people;
+            toggle("people", &mut panels.people);
             panels.people_tab = 0;
         }
         "friends" => {
-            panels.people = !panels.people;
+            toggle("people", &mut panels.people);
             panels.people_tab = 1;
         }
-        "inventory" => panels.inventory = !panels.inventory,
-        "appearance" => panels.appearance = !panels.appearance,
-        "ao" => panels.ao = !panels.ao,
+        "inventory" => toggle("inventory", &mut panels.inventory),
+        "gestures" => toggle("gestures", &mut panels.gestures),
+        "appearance" => toggle("appearance", &mut panels.appearance),
+        "ao" => toggle("ao", &mut panels.ao),
         "minimap" => panels.minimap = !panels.minimap,
-        "worldmap" => panels.world_map = !panels.world_map,
-        "places" => panels.places = !panels.places,
-        "search" => panels.search = !panels.search,
-        "performance" => panels.perf = !panels.perf,
-        "preferences" => panels.settings = !panels.settings,
+        "worldmap" => toggle("worldmap", &mut panels.world_map),
+        "places" => toggle("places", &mut panels.places),
+        "search" => toggle(super::search::WINDOW, &mut panels.search),
+        "performance" => toggle("perf", &mut panels.perf),
+        "preferences" => toggle("options", &mut panels.settings),
         "fly" => return BarAction::ToggleFly,
         "mouselook" => return BarAction::ToggleMouselook,
         "sit" => return BarAction::SitGround,
@@ -1020,6 +1052,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "conversations" => panels.chat,
         "people" | "friends" => panels.people,
         "inventory" => panels.inventory,
+        "gestures" => panels.gestures,
         "appearance" => panels.appearance,
         "minimap" => panels.minimap,
         "worldmap" => panels.world_map,
@@ -1046,10 +1079,27 @@ fn tool_fill(p: &Palette, active: bool, hovered: bool) -> Option<Color32> {
     }
 }
 
+/// The id of the toolbar button of `command`, for the demo scenarios that
+/// click it.
+pub(crate) fn tool_button_id(command: &str) -> egui::Id {
+    egui::Id::new(("toolbar_button", command))
+}
+
 #[allow(clippy::too_many_arguments)]
-fn tool_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, active: bool, width: f32, badge: bool) -> bool {
+fn tool_button(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    command: &str,
+    icon: &str,
+    tip: &str,
+    active: bool,
+    width: f32,
+    badge: bool,
+) -> bool {
     let size = Vec2::new(width, 22.0);
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let resp = ui.interact(rect, tool_button_id(command), egui::Sense::click());
     let icon_size = (width - 6.0).clamp(10.0, 16.0);
     let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
@@ -1400,6 +1450,7 @@ pub fn bottom_bar(
     layout: &Layout,
     panels: &mut Panels,
     chat: &mut super::chat::ChatUi,
+    gestures: &crate::gestures::Manager,
     unread: usize,
     flying: bool,
     seated: bool,
@@ -1431,7 +1482,7 @@ pub fn bottom_bar(
                     total * layout.chat_bar_fraction
                 };
                 let chat_w = wanted.clamp(120.0, max_chat);
-                out = super::chat::bar(ui, p, chat, chat_w);
+                out = super::chat::bar(ui, p, chat, gestures, chat_w);
 
                 // draggable separator (dotted, like Firestorm's) between chat and toolbar
                 let (handle, hresp) = ui.allocate_exact_size(Vec2::new(10.0, 22.0), egui::Sense::drag());
@@ -1475,14 +1526,18 @@ pub fn bottom_bar(
                     } else {
                         command_active(&b.command, panels, flying, seated, mouselook)
                     };
-                    let badge = b.command == "conversations" && unread > 0 && !panels.chat;
+                    // Firestorm flashes the button while the conversations
+                    // are closed or minimized (LLIMMgr, flashCommand)
+                    let badge = b.command == "conversations"
+                        && unread > 0
+                        && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
                     let tip = if badge {
                         aurora_i18n::tr!("ui-bars-unread", value0 = b.tooltip.to_string(), unread = format!("{}", unread))
                     } else {
                         b.tooltip.clone()
                     };
-                    if tool_button(ui, p, icons, &b.icon, &tip, active, btn_w, badge) {
-                        let a = run_command(&b.command, panels);
+                    if tool_button(ui, p, icons, &b.command, &b.icon, &tip, active, btn_w, badge) {
+                        let a = run_command(ui.ctx(), &b.command, panels);
                         if !matches!(a, BarAction::None) {
                             action = a;
                         }
@@ -1670,6 +1725,34 @@ mod tests {
         bench.click(settings);
         assert!(bench.open_prefs, "the button opens the sound preferences");
         assert!(!bench.panel_shown(), "and closes the panel");
+    }
+
+    /// Issue #269: the button of a minimized window brings it back instead
+    /// of closing it; a window shown closes, a closed one opens.
+    #[test]
+    fn a_toolbar_button_expands_its_minimized_window() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        for (cmd, id, open) in [
+            ("conversations", "conversations", (|p| p.chat) as fn(&Panels) -> bool),
+            ("inventory", "inventory", |p| p.inventory),
+            ("gestures", "gestures", |p| p.gestures),
+            ("people", "people", |p| p.people),
+            ("preferences", "options", |p| p.settings),
+        ] {
+            run_command(&ctx, cmd, &mut panels);
+            if !open(&panels) {
+                run_command(&ctx, cmd, &mut panels);
+            }
+            assert!(open(&panels), "{cmd} opens");
+            super::super::widgets::minimize_floater(&ctx, id);
+            run_command(&ctx, cmd, &mut panels);
+            assert!(open(&panels), "{cmd}: a minimized window stays open, to expand");
+        }
+        // shown again (its floater took the request): the button closes it
+        ctx.data_mut(|d| d.insert_persisted(egui::Id::new(("conversations", "minimized")), false));
+        run_command(&ctx, "conversations", &mut panels);
+        assert!(!panels.chat);
     }
 }
 
