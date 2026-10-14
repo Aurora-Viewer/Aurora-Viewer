@@ -39,6 +39,7 @@ pub mod parked;
 pub mod place_details;
 pub mod profiles;
 pub mod radar;
+pub mod region_restart;
 pub mod script_debug;
 pub mod search;
 pub mod social;
@@ -195,6 +196,8 @@ pub struct World {
     shape_preview: Option<Vec<u8>>,
     shape_preview_generation: u64,
     pub alerts: VecDeque<String>,
+    /// The announced restart of the agent's region (region_restart.rs).
+    pub region_restart: region_restart::Tracker,
     pub movement_complete: bool,
     pub avatar_lib: Arc<AvatarLibrary>,
     /// Animated joint matrices (skeleton space, rest -> posed) of the avatars
@@ -422,6 +425,7 @@ impl World {
             shape_preview: None,
             shape_preview_generation: 0,
             alerts: VecDeque::new(),
+            region_restart: Default::default(),
             movement_complete: false,
             avatar_lib,
             teleporting: false,

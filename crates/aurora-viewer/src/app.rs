@@ -51,6 +51,7 @@ mod marketplace_listings;
 mod object_actions;
 mod pay;
 mod plate_click;
+mod region_restart;
 mod report_abuse;
 mod reset_skeleton;
 mod scripts;
@@ -391,6 +392,8 @@ pub struct App {
     options_ui: ui::options::OptionsUi,
     audio_ui: ui::audio::AudioUi,
     notif_ui: ui::notifications::NotifUi,
+    /// The region restart alert (app/region_restart.rs).
+    region_restart: region_restart::State,
     /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
     demo_lookups: Vec<(Instant, NetCommand)>,
     /// Parcel music stream on (radio toggle).
@@ -811,6 +814,7 @@ impl App {
             options_ui: Default::default(),
             audio_ui: Default::default(),
             notif_ui: Default::default(),
+            region_restart: Default::default(),
             demo_lookups: Vec::new(),
             music_playing: false,
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
@@ -1644,7 +1648,12 @@ impl App {
         self.login_form.pending_connect = None;
         self.login_form.focused = false;
         self.login_form.error = error;
+        self.login_form.reconnect = false;
         self.login_progress = None;
+        // the alert belonged to the session (the demo's scenario stays played)
+        let demo = self.region_restart.take_demo();
+        self.region_restart = region_restart::State::default();
+        self.region_restart.put_demo(demo);
         self.move_complete_at = None;
         self.static_eyes_sent = None;
         self.set_mouselook_grab(false);
@@ -2120,8 +2129,16 @@ impl App {
                 force_mouselook,
             } => self.camera.on_sit_response(object, camera_eye, camera_at, force_mouselook),
             NetEvent::CameraConstraint(plane) => self.camera.set_collide_plane(plane, &self.settings.camera),
+            NetEvent::RegionRestart(notice) => self.on_region_restart(notice),
+            NetEvent::RegionRestartCancelled => self.on_region_restart_cancelled(),
             NetEvent::Disconnected { reason } => {
-                self.back_to_login(Some(aurora_i18n::tr!("app-disconnected", reason = reason.to_string())));
+                // cut by the region's restart: say so, and offer to reconnect
+                let restart = self.restart_disconnect();
+                let reconnect = restart.is_some();
+                self.back_to_login(Some(
+                    restart.unwrap_or_else(|| aurora_i18n::tr!("app-disconnected", reason = reason.to_string())),
+                ));
+                self.login_form.reconnect = reconnect;
             }
             // ---- sounds (process_sound_trigger, setAttachedSound)
             NetEvent::SoundTrigger {
@@ -5032,6 +5049,7 @@ impl App {
         }
         self.update_voice();
         self.update_radar();
+        self.update_region_restart();
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
@@ -8620,11 +8638,13 @@ impl App {
                 let dnd = self.world.status.dnd;
                 let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || (dnd && !aurora);
                 self.world.notifications.aurora = aurora;
+                let restart = self.restart_bell_info(&p);
                 let mut toast_env = ui::notifications::ToastEnv {
                     pics: &self.avatar_pics,
                     emoji: &mut self.emoji,
                     hidden: toasts_hidden,
                     message_seconds: f64::from(self.settings.im_toast_seconds),
+                    restart,
                 };
                 let (answers, asks) = if aurora {
                     ui::notification_center::show(
@@ -8650,10 +8670,16 @@ impl App {
                         &mut toast_env,
                     )
                 };
+                // the region restart over the toasts, under the open list
+                self.show_region_restart(&ctx, &p);
+                self.order_region_restart(&ctx, aurora);
                 for ask in asks {
                     self.on_notification_ask(&ctx, ask);
                 }
                 for (id, r) in answers {
+                    if self.region_restart_bell_answer(id, &r) {
+                        continue;
+                    }
                     if matches!(r, crate::world::notifications::Response::Open) {
                         let presence = self
                             .world

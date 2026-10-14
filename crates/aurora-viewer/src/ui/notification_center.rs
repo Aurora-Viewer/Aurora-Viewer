@@ -123,7 +123,7 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
     c.presence
         .retain(|(id, t)| m.now - t < PRESENCE + PRESENCE_FADE && list.list.iter().any(|n| n.id == *id));
     for n in list.listed().filter(|n| n.id > c.last_seen) {
-        if !n.read && !m.dnd && !m.hidden && !m.open {
+        if !n.read && !n.quiet && !m.dnd && !m.hidden && !m.open {
             let total = show_seconds(n, message_seconds);
             c.peek.push(Peek {
                 id: n.id,
@@ -538,9 +538,13 @@ fn full_list(
                 .min_scrolled_height(max_h)
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 6.0;
-                    for n in list.list.iter_mut().rev().filter(|n| !n.transient) {
-                        if let Some(r) = center_card(ui, p, icons, ratings, env, &mut nui.wanted_pics, n) {
-                            answers.push((n.id, r));
+                    // the region restart pinned at the top, then newest first
+                    let pinned = |n: &Notification| matches!(n.data, Data::RegionRestart);
+                    for first in [true, false] {
+                        for n in list.list.iter_mut().rev().filter(|n| !n.transient && pinned(n) == first) {
+                            if let Some(r) = center_card(ui, p, icons, ratings, env, &mut nui.wanted_pics, n) {
+                                answers.push((n.id, r));
+                            }
                         }
                     }
                 });
@@ -622,6 +626,11 @@ fn center_card(
     wanted: &mut std::collections::HashSet<uuid::Uuid>,
     n: &mut Notification,
 ) -> Option<Response> {
+    if matches!(n.data, Data::RegionRestart)
+        && let Some(info) = &env.restart
+    {
+        return super::region_restart::bell_card(ui, p, info);
+    }
     let read = n.read;
     let inner = ui.scope(|ui| {
         if matches!(n.data, Data::Message { .. }) {
