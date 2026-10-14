@@ -315,6 +315,8 @@ struct BubbleJob {
     links: Vec<(std::ops::Range<usize>, Link)>,
     badges: Vec<(usize, LinkBadge)>,
     sender: Option<(usize, Sender)>,
+    /// The characters of the sender's name (none for a notice).
+    name: Option<std::ops::Range<usize>>,
 }
 
 /// The badge before a link: a web link's trust, a place's region rating.
@@ -385,6 +387,7 @@ fn line_job(
         0.0
     };
     let mut sender = None;
+    let mut name = None;
     if !line.kind.is_notice() {
         job.append(before, 0.0, name_fmt.clone());
         let who = match line.kind {
@@ -397,6 +400,8 @@ fn line_job(
         let who = who.filter(|_| pill.is_none());
         let lead = if who.is_some() { pic_side(size) + 4.0 } else { 0.0 };
         sender = who.map(|w| (job.text.chars().count(), w));
+        let start = job.text.chars().count();
+        name = Some(start..start + line.from.chars().count());
         job.append(&line.from, lead, name_fmt.clone());
         job.append(after, 0.0, name_fmt);
     }
@@ -453,6 +458,7 @@ fn line_job(
         links,
         badges,
         sender,
+        name,
     }
 }
 
@@ -1696,6 +1702,7 @@ pub fn toasts(
         return;
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
+    let mut names: Vec<(egui::Rect, &crate::world::ChatLine)> = Vec::new();
     egui::Area::new(egui::Id::new("chat_toasts"))
         .anchor(
             egui::Align2::LEFT_BOTTOM,
@@ -1734,6 +1741,7 @@ pub fn toasts(
                             links: line_links,
                             badges,
                             sender,
+                            name,
                         } = line_job(line, p, world, want_names, 540.0, size, times, family.as_ref());
                         for s in job.sections.iter_mut() {
                             s.format.color = s.format.color.gamma_multiply(alpha);
@@ -1774,6 +1782,14 @@ pub fn toasts(
                                 super::widgets::region_rating(ui.ctx(), &world.map.ratings, &place.location.region);
                             }
                         }
+                        // the islands' pills: the sender's name acts like the
+                        // conversations' (Firestorm's toast links it)
+                        if pills
+                            && let Some(range) = name
+                            && let Some(r) = range_rects(&galley, rect.min, range).first().copied()
+                        {
+                            names.push((r, line));
+                        }
                         let col = color_for(line.kind, p).gamma_multiply(alpha);
                         for (range, link) in line_links {
                             for r in range_rects(&galley, rect.min, range) {
@@ -1792,6 +1808,99 @@ pub fn toasts(
     for (k, (rect, link, col)) in links.iter().enumerate() {
         bubble_link(ctx, p, world, k, *rect, link, *col);
     }
+    for (k, (rect, line)) in names.into_iter().enumerate() {
+        bubble_sender_link(ctx, p, world, k, rect, line);
+    }
+}
+
+/// `AURORA_DEMO_BARS=chatname`: a click on a resident's name in the pills
+/// at frame 700 (its profile opens).
+pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    if !super::bars::demo::get().click_name || !(700..=701).contains(&frame) {
+        return Vec::new();
+    }
+    let Some(r) = ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new("chat_toast_demo_name"))) else {
+        return Vec::new();
+    };
+    let pos = r.center();
+    let mut events = vec![egui::Event::PointerMoved(pos)];
+    events.push(egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: frame == 700,
+        modifiers: Default::default(),
+    });
+    events
+}
+
+/// Who a chat line's sender name leads to: a resident, an object, or no
+/// one (a notice, a line without its source).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SenderLink {
+    Resident(uuid::Uuid),
+    Object(uuid::Uuid),
+}
+
+fn sender_link(world: &World, line: &crate::world::ChatLine) -> Option<SenderLink> {
+    let id = if line.kind == ChatKind::Own { world.agent_id } else { line.source };
+    match line.kind {
+        _ if id.is_nil() || line.kind.is_notice() => None,
+        ChatKind::Object(_) | ChatKind::ObjectIm => Some(SenderLink::Object(id)),
+        _ => Some(SenderLink::Resident(id)),
+    }
+}
+
+/// The sender's name of a pill: a click shows the resident's profile (the
+/// one chosen in the preferences) or inspects the object, a right click
+/// offers the conversations' sender menu, or the object's. Firestorm's
+/// toast links the name the same way (LLViewerChat::getSenderSLURL: the
+/// agent's `about`, an object's `objectim`). The hand over it says so,
+/// nothing else changes (the human's choice).
+fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: egui::Rect, line: &crate::world::ChatLine) {
+    let Some(target) = sender_link(world, line) else { return };
+    // AURORA_DEMO_BARS=chatname: the newest resident's name is clicked
+    if matches!(target, SenderLink::Resident(_)) && super::bars::demo::get().click_name {
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("chat_toast_demo_name"), rect));
+    }
+    egui::Area::new(egui::Id::new(("chat_toast_sender", k)))
+        .fixed_pos(rect.min)
+        .order(egui::Order::Background)
+        .show(ctx, |ui| {
+            let (_, resp) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            match target {
+                SenderLink::Resident(id) => {
+                    line_name_menu(&resp, p, world, id, line);
+                    if resp.clicked() {
+                        super::profile::request_open(ui.ctx(), id);
+                    }
+                }
+                SenderLink::Object(id) => {
+                    super::menu::context_menu(&resp, p, |ui| {
+                        if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
+                            super::context::request(ui.ctx(), CtxAction::Inspect(id));
+                        }
+                        let (icon, label) = if world.mutes.is_muted_id(&id) {
+                            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
+                        } else {
+                            ("ban", aurora_i18n::tr!("common-ignore"))
+                        };
+                        if super::menu::item(ui, p, icon, label) {
+                            super::context::request(
+                                ui.ctx(),
+                                CtxAction::ToggleBlockObject {
+                                    id,
+                                    name: line.from.clone(),
+                                },
+                            );
+                        }
+                    });
+                    if resp.clicked() {
+                        super::context::request(ui.ctx(), CtxAction::Inspect(id));
+                    }
+                }
+            }
+        });
 }
 
 /// Screen rects of a char range of a laid-out text, one per row.
@@ -2066,6 +2175,110 @@ mod tests {
         let pill = job(&online, Some(&family));
         assert!(pill.sections.iter().all(|s| s.format.italics));
         assert!(!job(&online, None).sections.iter().any(|s| s.format.italics));
+    }
+
+    /// The pills' sender names: a resident's profile (ours for our own
+    /// lines), an object's inspection, nothing for a notice or a line
+    /// without its source.
+    #[test]
+    fn a_pill_name_leads_to_its_resident_or_object() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = uuid::Uuid::from_u128(1);
+        let line = |kind, source: u128| crate::world::ChatLine {
+            time: std::time::SystemTime::now(),
+            from: "Someone".into(),
+            text: "Hello".into(),
+            kind,
+            source: uuid::Uuid::from_u128(source),
+            origin: Origin::Live,
+        };
+        let id = uuid::Uuid::from_u128;
+        assert_eq!(
+            sender_link(&world, &line(ChatKind::Local(ChatType::Normal), 7)),
+            Some(SenderLink::Resident(id(7)))
+        );
+        assert_eq!(sender_link(&world, &line(ChatKind::Own, 0)), Some(SenderLink::Resident(id(1))));
+        assert_eq!(
+            sender_link(&world, &line(ChatKind::Object(ChatType::Normal), 9)),
+            Some(SenderLink::Object(id(9)))
+        );
+        assert_eq!(sender_link(&world, &line(ChatKind::ObjectIm, 9)), Some(SenderLink::Object(id(9))));
+        assert_eq!(sender_link(&world, &line(ChatKind::System, 7)), None);
+        assert_eq!(sender_link(&world, &line(ChatKind::Local(ChatType::Normal), 0)), None);
+    }
+
+    /// A click on a resident's name in the pills opens the profile; the
+    /// rest of the pill, and the room between the pills, let the click
+    /// through to the world.
+    #[test]
+    fn a_click_on_a_pill_name_opens_the_profile_and_the_rest_reaches_the_world() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let orion = uuid::Uuid::from_u128(7);
+        for (kind, from, source, text) in [
+            (ChatKind::System, "", 0, "Nova est en ligne."),
+            (ChatKind::Local(ChatType::Normal), "Orion Exemple", 7, "Bienvenue dans la démo"),
+        ] {
+            world.chat.push_back(crate::world::ChatLine {
+                time: std::time::SystemTime::now(),
+                from: from.into(),
+                text: text.into(),
+                kind,
+                source: uuid::Uuid::from_u128(source),
+                origin: Origin::Live,
+            });
+        }
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1536.0, 864.0));
+        let mut frame = |events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    toasts(
+                        ui.ctx(),
+                        &p,
+                        &world,
+                        &HashMap::new(),
+                        &mut HashSet::new(),
+                        &mut HashSet::new(),
+                        800.0,
+                        20.0,
+                        false,
+                        true,
+                    )
+                },
+            );
+            out.textures_delta.clear();
+        };
+        frame(Vec::new());
+        frame(Vec::new());
+        let name = ctx
+            .memory(|m| m.area_rect(egui::Id::new(("chat_toast_sender", 0usize))))
+            .expect("the resident's name is clickable");
+        // one name only: the notice has none
+        assert!(ctx.memory(|m| m.area_rect(egui::Id::new(("chat_toast_sender", 1usize)))).is_none());
+        let click = |at: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let at = name.center();
+        frame(vec![egui::Event::PointerMoved(at), click(at, true)]);
+        frame(vec![click(at, false)]);
+        assert_eq!(crate::ui::profile::take_open_request(&ctx), Some(orion));
+        // the message after the name and the gap between pills: the world's
+        let after = egui::pos2(name.right() + 40.0, name.center().y);
+        frame(vec![egui::Event::PointerMoved(after)]);
+        assert!(!ctx.is_pointer_over_egui(), "the message lets the pointer through");
+        let between = egui::pos2(name.left() + 2.0, name.top() - 3.0);
+        frame(vec![egui::Event::PointerMoved(between)]);
+        assert!(!ctx.is_pointer_over_egui(), "between two pills");
     }
 
     #[test]

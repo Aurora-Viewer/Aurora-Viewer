@@ -5864,6 +5864,7 @@ impl App {
             raw.events
                 .extend(ui::toolbar::demo_events(&ctx, self.frame_count, &mut self.toolbar_ui));
             raw.events.extend(ui::bars::favorites::demo_events(&ctx, self.frame_count));
+            raw.events.extend(ui::chat::demo_events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::resize_events(&ctx, self.frame_count));

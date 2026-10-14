@@ -2228,6 +2228,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   pill dragged after the fourth), `dock` (the dock's Favorites button);
   with `favorites` the place island's menu or, with `dock`, the grid opens
   at frame 300, the mockup's row or tile under the pointer from frame 700.
+  `chatname`: the newest resident's name of the chat pills clicked at
+  frame 700, its profile opens (an object's name inspects the object).
   Capture at
   `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
   at frame 780: at 1280 the place shows the parcel and the region, at

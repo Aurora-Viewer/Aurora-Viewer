@@ -11,7 +11,8 @@
 //! `added` (the twelve, the last one just added from the star), and where
 //! they live: `row` (the row under the islands, `folded`: folded to its
 //! tab, `rowdrag`: a pill dragged at frame 650), `dock` (the dock's
-//! button; `favorites` then opens its grid). `normal` or nothing else: the
+//! button; `favorites` then opens its grid); `chatname`: a resident's name
+//! of the chat pills clicked at frame 700. `normal` or nothing else: the
 //! islands as set. With any word the voice light is the mockup's
 //! (connected).
 
@@ -48,6 +49,8 @@ pub struct DemoBars {
     pub access: Option<crate::settings::FavoritesAccess>,
     pub folded: Option<bool>,
     pub row_drag: bool,
+    /// A resident's name of the chat pills clicked at frame 700.
+    pub click_name: bool,
 }
 
 /// The favourites the demo's Favorites folder holds.
@@ -94,6 +97,7 @@ pub fn parse(value: &str) -> DemoBars {
                 d.access = Some(crate::settings::FavoritesAccess::Row);
                 d.folded = Some(true);
             }
+            "chatname" => d.click_name = true,
             "rowdrag" => {
                 d.access = Some(crate::settings::FavoritesAccess::Row);
                 d.row_drag = true;
@@ -109,7 +113,8 @@ pub fn parse(value: &str) -> DemoBars {
         || d.voice
         || d.read
         || d.favorites.is_some()
-        || d.access.is_some();
+        || d.access.is_some()
+        || d.click_name;
     if d.classic.is_none() && (islands_only || d.chat_width.is_some()) {
         d.classic = Some(false);
     }
