@@ -1136,6 +1136,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_WINDOWS=<mode>` | Collapse, move and restore of the inventory title bar |
+| `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: guide, snap, grouped move, resize |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
@@ -1319,6 +1320,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Take screenshots at `620,740,900,1120` to check content, collapse, move and
   restored dimensions. The "−" button stays usable; the other
   title bar buttons and the content do not trigger the title bar double-click.
+- **`AURORA_DEMO_MINIMIZED=1|expand`**: double-clicks the real title bar of
+  Conversations at frames 600–605; the window becomes a bar 200 points wide
+  at most, outlined in the accent while messages are unread (the demo group
+  message), and the toolbar button keeps its dot. `expand` then clicks the
+  real Conversations toolbar button at frames 900–901: the window expands
+  instead of closing (issue #269). Capture with `AURORA_FPS_LIMIT=60` at
+  `560,760,1000`.
 - **`AURORA_DEMO_SNAP=1|group|size`**: drags the real Conversations
   window by its title bar to next to People (both must be
   open: first-launch layout, or `AURORA_DEMO_UI`). Frame

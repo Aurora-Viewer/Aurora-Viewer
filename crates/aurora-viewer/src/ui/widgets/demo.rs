@@ -111,6 +111,39 @@ pub fn events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     Vec::new()
 }
 
+/// AURORA_DEMO_MINIMIZED=1|expand: the real title bar of Conversations is
+/// double-clicked at frames 600–605, the window is minimized while the demo
+/// chat goes on (its bar lights up, the toolbar button keeps its dot);
+/// `expand` then clicks the real Conversations toolbar button at frames
+/// 900–901, which expands the window instead of closing it (#269).
+pub fn minimized_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let Ok(mode) = std::env::var("AURORA_DEMO_MINIMIZED") else {
+        return Vec::new();
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let title = egui::Id::new("conversations").with("title_double_click");
+    let at = |id: egui::Id| ctx.read_response(id).map(|r| r.rect.left_center() + egui::vec2(30.0, 0.0));
+    match frame {
+        600 | 604 => at(title).map_or(Vec::new(), |pos| vec![egui::Event::PointerMoved(pos), button(pos, true)]),
+        601 | 605 => at(title).map_or(Vec::new(), |pos| vec![button(pos, false)]),
+        900 | 901 if mode == "expand" => {
+            let Some(pos) = ctx
+                .read_response(crate::ui::bars::tool_button_id("conversations"))
+                .map(|r| r.rect.center())
+            else {
+                return Vec::new();
+            };
+            vec![egui::Event::PointerMoved(pos), button(pos, frame == 900)]
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// AURORA_DEMO_SNAP=1|group|size: the Conversations window dragged by its
 /// title next to the People window, on the real windows. Frame 700: the
 /// title is pressed; until 900 it is held 6 px short of the right side of
