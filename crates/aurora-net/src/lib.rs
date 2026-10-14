@@ -19,6 +19,7 @@ pub mod profile;
 pub mod scripts;
 pub mod search;
 mod session;
+pub mod slm;
 pub mod social;
 pub mod stats;
 pub mod task_inventory;

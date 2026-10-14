@@ -15,6 +15,7 @@ mod inventory_upload;
 mod object_actions;
 mod object_cache;
 mod scripts;
+mod slm_net;
 mod task_notecard;
 mod wearable_save;
 
@@ -1696,6 +1697,39 @@ impl Session<'_> {
                     let _ = events.send(NetEvent::InventoryMerchant(result));
                 });
             }
+            NetCommand::RequestMerchantStatus => {
+                let events = self.sh.events.clone();
+                let http = self.sh.caps_http.clone();
+                let cap = self.main_cap("DirectDelivery");
+                tokio::spawn(async move {
+                    // getMerchantStatusCoro: no capability is a connection failure
+                    let status = match cap {
+                        None => crate::slm::MerchantStatus::ConnectionFailure(String::new()),
+                        Some(cap) => match http
+                            .get(format!("{}/merchant", cap.trim_end_matches('/')))
+                            .timeout(Duration::from_secs(20))
+                            .send()
+                            .await
+                        {
+                            Ok(r) => {
+                                let reason = r.status().canonical_reason().unwrap_or("").to_owned();
+                                crate::slm::merchant_status(r.status().as_u16(), &reason)
+                            }
+                            Err(e) => crate::slm::MerchantStatus::ConnectionFailure(e.to_string()),
+                        },
+                    };
+                    let _ = events.send(NetEvent::MerchantStatus(status));
+                });
+            }
+            NetCommand::Slm(request) => {
+                let events = self.sh.events.clone();
+                let http = self.sh.caps_http.clone();
+                let cap = self.main_cap("DirectDelivery");
+                tokio::spawn(async move {
+                    let reply = slm_net::slm_request(&http, cap.as_deref(), &request).await;
+                    let _ = events.send(NetEvent::Slm { request, reply });
+                });
+            }
             NetCommand::PreviewInventoryItem(it) => {
                 // Protected inventory assets require the simulator to check
                 // the item permissions (LLAssetStorage::getInvItemAsset).
@@ -2290,6 +2324,7 @@ impl Session<'_> {
         });
     }
 
+    /// The capability of the agent's region (cloned for a request task).
     fn main_cap(&self, name: &str) -> Option<String> {
         self.main.and_then(|a| self.sims.get(&a)).and_then(|s| s.caps.get(name).cloned())
     }
