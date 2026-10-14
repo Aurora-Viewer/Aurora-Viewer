@@ -30,11 +30,13 @@ const MEASURE_BUDGET: Duration = Duration::from_micros(300);
 /// What precedes a line's text: the day when it changes, the sender's
 /// header when the sender or the moment does. `tail`: the last line of its
 /// sender's group, which the bubbles end with the picture and the time.
+/// `first`: the first row of the list, against its top edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Look {
     pub marker: Option<(i64, i64, i64)>,
     pub header: bool,
     pub tail: bool,
+    pub first: bool,
 }
 
 /// Mark the last line of each group: the one before a new header, a day
@@ -252,6 +254,9 @@ impl View {
             .collect();
         let mut looks: Vec<Look> = shown.iter().map(|&i| grouping.look(&s.lines[i])).collect();
         mark_tails(&mut looks, |k| s.lines[shown[k]].kind.is_notice());
+        if let Some(look) = looks.first_mut() {
+            look.first = true;
+        }
         let mut y = 0.0;
         for (&i, look) in shown.iter().zip(looks) {
             let line = &s.lines[i];
