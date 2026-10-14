@@ -621,6 +621,7 @@ mod tests {
             result: Err(403),
         });
         assert!(w.calls.active.is_none());
+        let name = w.social.name_of(&other);
         let last = w
             .social
             .ims
@@ -628,10 +629,7 @@ mod tests {
             .find(|s| s.other == other)
             .and_then(|s| s.lines.back())
             .expect("notice");
-        assert_eq!(
-            last.text,
-            aurora_i18n::tr!("world-calls-not-allowed", name = w.social.name_of(&other).as_str())
-        );
+        assert_eq!(last.text, aurora_i18n::tr!("world-calls-not-allowed", name = name.as_str()));
     }
 
     #[test]

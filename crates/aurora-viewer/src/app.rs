@@ -232,6 +232,8 @@ pub struct App {
     mic_on: bool,
     /// AURORA_DEMO_CALL: the simulated voice server of the calls.
     call_demo: crate::demo::calls::CallDemo,
+    /// The call whose conversation was last brought up.
+    call_shown: Option<uuid::Uuid>,
     /// Microphone button of the bottom bar held (hold-to-talk mode).
     mic_button_held: bool,
     /// Voice: connected in this region, own speaking level (0..1).
@@ -673,6 +675,7 @@ impl App {
             autopilot_flags: 0,
             mic_on: false,
             call_demo: Default::default(),
+            call_shown: None,
             mic_button_held: false,
             voice_connected: false,
             voice_level: 0.0,
@@ -3449,6 +3452,12 @@ impl App {
         if let Some((status, members)) = report {
             self.world.call_voice_update(status, members);
         }
+        // a new call shows its conversation (started, accepted, answered by text)
+        let call = self.world.calls.active.as_ref().map(|c| c.session);
+        if call.is_some() && call != self.call_shown {
+            self.panels.chat = true;
+        }
+        self.call_shown = call;
         // the microphone a call wants when it connects or ends (toggle mode)
         if let Some(on) = self.world.calls.mic.take()
             && !self.settings.audio.mic_hold
