@@ -459,7 +459,7 @@ pub struct Settings {
     pub new_profile: bool,
 }
 
-const SETTINGS_VERSION: u32 = 11;
+const SETTINGS_VERSION: u32 = 12;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1125,6 +1125,10 @@ impl Settings {
             // walking: arrow keys only (no more WASD / ZQSD by default)
             self.keybinds.drop_letter_walk();
         }
+        if self.settings_version < 12 {
+            // letter shortcuts follow the layout (M is the M key on AZERTY)
+            self.keybinds.follow_layout_letters();
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -1692,6 +1696,35 @@ mod tests {
         let bytes = serde_json::to_vec(&existing).expect("serialize synthetic settings");
         let saved: Settings = serde_json::from_slice(&bytes).expect("read synthetic settings");
         assert_eq!(saved.sanitized().keybinds, existing.keybinds);
+    }
+
+    /// The move of the letter shortcuts to the layout's letters runs once
+    /// (`KeyBindings::follow_layout_letters`, tested per layout there): a
+    /// key chosen afterwards, even the former QWERTY place, is kept.
+    #[test]
+    fn letter_shortcuts_follow_the_layout_once_and_keep_choices() {
+        let plain = |code| {
+            Some(crate::keybinds::Binding {
+                input: Input::key(code),
+                ctrl: false,
+                shift: false,
+                alt: false,
+            })
+        };
+        for version in [11, SETTINGS_VERSION] {
+            let mut file = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            file.keybinds.set(Action::Mouselook, 0, plain(KeyCode::KeyK));
+            file.keybinds.set(Action::Mouselook, 1, None);
+            let loaded = file.sanitized();
+            assert_eq!(loaded.keybinds.get(Action::Mouselook), [plain(KeyCode::KeyK), None]);
+            assert_eq!(loaded.settings_version, SETTINGS_VERSION);
+        }
+        let mut chosen = Settings::default();
+        chosen.keybinds.set(Action::Mouselook, 0, plain(KeyCode::KeyM));
+        assert_eq!(chosen.sanitized().keybinds.get(Action::Mouselook)[0], plain(KeyCode::KeyM));
     }
 
     #[test]
