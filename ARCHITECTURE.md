@@ -449,7 +449,14 @@ moves.
 
 `world/radar.rs` holds the radar of the People window (sweep of the avatars once per second, first
 appearance, crossings reported, regions left behind by a teleport), `ui/people/radar.rs`
-its table, its settings and its options menu; `ui/people.rs` the Friends, Groups and Blocked tabs.
+its table (Firestorm's look), its rows, its settings and its options menu; `ui/people/nearby.rs`
+the same list in Aurora's look (rows grouped by chat range, compact density, sort pills, quick
+actions over the row under the pointer), `ui/people/sheet.rs` the sheet of the person clicked,
+at the right (rights of a friendship, what the radar knows, the avatar menu under "…"; the window
+widens for it before its frame and gives the width back), `demo_people.rs` their offline
+scenario; `ui/people.rs` the Friends, Groups and Blocked tabs.
+`ui/widgets/pills.rs` shares the tabs in pills, the filter pills and the search box of the
+redrawn windows (group profile, About Land, People).
 The "Invisible" status (right to see us online withdrawn from each friend, then given back to those who had it)
 is in `world/status.rs`.
 `ui/widgets/keycap.rs` draws the keys of a shortcut (list of

@@ -479,7 +479,7 @@ fn demo_raw() -> Llsd {
         .filter(|id| people.iter().all(|(f, _, _)| f != id))
         .map(|id| {
             let i = (id.as_u128() & 0xFF) as usize - 100;
-            llsd_map! {"buddy_id" => id, "buddy_rights_given" => [1, 3, 7, 0][i], "buddy_rights_has" => if i % 2 == 0 { 3 } else { 1 }}
+            llsd_map! {"buddy_id" => id, "buddy_rights_given" => [1, 3, 7, 0][i], "buddy_rights_has" => if i.is_multiple_of(2) { 3 } else { 1 }}
         })
         .collect();
     buddies.extend(

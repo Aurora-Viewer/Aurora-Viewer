@@ -188,7 +188,10 @@ pub(super) fn fit_window(ctx: &egui::Context, st: &mut PeopleUi) {
     if st.sheet.is_none() || !st.sheet_grow {
         return;
     }
-    let Some(width) = egui::AreaState::load(ctx, egui::Id::new(super::WINDOW)).and_then(|s| s.size).map(|s| s.x) else {
+    let Some(width) = egui::AreaState::load(ctx, egui::Id::new(super::WINDOW))
+        .and_then(|s| s.size)
+        .map(|s| s.x)
+    else {
         // not laid out yet: next frame
         return;
     };
@@ -356,9 +359,8 @@ fn list_part(
                     paint_rich(ui, p, world, data, row, rect, selected, pointer)
                 };
                 ui.set_opacity(opacity);
-                let hot = (ui.rect_contains_pointer(rect) && !resp.dragged())
-                    || st.row_menu == Some(row.id)
-                    || st.demo_hover == Some(row.id);
+                let hot =
+                    (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(row.id) || st.demo_hover == Some(row.id);
                 if hot {
                     hover_actions(ui, p, world, st, row, rect, compact, actions);
                 }
@@ -503,16 +505,19 @@ fn summary(ui: &mut egui::Ui, p: &Palette, total: usize, chat: usize, friends: u
 /// The header of a range: its name in small capitals, then a faint line.
 fn band_header(ui: &mut egui::Ui, p: &Palette, band: Band) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), BAND_H), Sense::hover());
-    let galley = ui
-        .painter()
-        .layout_no_wrap(band.title().to_uppercase(), FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())), p.muted_dim);
+    let galley = ui.painter().layout_no_wrap(
+        band.title().to_uppercase(),
+        FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())),
+        p.muted_dim,
+    );
     let y = rect.bottom() - 9.0;
     let w = galley.size().x;
     ui.painter()
         .galley(Pos2::new(rect.left() + 2.0, y - galley.size().y / 2.0), galley, p.muted_dim);
     let from = rect.left() + 2.0 + w + 6.0;
     if from < rect.right() {
-        ui.painter().hline(from..=rect.right(), y, egui::Stroke::new(1.0, p.raised.gamma_multiply(0.5)));
+        ui.painter()
+            .hline(from..=rect.right(), y, egui::Stroke::new(1.0, p.raised.gamma_multiply(0.5)));
     }
 }
 
@@ -569,11 +574,15 @@ fn paint_rich(
     }
     // the range, then the time since the arrival, then the badges
     let band = Band::of(row.range);
-    let dist = Rect::from_min_max(Pos2::new(rect.right() - 8.0 - DIST_W, rect.top()), Pos2::new(rect.right() - 8.0, rect.bottom()));
+    let dist = Rect::from_min_max(
+        Pos2::new(rect.right() - 8.0 - DIST_W, rect.top()),
+        Pos2::new(rect.right() - 8.0, rect.bottom()),
+    );
     let color = if row.range.is_some() { band.color(p) } else { p.muted };
-    let galley = ui
-        .painter()
-        .layout_job(egui::text::LayoutJob::single_section(distance_text(row.range, data.draw_distance), semibold(ui, 13.0, color)));
+    let galley = ui.painter().layout_job(egui::text::LayoutJob::single_section(
+        distance_text(row.range, data.draw_distance),
+        semibold(ui, 13.0, color),
+    ));
     ui.painter().galley(
         Pos2::new(dist.right() - galley.size().x, dist.center().y - galley.size().y / 2.0),
         galley,
@@ -615,9 +624,7 @@ fn paint_rich(
     let name_h = name_g.size().y;
     ui.painter().galley(Pos2::new(left, top), name_g, name_color);
     ui.painter().galley(Pos2::new(left, top + name_h - 2.0), user_g, p.muted);
-    tip.or_else(|| {
-        (cut && pointer.is_some_and(|at| at.x >= left && at.x <= left + width)).then(|| row.name.clone())
-    })
+    tip.or_else(|| (cut && pointer.is_some_and(|at| at.x >= left && at.x <= left + width)).then(|| row.name.clone()))
 }
 
 /// One avatar on one line, for a crowd.
@@ -638,7 +645,7 @@ fn paint_compact(
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));
     } else if pointer.is_some() {
         ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.45));
-    } else if index % 2 == 0 {
+    } else if index.is_multiple_of(2) {
         // every other line, faintly, to follow a line across
         ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.12));
     }
@@ -717,10 +724,7 @@ fn hover_actions(
         .rect_filled(pill, ui.visuals().widgets.inactive.corner_radius, p.raised);
     let mut menu_open = false;
     for (i, (icon, tip)) in buttons.iter().enumerate() {
-        let r = Rect::from_min_size(
-            Pos2::new(pill.left() + PAD + i as f32 * (button.x + PAD), pill.top() + PAD),
-            button,
-        );
+        let r = Rect::from_min_size(Pos2::new(pill.left() + PAD + i as f32 * (button.x + PAD), pill.top() + PAD), button);
         let resp = ui.interact(r, ui.id().with(("people-row-act", row.id, *icon)), Sense::click());
         if resp.hovered() {
             ui.painter().rect_filled(r, widgets::inner_radius(ui.visuals()), p.bar);

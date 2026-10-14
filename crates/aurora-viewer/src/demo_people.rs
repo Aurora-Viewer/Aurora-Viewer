@@ -38,6 +38,11 @@ pub fn mode() -> Option<Mode> {
     })
 }
 
+/// `legacy`: Firestorm's table for this run, whatever the preference says.
+pub fn legacy() -> bool {
+    mode() == Some(Mode::Legacy)
+}
+
 /// The first friend of the demo buddy list (a display name "Nova ♪").
 pub const NOVA: Uuid = super::DEMO_FRIEND;
 
@@ -205,9 +210,9 @@ fn rich() -> Vec<Resident> {
 /// The mock-up's crowd: forty names, ranges growing slowly then faster.
 fn crowd() -> Vec<Resident> {
     const FIRST: [&str; 40] = [
-        "Aria", "Bram", "Cléo", "Dax", "Elin", "Faro", "Gaïa", "Hugo", "Ines", "Jun", "Kiri", "Lior", "Mira", "Nils", "Oda", "Pax", "Quinn",
-        "Rhea", "Sven", "Tali", "Ugo", "Vela", "Wren", "Xan", "Yuna", "Zed", "Ama", "Bix", "Coral", "Dune", "Eko", "Fen", "Gil", "Hale",
-        "Isa", "Jax", "Koa", "Luz", "Moss", "Nyx",
+        "Aria", "Bram", "Cléo", "Dax", "Elin", "Faro", "Gaïa", "Hugo", "Ines", "Jun", "Kiri", "Lior", "Mira", "Nils", "Oda", "Pax",
+        "Quinn", "Rhea", "Sven", "Tali", "Ugo", "Vela", "Wren", "Xan", "Yuna", "Zed", "Ama", "Bix", "Coral", "Dune", "Eko", "Fen", "Gil",
+        "Hale", "Isa", "Jax", "Koa", "Luz", "Moss", "Nyx",
     ];
     let last = [aurora_i18n::tr!("demo-example"), "Démo", "Lumen", "Brisé", "Nord"];
     FIRST
@@ -312,7 +317,11 @@ pub fn voice(levels: &mut HashMap<Uuid, (f32, bool)>, time: f64) {
     for r in residents() {
         if let Some(speaking) = r.state.voice {
             // silent in the channel, or talking in short bursts
-            let level = if speaking { 0.4 + 0.2 * (time * 3.0).sin().abs() as f32 } else { 0.0 };
+            let level = if speaking {
+                0.4 + 0.2 * (time * 3.0).sin().abs() as f32
+            } else {
+                0.0
+            };
             levels.insert(r.id, (level, speaking));
         }
     }

@@ -33,7 +33,11 @@ const SHEET_BLEED: f32 = 9.0;
 const GRANTS: [(i32, &str, &str); 3] = [
     (rights::ONLINE_STATUS, "eye-filled", "ui-profile-see-when-i-am-online"),
     (rights::MAP_LOCATION, "map-pin-filled", "people-sheet-grant-map"),
-    (rights::MODIFY_OBJECTS, "pencil-filled", "ui-profile-modify-delete-or-take-my-objects"),
+    (
+        rights::MODIFY_OBJECTS,
+        "pencil-filled",
+        "ui-profile-modify-delete-or-take-my-objects",
+    ),
 ];
 
 /// The same rights, received.
@@ -105,11 +109,7 @@ pub(super) fn show(
             match row {
                 Some(row) => nearby(ui, p, data, row),
                 None => {
-                    ui.label(
-                        egui::RichText::new(aurora_i18n::tr!("people-sheet-gone"))
-                            .size(12.0)
-                            .color(p.muted),
-                    );
+                    ui.label(egui::RichText::new(aurora_i18n::tr!("people-sheet-gone")).size(12.0).color(p.muted));
                 }
             }
         });
@@ -171,13 +171,30 @@ fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uui
 }
 
 /// The actions of the avatar menu people use the most, the rest under "…".
-fn buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi, id: Uuid, friend: Option<&Friend>, actions: &mut Vec<PeopleAction>) {
+fn buttons(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut PeopleUi,
+    id: Uuid,
+    friend: Option<&Friend>,
+    actions: &mut Vec<PeopleAction>,
+) {
     let online = friend.is_none_or(|f| f.online);
     let own = id == world.agent_id;
     let size = Vec2::new(0.0, BUTTON_H);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(5.0, 5.0);
-        if widgets::action_button(ui, p, "message-filled", aurora_i18n::tr!("people-sheet-im"), ActionKind::Primary, size).clicked() {
+        if widgets::action_button(
+            ui,
+            p,
+            "message-filled",
+            aurora_i18n::tr!("people-sheet-im"),
+            ActionKind::Primary,
+            size,
+        )
+        .clicked()
+        {
             actions.push(PeopleAction::OpenIm(id));
         }
         let call = widgets::action_button_if(
@@ -250,11 +267,13 @@ fn line(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, control_w: f32,
         p.ink,
     );
     let slot = Rect::from_min_max(Pos2::new(rect.right() - control_w, rect.top()), rect.max);
-    control(&mut ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(slot)
-            .layout(egui::Layout::right_to_left(egui::Align::Center)),
-    ));
+    control(
+        &mut ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(slot)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        ),
+    );
 }
 
 /// What we grant the friend, a switch each. The map goes with the online
@@ -294,9 +313,7 @@ fn received(ui: &mut egui::Ui, p: &Palette, f: &Friend, name: &str) {
                 egui::TextFormat::simple(FontId::proportional(11.5), p.muted_dim),
             )
         };
-        let galley = ui
-            .painter()
-            .layout_job(egui::text::LayoutJob::single_section(text, format));
+        let galley = ui.painter().layout_job(egui::text::LayoutJob::single_section(text, format));
         let w = galley.size().x;
         line(ui, p, icon, aurora_i18n::text(key), w, |ui| {
             ui.label(galley);
@@ -354,7 +371,10 @@ fn nearby(ui: &mut egui::Ui, p: &Palette, data: &RadarData, row: &Row) {
         Age::Days(days) => {
             // red up to the age alert's threshold, as in the radar table
             let young = (0..=i64::from(data.settings.age_alert_days)).contains(&days);
-            Some((aurora_i18n::tr!("radar-age-days", days = days), if young { p.danger } else { p.muted }))
+            Some((
+                aurora_i18n::tr!("radar-age-days", days = days),
+                if young { p.danger } else { p.muted },
+            ))
         }
     };
     if let Some((text, color)) = age {

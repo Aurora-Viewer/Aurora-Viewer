@@ -53,7 +53,11 @@ pub enum PeopleAction {
     GroupNotices(Uuid, bool),
     /// The switch of the right to modify our objects in a sheet: asked
     /// first (GrantModifyRights / RevokeModifyRights).
-    ModifyRights { friend: Uuid, rights: i32, grant: bool },
+    ModifyRights {
+        friend: Uuid,
+        rights: i32,
+        grant: bool,
+    },
 }
 
 /// Options of the friends tab (menu_people_friends_view.xml).

@@ -8275,7 +8275,7 @@ impl App {
                     &mut radar,
                     &mut self.settings.friends_list,
                     &mut people_map,
-                    !self.settings.classic_people,
+                    !self.settings.classic_people && !(self.demo && crate::demo::people::legacy()),
                 );
                 if people_before != (self.settings.radar.clone(), self.settings.friends_list.clone()) {
                     self.settings.save();
@@ -9474,9 +9474,9 @@ impl ApplicationHandler for App {
                 for ev in crate::demo::people::events() {
                     self.world.apply(ev);
                 }
-                use crate::demo::people::Mode;
-                self.settings.classic_people = mode == Mode::Legacy;
-                self.settings.radar.compact = mode == Mode::Crowd;
+                // the density is the list's own toggle; the look is forced
+                // for the run only (`demo::people::legacy`), not saved
+                self.settings.radar.compact = mode == crate::demo::people::Mode::Crowd;
                 if let Some(id) = crate::demo::people::sheet() {
                     self.people_ui.radar_selected = vec![id];
                     self.people_ui.open_sheet(id);

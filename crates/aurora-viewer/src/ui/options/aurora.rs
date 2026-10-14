@@ -529,7 +529,10 @@ mod tests {
         assert_eq!(s.notifications_style, NotificationsStyle::Aurora);
         assert_eq!(fresh.notifications_style, NotificationsStyle::Aurora);
         assert_eq!(s.world_map_style, fresh.world_map_style);
-        assert!(!s.classic_people && !fresh.classic_people, "the rows grouped by range are the default");
+        assert!(
+            !s.classic_people && !fresh.classic_people,
+            "the rows grouped by range are the default"
+        );
         assert_eq!(s.classic_profiles, fresh.classic_profiles);
         assert_eq!(s.photo_window, PhotoWindowStyle::Aurora);
         assert_eq!(fresh.photo_window, PhotoWindowStyle::Aurora);
