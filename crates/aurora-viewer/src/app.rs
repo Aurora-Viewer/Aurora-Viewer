@@ -7161,6 +7161,17 @@ impl App {
         }
     }
 
+    /// sendEjectNotifications: "You ejected X from the group Y", for each.
+    fn notify_ejected(&mut self, group: uuid::Uuid, members: &[uuid::Uuid]) {
+        let group_name = self.world.search.groups.get(&group).map(|g| g.name.clone()).unwrap_or_default();
+        let me = self.world.agent_id;
+        for m in members.iter().filter(|m| **m != me) {
+            let name = self.world.social.name_of(m);
+            self.world
+                .system_message(aurora_i18n::tr!("ui-group-admin-ejected", name = name, group = group_name.clone()));
+        }
+    }
+
     /// What the group profile window asked (LLGroupActions).
     fn apply_group_actions(&mut self, ctx: &egui::Context, actions: Vec<ui::group_profile::GroupAction>) {
         use ui::group_profile::GroupAction;
@@ -7174,6 +7185,18 @@ impl App {
                     self.world.group_data.refresh(group, member);
                 }
                 GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
+                GroupAction::Eject { group, members } | GroupAction::Ban { group, members } if members.is_empty() => {
+                    log::debug!("group {group}: nobody to eject");
+                }
+                GroupAction::Eject { group, members } => {
+                    self.notify_ejected(group, &members);
+                    self.world.group_data.eject(group, members, self.world.agent_id);
+                }
+                GroupAction::Ban { group, members } => {
+                    self.notify_ejected(group, &members);
+                    self.world.group_data.ban(group, members, self.world.agent_id);
+                }
+                GroupAction::ChangeRoles { group, changes } => self.world.group_data.change_roles(group, changes),
                 GroupAction::RefreshNotices(group) => self.world.group_data.request_notices(group),
                 GroupAction::OpenNotice { group, notice } => {
                     log::info!("group notice asked: {notice}");

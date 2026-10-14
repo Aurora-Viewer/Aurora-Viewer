@@ -18,6 +18,8 @@
 //! (`world.groups`) and LLGroupMgr's members, roles, titles and notices
 //! (`world.group_data`). Notices, land and experiences are not ported yet.
 
+mod abilities;
+mod admin_members;
 mod home;
 mod invite;
 mod members;
@@ -68,6 +70,15 @@ pub enum GroupAction {
         subject: String,
         message: String,
         item: Option<(Uuid, Uuid)>,
+    },
+    /// EjectGroupMemberRequest, confirmed.
+    Eject { group: Uuid, members: Vec<Uuid> },
+    /// The ban (GroupAPIv1), then the ejection, confirmed.
+    Ban { group: Uuid, members: Vec<Uuid> },
+    /// GroupRoleChanges.
+    ChangeRoles {
+        group: Uuid,
+        changes: Vec<aurora_net::groups::RoleChange>,
     },
     /// InviteGroupRequest: (invitee, role) pairs.
     Invite { group: Uuid, invites: Vec<(Uuid, Uuid)> },
@@ -246,7 +257,7 @@ impl GroupProfileUi {
         }
         match self.tab {
             Tab::Home => home::show(self, ui, c, env, v, actions),
-            Tab::Members => members::show(self, ui, c, env, v),
+            Tab::Members => members::show(self, ui, c, env, v, actions),
             Tab::Notices => notices::show(self, ui, c, v, actions),
         }
     }

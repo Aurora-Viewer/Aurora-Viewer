@@ -256,23 +256,6 @@ impl GroupMgr {
         self.read.insert(group, ids.into_iter().collect());
     }
 
-    /// The powers a member has through their roles (getAgentPowersBasedOnRoleChanges
-    /// without changes): every power for an owner.
-    pub fn member_powers(&self, group: &Uuid, member: &Uuid) -> u64 {
-        let Some(g) = self.groups.get(group) else {
-            return 0;
-        };
-        if g.members.get(member).is_some_and(|m| m.is_owner) {
-            return u64::MAX;
-        }
-        g.member_roles
-            .get(member)
-            .into_iter()
-            .flatten()
-            .filter_map(|r| g.roles.get(r))
-            .fold(0, |acc, r| acc | r.powers)
-    }
-
     /// LLGroupMgr::sendGroupMemberEjects: sent, and the members leave our
     /// copy at once (we never eject ourselves).
     pub fn eject(&mut self, group: Uuid, members: Vec<Uuid>, me: Uuid) {

@@ -701,8 +701,16 @@ mod tests {
         assert!(v.iter().all(|m| m.group_data.group_id == Uuid::from_u128(9)));
 
         let changes = [
-            RoleChange { role: Uuid::from_u128(5), member: Uuid::from_u128(10), add: true },
-            RoleChange { role: Uuid::from_u128(6), member: Uuid::from_u128(10), add: false },
+            RoleChange {
+                role: Uuid::from_u128(5),
+                member: Uuid::from_u128(10),
+                add: true,
+            },
+            RoleChange {
+                role: Uuid::from_u128(6),
+                member: Uuid::from_u128(10),
+                add: false,
+            },
         ];
         let m = &role_change_messages(me, Uuid::nil(), Uuid::from_u128(9), &changes)[0];
         assert_eq!(m.role_change.iter().map(|c| c.change).collect::<Vec<_>>(), [0, 1]);

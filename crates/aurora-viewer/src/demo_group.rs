@@ -444,6 +444,25 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
             },
         }],
         NetCommand::GroupNoticeRequest(notice) => vec![notice_im(notice)?],
+        // the dataserver ejects them; a ban answers the group's ban list
+        NetCommand::EjectGroupMembers { group, members } => {
+            log::info!("demo group: {} member(s) ejected", members.len());
+            vec![NetEvent::GroupEjected {
+                group: *group,
+                success: true,
+            }]
+        }
+        NetCommand::GroupBans { group, action, ids } => {
+            log::info!("demo group: ban action {action:?} for {} resident(s)", ids.len());
+            vec![NetEvent::GroupBanList {
+                group: *group,
+                bans: ids.iter().map(|id| (*id, 1_790_000_000.0)).collect(),
+            }]
+        }
+        NetCommand::GroupRoleChanges { changes, .. } => {
+            log::info!("demo group: {} role change(s)", changes.len());
+            Vec::new()
+        }
         // a notice sent to the group: every member gets it, us too
         NetCommand::SendImDialog {
             to,

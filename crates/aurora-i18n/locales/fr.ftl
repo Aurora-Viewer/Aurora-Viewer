@@ -5636,6 +5636,26 @@ ui-group-invite-send = Envoyer les invitations
 ui-group-invite-owner = Êtes-vous sûr de vouloir inviter de nouveaux propriétaires ? Cette action est permanente !
 ui-group-invite-already = Certains résidents choisis sont déjà dans le groupe et n'ont donc pas reçu d'invitation.
 ui-group-invite-too-many = Invitations non envoyées : trop de résidents choisis. Les invitations sont limitées à 100 par envoi.
+ui-group-admin-eject = Expulser
+ui-group-admin-ban = Bannir
+ui-group-admin-eject-one = Vous allez expulser { $name } du groupe.
+ui-group-admin-eject-many = Vous allez expulser { $count } membres du groupe.
+ui-group-admin-ban-one = Vous allez bannir { $name } du groupe.
+ui-group-admin-ban-many = Vous allez bannir { $count } membres du groupe.
+ui-group-admin-add-owners = Vous êtes sur le point d'ajouter des membres du groupe dans le rôle de { $role }. Les membres ne peuvent pas être destitués de ce rôle. Ils doivent donner eux-mêmes leur démission. Êtes-vous certain de vouloir continuer ?
+ui-group-admin-ejected = Vous avez expulsé { $name } du groupe { $group }.
+ui-group-admin-export = Exporter la liste des membres
+ui-group-admin-selected = { $count ->
+    [one] 1 sélectionné
+   *[other] { $count } sélectionnés
+    }
+ui-group-admin-roles-of-many = { $count } membres · rôles
+ui-group-admin-save = Enregistrer
+ui-group-admin-can-do = { $count ->
+    [one] Ce que ce membre peut faire · { $shown }
+   *[other] Ce que ces membres peuvent faire · { $shown }
+    }
+ui-group-admin-abilities-note = Le détail se règle dans Administration › Rôles.
 group-abilities-membership = Membres
 group-abilities-membership-help = Ces pouvoirs permettent d'ajouter et de supprimer des membres du groupe et permettent aux nouveaux membres de rejoindre le groupe sans recevoir d'invitation.
 group-ability-member-invite = Inviter des membres dans ce groupe

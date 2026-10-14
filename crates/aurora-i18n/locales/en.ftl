@@ -5636,6 +5636,26 @@ ui-group-invite-send = Send Invitations
 ui-group-invite-owner = Are you sure you want to invite new owners? This action is permanent!
 ui-group-invite-already = Some Residents you chose are already in the group, and so were not sent an invitation.
 ui-group-invite-too-many = Group Invitations not sent: too many Residents selected. Group Invitations are limited to 100 per request.
+ui-group-admin-eject = Eject
+ui-group-admin-ban = Ban
+ui-group-admin-eject-one = You are about to eject { $name } from the group.
+ui-group-admin-eject-many = You are about to eject { $count } members from the group.
+ui-group-admin-ban-one = You are about to ban { $name } from the group.
+ui-group-admin-ban-many = You are about to ban { $count } members from the group.
+ui-group-admin-add-owners = You are about to add group members to the role of { $role }. Members cannot be removed from that role. The members must resign from the role themselves. Are you sure you want to continue?
+ui-group-admin-ejected = You ejected { $name } from the group { $group }.
+ui-group-admin-export = Export the member list
+ui-group-admin-selected = { $count ->
+    [one] 1 selected
+   *[other] { $count } selected
+    }
+ui-group-admin-roles-of-many = { $count } members · roles
+ui-group-admin-save = Save
+ui-group-admin-can-do = { $count ->
+    [one] What they can do · { $shown }
+   *[other] What they can do · { $shown }
+    }
+ui-group-admin-abilities-note = The details are set in Administration › Roles.
 group-abilities-membership = Membership
 group-abilities-membership-help = These Abilities include powers to add and remove group Members, and allow new Members to join without an invitation.
 group-ability-member-invite = Invite People to this Group

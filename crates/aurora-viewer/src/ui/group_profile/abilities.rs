@@ -93,13 +93,11 @@ pub fn catalogue() -> Vec<AbilitySet> {
             icon: "id-filled",
             name: aurora_i18n::tr!("group-abilities-group-identity"),
             help: aurora_i18n::tr!("group-abilities-group-identity-help"),
-            abilities: vec![
-                Ability {
-                    bit: 11,
-                    name: aurora_i18n::tr!("group-ability-group-change-identity"),
-                    help: aurora_i18n::tr!("group-ability-group-change-identity-help"),
-                },
-            ],
+            abilities: vec![Ability {
+                bit: 11,
+                name: aurora_i18n::tr!("group-ability-group-change-identity"),
+                help: aurora_i18n::tr!("group-ability-group-change-identity-help"),
+            }],
         },
         AbilitySet {
             icon: "map-2",
@@ -294,13 +292,11 @@ pub fn catalogue() -> Vec<AbilitySet> {
             icon: "coin-filled",
             name: aurora_i18n::tr!("group-abilities-accounting"),
             help: aurora_i18n::tr!("group-abilities-accounting-help"),
-            abilities: vec![
-                Ability {
-                    bit: 40,
-                    name: aurora_i18n::tr!("group-ability-accounting-accountable"),
-                    help: aurora_i18n::tr!("group-ability-accounting-accountable-help"),
-                },
-            ],
+            abilities: vec![Ability {
+                bit: 40,
+                name: aurora_i18n::tr!("group-ability-accounting-accountable"),
+                help: aurora_i18n::tr!("group-ability-accounting-accountable-help"),
+            }],
         },
         AbilitySet {
             icon: "speakerphone",
