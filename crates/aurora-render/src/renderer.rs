@@ -1094,8 +1094,6 @@ struct FrameGroups {
     refl: [wgpu::BindGroup; 7],
 }
 
-/// The passes of a frame and all they own. Lives on the render thread, or
-/// in the `Renderer` itself with AURORA_RENDER_THREAD=0.
 /// What a frame draws into: the swapchain image, presented, or a photo's
 /// own texture (`Capture::Snapshot`), read back and dropped.
 enum FrameTarget {
@@ -1112,6 +1110,8 @@ impl FrameTarget {
     }
 }
 
+/// The passes of a frame and all they own. Lives on the render thread, or
+/// in the `Renderer` itself with AURORA_RENDER_THREAD=0.
 pub(crate) struct Backend {
     device: wgpu::Device,
     queue: wgpu::Queue,
