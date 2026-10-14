@@ -101,12 +101,11 @@ impl App {
         if !self.day_editor.open {
             return;
         }
-        let can_inventory = self.demo
-            || self
-                .world
-                .main_region
-                .and_then(|h| self.world.regions.get(&h))
-                .is_some_and(|r| r.caps.contains_key("UpdateSettingsAgentInventory") && r.caps.contains_key("UpdateSettingsTaskInventory"));
+        let can_inventory =
+            self.demo
+                || self.world.main_region.and_then(|h| self.world.regions.get(&h)).is_some_and(|r| {
+                    r.caps.contains_key("UpdateSettingsAgentInventory") && r.caps.contains_key("UpdateSettingsTaskInventory")
+                });
         let actions = self.day_editor.show(ctx, p, &self.world.inventory, &self.ui_images, can_inventory);
         if self.day_editor.show_picker(ctx, p, &mut self.world, &self.ui_images) {
             self.show_day_edit();
@@ -115,7 +114,11 @@ impl App {
             match action {
                 DayAction::Changed => self.show_day_edit(),
                 DayAction::LoadFrame(item) | DayAction::LoadTrack(item) => {
-                    let purpose = if matches!(action, DayAction::LoadFrame(_)) { DayFetch::Frame } else { DayFetch::Track };
+                    let purpose = if matches!(action, DayAction::LoadFrame(_)) {
+                        DayFetch::Frame
+                    } else {
+                        DayFetch::Track
+                    };
                     if let Some(it) = self.world.inventory.items.get(&item).cloned() {
                         self.day_fetch = Some((item, purpose));
                         self.send(NetCommand::PreviewInventoryItem(it));

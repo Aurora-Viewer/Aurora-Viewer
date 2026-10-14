@@ -1001,7 +1001,7 @@ To check with these scenarios:
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
-| `AURORA_DEMO_ENV_EDITOR=<mode>` | Sky and water editors |
+| `AURORA_DEMO_ENV_EDITOR=<mode>` | Sky, water and day cycle editors |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 
 ### Details
@@ -1115,8 +1115,15 @@ To check with these scenarios:
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
   (2500).
-- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save`**: sky
-  and water editors (`app/env_editor.rs`), with the library and Settings
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save|day|day-play|day-edit`**: sky,
+  water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
+  `day`: the day cycle editor opens on the user's "my day cycle" (frame
+  400: midnight, the purple sky at 25 %, noon, sunset), the ground track and
+  its first key frame selected; `day-play` plays it (a day in a minute,
+  from frame 900); `day-edit` brightens the noon frame (900), tries a frame
+  at 75 % (950, refused: a frame is there), clones the ground track into
+  Sky 3 and selects it (1000), then saves over the item (1100, logged as
+  `day cycle saved`). The sky and water editors use the library and Settings
   folder of `AURORA_DEMO_ENV_SELECT`. At frame 400 the editor opens on a
   snapshot of the shown sky (`sky`, `clouds` and `sun` pick the tab) or
   water (`water`), or on the user's "my purple sky" item once its folder

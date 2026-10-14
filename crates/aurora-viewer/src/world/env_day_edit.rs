@@ -312,7 +312,11 @@ impl DayDoc {
         Some(if forward {
             t.iter().map(|(p, _)| *p).find(|p| *p > pos + half).unwrap_or(t[0].0)
         } else {
-            t.iter().rev().map(|(p, _)| *p).find(|p| *p < pos - half).unwrap_or(t[t.len() - 1].0)
+            t.iter()
+                .rev()
+                .map(|(p, _)| *p)
+                .find(|p| *p < pos - half)
+                .unwrap_or(t[t.len() - 1].0)
         })
     }
 

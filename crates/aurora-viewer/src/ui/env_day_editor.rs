@@ -315,7 +315,10 @@ impl DayEditorUi {
             ui.label(RichText::new(aurora_i18n::tr!("ui-day-editor-name")).size(12.0).color(p.ink));
             // refresh: renaming needs modify rights and an item
             let enabled = self.rights.modify && self.rights.save && self.item.is_some();
-            let r = ui.add_enabled(enabled, egui::TextEdit::singleline(&mut self.name).desired_width(320.0).char_limit(63));
+            let r = ui.add_enabled(
+                enabled,
+                egui::TextEdit::singleline(&mut self.name).desired_width(320.0).char_limit(63),
+            );
             if r.changed()
                 && let Some(doc) = &mut self.doc
             {
@@ -334,7 +337,6 @@ impl DayEditorUi {
         if widgets::tabs(ui, p, &mut t, &tabs) {
             self.select_track(t);
         }
-        let _ = p;
     }
 
     /// WLTimeSlider over WLDayCycleFrames, with the p0..p4 labels.
@@ -357,7 +359,11 @@ impl DayEditorUi {
             painter.line_segment([egui::pos2(x, lane.top()), egui::pos2(x, lane.bottom())], (1.0, p.raised));
         }
         let can_edit = self.rights.modify && self.playing.is_none();
-        let frames: Vec<f32> = self.doc.as_ref().map(|d| d.tracks[self.track].iter().map(|k| k.0).collect()).unwrap_or_default();
+        let frames: Vec<f32> = self
+            .doc
+            .as_ref()
+            .map(|d| d.tracks[self.track].iter().map(|k| k.0).collect())
+            .unwrap_or_default();
         let hit = |x: f32| frames.iter().position(|f| (x_of(*f) - x).abs() <= 7.0);
         // interactions: press on a key frame selects it (and starts a drag),
         // elsewhere moves the time cursor; double click adds a frame
@@ -370,7 +376,11 @@ impl DayEditorUi {
                         self.pos = frames[i];
                         if resp.drag_started() && can_edit {
                             let copy = ui.input(|i| i.modifiers.shift);
-                            self.drag = Some(Drag { index: i, copy, pos: frames[i] });
+                            self.drag = Some(Drag {
+                                index: i,
+                                copy,
+                                pos: frames[i],
+                            });
                         }
                     }
                     None => self.set_pos(pos_of(ptr.x)),
@@ -378,14 +388,14 @@ impl DayEditorUi {
                 out.push(DayAction::Changed);
             }
         }
-        if resp.dragged() {
-            if let Some(ptr) = resp.interact_pointer_pos() {
-                match &mut self.drag {
-                    Some(d) => d.pos = day::snap(pos_of(ptr.x)),
-                    None => {
-                        self.set_pos(pos_of(ptr.x));
-                        out.push(DayAction::Changed);
-                    }
+        if resp.dragged()
+            && let Some(ptr) = resp.interact_pointer_pos()
+        {
+            match &mut self.drag {
+                Some(d) => d.pos = day::snap(pos_of(ptr.x)),
+                None => {
+                    self.set_pos(pos_of(ptr.x));
+                    out.push(DayAction::Changed);
                 }
             }
         }
@@ -417,7 +427,11 @@ impl DayEditorUi {
             };
             let c = egui::pos2(x_of(shown), lane.center().y);
             let r = egui::Rect::from_center_size(c, Vec2::new(10.0, 16.0));
-            let fill = if self.selected == Some(i) { p.violet } else { p.ink.gamma_multiply(0.75) };
+            let fill = if self.selected == Some(i) {
+                p.violet
+            } else {
+                p.ink.gamma_multiply(0.75)
+            };
             painter.rect_filled(r, radius, fill);
         }
         if let Some(d) = self.drag.filter(|d| d.copy) {
@@ -618,7 +632,14 @@ impl DayEditorUi {
 
     /// frame_edit_controls: the selected frame in the sky tabs or the water
     /// panel, else "Select a key frame…" (icn_lock_edit).
-    fn frame_panels(&mut self, ui: &mut egui::Ui, p: &Palette, images: &HashMap<Uuid, egui::TextureHandle>, height: f32, out: &mut Vec<DayAction>) {
+    fn frame_panels(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        images: &HashMap<Uuid, egui::TextureHandle>,
+        height: f32,
+        out: &mut Vec<DayAction>,
+    ) {
         let key = self.selected.filter(|_| self.playing.is_none()).map(|i| (self.track, i));
         let Some((track, index)) = key else {
             self.frame_key = None;
@@ -676,7 +697,11 @@ impl DayEditorUi {
             } else if self.saving.is_some() {
                 ui.label(RichText::new(aurora_i18n::tr!("ui-env-editor-saving")).size(11.5).color(p.muted));
             } else if !can_inventory {
-                ui.label(RichText::new(aurora_i18n::tr!("ui-env-editor-no-inventory")).size(11.5).color(p.muted));
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-env-editor-no-inventory"))
+                        .size(11.5)
+                        .color(p.muted),
+                );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let size = Vec2::new(0.0, 26.0);
@@ -792,13 +817,28 @@ impl DayEditorUi {
             let mut done = false;
             let modal = widgets::Modal::new(egui::Id::new("env_day_editor_track_source")).show(ctx, |ui| {
                 ui.set_width(340.0);
-                ui.label(RichText::new(aurora_i18n::tr!("ui-day-editor-choose-track")).size(15.0).strong().color(p.ink));
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-day-editor-choose-track"))
+                        .size(15.0)
+                        .strong()
+                        .color(p.ink),
+                );
                 ui.add_space(8.0);
                 for t in 0..TRACKS {
                     // the water track loads into the water only
                     let fits = (t == TRACK_WATER) == (self.track == TRACK_WATER);
                     let enabled = fits && !src.tracks[t].is_empty();
-                    if widgets::action_button_if(ui, p, "sun-filled", &track_label(t), ActionKind::Flat, Vec2::new(0.0, 24.0), enabled).clicked() {
+                    if widgets::action_button_if(
+                        ui,
+                        p,
+                        "sun-filled",
+                        &track_label(t),
+                        ActionKind::Flat,
+                        Vec2::new(0.0, 24.0),
+                        enabled,
+                    )
+                    .clicked()
+                    {
                         let to = self.track;
                         if let Some(doc) = &mut self.doc {
                             match doc.clone_track(&src, t, to) {
@@ -819,7 +859,16 @@ impl DayEditorUi {
                     }
                 }
                 ui.add_space(6.0);
-                if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, Vec2::new(0.0, 26.0)).clicked() {
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "x",
+                    aurora_i18n::tr!("common-cancel"),
+                    ActionKind::Flat,
+                    Vec2::new(0.0, 26.0),
+                )
+                .clicked()
+                {
                     done = true;
                 }
             });
