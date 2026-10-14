@@ -1858,12 +1858,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   window `overview`, `manage`, `people`, or the tabs of the classic window
   `general`, `covenant`, `objects`, `options`, `media`, `sound`, `access`,
   `experiences`, `environment` (or their index); Aurora's window opens a
-  tab on the page that holds it (`options` on "Manage", `access` on
-  "People and objects", `covenant` on the overview). Roles: `owner` makes
+  tab's section of "Manage", scrolled to and unfolded (`options` on "What
+  visitors can do", `general` on "Sale and ownership", `covenant` on the
+  overview); `people` asks for the object owners as Refresh does, `owners`
+  also scrolls down to them. Roles: `owner` makes
   the avatar the owner of the parcel (everything editable); `officer`
   leaves the parcel to the group "Aurora Builders" and gives the avatar
   its land powers except sale, deed, release and terraforming (the
-  camera over the picture shows, "Edit land" stays greyed); `visitor`
+  camera over the picture shows, "Edit the land" stays greyed with the
+  power it needs, "View as" offers Officer / Visitor); `visitor`
   gives the parcel to another resident and to a group the avatar is not
   in (no camera, "Buy a pass" follows the parcel); without a role the
   parcel belongs to the group and the avatar has no powers in it.

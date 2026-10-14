@@ -296,7 +296,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     ui.add_space(12.0);
     let left = |ui: &mut egui::Ui, world: &mut World, s: &mut LandUi| description_card(ui, p, s, v, world, &parcel);
     let right = |ui: &mut egui::Ui, world: &mut World, _: &mut LandUi| info_card(ui, p, v, world, &parcel);
-    cards(ui, p, world, s, left, right);
+    cards(ui, p, world, s, 1.3, left, right);
 }
 
 /// Height of an action button.

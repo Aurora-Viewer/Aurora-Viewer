@@ -2,12 +2,12 @@
 //! nine tabs back, `Settings::classic_about_land`): the parcel at a glance
 //! in a header shared by three pages, "Overview" for everyone
 //! (`overview.rs`), "Manage" for the settings and "People and objects" for
-//! the lists. Nothing of Firestorm's floater is left out and the protocol
-//! is the same: until the settings are regrouped by intent, "Manage" and
-//! "People and objects" hold the panes of the nine tabs (`Tab`), the
-//! covenant being a card of the overview.
+//! the lists (`manage.rs`, `people.rs`). Nothing of Firestorm's floater is
+//! left out and the protocol is the same. Who may manage the parcel can look
+//! at it as a visitor would ("View as").
 
-use super::{LandUi, Tab, View, overview};
+use super::manage::Section;
+use super::{LandUi, Tab, View, manage, overview, people};
 use crate::theme::Palette;
 use crate::ui::{presence, widgets};
 use crate::world::World;
@@ -55,29 +55,19 @@ impl Page {
         }
     }
 
-    /// The panes of the nine tabs a page holds for now, in their order.
-    pub(super) fn panes(self) -> &'static [Tab] {
-        match self {
-            Page::Overview => &[],
-            Page::Manage => &[
-                Tab::General,
-                Tab::Options,
-                Tab::Media,
-                Tab::Sound,
-                Tab::Experiences,
-                Tab::Environment,
-            ],
-            Page::People => &[Tab::Access, Tab::Objects],
+    /// Where a tab of the classic window went: its page, and on "Manage"
+    /// its section (the covenant is a card of the overview).
+    pub(super) fn of(tab: Tab) -> (Page, Option<Section>) {
+        match tab {
+            Tab::Covenant => (Page::Overview, None),
+            Tab::General => (Page::Manage, Some(Section::Sale)),
+            Tab::Objects => (Page::Manage, Some(Section::Objects)),
+            Tab::Options => (Page::Manage, Some(Section::Rules)),
+            Tab::Media | Tab::Sound => (Page::Manage, Some(Section::Media)),
+            Tab::Access => (Page::Manage, Some(Section::Access)),
+            Tab::Experiences => (Page::Manage, Some(Section::Experiences)),
+            Tab::Environment => (Page::Manage, Some(Section::Environment)),
         }
-    }
-
-    /// The page that shows a tab of the classic window (the covenant is
-    /// a card of the overview).
-    pub(super) fn of(tab: Tab) -> Page {
-        Page::ALL
-            .into_iter()
-            .find(|page| page.panes().contains(&tab))
-            .unwrap_or(Page::Overview)
     }
 }
 
@@ -89,8 +79,6 @@ pub(super) const MIN_SIZE: Vec2 = Vec2::new(760.0, 480.0);
 const PICTURE: Vec2 = Vec2::new(220.0, 148.0);
 /// Width of the objects gauge.
 const GAUGE_W: f32 = 220.0;
-/// Width of the navigation of "Manage" and "People and objects".
-const NAV_W: f32 = 200.0;
 
 /// The tint of a pill: allowed, for the group only, refused, or a plain fact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,7 +90,7 @@ pub(super) enum Tone {
 }
 
 /// Text in the theme's semi-bold face.
-fn semibold(ui: &egui::Ui, text: &str, size: f32, color: Color32) -> egui::text::LayoutJob {
+pub(super) fn semibold(ui: &egui::Ui, text: &str, size: f32, color: Color32) -> egui::text::LayoutJob {
     let family = crate::ui::fonts::semibold(ui.ctx());
     let mut job = egui::text::LayoutJob::default();
     job.append(text, 0.0, crate::ui::fonts::semibold_format(&family, size, color));
@@ -181,20 +169,21 @@ pub(super) fn kv(ui: &mut egui::Ui, p: &Palette, key: &str, value: impl FnOnce(&
     });
 }
 
-/// Two cards side by side, 1.3 to 1 like the mockup's grid, as tall as the
-/// taller one.
+/// Two cards side by side, `ratio` to 1 (1.3 for the overview's grid), as
+/// tall as the taller one.
 pub(super) fn cards(
     ui: &mut egui::Ui,
     p: &Palette,
     world: &mut World,
     s: &mut LandUi,
+    ratio: f32,
     left: impl FnOnce(&mut egui::Ui, &mut World, &mut LandUi),
     right: impl FnOnce(&mut egui::Ui, &mut World, &mut LandUi),
 ) {
     const GAP: f32 = 12.0;
     const PAD: Vec2 = Vec2::new(12.0, 10.0);
     let width = ui.available_width();
-    let left_w = ((width - GAP) * 1.3 / 2.3).floor();
+    let left_w = ((width - GAP) * ratio / (ratio + 1.0)).floor();
     let right_w = width - GAP - left_w;
     let top = ui.cursor().min;
     let faces = [ui.painter().add(Shape::Noop), ui.painter().add(Shape::Noop)];
@@ -243,8 +232,10 @@ pub(super) fn cards(
     ui.allocate_rect(Rect::from_min_size(top, Vec2::new(width, h)), Sense::hover());
 }
 
-/// The page tabs: a lit face for the open one.
-fn page_tabs(ui: &mut egui::Ui, p: &Palette, page: &mut Page) {
+/// The page tabs: a lit face for the open one; at the right end, for who
+/// may manage the parcel, "View as" themselves or a visitor (`role`: the
+/// name of their own rights).
+fn page_tabs(ui: &mut egui::Ui, p: &Palette, page: &mut Page, role: Option<&str>, visitor: &mut bool) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         for it in Page::ALL {
@@ -271,7 +262,45 @@ fn page_tabs(ui: &mut egui::Ui, p: &Palette, page: &mut Page) {
                 *page = it;
             }
         }
+        if let Some(role) = role {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let mut choice = usize::from(*visitor);
+                let options = [(role, false), (aurora_i18n::tr!("ui-land-overview-visitor"), false)];
+                if widgets::segmented(ui, p, &mut choice, &options) {
+                    *visitor = choice == 1;
+                }
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-land-overview-view-as"))
+                        .size(12.0)
+                        .color(p.muted),
+                )
+                .on_hover_text(aurora_i18n::tr!("ui-land-overview-view-as-tip"));
+            });
+        }
     });
+}
+
+/// The name of the agent's rights on the parcel for "View as": None when
+/// they can change nothing (they already see what a visitor sees).
+pub(super) fn manager_role(v: &View) -> Option<&'static str> {
+    let parcel = v.parcel.as_ref()?;
+    manage::lock_banner(v, false, "").is_none().then(|| {
+        if parcel.owner_id == v.agent {
+            aurora_i18n::tr!("common-owner")
+        } else {
+            aurora_i18n::tr!("ui-land-overview-officer")
+        }
+    })
+}
+
+/// The same parcel seen by someone without any right on it.
+pub(super) fn as_visitor(v: &View) -> View {
+    View {
+        agent: Uuid::max(),
+        groups: Vec::new(),
+        ..v.clone()
+    }
 }
 
 /// The part of a `w` x `h` picture that covers a `size` frame, cut in its
@@ -566,19 +595,6 @@ fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
     });
 }
 
-/// The navigation of a page holding panes of the classic window.
-fn pane_nav(ui: &mut egui::Ui, p: &Palette, tabs: &[Tab], selected: &mut Tab) {
-    ui.vertical(|ui| {
-        ui.set_width(NAV_W);
-        ui.spacing_mut().item_spacing.y = 2.0;
-        for tab in tabs {
-            if widgets::navigation(ui, p, tab.icon(), tab.label(), *selected == *tab).clicked() {
-                *selected = *tab;
-            }
-        }
-    });
-}
-
 /// The window's body. True when the saved music streams changed.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
@@ -592,11 +608,23 @@ pub(super) fn show(
     has_xp: bool,
 ) -> bool {
     let mut streams_changed = false;
-    page_tabs(ui, p, &mut s.page);
+    let role = manager_role(v);
+    if role.is_none() {
+        s.view_as_visitor = false;
+    }
+    page_tabs(ui, p, &mut s.page, role, &mut s.view_as_visitor);
     ui.add_space(8.0);
     let Some(parcel) = v.parcel.clone() else {
         super::no_selection(ui, p);
         return false;
+    };
+    let preview = s.view_as_visitor;
+    let visitor;
+    let v = if preview {
+        visitor = as_visitor(v);
+        &visitor
+    } else {
+        v
     };
     match s.page {
         Page::Overview => {
@@ -610,30 +638,15 @@ pub(super) fn show(
                     ui.add_space(4.0);
                 });
         }
-        page => {
+        Page::Manage => {
             header(ui, p, s, v, world, &parcel, pics);
             ui.add_space(12.0);
-            let tabs: Vec<Tab> = page.panes().iter().copied().filter(|t| *t != Tab::Experiences || has_xp).collect();
-            let mut selected = if page == Page::Manage { s.manage_tab } else { s.people_tab };
-            if !tabs.contains(&selected) {
-                selected = tabs.first().copied().unwrap_or(Tab::General);
-            }
-            let height = ui.available_height();
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
-                ui.allocate_ui_with_layout(Vec2::new(NAV_W, height), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    pane_nav(ui, p, &tabs, &mut selected);
-                });
-                ui.vertical(|ui| {
-                    ui.set_width(ui.available_width());
-                    streams_changed = super::pane(ui, p, s, v, world, pics.images, streams, selected);
-                });
-            });
-            if page == Page::Manage {
-                s.manage_tab = selected;
-            } else {
-                s.people_tab = selected;
-            }
+            streams_changed = manage::show(ui, p, s, v, world, pics.images, streams, preview, has_xp);
+        }
+        Page::People => {
+            header(ui, p, s, v, world, &parcel, pics);
+            ui.add_space(12.0);
+            people::show(ui, p, s, v, world, pics);
         }
     }
     streams_changed
@@ -661,16 +674,55 @@ mod tests {
     #[test]
     fn every_classic_tab_has_a_place() {
         for tab in Tab::ALL {
-            let page = Page::of(tab);
+            let (page, section) = Page::of(tab);
             if tab == Tab::Covenant {
                 assert_eq!(page, Page::Overview, "the covenant is a card of the overview");
             } else {
-                assert!(page.panes().contains(&tab), "{tab:?} is on {page:?}");
+                assert_eq!(page, Page::Manage, "{tab:?}");
+                assert!(section.is_some(), "{tab:?} has its section");
             }
         }
-        // the lists of people and of object owners are under "People and objects"
-        assert_eq!(Page::of(Tab::Access), Page::People);
-        assert_eq!(Page::of(Tab::Objects), Page::People);
-        assert_eq!(Page::of(Tab::Options), Page::Manage);
+        assert_eq!(Page::of(Tab::Options).1, Some(Section::Rules));
+        assert_eq!(Page::of(Tab::Sound).1, Some(Section::Media));
+    }
+
+    /// "View as" a visitor: the owner and an officer lose every right, and
+    /// only they are offered it.
+    #[test]
+    fn view_as_a_visitor_takes_every_right() {
+        use crate::world::land::powers;
+        let (me, group) = (Uuid::from_u128(1), Uuid::from_u128(9));
+        let parcel = |owner: Uuid| ParcelInfo {
+            owner_id: owner,
+            group_id: group,
+            is_group_owned: owner == group,
+            status: aurora_net::land::OS_LEASED,
+            ..Default::default()
+        };
+        let view = |parcel: ParcelInfo, powers: u64| View {
+            parcel: Some(std::sync::Arc::new(parcel)),
+            handle: 0,
+            region: None,
+            agent: me,
+            groups: vec![aurora_net::GroupMembership {
+                id: group,
+                name: String::new(),
+                insignia: Uuid::nil(),
+                powers,
+                accept_notices: true,
+                list_in_profile: true,
+                contribution: 0,
+            }],
+            same_region: true,
+            now: 0,
+        };
+        let owner = view(parcel(me), 0);
+        assert_eq!(manager_role(&owner), Some(aurora_i18n::tr!("common-owner")));
+        assert!(!as_visitor(&owner).can(powers::LAND_OPTIONS));
+        let officer = view(parcel(group), powers::LAND_OPTIONS);
+        assert_eq!(manager_role(&officer), Some(aurora_i18n::tr!("ui-land-overview-officer")));
+        assert!(!as_visitor(&officer).can(powers::LAND_OPTIONS));
+        assert_eq!(manager_role(&view(parcel(group), 0)), None, "a member without powers");
+        assert_eq!(manager_role(&view(parcel(Uuid::from_u128(5)), 0)), None, "a visitor");
     }
 }

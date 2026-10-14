@@ -5015,6 +5015,146 @@ ui-land-overview-media-and-sound = Media and sound
 ui-land-overview-media = Media
 ui-land-overview-none = None
 ui-land-overview-no-page = no page
+ui-land-overview-visitor = Visitor
+ui-land-overview-officer = Officer
+ui-land-overview-view-as = View as
+ui-land-overview-view-as-tip = See the parcel as a visitor sees it: nothing can be changed while this is on
+ui-land-manage-access = Who can come
+ui-land-manage-rules = What visitors can do
+ui-land-manage-objects = Objects and prims
+ui-land-manage-visibility = Visibility and search
+ui-land-manage-media = Media and sound
+ui-land-manage-environment = Environment
+ui-land-manage-experiences = Experiences
+ui-land-manage-sale = Sale and ownership
+ui-land-manage-build = Build
+ui-land-manage-group = Group
+ui-land-manage-apparent-time = Apparent time of day
+ui-land-manage-home-page = Home page
+ui-land-manage-replace-texture = Replaced texture
+ui-land-manage-avatar-sounds = Avatar sounds
+ui-land-manage-size = Size
+ui-land-manage-type = Type
+ui-land-manage-xp-allowed = Allowed experiences
+ui-land-manage-xp-blocked = Blocked experiences
+ui-land-manage-sold-to = to { $who }
+ui-land-power-options = Manage parcel options
+ui-land-power-manage-allowed = Manage the access list
+ui-land-power-manage-banned = Manage the ban list
+ui-land-power-landing-point = Set the landing point
+ui-land-power-edit = Edit the land
+ui-land-power-find-places = Show the parcel in search
+ui-land-power-identity = Change the name, description and picture
+ui-land-power-media = Change music and media
+ui-land-power-environment = Change the environment
+ui-land-power-sale = Set land for sale
+ui-land-power-deed = Deed land
+ui-land-power-release = Abandon land
+ui-land-power-return = Return objects
+ui-land-manage-lock-preview = You are looking at the parcel as a visitor: nothing can be changed. Switch "View as" back to change the settings.
+ui-land-manage-lock-public = You see the settings without being able to change them: public land is managed by Linden Lab.
+ui-land-manage-lock-group = You see the settings without being able to change them: only the officers of { $group } with the matching powers can.
+ui-land-manage-lock-owner = You see the settings without being able to change them: only the parcel's owner can.
+ui-land-manage-missing-power = Read only: this needs the group power "{ $power }".
+ui-land-manage-access-why = Choose who may enter. Without "Everyone", red lines appear around the parcel for the others.
+ui-land-manage-access-estate = The estate does not let parcels restrict their access.
+ui-land-manage-set-by-estate = Required by the estate.
+ui-land-manage-age = Must be 18 or over
+ui-land-manage-age-desc = An estate setting too: the estate owner can require it.
+ui-land-manage-payment = Payment info on file
+ui-land-manage-group-enters = The group { $group } enters without restriction
+ui-land-manage-passes = Sell passes
+ui-land-manage-passes-desc = A pass gives temporary access to those who are not on the list.
+ui-land-manage-routing = Teleport routing
+ui-land-manage-routing-desc = Where those who teleport here arrive.
+ui-land-manage-landing-point = Landing point
+ui-land-manage-landing-point-at = ({ $position }), facing { $heading }°. You must be on the parcel to set it.
+ui-land-manage-landing-point-none = None. You must be on the parcel to set it.
+ui-land-manage-clear = Clear
+ui-land-manage-set-here = Set here
+ui-land-manage-lists-elsewhere = Access and ban lists: in "People and objects"
+ui-land-manage-rules-why = "Everyone" includes the group. The estate can impose some settings (damage, pushing).
+ui-land-manage-everyone-head = EVERYONE
+ui-land-manage-group-head = GROUP
+ui-land-manage-object-entry = Bring objects in
+ui-land-manage-run-scripts = Run scripts
+ui-land-manage-use-with-care = use with care
+ui-land-manage-safe = No damage (safe)
+ui-land-manage-safe-desc = Fights take no health here.
+ui-land-manage-push-desc = Other people's scripts cannot push you.
+ui-land-manage-push-region = The region's rules take precedence.
+ui-land-manage-see-avatars = See and talk from the neighbouring parcels
+ui-land-manage-others = Others
+ui-land-manage-impact = Impact { $impact } / { $capacity } on the parcel · region { $used } / { $max }
+ui-land-manage-selected-sat = Selected or sat upon: { $count }
+ui-land-manage-auto-return = Auto-return of other residents' objects
+ui-land-manage-auto-return-desc = After this delay, objects left by non-members go back to their owner. 0 = never.
+ui-land-manage-return = Return objects
+ui-land-manage-return-desc = By category; one owner at a time in "People and objects".
+ui-land-manage-return-others = Others'
+ui-land-manage-return-group = The group's
+ui-land-manage-return-owner = The owner's
+ui-land-manage-search-desc = L$ { $fee } a week. Category, rating, picture and description are used for the results.
+ui-land-manage-category-rating = Category and rating
+ui-land-manage-visibility-advanced = Advanced: name, description, picture (also in the header)
+ui-land-manage-name = Name
+ui-land-manage-picture-desc = Shown in search and in the header.
+ui-land-manage-show = Show
+ui-land-manage-hide = Hide
+ui-land-manage-media-why = Music (URL, favourites), the parcel's media (type, page, replaced texture, size, loop), gesture and object sounds, avatar sounds (everyone / group), voice (on, limited to the parcel), hide MOAP.
+ui-land-manage-parcel-media = Parcel media
+ui-land-manage-env-region = The region's
+ui-land-manage-env-inventory = From inventory
+ui-land-manage-env-custom = Custom
+ui-land-manage-environment-why = The sky, water and day cycle seen on the parcel.
+ui-land-manage-environment-advanced = Advanced: day length and offset, sky altitudes
+ui-land-manage-ground-water = Ground and water
+ui-land-manage-experiences-count = { $allowed ->
+    [one] { $allowed } allowed
+   *[other] { $allowed } allowed
+    } · { $blocked ->
+    [one] { $blocked } blocked
+   *[other] { $blocked } blocked
+    }
+ui-land-manage-sale-why = Sell (price, to whom, with the objects), cancel a sale, choose the group, deed to the group and contribution, abandon, reclaim, script info.
+ui-land-manage-ownership = Ownership
+ui-land-manage-acquired-on = Acquired on { $date }
+ui-land-people-allowed = Always allowed
+ui-land-people-banned = Banned
+ui-land-people-ban = Ban
+ui-land-people-left = { $left } left
+ui-land-people-allowed-hint = They come in even when access is restricted.
+ui-land-people-banned-hint = Banned residents can neither enter nor fly over.
+ui-land-people-selected = { $count ->
+    [one] { $count } selected
+   *[other] { $count } selected
+    }
+ui-land-people-remove = Remove
+ui-land-people-duration = Duration…
+ui-land-people-owners = Objects by owner
+ui-land-people-owners-count = { $objects ->
+    [one] { $objects } object
+   *[other] { $objects } objects
+    } · { $owners ->
+    [one] { $owners } owner
+   *[other] { $owners } owners
+    }
+ui-land-people-owners-idle = Refresh to list the owners of the parcel's objects.
+ui-land-people-refresh = Refresh
+ui-land-people-return-selection = Return the selection
+ui-land-people-return = Return
+ui-land-people-owner-head = OWNER
+ui-land-people-objects-head = OBJECTS
+ui-land-people-newest-head = NEWEST
+ui-land-people-you = you
+ui-land-people-group-tag = group
+ui-land-people-today = today { $time }
+ui-land-people-yesterday = yesterday
+ui-land-dialogs-return-objects-of-owners = { $owners ->
+    [one] Return the { $count } objects of this owner to them?
+   *[other] Return the { $count } objects of these { $owners } owners to them?
+    }
+ui-land-dialogs-objects-of-owners-returned = The objects of the selected owners have been returned.
 ui-group-profile-title = Group Profile
 ui-group-profile-view = View the group's profile
 

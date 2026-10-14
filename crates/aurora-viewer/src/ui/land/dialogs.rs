@@ -21,6 +21,9 @@ pub(super) enum Confirm {
     ReturnGroup,
     ReturnOther,
     ReturnList(ObjectOwner),
+    /// Several owners of the list at once: one ParcelReturnObjects with all
+    /// their IDs (RT_LIST takes a list).
+    ReturnOwners(Vec<ObjectOwner>),
     ResetEnvironment,
 }
 
@@ -127,6 +130,11 @@ fn question(c: &Confirm, parcel: &ParcelInfo, world: &mut World) -> String {
             value0 = world.social.name_of(&o.id).to_string(),
             value1 = format!("{}", o.count)
         ),
+        Confirm::ReturnOwners(owners) => aurora_i18n::tr!(
+            "ui-land-dialogs-return-objects-of-owners",
+            count = owners.iter().map(|o| i64::from(o.count)).sum::<i64>(),
+            owners = owners.len() as i64
+        ),
         Confirm::ResetEnvironment => aurora_i18n::tr!("ui-land-dialogs-you-are-about-to-remove-all-applied-settings-do").into(),
     }
 }
@@ -198,6 +206,10 @@ fn accept(c: Confirm, parcel: &ParcelInfo, world: &mut World) {
             };
             info(world, body);
             returned(world, RT_LIST, vec![o.id]);
+        }
+        Confirm::ReturnOwners(owners) => {
+            info(world, aurora_i18n::tr!("ui-land-dialogs-objects-of-owners-returned").into());
+            returned(world, RT_LIST, owners.iter().map(|o| o.id).collect());
         }
         Confirm::ResetEnvironment => world.land.environment(|local_id| LandCommand::EnvironmentReset { local_id }),
     }
@@ -312,6 +324,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
             ids,
             mut temporary,
             mut hours,
+            replace,
         } => {
             let mut answer = None;
             let open = window(ctx, p, aurora_i18n::tr!("ui-land-dialogs-ban-duration"), 300.0, |ui| {
@@ -337,11 +350,23 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                 Some(true) => {
                     // onClickBan: expiry time, 0 = always
                     let time = if temporary { (v.now + hours as i64 * 3600) as i32 } else { 0 };
+                    if replace {
+                        // a new duration for residents already banned:
+                        // addToBanList keeps the later expiry, so they go first
+                        if let Some(sel) = world.land.sel.as_mut() {
+                            sel.bans.retain(|e| !ids.contains(&e.id));
+                        }
+                    }
                     super::access::add_banned(world, &ids, time);
                     None
                 }
                 Some(false) => None,
-                None => open.then_some(Dialog::BanDuration { ids, temporary, hours }),
+                None => open.then_some(Dialog::BanDuration {
+                    ids,
+                    temporary,
+                    hours,
+                    replace,
+                }),
             }
         }
         Dialog::Sell(mut form) => {

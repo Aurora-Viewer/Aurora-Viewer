@@ -5015,6 +5015,146 @@ ui-land-overview-media-and-sound = Médias et son
 ui-land-overview-media = Média
 ui-land-overview-none = Aucune
 ui-land-overview-no-page = aucune page
+ui-land-overview-visitor = Visiteur
+ui-land-overview-officer = Officier
+ui-land-overview-view-as = Vu en tant que
+ui-land-overview-view-as-tip = Voir la parcelle comme un visiteur la voit : rien n'est modifiable tant que c'est activé
+ui-land-manage-access = Qui peut venir
+ui-land-manage-rules = Ce que les visiteurs peuvent faire
+ui-land-manage-objects = Objets et prims
+ui-land-manage-visibility = Visibilité et recherche
+ui-land-manage-media = Médias et son
+ui-land-manage-environment = Environnement
+ui-land-manage-experiences = Expériences
+ui-land-manage-sale = Vente et propriété
+ui-land-manage-build = Construire
+ui-land-manage-group = Groupe
+ui-land-manage-apparent-time = Heure apparente
+ui-land-manage-home-page = Page d'accueil
+ui-land-manage-replace-texture = Texture remplacée
+ui-land-manage-avatar-sounds = Sons d'avatar
+ui-land-manage-size = Taille
+ui-land-manage-type = Type
+ui-land-manage-xp-allowed = Expériences autorisées
+ui-land-manage-xp-blocked = Expériences bloquées
+ui-land-manage-sold-to = pour { $who }
+ui-land-power-options = Gérer les options de la parcelle
+ui-land-power-manage-allowed = Gérer la liste d'accès
+ui-land-power-manage-banned = Gérer la liste des interdits
+ui-land-power-landing-point = Définir le point d'arrivée
+ui-land-power-edit = Modifier le terrain
+ui-land-power-find-places = Afficher la parcelle dans la recherche
+ui-land-power-identity = Changer le nom, la description et la photo
+ui-land-power-media = Changer la musique et les médias
+ui-land-power-environment = Changer l'environnement
+ui-land-power-sale = Mettre le terrain en vente
+ui-land-power-deed = Céder le terrain
+ui-land-power-release = Abandonner le terrain
+ui-land-power-return = Renvoyer des objets
+ui-land-manage-lock-preview = Vous voyez la parcelle comme un visiteur : rien n'est modifiable. Revenez à votre rôle dans « Vu en tant que » pour changer les réglages.
+ui-land-manage-lock-public = Vous voyez les réglages sans pouvoir les modifier : un terrain public est géré par Linden Lab.
+ui-land-manage-lock-group = Vous voyez les réglages sans pouvoir les modifier : seuls les officiers de { $group } ayant les droits correspondants le peuvent.
+ui-land-manage-lock-owner = Vous voyez les réglages sans pouvoir les modifier : seul le propriétaire de la parcelle le peut.
+ui-land-manage-missing-power = Lecture seule : il faut le droit de groupe « { $power } ».
+ui-land-manage-access-why = Choisissez qui peut entrer. Sans « Tout le monde », des lignes rouges apparaissent autour de la parcelle pour les autres.
+ui-land-manage-access-estate = Le domaine ne laisse pas les parcelles restreindre leur accès.
+ui-land-manage-set-by-estate = Imposé par le domaine.
+ui-land-manage-age = Doit avoir 18 ans ou plus
+ui-land-manage-age-desc = Réglage de domaine possible : le propriétaire du domaine peut l'imposer.
+ui-land-manage-payment = Infos de paiement enregistrées
+ui-land-manage-group-enters = Le groupe { $group } entre sans restriction
+ui-land-manage-passes = Vendre des pass
+ui-land-manage-passes-desc = Un pass donne un accès temporaire à ceux qui ne sont pas sur la liste.
+ui-land-manage-routing = Arrivée par téléportation
+ui-land-manage-routing-desc = Où arrivent ceux qui se téléportent ici.
+ui-land-manage-landing-point = Point d'arrivée
+ui-land-manage-landing-point-at = ({ $position }), regard { $heading }°. Il faut être sur la parcelle pour le définir.
+ui-land-manage-landing-point-none = Aucun. Il faut être sur la parcelle pour le définir.
+ui-land-manage-clear = Effacer
+ui-land-manage-set-here = Définir ici
+ui-land-manage-lists-elsewhere = Listes d'accès et d'interdits : dans « Personnes et objets »
+ui-land-manage-rules-why = « Tout le monde » inclut le groupe. Le domaine peut imposer certains réglages (dégâts, bousculades).
+ui-land-manage-everyone-head = TOUT LE MONDE
+ui-land-manage-group-head = GROUPE
+ui-land-manage-object-entry = Faire entrer des objets
+ui-land-manage-run-scripts = Exécuter des scripts
+ui-land-manage-use-with-care = à utiliser prudemment
+ui-land-manage-safe = Sans dégâts (sécurisé)
+ui-land-manage-safe-desc = Les combats n'enlèvent pas de santé ici.
+ui-land-manage-push-desc = Les scripts des autres ne peuvent pas vous pousser.
+ui-land-manage-push-region = Les règles de la région priment.
+ui-land-manage-see-avatars = Voir et parler depuis les parcelles voisines
+ui-land-manage-others = Autres
+ui-land-manage-impact = Impact { $impact } / { $capacity } sur la parcelle · région { $used } / { $max }
+ui-land-manage-selected-sat = Sélectionnés ou assis : { $count }
+ui-land-manage-auto-return = Renvoi automatique des objets des autres
+ui-land-manage-auto-return-desc = Après ce délai, les objets posés par des non-membres retournent à leur propriétaire. 0 = jamais.
+ui-land-manage-return = Rendre des objets
+ui-land-manage-return-desc = Par catégorie ; un propriétaire à la fois dans « Personnes et objets ».
+ui-land-manage-return-others = Ceux des autres
+ui-land-manage-return-group = Ceux du groupe
+ui-land-manage-return-owner = Ceux du propriétaire
+ui-land-manage-search-desc = { $fee } L$ par semaine. Catégorie, maturité, photo et description servent aux résultats.
+ui-land-manage-category-rating = Catégorie et maturité
+ui-land-manage-visibility-advanced = Avancé : nom, description, photo (aussi dans l'en-tête)
+ui-land-manage-name = Nom
+ui-land-manage-picture-desc = Montrée dans la recherche et dans l'en-tête.
+ui-land-manage-show = Afficher
+ui-land-manage-hide = Masquer
+ui-land-manage-media-why = Musique (URL, favoris), média de la parcelle (type, page, texture remplacée, taille, boucle), sons des gestes et objets, sons d'avatar (tous / groupe), voix (activée, limitée à la parcelle), masquer les MOAP.
+ui-land-manage-parcel-media = Média de la parcelle
+ui-land-manage-env-region = Celui de la région
+ui-land-manage-env-inventory = De l'inventaire
+ui-land-manage-env-custom = Personnalisé
+ui-land-manage-environment-why = Le ciel, l'eau et le cycle du jour vus sur la parcelle.
+ui-land-manage-environment-advanced = Avancé : durée et décalage de la journée, altitudes des ciels
+ui-land-manage-ground-water = Sol et eau
+ui-land-manage-experiences-count = { $allowed ->
+    [one] { $allowed } autorisée
+   *[other] { $allowed } autorisées
+    } · { $blocked ->
+    [one] { $blocked } bloquée
+   *[other] { $blocked } bloquées
+    }
+ui-land-manage-sale-why = Vendre (prix, à qui, avec les objets), annuler une vente, choisir le groupe, céder au groupe et contribution, abandonner, récupérer, infos des scripts.
+ui-land-manage-ownership = Propriété
+ui-land-manage-acquired-on = Acquis le { $date }
+ui-land-people-allowed = Toujours autorisés
+ui-land-people-banned = Interdits
+ui-land-people-ban = Interdire
+ui-land-people-left = { $left } restantes
+ui-land-people-allowed-hint = Ils entrent même quand l'accès est restreint.
+ui-land-people-banned-hint = Les interdits ne peuvent ni entrer ni voler au-dessus.
+ui-land-people-selected = { $count ->
+    [one] { $count } sélectionné
+   *[other] { $count } sélectionnés
+    }
+ui-land-people-remove = Retirer
+ui-land-people-duration = Durée…
+ui-land-people-owners = Objets par propriétaire
+ui-land-people-owners-count = { $objects ->
+    [one] { $objects } objet
+   *[other] { $objects } objets
+    } · { $owners ->
+    [one] { $owners } propriétaire
+   *[other] { $owners } propriétaires
+    }
+ui-land-people-owners-idle = Actualisez pour voir à qui sont les objets de la parcelle.
+ui-land-people-refresh = Actualiser
+ui-land-people-return-selection = Rendre la sélection
+ui-land-people-return = Rendre
+ui-land-people-owner-head = PROPRIÉTAIRE
+ui-land-people-objects-head = OBJETS
+ui-land-people-newest-head = PLUS RÉCENT
+ui-land-people-you = vous
+ui-land-people-group-tag = groupe
+ui-land-people-today = aujourd'hui { $time }
+ui-land-people-yesterday = hier
+ui-land-dialogs-return-objects-of-owners = { $owners ->
+    [one] Rendre les { $count } objets de ce propriétaire ?
+   *[other] Rendre les { $count } objets de ces { $owners } propriétaires ?
+    }
+ui-land-dialogs-objects-of-owners-returned = Les objets des propriétaires choisis ont été rendus.
 ui-group-profile-title = Profil du groupe
 ui-group-profile-view = Voir le profil du groupe
 

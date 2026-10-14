@@ -17,10 +17,12 @@ mod environment;
 mod experiences;
 mod files;
 mod general;
+mod manage;
 mod media;
 mod objects;
 mod options;
 mod overview;
+mod people;
 mod sound;
 
 use aurora::Page;
@@ -141,6 +143,7 @@ impl Draft {
 }
 
 /// What the tabs read about the selection, its region and the agent.
+#[derive(Clone)]
 struct View {
     parcel: Option<Arc<ParcelInfo>>,
     handle: RegionHandle,
@@ -153,6 +156,7 @@ struct View {
     now: i64,
 }
 
+#[derive(Clone)]
 struct RegionView {
     name: String,
     owner: Uuid,
@@ -201,6 +205,8 @@ enum Dialog {
         ids: Vec<Uuid>,
         temporary: bool,
         hours: u32,
+        /// Residents already banned whose duration changes.
+        replace: bool,
     },
     /// A message with only "OK" (alerts of the panels).
     Message(String),
@@ -220,11 +226,24 @@ enum PickFor {
 pub struct LandUi {
     /// The classic window's tab.
     tab: Tab,
-    /// The Aurora window's page, and the pane of the classic window each
-    /// page shows for now.
+    /// The Aurora window's page; on "Manage" the section in view, the one
+    /// to scroll to and the folded parts that are open.
     page: Page,
-    manage_tab: Tab,
-    people_tab: Tab,
+    manage_section: manage::Section,
+    manage_jump: Option<manage::Section>,
+    manage_open: HashSet<manage::Section>,
+    /// The owner (or an officer) looks at the parcel as a visitor would.
+    view_as_visitor: bool,
+    /// "People and objects": the search fields of the two lists and the
+    /// object owners ticked.
+    access_filter: String,
+    ban_filter: String,
+    owners_sel: HashSet<Uuid>,
+    /// Demo captures of "People and objects": ask for the object owners
+    /// once, as the Refresh button does.
+    refresh_owners_once: bool,
+    /// Demo captures: scroll "People and objects" to the object owners.
+    scroll_to_owners: bool,
     /// The overview's covenant shown in full.
     covenant_open: bool,
     was_open: bool,
@@ -287,8 +306,15 @@ impl LandUi {
     /// holds it, or a page by its key (`Page::key`).
     pub fn set_tab(&mut self, name: &str) {
         let key = name.trim().to_lowercase();
+        if key == "owners" {
+            self.page = Page::People;
+            self.refresh_owners_once = true;
+            self.scroll_to_owners = true;
+            return;
+        }
         if let Some(page) = Page::ALL.into_iter().find(|p| p.key() == key) {
             self.page = page;
+            self.refresh_owners_once = page == Page::People;
             return;
         }
         let by_name = |t: &&Tab| {
@@ -301,11 +327,12 @@ impl LandUi {
             .or_else(|| key.parse::<usize>().ok().and_then(|i| Tab::ALL.get(i)))
         {
             self.tab = *t;
-            self.page = Page::of(*t);
-            match self.page {
-                Page::Manage => self.manage_tab = *t,
-                Page::People => self.people_tab = *t,
-                Page::Overview => {}
+            let (page, section) = Page::of(*t);
+            self.page = page;
+            if let Some(section) = section {
+                self.manage_section = section;
+                self.manage_jump = Some(section);
+                self.manage_open.insert(section);
             }
         }
     }
@@ -425,6 +452,7 @@ impl LandUi {
                         ids,
                         temporary: false,
                         hours: 1,
+                        replace: false,
                     })
                 }
                 Some(PickFor::SellTo) => {
