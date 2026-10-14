@@ -122,7 +122,16 @@ dragging a handle switch to `violet_light`, like any selection.
 - **Name plate.** The tag above an avatar (`ui/nameplate.rs`) is the
   **only exception** to the almost square corners: a glass plate with fully
   rounded ends. It is not a precedent: nothing else in the interface is
-  rounder.
+  rounder, but for the residents' pictures (below).
+- **Residents' pictures.** The profile pictures of the residents are round:
+  on the name plates, and in the Conversations window (bubbles, head of a
+  conversation, list), drawn by `widgets::avatar_disc`, with their status
+  dot on the edge (`ui/presence.rs`). Only these pictures and the name
+  plates are round; groups, places and objects keep square tiles. The
+  bubbles of the conversations themselves keep the buttons' radius, and
+  the user's own bubbles carry the accent gradient (violet to indigo), the
+  one gradient outside the brand elements, chosen by the human
+  (2026-10-14).
   - *Glass*: the tint of the plate (halfway between `navy` and `bar`, at
     52%) over the window blur, a light one-pixel border (`ink` at 14%), a
     soft shadow below. The blur goes to the 16 nearest plates; the others,

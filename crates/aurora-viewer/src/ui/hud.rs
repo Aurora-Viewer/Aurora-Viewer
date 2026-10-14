@@ -162,17 +162,16 @@ fn plate_content(
     too_complex: bool,
 ) -> super::nameplate::Content {
     use super::nameplate::{Content, Detail, Presence, Role};
-    use crate::world::status::{ANIM_AWAY, ANIM_DO_NOT_DISTURB};
+    use super::presence::Status;
     let id = o.full_id;
     let own = id == world.agent_id;
     let anims = world.animations_of(&id);
     let playing = |anim: uuid::Uuid| anims.iter().any(|a| a.id == anim);
-    let presence = if playing(ANIM_DO_NOT_DISTURB) {
-        Presence::Busy
-    } else if playing(ANIM_AWAY) {
-        Presence::Away
-    } else {
-        Presence::Online
+    // the source of the Conversations window's dot too (ui/presence.rs)
+    let presence = match super::presence::of_avatar(world, &id) {
+        Status::Busy => Presence::Busy,
+        Status::Away => Presence::Away,
+        _ => Presence::Online,
     };
     let names = &world.social.avatar_names;
     let (name, username, legacy) = match names.get(&id) {

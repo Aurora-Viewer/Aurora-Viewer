@@ -512,6 +512,150 @@ pub fn many_conversation_events(agent: Uuid) -> Vec<NetEvent> {
         .collect()
 }
 
+/// AURORA_DEMO_CONV=bubbles[:busy|:group|:local|:legacy]: the
+/// Conversations window as a messenger (ui/chat/bubbles.rs). Without a
+/// suffix the conversation with an online friend, over two days; `busy` the
+/// one with a resident nearby in do not disturb, after their automatic
+/// response; `group` the demo group chat; `local` the nearby chat; `legacy`
+/// the friend's conversation in the legacy lines (`ChatStyle::Legacy`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bubbles {
+    Friend,
+    Busy,
+    Group,
+    Local,
+    Legacy,
+}
+
+pub fn bubbles_scenario() -> Option<Bubbles> {
+    let v = std::env::var("AURORA_DEMO_CONV").ok()?;
+    Some(match v.strip_prefix("bubbles")? {
+        "" => Bubbles::Friend,
+        ":busy" => Bubbles::Busy,
+        ":group" => Bubbles::Group,
+        ":local" => Bubbles::Local,
+        ":legacy" => Bubbles::Legacy,
+        _ => return None,
+    })
+}
+
+/// The conversation of the scenario shown in the window.
+pub fn bubbles_conversation(view: Bubbles) -> Option<Uuid> {
+    match view {
+        Bubbles::Friend | Bubbles::Legacy => Some(DEMO_FRIEND),
+        Bubbles::Busy => Some(DEMO_NOVA),
+        Bubbles::Group => Some(DEMO_GROUP1),
+        Bubbles::Local => None,
+    }
+}
+
+/// What the network says for the scenario: a resident in the region playing the
+/// do not disturb animation; a few lines of
+/// nearby chat from residents and an object.
+pub fn bubbles_events() -> Vec<NetEvent> {
+    let mut ev = vec![
+        NetEvent::CoarseLocations {
+            handle: HANDLE,
+            positions: vec![
+                (DEMO_TESS, Vec3::new(96.0, 150.0, 28.0)),
+                (DEMO_NOVA, Vec3::new(150.0, 140.0, 24.0)),
+            ],
+        },
+        NetEvent::AvatarAnimations {
+            sources: Vec::new(),
+            avatar: DEMO_NOVA,
+            anims: vec![(crate::world::status::ANIM_DO_NOT_DISTURB, 1)],
+        },
+    ];
+    let say = |from: Uuid, name: &str, text: &str, object: bool| {
+        NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: name.into(),
+            source_id: from,
+            owner_id: Uuid::nil(),
+            source_type: if object {
+                aurora_net::ChatSourceType::Object
+            } else {
+                aurora_net::ChatSourceType::Agent
+            },
+            chat_type: aurora_net::ChatType::Normal,
+            position: Vec3::ZERO,
+            message: text.into(),
+        })
+    };
+    ev.push(say(
+        DEMO_NOVA,
+        aurora_i18n::tr!("demo-nova-example"),
+        aurora_i18n::tr!("demo-bubbles-local-1"),
+        false,
+    ));
+    ev.push(say(
+        DEMO_NOVA,
+        aurora_i18n::tr!("demo-nova-example"),
+        aurora_i18n::tr!("demo-bubbles-local-2"),
+        false,
+    ));
+    ev.push(say(
+        u(200),
+        aurora_i18n::tr!("common-demo-hud"),
+        aurora_i18n::tr!("demo-bubbles-local-3"),
+        true,
+    ));
+    ev
+}
+
+/// The lines said before the scenario starts (yesterday's among them) and
+/// ours: they are written in the conversations as they would have been.
+pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
+    use crate::world::{ChatKind, ChatLine, Origin};
+    let now = std::time::SystemTime::now();
+    let ago = |minutes: u64| now - std::time::Duration::from_secs(minutes * 60);
+    let me = world.own_name();
+    let line = |time, from: &str, source: Uuid, kind, text: &str| ChatLine {
+        time,
+        from: from.to_owned(),
+        text: text.to_owned(),
+        kind,
+        source,
+        origin: Origin::Live,
+    };
+    match view {
+        Bubbles::Friend | Bubbles::Legacy => {
+            let friend = DEMO_FRIEND;
+            let name = "Nova Example";
+            for l in [
+                line(
+                    ago(26 * 60),
+                    &me,
+                    Uuid::nil(),
+                    ChatKind::Own,
+                    aurora_i18n::tr!("demo-bubbles-concert"),
+                ),
+                line(ago(26 * 60 - 3), name, friend, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-cant")),
+                line(ago(12), name, friend, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-sorry")),
+                line(ago(11), name, friend, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-join")),
+                line(ago(2), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-coming")),
+                line(ago(1), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-send-tp")),
+            ] {
+                world.conversation_line(friend, l);
+            }
+        }
+        Bubbles::Busy => {
+            // ours, before her automatic response (which the events bring)
+            world.conversation_line(
+                DEMO_NOVA,
+                line(ago(1), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-free")),
+            );
+            // her automatic response, as world/status.rs writes it
+            let reply = aurora_i18n::tr!(
+                "world-status-auto-response",
+                value0 = aurora_i18n::tr!("demo-bubbles-busy-reply").to_string()
+            );
+            world.conversation_line(DEMO_NOVA, line(now, "Tess Touch", DEMO_NOVA, ChatKind::Im, &reply));
+        }
+        Bubbles::Group | Bubbles::Local => {}
+    }
+}
+
 /// AURORA_DEMO_CONV=tp[:sent|reject]: a conversation with a resident
 /// (DEMO_NOVA, whom the demo's names call "Tess Touch"), then (issue #280)
 /// the invitation of a teleport offer to them (`tp`), the offer sent to
@@ -2978,6 +3122,9 @@ pub fn events() -> Vec<NetEvent> {
     }
     if many_conversations_scenario() {
         ev.extend(many_conversation_events(agent));
+    }
+    if bubbles_scenario().is_some() {
+        ev.extend(bubbles_events());
     }
     if teleport_offer_scenario() {
         ev.extend(teleport_offer_events(agent));

@@ -7008,6 +7008,7 @@ impl App {
                 let mut mini = Vec::new();
                 let mut open = self.panels.chat;
                 let mut contact_actions = Vec::new();
+                self.chat_ui.style = self.settings.chat_style;
                 for c in ui::chat::show(
                     &ctx,
                     &p,
@@ -8288,6 +8289,17 @@ impl ApplicationHandler for App {
                 self.chat_ui
                     .open(crate::demo::many_conversation(crate::demo::MANY_CONVERSATIONS - 1));
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
+            } else if let Some(view) = crate::demo::bubbles_scenario() {
+                // =bubbles[:busy|:group|:local|:legacy]: the window as a
+                // messenger, or its legacy lines (its lines are added once
+                // the login is in)
+                self.panels.chat = true;
+                self.panels.perf = false;
+                self.chat_ui.selected = crate::demo::bubbles_conversation(view);
+                if view == crate::demo::Bubbles::Legacy {
+                    self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
+                }
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(700.0, 560.0));
             } else if crate::demo::teleport_offer_scene().is_some() {
                 self.panels.chat = true;
                 self.panels.perf = false;
@@ -8344,6 +8356,9 @@ impl ApplicationHandler for App {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
+            }
+            if let Some(view) = crate::demo::bubbles_scenario() {
+                crate::demo::bubbles_lines(&mut self.world, view);
             }
             // AURORA_DEMO_CONV=tp[:sent|reject]: the avatar menu's teleport
             // offer (its invitation, or sent as invited to the resident whose

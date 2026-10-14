@@ -48,6 +48,7 @@ pub mod people;
 pub mod perf;
 pub mod place_details;
 pub mod places;
+pub mod presence;
 pub mod profile;
 pub mod scripts;
 pub mod search;

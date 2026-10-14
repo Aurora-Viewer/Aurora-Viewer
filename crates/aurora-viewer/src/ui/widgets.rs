@@ -1362,6 +1362,31 @@ fn square_crop(w: usize, h: usize) -> egui::Rect {
     egui::Rect::from_center_size(egui::pos2(0.5, 0.5), Vec2::new(u, v))
 }
 
+/// `avatar_picture` in a disc: the residents of the Conversations window,
+/// round like the pictures of the name plates (docs/BRANDING.md: only these
+/// and the name plates are round).
+pub fn avatar_disc(ui: &egui::Ui, p: &Palette, rect: egui::Rect, pic: Option<&egui::TextureHandle>, name: &str, dim: bool) {
+    let radius = rect.width().min(rect.height()) * 0.5;
+    match pic {
+        Some(t) => {
+            let [w, h] = t.size();
+            let tint = if dim { PICTURE_TINT_DISABLED } else { PICTURE_TINT };
+            egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), rect.size()))
+                .uv(square_crop(w, h))
+                .tint(tint)
+                .corner_radius(radius)
+                .paint_at(ui, rect);
+        }
+        None => {
+            ui.painter().circle_filled(rect.center(), radius, p.raised);
+            let color = if dim { p.muted_dim } else { p.violet_pale };
+            let font = egui::FontId::proportional(rect.height() * 0.42);
+            ui.painter()
+                .text(rect.center(), egui::Align2::CENTER_CENTER, initials(name), font, color);
+        }
+    }
+}
+
 /// Profile picture of a resident over the square `rect` of a list row or a
 /// chat line, or the initials of `name` on a tile while there is none.
 /// `dim` fades it with its row.

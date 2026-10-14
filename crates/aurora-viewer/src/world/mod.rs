@@ -1991,6 +1991,8 @@ impl World {
             return;
         }
         if im.dialog == 0 && !im.from_agent_id.is_nil() {
+            // an ordinary message: their automatic response is behind them
+            self.social.auto_responded.remove(&im.from_agent_id);
             if !im.from_name.is_empty() {
                 self.social.names.entry(im.from_agent_id).or_insert_with(|| im.from_name.clone());
             }
@@ -2363,6 +2365,13 @@ impl World {
             origin: Origin::Live,
         };
         self.conversation_push(to, line, false);
+    }
+
+    /// Add a line said at its own time to a conversation, opening it (the
+    /// demo's conversations over several days).
+    pub fn conversation_line(&mut self, session: Uuid, line: ChatLine) {
+        self.social.session_mut(session);
+        self.conversation_push(session, line, false);
     }
 
     /// Our teleport offer (send_lures, llviewermessage.cpp): the invitation
