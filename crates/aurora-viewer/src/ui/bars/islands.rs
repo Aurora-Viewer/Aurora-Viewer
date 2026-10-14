@@ -1,6 +1,7 @@
 //! Aurora's top bar: glass islands laid over the world instead of a
 //! full-width band (variant A of the bars mockup the human validated). From
-//! the left: the Aurora menu, the place (stretched to the account island,
+//! the left: the Aurora menu, the bug report (when shown), the place
+//! (stretched to the account island,
 //! `place.rs`), the account (picture with the online status, balance), the
 //! system (SLT clock, latency, frame rate, media and volume) and the bell.
 //! The islands keep the windows' blur, sampled within their rectangles
@@ -194,9 +195,14 @@ pub fn top(
     let acc_rect = row(screen, right - account_width(ui, p, st), right);
     right = acc_rect.left() - MARGIN;
     let left = screen.left() + MARGIN;
-    let n = if st.show_bug_report { 2.0 } else { 1.0 };
-    let menu_rect = row(screen, left, left + PAD * 2.0 + SLOT * n + GAP * (n - 1.0));
-    let span = row(screen, menu_rect.right() + MARGIN, right);
+    let menu_rect = row(screen, left, left + PAD * 2.0 + SLOT);
+    // the bug report in an island of its own after the wolf's (the human's
+    // request: in one island the two read as one button); hidden, the place
+    // follows the wolf 8 px away
+    let bug_rect = st
+        .show_bug_report
+        .then(|| row(screen, menu_rect.right() + MARGIN, menu_rect.right() + MARGIN + PAD * 2.0 + SLOT));
+    let span = row(screen, bug_rect.unwrap_or(menu_rect).right() + MARGIN, right);
     let (place_rect, detail) = super::place::layout(ui, st, span);
 
     // each island is an area of its own: the pointer over it is over the
@@ -242,17 +248,20 @@ pub fn top(
             },
         );
         resp.on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
-        // the bug report: a button of its own next to the wolf, when shown
-        // (the island is then one slot wider, never a hole without it)
-        if st.show_bug_report {
-            let bug = wolf.translate(Vec2::new(SLOT + GAP, 0.0));
+    });
+    if let Some(bug_rect) = bug_rect {
+        area(&ctx, p, "bug", bug_rect, |ui| {
+            // its right click hides it, as the wolf's does
+            let back = ui.interact(bug_rect, Id::new("bars_island_bug_back"), Sense::click());
+            menu_options(&back, p, st, &mut action);
+            let bug = Rect::from_center_size(bug_rect.center(), Vec2::splat(SLOT));
             let resp = icon_slot(ui, p, icons, bug, Id::new("bars_island_bug"), "bug-filled", true);
             menu_options(&resp, p, st, &mut action);
             if resp.on_hover_text(aurora_i18n::tr!("bug-title")).clicked() {
                 action = BarAction::ReportBug;
             }
-        }
-    });
+        });
+    }
     area(&ctx, p, "place", place_rect, |ui| {
         if let Some(a) = super::place::island(ui, p, icons, panels, st, place_rect, detail) {
             action = a;
@@ -261,7 +270,7 @@ pub fn top(
     (action, audio_action)
 }
 
-/// Right-click menu of the menu island: the bug report button, also in
+/// Right-click menu of the menu and bug islands: the bug report button, also in
 /// Preferences › Interface ("Report a bug in the top bar", on by default
 /// during the alpha).
 fn menu_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
@@ -570,10 +579,19 @@ mod tests {
                     let (menu, place, account, system, bell) = (rect("menu"), rect("place"), rect("account"), rect("system"), rect("bell"));
                     let case = format!("{width} bug {bug} stretch {stretch}");
                     assert_eq!((menu.left(), menu.top(), menu.height()), (MARGIN, MARGIN, HEIGHT), "{case}");
-                    let slots = if bug { 2.0 } else { 1.0 };
-                    assert_eq!(menu.width(), PAD * 2.0 + SLOT * slots + GAP * (slots - 1.0), "{case}");
+                    assert_eq!(menu.width(), PAD * 2.0 + SLOT, "{case}");
                     assert_eq!(bell.right(), width - MARGIN, "{case}");
-                    assert_eq!(place.left() - menu.right(), MARGIN, "{case}");
+                    // the bug's island between the wolf's and the place, or
+                    // the place right after the wolf
+                    let before_place = if bug {
+                        let b = rect("bug");
+                        assert_eq!((b.top(), b.height(), b.width()), (MARGIN, HEIGHT, PAD * 2.0 + SLOT), "{case}");
+                        assert_eq!(b.left() - menu.right(), MARGIN, "{case}");
+                        b
+                    } else {
+                        menu
+                    };
+                    assert_eq!(place.left() - before_place.right(), MARGIN, "{case}");
                     let pairs = [(account, system), (system, bell)];
                     for (a, b) in pairs {
                         assert_eq!(b.left() - a.right(), MARGIN, "{case}: {a:?} {b:?}");

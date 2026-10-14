@@ -399,7 +399,7 @@ const ALIASES: &[(&str, &str)] = &[
     ("mouselook", "crosshair"),
     ("radar", "radar-filled"),
     ("statistics", "chart-area-line-filled"),
-    ("nearbychat_18", "message-circle-filled"),
+    ("nearbychat_18", "message-filled"),
     ("Home_Off", "home-filled"),
     ("Stop_Off", "player-stop-filled"),
     ("Inv_FolderClosed", "folder-filled"),

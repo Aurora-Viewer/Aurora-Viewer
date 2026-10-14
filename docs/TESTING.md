@@ -2210,8 +2210,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `normal` (the islands as set), `legacy` (Firestorm's bars), `compact`
   (the place island as wide as its content), `rights` (the parcel rights
   named when there is room), `nobug` / `bug` (the bug report button
-  hidden / shown: the menu island holds the wolf alone, the place follows
-  8 px away), `voice` (talking on the dock's Speak button, its level at
+  hidden / shown: the bug's own island, after the wolf's, goes away and
+  the place follows the wolf 8 px away), `voice` (talking on the dock's Speak button, its level at
   62 %), `chatwide` (the chat island 560 px wide: the dock moves right, its
   buttons narrow at 1280); and one menu opened at frame 300: `menu`
   (the place), `options` (right click on the place island), `favorites`,

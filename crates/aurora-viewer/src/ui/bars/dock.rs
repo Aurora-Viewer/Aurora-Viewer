@@ -226,7 +226,7 @@ fn chat_island(
     paint_icon(
         ui,
         icons,
-        "message-circle-filled",
+        "message-filled",
         button,
         super::islands::ICON,
         slot_ink(p, resp.hovered() || open, true),
