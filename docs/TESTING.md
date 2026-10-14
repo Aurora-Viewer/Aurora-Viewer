@@ -1174,9 +1174,9 @@ To check with these scenarios:
   follows it (two ground frames instead of four, logged `the editor follows
   it`). `day-notrans`: as `day`, then the library's no-transfer "Annan
   Adored Pink Sky" is loaded at 60 % (900): Firestorm's question about
-  making the day no-transfer comes first. `beacons`: the sky editor on its
+  making the day no-transfer comes first, with its "Do not show again" box (Preferences › General › Environment turns it back on). `beacons`: the sky editor on its
   Sun & Moon tab with both beacons on: a line from the avatar towards the
-  sun (amber) and the moon (violet); they go off again when the editor
+  sun (amber) and the moon (violet), named at the bottom left; they go off again when the editor
   closes (a capture's exit skips that: the demo profile keeps them on).
 
 ## Load and smoothness
