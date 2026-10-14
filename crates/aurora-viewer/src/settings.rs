@@ -14,6 +14,29 @@ pub enum ChatStyle {
     Legacy,
 }
 
+/// What a left click on another avatar's name plate does (Preferences ›
+/// Interface; the human's request of 2026-10-14). Each one is an entry of
+/// the avatar's menu; nothing, the default, leaves the click to the world.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PlateClick {
+    #[default]
+    Nothing,
+    Profile,
+    InstantMessage,
+    OfferTeleport,
+    Menu,
+}
+
+impl PlateClick {
+    pub const ALL: [PlateClick; 5] = [
+        PlateClick::Nothing,
+        PlateClick::Profile,
+        PlateClick::InstantMessage,
+        PlateClick::OfferTeleport,
+        PlateClick::Menu,
+    ];
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum GridChoice {
     SecondLife,
@@ -244,6 +267,10 @@ pub struct Settings {
     /// Complete name plates for friends only: the others stop at the
     /// compact pill (off by default).
     pub plates_friends_only_full: bool,
+    /// A name plate under the pointer shows full while it stays there (on
+    /// by default).
+    pub plates_hover_expand: bool,
+    pub plate_click: PlateClick,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
@@ -632,6 +659,8 @@ impl Default for Settings {
             name_tag_distance: 64.0,
             classic_name_tags: false,
             plates_friends_only_full: false,
+            plates_hover_expand: true,
+            plate_click: PlateClick::Nothing,
             chat_style: ChatStyle::Bubbles,
             invert_mouse: false,
             arrows_strafe: false,

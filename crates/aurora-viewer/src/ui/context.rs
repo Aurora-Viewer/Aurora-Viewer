@@ -179,6 +179,11 @@ pub enum CtxAction {
     /// a conversation, a resident or a group.
     ShowHistory(Option<Uuid>),
     OfferTeleport(Uuid),
+    /// A button of a teleport card in a conversation (accept or not).
+    AnswerTeleport {
+        invite: u64,
+        accept: bool,
+    },
     Profile(Uuid),
     /// Rendering exception of an avatar (LLRenderMuteList).
     SetRender(Uuid, u8),

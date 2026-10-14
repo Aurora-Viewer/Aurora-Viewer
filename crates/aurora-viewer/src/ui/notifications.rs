@@ -273,9 +273,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, list: &mut Notifica
     let mut answers = Vec::new();
     let now = ctx.input(|i| i.time);
 
-    // new arrivals become toasts (unless the list is open)
+    // new arrivals become toasts (unless the list is open, or they were
+    // already seen where they arrived: a card in the conversation in sight)
     for n in list.list.iter().filter(|n| n.id > nui.last_seen) {
-        if !nui.open {
+        if !nui.open && !n.read {
             let ttl = if n.interactive() { TOAST_OFFER } else { TOAST_INFO };
             nui.toasts.push((n.id, now + ttl));
         }
