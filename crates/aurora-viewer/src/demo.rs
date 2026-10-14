@@ -1653,6 +1653,18 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 },
             ]
         }
+        // AURORA_DEMO_ACTIONS=tp-door: the touched object answers like a
+        // club's teleport door scripted with llMapDestination (issue #283)
+        aurora_net::NetCommand::ObjectGrab { local_id: 975, .. }
+            if std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|m| m.starts_with("tp-door")) =>
+        {
+            vec![NetEvent::ScriptTeleportRequest {
+                object_name: "Club door".into(),
+                region: aurora_i18n::tr!("common-aurora-demo").into(),
+                position: Vec3::new(168.4, 149.7, 118.2),
+                flags: aurora_net::beacon::SHOW_MAP | aurora_net::beacon::FOCUS_MAP,
+            }]
+        }
         _ => Vec::new(),
     }
 }
@@ -1702,7 +1714,7 @@ pub fn action_mode_id(mode: &str) -> u32 {
         "sit" => 970,
         "buy" => 971,
         "pay" => 972,
-        "none" | "touch" => 975,
+        "none" | "touch" | "tp" => 975,
         "open" => 976,
         "play" | "pause" => 977,
         "zoom" => 979,
