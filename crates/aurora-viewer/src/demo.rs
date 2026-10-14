@@ -39,6 +39,9 @@ pub mod geometry;
 /// Names and chat in the characters residents use (AURORA_DEMO_GLYPHS).
 #[path = "demo_glyphs.rs"]
 pub mod glyphs;
+/// The demo group server (AURORA_DEMO_GROUP_PROFILE).
+#[path = "demo_group.rs"]
+pub mod group;
 #[path = "demo_hud.rs"]
 pub mod hud;
 /// About Land answers (AURORA_DEMO_LAND).
@@ -1239,6 +1242,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = hud::reply(cmd) {
         return events;
     }
+    if let Some(events) = group::reply(cmd) {
+        return events;
+    }
     if let Some(events) = search::reply(cmd) {
         return events;
     }
@@ -1269,6 +1275,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             vec![NetEvent::Names(
                 ids.iter()
                     .map(|id| {
+                        if let Some((first, last, _)) = group::member_name(id) {
+                            return (*id, first.to_owned(), last.to_owned());
+                        }
                         let n = (id.as_u128() & 0xFF) as usize % names.len();
                         let mut it = names[n].split(' ');
                         (*id, it.next().unwrap_or("").to_owned(), it.next().unwrap_or("").to_owned())
@@ -1295,6 +1304,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                             long
                         } else if let Some(resident) = tags::name(id) {
                             resident
+                        } else if let Some(member) = group::member_name(id) {
+                            member
                         } else if let Some((first, sample)) = &glyphs {
                             (first.as_str(), "Resident", sample.display_name)
                         } else {
@@ -1456,15 +1467,24 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 list_in_profile: true,
                 contribution: 0,
             };
+            // our abilities in the first one follow the group profile's
+            // scenario; the groups joined or left since are in the list
+            let mut groups = vec![
+                aurora_net::GroupMembership {
+                    powers: group::my_powers(),
+                    ..g(DEMO_GROUP1, "Aurora Builders", true)
+                },
+                g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),
+                aurora_net::GroupMembership {
+                    list_in_profile: false,
+                    ..g(DEMO_GROUP3, aurora_i18n::tr!("common-plaza-market"), true)
+                },
+            ];
+            if !group::adjust_groups(&mut groups) {
+                return vec![NetEvent::Groups(groups)];
+            }
             vec![
-                NetEvent::Groups(vec![
-                    g(DEMO_GROUP1, "Aurora Builders", true),
-                    g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),
-                    aurora_net::GroupMembership {
-                        list_in_profile: false,
-                        ..g(DEMO_GROUP3, aurora_i18n::tr!("common-plaza-market"), true)
-                    },
-                ]),
+                NetEvent::Groups(groups),
                 NetEvent::ActiveGroup {
                     id: DEMO_GROUP1,
                     name: "Aurora Builders".into(),

@@ -305,7 +305,8 @@ pub struct Settings {
     pub plates_hover_expand: bool,
     pub plate_click: PlateClick,
     /// Profiles in Firestorm's tabbed window (Second Life, Feed, Favorites…)
-    /// instead of the header and cards of `ui/profile/aurora.rs`.
+    /// instead of the header and cards of `ui/profile/aurora.rs`; group
+    /// profiles in the classic window too (`ui/group_profile.rs`).
     pub classic_profiles: bool,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
