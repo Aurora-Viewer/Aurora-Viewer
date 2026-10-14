@@ -188,6 +188,8 @@ pub struct App {
     name_tags_alt_classic: bool,
     /// AURORA_DEMO_TAGS: the set of states its residents show.
     demo_tag_states: Option<bool>,
+    /// AURORA_DEMO_PEOPLE: the states of its residents were sent.
+    demo_people_states: bool,
     /// Interface parts of the frame's profile (`u_*`).
     ui_parts: Parts,
     /// The interface's shapes leave for the render thread, which
@@ -674,6 +676,7 @@ impl App {
             sync_alt: 0,
             name_tags_alt_classic: false,
             demo_tag_states: None,
+            demo_people_states: false,
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
             last_frame: Instant::now(),
@@ -3506,6 +3509,12 @@ impl App {
         let mut events = self
             .radar
             .sweep(seen, self.world.agent.position, my_region, &gaps, self.settings.draw_distance, now);
+        // AURORA_DEMO_PEOPLE: its residents arrived before the session
+        if self.demo {
+            for (id, ago) in crate::demo::people::arrivals() {
+                self.radar.backdate(&id, now - ago);
+            }
+        }
         let s = self.settings.radar.clone();
         // Firestorm asks for every profile as its entry appears; here only
         // when something reads them (a column on screen, the age alert)
@@ -6135,6 +6144,9 @@ impl App {
         }
         if self.demo {
             let time = self.egui_ctx.input(|i| i.time);
+            for event in crate::demo::people::state_events(time, &mut self.demo_people_states) {
+                self.world.apply(event);
+            }
             for event in crate::demo::tags::state_events(time, &mut self.demo_tag_states) {
                 self.world.apply(event);
             }
@@ -7840,6 +7852,7 @@ impl App {
                         VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
                     );
                     crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
+                    crate::demo::people::voice(&mut levels, ctx.input(|i| i.time));
                     levels
                 } else {
                     self.voice.levels(self.world.agent_id)
@@ -8262,6 +8275,7 @@ impl App {
                     &mut radar,
                     &mut self.settings.friends_list,
                     &mut people_map,
+                    !self.settings.classic_people,
                 );
                 if people_before != (self.settings.radar.clone(), self.settings.friends_list.clone()) {
                     self.settings.save();
@@ -8285,6 +8299,9 @@ impl App {
                             self.panels.chat = true;
                         }
                         ui::people::PeopleAction::GroupNotices(id, on) => self.world.groups.set_accept_notices(id, on),
+                        ui::people::PeopleAction::ModifyRights { friend, rights, grant } => {
+                            self.contacts_ui.ask_modify_rights(friend, rights, grant)
+                        }
                         ui::people::PeopleAction::PickFriend => self.contacts_ui.pick_new_friend(),
                         ui::people::PeopleAction::Unblock(id, name) => self.world.unblock(id, &name, 0),
                         ui::people::PeopleAction::BlockByName(name) => {
@@ -9450,6 +9467,33 @@ impl ApplicationHandler for App {
                 if matches!(v.as_str(), "profile" | "profil") {
                     self.group_profile_ui.open(&mut self.world, crate::demo::DEMO_GROUP1);
                 }
+            }
+            // AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy: Near you with the
+            // residents of the People mock-up, alone on screen
+            if let Some(mode) = crate::demo::people::mode() {
+                for ev in crate::demo::people::events() {
+                    self.world.apply(ev);
+                }
+                use crate::demo::people::Mode;
+                self.settings.classic_people = mode == Mode::Legacy;
+                self.settings.radar.compact = mode == Mode::Crowd;
+                if let Some(id) = crate::demo::people::sheet() {
+                    self.people_ui.radar_selected = vec![id];
+                    self.people_ui.open_sheet(id);
+                    // the mock-up's window with a sheet
+                    let pos = ui::people::default_pos(ui::layout::work_area(&self.egui_ctx));
+                    ui::widgets::place_floater(&self.egui_ctx, ui::people::WINDOW, pos, egui::vec2(860.0, 600.0));
+                }
+                if let Some(id) = crate::demo::people::hovered() {
+                    self.people_ui.radar_selected = vec![id];
+                    self.people_ui.demo_hover = Some(id);
+                }
+                self.panels.people = true;
+                self.panels.people_tab = 0;
+                self.panels.inventory = false;
+                self.panels.chat = false;
+                self.panels.minimap = false;
+                self.panels.perf = false;
             }
             if std::env::var_os("AURORA_DEMO_UI").is_some() {
                 self.panels.people = true;

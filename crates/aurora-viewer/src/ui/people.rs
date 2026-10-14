@@ -1,4 +1,6 @@
-//! "People" floater (nearby / friends / groups / blocked).
+//! "People" floater (nearby / friends / groups / blocked). Near you comes in
+//! Aurora's look (`nearby.rs`, `sheet.rs`) or as Firestorm's radar table
+//! (`radar.rs`), chosen in Preferences › Aurora (`Settings::classic_people`).
 
 use super::Panels;
 use super::context::{self, AvatarList};
@@ -14,8 +16,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+mod nearby;
 mod radar;
+mod sheet;
 pub use radar::{RadarData, RadarSettings, age_days, radar_name};
+
+/// Id of the window.
+pub(crate) const WINDOW: &str = "people";
 
 pub enum PeopleAction {
     OpenIm(Uuid),
@@ -44,6 +51,9 @@ pub enum PeopleAction {
     PickFriend,
     /// The bell of a group: receive its notices or not.
     GroupNotices(Uuid, bool),
+    /// The switch of the right to modify our objects in a sheet: asked
+    /// first (GrantModifyRights / RevokeModifyRights).
+    ModifyRights { friend: Uuid, rights: i32, grant: bool },
 }
 
 /// Options of the friends tab (menu_people_friends_view.xml).
@@ -99,6 +109,9 @@ pub(crate) fn default_pos(work: egui::Rect) -> egui::Pos2 {
 /// picture, a name of some eighteen characters, the height a dozen avatars.
 pub(crate) const DEFAULT_SIZE: Vec2 = Vec2::new(462.0, 420.0);
 
+/// Its size in Aurora's look, the mock-up's: a dozen rich rows.
+pub(crate) const AURORA_SIZE: Vec2 = Vec2::new(520.0, 560.0);
+
 #[derive(Default)]
 pub struct PeopleUi {
     pub filter: String,
@@ -115,9 +128,25 @@ pub struct PeopleUi {
     /// The ones already asked for, and the pace of the new ones.
     pics_asked: HashSet<Uuid>,
     pic_budget: super::nameplate::PictureBudget,
+    /// The person whose sheet is open (Aurora's look).
+    pub sheet: Option<Uuid>,
+    /// A sheet just opened: the window grows for it if it is too narrow.
+    sheet_grow: bool,
+    /// The width the window took for the sheet, given back when it closes.
+    sheet_grown: f32,
+    /// The row whose "…" menu is open: its quick actions stay shown.
+    row_menu: Option<Uuid>,
+    /// AURORA_DEMO_PEOPLE=rows: the row shown as under the pointer, its
+    /// quick actions out (a capture has no pointer).
+    pub demo_hover: Option<Uuid>,
 }
 
 impl PeopleUi {
+    /// Open the sheet of `id` in Near you (Aurora's look).
+    pub fn open_sheet(&mut self, id: Uuid) {
+        nearby::open_sheet(self, id);
+    }
+
     /// A row on screen has no picture yet: ask for it, a few new residents
     /// a second (a crowded region or a long friend list would send as many
     /// profile requests at once), then again every frame until it is there.
@@ -160,33 +189,68 @@ pub fn people_window(
     friends: &mut FriendsSettings,
     // the mini-map renderer (LLNetMap in the Nearby tab)
     map: &mut dyn FnMut(&mut egui::Ui, Vec2),
+    // Aurora's look of Near you (`Settings::classic_people` off)
+    aurora: bool,
 ) -> Vec<PeopleAction> {
     let mut actions = Vec::new();
     let mut open = panels.people;
     let help = aurora_i18n::tr!("ui-people-nearby-avatars-and-friends-list");
     let pos = default_pos(super::layout::work_area(ctx));
-    let floater = Floater::new("people", aurora_i18n::tr!("common-people"), pos, DEFAULT_SIZE).help(help);
+    let size = if aurora { AURORA_SIZE } else { DEFAULT_SIZE };
+    // the table has no sheet: back to Firestorm's look, the window gives
+    // back the width it took for one
+    if !aurora && st.sheet.is_some() {
+        nearby::close_sheet(st);
+    }
+    nearby::fit_window(ctx, st);
+    let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("common-people"), pos, size).help(help);
+    if aurora {
+        // the mock-up's tabs right under the title
+        floater = floater.compact_header();
+    }
     floater.show(ctx, p, &mut open, |ui| {
         let mut tab = panels.people_tab as usize;
-        widgets::tabs(
-            ui,
-            p,
-            &mut tab,
-            &[
-                (aurora_i18n::tr!("ui-people-near-you"), true),
-                (aurora_i18n::tr!("common-friends"), true),
-                (aurora_i18n::tr!("common-groups"), true),
-                (aurora_i18n::tr!("common-recent"), false),
-                (aurora_i18n::tr!("common-blocked"), true),
-            ],
-        );
+        let labels = [
+            (aurora_i18n::tr!("ui-people-near-you"), true),
+            (aurora_i18n::tr!("common-friends"), true),
+            (aurora_i18n::tr!("common-groups"), true),
+            (aurora_i18n::tr!("common-recent"), false),
+            (aurora_i18n::tr!("common-blocked"), true),
+        ];
+        if aurora {
+            // the mock-up's tabs: pills, the count of the open one in the accent
+            let count = match tab {
+                0 => radar.radar.total,
+                1 => world.social.friends.len(),
+                2 => world.groups.sorted().len(),
+                _ => world.mutes.entries().len(),
+            };
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for (i, (label, enabled)) in labels.iter().enumerate() {
+                    let selected = tab == i;
+                    let count = (selected && *enabled).then(|| aurora_i18n::integer(count as i64));
+                    if widgets::pill_tab(ui, p, "", label, count, true, selected, *enabled).clicked() {
+                        tab = i;
+                    }
+                }
+            });
+        } else {
+            widgets::tabs(ui, p, &mut tab, &labels);
+        }
         panels.people_tab = tab as u8;
-        ui.add_space(4.0);
+        if !aurora {
+            ui.add_space(4.0);
+        }
         match panels.people_tab {
             0 => {
                 // the radar lays out its own filter, beside its buttons
                 let mut blocked = false;
-                radar::tab(ui, p, world, radar, st, map, &mut actions, &mut blocked);
+                if aurora {
+                    nearby::tab(ui, p, world, radar, st, map, &mut actions, &mut blocked);
+                } else {
+                    radar::tab(ui, p, world, radar, st, map, &mut actions, &mut blocked);
+                }
                 if blocked {
                     panels.people_tab = 4;
                 }

@@ -5093,6 +5093,32 @@ radar-age-alert = { $days ->
     }
 radar-too-far-to-zoom = Cet avatar est trop loin pour que la caméra aille jusqu'à lui.
 people-view-sort-options = Options d'affichage et de tri
+people-filter-by-name = Filtrer par nom…
+people-view-rich = Lignes riches
+people-view-compact = Compact (une ligne chacun, pour une foule)
+people-alerts-options = Alertes et options
+people-sort = Trier
+people-sort-arrival = Arrivée
+people-sum-nearby = près de vous
+people-sum-earshot = à portée de voix
+people-sum-friends = { $count ->
+    [one] ami
+   *[other] amis
+    }
+people-band-whisper = Chuchoter · { $range } m
+people-band-say = Parler · { $range } m
+people-band-shout = Crier · { $range } m
+people-band-beyond = Au-delà
+people-seen-now = < 1 min
+people-seen-minutes = { $n } min
+people-seen-hours = { $n } h
+people-sheet-im = IM
+people-sheet-i-grant = Ce que j'accorde à { $name }
+people-sheet-they-grant = Ce que { $name } m'accorde
+people-sheet-grant-map = Me localiser sur la carte
+people-sheet-has-online = Je vois quand cette personne est en ligne
+people-sheet-has-map = Je peux la localiser
+people-sheet-gone = N'est plus près de vous.
 people-friends-add = Proposer l'amitié à un résident
 people-friends-sort-name = Trier par nom
 people-friends-sort-username = Trier par nom d'utilisateur
@@ -5156,6 +5182,10 @@ ui-options-aurora-world-map = Carte du monde
 ui-options-aurora-world-map-help = La carte occupe la fenêtre, recherche et lieu flottent dessus ; ou carte et panneau latéral comme Firestorm.
 ui-options-aurora-world-map-full = Carte plein cadre
 ui-options-aurora-world-map-side = Panneau latéral (Firestorm)
+ui-options-aurora-people = Personnes
+ui-options-aurora-people-help = Lignes avec photo, badges et portée, ou tableau à colonnes comme le radar de Firestorm.
+ui-options-aurora-people-rows = Lignes riches
+ui-options-aurora-people-table = Tableau (Firestorm)
 ui-options-aurora-profiles = Profils
 ui-options-aurora-profiles-help = En-tête avec photo, badges et actions, contenu en cartes ; ou fenêtres à onglets Vie SL, Flux, Favoris… comme Firestorm. Vaut pour les avatars et les groupes.
 ui-options-aurora-profiles-aurora = Aurora

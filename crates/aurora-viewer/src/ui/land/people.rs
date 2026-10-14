@@ -304,23 +304,7 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
 /// The search field of a list: a magnifier then the text, on the field's
 /// face like the mockup's.
 fn search_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, width: f32) {
-    egui::Frame::new()
-        .fill(p.bar)
-        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
-        .inner_margin(egui::Margin::symmetric(9, 4))
-        .show(ui, |ui| {
-            ui.set_width(width - 18.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 7.0;
-                widgets::glyph(ui, "search-filled", p.muted, 13.0);
-                ui.add(
-                    egui::TextEdit::singleline(text)
-                        .frame(egui::Frame::NONE)
-                        .hint_text(aurora_i18n::tr!("common-search"))
-                        .desired_width(f32::INFINITY),
-                );
-            });
-        });
+    widgets::search_box(ui, p, text, aurora_i18n::tr!("common-search"), width);
 }
 
 fn s_pics<'a>(pics: &'a Pictures, id: Uuid) -> Option<&'a egui::TextureHandle> {
