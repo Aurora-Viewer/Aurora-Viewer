@@ -240,6 +240,8 @@ pub struct App {
     call_shown: Option<uuid::Uuid>,
     /// When the voice volumes changed by the call strip are saved.
     volumes_save_at: Option<Instant>,
+    /// Residents added to a conversation: the picker and the confirmation.
+    call_invite_ui: ui::call_invite::CallInviteUi,
     /// Microphone button of the bottom bar held (hold-to-talk mode).
     mic_button_held: bool,
     /// Voice: connected in this region, own speaking level (0..1).
@@ -698,6 +700,7 @@ impl App {
             call_demo: Default::default(),
             call_shown: None,
             volumes_save_at: None,
+            call_invite_ui: Default::default(),
             mic_button_held: false,
             voice_connected: false,
             voice_level: 0.0,
@@ -8086,6 +8089,8 @@ impl App {
                         ui::chat::ConvAction::HangUp => self.world.end_call(),
                         ui::chat::ConvAction::ToggleMic => self.mic_on = !self.mic_on,
                         ui::chat::ConvAction::AnswerCall { session, answer } => self.world.answer_call_invite(session, answer),
+                        ui::chat::ConvAction::PickPeople(conversation) => self.call_invite_ui.pick_for(conversation),
+                        ui::chat::ConvAction::AddPeople(conversation, ids) => self.call_invite_ui.add(&mut self.world, conversation, ids),
                         ui::chat::ConvAction::SetVolume(id, v) => {
                             self.world.calls.set_volume(id, v);
                             // saved once the slider rests
@@ -8138,6 +8143,13 @@ impl App {
                 }
                 // their confirmations, also asked from the other menus
                 contact_actions.extend(ui::contacts::dialog_windows(&ctx, &p, &mut self.world, &mut self.contacts_ui));
+                // residents added to a conversation: a conversation with one
+                // resident that became a conference closes (FSFloaterIM::
+                // addP2PSessionParticipants)
+                if let Some(closed) = self.call_invite_ui.show(&ctx, &p, &mut self.world) {
+                    self.world.leave_session(closed);
+                    self.chat_ui.forget(closed);
+                }
                 for c in contact_actions {
                     self.on_contacts_action(c, &mut a);
                 }

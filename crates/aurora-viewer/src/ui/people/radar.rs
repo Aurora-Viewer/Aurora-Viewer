@@ -731,7 +731,9 @@ pub fn tab(
             aurora_i18n::tr!("radar-selection-menu"),
             first.is_some(),
             |ui| {
-                if let Some(id) = first {
+                if st.radar_selected.len() > 1 {
+                    context::avatars_menu(ui, p, world, &st.radar_selected);
+                } else if let Some(id) = first {
                     context::avatar_list_menu(ui, p, world, id, AvatarList::Nearby);
                 }
             },
@@ -748,6 +750,7 @@ pub fn tab(
     }
     let filter = st.filter.trim().to_lowercase();
     let list = rows(world, data, &filter);
+    let order: Vec<Uuid> = list.iter().map(|r| r.id).collect();
     let counts = (
         data.radar.total,
         list.iter().filter(|r| r.same_region).count(),
@@ -762,7 +765,9 @@ pub fn tab(
         }
         let radius = ui.visuals().window_corner_radius;
         for row in &list {
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::click());
+            // dragged onto a conversation, the resident joins it
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::click_and_drag());
+            resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(row.id));
             if !ui.is_rect_visible(rect) {
                 continue;
             }
@@ -784,19 +789,14 @@ pub fn tab(
             let tip = paint_row(ui, p, data, row, rect, pointer);
             ui.set_opacity(opacity);
             if resp.clicked() {
-                // Ctrl adds to the selection or takes away from it
-                if ui.input(|i| i.modifiers.command) {
-                    if selected {
-                        st.radar_selected.retain(|id| *id != row.id);
-                    } else {
-                        st.radar_selected.push(row.id);
-                    }
-                } else {
-                    st.radar_selected = vec![row.id];
-                }
+                // Ctrl adds to the selection or takes away from it, Shift
+                // takes the rows from the last one clicked
+                let mods = ui.input(|i| i.modifiers);
+                crate::ui::contacts::click_select(&mut st.radar_selected, &mut st.radar_anchor, &order, row.id, mods);
             }
             if resp.secondary_clicked() && !selected {
                 st.radar_selected = vec![row.id];
+                st.radar_anchor = Some(row.id);
             }
             // double click: the camera goes to the avatar, when it is drawn
             // (LLAvatarActions::zoomIn)
@@ -807,8 +807,16 @@ pub fn tab(
                     actions.push(PeopleAction::TooFarToZoom);
                 }
             }
-            // menu_fs_radar.xml
-            menu::context_menu(&resp, p, |ui| context::avatar_list_menu(ui, p, world, row.id, AvatarList::Nearby));
+            // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
+            let several = st.radar_selected.len() > 1 && st.radar_selected.contains(&row.id);
+            let chosen = st.radar_selected.clone();
+            menu::context_menu(&resp, p, |ui| {
+                if several {
+                    context::avatars_menu(ui, p, world, &chosen);
+                } else {
+                    context::avatar_list_menu(ui, p, world, row.id, AvatarList::Nearby);
+                }
+            });
             if let Some(tip) = tip {
                 resp.on_hover_text(tip);
             }

@@ -470,6 +470,10 @@ pub enum ConvAction {
     },
     /// A participant's voice volume (0..1, 0.5 as sent).
     SetVolume(uuid::Uuid, f32),
+    /// "Add" of the call strip: pick residents to add to the conversation.
+    PickPeople(uuid::Uuid),
+    /// Residents dropped on a conversation, to add to it.
+    AddPeople(uuid::Uuid, Vec<uuid::Uuid>),
 }
 
 use super::widgets::initials;
@@ -1305,6 +1309,23 @@ pub fn show(
             }
             // ---- conversation pane
             ui.vertical(|ui| {
+                // a resident dropped on it joins it (LLFloaterIMSession::
+                // handleDragAndDrop, DAD_PERSON / DAD_CALLINGCARD)
+                if let Some(conversation) = st.selected {
+                    let pane = ui.available_rect_before_wrap();
+                    let zone = ui.interact(pane, ui.id().with("person_drop"), egui::Sense::hover());
+                    if zone.dnd_hover_payload::<super::call_invite::PersonDrag>().is_some() {
+                        ui.painter().rect_stroke(
+                            pane,
+                            ui.visuals().window_corner_radius,
+                            egui::Stroke::new(1.5, p.violet),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    if let Some(person) = zone.dnd_release_payload::<super::call_invite::PersonDrag>() {
+                        actions.push(ConvAction::AddPeople(conversation, vec![person.0]));
+                    }
+                }
                 // who the conversation is with, and its actions
                 header::show(ui, p, icons, pics, world, st, &mut actions);
                 ui.add_space(4.0);

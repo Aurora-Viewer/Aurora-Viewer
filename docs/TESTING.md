@@ -2457,7 +2457,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
-| `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
+| `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
@@ -2485,12 +2485,16 @@ What the inventory must show with these scenarios:
   then "In call" with a timer; `hangup` is the same and Tess hangs up after
   12 s (back to nearby voice, a notice in the conversation); `group` calls
   the group Aurora Builders (Nova, Tess and Orion); `conference` starts a
-  voice conference with Tess and Nova; `incoming` makes Tess call us (the
+  voice conference with Tess and Nova (`conference-legacy`: the capability
+  answers 400 and the conference starts by message, IM_SESSION_CONFERENCE_START;
+  the log says "starting it by message"); `incoming` makes Tess call us (the
   card with Accept, Decline and Reply by text, and the same answers in her
   conversation, which comes up flashing; unanswered, both close after 30 s)
   and
   `incoming-group` makes Nova start a call in Aurora Builders. Voice must be
-  enabled (Preferences › Sound and voice), as on the grid.
+  enabled (Preferences › Sound and voice), as on the grid. Residents added to
+  a conference ("Add" of the call strip, or dragged from Contacts › Friends
+  or People › Nearby onto the conversation) join it at once.
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),

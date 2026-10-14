@@ -107,6 +107,21 @@ pub(super) fn strip(
                     if action_button(ui, p, "phone-off", hang_up, ActionKind::Danger, egui::vec2(0.0, 24.0)).clicked() {
                         actions.push(ConvAction::HangUp);
                     }
+                    // add residents (isInviteAllowed: not a group's call)
+                    if !matches!(call.kind, crate::world::calls::CallKind::Group)
+                        && action_button(
+                            ui,
+                            p,
+                            "user-plus",
+                            aurora_i18n::tr!("ui-call-add"),
+                            ActionKind::Flat,
+                            egui::vec2(0.0, 24.0),
+                        )
+                        .on_hover_text(aurora_i18n::tr!("ui-call-add-people"))
+                        .clicked()
+                    {
+                        actions.push(ConvAction::PickPeople(call.conversation()));
+                    }
                     // the microphone, in toggle mode (held, it is the bar's button)
                     if let Some(on) = st.mic {
                         let (icon, tip) = if on {

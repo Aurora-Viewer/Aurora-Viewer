@@ -107,6 +107,8 @@ pub struct PeopleUi {
     pub block_name: String,
     /// Avatars selected in the radar.
     pub radar_selected: Vec<Uuid>,
+    /// The row Shift selects from (the last one clicked).
+    pub radar_anchor: Option<Uuid>,
     /// Residents whose profile picture a row on screen waits for (drained by
     /// the viewer, which asks for the profile and the texture).
     pub wanted_pics: HashSet<Uuid>,
