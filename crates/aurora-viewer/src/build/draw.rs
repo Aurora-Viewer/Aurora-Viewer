@@ -219,6 +219,11 @@ impl<'a> Painter3d<'a> {
         let Some(s) = self.cam.project(p) else {
             return;
         };
+        self.screen_text(s, text, size, color);
+    }
+
+    /// Label in egui points, with the same shadow as world-space labels.
+    pub fn screen_text(&self, s: Pos2, text: &str, size: f32, color: Color32) {
         let font = FontId::proportional(size);
         self.painter.text(
             s + egui::vec2(1.0, 1.0),

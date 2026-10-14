@@ -3,7 +3,7 @@
 //! their grid snapping, snap rulers and the position readout.
 //!
 //! Sizes follow LL: handles keep a constant size on screen (50 px arrows,
-//! 100 px rotation sphere). Aurora uses thicker strokes and 12 px stretch
+//! 100 px rotation sphere). Aurora uses thicker strokes and 14 px stretch
 //! boxes for readability. Objects follow the mouse locally;
 //! MultipleObjectUpdate goes out on release (stretching also every
 //! 0.1 s like LLManipScale::sendUpdates).
@@ -34,10 +34,12 @@ pub(super) const PLANE_OFFSET: f32 = 0.52;
 const PLANE_HALF: f32 = 0.15;
 const PLANE_PICK_SCALE: f32 = 1.3;
 /// Arrow head: height and radius, in arrow lengths.
-const ARROW_HEAD: (f32, f32) = (0.26, 0.12);
+const ARROW_HEAD: (f32, f32) = (0.30, 0.15);
+/// A square stop marks the negative direction; the positive side is an arrow.
+const AXIS_STOP_PX: f32 = 12.0;
 /// Aurora: thicker than LLManipTranslate's 2 px shafts, with the same
 /// axis length and picking tolerance; shared by the rotation rings.
-const STROKE_PX: (f32, f32) = (3.0, 4.5);
+const STROKE_PX: (f32, f32) = (4.0, 6.0);
 const MIN_PLANE_MANIP_DOT: f32 = 0.25;
 const SNAP_GUIDE_SCREEN_SIZE: f32 = 0.7;
 const SNAP_ARROW_SCALE: f32 = 0.7;
@@ -49,8 +51,8 @@ const MAX_DRAG_DISTANCE: f32 = 48.0;
 const RING_PX: f32 = 100.0;
 const SNAP_ANGLE: f32 = 5.625;
 /// LLManipScale: pick radius, box size, streaming interval.
-const SCALE_PICK_PX: f32 = 11.0;
-const SCALE_BOX_FACTOR: f32 = 0.24;
+const SCALE_PICK_PX: f32 = 14.0;
+const SCALE_BOX_FACTOR: f32 = 0.28;
 const SCALE_UPDATE_DELAY: f32 = 0.1;
 const SNAP_GUIDE_SCREEN_OFFSET: f32 = 0.05;
 /// Tick label spacing in pixels (LLManip::sTickLabelSpacing).
@@ -551,8 +553,8 @@ impl Manip {
     }
 
     /// Aurora look of LLManipTranslate::renderTranslationHandles: pale axes
-    /// with heads in the color of their axis, square plane handles in the
-    /// color of their normal, and the accent of the theme under the cursor.
+    /// with positive arrowheads and negative square stops, signed axis
+    /// labels, square plane handles, and the theme's accent under the cursor.
     fn draw_translate(&self, p: &mut Painter3d, s: &BuildSettings, f: &Frame, drag: Option<&Drag>) {
         let cam = p.cam;
         let pal = p.pal;
@@ -589,10 +591,10 @@ impl Manip {
             p.tri_plain(q[0], q[2], q[3], fill);
             p.flush();
             for k in 0..4 {
-                p.line(q[k], q[(k + 1) % 4], color, if hl { 2.5 } else { 2.0 });
+                p.line(q[k], q[(k + 1) % 4], color, if hl { 3.5 } else { 2.5 });
             }
         }
-        // arrows, farthest first; the heads point away from the pivot
+        // Axis handles, farthest first; only the positive end has an arrowhead.
         let mut arrows: Vec<(f32, usize, f32)> = Vec::new();
         for i in 0..3 {
             for sgn in [1.0f32, -1.0] {
@@ -602,6 +604,21 @@ impl Manip {
         }
         arrows.sort_by(|a, b| b.0.total_cmp(&a.0));
         let (head_h, head_r) = (len * ARROW_HEAD.0, len * ARROW_HEAD.1);
+        let names = [
+            [
+                aurora_i18n::tr!("build-manip-x-negative"),
+                aurora_i18n::tr!("build-manip-x-positive"),
+            ],
+            [
+                aurora_i18n::tr!("build-manip-y-negative"),
+                aurora_i18n::tr!("build-manip-y-positive"),
+            ],
+            [
+                aurora_i18n::tr!("build-manip-z-negative"),
+                aurora_i18n::tr!("build-manip-z-positive"),
+            ],
+        ];
+        let mut labels = Vec::with_capacity(6);
         for (_, i, sgn) in arrows {
             let selected = active == Some(Part::Arrow(i)) || self.hover == Some(Part::Arrow(i));
             if active.is_some() && !selected {
@@ -616,15 +633,33 @@ impl Manip {
             };
             let a = g * unit(i) * sgn;
             let sc = self.arrow_scale[i].max(1.0);
-            let base = piv + a * (len - head_h * 0.5 * sc);
+            let positive = sgn > 0.0;
+            let base = piv + a * if positive { len - head_h * 0.5 * sc } else { len };
             p.line_cased(piv, base, shaft, width);
-            p.cone(base, a, head_r * sc, head_h * sc, head);
-            p.flush();
+            let tip = if positive {
+                p.cone(base, a, head_r * sc, head_h * sc, head);
+                p.flush();
+                base + a * head_h * sc
+            } else {
+                p.square(base, AXIS_STOP_PX * sc, head, Stroke::new(2.0, fade(pal.navy, 0.5)));
+                base
+            };
+            if let (Some(origin), Some(end)) = (cam.project(piv), cam.project(tip)) {
+                let direction = end - origin;
+                // An axis viewed end-on has overlapping ends: avoid labels at the pivot.
+                if direction.length() >= 8.0 {
+                    let gap = if positive { 16.0 } else { AXIS_STOP_PX * sc * 0.5 + 12.0 };
+                    labels.push((end + direction.normalized() * gap, names[i][usize::from(positive)]));
+                }
+            }
         }
         if active.is_none()
             && let Some(c) = cam.project(piv)
         {
-            p.painter.circle(c, 4.5, pal.violet_light, Stroke::new(1.5, fade(pal.navy, 0.5)));
+            p.painter.circle(c, 5.5, pal.violet_light, Stroke::new(2.0, fade(pal.navy, 0.5)));
+        }
+        for (pos, name) in labels {
+            p.screen_text(pos, name, 13.0, pal.ink);
         }
     }
 
@@ -850,7 +885,7 @@ impl Manip {
                 for bit in [1u8, 2, 4] {
                     if c & bit == 0 {
                         let (from, to) = (corner(corner_signs(c)), corner(corner_signs(c | bit)));
-                        p.line(from, to, fade(pal.violet_light, 0.7), 1.5);
+                        p.line(from, to, fade(pal.violet_light, 0.7), 2.0);
                     }
                 }
             }
@@ -887,9 +922,9 @@ impl Manip {
             }
             let hl = self.hover == Some(part) || active == Some(part);
             let (fill, outline) = match part {
-                Part::Corner(_) | Part::Face(..) if hl => (pal.violet_light, Stroke::new(2.0, pal.ink)),
-                Part::Corner(_) => (fade(pal.ink, 0.9), Stroke::new(1.5, fade(pal.navy, 0.5))),
-                Part::Face(i, _) => (axis_color(&pal, i), Stroke::new(1.5, fade(pal.navy, 0.5))),
+                Part::Corner(_) | Part::Face(..) if hl => (pal.violet_light, Stroke::new(2.5, pal.ink)),
+                Part::Corner(_) => (fade(pal.ink, 0.9), Stroke::new(2.0, fade(pal.navy, 0.5))),
+                Part::Face(i, _) => (axis_color(&pal, i), Stroke::new(2.0, fade(pal.navy, 0.5))),
                 _ => continue,
             };
             // Slightly larger than LL's 10 px boxes; resting corners fit the pick radius.
