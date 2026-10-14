@@ -17,6 +17,8 @@ const HANDLE: u64 = (256000u64 << 32) | 256000;
 /// The local asset server of its `net=` option.
 #[path = "demo_asset_server.rs"]
 pub mod asset_server;
+#[path = "demo_auto_hover.rs"]
+pub mod auto_hover;
 /// Voice calls with a simulated voice server (AURORA_DEMO_CALL).
 #[path = "demo_calls.rs"]
 pub mod calls;

@@ -13,13 +13,15 @@ pub mod demo;
 #[cfg(test)]
 pub(crate) mod elide_tests;
 pub(crate) mod keycap;
-mod pills;
+pub(crate) mod pills;
 mod resize;
 mod workspace;
 pub use color::color_button;
 pub use pills::{dot_pill, dot_pill_width, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide, search_box};
 pub use workspace::{Modal, collapsing, collapsing_forced, glyph, navigation, navigation_wrapped, section_header, stat, surface};
-pub(crate) use workspace::{finish_bar_glass, inventory_item_label, inventory_spacing, overlay, overlay_frame, paint_world_label};
+pub(crate) use workspace::{
+    finish_bar_glass, inventory_item_label, inventory_spacing, island_shape, overlay, overlay_frame, paint_world_label,
+};
 
 /// Keep status suffixes at normal weight and slightly darker than the name.
 pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, color: Color32) -> egui::text::LayoutJob {
@@ -1231,6 +1233,105 @@ fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) 
     }
 }
 
+/// Signed height adjustment: keep egui's pointer/keyboard behaviour, with a
+/// visible Aurora rail, zero marker, accent fill and solid rectangular knob.
+/// The surrounding floater supplies the shared glass, no opaque card here.
+pub fn height_slider(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    subdued: bool,
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        let aspect = 0.6;
+        let slider = ui
+            .scope(|ui| {
+                // Paint only the slider ourselves; the numeric field keeps the
+                // theme's normal input face. The stock slider still owns input.
+                let widgets = &mut ui.visuals_mut().widgets;
+                widgets.inactive.bg_fill = Color32::TRANSPARENT;
+                widgets.inactive.fg_stroke = Stroke::NONE;
+                widgets.hovered.bg_fill = Color32::TRANSPARENT;
+                widgets.hovered.fg_stroke = Stroke::NONE;
+                widgets.active.bg_fill = Color32::TRANSPARENT;
+                widgets.active.fg_stroke = Stroke::NONE;
+                ui.add(
+                    egui::Slider::new(&mut *value, range.clone())
+                        .step_by(0.001)
+                        .clamping(egui::SliderClamping::Edits)
+                        .smart_aim(false)
+                        .show_value(false)
+                        .trailing_fill(false)
+                        .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: aspect }),
+                )
+            })
+            .inner;
+        let rect = slider.rect;
+        let half_width = rect.height() / 2.5 * aspect; // egui Slider::position_range
+        let left = rect.left() + half_width;
+        let right = rect.right() - half_width;
+        let at = |v: f32| egui::lerp(left..=right, ((v - range.start()) / (range.end() - range.start())).clamp(0.0, 1.0));
+        let x = at(*value);
+        let zero = at(0.0);
+        let fade = if ui.is_enabled() { 1.0 } else { 0.45 };
+        let rail = egui::Rect::from_center_size(rect.center(), Vec2::new(rect.width(), 8.0));
+        let painter = ui.painter();
+        painter.rect(
+            rail,
+            TRACK_RADIUS,
+            p.muted_dim.lerp_to_gamma(p.raised, 0.25).gamma_multiply(fade),
+            Stroke::new(1.0, p.muted.gamma_multiply(0.5 * fade)),
+            egui::StrokeKind::Inside,
+        );
+        let fill = egui::Rect::from_min_max(egui::pos2(zero.min(x), rail.top()), egui::pos2(zero.max(x), rail.bottom()));
+        if fill.width() > 0.5 {
+            painter.rect_filled(
+                fill,
+                TRACK_RADIUS,
+                (if subdued { p.muted_dim } else { p.violet }).gamma_multiply(fade),
+            );
+        }
+        painter.line_segment(
+            [egui::pos2(zero, rail.top() - 2.0), egui::pos2(zero, rail.bottom() + 2.0)],
+            Stroke::new(1.0, p.muted.gamma_multiply(fade)),
+        );
+        let hot = slider.hovered() || slider.dragged() || slider.has_focus();
+        let knob = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), Vec2::new(half_width * 2.0, rect.height() / 1.25));
+        painter.rect(
+            knob,
+            inner_radius(ui.visuals()),
+            (if subdued {
+                p.muted
+            } else if hot {
+                p.on_accent
+            } else {
+                p.violet_light
+            })
+            .gamma_multiply(fade),
+            Stroke::new(1.0, p.on_accent.gamma_multiply(0.75 * fade)),
+            egui::StrokeKind::Inside,
+        );
+        let numeric = ui.add_sized(
+            Vec2::new(78.0, rect.height()),
+            egui::DragValue::new(value)
+                .range(range)
+                .clamp_existing_to_range(false)
+                .speed(0.001)
+                .fixed_decimals(3)
+                .suffix(" m")
+                .custom_formatter(|value, _| aurora_i18n::number(value, 3))
+                .custom_parser(|text| aurora_i18n::parse_number(text).filter(|v| v.is_finite())),
+        );
+        if numeric.gained_focus() || numeric.has_focus() || numeric.lost_focus() {
+            numeric.union(slider)
+        } else {
+            slider.union(numeric)
+        }
+    })
+    .inner
+}
+
 /// Progress bar of the interface: a flat track filled with the brand
 /// gradient (or `tint`), which glides to its value instead of jumping.
 /// `text` is written under it; `{}` in it is replaced by the percentage
@@ -1308,6 +1409,36 @@ pub fn action_button_if(
     action_button_keyed(ui, p, icon, label, kind, size, enabled, None)
 }
 
+const KEYED_ICON: f32 = 15.0;
+const KEYED_GAP: f32 = 7.0;
+/// Room around the content of a button that takes its content's width.
+const KEYED_PAD: f32 = 24.0;
+
+/// An `action_button_keyed`'s icon with its gap, label and keycaps widths.
+fn keyed_parts(ui: &egui::Ui, icon: &str, label: &str, key: Option<&crate::keybinds::Binding>) -> (f32, f32, f32) {
+    let text = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.5), Color32::PLACEHOLDER)
+        .size()
+        .x;
+    // an icon alone (empty label) sits in the middle, without the gap
+    let lead = match (icon.is_empty(), label.is_empty()) {
+        (true, _) => 0.0,
+        (false, true) => KEYED_ICON,
+        (false, false) => KEYED_ICON + KEYED_GAP,
+    };
+    let caps = key.map_or(0.0, |b| KEYED_GAP + keycap::row_width(&keycap::caps(ui, b, Color32::PLACEHOLDER)));
+    (lead, text, caps)
+}
+
+/// The width of an `action_button_keyed`'s content (icon, label, keys):
+/// to give the button its own padding, or lay out what sits beside it
+/// before it is drawn.
+pub fn action_button_keyed_content(ui: &egui::Ui, icon: &str, label: &str, key: Option<&crate::keybinds::Binding>) -> f32 {
+    let (lead, text, caps) = keyed_parts(ui, icon, label, key);
+    lead + text + caps
+}
+
 /// `action_button_if` with the keycaps of its shortcut after the label
 /// ("Stop flying F"); in a button too narrow for all three, the icon goes.
 #[allow(clippy::too_many_arguments)]
@@ -1321,31 +1452,19 @@ pub fn action_button_keyed(
     enabled: bool,
     key: Option<&crate::keybinds::Binding>,
 ) -> egui::Response {
-    const ICON: f32 = 15.0;
-    const GAP: f32 = 7.0;
+    const ICON: f32 = KEYED_ICON;
+    const GAP: f32 = KEYED_GAP;
     let enabled = enabled && ui.is_enabled();
     let font = egui::FontId::proportional(12.5);
-    let width = |ui: &egui::Ui| {
-        ui.painter()
-            .layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER)
-            .size()
-            .x
-    };
-    // an icon alone (empty label) sits in the middle, without the gap
-    let lead = match (icon.is_empty(), label.is_empty()) {
-        (true, _) => 0.0,
-        (false, true) => ICON,
-        (false, false) => ICON + GAP,
-    };
-    let caps_w = key.map_or(0.0, |b| GAP + keycap::row_width(&keycap::caps(ui, b, Color32::PLACEHOLDER)));
-    let icon = if key.is_some() && size.x > 0.0 && lead + width(ui) + caps_w + 2.0 * GAP > size.x {
+    let (lead, text_w, caps_w) = keyed_parts(ui, icon, label, key);
+    let icon = if key.is_some() && size.x > 0.0 && lead + text_w + caps_w + 2.0 * GAP > size.x {
         ""
     } else {
         icon
     };
     let lead = if icon.is_empty() { 0.0 } else { lead };
-    let content = lead + width(ui) + caps_w;
-    let desired = Vec2::new(if size.x > 0.0 { size.x } else { content + 24.0 }, size.y);
+    let content = lead + text_w + caps_w;
+    let desired = Vec2::new(if size.x > 0.0 { size.x } else { content + KEYED_PAD }, size.y);
     let (rect, resp) = ui.allocate_exact_size(desired, if enabled { Sense::click() } else { Sense::hover() });
     let hot = enabled && (resp.hovered() || resp.has_focus());
     let (fill, ink) = match kind {
@@ -1460,7 +1579,7 @@ pub struct DialogButton<'a> {
 }
 
 /// The width `action_button` gives `label` with `icon` when it fits its content.
-fn action_button_fit(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
+pub fn action_button_fit(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
     let text = ui
         .painter()
         .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.5), Color32::PLACEHOLDER)

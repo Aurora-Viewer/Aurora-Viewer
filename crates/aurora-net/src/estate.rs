@@ -274,8 +274,191 @@ impl SimStats {
     }
 }
 
+/// LLFloaterRegionInfo's estate messages write their numbers with C's
+/// `"%f"`: six decimals, a dot.
+fn c_float(v: f32) -> String {
+    format!("{v:.6}")
+}
+
+fn yes_no(v: bool) -> String {
+    if v { "Y" } else { "N" }.to_owned()
+}
+
+/// The region's rules of the General panel, as its controls hold them
+/// (processRegionInfo) and as "Apply" sends them (sendUpdate).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegionRules {
+    pub block_terraform: bool,
+    pub block_fly: bool,
+    pub block_fly_over: bool,
+    pub allow_damage: bool,
+    pub restrict_pushobject: bool,
+    pub allow_land_resell: bool,
+    pub allow_parcel_changes: bool,
+    pub block_parcel_search: bool,
+    /// The agent limit spinner (1 to the region's hard limit).
+    pub agent_limit: f32,
+    /// The object bonus spinner (1 to 10).
+    pub object_bonus: f32,
+    /// SIM_ACCESS_PG (13), _MATURE (21) or _ADULT (42).
+    pub sim_access: u8,
+}
+
+impl RegionRules {
+    /// LLFloaterRegionInfo::processRegionInfo, the General panel's part.
+    pub fn of(d: &RegionDetails) -> Self {
+        use crate::types::region_flags as rf;
+        let has = |f: u32| d.flags & u64::from(f) != 0;
+        RegionRules {
+            block_terraform: has(rf::BLOCK_TERRAFORM),
+            block_fly: has(rf::BLOCK_FLY),
+            block_fly_over: has(rf::BLOCK_FLYOVER),
+            allow_damage: has(rf::ALLOW_DAMAGE),
+            restrict_pushobject: has(rf::RESTRICT_PUSHOBJECT),
+            allow_land_resell: !has(rf::BLOCK_LAND_RESELL),
+            allow_parcel_changes: has(rf::ALLOW_PARCEL_CHANGES),
+            block_parcel_search: has(rf::BLOCK_PARCEL_SEARCH),
+            agent_limit: d.max_agents as f32,
+            object_bonus: d.object_bonus,
+            sim_access: d.sim_access,
+        }
+    }
+
+    /// `setregioninfo`'s strings (LLPanelRegionGeneralInfo::sendUpdate
+    /// without the capability): terraform, fly, damage, resell, agent limit,
+    /// object bonus, access, push, subdivide. The search block, documented
+    /// as a tenth string, is not sent.
+    pub fn strings(&self) -> Vec<String> {
+        vec![
+            yes_no(self.block_terraform),
+            yes_no(self.block_fly),
+            yes_no(self.allow_damage),
+            yes_no(self.allow_land_resell),
+            c_float(self.agent_limit),
+            c_float(self.object_bonus),
+            self.sim_access.to_string(),
+            yes_no(self.restrict_pushobject),
+            yes_no(self.allow_parcel_changes),
+        ]
+    }
+
+    /// The DispatchRegionInfo capability's body (sendUpdate's first way).
+    pub fn body(&self) -> Llsd {
+        aurora_llsd::llsd_map! {
+            "block_terraform" => self.block_terraform,
+            "block_fly" => self.block_fly,
+            "block_fly_over" => self.block_fly_over,
+            "allow_damage" => self.allow_damage,
+            "allow_land_resell" => self.allow_land_resell,
+            "agent_limit" => f64::from(self.agent_limit),
+            "prim_bonus" => f64::from(self.object_bonus),
+            "sim_access" => i32::from(self.sim_access),
+            "restrict_pushobject" => self.restrict_pushobject,
+            "allow_parcel_changes" => self.allow_parcel_changes,
+            "block_parcel_search" => self.block_parcel_search,
+        }
+    }
+}
+
+/// `estatechangeinfo`'s strings (LLEstateInfoModel::commitEstateInfoDataserver):
+/// name, flags (`"%u"`), sun hour × 1024 (`"%d"`).
+pub fn estate_change_strings(e: &EstateInfo) -> Vec<String> {
+    vec![
+        e.name.clone(),
+        (e.flags as u32).to_string(),
+        ((e.sun_hour * 1024.0) as i32).to_string(),
+    ]
+}
+
+/// The EstateChangeInfo capability's body (commitEstateInfoCapsCoro), with
+/// the invoice of the last `getinfo`.
+pub fn estate_change_body(e: &EstateInfo, invoice: Uuid) -> Llsd {
+    aurora_llsd::llsd_map! {
+        "estate_name" => e.name.as_str(),
+        "sun_hour" => f64::from(e.sun_hour),
+        "is_sun_fixed" => e.has(estate_flags::SUN_FIXED),
+        "is_externally_visible" => e.has(estate_flags::EXTERNALLY_VISIBLE),
+        "allow_direct_teleport" => e.has(estate_flags::ALLOW_DIRECT_TELEPORT),
+        "deny_anonymous" => e.has(estate_flags::DENY_ANONYMOUS),
+        "deny_age_unverified" => e.has(estate_flags::DENY_AGEUNVERIFIED),
+        "block_bots" => e.has(estate_flags::DENY_BOTS),
+        "allow_voice_chat" => e.has(estate_flags::ALLOW_VOICE),
+        "override_public_access" => e.has(estate_flags::ALLOW_ACCESS_OVERRIDE),
+        "override_environment" => e.has(estate_flags::ALLOW_ENVIRONMENT_OVERRIDE),
+        "invoice" => invoice,
+    }
+}
+
+/// The Terrain panel's settings: water, raise and lower limits (of
+/// RegionInfo), the four detail textures and the elevation ranges of the
+/// four corners (of RegionHandshake: 0 south-west, 1 north-west, 2
+/// south-east, 3 north-east).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerrainSettings {
+    pub water_height: f32,
+    pub raise_limit: f32,
+    pub lower_limit: f32,
+    pub textures: [Uuid; 4],
+    pub start_height: [f32; 4],
+    pub height_range: [f32; 4],
+}
+
+/// What `setregionterrain` repeats of the region besides the terrain
+/// (LLRegionInfoModel: the sun, sent back as it was read).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RegionSun {
+    pub use_estate_sun: bool,
+    pub fixed_sun: bool,
+    pub sun_hour: f32,
+}
+
+impl RegionSun {
+    pub fn of(d: &RegionDetails) -> Self {
+        RegionSun {
+            use_estate_sun: d.use_estate_sun,
+            fixed_sun: d.flags & estate_flags::SUN_FIXED != 0,
+            sun_hour: d.sun_hour,
+        }
+    }
+}
+
+/// The messages of the Terrain panel's "Apply" (LLPanelRegionTerrainInfo::
+/// sendUpdate), in their order: `setregionterrain` (LLRegionInfoModel::
+/// sendRegionTerrain: water, raise, lower, estate sun, fixed sun, sun hour,
+/// then the estate's global time, fixed sun and hour it resets),
+/// `texturedetail` ("%d %s"), `textureheights` ("%d %f %f") and
+/// `texturecommit`.
+pub fn terrain_messages(t: &TerrainSettings, sun: RegionSun) -> Vec<(&'static str, Vec<String>)> {
+    let region_terrain = vec![
+        c_float(t.water_height),
+        c_float(t.raise_limit),
+        c_float(t.lower_limit),
+        yes_no(sun.use_estate_sun),
+        yes_no(sun.fixed_sun),
+        c_float(sun.sun_hour),
+        yes_no(true),
+        yes_no(false),
+        c_float(0.0),
+    ];
+    let detail = t
+        .textures
+        .iter()
+        .enumerate()
+        .map(|(i, id)| format!("{i} {}", id.hyphenated()))
+        .collect();
+    let heights = (0..4)
+        .map(|i| format!("{i} {} {}", c_float(t.start_height[i]), c_float(t.height_range[i])))
+        .collect();
+    vec![
+        ("setregionterrain", region_terrain),
+        ("texturedetail", detail),
+        ("textureheights", heights),
+        ("texturecommit", Vec::new()),
+    ]
+}
+
 /// What the Region / Estate window asks the simulator.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum EstateCommand {
     /// LLFloaterRegionInfo::refreshFromRegion, as each panel asks: the
     /// EstateOwnerMessage `getinfo` (a new invoice), the EstateAccess lists,
@@ -283,6 +466,19 @@ pub enum EstateCommand {
     Refresh { handle: RegionHandle },
     /// RequestRegionInfo (requestRegionInfo), after the panels.
     RequestRegionInfo { handle: RegionHandle },
+    /// The General panel's "Apply": DispatchRegionInfo, else `setregioninfo`.
+    SetRegionInfo { handle: RegionHandle, rules: RegionRules },
+    /// The Estate panel's "Apply" (LLEstateInfoModel::sendEstateInfo):
+    /// EstateChangeInfo, else `estatechangeinfo` with a new invoice.
+    SetEstateInfo { handle: RegionHandle, info: EstateInfo },
+    /// The Terrain panel's "Apply".
+    SetTerrain {
+        handle: RegionHandle,
+        terrain: TerrainSettings,
+        sun: RegionSun,
+    },
+    /// "Bake Terrain" (callbackBakeTerrain): `terrain` with "bake".
+    BakeTerrain { handle: RegionHandle },
 }
 
 /// What the simulator answered.
@@ -395,6 +591,85 @@ mod tests {
         let daily = llsd_map! { "restart" => llsd_map! { "type" => Llsd::String("D".into()), "time" => Llsd::Integer(21600) }};
         assert_eq!(parse_restart_schedule(&daily).map(|s| s.days), Some([true; 7]));
         assert_eq!(parse_restart_schedule(&llsd_map! {}), None);
+    }
+
+    /// setregioninfo in sendUpdate's order, with C's "%f"; the search
+    /// block only goes through the capability.
+    #[test]
+    fn the_region_rules_as_firestorm_sends_them() {
+        use crate::types::region_flags as rf;
+        let d = RegionDetails {
+            flags: u64::from(rf::BLOCK_TERRAFORM | rf::RESTRICT_PUSHOBJECT | rf::BLOCK_LAND_RESELL | rf::BLOCK_PARCEL_SEARCH),
+            max_agents: 40,
+            object_bonus: 1.5,
+            sim_access: 21,
+            ..Default::default()
+        };
+        let r = RegionRules::of(&d);
+        assert!(r.block_terraform && r.restrict_pushobject && !r.allow_land_resell && r.block_parcel_search);
+        assert!(!r.block_fly && !r.allow_damage && !r.allow_parcel_changes);
+        assert_eq!(
+            r.strings(),
+            ["Y", "N", "N", "N", "40.000000", "1.500000", "21", "Y", "N"]
+                .map(String::from)
+                .to_vec()
+        );
+        let body = r.body();
+        assert_eq!(body["agent_limit"].as_f64(), 40.0);
+        assert_eq!(body["prim_bonus"].as_f64(), 1.5);
+        assert_eq!(body["sim_access"].as_i32(), 21);
+        assert!(body["block_parcel_search"].as_bool() && !body["allow_land_resell"].as_bool());
+        assert_eq!(body.as_map().map(|m| m.len()), Some(11));
+    }
+
+    #[test]
+    fn the_estate_change_as_firestorm_sends_it() {
+        let e = EstateInfo {
+            name: "Aurora Demo".into(),
+            owner: Uuid::from_u128(1),
+            id: 104_123,
+            flags: estate_flags::EXTERNALLY_VISIBLE | estate_flags::DENY_BOTS | estate_flags::ALLOW_VOICE,
+            sun_hour: 6.0,
+        };
+        assert_eq!(
+            estate_change_strings(&e),
+            ["Aurora Demo", "2415951872", "6144"].map(String::from).to_vec()
+        );
+        let invoice = Uuid::from_u128(9);
+        let body = estate_change_body(&e, invoice);
+        assert!(body["is_externally_visible"].as_bool() && body["block_bots"].as_bool() && body["allow_voice_chat"].as_bool());
+        assert!(!body["deny_anonymous"].as_bool() && !body["is_sun_fixed"].as_bool());
+        assert_eq!(body["invoice"].as_uuid(), invoice);
+        assert_eq!(body["estate_name"].as_str(), "Aurora Demo");
+    }
+
+    #[test]
+    fn the_terrain_messages_in_their_order() {
+        let t = TerrainSettings {
+            water_height: 20.0,
+            raise_limit: 4.0,
+            lower_limit: -4.0,
+            textures: [Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4)],
+            start_height: [10.0, 10.0, 12.5, 10.0],
+            height_range: [60.0; 4],
+        };
+        let sun = RegionSun {
+            use_estate_sun: true,
+            fixed_sun: false,
+            sun_hour: 0.0,
+        };
+        let m = terrain_messages(&t, sun);
+        let names: Vec<&str> = m.iter().map(|(n, _)| *n).collect();
+        assert_eq!(names, ["setregionterrain", "texturedetail", "textureheights", "texturecommit"]);
+        assert_eq!(
+            m[0].1,
+            ["20.000000", "4.000000", "-4.000000", "Y", "N", "0.000000", "Y", "N", "0.000000"]
+                .map(String::from)
+                .to_vec()
+        );
+        assert_eq!(m[1].1[1], "1 00000000-0000-0000-0000-000000000002");
+        assert_eq!(m[2].1[2], "2 12.500000 60.000000");
+        assert!(m[3].1.is_empty());
     }
 
     #[test]

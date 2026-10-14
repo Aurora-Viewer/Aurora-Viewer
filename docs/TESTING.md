@@ -85,6 +85,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
+| `AURORA_TEST_NEUTRAL_POSE=1` | Local neutral-pose comparison in the online or demo Hover Height floater |
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
@@ -94,6 +95,44 @@ The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 `AURORA_DEMO_DIALOG` adds only the requested dialog;
 `AURORA_DEMO_INVENTORY=offer|offer-reject` adds only the received item.
+
+`AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
+Appearance › Hover Height, initially off. Our avatar starts with normal
+animations; enable the switch to display the exact shaped neutral skeleton
+used by automatic hover height, including worn-mesh joint offsets.
+Rigged meshes and rigid attachments follow the same neutral palette.
+This is local only, not saved:
+the motion controller and server animation signals continue normally, and
+other avatars are unchanged. Use it online to compare the reported roughly
+10 cm grounding discrepancy with/without the normal pose. The option is
+absent from an ordinary launch.
+Hover Height exposes a saved "Automatic height offset" in every launch
+(default 0 m). Positive values raise the result, negative values lower it;
+the offset applies again after each body attachment change, including removal
+of the last foot attachment. Millimetre numeric entry and -3..3 m adjustment
+match the height control. Dragging previews immediately from the cached
+estimate without another vertex scan; release saves the preference and commits
+the total height. With automatic mode disabled the offset slider is inactive.
+The technical measurements and recalculation button have been removed.
+Use the neutral-pose test switch when comparing shoes with the ground.
+The sliders share Aurora's contrasting track, zero marker, accent fill and
+solid rectangular handle over the normal blurred floater. While auto is on,
+the manual slider/value and Lower/Reset/Raise buttons are grey but remain
+interactive. Any manual change switches auto off immediately; Reset does so
+even when the height already equals zero. The saved automatic offset stays
+available when auto is enabled again. Merely displaying a computed height
+must not round it or switch modes.
+Two shared Aurora dividers separate manual height, automatic adjustment and
+the common camera/pose switches. The automatic section also has
+Lower/Reset/Raise buttons: they change the saved offset, retain automatic
+mode and apply the cached estimate immediately. Reset restores zero offset;
+steps match the manual buttons (1 cm, Alt 10 cm, Ctrl/Shift 1 mm).
+The scene compares an attachment/skeleton signature each frame, but mesh
+decoding and vertex scans run only after changes settle for 200 ms. HUD,
+animation and ordinary movement changes do not trigger ongoing recalculation.
+Body attachment, shape, physical-size and newly available asset changes can
+invalidate the estimate; an initial size-only estimate is upgraded once a
+usable contact plane arrives. Changing the offset reuses the cached result.
 
 The frames-per-second limiter is enabled at **120 fps by default**. It can
 be disabled or adjusted in Preferences › Graphics › Smoothness; preferences
@@ -144,7 +183,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
-| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic` | The Controls window open on a tab, or Firestorm's two windows |
+| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
 
 `AURORA_CAPTURE_LAYOUT`: a screenshot otherwise starts from the default
 layout, to be reproducible. With this variable it reloads that of the
@@ -203,7 +242,16 @@ reset, saved positions, the alt-camera keys), `movement` on its Movement tab
 (the eight buttons with the keys of the keyboard's layout, walk / run / fly),
 `compact` the window minimized (its joysticks and zoom only),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
-not saved).
+not saved). `free` opens the photo window with its "Free camera" switch on:
+the Controls window opens by itself on its camera tab, which drives the free
+camera (the "Free camera / The avatar stays put" banner with Back and its
+key, the move and look joysticks with up / down and their keys between them,
+the speed at 2 m/s, "No collisions" on, the keys); at frame 640 the camera
+has flown 2 m to the left and 1 m up and turned, the avatar where it was
+(the log gives `free camera: on at …` and `demo free camera: flown to …`).
+`free-compact` is the same window minimized: its title is "Free camera", the
+two joysticks with up / down, the speed and Back. Escape, Back or closing the
+photo window brings the camera back (`free camera: back to the avatar`).
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
@@ -216,7 +264,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details) |
-| `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Avatar hover-height adjustment and camera toggle |
+| `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
@@ -235,7 +283,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure`**:
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-cycle`**:
   opens the hover-height floater at frame 600. A number sets the height;
   `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
   repeats the cycle with "Affect camera view" enabled; otherwise the camera
@@ -250,6 +298,31 @@ when unfocused") is ignored during a screenshot.
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
   switch for the manual check. On the grid, also verify other viewers see
   the committed adjustment, then teleport and reconnect to check persistence.
+  `auto-static` adds two rigid soles with a linked heel at frame 620;
+  the `auto-*` scenarios frame the feet at 600, after the login camera reset.
+  Their avatar reports a 1.68 m physics height, matching the offline
+  simulation's 0.84 m centre clearance; the generic fixture's 1.9 m size
+  does not match that simulation. Grounding uses the simulator-reported
+  contact distance when available, otherwise the physical height, not the
+  independently computed shaped skeleton height.
+  `auto-static-off` repeats it with automatic adjustment disabled for comparison;
+  `auto-rigged` adds a rigged shoe mesh on the spine with an unrelated low
+  triangle whose foot weights are zero (it must not lift the avatar).
+  `auto-contact` uses those shoes with a reported 1.48 m physical height and
+  a contact plane at the actual ground: the 0.84 m centre clearance includes
+  a 10 cm margin over half that size. It must give the same grounded result
+  as `auto-rigged`, not raise the shoes by those extra 10 cm. Enable
+  `AURORA_TEST_NEUTRAL_POSE=1` to compare the exact neutral pose.
+  `auto-offset` uses that same contact-plane fixture: +0.05 m offset at 700
+  gives +0.316 m total height; -0.03 m at 860 gives +0.236 m. Removing the
+  shoes at 940 leaves the fixed -0.03 m offset. Capture 660, 840, 920 and 1100.
+  `auto-cycle` adds the rigid shoes at 620 and removes them at 940; capture
+  580, 840 and 1100 to compare barefoot / soles on the ground / barefoot.
+  Automatic adjustment is enabled by default in Hover Height. Manual edits
+  last until the next body attachment change; HUD changes must leave the
+  height intact. Updates during sitting/flying wait until standing on the
+  ground. On the grid: add/remove rigged shoes/body, rigid foot linksets and
+  HUDs, including delayed mesh loading and attachments worn while seated.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
@@ -1396,6 +1469,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
+| `AURORA_DEMO_BARS=<words>` | Top bar: islands, Firestorm's bars, place island stretched or not, rights named, a menu open |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
@@ -1422,7 +1496,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_REGION=overview[:role][:preview][:compact]` | "Region / Estate" as estate owner, manager or resident |
+| `AURORA_DEMO_REGION=overview\|manage[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
@@ -2088,6 +2162,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing
   is saved.
+- **`AURORA_DEMO_BARS=<words>`**: the states of the top bar for the
+  comparisons with the bars mockup, for this run only (nothing is saved),
+  with the mockup's long parcel name. Words, separated by commas:
+  `normal` (the islands as set), `legacy` (Firestorm's bars), `compact`
+  (the place island as wide as its content), `rights` (the parcel rights
+  named when there is room), `nobug` / `bug` (the bug report button
+  hidden / shown: the menu island holds the wolf alone, the place follows
+  8 px away); and one menu opened at frame 300: `menu`
+  (the place), `options` (right click on the place island), `favorites`,
+  `star`, `status` (the account's picture). Capture at
+  `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
+  at frame 780: at 1280 the place shows the parcel and the region, at
+  1536 the position too, with `rights` the forbidden rights are named at
+  1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
+  the bell's violet counter.
 - **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
@@ -2204,7 +2293,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_REGION=overview[:owner|:manager|:resident][:preview][:compact]`**:
+- **`AURORA_DEMO_REGION=overview|manage[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain][:pending][:ask-…]`**:
   the Region / Estate window opens on the demo region, whose simulator
   answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
   at most, estate 104 123, no terraforming, pushing limited, voice, resale
@@ -2221,7 +2310,20 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `resident` gets neither: no People tab, no "View as", no managers nor
   interventions. `preview` opens on "View as" Resident; `compact` opens
   the window 480 px wide (no map, one column, the action buttons as
-  icons). Manage and People are greyed until the next steps.
+  icons). People is greyed until a next step. `manage` opens on Manage
+  (who can come, region rules, terrain and water; the other sections of
+  the navigation are greyed): `access`, `rules` or `terrain` scrolls to
+  that section, `pending` makes two changes there and scrolls to the bar
+  "2 changes not sent yet" (Cancel / Apply), and `ask-override`,
+  `ask-linden`, `ask-bonus`, `ask-maturity`, `ask-heights` or `ask-bake`
+  opens that question (EstateParcelAccessOverride, ChangeLindenEstate,
+  ChangeObjectBonusFactor, RegionMaturityChange, ConfirmTextureHeights,
+  ConfirmBakeTerrain). The demo simulator keeps what Apply sends and
+  answers it in the next RegionInfo / `estateupdateinfo`; the terrain's
+  textures and elevations, which a real simulator sends back in a new
+  RegionHandshake, stay shown as sent. A manager sees the bake greyed
+  with the amber "estate owner" lock, a resident (or `preview`) the amber
+  banner and a sentence instead of the estate's access.
 - **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members

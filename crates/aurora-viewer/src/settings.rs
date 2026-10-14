@@ -172,6 +172,10 @@ pub struct Settings {
     pub build: crate::build::BuildSettings,
     /// Camera (Firestorm "Move & View › View").
     pub camera: crate::camera::CameraSettings,
+    /// Ground foot geometry after wearing/detaching a body attachment.
+    pub auto_hover_height: bool,
+    /// Fixed adjustment added to each automatic grounding estimate (metres).
+    pub auto_hover_offset: f32,
     /// Contacts window (Friends / Groups / Contact sets).
     pub contacts: crate::ui::contacts::ContactsSettings,
     /// Radar of the People window.
@@ -248,6 +252,13 @@ pub struct Settings {
     /// SettingsMakeNoTrans is asked (its "ignore" box turns it off; shown
     /// by default like the notification).
     pub confirm_no_transfer_settings: bool,
+    /// ChangeObjectBonusFactor is asked before Region / Estate sends a new
+    /// object bonus (its "ignore" box turns it off; shown by default).
+    pub confirm_object_bonus: bool,
+    /// RegionCheckTextureHeights: Region / Estate asks before sending
+    /// elevation ranges whose low end is above the high one ("Don't ask"
+    /// turns it off; on by default).
+    pub region_check_texture_heights: bool,
     /// Ask before a payment above `payment_confirm_threshold` L$
     /// (FSConfirmPayments, on by default).
     pub confirm_payments: bool,
@@ -332,6 +343,16 @@ pub struct Settings {
     pub classic_profiles: bool,
     /// Firestorm's Pay window (floater_pay.xml) instead of `ui/pay.rs`.
     pub classic_pay_window: bool,
+    /// The full-width top and bottom bars of Firestorm instead of the glass
+    /// islands of `ui/bars/islands.rs`.
+    pub classic_bars: bool,
+    /// The place island stretches to the islands on its right (on by
+    /// default); off, it is as wide as its content.
+    pub place_bar_stretch: bool,
+    /// The parcel rights of the place island are named next to their icons
+    /// when there is room (off by default: icons alone, named in their
+    /// tooltips).
+    pub place_bar_rights_text: bool,
     /// People › Near you as Firestorm's radar table (`ui/people/radar.rs`)
     /// instead of the rows grouped by range and the sheet of
     /// `ui/people/nearby.rs`.
@@ -714,6 +735,8 @@ impl Default for Settings {
             debug: DebugView::default(),
             build: Default::default(),
             camera: Default::default(),
+            auto_hover_height: true,
+            auto_hover_offset: 0.0,
             contacts: Default::default(),
             radar: Default::default(),
             friends_list: Default::default(),
@@ -760,6 +783,8 @@ impl Default for Settings {
             landmarks_by_date: true,
             confirm_teleports: true,
             confirm_no_transfer_settings: true,
+            confirm_object_bonus: true,
+            region_check_texture_heights: true,
             confirm_payments: true,
             payment_confirm_threshold: 200,
             maps: MapSettings::default(),
@@ -803,6 +828,9 @@ impl Default for Settings {
             classic_name_tags: false,
             classic_profiles: false,
             classic_pay_window: false,
+            classic_bars: false,
+            place_bar_stretch: true,
+            place_bar_rights_text: false,
             classic_people: false,
             classic_restart_alert: false,
             region_restart: Default::default(),

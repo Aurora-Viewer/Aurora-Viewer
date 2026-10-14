@@ -19,13 +19,24 @@ pub fn pill_tab(
     selected: bool,
     enabled: bool,
 ) -> egui::Response {
-    tab(ui, p, icon, label, count, accent, selected, enabled, None)
+    tab(ui, p, icon, label, count, accent, selected, enabled, None, None)
 }
 
 /// A `pill_tab` of the given width, its icon and name in the middle (the
-/// two halves of the Controls window).
-pub fn pill_tab_wide(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool, width: f32) -> egui::Response {
-    tab(ui, p, icon, label, None, false, selected, true, Some(width))
+/// two halves of the Controls window), greyed while it does not apply,
+/// `why` on hover (the Movement tab while the photo's free camera flies).
+#[allow(clippy::too_many_arguments)]
+pub fn pill_tab_wide(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    selected: bool,
+    width: f32,
+    enabled: bool,
+    why: &str,
+) -> egui::Response {
+    tab(ui, p, icon, label, None, false, selected, enabled, Some(width), Some(why))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -39,6 +50,8 @@ fn tab(
     selected: bool,
     enabled: bool,
     width: Option<f32>,
+    // what a greyed tab says on hover ("not yet" by default)
+    disabled_tip: Option<&str>,
 ) -> egui::Response {
     let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
     let ink = if !enabled {
@@ -96,7 +109,11 @@ fn tab(
     if enabled {
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
-        resp.on_hover_text(crate::ui::menu::not_yet())
+        let tip = match disabled_tip {
+            Some(tip) => tip.to_owned(),
+            None => crate::ui::menu::not_yet().to_owned(),
+        };
+        resp.on_hover_text(tip)
     }
 }
 
@@ -240,16 +257,27 @@ pub fn filter_pill_width(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
 /// The search field of a list: a magnifier then the text, on the field's
 /// face.
 pub fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    icon_field(ui, p, "search-filled", text, hint, width)
+}
+
+/// The face of a field of the redrawn windows and menus: the search box's,
+/// the SLURL of the place menu.
+pub fn field_frame(ui: &egui::Ui, p: &Palette) -> egui::Frame {
     egui::Frame::new()
         .fill(p.bar)
         .corner_radius(ui.visuals().widgets.inactive.corner_radius)
         .inner_margin(egui::Margin::symmetric(9, 4))
+}
+
+/// A text field on that face, a Tabler `icon` before the text.
+pub fn icon_field(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    field_frame(ui, p)
         .show(ui, |ui| {
             ui.set_width(width - 18.0);
             // left to right even in a row laid out from the right
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 7.0;
-                super::glyph(ui, "search-filled", p.muted, 13.0);
+                super::glyph(ui, icon, p.muted, 13.0);
                 ui.add(
                     egui::TextEdit::singleline(text)
                         .frame(egui::Frame::NONE)

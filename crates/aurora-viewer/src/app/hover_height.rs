@@ -12,15 +12,29 @@ impl App {
                 }
             }
             if let Some(mode) = mode.as_deref() {
+                crate::demo::auto_hover::tick(&mut self.world, &mut self.scene, self.frame_count, mode);
                 if self.frame_count == 600 {
                     self.hover_height_ui.open = true;
                     self.panels.chat = false;
                     self.panels.people = false;
                     self.panels.perf = false;
                     self.settings.camera.hover_affects_camera = mode == "camera";
+                    if mode.starts_with("auto-") {
+                        self.settings.auto_hover_height = mode != "auto-static-off";
+                        self.settings.auto_hover_offset = 0.0;
+                        // Frame the feet after login has reset the camera.
+                        self.camera.demo_orbit(0.0, 0.3, Some(5.0), &self.settings.camera);
+                    }
                     if let Ok(value) = mode.parse::<f32>() {
                         self.world.hover_height.preview(value);
                         self.world.hover_height.commit();
+                    }
+                }
+                if mode == "auto-offset" {
+                    match self.frame_count {
+                        700 => self.settings.auto_hover_offset = 0.05,
+                        860 => self.settings.auto_hover_offset = -0.03,
+                        _ => {}
                     }
                 }
                 if matches!(mode, "cycle" | "camera") {

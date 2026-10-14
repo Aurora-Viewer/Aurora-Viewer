@@ -236,6 +236,8 @@ pub struct App {
     /// world focuses the camera, as with Alt (LLToolCamera).
     controls_ui: ui::controls::ControlsUi,
     controls_held: Vec<Action>,
+    /// Its free camera joysticks this frame: move, look.
+    controls_free: (egui::Vec2, egui::Vec2),
     object_view: bool,
     /// Double click on the ground (src/autopilot.rs): the presses of the
     /// left button on the world, whether the one being handled is the
@@ -722,6 +724,7 @@ impl App {
             always_run: false,
             controls_ui: Default::default(),
             controls_held: Vec::new(),
+            controls_free: (egui::Vec2::ZERO, egui::Vec2::ZERO),
             object_view: false,
             double_click: Default::default(),
             double_press: false,
@@ -2319,7 +2322,11 @@ impl App {
             if !self.right_gesture.motion(dx, dy, self.egui_ctx.pixels_per_point()) {
                 return; // maybe a click: do not move the camera yet
             }
-            self.camera.orbit_drag(dx, dy, s, &mut self.world.agent);
+            match self.camera.free_mut() {
+                // the free camera looks around instead of orbiting
+                Some(free) => free.drag(dx, dy, s),
+                None => self.camera.orbit_drag(dx, dy, s, &mut self.world.agent),
+            }
         }
     }
 
@@ -4162,6 +4169,18 @@ impl App {
         i.strafe_right |= held(Action::StrafeRight);
         i.up |= held(Action::Up);
         i.down |= held(Action::Down);
+        if self.camera.free().is_some() {
+            // the photo's free camera takes the movement keys: the avatar
+            // stays where it is (no walk, turn, jump or flight start)
+            self.photo_free_move(&i, dt);
+            self.input = MoveInput::default();
+            self.fb_since = None;
+            self.lr_since = None;
+            self.up_since = None;
+            self.turn_since = None;
+            self.cam_key_since = [None; 10];
+            return;
+        }
         if self.mouse_mode == MouseMode::Steer {
             // left button held on the avatar (Firestorm): the avatar faces the
             // camera; the arrows are camera-relative and turn the avatar toward
@@ -4509,6 +4528,7 @@ impl App {
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
         images.extend(self.place_images.drain());
         images.extend(self.land_ui.wanted_images.drain());
+        images.extend(self.region_ui.wanted_images.drain());
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.people_ui.wanted_images.drain());
@@ -5108,6 +5128,13 @@ impl App {
             self.update_ao(now);
             // poses first: attachments follow their bone in the same frame
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, now);
+            self.scene.update_auto_hover(
+                &mut self.world,
+                self.settings.auto_hover_height,
+                self.settings.auto_hover_offset,
+                !self.hover_height_ui.previewing_offset(),
+                now,
+            );
             for anim in completed {
                 self.ao_runtime.finished(anim);
                 // LLAgent::requestStopMotion: stop the finished non-looping
@@ -7312,7 +7339,58 @@ impl App {
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::LandmarkStar(star) => self.landmark_star(star),
+            BarAction::PlaceBar { stretch, rights_text } => {
+                self.settings.place_bar_stretch = stretch;
+                self.settings.place_bar_rights_text = rights_text;
+                self.settings.save();
+            }
+            BarAction::ShowBugButton(shown) => {
+                self.settings.show_bug_report = shown;
+                self.settings.save();
+            }
+            BarAction::OpenFavorites => {
+                // Places › Favorites, the first tab
+                self.places_ui.tab = 0;
+                ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
+            }
         }
+    }
+
+    /// Firestorm's bars or the islands, and how the islands are set: the
+    /// settings, or what `AURORA_DEMO_BARS` asks for in demo (never saved).
+    fn bars_look(&self) -> (bool, ui::bars::IslandsLook) {
+        let s = &self.settings;
+        let demo = if self.demo { ui::bars::demo::get() } else { Default::default() };
+        let look = ui::bars::IslandsLook {
+            stretch: demo.stretch.unwrap_or(s.place_bar_stretch),
+            rights_text: demo.rights_text.unwrap_or(s.place_bar_rights_text),
+        };
+        (demo.classic.unwrap_or(s.classic_bars), look)
+    }
+
+    /// The last places of the teleport history for the place menu, newest
+    /// first, without the one we stand in (its last entry): two, as in the
+    /// mockup.
+    fn recent_places(&self) -> Vec<ui::bars::RecentPlace> {
+        self.world
+            .tp_storage
+            .items
+            .iter()
+            .rev()
+            .skip(1)
+            .take(2)
+            .map(|item| {
+                let (name, region) = match item.title.rsplit_once(", ") {
+                    Some((name, region)) => (name.to_owned(), region.to_owned()),
+                    None => (item.title.clone(), String::new()),
+                };
+                ui::bars::RecentPlace {
+                    name,
+                    region,
+                    slurl: item.slurl.clone(),
+                }
+            })
+            .collect()
     }
 
     /// The grid of the session for the web search: only the main grid's
@@ -8044,6 +8122,15 @@ impl App {
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 t = self.ui_parts.lap(Part::UiTags, t);
                 let parcel_landmark = self.parcel_landmark();
+                let (classic_bars, islands) = self.bars_look();
+                let own_name = self.world.own_name();
+                // AURORA_DEMO_BARS: the long parcel name of the mockup (the
+                // islands only: Firestorm's bars stay as they were)
+                let parcel_name = if self.demo && ui::bars::demo::get().on && !classic_bars {
+                    aurora_i18n::tr!("demo-bars-parcel")
+                } else {
+                    self.world.parcel_name.as_str()
+                };
                 let icons = &self.skin.icons;
                 let layout = &self.skin.layout;
                 let maturity = self
@@ -8053,12 +8140,16 @@ impl App {
                     .map(|i| ui::bars::maturity_name(i.sim_access))
                     .unwrap_or("");
                 let status = ui::bars::StatusInfo {
-                    show_bug_report: self.settings.show_bug_report,
+                    show_bug_report: if self.demo {
+                        ui::bars::demo::get().bug.unwrap_or(self.settings.show_bug_report)
+                    } else {
+                        self.settings.show_bug_report
+                    },
                     show_huds: self.settings.show_huds,
                     hud_zoom: self.world.hud_zoom,
                     ban_lines: self.settings.maps.ban_lines,
                     region: &self.world.region_name(),
-                    parcel: &self.world.parcel_name,
+                    parcel: parcel_name,
                     maturity,
                     position: self.world.agent.position,
                     fps: self.perf.fps,
@@ -8086,6 +8177,11 @@ impl App {
                         }),
                         _ => Vec::new(),
                     },
+                    classic_bars,
+                    islands,
+                    own_name: &own_name,
+                    own_pic: self.avatar_pics.get(&self.world.agent_id),
+                    recent: if classic_bars { Vec::new() } else { self.recent_places() },
                 };
                 let media = ui::audio::MediaState {
                     music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
@@ -8136,6 +8232,7 @@ impl App {
                     output_device: self.settings.audio.output_device.clone(),
                     input_devices: &self.options_ui.input_devices,
                     output_devices: &self.options_ui.output_devices,
+                    voice_dot: (!classic_bars).then(|| (self.voice.light, self.voice.status.clone())),
                     ..Default::default()
                 };
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
@@ -8160,7 +8257,13 @@ impl App {
                 );
                 // what the bars leave: where the windows are laid out, moved
                 // and snapped this frame
-                ui::layout::set_work_area(ui.ctx(), ui.available_rect_before_wrap());
+                let left = ui.available_rect_before_wrap();
+                let area = if classic_bars {
+                    left
+                } else {
+                    ui::bars::islands::work_area(left, left.bottom())
+                };
+                ui::layout::set_work_area(ui.ctx(), area);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.toolbar_ui.show(ui.ctx(), &p, layout, toolbar_settings);
                 if self.toolbar_ui.commit(layout, toolbar_settings) || chat_width_set || toolbar_migrated {
@@ -8625,7 +8728,8 @@ impl App {
                     &self.skin.icons,
                     &mut self.media,
                     &mut self.media_ui,
-                    self.skin.layout.nav_bar_height,
+                    // under the top bar or the islands
+                    ui::layout::work_area(&ctx).top() - ctx.content_rect().top(),
                 );
                 if let Some(c) = self.media_cursor {
                     ctx.set_cursor_icon(c);
@@ -8770,8 +8874,18 @@ impl App {
                     .then_some(self.world.main_region)
                     .flatten()
                     .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
-                self.region_ui
-                    .show(&ctx, &p, &mut self.world, &self.avatar_pics, region_map.as_ref(), &mut open);
+                if self.region_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.world,
+                    &self.avatar_pics,
+                    &self.ui_images,
+                    region_map.as_ref(),
+                    &mut self.settings,
+                    &mut open,
+                ) {
+                    self.settings.save();
+                }
                 self.panels.region_estate = open;
                 match self.region_ui.action.take() {
                     Some(ui::region::RegionAction::AboutLand) => self.panels.about_land = true,
@@ -8793,12 +8907,19 @@ impl App {
                 self.controls_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
+                let automatic_base = self.scene.automatic_hover_base(&self.world);
                 if self.hover_height_ui.show(
                     &ctx,
                     &p,
                     &mut self.world.hover_height,
                     hover_enabled,
-                    &mut self.settings.camera.hover_affects_camera,
+                    ui::hover_height::HoverHeightOptions {
+                        camera: &mut self.settings.camera.hover_affects_camera,
+                        automatic: &mut self.settings.auto_hover_height,
+                        offset: &mut self.settings.auto_hover_offset,
+                        automatic_base,
+                        neutral_pose_test: &mut self.scene.neutral_pose_test,
+                    },
                 ) {
                     self.settings.save();
                 }
@@ -9785,7 +9906,7 @@ impl ApplicationHandler for App {
             // AURORA_DEMO_REGION=overview[:owner|:manager|:resident]: Region /
             // Estate on that page
             if let Some(scenario) = crate::demo::region::scenario() {
-                self.region_ui.demo(scenario.page, scenario.preview);
+                self.region_ui.demo(scenario.page, scenario.preview, scenario.manage);
                 if scenario.compact {
                     let pos = egui::pos2(560.0, 80.0);
                     ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(480.0, 720.0));
@@ -10943,7 +11064,9 @@ impl ApplicationHandler for App {
                     }
                     None => false,
                 };
-                if !on_media {
+                // (the free camera has no zoom: the wheel would change the
+                // avatar's view behind it, or enter mouselook)
+                if !on_media && self.camera.free().is_none() {
                     // SL wheel clicks: positive zooms out
                     let was = self.camera.mouselook();
                     self.camera

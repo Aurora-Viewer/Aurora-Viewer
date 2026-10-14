@@ -72,8 +72,32 @@ fn toast_seconds(n: &Notification, message_seconds: f64) -> f64 {
     }
 }
 
-/// Bell button with the unread count; returns true when clicked.
-pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: bool) -> (bool, egui::Rect) {
+/// Bell button with the unread count; returns true when clicked. In an
+/// island of the Aurora bars (`island`), the count is the violet one the
+/// Conversations button has.
+pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: bool, island: bool) -> (bool, egui::Rect) {
+    if island {
+        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(super::bars::islands::SLOT), egui::Sense::click());
+        let hot = resp.hovered() || open;
+        if hot {
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+        }
+        let icon = if unread > 0 { "bell-ringing-filled" } else { "bell-filled" };
+        if let Some(t) = icons.get(icon) {
+            let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(16.0));
+            ui.painter().image(
+                t.id(),
+                r,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                p.ink,
+            );
+        }
+        if unread > 0 {
+            super::bars::islands::count(ui, p, rect, unread, 1.0, false);
+        }
+        let tip = aurora_i18n::tr!("notifications-unread-count", count = unread);
+        return (resp.on_hover_text(tip).clicked(), rect);
+    }
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(22.0, 20.0), egui::Sense::click());
     if resp.hovered() || open {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);

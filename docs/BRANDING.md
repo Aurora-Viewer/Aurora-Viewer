@@ -227,6 +227,11 @@ dragging a handle switch to `violet_light`, like any selection.
   `violet_light`). On a solid violet face, text and icons in `on_accent`
   (neither hard-coded white, nor `ink`, which a skin can darken); on a
   `danger` or `amber` face, which are light, the text stays in `navy`.
+  Signed height sliders use `widgets::height_slider`: a visible neutral
+  track, zero marker, violet fill from zero and a solid rectangular handle
+  in the theme's radius. Secondary controls can be grey while retaining
+  their interaction; the hover-height manual controls switch automatic
+  mode off when edited. The surrounding shared floater keeps its glass.
 - **Very subtle but visible separators.** A thin line of a neutral barely
   lighter than the background, so that one can see where each element starts
   and ends without weighing things down. Between two areas of a window:
