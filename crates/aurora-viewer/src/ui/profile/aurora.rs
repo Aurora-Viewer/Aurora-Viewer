@@ -390,7 +390,7 @@ fn body(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
     let f = facts(world, &w.id, own, profile);
     header(ui, env, w, compact, &f);
     let friend = world.social.friends.iter().find(|fr| fr.id == w.id);
-    if !own {
+    if !own && (friend.is_some() || !compact) {
         ui.add_space(10.0);
         match friend {
             Some(fr) => rights_bar(ui, env, w.id, fr, compact),
@@ -1418,6 +1418,8 @@ fn card(
         })
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            // the head 8 px over the content (.card > .h)
+            ui.spacing_mut().item_spacing.y = 6.0;
             if let Some((icon, title)) = head {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
@@ -1454,7 +1456,6 @@ fn card(
                         });
                     }
                 });
-                ui.add_space(4.0);
             }
             body(ui);
         })
@@ -1831,6 +1832,10 @@ fn groups_card(ui: &mut egui::Ui, env: &mut Env, w: &Window) {
         return;
     };
     let own = w.id == world.agent_id;
+    // in edit mode the groups shown are a setting of Visibility (the mock-up)
+    if w.editing {
+        return;
+    }
     let title = aurora_i18n::tr!("ui-profile-aurora-groups", count = pr.groups.len() as i64);
     // inviting to a group is not ported yet: the link waits greyed
     let invite = (!own).then(|| Link {
