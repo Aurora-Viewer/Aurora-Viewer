@@ -542,6 +542,12 @@ fn segments(text: &str) -> Vec<Seg<'_>> {
     out
 }
 
+/// Right click on the sender of a chat line: the name menu, its report on
+/// the line.
+fn line_name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, line: &crate::world::ChatLine) {
+    super::menu::context_menu(r, p, |ui| super::context::chat_sender_menu(ui, p, world, id, line));
+}
+
 /// Right click on an avatar name in a conversation (menu_url_agent.xml).
 fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
     super::menu::context_menu(r, p, |ui| {
@@ -913,7 +919,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                         (false, false) => line.source,
                     };
                     if !object && !avatar.is_nil() {
-                        name_menu(&r, p, world, avatar);
+                        line_name_menu(&r, p, world, avatar, line);
                     }
                     if !object
                         && !avatar.is_nil()
@@ -1182,8 +1188,8 @@ pub fn show(
     };
     let own_name = world.own_name();
     let mut tear_off = false;
-    let mut floater = super::widgets::Floater::new("conversations", title, default.min, default.size())
-        .attention(world.chat_unread + world.social.total_unread() > 0);
+    let mut floater =
+        super::widgets::Floater::new("conversations", title, default.min, default.size()).attention(conversations_waiting(world));
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
@@ -1526,6 +1532,13 @@ pub fn show(
         actions.push(ConvAction::Contacts(super::contacts::ContactsAction::ToggleTornOff));
     }
     actions
+}
+
+/// The violet outline of the Conversations floater (#293) waits for what the
+/// pill of its bottom-bar button counts: IMs, group chats and conferences,
+/// never the nearby chat alone (`World::conversations_badge`).
+pub fn conversations_waiting(world: &World) -> bool {
+    world.conversations_badge() > 0
 }
 
 /// The open Conversations floater shows the local chat: its tab is selected

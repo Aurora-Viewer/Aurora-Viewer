@@ -10,7 +10,8 @@ use aurora_net::currency::{CurrencyError, CurrencyQuote};
 const DEMO_HELPER: &str = "demo://currency/";
 
 impl App {
-    fn currency_helper(&self) -> Option<&'static str> {
+    /// The grid's helper pages (currency.php, landtool.php), or the demo's.
+    pub(super) fn currency_helper(&self) -> Option<&'static str> {
         if self.demo {
             Some(DEMO_HELPER)
         } else {

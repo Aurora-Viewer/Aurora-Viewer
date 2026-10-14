@@ -9,6 +9,8 @@
 //! nine tabs for the session, whatever Preferences › Aurora says.
 //! `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` sets the objects on the owner's
 //! land and makes them grow at each answer (the floater's refresh).
+//! `AURORA_DEMO_BUY_LAND` puts the parcel up for sale, and a ParcelBuy
+//! hands it to the avatar.
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS, TEX_GRADIENT};
 use crate::world::land::powers;
@@ -107,6 +109,21 @@ pub fn group_powers(group: Uuid) -> u64 {
     }
 }
 
+/// AURORA_DEMO_BUY_LAND=<mode>[:confirm]: the plaza parcel for sale by
+/// a demo resident (rich, short, upgrade, other, error; see docs/TESTING.md).
+pub fn buy_scenario() -> Option<String> {
+    let v = std::env::var("AURORA_DEMO_BUY_LAND").ok()?.trim().to_lowercase();
+    Some(v.split(':').next().unwrap_or_default().to_owned())
+}
+
+/// AURORA_DEMO_BUY_LAND=<mode>:confirm: the confirmation opens by itself.
+pub fn buy_confirms() -> bool {
+    std::env::var("AURORA_DEMO_BUY_LAND").is_ok_and(|v| v.trim().to_lowercase().ends_with(":confirm"))
+}
+
+/// Price of the plaza parcel in AURORA_DEMO_BUY_LAND.
+const SALE_PRICE: i32 = 4500;
+
 fn now() -> i32 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -181,10 +198,29 @@ fn initial(role: Role) -> ParcelInfo {
     }
 }
 
+/// The plaza parcel on sale by a resident, with its objects; "other": set
+/// to sell to Nova only.
+fn for_sale(mut p: ParcelInfo, mode: &str) -> ParcelInfo {
+    p.owner_id = DEMO_LOUP;
+    p.is_group_owned = false;
+    p.flags |= pf::FOR_SALE | pf::SELL_PARCEL_OBJECTS;
+    p.sale_price = SALE_PRICE;
+    if mode == "other" {
+        p.auth_buyer = DEMO_NOVA;
+    }
+    p
+}
+
 pub(super) fn parcel() -> ParcelInfo {
     let mut g = PARCEL.lock();
-    g.get_or_insert_with(|| initial(scenario().map_or(Role::Member, |s| s.role)))
-        .clone()
+    g.get_or_insert_with(|| {
+        let p = initial(scenario().map_or(Role::Member, |s| s.role));
+        match buy_scenario() {
+            Some(mode) => for_sale(p, &mode),
+            None => p,
+        }
+    })
+    .clone()
 }
 
 /// AURORA_DEMO_LAND_PRIMS=<used>[,<step>]: objects on the owner's land in
@@ -353,6 +389,18 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                 }));
             }
             out
+        }
+        LandCommand::Buy { for_group, group, .. } => {
+            // the sale goes through: the parcel changes hands
+            let mut p = parcel();
+            p.owner_id = if *for_group { *group } else { DEMO_AGENT };
+            p.is_group_owned = *for_group;
+            p.flags &= !(pf::FOR_SALE | pf::SELL_PARCEL_OBJECTS);
+            p.sale_price = 0;
+            p.auth_buyer = Uuid::nil();
+            p.claim_date = now();
+            *PARCEL.lock() = Some(p);
+            vec![selected()]
         }
         LandCommand::DwellRequest { .. } => vec![ev(LandEvent::Dwell { local_id: 1, dwell: 145.0 })],
         LandCommand::ObjectOwnersRequest { .. } => {

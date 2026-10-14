@@ -209,7 +209,9 @@ impl World {
 
     /// Commands queued by groups, sessions and the block list.
     pub fn take_social_commands(&mut self) -> Vec<NetCommand> {
-        self.groups.take_commands()
+        let mut cmds = self.groups.take_commands();
+        cmds.extend(self.group_data.take_commands());
+        cmds
     }
 }
 

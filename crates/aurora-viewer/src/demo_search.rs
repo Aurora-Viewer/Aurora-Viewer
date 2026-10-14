@@ -29,6 +29,23 @@ fn id(base: u128, n: usize) -> Uuid {
     Uuid::from_u128(base | n as u128)
 }
 
+/// The demo group the agent is not in, with an open enrollment and a fee
+/// ("Boreal Photographers"): the guest's view of the group profile.
+pub fn boreal() -> Uuid {
+    id(GROUP, 4)
+}
+
+/// The member count a demo group's profile gives.
+pub fn member_count(group: &Uuid) -> Option<i32> {
+    groups().into_iter().find(|g| g.0 == *group).map(|g| g.2)
+}
+
+/// Its founder, as in the profile.
+pub fn founder(group: &Uuid) -> Option<Uuid> {
+    let i = groups().iter().position(|g| g.0 == *group)?;
+    Some(if i % 2 == 0 { DEMO_LOUP } else { DEMO_NOVA })
+}
+
 /// (name, members) of the demo groups; the first two are the demo's own.
 fn groups() -> Vec<(Uuid, String, i32)> {
     vec![

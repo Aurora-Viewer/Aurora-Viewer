@@ -53,7 +53,7 @@ sections! {
         complexity_mode, occlusion_culling, max_particles, texture_budget_auto, texture_budget_mb, anisotropy,
         shadow_quality, shadows, projector_shadows, ssao, time_of_day, env_manual_transition, env_persist,
         exposure, sharpen, glow, water_reflections, mirrors, ssr, reflection_probes, probe_count, antialiasing,
-        tonemapper, vsync, fps_cap, fps_limit, background_fps_cap, background_fps_limit,
+        tonemapper, dof, vsync, fps_cap, fps_limit, background_fps_cap, background_fps_limit,
     ],
     1 => [
         language, language_is_public, update_mode, ui_scale, use_pie_menu, snap_windows, show_perf,
@@ -88,8 +88,8 @@ sections! {
         lookat.private_local, lookat.limit_distance, lookat.max_distance,
     ],
     TAB_AURORA => [
-        chat_style, classic_name_tags, lookat.style, classic_about_land, lookat.aim, plates_hover_expand,
-        plates_friends_only_full, plate_click,
+        chat_style, classic_name_tags, lookat.style, notifications_style, world_map_style, classic_profiles, photo_window, classic_about_land,
+        lookat.aim, plates_hover_expand, plates_friends_only_full, plate_click,
     ],
 }
 

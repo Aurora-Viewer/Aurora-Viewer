@@ -76,6 +76,26 @@ fn nearby_chat_does_not_raise_the_conversations_button_count() {
     assert_eq!(w.conversations_badge(), 2);
 }
 
+/// The minimized Conversations floater's outline (#293) follows the pill of
+/// its button: off with unread nearby chat only, on for an IM.
+#[test]
+fn nearby_chat_alone_lights_neither_the_outline_nor_the_pill() {
+    let mut w = world();
+    w.push_chat(ChatLine {
+        time: SystemTime::now(),
+        from: "Tom Smith".into(),
+        text: "hello everyone".into(),
+        kind: ChatKind::Local(aurora_net::ChatType::Normal),
+        source: TOM,
+        origin: Origin::Live,
+    });
+    assert!(w.chat_unread > 0);
+    assert_eq!(w.conversations_badge(), 0);
+    assert!(!crate::ui::chat::conversations_waiting(&w));
+    receive(&mut w, JANE, JANE, "hi", ImKind::Private, false);
+    assert!(crate::ui::chat::conversations_waiting(&w));
+}
+
 #[test]
 fn a_friend_online_is_a_toast_that_never_enters_the_bell() {
     let mut w = world();
@@ -174,6 +194,12 @@ fn no_message_entry_in_sight_in_dnd_from_a_blocked_resident_or_when_turned_off()
     w.status.dnd = true;
     receive(&mut w, JANE, JANE, "hello", ImKind::Private, false);
     assert!(messages(&w).is_empty());
+    // Aurora's paused bell keeps it in "To do", silently
+    let mut w = world();
+    w.notifications.aurora = true;
+    w.status.dnd = true;
+    receive(&mut w, JANE, JANE, "hello", ImKind::Private, false);
+    assert_eq!(messages(&w).len(), 1);
     // a blocked resident in a group chat
     let mut w = world();
     w.notifications.toasts.group_im = true;

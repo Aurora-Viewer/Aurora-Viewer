@@ -7,6 +7,13 @@
 //! browser), "Favorites" (picks), "Classifieds", "Real life" and
 //! "Notes". Our own profile can be edited (texts, pictures, picks, show in
 //! search, full birth date); notes can be written on anyone.
+//!
+//! This is the classic window (Preferences › Aurora › Profiles); the
+//! default one is drawn by `aurora`, on the same state, data and actions.
+
+mod aurora;
+
+pub use aurora::banner_image;
 
 use super::menu;
 use super::texture_picker::TexturePicker;
@@ -47,6 +54,13 @@ pub enum ProfileAction {
     Net(NetCommand),
     /// Our display name (the button next to our name).
     DisplayName,
+    /// The right to modify our objects, granted or revoked once confirmed
+    /// (the rights bar of the Aurora window).
+    ModifyRights {
+        friend: Uuid,
+        rights: i32,
+        grant: bool,
+    },
     /// Chat of one of our groups (double-click in the group list).
     GroupChat(Uuid),
     /// Picks and classifieds: "Show on map" / "Teleport"
@@ -137,6 +151,10 @@ struct Window {
     rights_edit: Option<i32>,
     /// Height under "Info" in the "Second Life" tab (previous frame).
     bottom_h: f32,
+    /// Our own profile edited in place (the Aurora window).
+    editing: bool,
+    /// The picture shown large in a window of its own (the Aurora window).
+    big_photo: bool,
 }
 
 impl Window {
@@ -161,6 +179,8 @@ impl Window {
             confirm_delete: false,
             rights_edit: None,
             bottom_h: 200.0,
+            editing: false,
+            big_photo: false,
         }
     }
 
@@ -187,6 +207,9 @@ pub struct ProfileUi {
     pub wanted_images: HashSet<Uuid>,
     picker: TexturePicker,
     picker_slot: Option<PictureSlot>,
+    /// Banners of the Aurora window by profile picture (`banner_image`),
+    /// made by the viewer when it decodes the picture.
+    pub banners: HashMap<Uuid, egui::TextureHandle>,
 }
 
 impl ProfileUi {
@@ -209,10 +232,21 @@ impl ProfileUi {
         }
     }
 
-    /// Demo captures: show one tab (0 Second Life ... 5 Notes).
-    pub fn set_tab(&mut self, id: Uuid, tab: usize) {
-        if let Some(w) = self.windows.iter_mut().find(|w| w.id == id) {
-            w.tab = tab.min(TAB_NOTES);
+    /// Demo captures of the Aurora window (AURORA_DEMO_PROFILE): `edit` puts
+    /// our profile in edit mode, `compact` gives the window the width of
+    /// the compact layout, a number shows that tab.
+    pub fn demo(&mut self, ctx: &egui::Context, id: Uuid, option: &str) {
+        let Some(w) = self.windows.iter_mut().find(|w| w.id == id) else {
+            return;
+        };
+        match option {
+            "edit" => w.editing = true,
+            "compact" => {
+                let size = Vec2::new(380.0, 640.0);
+                let pos = ctx.content_rect().center() - size * 0.5;
+                widgets::place_floater(ctx, &aurora::window_id(id), pos, size);
+            }
+            tab => w.tab = tab.parse::<usize>().unwrap_or(TAB_SL).min(TAB_NOTES),
         }
     }
 
@@ -235,11 +269,47 @@ impl ProfileUi {
         world: &mut World,
         want_names: &mut HashSet<Uuid>,
         web: &WebContext,
+        classic: bool,
     ) -> Vec<ProfileAction> {
         let mut actions = Vec::new();
         let screen = ctx.content_rect();
         let mut pick_picture: Option<(PictureSlot, Uuid)> = None;
         for (i, w) in self.windows.iter_mut().enumerate() {
+            if !classic {
+                let profile = world.profiles.get(&w.id);
+                if let Some(pr) = profile {
+                    w.about.sync(&pr.sl_about);
+                    w.fl_about.sync(&pr.fl_about);
+                    if let Some(n) = &pr.notes {
+                        w.notes.sync(n);
+                    }
+                }
+                if !w.open {
+                    continue;
+                }
+                if std::mem::take(&mut w.raise) {
+                    let win_id = aurora::window_id(w.id);
+                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(&win_id)));
+                }
+                world.social.avatar_names.want(&w.id);
+                let mut env = aurora::Env {
+                    p,
+                    emoji,
+                    pics,
+                    images,
+                    banners: &self.banners,
+                    world,
+                    want_names,
+                    web,
+                    wanted_pics: &mut self.wanted_pics,
+                    wanted_images: &mut self.wanted_images,
+                    actions: &mut actions,
+                    pick_picture: &mut pick_picture,
+                };
+                let open = aurora::window(ctx, &mut env, w, i);
+                close_or_confirm(w, open);
+                continue;
+            }
             let profile = world.profiles.get(&w.id);
             if let Some(pr) = profile {
                 w.about.sync(&pr.sl_about);
@@ -336,18 +406,7 @@ impl ProfileUi {
             if let Some(rights) = w.rights_edit {
                 rights_dialog(ctx, p, w, &name, rights, &mut actions);
             }
-            if !open {
-                // LLFloaterProfile::onClickCloseBtn: ask before losing edits
-                let pick_dirty = w.pick_edit.as_ref().is_some_and(|(e, base)| e != base);
-                if w.about.dirty() || w.fl_about.dirty() || w.notes.dirty() || pick_dirty {
-                    w.confirm_close = true;
-                } else {
-                    w.open = false;
-                }
-            }
-            if !w.open {
-                w.web.close();
-            }
+            close_or_confirm(w, open);
         }
         self.windows.retain(|w| w.open);
         if let Some((slot, current)) = pick_picture {
@@ -411,6 +470,27 @@ fn unsaved_bar(ui: &mut egui::Ui, p: &Palette, w: &mut Window, actions: &mut Vec
                 });
             });
         });
+}
+
+/// Some text or pick of the window is edited and not saved.
+fn has_unsaved(w: &Window) -> bool {
+    let pick_dirty = w.pick_edit.as_ref().is_some_and(|(e, base)| e != base);
+    w.about.dirty() || w.fl_about.dirty() || w.notes.dirty() || pick_dirty
+}
+
+/// The close button was pressed when `open` is false:
+/// LLFloaterProfile::onClickCloseBtn asks before losing edits.
+fn close_or_confirm(w: &mut Window, open: bool) {
+    if !open {
+        if has_unsaved(w) {
+            w.confirm_close = true;
+        } else {
+            w.open = false;
+        }
+    }
+    if !w.open {
+        w.web.close();
+    }
 }
 
 fn save_all(w: &mut Window, actions: &mut Vec<ProfileAction>) {
@@ -675,7 +755,7 @@ fn second_life_tab(
             clicked |= rights_icon(
                 ui,
                 p,
-                "box",
+                "pencil-filled",
                 f.rights_given & 4 != 0,
                 aurora_i18n::tr!("ui-profile-modify-delete-or-take-my-objects"),
             );
@@ -1043,7 +1123,7 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
         } else {
             aurora_i18n::tr!("common-block")
         };
-        if menu::item(ui, p, "forbid-filled", block) {
+        if menu::item(ui, p, "ban", block) {
             actions.push(ProfileAction::ToggleBlock(id));
         }
         menu::separator(ui, p);
@@ -1057,7 +1137,12 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
             ui.ctx().copy_text(id.to_string());
         }
         menu::separator(ui, p);
-        menu::item_tip(ui, p, "flag-filled", aurora_i18n::tr!("common-report"), false, soon);
+        if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("common-report")) {
+            super::context::request(
+                ui.ctx(),
+                super::context::CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Avatar(id)),
+            );
+        }
     });
 }
 

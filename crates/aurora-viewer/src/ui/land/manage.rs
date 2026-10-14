@@ -2096,8 +2096,15 @@ fn sale(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut Wo
             {
                 s.dialog = Some(Dialog::Confirm(Confirm::Release));
             }
-            // LLFloaterBuyLand for a group and LLFloaterScriptLimits are not ported yet
-            button(ui, p, "", aurora_i18n::tr!("ui-land-general-buy-for-group"), false).on_disabled_hover_text(super::not_yet());
+            // onClickBuyLand(true): for the active group, with its power
+            let group = world.groups.active;
+            let buy_group = !group.is_nil() && crate::world::land::can_agent_buy(parcel, &v.rights(), Some(group), true);
+            if button(ui, p, "", aurora_i18n::tr!("ui-land-general-buy-for-group"), buy_group)
+                .on_disabled_hover_text(aurora_i18n::tr!("ui-land-general-this-land-is-not-for-sale-to-you"))
+                .clicked()
+            {
+                world.land.request_buy(true);
+            }
             if v.region.as_ref().is_some_and(|r| r.has_land_resources)
                 && button(ui, p, "code", aurora_i18n::tr!("ui-land-general-script-info"), true).clicked()
             {

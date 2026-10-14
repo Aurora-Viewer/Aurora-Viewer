@@ -10,11 +10,13 @@ pub mod eep_env;
 pub mod env;
 pub mod env_select;
 pub mod experiences;
+pub mod group_data;
 pub mod groups;
 pub mod hover_height;
 pub mod hud_scale;
 pub mod inventory;
 pub mod land;
+pub mod land_buy;
 pub mod landmarks;
 pub mod lookat;
 pub mod lslbridge;
@@ -23,6 +25,7 @@ pub mod maturity;
 pub mod motion;
 pub mod mutes;
 pub mod names;
+pub mod notification_history;
 pub mod notifications;
 pub mod objects;
 pub mod outfit;
@@ -150,6 +153,9 @@ pub struct World {
     pub hud_zoom: f32,
     pub hud_scales: hud_scale::HudScales,
     pub hover_height: hover_height::HoverHeight,
+    /// What left the notification list, kept per account (the center's
+    /// History).
+    pub notification_history: notification_history::History,
     pub login: Option<Arc<LoginResponse>>,
     pub agent_id: Uuid,
     pub regions: HashMap<RegionHandle, Region>,
@@ -208,6 +214,9 @@ pub struct World {
     diag_reported: HashSet<Uuid>,
     pub events_this_frame: usize,
     pub balance: Option<i32>,
+    /// m² of land the account holds (MoneyBalanceReply SquareMetersCommitted,
+    /// LLStatusBar::getSquareMetersCommitted).
+    pub land_committed: i32,
     pub upload_cost: Option<i32>,
     pub local_assets: HashMap<Uuid, (String, bool)>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
@@ -304,6 +313,9 @@ pub struct World {
     pub place_details: place_details::PlaceDetails,
     /// "Search": result lists and details of the directory search.
     pub search: search::Search,
+    /// Members, roles, titles and notices of the groups whose profile is
+    /// open (LLGroupMgr).
+    pub group_data: group_data::GroupMgr,
     arrived_once: bool,
     /// The instant messages kept while offline were asked for (once per
     /// login).
@@ -344,6 +356,7 @@ impl World {
             hud_zoom: 1.0,
             hud_scales: Default::default(),
             hover_height: Default::default(),
+            notification_history: Default::default(),
             ui_sounds: Vec::new(),
             im_messages: Vec::new(),
             balance_changes: Vec::new(),
@@ -386,6 +399,7 @@ impl World {
             diag_reported: HashSet::new(),
             events_this_frame: 0,
             balance: None,
+            land_committed: 0,
             upload_cost: None,
             local_assets: HashMap::new(),
             health: 100.0,
@@ -426,6 +440,7 @@ impl World {
             map: worldmap::WorldMap::default(),
             place_details: Default::default(),
             search: Default::default(),
+            group_data: Default::default(),
             notifications: notifications::Notifications::default(),
             teleport_invites: teleport_invites::TeleportInvites::default(),
             maturity: maturity::MaturityPreference::default(),
@@ -1969,6 +1984,25 @@ impl World {
                 self.search.events.insert(e.id, *e);
                 None
             }
+            ev @ (NetEvent::GroupMembers(_)
+            | NetEvent::GroupRoles(_)
+            | NetEvent::GroupRoleMembers(_)
+            | NetEvent::GroupTitles { .. }
+            | NetEvent::GroupNotices { .. }) => {
+                self.group_data.on_event(&ev);
+                None
+            }
+            // LLGroupMgr::processJoinGroupReply / processLeaveGroupReply: the
+            // group list again, the group's data forgotten, its profile
+            // asked again
+            NetEvent::GroupJoined { group, success } | NetEvent::GroupLeft { group, success } => {
+                if success {
+                    self.groups.out.push(aurora_net::NetCommand::RequestGroups);
+                    self.group_data.clear(&group);
+                    self.search.request_group(group);
+                }
+                None
+            }
             NetEvent::GroupProfile(g) => {
                 self.search.groups.insert(g.id, *g);
                 None
@@ -1978,6 +2012,7 @@ impl World {
                 None
             }
             NetEvent::RemoteParcel { handle, position, result } => {
+                self.map.apply_remote_parcel(handle, position, result.as_ref().ok().copied());
                 self.place_details.apply_remote_parcel(handle, position, result);
                 None
             }
@@ -2008,6 +2043,10 @@ impl World {
                 // the app compares with UISndMoneyChangeThreshold
                 self.balance_changes.push((self.balance, b));
                 self.balance = Some(b);
+                None
+            }
+            NetEvent::LandHoldings { committed, .. } => {
+                self.land_committed = committed;
                 None
             }
             NetEvent::InventoryContents(c) => {
@@ -2063,6 +2102,10 @@ impl World {
             }
             NetEvent::MapItems { item_type, items } => {
                 self.map.apply_items(item_type, items);
+                None
+            }
+            NetEvent::AgentFound { prey, x, y } => {
+                self.map.agent_found(prey, x, y, self.agent.position.z);
                 None
             }
             NetEvent::ParcelCollision {
@@ -2605,15 +2648,16 @@ impl World {
     /// A message received in a conversation that is not in sight
     /// (`in_sight`: its tab shown in the Conversations window): a toast and
     /// an entry under the bell until the conversation is read, as
-    /// notify_of_message decides (llimview.cpp) — never in do not disturb,
-    /// group chats by their own preference.
+    /// notify_of_message decides (llimview.cpp) — never in do not disturb
+    /// with Firestorm's toasts, group chats by their own preference.
     pub fn notify_message(&mut self, m: &ImMessage, in_sight: bool) {
         let prefs = self.notifications.toasts;
         let wanted = match m.kind {
             ImKind::Group => prefs.group_im,
             ImKind::Private | ImKind::Conference => prefs.im,
         };
-        if !wanted || in_sight || self.status.dnd {
+        // Aurora's paused bell still keeps them in "To do", silently
+        if !wanted || in_sight || (self.status.dnd && !self.notifications.aurora) {
             return;
         }
         let Some(line) = self.social.ims.iter().find(|s| s.other == m.session).and_then(|s| s.lines.back()) else {
@@ -2654,6 +2698,15 @@ impl World {
         self.acknowledge_read_messages();
         self.social.focus_im = Some(session);
         Some(session)
+    }
+
+    /// Each frame: the file of the history once read, and what left the
+    /// notification list since.
+    pub fn record_notification_history(&mut self) {
+        self.notification_history.poll();
+        for e in self.notifications.take_departures() {
+            self.notification_history.add(e);
+        }
     }
 
     /// The message entries whose conversation has been read leave the bell.

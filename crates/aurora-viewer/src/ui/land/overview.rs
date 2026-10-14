@@ -330,17 +330,22 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut
                 .map
                 .track_location(ox as f64 + point.x as f64, oy as f64 + point.y as f64, point.z, true);
         }
-        // LLLandmarkActions::createLandmarkHere is not ported yet
-        widgets::action_button_if(
+        // "Create landmark" is for where the agent stands (STORM-411)
+        let here = landmark_here(v, parcel, world.parcel.as_ref().map(|a| a.local_id));
+        if widgets::action_button_if(
             ui,
             p,
             "bookmark-filled",
             aurora_i18n::tr!("common-landmark"),
             widgets::ActionKind::Flat,
             size,
-            false,
+            here,
         )
-        .on_disabled_hover_text(menu::not_yet());
+        .on_disabled_hover_text(aurora_i18n::tr!("ui-land-overview-landmark-here"))
+        .clicked()
+        {
+            crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::CreateLandmark);
+        }
         let slurl = (!region.is_empty()).then(|| crate::slurl::make(&region, point));
         if widgets::action_button_if(
             ui,
@@ -357,22 +362,22 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut
         {
             ui.ctx().copy_text(url);
         }
-        // LLFloaterBuyLand is not ported yet: the reason it would be refused
+        // onClickBuyLand: startBuyLand on the selection (LLFloaterBuyLand)
         let buy = can_agent_buy(parcel, &v.rights(), None, true);
-        widgets::action_button_if(
+        if widgets::action_button_if(
             ui,
             p,
             "shopping-cart-filled",
             aurora_i18n::tr!("ui-land-overview-buy"),
             widgets::ActionKind::Flat,
             size,
-            false,
+            buy,
         )
-        .on_disabled_hover_text(if buy {
-            menu::not_yet()
-        } else {
-            aurora_i18n::tr!("ui-land-general-this-land-is-not-for-sale-to-you")
-        });
+        .on_disabled_hover_text(aurora_i18n::tr!("ui-land-general-this-land-is-not-for-sale-to-you"))
+        .clicked()
+        {
+            world.land.request_buy(false);
+        }
         if widgets::action_button_if(
             ui,
             p,
@@ -387,27 +392,53 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut
         {
             s.dialog = Some(Dialog::Confirm(Confirm::BuyPass));
         }
-        // LLFloaterReporter is not ported yet
-        widgets::action_button_if(
+        // LLFloaterReporter, about where the agent is
+        if widgets::action_button(
             ui,
             p,
             "flag-filled",
             aurora_i18n::tr!("ui-land-overview-report"),
             widgets::ActionKind::Flat,
             size,
-            false,
         )
-        .on_disabled_hover_text(menu::not_yet());
-        let mut scripts = false;
-        more_menu(ui, p, v, world, &mut scripts);
-        if scripts {
+        .clicked()
+        {
+            crate::ui::context::request(
+                ui.ctx(),
+                crate::ui::context::CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Nothing),
+            );
+        }
+        let mut more = More::default();
+        more_menu(ui, p, v, world, &parcel_for_group(parcel, v, world), &mut more);
+        if more.scripts {
             s.scripts.open();
+        }
+        if more.buy_for_group {
+            world.land.request_buy(true);
         }
     });
 }
 
+/// "Landmark" only for the parcel the agent stands on.
+pub(super) fn landmark_here(v: &View, parcel: &ParcelInfo, agent_parcel: Option<i32>) -> bool {
+    v.same_region && agent_parcel == Some(parcel.local_id)
+}
+
+/// LLPanelLandGeneral::refresh: buying for the active group, with its power.
+fn parcel_for_group(parcel: &ParcelInfo, v: &View, world: &World) -> bool {
+    let group = world.groups.active;
+    !group.is_nil() && can_agent_buy(parcel, &v.rights(), Some(group), true)
+}
+
+/// What the "…" menu asked for.
+#[derive(Default)]
+struct More {
+    scripts: bool,
+    buy_for_group: bool,
+}
+
 /// "…": the rarer actions of Firestorm's General tab.
-fn more_menu(ui: &mut egui::Ui, p: &Palette, v: &View, world: &World, scripts: &mut bool) {
+fn more_menu(ui: &mut egui::Ui, p: &Palette, v: &View, world: &World, buy_group: &bool, more: &mut More) {
     let Some(t) = crate::ui::icons::global("dots-filled") else {
         return;
     };
@@ -425,11 +456,13 @@ fn more_menu(ui: &mut egui::Ui, p: &Palette, v: &View, world: &World, scripts: &
         {
             ui.ctx().copy_text(id.to_string());
         }
-        menu::todo(ui, p, "users-group", aurora_i18n::tr!("ui-land-general-buy-for-group"));
+        if menu::item_if(ui, p, "users-group", aurora_i18n::tr!("ui-land-general-buy-for-group"), *buy_group) {
+            more.buy_for_group = true;
+        }
         if v.region.as_ref().is_some_and(|r| r.has_land_resources)
             && menu::item(ui, p, "code", aurora_i18n::tr!("ui-land-general-script-info"))
         {
-            *scripts = true;
+            more.scripts = true;
         }
     })
     .on_hover_text(aurora_i18n::tr!("ui-land-overview-more"));

@@ -39,11 +39,18 @@ pub mod geometry;
 /// Names and chat in the characters residents use (AURORA_DEMO_GLYPHS).
 #[path = "demo_glyphs.rs"]
 pub mod glyphs;
+/// The demo group server (AURORA_DEMO_GROUP_PROFILE).
+#[path = "demo_group.rs"]
+pub mod group;
 #[path = "demo_hud.rs"]
 pub mod hud;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
+/// The notification center's mockup scenario, in either style
+/// (AURORA_DEMO_NOTIFS).
+#[path = "demo_notifs.rs"]
+pub mod notifs;
 /// Place details of place links (AURORA_DEMO_PLACE).
 #[path = "demo_place.rs"]
 pub mod place;
@@ -425,6 +432,32 @@ fn demo_raw() -> Llsd {
         aurora_i18n::tr!("common-shopping"),
         -1,
     ));
+    if place::many_landmarks() {
+        skel.push(folder(
+            place::CLUBS_FOLDER,
+            place::LANDMARKS_FOLDER,
+            aurora_i18n::tr!("demo-map-clubs"),
+            -1,
+        ));
+        skel.push(folder(
+            place::BEACHES_FOLDER,
+            place::LANDMARKS_FOLDER,
+            aurora_i18n::tr!("demo-map-beaches"),
+            -1,
+        ));
+        skel.push(folder(
+            place::WALKS_FOLDER,
+            place::LANDMARKS_FOLDER,
+            aurora_i18n::tr!("demo-map-walks"),
+            -1,
+        ));
+        skel.push(folder(
+            place::MARKETS_FOLDER,
+            place::LANDMARKS_FOLDER,
+            aurora_i18n::tr!("demo-map-markets"),
+            -1,
+        ));
+    }
     if env::enabled() {
         skel.push(env::settings_folder(u(1)));
     }
@@ -1036,7 +1069,10 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
         p.flags = flags::TRANSACTED | flags::ALLOW_PUBLISH;
         p.customer_type = aurora_i18n::tr!("demo-premium").into();
         p.groups = groups;
-        p.picks = vec![(Uuid::from_u128(0x91C0_0001), aurora_i18n::tr!("demo-aurora-beach").into())];
+        p.picks = vec![
+            (Uuid::from_u128(0x91C0_0001), aurora_i18n::tr!("demo-aurora-beach").into()),
+            (Uuid::from_u128(0x91C0_0002), aurora_i18n::tr!("demo-my-workshop").into()),
+        ];
     } else if id == DEMO_LOUP {
         p.sl_about = aurora_i18n::tr!(
             "demo-lone-wolf-weekend-builder-my-partner-secondlife-app-agent",
@@ -1065,8 +1101,102 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
         p.hide_age = Some(true);
         p.online = None;
         p.groups = groups.into_iter().take(1).collect();
+    } else if id == DEMO_FRIEND {
+        // the friend of the profile mock-up: a place link and a web link in
+        // About, a partner, a group we are not in, three favorite places
+        let region = aurora_i18n::tr!("common-boreal-lagoon");
+        let slurl = format!("http://maps.secondlife.com/secondlife/{}/128/64/22", url_path(region));
+        p.sl_about = aurora_i18n::tr!("demo-nova-about", slurl = slurl);
+        // the names of the demo call this one "Tess ✨"
+        p.partner = DEMO_NOVA;
+        p.customer_type = "Premium".into();
+        p.groups = vec![
+            groups[0].clone(),
+            aurora_net::ProfileGroup {
+                id: DEMO_FIREFLIES,
+                name: aurora_i18n::tr!("demo-fireflies-club").into(),
+                insignia: Uuid::nil(),
+            },
+        ];
+        p.picks = DEMO_PICKS.iter().map(|(pick, _)| (*pick, demo_pick_name(*pick).into())).collect();
+        p.notes = Some(aurora_i18n::tr!("demo-nova-notes").into());
+    }
+    // AURORA_DEMO_PROFILE: the residents of the scenarios have a picture
+    // (and so a banner in the Aurora window)
+    if p.sl_image.is_nil() && std::env::var_os("AURORA_DEMO_PROFILE").is_some() {
+        p.sl_image = tags::scenario_picture(id);
     }
     p
+}
+
+/// A group of the demo friend's profile that we are not in.
+const DEMO_FIREFLIES: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0010);
+
+/// The favorite places of the demo profiles and their snapshots.
+const DEMO_PICKS: [(Uuid, Uuid); 3] = [
+    (
+        Uuid::from_u128(0x91C0_0001),
+        Uuid::from_u128(0x5A90_0000_0000_0000_0000_0000_0000_0001),
+    ),
+    (
+        Uuid::from_u128(0x91C0_0003),
+        Uuid::from_u128(0x5A90_0000_0000_0000_0000_0000_0000_0003),
+    ),
+    (
+        Uuid::from_u128(0x91C0_0002),
+        Uuid::from_u128(0x5A90_0000_0000_0000_0000_0000_0000_0002),
+    ),
+];
+
+fn demo_pick_name(pick: Uuid) -> &'static str {
+    match pick.as_u128() & 0xF {
+        1 => aurora_i18n::tr!("demo-aurora-beach"),
+        3 => aurora_i18n::tr!("demo-lagoon-stage"),
+        _ => aurora_i18n::tr!("demo-my-workshop"),
+    }
+}
+
+/// A region name in the path of a place link.
+fn url_path(name: &str) -> String {
+    let mut out = String::new();
+    for b in name.bytes() {
+        if b.is_ascii_alphanumeric() {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// The snapshot of a demo favorite place: a sky gradient over three colors
+/// (the mock-up's pictures), 128 x 80.
+fn pick_snapshot(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    const SKIES: [[[f32; 3]; 3]; 3] = [
+        [[255.0, 179.0, 107.0], [196.0, 93.0, 214.0], [42.0, 47.0, 107.0]],
+        [[125.0, 211.0, 252.0], [31.0, 95.0, 122.0], [11.0, 42.0, 58.0]],
+        [[163.0, 230.0, 53.0], [63.0, 98.0, 18.0], [26.0, 46.0, 5.0]],
+    ];
+    let n = DEMO_PICKS.iter().position(|(_, s)| s == id)?;
+    let sky = SKIES[n];
+    let (w, h) = (128u32, 80u32);
+    let mut px = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            // 160°: mostly down the picture, a little across
+            let t = ((y as f32 / (h - 1) as f32) * 0.85 + (x as f32 / (w - 1) as f32) * 0.15).clamp(0.0, 1.0);
+            let (a, b, k) = if t < 0.55 {
+                (sky[0], sky[1], t / 0.55)
+            } else {
+                (sky[1], sky[2], (t - 0.55) / 0.45)
+            };
+            for c in 0..3 {
+                px.push((a[c] + (b[c] - a[c]) * k) as u8);
+            }
+            px.push(255);
+        }
+    }
+    Some((px, w, h))
 }
 
 /// AURORA_DEMO_CONTACTS: two contact sets (one with a non-friend), an alias
@@ -1112,6 +1242,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = hud::reply(cmd) {
         return events;
     }
+    if let Some(events) = group::reply(cmd) {
+        return events;
+    }
     if let Some(events) = search::reply(cmd) {
         return events;
     }
@@ -1142,6 +1275,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             vec![NetEvent::Names(
                 ids.iter()
                     .map(|id| {
+                        if let Some((first, last, _)) = group::member_name(id) {
+                            return (*id, first.to_owned(), last.to_owned());
+                        }
                         let n = (id.as_u128() & 0xFF) as usize % names.len();
                         let mut it = names[n].split(' ');
                         (*id, it.next().unwrap_or("").to_owned(), it.next().unwrap_or("").to_owned())
@@ -1168,6 +1304,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                             long
                         } else if let Some(resident) = tags::name(id) {
                             resident
+                        } else if let Some(member) = group::member_name(id) {
+                            member
                         } else if let Some((first, sample)) = &glyphs {
                             (first.as_str(), "Resident", sample.display_name)
                         } else {
@@ -1330,15 +1468,24 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 list_in_profile: true,
                 contribution: 0,
             };
+            // our abilities in the first one follow the group profile's
+            // scenario; the groups joined or left since are in the list
+            let mut groups = vec![
+                aurora_net::GroupMembership {
+                    powers: group::my_powers(),
+                    ..g(DEMO_GROUP1, "Aurora Builders", true)
+                },
+                g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),
+                aurora_net::GroupMembership {
+                    list_in_profile: false,
+                    ..g(DEMO_GROUP3, aurora_i18n::tr!("common-plaza-market"), true)
+                },
+            ];
+            if !group::adjust_groups(&mut groups) {
+                return vec![NetEvent::Groups(groups)];
+            }
             vec![
-                NetEvent::Groups(vec![
-                    g(DEMO_GROUP1, "Aurora Builders", true),
-                    g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),
-                    aurora_net::GroupMembership {
-                        list_in_profile: false,
-                        ..g(DEMO_GROUP3, aurora_i18n::tr!("common-plaza-market"), true)
-                    },
-                ]),
+                NetEvent::Groups(groups),
                 NetEvent::ActiveGroup {
                     id: DEMO_GROUP1,
                     name: "Aurora Builders".into(),
@@ -1480,15 +1627,28 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         })],
         aurora_net::NetCommand::RequestProfile(id) => vec![NetEvent::AvatarProfile(Box::new(demo_profile(*id)))],
         aurora_net::NetCommand::PickInfoRequest { creator, pick } => {
-            let names = [aurora_i18n::tr!("demo-aurora-beach"), aurora_i18n::tr!("demo-my-workshop")];
-            let n = ((pick.as_u128() & 0xF) as usize + 1) % names.len();
+            // the beach (parcel 0), the workshop (1), the lagoon's stage (2)
+            let n = match pick.as_u128() & 0xF {
+                1 => 0,
+                3 => 2,
+                _ => 1,
+            };
+            let (desc, sim) = match n {
+                0 => (
+                    aurora_i18n::tr!("demo-a-quiet-spot-by-the-water-perfect-for-watching"),
+                    aurora_i18n::tr!("common-aurora-demo"),
+                ),
+                1 => (aurora_i18n::tr!("demo-workshop-desc"), aurora_i18n::tr!("common-sandbox")),
+                _ => (aurora_i18n::tr!("demo-lagoon-stage-desc"), aurora_i18n::tr!("common-boreal-lagoon")),
+            };
             vec![NetEvent::PickInfo(Box::new(aurora_net::PickInfo {
                 id: *pick,
                 creator: *creator,
                 parcel: Uuid::from_u128(0x9A2C_E100 + n as u128),
-                name: names[n].into(),
-                desc: aurora_i18n::tr!("demo-a-quiet-spot-by-the-water-perfect-for-watching").into(),
-                sim_name: aurora_i18n::tr!("common-aurora-demo").into(),
+                name: demo_pick_name(*pick).into(),
+                desc: desc.into(),
+                snapshot: DEMO_PICKS.iter().find(|(p, _)| p == pick).map_or(Uuid::nil(), |(_, s)| *s),
+                sim_name: sim.into(),
                 pos_global: glam::DVec3::new(256_000.0 + 140.0, 256_000.0 + 120.0, 25.0),
                 enabled: true,
                 ..Default::default()
@@ -1498,13 +1658,22 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         aurora_net::NetCommand::RegionHandleRequest(id) => place::region_handle(*id),
         aurora_net::NetCommand::ParcelInfoRequest(id) => match place::parcel_info(*id) {
             Some(ev) => vec![ev],
-            // the parcels of the profile picks
-            None => vec![NetEvent::ParcelInfo(Box::new(aurora_net::ParcelSummary {
-                id: *id,
-                name: aurora_i18n::tr!("common-aurora-plaza").into(),
-                sim_name: aurora_i18n::tr!("common-aurora-demo").into(),
-                ..Default::default()
-            }))],
+            // the parcels of the profile picks: the plaza, the sandbox's
+            // workshop, the club of the lagoon (moderate)
+            None => {
+                let (name, sim, flags) = match id.as_u128() {
+                    0x9A2C_E101 => ("", aurora_i18n::tr!("common-sandbox"), 0),
+                    0x9A2C_E102 => (aurora_i18n::tr!("demo-fireflies-club"), aurora_i18n::tr!("common-boreal-lagoon"), 1),
+                    _ => (aurora_i18n::tr!("common-aurora-plaza"), aurora_i18n::tr!("common-aurora-demo"), 0),
+                };
+                vec![NetEvent::ParcelInfo(Box::new(aurora_net::ParcelSummary {
+                    id: *id,
+                    name: name.into(),
+                    sim_name: sim.into(),
+                    flags,
+                    ..Default::default()
+                }))]
+            }
         },
         aurora_net::NetCommand::ClassifiedsRequest(id) if *id == DEMO_LOUP => vec![NetEvent::AvatarClassifieds {
             target: *id,
@@ -1556,6 +1725,16 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 .collect();
             blocks.push(map_block(0, 0, "", 0));
             vec![NetEvent::MapBlocks { blocks, null_sims: false }]
+        }
+        // the two online friends who let us map them: one in our region, one
+        // in the Boreal Lagoon
+        aurora_net::NetCommand::FindAgent(prey) if [u(100), u(102)].contains(prey) => {
+            let (x, y) = if *prey == u(100) {
+                (256_020.0, 256_240.0)
+            } else {
+                (256_316.0, 256_200.0)
+            };
+            vec![NetEvent::AgentFound { prey: *prey, x, y }]
         }
         aurora_net::NetCommand::MapItemRequest { item_type, handle } => {
             use aurora_net::map_item;
@@ -1630,6 +1809,20 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 ..Default::default()
             }])]
         }
+        // Report Abuse: the region's categories, the reported object (owned
+        // by Nova) and a report the demo keeps to itself
+        aurora_net::NetCommand::RequestAbuseCategories { .. } => {
+            vec![NetEvent::AbuseCategories(crate::report_abuse::default_categories())]
+        }
+        aurora_net::NetCommand::RequestReportObjectProperties { object, .. } => {
+            vec![NetEvent::ObjectProperties(vec![aurora_net::build::ObjectProps {
+                object_id: *object,
+                owner_id: DEMO_NOVA,
+                name: aurora_i18n::tr!("common-demo-object").into(),
+                ..Default::default()
+            }])]
+        }
+        aurora_net::NetCommand::SendAbuseReport(_) => vec![NetEvent::AbuseReportSent(Ok(()))],
         aurora_net::NetCommand::RequestPayPrice { object, .. } if *object == action_id(972) => {
             let (default, buttons) = match std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default().as_str() {
                 "pay-layout" => (1956, vec![1956, 3913, 5870, 7826]),
@@ -2210,6 +2403,7 @@ pub fn events() -> Vec<NetEvent> {
             owner: DEMO_LOUP,
             is_estate_manager: false,
             product_name: "Estate / Full Region".into(),
+            billable_factor: 1.0,
         })),
     ];
     // parcel overlay (mini-map property lines): four parcels split at
@@ -3176,12 +3370,22 @@ pub fn events() -> Vec<NetEvent> {
             "1" => land::MUSIC_URL.into(),
             url => url.to_owned(),
         };
+        // the parcel's cells: the 128 m square around the plaza (x and y
+        // 64..192), one bit per 4 m cell (ParcelProperties Bitmap)
+        let mut bitmap = vec![0u8; 512];
+        for y in 16..48 {
+            for x in 16..48 {
+                let i = y * 64 + x;
+                bitmap[i / 8] |= 1 << (i % 8);
+            }
+        }
         ev.push(NetEvent::AgentParcel(Arc::new(aurora_net::ParcelInfo {
             local_id: 1,
             name: aurora_i18n::tr!("common-aurora-plaza").into(),
             desc: aurora_i18n::tr!("demo-aurora-viewer-s-offline-demo-parcel").into(),
             owner_id: u(100),
             area: 16384,
+            bitmap,
             max_prims: 3750,
             owner_prims: 47,
             other_prims: 2,
@@ -4847,6 +5051,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if let Some(picture) = tags::picture_pixels(id) {
         return Some(picture);
+    }
+    if let Some(snapshot) = pick_snapshot(id) {
+        return Some(snapshot);
     }
     if let Some(bake) = bake_texture(id) {
         return Some(bake);

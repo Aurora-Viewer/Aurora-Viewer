@@ -47,6 +47,9 @@ pub struct RegionInfo {
     pub is_estate_manager: bool,
     /// RegionInfo3 ProductName ("Mainland / Full Region"...).
     pub product_name: String,
+    /// RegionHandshake BillableFactor: land here is charged as its area
+    /// times this (LLViewerRegion::getBillableFactor).
+    pub billable_factor: f32,
 }
 
 /// Parcel description from ParcelProperties (About Land).
@@ -71,6 +74,10 @@ pub struct ParcelInfo {
     /// Bounding box in region coordinates (z unused).
     pub aabb_min: Vec3,
     pub aabb_max: Vec3,
+    /// The parcel's cells: one bit per 4 m cell of the region, x + y * cells
+    /// (Bitmap; LLViewerParcelMgr keeps the agent parcel's as
+    /// mAgentParcelOverlay for inAgentParcel).
+    pub bitmap: Vec<u8>,
     /// Parcel prim capacity (with bonus) and usage.
     pub max_prims: i32,
     pub total_prims: i32,
@@ -82,6 +89,12 @@ pub struct ParcelInfo {
     pub selected_prims: i32,
     pub sim_max_prims: i32,
     pub sim_total_prims: i32,
+    /// Parcel grid units of the requested rectangle owned by the agent, by
+    /// others, and public (SelfCount / OtherCount / PublicCount:
+    /// LLParcelSelection's mSelected*Count).
+    pub self_count: i32,
+    pub other_count: i32,
+    pub public_count: i32,
     /// Auto-return of other residents' objects, minutes (0 = off).
     pub other_clean_time: i32,
     /// `PF_*` flags (llparcelflags.h).
@@ -554,6 +567,22 @@ pub enum NetEvent {
         online: bool,
     },
     Balance(i32),
+    /// MoneyBalanceReply's land: m² the account may hold (tier) and m² it
+    /// holds (LLStatusBar::setLandCredit / setLandCommitted).
+    LandHoldings {
+        credit: i32,
+        committed: i32,
+    },
+    /// Answer of the land helper to `LandToolPreflight`, for the billable
+    /// area and the L$ asked (so a stale answer can be told apart).
+    LandToolPreflight {
+        billable_area: i32,
+        currency_buy: i32,
+        result: Result<crate::land_tool::LandToolInfo, crate::currency::CurrencyError>,
+    },
+    /// Outcome of `LandToolBuy`: the website side of a land purchase is done
+    /// (membership, land use, L$); the ParcelBuy is sent next.
+    LandToolPrepared(Result<(), crate::currency::CurrencyError>),
     /// Answer of the currency helper to `CurrencyQuote`; `amount` is the one
     /// asked, so an estimate for a figure typed over can be dropped.
     CurrencyQuote {
@@ -661,6 +690,33 @@ pub enum NetEvent {
     EventInfo(Box<crate::search::EventInfo>),
     /// GroupProfileReply (LLGroupMgr::processGroupPropertiesReply).
     GroupProfile(Box<crate::search::GroupProfile>),
+    /// Members of a group: one GroupMembersReply packet, or the whole list
+    /// of the GroupMemberData capability.
+    GroupMembers(Box<crate::groups::MembersPage>),
+    /// Roles of a group (GroupRoleDataReply, one packet).
+    GroupRoles(Box<crate::groups::RolesPage>),
+    /// Role / member pairs of a group (GroupRoleMembersReply, one packet).
+    GroupRoleMembers(Box<crate::groups::RoleMembersPage>),
+    /// The titles we can wear in a group (GroupTitlesReply).
+    GroupTitles {
+        group: Uuid,
+        request: Uuid,
+        titles: Vec<crate::groups::GroupTitle>,
+    },
+    /// The notice list of a group (GroupNoticesListReply, one packet).
+    GroupNotices {
+        group: Uuid,
+        notices: Vec<crate::groups::NoticeSummary>,
+    },
+    /// JoinGroupReply / LeaveGroupReply.
+    GroupJoined {
+        group: Uuid,
+        success: bool,
+    },
+    GroupLeft {
+        group: Uuid,
+        success: bool,
+    },
     /// Land types of the grid, (ProductSKU, description) (ProductInfoRequest).
     ProductInfo(Vec<(String, String)>),
     /// RegionIDAndHandleReply (LLLandmark::processRegionIDAndHandle).
@@ -748,6 +804,13 @@ pub enum NetEvent {
     MapItems {
         item_type: u32,
         items: Vec<MapItem>,
+    },
+    /// FindAgent answered: where a friend who lets us see them on the map
+    /// is (global metres, no height; LLAvatarTracker::processAgentFound).
+    AgentFound {
+        prey: Uuid,
+        x: f64,
+        y: f64,
     },
     /// Animations currently playing on an avatar (id, sequence).
     AvatarAnimations {
@@ -888,6 +951,10 @@ pub enum NetEvent {
     CofVersionIncremented(Option<i32>),
     /// ObjectProperties / ObjectPropertiesFamily (build tools: selection).
     ObjectProperties(Vec<crate::build::ObjectProps>),
+    /// The region's abuse categories: (value, localized label).
+    AbuseCategories(Vec<(i32, String)>),
+    /// Outcome of `SendAbuseReport` (`Err`: the text to show).
+    AbuseReportSent(Result<(), String>),
     /// llSetPayPrice values for the clicked object.
     PayPrice {
         object: Uuid,
@@ -1222,6 +1289,20 @@ pub enum NetCommand {
         handle: RegionHandle,
         object: Uuid,
     },
+    /// RequestObjectPropertiesFamily with COMPLAINT_REPORT_REQUEST, for the
+    /// object an abuse report is about (LLFloaterReporter::getObjectInfo).
+    RequestReportObjectProperties {
+        handle: RegionHandle,
+        object: Uuid,
+    },
+    /// The abuse categories in this language (AbuseCategories); answered by
+    /// `AbuseCategories`, nothing when the region has no such capability.
+    RequestAbuseCategories {
+        language: String,
+    },
+    /// Send an abuse report (sendReportViaCaps, else UserReport after the
+    /// screenshot's upload); answered by `AbuseReportSent`.
+    SendAbuseReport(Box<crate::abuse_report::AbuseReport>),
     RequestPayPrice {
         handle: RegionHandle,
         object: Uuid,
@@ -1269,6 +1350,40 @@ pub enum NetCommand {
     EventInfoRequest(u32),
     /// GroupProfileRequest: the details of a group found.
     GroupProfileRequest(Uuid),
+    /// The members of a group (LLGroupMgr::sendCapGroupMembersRequest: the
+    /// GroupMemberData capability, GroupMembersRequest without it).
+    GroupMembersRequest {
+        group: Uuid,
+        request: Uuid,
+    },
+    /// GroupRoleDataRequest / GroupRoleMembersRequest / GroupTitlesRequest.
+    GroupRoleDataRequest {
+        group: Uuid,
+        request: Uuid,
+    },
+    GroupRoleMembersRequest {
+        group: Uuid,
+        request: Uuid,
+    },
+    GroupTitlesRequest {
+        group: Uuid,
+        request: Uuid,
+    },
+    /// Wear the title of one of our roles (GroupTitleUpdate).
+    GroupTitleUpdate {
+        group: Uuid,
+        role: Uuid,
+    },
+    /// GroupNoticesListRequest.
+    GroupNoticesListRequest(Uuid),
+    /// Join a group (JoinGroupRequest).
+    JoinGroup(Uuid),
+    /// Invite residents into a group, each into a role (InviteGroupRequest,
+    /// (invitee, role) pairs).
+    InviteToGroup {
+        group: Uuid,
+        invites: Vec<(Uuid, Uuid)>,
+    },
     /// The land types of the grid (ProductInfoRequest capability).
     ProductInfoRequest,
     /// The parcel at a point of any region, by the RemoteParcelRequest
@@ -1343,6 +1458,12 @@ pub enum NetCommand {
         item_type: u32,
         handle: RegionHandle,
     },
+    /// The avatar the map follows, nil to stop (TrackAgent,
+    /// LLAvatarTracker::track / untrack).
+    TrackAgent(Uuid),
+    /// Ask where a friend is (FindAgent, LLAvatarTracker::findAgent);
+    /// answered with `NetEvent::AgentFound` when they let us map them.
+    FindAgent(Uuid),
     FetchInventory {
         folders: Vec<Uuid>,
         owner: Uuid,
@@ -1441,6 +1562,18 @@ pub enum NetCommand {
         helper: String,
         quote: crate::currency::CurrencyQuote,
         password: crate::currency::Password,
+    },
+    /// What buying land needs on the website side (XML-RPC
+    /// preflightBuyLandPrep on `<helper>landtool.php`).
+    LandToolPreflight {
+        helper: String,
+        billable_area: i32,
+        currency_buy: i32,
+    },
+    /// Do that website side (XML-RPC buyLandPrep), before the ParcelBuy.
+    LandToolBuy {
+        helper: String,
+        request: crate::land_tool::LandToolBuy,
     },
     RequestInventoryMerchant,
     /// GET /merchant for the "Marketplace listings" window

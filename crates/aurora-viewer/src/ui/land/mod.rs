@@ -822,7 +822,7 @@ fn not_yet() -> &'static str {
 }
 
 /// Region type in French (LLViewerRegion::getLocalizedSimProductName).
-fn product_name(product: &str) -> String {
+pub(crate) fn product_name(product: &str) -> String {
     match product {
         "Estate / Full Region" => aurora_i18n::tr!("ui-land-mod-estate-full-region"),
         "Estate / Homestead" => aurora_i18n::tr!("extra-estate-homestead"),
@@ -901,7 +901,7 @@ fn claim_date(secs: i64) -> String {
 
 /// process_covenant_reply with the French LTime strings:
 /// "Wed Jun 05 21:18:48 2024".
-fn covenant_date(secs: i64) -> String {
+pub(crate) fn covenant_date(secs: i64) -> String {
     let (y, m, d, w, h, mi, s) = slt_parts(secs);
     format!("{} {} {d:02} {h:02}:{mi:02}:{s:02} {y}", weekdays()[w], months()[m - 1])
 }

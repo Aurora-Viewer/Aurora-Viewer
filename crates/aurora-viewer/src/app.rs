@@ -27,11 +27,13 @@ use winit::window::{Window, WindowId};
 mod ao;
 mod bug_report;
 mod buy_currency;
+mod buy_land;
 mod chat_commands;
 mod click_pick;
 mod color_picker;
 mod context_menu;
 mod cursor_hold;
+mod dof;
 mod double_click;
 mod gestures;
 mod hover_height;
@@ -44,6 +46,7 @@ mod inventory_thumbnail;
 mod marketplace_listings;
 mod object_actions;
 mod plate_click;
+mod report_abuse;
 mod reset_skeleton;
 mod scripts;
 mod shape_editor;
@@ -336,11 +339,22 @@ pub struct App {
     /// Mini-map and world map state, map server tiles.
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
+    /// World › Landmark this Place (LLFloaterCreateLandmark).
+    create_landmark_ui: ui::landmark_create::CreateLandmarkUi,
+    /// Inventory generation whose Favorites / Landmarks folders were asked for.
+    landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// Report Abuse (LLFloaterReporter).
+    report_abuse: ui::report_abuse::ReportAbuseUi,
+    /// The depth of field's focus distance and its transition.
+    dof_focus: crate::dof::Focus,
     /// Photos: the window, the frames drawn at their size, the saves.
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
+    /// Buy Land (LLFloaterBuyLand), and the selection it follows.
+    buy_land_ui: ui::buy_land::BuyLandUi,
+    buy_land_source: buy_land::BuyLandSource,
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
     /// Me › Marketplace listings (LLFloaterMarketplaceListings).
@@ -390,6 +404,8 @@ pub struct App {
     /// Avatar name tags on screen last frame, far first: a click on one
     /// counts as one on its avatar.
     name_tags: Vec<ui::hud::NameTag>,
+    /// Clickable destination marker last painted under the HUDs and UI.
+    beacon_hit: Option<ui::minimap::BeaconHit>,
     /// The avatar whose plate is under the pointer (app/plate_click.rs).
     plate_hover: Option<uuid::Uuid>,
     /// Block list version applied to object sounds, and the objects whose
@@ -727,10 +743,16 @@ impl App {
             contacts_ui: Default::default(),
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
+            create_landmark_ui: Default::default(),
+            landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            report_abuse: Default::default(),
+            dof_focus: Default::default(),
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
+            buy_land_ui: Default::default(),
+            buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
             listings_ui: Default::default(),
             demo_slm: None,
@@ -771,6 +793,7 @@ impl App {
             voice_tags: Default::default(),
             plates: Default::default(),
             name_tags: Vec::new(),
+            beacon_hit: None,
             plate_hover: None,
             sound_blocks: Default::default(),
             sound_changes: Vec::new(),
@@ -1023,7 +1046,11 @@ impl App {
                 }
                 return;
             }
-            if self.demo_script_command(&cmd) || self.demo_currency_command(&cmd) || self.demo_marketplace_command(&cmd) {
+            if self.demo_script_command(&cmd)
+                || self.demo_currency_command(&cmd)
+                || self.demo_buy_land_command(&cmd)
+                || self.demo_marketplace_command(&cmd)
+            {
                 return;
             }
             if matches!(cmd, NetCommand::RequestInventoryMerchant) {
@@ -1177,7 +1204,20 @@ impl App {
             }
             if let NetCommand::CreateInventoryItem { parent, kind, name } = &cmd {
                 let (asset, inventory, subtype) = kind.types();
+                // a landmark's asset is written by the server from where the
+                // agent stands (the demo region has no id: a version 1
+                // landmark, with the global position)
+                let asset_id = match (kind, self.world.agent_global()) {
+                    (aurora_net::inventory::operations::NewItem::Landmark, Some(g)) => {
+                        let id = uuid::Uuid::new_v4();
+                        let text = format!("Landmark version 1\nposition {} {} {}\n", g.x, g.y, g.z);
+                        self.world.landmarks.on_data(id, Some(text.as_bytes()));
+                        id
+                    }
+                    _ => uuid::Uuid::nil(),
+                };
                 let item = aurora_net::inventory::InvItem {
+                    asset_id,
                     id: uuid::Uuid::new_v4(),
                     parent: *parent,
                     name: name.clone(),
@@ -1522,6 +1562,11 @@ impl App {
         if let NetEvent::InventoryCreated(item) = ev {
             let gesture = item.asset_type == 21;
             let id = item.id;
+            if self.create_landmark_ui.created(id, item.parent, item.asset_type) {
+                // the Create Landmark window edits it: no rename in the inventory
+                self.world.inventory.add_items(vec![item]);
+                return;
+            }
             self.world.inventory.add_items(vec![item]);
             self.inventory_ui.show_original(&self.world.inventory, id);
             self.inventory_ui.begin_rename(&self.world.inventory, id);
@@ -1577,6 +1622,18 @@ impl App {
                 return;
             }
             if self.build.replacement_inventory_result(request, &result) {
+                return;
+            }
+            if self.create_landmark_ui.edits.remove(&request) {
+                match result {
+                    Ok(reply) => {
+                        self.create_landmark_ui.folder_created(&reply.created);
+                        self.world.inventory.remove(&reply.removed);
+                        self.world.inventory.apply(reply.contents);
+                        self.world.inventory.created_folders(reply.folders);
+                    }
+                    Err(reason) => log::warn!("landmark change not saved: {reason}"),
+                }
                 return;
             }
             if self.world_edits.remove(&request) {
@@ -1718,11 +1775,14 @@ impl App {
         }
         match ev {
             NetEvent::ObjectProperties(props) => {
+                self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
                 self.interactions.on_properties(&props);
                 self.build.on_properties(props);
             }
             NetEvent::PayPrice { object, default, buttons } => self.interactions.on_prices(object, default, buttons),
+            NetEvent::AbuseCategories(list) => self.report_abuse.set_categories(list),
+            NetEvent::AbuseReportSent(result) => self.report_abuse_sent(result),
             NetEvent::TaskInventory { object, serial, result } => {
                 self.interactions.on_purchase_inventory(object, &result);
                 let items = result
@@ -1800,6 +1860,13 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.world.notification_history = if self.demo {
+                    Default::default()
+                } else {
+                    crate::world::notification_history::History::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::notification_history::FILE),
+                    )
+                };
                 self.world.hover_height = if self.demo {
                     Default::default()
                 } else {
@@ -1966,7 +2033,18 @@ impl App {
             NetEvent::LoggedOut => {
                 self.back_to_login(None);
             }
-            NetEvent::CurrencyQuote { amount, result } => self.buy_currency_ui.quote_reply(amount, result),
+            // both windows estimate L$: the one that asked takes the answer
+            NetEvent::CurrencyQuote { amount, result } => {
+                if !self.buy_land_ui.quote_reply(amount, &result) {
+                    self.buy_currency_ui.quote_reply(amount, result);
+                }
+            }
+            NetEvent::LandToolPreflight {
+                billable_area,
+                currency_buy,
+                result,
+            } => self.buy_land_ui.preflight_reply(billable_area, currency_buy, result),
+            NetEvent::LandToolPrepared(result) => self.land_tool_prepared(result),
             NetEvent::CurrencyBought(result) => self.currency_bought(result),
             // LLSetDisplayNameReply + LLFloaterDisplayName::onCacheSetName
             NetEvent::SetDisplayNameReply { status, reason, content } => {
@@ -1993,6 +2071,28 @@ impl App {
     }
 
     // ------------------------------------------------------------------ input
+
+    /// LLTracker::handleMouseDown: only the visible destination marker
+    /// takes the press. UI, worn HUDs and camera modifiers keep priority.
+    fn beacon_hover(&self) -> bool {
+        let ppp = self.egui_ctx.pixels_per_point();
+        let at = egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp);
+        matches!(self.screen, Screen::World)
+            && !self.camera.mouselook()
+            && !self.alt
+            && !self.ctrl
+            && !self.shift
+            && !self.color_pipette()
+            && !self.exit_prompt.open
+            && !self.cursor_hold.held()
+            && self.mouse_mode == MouseMode::None
+            && self
+                .beacon_hit
+                .as_ref()
+                .zip(self.world.map.track.as_ref())
+                .is_some_and(|(hit, track)| hit.contains(at, track))
+            && (!self.settings.show_huds || self.scene.hud_pick(&self.world, self.cursor_pos, true).is_none())
+    }
 
     /// The camera drag a left click would start under the pointer, like
     /// LLToolCamera::handleHover (lltoolfocus.cpp): Alt held over the world,
@@ -2904,6 +3004,50 @@ impl App {
         }
     }
 
+    /// Aurora's notification center (Preferences › Aurora › Notifications),
+    /// or Firestorm's toasts; AURORA_DEMO_NOTIFS=legacy shows the latter for
+    /// the session without saving it.
+    fn notifications_aurora(&self) -> bool {
+        if self.demo && crate::demo::notifs::mode().is_some_and(|m| m.starts_with("legacy")) {
+            return false;
+        }
+        self.settings.notifications_style == crate::settings::NotificationsStyle::Aurora
+    }
+
+    /// A click in the center besides an answer: the paused bell's banner, an
+    /// entry of the history.
+    fn on_notification_ask(&mut self, ctx: &egui::Context, ask: ui::notification_center::Ask) {
+        use crate::world::notification_history::Follow;
+        match ask {
+            ui::notification_center::Ask::EndDnd => self.world.set_dnd(false),
+            ui::notification_center::Ask::Follow(e) => match e.follow.clone() {
+                Follow::None => {}
+                Follow::Restore => {
+                    self.world.notifications.restore(&e);
+                }
+                Follow::Conversation(session) => {
+                    if !self.world.social.ims.iter().any(|s| s.other == session) {
+                        self.world.social.session_mut(session);
+                    }
+                    self.world.social.focus_im = Some(session);
+                    self.notif_ui.open = false;
+                    ui::notifications::open_conversations(ctx, &mut self.panels.chat);
+                }
+                Follow::Place(link) => {
+                    if let Some(l) = crate::slurl::parse(&link) {
+                        self.notif_ui.open = false;
+                        ui::context::request(ctx, ui::context::CtxAction::ShowPlace(l.region, l.pos));
+                    }
+                }
+                Follow::Inventory(item) => {
+                    self.inventory_ui.show_original(&self.world.inventory, item);
+                    self.panels.inventory = true;
+                    self.notif_ui.open = false;
+                }
+            },
+        }
+    }
+
     fn update_sounds(&mut self) {
         self.flush_object_sounds();
         let ui = &self.settings.audio.ui;
@@ -3375,9 +3519,8 @@ impl App {
             Request::TransferTask(request) => self.apply_inventory_action(ui::inventory::InvAction::TakeTask(request)),
             Request::ZoomFraction(f) => self.camera.set_zoom_fraction(f),
             Request::AboutLand => self.panels.about_land = true,
-            Request::BuyLand => self
-                .world
-                .system_message(aurora_i18n::tr!("app-land-purchase-is-not-available-in-aurora-yet")),
+            // LLPanelLandInfo::onClickBuy: the land tool's selection
+            Request::BuyLand => self.open_buy_land(buy_land::BuyLandSource::LandTool, false),
             Request::Profile(id) => self.profile_ui.open(&mut self.world, id),
             Request::GroupProfile(id) => self.group_profile_ui.open(&mut self.world, id),
             Request::PasteVector(which) => {
@@ -3530,6 +3673,12 @@ impl App {
     /// Run by `click`; false also when it stopped to ask for the depth under
     /// the cursor (`ClickWait::waiting`), to run again when it has come.
     fn build_mouse_down(&mut self) -> bool {
+        // Report Abuse's object picker takes the click (LLToolObjPicker)
+        if self.report_abuse.picking {
+            self.left_down = true;
+            self.report_abuse_pick();
+            return true;
+        }
         if self.color_pipette() {
             self.left_down = true;
             self.sample_build_color();
@@ -4051,9 +4200,11 @@ impl App {
             wanted.push(self.world.agent_id);
         }
         wanted.extend(self.profile_ui.wanted_pics.drain());
+        wanted.extend(self.worldmap_ui.wanted_pics.drain());
         wanted.extend(self.contacts_ui.wanted_pics.drain());
         wanted.extend(self.plates.wanted_pics.drain());
         wanted.extend(self.search_ui.wanted_pics.drain());
+        wanted.extend(self.group_profile_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
         wanted.extend(self.land_ui.wanted_pics.drain());
@@ -4077,6 +4228,12 @@ impl App {
             {
                 let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
                 let t = self.egui_ctx.load_texture(format!("pic-{agent}"), ci, egui::TextureOptions::LINEAR);
+                // the Aurora profile's banner: a few pixels the filter blurs
+                let banner = ui::profile::banner_image(w as usize, h as usize, &rgba);
+                let banner = self
+                    .egui_ctx
+                    .load_texture(format!("banner-{image}"), banner, egui::TextureOptions::LINEAR);
+                self.profile_ui.banners.insert(image, banner);
                 self.avatar_pic_images.insert(image, t.clone());
                 self.avatar_pics.insert(agent, t);
                 if agent == self.world.agent_id && !self.demo {
@@ -4103,10 +4260,12 @@ impl App {
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
         images.extend(self.place_images.drain());
         images.extend(self.land_ui.wanted_images.drain());
+        images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
+        images.extend(self.worldmap_ui.wanted_images.drain());
         for note in self.task_notecards.values_mut() {
             images.extend(note.state.wanted_images.drain());
         }
@@ -4157,6 +4316,32 @@ impl App {
                 self.show_place_profile(source);
             }
         }
+        // AURORA_DEMO_LANDMARK: World › Landmark this place, or a landmark of
+        // the plaza already made, once the agent stands on a parcel
+        let folder_ready = |kind: i32| {
+            let inv = &self.world.inventory;
+            crate::world::appearance::system_folder(inv, kind)
+                .and_then(|f| inv.folders.get(&f))
+                .is_some_and(|f| f.state == crate::world::inventory::FetchState::Fetched)
+        };
+        let ready = match self.create_landmark_ui.demo_pending {
+            Some(ui::landmark_create::DemoStart::Quick(kind)) => folder_ready(kind),
+            _ => true,
+        };
+        if self.world.movement_complete
+            && self.world.parcel.is_some()
+            && ready
+            && let Some(start) = self.create_landmark_ui.demo_pending.take()
+        {
+            match start {
+                ui::landmark_create::DemoStart::Window => self.open_create_landmark(None),
+                ui::landmark_create::DemoStart::Quick(kind) => {
+                    if let Some(cmd) = self.create_landmark_ui.quick(&self.world, kind) {
+                        self.send(cmd);
+                    }
+                }
+            }
+        }
         self.world.flush_arrival(now);
         // LLLandmark::setRegionHandle: the agent's region needs no request
         if let Some(h) = self.world.main_region
@@ -4167,7 +4352,7 @@ impl App {
         for asset in self.places_ui.want_landmarks.drain() {
             self.world.landmarks.resolve(asset);
         }
-        for folder in self.places_ui.want_folders.drain() {
+        for folder in self.places_ui.want_folders.drain().chain(self.worldmap_ui.want_folders.drain()) {
             self.world.inventory.request(folder);
         }
         for g in self.place_groups.drain() {
@@ -5235,6 +5420,16 @@ impl App {
             all_lights: self.frame_profile.all_lights(),
             probe_walk_list: self.frame_profile.probe_walk_list(),
             debug: self.settings.debug.render(),
+            dof: {
+                // the image's own vertical field of view (a photo's may be
+                // wider than the window's)
+                let lens_proj = match &photo {
+                    Some(f) => self.camera.photo_proj(f.aspect, window_aspect),
+                    None => self.camera.proj(aspect),
+                };
+                let fov = 2.0 * (1.0 / lens_proj.y_axis.y.max(1e-6)).atan();
+                self.dof_frame(&mut gfx.renderer, dt, fov, lod_height, h)
+            },
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -5430,6 +5625,7 @@ impl App {
                 gfx.renderer.capture_scene = true;
             }
         }
+        self.report_abuse_capture(&mut gfx.renderer);
         self.sound_cues.before(&ctx, &raw);
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
         let mut inventory_drop = None;
@@ -5546,6 +5742,10 @@ impl App {
             full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
             full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
         }
+        if !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover() {
+            full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
+            full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
+        }
         if let Some(h) = &self.interactions.held {
             if h.physical {
                 full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Grab, false);
@@ -5582,7 +5782,7 @@ impl App {
             full.platform_output.cursor_icon = cursor;
             full.platform_output.cursor_image = self.cursors.inventory_drag(cursor);
         }
-        if self.color_pipette() && !ctx.is_pointer_over_egui() {
+        if (self.color_pipette() || self.report_abuse.picking) && !ctx.is_pointer_over_egui() {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
             full.platform_output.cursor_image = self.cursors.pipette();
         }
@@ -5655,6 +5855,7 @@ impl App {
                 || self.inventory_images.capturing.is_some()
                 || self.inventory_images.auto_capture_pending
                 || self.bug_report.capture_pending
+                || self.report_abuse.capture_pending
             {
                 self.inventory_images.capture = Some(request);
             } else {
@@ -5667,6 +5868,7 @@ impl App {
             && self.inventory_images.capturing.is_none()
             && !self.inventory_images.auto_capture_pending
             && !self.bug_report.capture_pending
+            && !self.report_abuse.capture_pending
         {
             self.want_scene_capture = false;
             self.scene_capture_place = None;
@@ -5789,6 +5991,49 @@ impl App {
             }
         }
         if self.demo
+            && let Some(mode) = crate::demo::notifs::mode()
+        {
+            let agent = self.world.agent_id;
+            if self.frame_count == crate::demo::notifs::DND_AT && mode == "dnd" {
+                self.world.set_dnd(true);
+            }
+            for event in crate::demo::notifs::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+            if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
+                // a few cards answered or closed: they go to the history
+                let ids: Vec<(u64, bool)> = self.world.notifications.listed().map(|n| (n.id, n.interactive())).collect();
+                for (id, interactive) in ids.into_iter().take(4) {
+                    // the teleport offer refused (its place stays), the rest kept or read
+                    let lure = self
+                        .world
+                        .notifications
+                        .list
+                        .iter()
+                        .any(|n| n.id == id && matches!(n.data, crate::world::notifications::Data::Lure { .. }));
+                    let r = if lure {
+                        crate::world::notifications::Response::Decline
+                    } else if interactive {
+                        crate::world::notifications::Response::Accept
+                    } else {
+                        crate::world::notifications::Response::Dismiss
+                    };
+                    let (cmds, _) = self.world.respond_notification(id, r);
+                    for c in cmds.into_iter().filter(|c| !matches!(c, NetCommand::AcceptLure { .. })) {
+                        self.send(c);
+                    }
+                }
+            }
+            if self.frame_count == crate::demo::notifs::LIST_AT && matches!(mode.as_str(), "list" | "history" | "dnd" | "legacy-history") {
+                self.notif_ui.open = true;
+                if mode.ends_with("history") {
+                    self.notif_ui.center.tab = ui::notification_center::Tab::History;
+                }
+            }
+        }
+        if self.demo
             && let Some(mode) = crate::demo::toasts::mode()
         {
             let agent = self.world.agent_id;
@@ -5827,6 +6072,7 @@ impl App {
         {
             self.bug_report.captured(w, h, pixels);
         }
+        self.report_abuse_captured(&mut gfx.renderer);
         if self.inventory_images.capturing.is_some()
             && let Some((w, h, pixels)) = gfx.renderer.captured.take()
             && let Some(request) = self.inventory_images.capturing.take()
@@ -5879,6 +6125,20 @@ impl App {
         self.resolve_clicks();
         self.demo_action_steps();
         self.demo_click_steps();
+        if self.demo && self.frame_count == 700 && std::env::var("AURORA_DEMO_MAP").as_deref() == Ok("beacon-click") {
+            if let Some(hit) = &self.beacon_hit {
+                let at = hit.rect.center() * self.egui_ctx.pixels_per_point();
+                self.cursor_pos = (at.x, at.y);
+                self.mouse_input(MouseButton::Left, true, false);
+                self.mouse_input(MouseButton::Left, false, false);
+            }
+            log::info!(
+                "demo beacon click: cleared={}, mouse_mode={:?}, pending_pick={}",
+                self.world.map.track.is_none(),
+                self.mouse_mode,
+                self.clicks.waiting(),
+            );
+        }
         if self.demo {
             self.demo_double_click_steps();
         }
@@ -6141,6 +6401,7 @@ impl App {
                 self.display_name_ui.open();
             }
             self.demo_buy_currency();
+            self.demo_buy_land();
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
         // the window, moving), Violet Wolf looks at a point north of him;
@@ -6660,6 +6921,7 @@ impl App {
         match a.bar {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.bug_report.requested = true,
+            BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
             BarAction::Import { choice, pick_files } => {
                 if pick_files {
                     self.imports.open_file_picker(choice);
@@ -6756,6 +7018,8 @@ impl App {
             BarAction::BanLines(v) => self.settings.maps.ban_lines = v,
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
             BarAction::TeleportHistory => self.toggle_teleport_history(),
+            BarAction::CreateLandmark => self.open_create_landmark(None),
+            BarAction::LandmarkStar(star) => self.landmark_star(star),
         }
     }
 
@@ -6787,6 +7051,49 @@ impl App {
             aurora_i18n::language(),
             self.search_session(),
         )
+    }
+
+    /// LLFloaterReg::showInstance("add_landmark"): World › Landmark this
+    /// Place, the Places "add" entries and About Land's Landmark button;
+    /// `dest` is the folder chosen in Places.
+    pub(super) fn open_create_landmark(&mut self, dest: Option<uuid::Uuid>) {
+        if let Some(cmd) = self.create_landmark_ui.open(&self.world, dest) {
+            self.send(cmd);
+        }
+    }
+
+    /// hasParcelLandmark: the landmark lying on the agent's parcel (the lit
+    /// star; the "add landmark" entries are greyed out meanwhile).
+    fn parcel_landmark(&mut self) -> Option<ui::landmark_create::ParcelLandmark> {
+        // the Favorites and Landmarks folders are fetched for it, as
+        // Firestorm has them after its background inventory fetch
+        if self.world.inventory.generation != self.landmark_folders_checked {
+            for id in crate::world::landmarks::unfetched_folders(&self.world.inventory) {
+                self.world.inventory.request(id);
+            }
+            self.landmark_folders_checked = self.world.inventory.generation;
+        }
+        let origin = self.world.main_origin();
+        self.create_landmark_ui
+            .parcel_landmark(&self.world.inventory, &mut self.world.landmarks, self.world.parcel.as_ref(), origin)
+    }
+
+    /// The navigation bar's star.
+    fn landmark_star(&mut self, action: ui::bars::StarAction) {
+        use ui::bars::StarAction;
+        use ui::landmark_create::{FOLDER_FAVORITES, FOLDER_LANDMARKS};
+        let cmd = match action {
+            StarAction::AddFavorite => self.create_landmark_ui.quick(&self.world, FOLDER_FAVORITES),
+            StarAction::AddLandmark => self.create_landmark_ui.quick(&self.world, FOLDER_LANDMARKS),
+            StarAction::MoreOptions => self.create_landmark_ui.open(&self.world, None),
+            StarAction::Edit(item) => {
+                self.create_landmark_ui.open_edit(&self.world.inventory, item);
+                None
+            }
+        };
+        if let Some(cmd) = cmd {
+            self.send(cmd);
+        }
     }
 
     /// The Marketplace page of the grid (World › SL Marketplace), None on a
@@ -6845,6 +7152,42 @@ impl App {
         if save {
             self.settings.save();
         }
+    }
+
+    /// What the group profile window asked (LLGroupActions).
+    fn apply_group_actions(&mut self, ctx: &egui::Context, actions: Vec<ui::group_profile::GroupAction>) {
+        use ui::group_profile::GroupAction;
+        let mut search = Vec::new();
+        for a in actions {
+            match a {
+                GroupAction::Search(a) => search.push(a),
+                GroupAction::Load { group, member } => self.world.group_data.open(group, member),
+                GroupAction::Refresh { group, member } => {
+                    self.send(NetCommand::GroupProfileRequest(group));
+                    self.world.group_data.refresh(group, member);
+                }
+                GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
+                GroupAction::Invite { group, invites } => {
+                    log::info!("group invite: {} resident(s) invited", invites.len());
+                    self.send(NetCommand::InviteToGroup { group, invites });
+                }
+                // group voice: connected by the voice calls
+                GroupAction::Call(group) => log::info!("group call {group}: group voice is not connected yet"),
+                GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
+                GroupAction::SetTitle { group, role } => self.world.group_data.set_title(group, role),
+                GroupAction::SetFlags {
+                    group,
+                    accept_notices,
+                    list_in_profile,
+                } => self.world.groups.set_flags(group, accept_notices, list_in_profile),
+                GroupAction::ShowInPeople(name) => {
+                    self.panels.people = true;
+                    self.panels.people_tab = 2;
+                    self.people_ui.filter = name;
+                }
+            }
+        }
+        self.apply_search_actions(ctx, search);
     }
 
     /// toggleTeleportHistory (llviewermenu.cpp) without the standalone
@@ -7081,6 +7424,8 @@ impl App {
         let mut a = UiActions::default();
         let p = self.palette;
         let ctx = ui.ctx().clone();
+        let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
+        self.beacon_hit = None;
         let mut t = Instant::now();
         if self.exit_prompt.open {
             ui.disable();
@@ -7281,11 +7626,12 @@ impl App {
                     )
                 };
                 if !self.camera.mouselook() && !held {
-                    ui::minimap::draw_beacon(&ctx, &self.world, projector);
+                    self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
                 }
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 t = self.ui_parts.lap(Part::UiTags, t);
+                let parcel_landmark = self.parcel_landmark();
                 let icons = &self.skin.icons;
                 let layout = &self.skin.layout;
                 let maturity = self
@@ -7315,6 +7661,7 @@ impl App {
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
                     double_click: self.double_click_action(),
+                    parcel_landmark,
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
@@ -7335,6 +7682,16 @@ impl App {
                         && self.world.parcel.as_ref().is_some_and(|pc| !pc.media_url.trim().is_empty()),
                     media_playing: self.media.parcel_playing(),
                 };
+                let aurora = self.notifications_aurora();
+                let bell = ui::bars::BellState {
+                    unread: if aurora {
+                        ui::notification_center::bell_count(&self.world.notifications, &self.notif_ui.center)
+                    } else {
+                        self.world.notifications.unread()
+                    },
+                    aurora,
+                    dnd: self.world.status.dnd,
+                };
                 let (bar, audio_action) = ui::bars::top_bars(
                     ui,
                     &p,
@@ -7346,7 +7703,7 @@ impl App {
                     &mut self.audio_ui,
                     media,
                     &mut self.notif_ui,
-                    self.world.notifications.unread(),
+                    bell,
                 );
                 a.bar = bar;
                 a.audio = Some(audio_action);
@@ -7834,23 +8191,45 @@ impl App {
                         n.read = true;
                     }
                 }
-                // nothing over the view in mouselook or the photo's full frame
-                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame();
+                // nothing over the view in mouselook or the photo's full frame;
+                // Firestorm's toasts wait in the bell in do not disturb too
+                let aurora = self.notifications_aurora();
+                let dnd = self.world.status.dnd;
+                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || (dnd && !aurora);
+                self.world.notifications.aurora = aurora;
                 let mut toast_env = ui::notifications::ToastEnv {
                     pics: &self.avatar_pics,
                     emoji: &mut self.emoji,
                     hidden: toasts_hidden,
                     message_seconds: f64::from(self.settings.im_toast_seconds),
                 };
-                let answers = ui::notifications::show(
-                    &ctx,
-                    &p,
-                    &self.skin.icons,
-                    &self.world.map.ratings,
-                    &mut self.world.notifications,
-                    &mut self.notif_ui,
-                    &mut toast_env,
-                );
+                let (answers, asks) = if aurora {
+                    ui::notification_center::show(
+                        &ctx,
+                        &p,
+                        &self.skin.icons,
+                        &self.world.map.ratings,
+                        &mut self.world.notifications,
+                        &mut self.world.notification_history,
+                        &mut self.notif_ui,
+                        &mut toast_env,
+                        dnd,
+                    )
+                } else {
+                    ui::notifications::show(
+                        &ctx,
+                        &p,
+                        &self.skin.icons,
+                        &self.world.map.ratings,
+                        &mut self.world.notifications,
+                        &mut self.world.notification_history,
+                        &mut self.notif_ui,
+                        &mut toast_env,
+                    )
+                };
+                for ask in asks {
+                    self.on_notification_ask(&ctx, ask);
+                }
                 for (id, r) in answers {
                     if matches!(r, crate::world::notifications::Response::Open) {
                         let presence = self
@@ -7879,6 +8258,7 @@ impl App {
                         ctx.open_url(egui::OpenUrl::new_tab(u));
                     }
                 }
+                self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
                 let mut open = self.panels.about_land;
                 // the mini-map's image of the selection's region, for the header
@@ -7905,11 +8285,15 @@ impl App {
                 }
                 self.panels.about_land = open;
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
+                for cmd in self.create_landmark_ui.show(&ctx, &p, &self.world.inventory) {
+                    self.send(cmd);
+                }
                 // the experience profile (the permission question's link)
                 if let Some((experience, change)) = ui::experience_profile::show(&ctx, &p, &mut self.world) {
                     self.world.experiences.change(experience, change);
                 }
                 self.photo_ui(&ctx, &p, renderer);
+                self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
                 if self.hover_height_ui.show(
                     &ctx,
@@ -7935,6 +8319,7 @@ impl App {
                     }
                 }
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
+                a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)
                 if let Some(id) = ui::profile::take_open_request(&ctx) {
                     self.profile_ui.open(&mut self.world, id);
@@ -7985,6 +8370,7 @@ impl App {
                     &mut self.world,
                     &mut self.chat_ui.wanted_names,
                     &web,
+                    self.settings.classic_profiles,
                 );
                 for pa in acts {
                     match pa {
@@ -7992,6 +8378,9 @@ impl App {
                         ui::profile::ProfileAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::profile::ProfileAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::profile::ProfileAction::DisplayName => self.display_name_ui.open(),
+                        ui::profile::ProfileAction::ModifyRights { friend, rights, grant } => {
+                            self.contacts_ui.ask_modify_rights(friend, rights, grant)
+                        }
                         ui::profile::ProfileAction::GroupChat(id) => {
                             self.world.start_group_chat(id);
                             self.panels.chat = true;
@@ -8012,6 +8401,9 @@ impl App {
                     }
                 }
                 // place profiles: standalone windows and "Places"
+                if self.panels.places {
+                    self.places_ui.landmark_here = self.parcel_landmark().is_some();
+                }
                 let mut c = ui::place_details::Ctx {
                     p: &p,
                     world: &self.world,
@@ -8050,6 +8442,7 @@ impl App {
                     match pa {
                         PlacesAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
                         PlacesAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                        PlacesAction::CreateLandmark(dest) => self.open_create_landmark(dest),
                         PlacesAction::ShowOnMap(g) => {
                             self.world.map.track_location(g.x, g.y, g.z as f32, false);
                             self.panels.world_map = true;
@@ -8103,10 +8496,17 @@ impl App {
                     .show(&ctx, &mut c, &self.avatar_pics, &mut self.settings.search, &search_web, &mut open);
                 // the profile of a group, whose name was clicked anywhere
                 // (LLGroupActions::show)
-                let group_acts = self.group_profile_ui.show(&ctx, &mut c);
+                let group_env = ui::group_profile::Env {
+                    avatar_pics: &self.avatar_pics,
+                    classic: self.settings.classic_profiles,
+                    now: ctx.input(|i| i.time),
+                    group_calls: false,
+                };
+                let group_acts = self.group_profile_ui.show(&ctx, &mut c, &group_env);
                 self.panels.search = open;
                 self.apply_search_actions(&ctx, search_acts);
-                self.apply_search_actions(&ctx, group_acts);
+                self.apply_group_actions(&ctx, group_acts);
+                self.group_profile_ui.dialogs(&ctx, &p, &mut self.world);
                 if let Some(id) = ui::group_profile::take_open_request(&ctx) {
                     self.group_profile_ui.open(&mut self.world, id);
                 }
@@ -8126,7 +8526,7 @@ impl App {
                     match ma {
                         ui::minimap::MiniMapAction::Teleport { x, y, z } => self.world.map.track_location(x, y, z, true),
                         ui::minimap::MiniMapAction::Track { x, y, z } => self.world.map.track_location(x, y, z, false),
-                        ui::minimap::MiniMapAction::StopTracking => self.world.map.track = None,
+                        ui::minimap::MiniMapAction::StopTracking => self.world.map.clear_track(),
                         ui::minimap::MiniMapAction::OpenWorldMap => self.panels.world_map = true,
                         ui::minimap::MiniMapAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::minimap::MiniMapAction::AboutLand(gx, gy) => {
@@ -8138,6 +8538,10 @@ impl App {
                     }
                 }
                 let mut open = self.panels.world_map;
+                let pictures = ui::worldmap::MapPictures {
+                    images: &self.ui_images,
+                    avatars: &self.avatar_pics,
+                };
                 let wm = self.worldmap_ui.show(
                     &ctx,
                     &p,
@@ -8145,6 +8549,8 @@ impl App {
                     &mut self.map_tiles,
                     &map_cam,
                     &mut self.settings.maps,
+                    self.settings.world_map_style,
+                    &pictures,
                     &mut open,
                 );
                 self.panels.world_map = open;
@@ -8155,6 +8561,7 @@ impl App {
                             self.panels.world_map = false;
                         }
                         ui::worldmap::WorldMapAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                        ui::worldmap::WorldMapAction::OpenPlace(source) => self.show_place_profile(source),
                     }
                 }
                 t = self.ui_parts.lap(Part::UiMaps, t);
@@ -8758,6 +9165,10 @@ impl ApplicationHandler for App {
                 self.demo_place = Some(source);
                 self.panels.perf = false;
             }
+            if let Some(start) = ui::landmark_create::DemoStart::from_env() {
+                self.create_landmark_ui.demo_pending = Some(start);
+                self.panels.perf = false;
+            }
             // AURORA_DEMO_PLACES=favorites|landmarks|history: "Places" on a tab
             if let Some(tab) = std::env::var("AURORA_DEMO_PLACES").ok().and_then(|v| ui::places::tab_from_name(&v)) {
                 self.places_ui.open_tab(tab);
@@ -8811,9 +9222,10 @@ impl ApplicationHandler for App {
             if std::env::var_os("AURORA_DEMO_PLACE_WINDOW").is_some() {
                 self.settings.standalone_place_details = true;
             }
-            // AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab]: a profile window
+            // AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab|edit|compact]:
+            // a profile window
             if let Ok(v) = std::env::var("AURORA_DEMO_PROFILE") {
-                let (who, tab) = v.split_once(':').unwrap_or((v.as_str(), "0"));
+                let (who, option) = v.split_once(':').unwrap_or((v.as_str(), "0"));
                 let id = match who {
                     "self" => crate::demo::DEMO_AGENT,
                     "nova" => crate::demo::DEMO_NOVA,
@@ -8821,7 +9233,7 @@ impl ApplicationHandler for App {
                     _ => crate::demo::DEMO_LOUP,
                 };
                 self.profile_ui.open(&mut self.world, id);
-                self.profile_ui.set_tab(id, tab.parse().unwrap_or(0));
+                self.profile_ui.demo(&self.egui_ctx, id, option);
                 self.panels.perf = false;
             }
             // AURORA_DEMO_LAND=<tab>[:role][:classic]: About Land on that tab
@@ -8830,10 +9242,17 @@ impl ApplicationHandler for App {
                 self.panels.about_land = true;
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_GROUP_PROFILE=1: the profile of the demo parcel's
-            // group, as after a click on its name
+            // AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest: the
+            // profile of the demo parcel's group, as after a click on its
+            // name (a guest's: a group we are not in)
             if std::env::var_os("AURORA_DEMO_GROUP_PROFILE").is_some() {
-                self.group_profile_ui.open(&mut self.world, crate::demo::DEMO_GROUP1);
+                self.group_profile_ui.open(&mut self.world, crate::demo::group::shown_group());
+                if let Some(member) = crate::demo::group::members_tab() {
+                    self.group_profile_ui.show_member(member);
+                }
+                if let Some(invitees) = crate::demo::group::invitees() {
+                    self.group_profile_ui.invite.open(crate::demo::group::shown_group(), invitees);
+                }
                 self.panels.perf = false;
             }
             // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add: the
@@ -8897,17 +9316,35 @@ impl ApplicationHandler for App {
             }
             // captures: AURORA_DEMO_MAP=1 opens the mini-map and the world map
             // (with a tracked spot east of the plaza)
-            if std::env::var_os("AURORA_DEMO_MAP").is_some() {
+            if let Ok(scenario) = std::env::var("AURORA_DEMO_MAP") {
+                let mode = scenario.split(',').next().unwrap_or_default().trim();
                 self.panels.minimap = true;
-                self.panels.world_map = std::env::var("AURORA_DEMO_MAP").as_deref() != Ok("mini");
+                self.panels.world_map = mode != "mini" && !mode.starts_with("beacon");
                 self.panels.perf = false;
-                self.world.map.track_location(256000.0 + 200.0, 256000.0 + 150.0, 25.0, false);
-                // =search:<text>: the region search with its results
-                if let Some(text) = std::env::var("AURORA_DEMO_MAP")
-                    .ok()
-                    .and_then(|v| v.strip_prefix("search:").map(str::to_owned))
-                {
-                    self.worldmap_ui.demo_search(&mut self.world, &text);
+                let (x, y, z) = match mode {
+                    "beacon" | "beacon-click" => (160.0, 128.0, 30.0),
+                    "beacon-offscreen" => (80.0, 128.0, 30.0),
+                    _ => (200.0, 150.0, 25.0),
+                };
+                if mode != "coordinates" {
+                    self.world.map.track_location(256000.0 + x, 256000.0 + y, z, false);
+                }
+                // words separated by commas: search:<text> (the search with its
+                // suggestions), drawer:<landmarks|history|friends>, landmarks
+                // (212 of them, the drawer open), friend (Nova followed),
+                // legacy (the side panel layout, the setting untouched)
+                for word in scenario.split(',').map(str::trim) {
+                    if let Some(text) = word.strip_prefix("search:") {
+                        self.worldmap_ui.demo_search(&mut self.world, text);
+                    } else if let Some(tab) = word.strip_prefix("drawer:") {
+                        self.worldmap_ui.demo_drawer(tab);
+                    } else if word == "landmarks" {
+                        self.worldmap_ui.demo_drawer("landmarks");
+                    } else if word == "friend" {
+                        self.world.map.track_avatar(crate::demo::DEMO_FRIEND, "Nova ♪");
+                    } else if word == "legacy" {
+                        self.worldmap_ui.demo_style = Some(crate::settings::WorldMapStyle::Legacy);
+                    }
                 }
             }
             // captures: AURORA_DEMO_SIT keeps the toolbar sit button visible
@@ -8917,6 +9354,12 @@ impl ApplicationHandler for App {
             // captures: AURORA_DEMO_NOTIF=1 opens the notification list
             if std::env::var_os("AURORA_DEMO_NOTIF").is_some() {
                 self.notif_ui.open = true;
+            }
+            // AURORA_DEMO_NOTIFS: nothing else open over the corners
+            if crate::demo::notifs::mode().is_some() {
+                self.panels.perf = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
             }
             // AURORA_DEMO_TOASTS: the toasts arrive with the Conversations
             // window closed, or minimized for `minimized`

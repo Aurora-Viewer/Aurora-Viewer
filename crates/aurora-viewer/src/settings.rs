@@ -14,6 +14,37 @@ pub enum ChatStyle {
     Legacy,
 }
 
+/// How notifications arrive (Preferences › Aurora): unrolled from the bell
+/// at the right end of the navigation bar and folded back into it (the
+/// default, `ui/notification_center.rs`), or as Firestorm's toasts stacked
+/// apart from the bell (`ui/notifications.rs`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NotificationsStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
+/// How the world map lays out its controls: over a map filling the window
+/// (the default), or in Firestorm's side panel next to the map (the legacy
+/// style, Preferences › Aurora).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum WorldMapStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
+/// The photo window: Aurora's panel anchored on the right, or Firestorm's
+/// floater (floater_snapshot.xml: a floating window, the controls on the
+/// left, the preview on the right). Preferences › Aurora.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PhotoWindowStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
 /// What a left click on another avatar's name plate does (Preferences ›
 /// Interface; the human's request of 2026-10-14). Each one is an entry of
 /// the avatar's menu; nothing, the default, leaves the click to the world.
@@ -149,6 +180,8 @@ pub struct Settings {
     pub ao: crate::ao::Settings,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
+    /// Depth of field (Preferences › Graphics).
+    pub dof: crate::dof::Settings,
     pub shape_show_hints: bool,
     pub shape_height_feet: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
@@ -281,9 +314,19 @@ pub struct Settings {
     /// by default).
     pub plates_hover_expand: bool,
     pub plate_click: PlateClick,
+    /// Profiles in Firestorm's tabbed window (Second Life, Feed, Favorites…)
+    /// instead of the header and cards of `ui/profile/aurora.rs`; group
+    /// profiles in the classic window too (`ui/group_profile.rs`).
+    pub classic_profiles: bool,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
+    /// The notification center's style (Preferences › Aurora).
+    pub notifications_style: NotificationsStyle,
+    /// The world map's layout (`ui/worldmap/overlay.rs` or the side panel).
+    pub world_map_style: WorldMapStyle,
+    /// The photo window's layout (Preferences › Aurora).
+    pub photo_window: PhotoWindowStyle,
     /// About Land as Firestorm's nine tabs (`ui/land`) instead of the
     /// overview and the settings grouped by intent (`ui/land/aurora`).
     pub classic_about_land: bool,
@@ -668,6 +711,7 @@ impl Default for Settings {
             show_ao: false,
             ao: Default::default(),
             snapshot: Default::default(),
+            dof: Default::default(),
             loading_backdrop: true,
             mouse_sensitivity: 1.0,
             window_width: 1600,
@@ -697,10 +741,14 @@ impl Default for Settings {
             chat_commands: Default::default(),
             name_tag_distance: 64.0,
             classic_name_tags: false,
+            classic_profiles: false,
             plates_friends_only_full: false,
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,
             chat_style: ChatStyle::Bubbles,
+            notifications_style: NotificationsStyle::Aurora,
+            world_map_style: WorldMapStyle::Aurora,
+            photo_window: PhotoWindowStyle::Aurora,
             classic_about_land: false,
             invert_mouse: false,
             arrows_strafe: false,
@@ -1093,6 +1141,7 @@ impl Settings {
         self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
         self.chat_commands.sanitize();
         self.snapshot.sanitize();
+        self.dof.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.sharpen = if self.sharpen.is_finite() {
             self.sharpen.clamp(0.0, 1.0)
@@ -1283,6 +1332,9 @@ pub struct MapSettings {
     pub world_events: bool,
     pub world_mature_events: bool,
     pub world_adult_events: bool,
+    /// The inventory's landmarks as pins (the full-frame map's layer; not
+    /// in Firestorm).
+    pub world_landmarks: bool,
     /// MapShowGridCoords.
     pub world_grid_coords: bool,
     /// FSWorldMapDoubleclickTeleport.
@@ -1314,6 +1366,7 @@ impl Default for MapSettings {
             world_events: true,
             world_mature_events: true,
             world_adult_events: false,
+            world_landmarks: true,
             world_grid_coords: false,
             world_double_click_tp: true,
             ban_lines: 1,

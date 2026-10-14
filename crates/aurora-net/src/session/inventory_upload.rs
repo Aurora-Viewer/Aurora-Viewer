@@ -21,9 +21,14 @@ struct Upload {
     transfer: Option<Transfer>,
     import: Option<(Uuid, crate::inventory::upload::Request)>,
     wearable: Option<super::wearable_save::Pending>,
+    /// An abuse report's screenshot: the report goes once it is stored.
+    report: Option<Box<crate::abuse_report::AbuseReport>>,
 }
 impl Upload {
     fn asset_type(&self) -> i8 {
+        if self.report.is_some() {
+            return 0;
+        }
         self.import
             .as_ref()
             .map_or(if self.kind < 4 { 13 } else { 5 }, |(_, request)| request.kind.asset_type() as i8)
@@ -81,6 +86,7 @@ impl Session<'_> {
                 transfer: None,
                 import: None,
                 wearable: Some(pending),
+                report: None,
             },
         );
         self.send_main(&message, true);
@@ -123,6 +129,7 @@ impl Session<'_> {
                 transfer: None,
                 import: Some((request, upload)),
                 wearable: None,
+                report: None,
             },
         );
         self.send_main(&message, true);
@@ -161,6 +168,41 @@ impl Session<'_> {
                 transfer: None,
                 import: None,
                 wearable: None,
+                report: None,
+            },
+        );
+        self.send_main(&m, true);
+    }
+
+    /// LLFloaterReporter::uploadImage: the screenshot as a temporary texture
+    /// (storeAssetData with temp_file), the report after it is stored.
+    pub(super) fn upload_report_screenshot(
+        &mut self,
+        transaction: Uuid,
+        asset: Uuid,
+        data: Vec<u8>,
+        report: crate::abuse_report::AbuseReport,
+    ) {
+        let mut m = AssetUploadRequest::default();
+        m.asset_block.transaction_id = transaction;
+        m.asset_block.type_ = 0;
+        m.asset_block.tempfile = true;
+        if data.len() + 100 < 1200 {
+            m.asset_block.asset_data.clone_from(&data);
+        }
+        self.inventory_uploads.assets.insert(
+            asset,
+            Upload {
+                transaction,
+                parent: Uuid::nil(),
+                kind: 255,
+                name: String::new(),
+                data,
+                started: Instant::now(),
+                transfer: None,
+                import: None,
+                wearable: None,
+                report: Some(Box::new(report)),
             },
         );
         self.send_main(&m, true);
@@ -234,6 +276,17 @@ impl Session<'_> {
             let Some(upload) = self.inventory_uploads.assets.remove(&m.asset_block.uuid) else {
                 return Ok(false);
             };
+            if let Some(report) = upload.report {
+                // uploadDoneCallback: no report without its screenshot
+                let result = if m.asset_block.success {
+                    self.send_user_report(&report, m.asset_block.uuid);
+                    Ok(())
+                } else {
+                    Err(aurora_i18n::tr!("report-abuse-screenshot-failed").to_owned())
+                };
+                emit(self.sh, NetEvent::AbuseReportSent(result));
+                return Ok(true);
+            }
             if let Some(pending) = upload.wearable {
                 if m.asset_block.success && m.asset_block.type_ == 13 {
                     self.wearable_asset_ready(pending, upload.transaction, m.asset_block.uuid);
@@ -294,6 +347,13 @@ impl Session<'_> {
                 .find_map(|(id, u)| u.transfer.as_ref().filter(|t| t.id == m.xfer_id.id).map(|_| *id));
             if let Some(asset) = asset {
                 let removed = self.inventory_uploads.assets.remove(&asset);
+                if removed.as_ref().is_some_and(|u| u.report.is_some()) {
+                    emit(
+                        self.sh,
+                        NetEvent::AbuseReportSent(Err(aurora_i18n::tr!("report-abuse-screenshot-failed").to_owned())),
+                    );
+                    return Ok(true);
+                }
                 if let Some(pending) = removed.as_ref().and_then(|u| u.wearable.as_ref()) {
                     emit(
                         self.sh,
@@ -331,12 +391,15 @@ impl Session<'_> {
         let mut failed = false;
         let mut imports = Vec::new();
         let mut wearables = Vec::new();
+        let mut reports = 0;
         self.inventory_uploads.assets.retain(|id, u| {
             if u.started.elapsed() > Duration::from_secs(60) {
                 if let Some(pending) = &u.wearable {
                     wearables.push(pending.request);
                 }
-                if let Some((request, _)) = &u.import {
+                if u.report.is_some() {
+                    reports += 1;
+                } else if let Some((request, _)) = &u.import {
                     imports.push(*request);
                 } else if u.wearable.is_none() {
                     failed = true;
@@ -351,7 +414,9 @@ impl Session<'_> {
                     if let Some(pending) = &u.wearable {
                         wearables.push(pending.request);
                     }
-                    if let Some((request, _)) = &u.import {
+                    if u.report.is_some() {
+                        reports += 1;
+                    } else if let Some((request, _)) = &u.import {
                         imports.push(*request);
                     } else if u.wearable.is_none() {
                         failed = true;
@@ -366,6 +431,12 @@ impl Session<'_> {
         });
         for asset in retry {
             self.send_inventory_packet(asset);
+        }
+        for _ in 0..reports {
+            emit(
+                self.sh,
+                NetEvent::AbuseReportSent(Err(aurora_i18n::tr!("report-abuse-screenshot-failed").to_owned())),
+            );
         }
         self.inventory_uploads.wearable_copies.retain(|_, pending| {
             if pending.started.elapsed() > Duration::from_secs(60) {

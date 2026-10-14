@@ -3,6 +3,7 @@
 //!
 //! Message flow follows `newview/llstartup.cpp` and `llviewermessage.cpp`.
 
+mod abuse_reports;
 mod asset_imports;
 mod build_cmds;
 mod currency;
@@ -58,6 +59,10 @@ mod offline_net;
 /// Directory search: queries, replies, event and group details (search.rs).
 #[path = "session_search.rs"]
 mod search_net;
+
+/// The members, roles, titles and notices of a group (groups.rs).
+#[path = "session_groups.rs"]
+mod groups_net;
 use crate::build::BUILD_PARCEL_SEQ;
 
 const SIM_TIMEOUT: Duration = Duration::from_secs(60);
@@ -1066,7 +1071,12 @@ impl Session<'_> {
     // -------------------------------------------------------------- commands
 
     fn on_command(&mut self, c: NetCommand) {
-        if self.on_object_action_command(&c) || self.on_social_command(&c) || self.on_offline_command(&c) || self.on_search_command(&c) {
+        if self.on_object_action_command(&c)
+            || self.on_social_command(&c)
+            || self.on_offline_command(&c)
+            || self.on_search_command(&c)
+            || self.on_groups_command(&c)
+        {
             return;
         }
         match c {
@@ -1252,6 +1262,9 @@ impl Session<'_> {
                     self.send(addr, &m, true);
                 }
             }
+            NetCommand::RequestReportObjectProperties { handle, object } => self.request_report_object(handle, object),
+            NetCommand::RequestAbuseCategories { language } => self.request_abuse_categories(&language),
+            NetCommand::SendAbuseReport(report) => self.send_abuse_report(*report),
             NetCommand::RequestPayPrice { handle, object } => {
                 if let Some(addr) = self.sim_for_handle(handle) {
                     let mut m = RequestPayPrice::default();
@@ -1511,6 +1524,24 @@ impl Session<'_> {
                 m.request_data.region_handle = handle;
                 self.send_main(&m, true);
             }
+            NetCommand::TrackAgent(prey) => {
+                let mut m = TrackAgent::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.target_data.prey_id = prey;
+                self.send_main(&m, true);
+            }
+            NetCommand::FindAgent(prey) => {
+                let mut m = FindAgent::default();
+                m.agent_block.hunter = self.agent_id();
+                m.agent_block.prey = prey;
+                // SpaceIP is filled in by the simulator
+                m.location_block.push(find_agent::LocationBlock {
+                    global_x: 0.0,
+                    global_y: 0.0,
+                });
+                self.send_main(&m, true);
+            }
             NetCommand::TeleportLandmark(asset) => {
                 let mut m = TeleportLandmarkRequest::default();
                 m.info.agent_id = self.agent_id();
@@ -1653,6 +1684,12 @@ impl Session<'_> {
             }
             NetCommand::CurrencyQuote { helper, amount } => self.currency_quote(helper, amount),
             NetCommand::BuyCurrency { helper, quote, password } => self.buy_currency(helper, quote, password),
+            NetCommand::LandToolPreflight {
+                helper,
+                billable_area,
+                currency_buy,
+            } => self.land_tool_preflight(helper, billable_area, currency_buy),
+            NetCommand::LandToolBuy { helper, request } => self.land_tool_buy(helper, request),
             NetCommand::FetchInventoryThumbnail { request, asset, resize } => {
                 let cap = self.main_cap("ViewerAsset");
                 let http = self.sh.caps_http.clone();
@@ -2058,6 +2095,15 @@ impl Session<'_> {
             | NetCommand::RequestOfflineMessagesLegacy
             | NetCommand::AnswerOfflineFriendship { .. }
             | NetCommand::AnswerOfflineGroupInvite { .. } => {}
+            // handled by on_groups_command
+            NetCommand::GroupMembersRequest { .. }
+            | NetCommand::GroupRoleDataRequest { .. }
+            | NetCommand::GroupRoleMembersRequest { .. }
+            | NetCommand::GroupTitlesRequest { .. }
+            | NetCommand::GroupTitleUpdate { .. }
+            | NetCommand::GroupNoticesListRequest(_)
+            | NetCommand::JoinGroup(_)
+            | NetCommand::InviteToGroup { .. } => {}
             // handled by on_search_command
             NetCommand::DirQuery { .. }
             | NetCommand::EventInfoRequest(_)
@@ -2823,6 +2869,7 @@ impl Session<'_> {
             || self.dispatch_social(from, pkt)?
             || self.dispatch_land(from, pkt)?
             || self.dispatch_search(from, pkt)?
+            || self.dispatch_groups(pkt)?
             || self.dispatch_build(pkt)?
         {
             return Ok(());
@@ -3487,6 +3534,19 @@ impl Session<'_> {
                     items,
                 },
             );
+        } else if id == FindAgent::ID {
+            // LLAvatarTracker::processAgentFound: the answer reuses the request
+            let m: FindAgent = pkt.decode()?;
+            if let Some(l) = m.location_block.first() {
+                emit(
+                    self.sh,
+                    NetEvent::AgentFound {
+                        prey: m.agent_block.prey,
+                        x: l.global_x,
+                        y: l.global_y,
+                    },
+                );
+            }
         } else if id == UUIDNameReply::ID {
             let m: UUIDNameReply = pkt.decode()?;
             let names = m
@@ -3661,6 +3721,13 @@ impl Session<'_> {
             let m: MoneyBalanceReply = pkt.decode()?;
             self.asset_imports.balance = Some(m.money_data.money_balance);
             emit(self.sh, NetEvent::Balance(m.money_data.money_balance));
+            emit(
+                self.sh,
+                NetEvent::LandHoldings {
+                    credit: m.money_data.square_meters_credit,
+                    committed: m.money_data.square_meters_committed,
+                },
+            );
         } else if id == TeleportStart::ID {
             emit(self.sh, NetEvent::TeleportStarted);
         } else if id == TeleportProgress::ID {
@@ -3852,6 +3919,7 @@ impl Session<'_> {
             owner: r.sim_owner,
             is_estate_manager: r.is_estate_manager,
             product_name: field_str(&m.region_info3.product_name),
+            billable_factor: r.billable_factor,
         };
         emit(self.sh, NetEvent::RegionHandshake(Arc::new(info)));
         if is_main {

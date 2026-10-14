@@ -1,6 +1,6 @@
 //! Session side of the About Land floater (land.rs): parcel selection and
 //! properties update, access lists, dwell, object owners and returns,
-//! release / deed / pass, the estate covenant (EstateCovenantRequest, then
+//! release / deed / pass, purchase (ParcelBuy / ParcelClaim), the estate covenant (EstateCovenantRequest, then
 //! the notecard by estate asset transfer) and the parcel environment.
 //! Senders follow LLViewerParcelMgr and LLFloaterLand (llviewerparcelmgr.cpp,
 //! llfloaterland.cpp, originally LGPL 2.1).
@@ -256,6 +256,54 @@ impl Session<'_> {
                 m.agent_data.agent_id = agent;
                 m.agent_data.session_id = session;
                 m.parcel_data.local_id = local_id;
+                self.send(addr, &m, true);
+            }
+            LandCommand::Buy {
+                handle,
+                local_id,
+                group,
+                for_group,
+                remove_contribution,
+                price,
+                area,
+            } => {
+                let Some(addr) = self.land_sim(handle) else {
+                    return;
+                };
+                log::info!("ParcelBuy: parcel {local_id}, L$ {price}, {area} m²");
+                let mut m = ParcelBuy::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.data.group_id = group;
+                m.data.is_group_owned = for_group;
+                m.data.remove_contribution = remove_contribution;
+                m.data.local_id = local_id;
+                // don't allow escrow buys
+                m.data.final_ = true;
+                m.parcel_data.price = price;
+                m.parcel_data.area = area;
+                self.send(addr, &m, true);
+            }
+            LandCommand::Claim {
+                handle,
+                group,
+                for_group,
+                west,
+                south,
+                east,
+                north,
+            } => {
+                let Some(addr) = self.land_sim(handle) else {
+                    return;
+                };
+                log::info!("ParcelClaim: {west},{south} to {east},{north}");
+                let mut m = ParcelClaim::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.data.group_id = group;
+                m.data.is_group_owned = for_group;
+                m.data.final_ = true;
+                m.parcel_data = vec![parcel_claim::ParcelData { west, south, east, north }];
                 self.send(addr, &m, true);
             }
             LandCommand::CovenantRequest { handle } => {
