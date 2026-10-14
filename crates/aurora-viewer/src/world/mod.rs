@@ -9,6 +9,7 @@ pub mod contact_sets;
 pub mod eep;
 pub mod eep_env;
 pub mod env;
+pub mod env_apply;
 pub mod env_day_edit;
 pub mod env_edit;
 pub mod env_select;
@@ -222,6 +223,9 @@ pub struct World {
     pub land_committed: i32,
     pub upload_cost: Option<i32>,
     pub local_assets: HashMap<Uuid, (String, bool)>,
+    /// ExtEnvironment answers of the frame (parcel local id, error), for the
+    /// environment editors' "Apply To Parcel / Region" (drained by the app).
+    pub environment_answers: Vec<(i32, Result<(), String>)>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
     pub health: f32,
     /// Interface sounds to play (drained by the app).
@@ -407,6 +411,7 @@ impl World {
             land_committed: 0,
             upload_cost: None,
             local_assets: HashMap::new(),
+            environment_answers: Vec::new(),
             health: 100.0,
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -1954,6 +1959,11 @@ impl World {
                     && !info.is_group_owned
                 {
                     self.social.want_name(info.owner_id);
+                }
+                // the environment editors wait for the answer of what they applied
+                if let aurora_net::land::LandEvent::Environment { local_id, result } = &ev {
+                    self.environment_answers
+                        .push((*local_id, result.as_ref().map(|_| ()).map_err(Clone::clone)));
                 }
                 self.land.apply(ev, &ctx);
                 None

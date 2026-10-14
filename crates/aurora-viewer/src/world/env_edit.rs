@@ -507,6 +507,19 @@ impl Rights {
         }
     }
 
+    /// LLFloaterEditExtDayCycle::setEditDayCycle: what a day without an
+    /// item allows (the parcel's or region's day, an import, the default
+    /// day), from its own flags.
+    pub fn from_flags(flags: u32) -> Rights {
+        let save = flags & FLAG_NOSAVE == 0;
+        Rights {
+            save,
+            copy: save && flags & FLAG_NOCOPY == 0,
+            modify: save && flags & FLAG_NOMOD == 0,
+            transfer: save && flags & FLAG_NOTRANS == 0,
+        }
+    }
+
     /// The flags written into the settings (setFlag / clearFlag).
     pub fn apply(self, doc: &mut SettingsDoc) {
         let f = self.flags(doc.flags());
@@ -660,6 +673,9 @@ mod tests {
         r.apply(&mut doc);
         assert_eq!(doc.flags(), FLAG_NOMOD);
         assert!(!Rights::from_item(0x7fffffff, FLAG_NOSAVE).save);
+        let day = Rights::from_flags(FLAG_NOMOD);
+        assert!(day.save && day.copy && !day.modify && day.transfer);
+        assert_eq!(Rights::from_flags(FLAG_NOSAVE), Rights::from_item(0, FLAG_NOSAVE));
         assert_eq!(correct_item_name(" a|b "), "ab");
         assert_eq!(correct_item_name(""), "Unnamed");
     }
