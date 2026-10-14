@@ -8314,12 +8314,7 @@ impl App {
                 );
                 // what the bars leave: where the windows are laid out, moved
                 // and snapped this frame (above the dock with the islands)
-                let left = ui.available_rect_before_wrap();
-                let area = if classic_bars {
-                    left
-                } else {
-                    ui::bars::islands::work_area(left, bottom_top)
-                };
+                let area = ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic_bars);
                 ui::layout::set_work_area(ui.ctx(), area);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);

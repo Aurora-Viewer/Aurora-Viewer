@@ -102,6 +102,18 @@ pub(crate) fn set_work_area(ctx: &egui::Context, area: Rect) {
     ctx.data_mut(|d| d.insert_temp(work_area_id(), area));
 }
 
+/// The room the bars leave this frame, from `left` (what the panels of
+/// Firestorm's bars leave) and `bottom_top` (the top of what the bottom
+/// bar keeps): with the islands, below the top islands and above the dock,
+/// 8 px from the window's sides (`bars::islands::work_area`).
+pub(crate) fn bars_room(left: Rect, bottom_top: f32, classic_bars: bool) -> Rect {
+    if classic_bars {
+        left
+    } else {
+        super::bars::islands::work_area(left, bottom_top)
+    }
+}
+
 /// Where the windows are laid out: the screen without the bars.
 pub(crate) fn work_area(ctx: &egui::Context) -> Rect {
     ctx.data(|d| d.get_temp::<Rect>(work_area_id()))

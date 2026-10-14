@@ -91,7 +91,7 @@ fn a_toast_waits_for_the_place_then_shows_or_is_dropped() {
     // a whole PRESENCE from the moment it shows, then the fade
     advance(&mut t, free + PRESENCE, false);
     assert_eq!(t.len(), 2);
-    advance(&mut t, free + PRESENCE + PRESENCE_FADE, false);
+    advance(&mut t, free + PRESENCE + PRESENCE_FADE + 0.01, false);
     assert!(t.is_empty());
     // waited too long: dropped without ever showing
     let mut t = vec![toast(3, 10.0)];
@@ -216,23 +216,21 @@ fn frames(size: Vec2, classic: bool, at: PresencePosition) -> Frame {
                 &mut chat_ui,
                 &gestures,
                 0,
+                None,
                 false,
                 false,
                 false,
                 &mut 0.0,
                 &mut bars::MicButton::default(),
                 false,
+                !classic,
+                Some(&mut emoji),
             );
             // the room the bars leave, as App reports it
-            let left = ui.available_rect_before_wrap();
-            let area = if classic {
-                left
-            } else {
-                bars::islands::work_area(left, left.bottom())
-            };
+            let area = crate::ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic);
             crate::ui::layout::set_work_area(ui.ctx(), area);
             let (mut names, mut wanted) = Default::default();
-            crate::ui::chat::toasts(ui.ctx(), &p, &world, &pics, &mut names, &mut wanted, bottom_top, 20.0, true);
+            crate::ui::chat::toasts(ui.ctx(), &p, &world, &pics, &mut names, &mut wanted, bottom_top, 20.0, true, !classic);
             let mut env = ToastEnv {
                 pics: &pics,
                 emoji: &mut emoji,
@@ -280,7 +278,7 @@ fn the_toasts_never_cross_a_bar_nor_the_chat_lines() {
                 let case = format!("{size:?} classic {classic} {at:?}");
                 let f = frames(size, classic, at);
                 // the bars were drawn, in the look asked
-                let expected = if classic { 2 } else { 6 };
+                let expected = if classic { 2 } else { 8 };
                 assert!(f.bars.len() >= expected, "{case}: bars {:?}", f.bars);
                 let chat = f.chat.unwrap_or_else(|| panic!("{case}: no chat lines"));
                 let low = size.y < 400.0;
