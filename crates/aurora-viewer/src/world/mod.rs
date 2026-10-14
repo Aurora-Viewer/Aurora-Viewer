@@ -22,6 +22,7 @@ pub mod maturity;
 pub mod motion;
 pub mod mutes;
 pub mod names;
+pub mod notification_history;
 pub mod notifications;
 pub mod objects;
 pub mod outfit;
@@ -2604,15 +2605,16 @@ impl World {
     /// A message received in a conversation that is not in sight
     /// (`in_sight`: its tab shown in the Conversations window): a toast and
     /// an entry under the bell until the conversation is read, as
-    /// notify_of_message decides (llimview.cpp) — never in do not disturb,
-    /// group chats by their own preference.
+    /// notify_of_message decides (llimview.cpp) — never in do not disturb
+    /// with Firestorm's toasts, group chats by their own preference.
     pub fn notify_message(&mut self, m: &ImMessage, in_sight: bool) {
         let prefs = self.notifications.toasts;
         let wanted = match m.kind {
             ImKind::Group => prefs.group_im,
             ImKind::Private | ImKind::Conference => prefs.im,
         };
-        if !wanted || in_sight || self.status.dnd {
+        // Aurora's paused bell still keeps them in "To do", silently
+        if !wanted || in_sight || (self.status.dnd && !self.notifications.aurora) {
             return;
         }
         let Some(line) = self.social.ims.iter().find(|s| s.other == m.session).and_then(|s| s.lines.back()) else {

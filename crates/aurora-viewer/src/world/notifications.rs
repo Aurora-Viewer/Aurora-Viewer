@@ -3,7 +3,9 @@
 //! permissions, llLoadURL), with the answers SL expects
 //! (LLOfferInfo, LLScriptFloater, LLPanelNotification in Firestorm).
 
+use super::notification_history::{self as history, Entry, Follow, Look, Outcome};
 use aurora_net::NetCommand;
+use std::collections::HashMap;
 use std::time::SystemTime;
 use uuid::Uuid;
 
@@ -187,7 +189,68 @@ pub struct Notification {
     pub maturity: u8,
 }
 
+impl Kind {
+    pub fn look(self) -> Look {
+        match self {
+            Kind::Info | Kind::Presence => Look::Info,
+            Kind::Alert => Look::Alert,
+            Kind::Teleport => Look::Teleport,
+            Kind::Friendship => Look::Friendship,
+            Kind::Inventory => Look::Inventory,
+            Kind::Group => Look::Group,
+            Kind::Script => Look::Script,
+            Kind::Permissions => Look::Permissions,
+            Kind::Url => Look::Url,
+            Kind::Message => Look::Message,
+        }
+    }
+
+    pub fn of_look(look: Look) -> Kind {
+        match look {
+            Look::Info => Kind::Info,
+            Look::Alert => Kind::Alert,
+            Look::Teleport => Kind::Teleport,
+            Look::Friendship => Kind::Friendship,
+            Look::Inventory => Kind::Inventory,
+            Look::Group => Kind::Group,
+            Look::Script => Kind::Script,
+            Look::Permissions => Kind::Permissions,
+            Look::Url => Kind::Url,
+            Look::Message => Kind::Message,
+        }
+    }
+}
+
+/// A place link in a text (a teleport offer's SLURL), for "Show the place".
+fn place_link(text: &str) -> Option<String> {
+    text.split_whitespace()
+        .find(|w| w.starts_with("secondlife://") || w.contains("maps.secondlife.com/secondlife/"))
+        .map(|w| w.trim_end_matches([')', ',', '.', ']']).to_owned())
+}
+
 impl Notification {
+    /// Its history entry, once it left the list with `outcome`: what it was,
+    /// and the action still useful (an offer gone cannot be accepted, what
+    /// it was about can be opened).
+    pub fn history_entry(&self, outcome: Outcome) -> Entry {
+        let follow = match &self.data {
+            Data::None => Follow::Restore,
+            Data::Message { session, .. } => Follow::Conversation(*session),
+            Data::Lure { from, .. } => place_link(&self.body).map_or(Follow::Conversation(*from), Follow::Place),
+            Data::TeleportRequest { from, .. } | Data::Friend { from, .. } => Follow::Conversation(*from),
+            Data::Inventory { object, .. } if !object.is_nil() && outcome == Outcome::Kept => Follow::Inventory(*object),
+            _ => Follow::None,
+        };
+        Entry {
+            time: history::secs(self.time),
+            look: self.kind.look(),
+            title: self.title.clone(),
+            body: self.body.clone(),
+            outcome,
+            follow,
+        }
+    }
+
     /// Needs an answer (stays until answered).
     pub fn interactive(&self) -> bool {
         !matches!(self.data, Data::None | Data::Presence { .. } | Data::Message { .. })
@@ -266,6 +329,15 @@ pub struct Notifications {
     /// toast: Firestorm's tip channel drops them until handleLoginComplete
     /// (LLScreenChannel::addToast, mWasStartUpToastShown).
     pub started: bool,
+    /// Aurora's notification center (Preferences › Aurora): in do not
+    /// disturb its bell is paused but everything still arrives in "To do";
+    /// Firestorm's style drops the messages' entries then.
+    pub aurora: bool,
+    /// What became of the notifications that left the list (answered,
+    /// declined…), for their history entry.
+    outcomes: HashMap<u64, Outcome>,
+    /// The listed notifications last time `take_departures` looked.
+    seen: Vec<(u64, Entry)>,
 }
 
 const MAX: usize = 100;
@@ -311,15 +383,24 @@ impl Notifications {
     /// since it was last read), so that a chatty friend fills one card.
     pub fn push_message(&mut self, session: Uuid, from: Uuid, title: impl Into<String>, text: impl Into<String>) -> u64 {
         let mut count = 1;
+        let mut before = None;
         if let Some(i) = self
             .list
             .iter()
             .position(|n| matches!(n.data, Data::Message { session: s, .. } if s == session))
-            && let Data::Message { count: c, .. } = self.list.remove(i).data
         {
-            count += c;
+            let old = self.list.remove(i);
+            before = Some(old.id);
+            if let Data::Message { count: c, .. } = old.data {
+                count += c;
+            }
         }
-        self.push(Kind::Message, title, text, Data::Message { session, from, count })
+        let id = self.push(Kind::Message, title, text, Data::Message { session, from, count });
+        // the same entry, not one gone to the history
+        if let Some(seen) = self.seen.iter_mut().find(|(i, _)| Some(*i) == before) {
+            seen.0 = id;
+        }
+        id
     }
 
     /// Forget the message entries of the conversations now read (opened in
@@ -349,6 +430,67 @@ impl Notifications {
         self.list.retain(|n| n.interactive());
     }
 
+    /// "Mark all read" of Aurora's center: information goes to the history,
+    /// what waits for an answer stays in "To do", marked read.
+    pub fn mark_all_read_to_history(&mut self) {
+        for n in self.list.iter_mut() {
+            n.read = true;
+        }
+        self.clear_info();
+    }
+
+    /// Record what became of `id` before it leaves the list some other way
+    /// than `respond` (a card answered in a conversation, a block).
+    pub fn note(&mut self, id: u64, outcome: Outcome) {
+        self.outcomes.insert(id, outcome);
+    }
+
+    /// Put an entry of the history back in the list ("Put back in To do").
+    pub fn restore(&mut self, e: &Entry) -> u64 {
+        let id = self.push(Kind::of_look(e.look), e.title.clone(), e.body.clone(), Data::None);
+        if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
+            n.time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(e.time);
+        }
+        id
+    }
+
+    /// The listed notifications that left the list since the last call,
+    /// as history entries (the toast-only ones are never kept).
+    pub fn take_departures(&mut self) -> Vec<Entry> {
+        let now: Vec<u64> = self.listed().map(|n| n.id).collect();
+        if now.len() == self.seen.len() && now.iter().zip(&self.seen).all(|(a, (b, _))| a == b) {
+            return Vec::new();
+        }
+        let mut gone = Vec::new();
+        for (id, mut entry) in std::mem::take(&mut self.seen) {
+            if now.contains(&id) {
+                continue;
+            }
+            if let Some(o) = self.outcomes.remove(&id) {
+                entry.outcome = o;
+            }
+            if entry.outcome != Outcome::Kept && matches!(entry.follow, Follow::Inventory(_)) {
+                entry.follow = Follow::None;
+            }
+            gone.push(entry);
+        }
+        // what each entry becomes when it leaves without a recorded answer:
+        // information read, an offer left unanswered ignored
+        self.seen = self
+            .listed()
+            .map(|n| {
+                let mut e = n.history_entry(if n.interactive() { Outcome::Ignored } else { Outcome::Read });
+                if let Data::Inventory { object, .. } = n.data
+                    && !object.is_nil()
+                {
+                    e.follow = Follow::Inventory(object);
+                }
+                (n.id, e)
+            })
+            .collect();
+        gone
+    }
+
     /// Apply an answer: returns the messages to send and an URL to open.
     /// `folder_for` gives the inventory folder for an asset type (offers)
     /// and `calling_cards` the calling card folder (friendship).
@@ -363,6 +505,7 @@ impl Notifications {
             return (Vec::new(), None);
         };
         let n = self.list.remove(pos);
+        self.outcomes.insert(id, outcome_of(&n, &r));
         let mut out = Vec::new();
         let mut url = None;
         let accept = matches!(r, Response::Accept);
@@ -475,6 +618,22 @@ impl Notifications {
         } else {
             NetCommand::DeclineFriendship { transaction: tx }
         }
+    }
+}
+
+/// What an answer did, for the history.
+fn outcome_of(n: &Notification, r: &Response) -> Outcome {
+    match r {
+        Response::Accept if matches!(n.data, Data::Inventory { .. }) => Outcome::Kept,
+        Response::Accept | Response::Button(_) | Response::SendText | Response::OpenUrl | Response::Open => Outcome::Answered,
+        Response::Decline | Response::Block | Response::BlockExperience => Outcome::Declined,
+        Response::Dismiss => match &n.data {
+            Data::Dialog { .. } | Data::TextBox { .. } => Outcome::Ignored,
+            Data::Inventory { object, .. } if !object.is_nil() => Outcome::Kept,
+            _ if n.close_declines() => Outcome::Declined,
+            _ => Outcome::Read,
+        },
+        Response::OpenExperience(_) => Outcome::Read,
     }
 }
 
@@ -621,6 +780,58 @@ mod tests {
             let (cmds, _) = n.respond(id, Response::Accept, |_| Uuid::nil(), cards);
             assert!(matches!(&cmds[..], [NetCommand::SendImDialog { dialog: im::GROUP_INVITATION_ACCEPT, id, .. }] if *id == tx));
         }
+    }
+
+    /// What leaves the list goes to the history with its outcome; a
+    /// friend's toast never does; information can be put back.
+    #[test]
+    fn departures_reach_the_history_with_their_outcome() {
+        let mut n = Notifications::default();
+        let (from, tx, object) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let info = n.push(Kind::Info, "Lune paid you L$50", "", Data::None);
+        let offer = n.push(
+            Kind::Inventory,
+            "Orion gives you a lantern",
+            "",
+            Data::Inventory {
+                from,
+                tx,
+                asset_type: 6,
+                object,
+                task: false,
+            },
+        );
+        n.push_presence(from, "Orion is online.", true);
+        assert!(n.take_departures().is_empty());
+        n.respond(offer, Response::Accept, |_| Uuid::nil(), Uuid::nil());
+        n.mark_all_read_to_history();
+        let gone = n.take_departures();
+        assert_eq!(gone.len(), 2);
+        let kept = gone.iter().find(|e| e.title.starts_with("Orion")).expect("offer");
+        assert_eq!((kept.outcome, &kept.follow), (Outcome::Kept, &Follow::Inventory(object)));
+        let read = gone.iter().find(|e| e.title.starts_with("Lune")).expect("info");
+        assert_eq!((read.outcome, &read.follow), (Outcome::Read, &Follow::Restore));
+        assert!(n.list.iter().all(|x| x.id != info));
+        // put back in "To do"
+        let back = n.restore(read);
+        assert!(n.listed().any(|x| x.id == back && x.title == read.title));
+        // a refused teleport offer keeps a way to its place
+        let lure = n.push(
+            Kind::Teleport,
+            "Tess offers a teleport",
+            "Lagoon secondlife:///app/teleport/Aurora/128/130/25",
+            Data::Lure {
+                from,
+                invite: 9,
+                change_rating: false,
+            },
+        );
+        n.take_departures();
+        n.note(lure, Outcome::Declined);
+        n.list.retain(|x| x.id != lure);
+        let gone = n.take_departures();
+        assert_eq!(gone[0].outcome, Outcome::Declined);
+        assert_eq!(gone[0].follow, Follow::Place("secondlife:///app/teleport/Aurora/128/130/25".into()));
     }
 
     #[test]
