@@ -4323,6 +4323,7 @@ ui-parcel-icons-name-isolated = Parcelle isolée
 ui-worldmap-l-unknown-area = { $value0 }{ "\u000AL$ " }{ $price }{ " (surface inconnue)" }
 ui-worldmap-at-utc = { $value0 }{ "\u000AÀ " }{ $h }:{ $m }{ " UTC" }
 ui-appearance-worn = { $value0 }{ " (portée)" }
+ui-bars-nearby-chat-and-conversations = Chat local et conversations
 ui-bars-unread = { $value0 }{ " (" }{ $unread }{ " non lus)" }
 ui-perf-in-progress = { $value0 }{ " (" }{ $value1 }{ " en cours)" }
 ui-options-mb-of-video-memory-detected = { $value0 }{ " Mo de mémoire vidéo détectés" }

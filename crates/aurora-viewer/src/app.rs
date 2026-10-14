@@ -178,6 +178,8 @@ pub struct App {
     panels: Panels,
     chat_ui: ChatUi,
     toolbar_ui: ui::toolbar::ToolbarUi,
+    /// The skin's toolbar as the dock of the islands has it by default.
+    dock_layout: ui::bars::dock::DockLayout,
     /// The History window (a conversation's whole transcript).
     history_ui: ui::chat::history::HistoryUi,
     perf: PerfData,
@@ -691,6 +693,7 @@ impl App {
             panels,
             chat_ui: ChatUi::default(),
             toolbar_ui: Default::default(),
+            dock_layout: Default::default(),
             history_ui: Default::default(),
             perf: PerfData::default(),
             frame_profile: FrameProfile::default(),
@@ -8269,17 +8272,20 @@ impl App {
                 };
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
                 let toolbar_settings = self.settings.toolbar.get_or_insert_default();
+                // the dock leaves the Conversations button out of its default
+                let bar_layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
                 let (chat, bar2, bottom_top, chat_width_set) = ui::bars::bottom_bar(
                     ui,
                     &p,
                     icons,
-                    layout,
+                    bar_layout,
                     &mut self.toolbar_ui,
                     toolbar_settings,
                     &mut self.panels,
                     &mut self.chat_ui,
                     &self.gesture_state.manager,
                     self.world.conversations_badge(),
+                    self.world.social.latest_unread(),
                     self.world.agent.flying,
                     self.world.agent.is_sitting(),
                     self.camera.mouselook(),
@@ -8303,8 +8309,8 @@ impl App {
                 };
                 ui::layout::set_work_area(ui.ctx(), area);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
-                self.toolbar_ui.show(ui.ctx(), &p, layout, toolbar_settings);
-                if self.toolbar_ui.commit(layout, toolbar_settings) || chat_width_set || toolbar_migrated {
+                self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
+                if self.toolbar_ui.commit(bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
                     self.settings.save();
                 }
                 self.mic_on = mic.on;

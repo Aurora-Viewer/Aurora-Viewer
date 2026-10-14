@@ -279,6 +279,7 @@ impl Bench {
                     &mut ChatUi::default(),
                     &crate::gestures::Manager::default(),
                     0,
+                    None,
                     false,
                     false,
                     false,

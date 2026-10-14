@@ -1800,6 +1800,9 @@ fn mic_mode(
 /// What lights the toolbar's buttons, besides the open windows.
 pub(crate) struct Row {
     pub unread: usize,
+    /// The conversation the chat island's button opens while there are
+    /// unread lines (`Social::latest_unread`).
+    pub latest_unread: Option<uuid::Uuid>,
     pub flying: bool,
     pub seated: bool,
     pub mouselook: bool,
@@ -1885,6 +1888,7 @@ pub fn bottom_bar(
     chat: &mut super::chat::ChatUi,
     gestures: &crate::gestures::Manager,
     unread: usize,
+    latest_unread: Option<uuid::Uuid>,
     flying: bool,
     seated: bool,
     mouselook: bool,
@@ -1897,6 +1901,7 @@ pub fn bottom_bar(
     if islands {
         let row = Row {
             unread,
+            latest_unread,
             flying,
             seated,
             mouselook,
@@ -1990,6 +1995,7 @@ pub fn bottom_bar(
                             ui.spacing_mut().item_spacing.x = gap;
                             let row = Row {
                                 unread,
+                                latest_unread: None,
                                 flying,
                                 seated,
                                 mouselook,

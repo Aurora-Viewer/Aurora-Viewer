@@ -2218,7 +2218,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `star`, `status` (the account's picture), `emoji` (the chat island's
   emoji picker). The bottom: the chat island on the left, the dock centred
   (buttons 34 px, 32 at 1280), the local chat lines in pills above the
-  chat island, all 8 px from the edges. With `AURORA_DEMO_TOOLBAR=drag`,
+  chat island, all 8 px from the edges; the chat island's button carries the unread counter of the conversations (the dock has no Conversations button by default). With `AURORA_DEMO_TOOLBAR=drag`,
   frame 654: a toolbar button dragged along the dock. Capture at
   `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
   at frame 780: at 1280 the place shows the parcel and the region, at

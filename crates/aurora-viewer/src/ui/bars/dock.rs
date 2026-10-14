@@ -122,7 +122,7 @@ pub fn bottom(
     let mut committed = false;
 
     let out = area(&ctx, p, "chat", geo.chat, |ui| {
-        chat_island(ui, p, icons, panels, chat, gestures, emoji, geo, chat_width, &mut committed)
+        chat_island(ui, p, icons, panels, chat, gestures, emoji, row, geo, chat_width, &mut committed)
     });
 
     area(&ctx, p, "dock", geo.dock, |ui| {
@@ -156,8 +156,9 @@ pub fn bottom(
 }
 
 /// The chat island: the field with "Nearby chat" as its placeholder and the
-/// emoji picker at its end, the button that opens the local chat, and the
-/// width handle on the island's right edge (double click: the default).
+/// emoji picker at its end, the button of the local chat and the
+/// conversations, and the width handle on the island's right edge (double
+/// click: the default).
 #[allow(clippy::too_many_arguments)]
 fn chat_island(
     ui: &mut egui::Ui,
@@ -167,6 +168,7 @@ fn chat_island(
     chat: &mut crate::ui::chat::ChatUi,
     gestures: &crate::gestures::Manager,
     mut emoji: Option<&mut crate::ui::emoji::Emoji>,
+    row: &Row,
     geo: Geometry,
     chat_width: &mut f32,
     committed: &mut bool,
@@ -218,28 +220,7 @@ fn chat_island(
         emoji_picker(ui, p, icons, chat, emoji, smile, Pos2::new(field.right(), island.top() - 6.0));
     }
 
-    // the local chat in the Conversations window, as Firestorm's nearby
-    // chat button (`nearbychat_18`)
-    let open = panels.chat && chat.selected.is_none() && !chat.contacts;
-    let resp = ui.interact(button, Id::new("chat_island_open"), Sense::click());
-    slot_face(ui, p, button, resp.hovered(), open);
-    paint_icon(
-        ui,
-        icons,
-        "message-filled",
-        button,
-        super::islands::ICON,
-        slot_ink(p, resp.hovered() || open, true),
-    );
-    if resp.on_hover_text(aurora_i18n::tr!("common-nearby-chat")).clicked() {
-        if open {
-            crate::ui::widgets::toggle_floater(ui.ctx(), "conversations", &mut panels.chat);
-        } else {
-            chat.selected = None;
-            chat.contacts = false;
-            crate::ui::widgets::open_floater(ui.ctx(), "conversations", &mut panels.chat);
-        }
-    }
+    conversations_button(ui, p, icons, panels, chat, row, button);
 
     // the width handle, along the island's right edge
     let handle = Rect::from_min_max(
@@ -303,6 +284,93 @@ fn emoji_picker(
     }
 }
 
+/// The button of the chat island: the local chat and the conversations
+/// (the human's choice: the Conversations button leaves the default dock).
+/// It carries the one violet unread counter while the conversations are
+/// closed or minimized, as Firestorm flashes its Conversations button
+/// (LLIMMgr, flashCommand). A click shows the newest unread conversation,
+/// else the local chat; on that conversation already, it closes the window.
+fn conversations_button(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    panels: &mut Panels,
+    chat: &mut crate::ui::chat::ChatUi,
+    row: &Row,
+    button: Rect,
+) {
+    let minimized = crate::ui::widgets::floater_minimized(ui.ctx(), "conversations");
+    let shown = panels.chat && !minimized;
+    let target = row.latest_unread.filter(|_| row.unread > 0);
+    let on_target = shown
+        && match target {
+            Some(id) => chat.selected == Some(id),
+            None => chat.selected.is_none() && !chat.contacts,
+        };
+    let resp = ui.interact(button, Id::new("chat_island_open"), Sense::click());
+    slot_face(ui, p, button, resp.hovered(), shown);
+    paint_icon(
+        ui,
+        icons,
+        "message-filled",
+        button,
+        super::islands::ICON,
+        slot_ink(p, resp.hovered() || shown, true),
+    );
+    let badge = row.unread > 0 && !shown;
+    if badge {
+        // as on the dock's buttons: 3 px in from the right edge, 1 px above
+        let slot = Rect::from_min_max(
+            Pos2::new(button.left(), button.top() - 1.0),
+            Pos2::new(button.right() - 5.0, button.bottom()),
+        );
+        super::islands::count(ui, p, slot, row.unread, 1.0, false);
+    }
+    let name = aurora_i18n::tr!("ui-bars-nearby-chat-and-conversations");
+    let tip = if row.unread > 0 {
+        aurora_i18n::tr!("ui-bars-unread", value0 = name.to_string(), unread = row.unread.to_string()).to_string()
+    } else {
+        name.to_string()
+    };
+    if resp.on_hover_text(tip).clicked() {
+        if on_target {
+            crate::ui::widgets::toggle_floater(ui.ctx(), "conversations", &mut panels.chat);
+        } else {
+            match target {
+                Some(id) => chat.open(id),
+                None => {
+                    chat.selected = None;
+                    chat.contacts = false;
+                }
+            }
+            crate::ui::widgets::open_floater(ui.ctx(), "conversations", &mut panels.chat);
+        }
+    }
+}
+
+/// The skin's toolbar without the Conversations button, for the dock: the
+/// chat island's button opens the conversations and counts their unread
+/// lines. Only the default dock leaves it out: a saved dock that holds it
+/// keeps it, and the toolbar's catalogue still offers it. Kept from one
+/// frame to the next, built again when the skin's toolbar changes.
+#[derive(Default)]
+pub struct DockLayout {
+    source: Vec<crate::ui::skin::ToolButton>,
+    layout: Option<crate::ui::skin::Layout>,
+}
+
+impl DockLayout {
+    pub fn of(&mut self, skin: &crate::ui::skin::Layout) -> &crate::ui::skin::Layout {
+        if self.layout.is_none() || self.source != skin.toolbar {
+            self.source.clone_from(&skin.toolbar);
+            let mut layout = skin.clone();
+            layout.toolbar.retain(|b| b.command != "conversations");
+            self.layout = Some(layout);
+        }
+        self.layout.get_or_insert_with(|| skin.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,6 +424,8 @@ mod tests {
         chat: crate::ui::chat::ChatUi,
         width: f32,
         toolbar: crate::ui::toolbar::ToolbarUi,
+        unread: usize,
+        latest: Option<uuid::Uuid>,
     }
 
     impl Bench {
@@ -368,6 +438,8 @@ mod tests {
                 chat: Default::default(),
                 width: 0.0,
                 toolbar: Default::default(),
+                unread: 0,
+                latest: None,
             }
         }
 
@@ -384,7 +456,8 @@ mod tests {
             let layout = crate::ui::skin::Layout::default();
             let settings = crate::ui::toolbar::ToolbarSettings::default();
             let row = Row {
-                unread: 0,
+                unread: self.unread,
+                latest_unread: self.latest,
                 flying: false,
                 seated: false,
                 mouselook: false,
@@ -481,5 +554,56 @@ mod tests {
         assert!((410.0..=441.0).contains(&bench.width), "{}", bench.width);
         let g = geometry(screen(1536.0), bench.width, 18, true);
         assert!(g.dock.left() >= g.chat.right() + AFTER_CHAT);
+    }
+    /// The default dock leaves the Conversations button to the chat
+    /// island; a saved dock that holds it keeps it.
+    #[test]
+    fn the_default_dock_leaves_conversations_to_the_chat_island() {
+        let skin = crate::ui::skin::Layout::default();
+        assert!(skin.toolbar.iter().any(|b| b.command == "conversations"));
+        let mut dock = DockLayout::default();
+        let layout = dock.of(&skin);
+        assert!(layout.toolbar.iter().all(|b| b.command != "conversations"));
+        assert_eq!(layout.toolbar.len(), skin.toolbar.len() - 1);
+        let saved = crate::ui::toolbar::ToolbarSettings {
+            buttons: Some(skin.toolbar.clone()),
+            locked: false,
+        };
+        assert!(saved.buttons(dock.of(&skin)).iter().any(|b| b.command == "conversations"));
+    }
+
+    /// The chat island's button: the newest unread conversation while there
+    /// are unread lines, else the local chat; a second click on the same
+    /// tab closes the window.
+    #[test]
+    fn the_chat_button_opens_the_newest_unread_conversation_or_the_local_chat() {
+        let mut bench = Bench::shown();
+        let g = geometry(screen(1536.0), 0.0, 17, true);
+        let at = Pos2::new(g.chat.right() - PAD - SLOT / 2.0, g.chat.center().y);
+        let click = |bench: &mut Bench| {
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            bench.frame(vec![egui::Event::PointerMoved(at), button(true)]);
+            bench.frame(vec![button(false)]);
+        };
+        let im = uuid::Uuid::from_u128(42);
+        bench.panels.chat = false;
+        bench.unread = 3;
+        bench.latest = Some(im);
+        click(&mut bench);
+        assert!(bench.panels.chat);
+        assert_eq!(bench.chat.selected, Some(im));
+        click(&mut bench);
+        assert!(!bench.panels.chat, "the same conversation again closes the window");
+        bench.unread = 0;
+        bench.latest = None;
+        bench.chat.selected = Some(im);
+        click(&mut bench);
+        assert!(bench.panels.chat);
+        assert_eq!(bench.chat.selected, None, "the local chat");
     }
 }
