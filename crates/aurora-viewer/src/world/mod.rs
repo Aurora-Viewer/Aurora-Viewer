@@ -1204,6 +1204,7 @@ impl World {
                 self.contact_sets = contact_sets::ContactSets::load(account.join(contact_sets::CONTACT_SETS_FILE));
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
                 self.status.invisible = status::Invisible::load(account.join(status::INVISIBLE_FILE), &self.social.friends);
+                self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
                 self.aliases_synced = u64::MAX;

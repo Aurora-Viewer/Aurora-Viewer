@@ -174,9 +174,60 @@ pub struct Calls {
     /// The microphone state wanted when a call connects or ends:
     /// Some(on) once, taken by the app (setUserPTTState, AutoDisengageMic).
     pub mic: Option<bool>,
+    /// Volume of each resident heard in voice (0..1, 0.5 = as sent), per
+    /// account like LLSpeakerVolumeStorage; residents left at 0.5 are not
+    /// kept.
+    pub volumes: std::collections::BTreeMap<Uuid, f32>,
+    volumes_path: Option<std::path::PathBuf>,
 }
 
+/// The file of the voice volumes, in the account's folder
+/// (LLSpeakerVolumeStorage keeps volume_settings.xml there).
+pub const VOLUMES_FILE: &str = "voice_volumes.xml";
+
 impl Calls {
+    /// The account's voice volumes (LLSD map: resident → volume).
+    pub fn load_volumes(&mut self, path: std::path::PathBuf) {
+        let saved = std::fs::read(&path).ok().and_then(|b| aurora_llsd::from_xml(&b).ok());
+        self.volumes = saved
+            .as_ref()
+            .and_then(|v| v.as_map())
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| Some((Uuid::parse_str(k).ok()?, v.as_f64() as f32)))
+                    .filter(|(_, v)| v.is_finite())
+                    .map(|(k, v)| (k, v.clamp(0.0, 1.0)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.volumes_path = Some(path);
+    }
+
+    /// A resident's volume; back at 0.5 it is forgotten.
+    pub fn set_volume(&mut self, id: Uuid, volume: f32) {
+        if (volume - 0.5).abs() < 0.005 || !volume.is_finite() {
+            self.volumes.remove(&id);
+        } else {
+            self.volumes.insert(id, volume.clamp(0.0, 1.0));
+        }
+    }
+
+    pub fn save_volumes(&self) {
+        let Some(path) = &self.volumes_path else {
+            return;
+        };
+        let mut map = aurora_llsd::Map::new();
+        for (id, v) in &self.volumes {
+            map.insert(id.to_string(), Llsd::from(*v as f64));
+        }
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(path, aurora_llsd::to_xml(&Llsd::Map(map))) {
+            log::warn!("voice volumes not saved: {e}");
+        }
+    }
+
     /// The invitation waiting in a conversation.
     pub fn invite_for(&self, conversation: &Uuid) -> Option<&PendingInvite> {
         self.invites.iter().find(|p| p.conversation() == *conversation)
@@ -981,6 +1032,25 @@ mod tests {
         w.status.cfg.friends_only = true;
         assert!(w.friends_only_drops(&inv.from, "Tess Touch"));
         assert!(!w.friends_only_drops(&inv.from, "Oz Linden"));
+    }
+
+    #[test]
+    fn voice_volumes_are_kept_per_account_file() {
+        let dir = std::env::temp_dir().join(format!("aurora-volumes-{}", Uuid::new_v4()));
+        let path = dir.join(VOLUMES_FILE);
+        let (a, b) = (Uuid::from_u128(2), Uuid::from_u128(3));
+        let mut calls = Calls::default();
+        calls.load_volumes(path.clone());
+        assert!(calls.volumes.is_empty());
+        calls.set_volume(a, 0.8);
+        calls.set_volume(b, 0.3);
+        calls.set_volume(b, 0.5);
+        calls.save_volumes();
+        let mut again = Calls::default();
+        again.load_volumes(path);
+        assert_eq!(again.volumes.len(), 1);
+        assert!((again.volumes[&a] - 0.8).abs() < 1e-6);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

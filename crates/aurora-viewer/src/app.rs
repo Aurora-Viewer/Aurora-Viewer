@@ -3511,10 +3511,10 @@ impl App {
         self.world.expire_call_invites();
         if self.volumes_save_at.is_some_and(|t| Instant::now() >= t) {
             self.volumes_save_at = None;
-            self.settings.save();
+            self.world.calls.save_volumes();
         }
         // each resident's voice volume (LLSpeakerVolumeStorage)
-        self.voice.apply_volumes(&self.settings.audio.speaker_volumes);
+        self.voice.apply_volumes(&self.world.calls.volumes);
         let report = if self.demo {
             let in_world = self.in_world();
             for ev in self.call_demo.scenario(&mut self.world, in_world) {
@@ -7909,7 +7909,7 @@ impl App {
                 self.chat_ui.voice_on = self.settings.audio.voice_enabled;
                 self.chat_ui.mic = (!self.settings.audio.mic_hold).then_some(self.mic_on);
                 if self.world.calls.active.is_some() {
-                    self.chat_ui.volumes.clone_from(&self.settings.audio.speaker_volumes);
+                    self.chat_ui.volumes.clone_from(&self.world.calls.volumes);
                 }
                 for c in ui::chat::show(
                     &ctx,
@@ -7945,12 +7945,7 @@ impl App {
                         ui::chat::ConvAction::ToggleMic => self.mic_on = !self.mic_on,
                         ui::chat::ConvAction::AnswerCall { session, answer } => self.world.answer_call_invite(session, answer),
                         ui::chat::ConvAction::SetVolume(id, v) => {
-                            // residents left as they send are not kept
-                            if (v - 0.5).abs() < 0.005 {
-                                self.settings.audio.speaker_volumes.remove(&id);
-                            } else {
-                                self.settings.audio.speaker_volumes.insert(id, v.clamp(0.0, 1.0));
-                            }
+                            self.world.calls.set_volume(id, v);
                             // saved once the slider rests
                             self.volumes_save_at = Some(Instant::now() + std::time::Duration::from_millis(500));
                         }
