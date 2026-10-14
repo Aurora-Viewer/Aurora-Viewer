@@ -7,7 +7,11 @@
 //! island's emoji picker); `nobug` / `bug`: the bug report button hidden /
 //! shown; `voice`: talking on the Speak button, its level at 62 %;
 //! `chatwide`: the chat island 560 px wide; `read`: no unread conversation
-//! counted. `normal` or nothing else: the
+//! counted. The favourites: `fav12` (the mockup's twelve), `nofav` (none),
+//! `added` (the twelve, the last one just added from the star), and where
+//! they live: `row` (the row under the islands, `folded`: folded to its
+//! tab, `rowdrag`: a pill dragged at frame 650), `dock` (the dock's
+//! button; `favorites` then opens its grid). `normal` or nothing else: the
 //! islands as set. With any word the voice light is the mockup's
 //! (connected).
 
@@ -39,6 +43,22 @@ pub struct DemoBars {
     pub chat_width: Option<f32>,
     /// No unread conversation shown (the demo's IMs count otherwise).
     pub read: bool,
+    /// The favourites of the demo, and where they live.
+    pub favorites: Option<Favorites>,
+    pub access: Option<crate::settings::FavoritesAccess>,
+    pub folded: Option<bool>,
+    pub row_drag: bool,
+}
+
+/// The favourites the demo's Favorites folder holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Favorites {
+    /// The mockup's twelve.
+    Twelve,
+    /// None.
+    Empty,
+    /// The twelve, the last one just added from the star.
+    Added,
 }
 
 pub fn parse(value: &str) -> DemoBars {
@@ -65,11 +85,31 @@ pub fn parse(value: &str) -> DemoBars {
             "voice" => d.voice = true,
             "chatwide" => d.chat_width = Some(560.0),
             "read" => d.read = true,
+            "fav12" => d.favorites = Some(Favorites::Twelve),
+            "nofav" => d.favorites = Some(Favorites::Empty),
+            "added" => d.favorites = Some(Favorites::Added),
+            "row" => d.access = Some(crate::settings::FavoritesAccess::Row),
+            "dock" => d.access = Some(crate::settings::FavoritesAccess::Dock),
+            "folded" => {
+                d.access = Some(crate::settings::FavoritesAccess::Row);
+                d.folded = Some(true);
+            }
+            "rowdrag" => {
+                d.access = Some(crate::settings::FavoritesAccess::Row);
+                d.row_drag = true;
+            }
             _ => {}
         }
     }
     // a menu or a look of the islands: the islands, whatever is saved
-    let islands_only = d.open.is_some() || d.stretch.is_some() || d.rights_text.is_some() || d.bug.is_some() || d.voice || d.read;
+    let islands_only = d.open.is_some()
+        || d.stretch.is_some()
+        || d.rights_text.is_some()
+        || d.bug.is_some()
+        || d.voice
+        || d.read
+        || d.favorites.is_some()
+        || d.access.is_some();
     if d.classic.is_none() && (islands_only || d.chat_width.is_some()) {
         d.classic = Some(false);
     }

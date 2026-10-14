@@ -42,6 +42,12 @@ pub fn work_area(screen: Rect, bottom: f32) -> Rect {
     )
 }
 
+/// The bottom of the favourites' row under the islands, when it is shown
+/// (`top` this frame): the windows' work area starts 8 px under it.
+pub fn favorites_row_bottom(ctx: &egui::Context) -> Option<f32> {
+    ctx.data(|d| d.get_temp::<f32>(Id::new("bars_favorites_row_bottom")))
+}
+
 /// The rectangle of an island between `left` and `right` on the row.
 fn row(screen: Rect, left: f32, right: f32) -> Rect {
     let top = screen.top() + MARGIN;
@@ -267,6 +273,18 @@ pub fn top(
             action = a;
         }
     });
+    // the favourites' row (F2) under the place island: the windows stay
+    // under it too
+    let row_id = Id::new("bars_favorites_row_bottom");
+    if st.favorites.access == crate::settings::FavoritesAccess::Row {
+        let (row, a) = super::favorites::row(&ctx, p, icons, st.favorites, place_rect);
+        if let Some(a) = a {
+            action = a;
+        }
+        ctx.data_mut(|d| d.insert_temp(row_id, row.bottom()));
+    } else {
+        ctx.data_mut(|d| d.remove_temp::<f32>(row_id));
+    }
     (action, audio_action)
 }
 
@@ -513,6 +531,7 @@ mod tests {
             own_name: "Aurora Demo",
             own_pic: None,
             recent: Vec::new(),
+            favorites: Box::leak(Box::default()),
         }
     }
 

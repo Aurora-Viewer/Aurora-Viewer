@@ -9,22 +9,18 @@
 //! Preferences › Aurora › Appearance › "Top and bottom bars" brings
 //! Firestorm's bar back (`bars::bottom_bar`, unchanged).
 
-use super::islands::{GAP, MARGIN, PAD, SLOT, area, slot_face, slot_ink};
+use super::islands::{GAP, MARGIN, PAD, area, slot_face, slot_ink};
 use super::{BarAction, ButtonLook, DOCK_MIC_W, MicButton, Row, paint_icon, toolbar_row};
 use crate::theme::Palette;
 use crate::ui::Panels;
 use crate::ui::icons::Icons;
 use egui::{Id, Pos2, Rect, RichText, Sense, Vec2};
 
-/// Height of the dock.
-pub const DOCK_H: f32 = 40.0;
-/// Height of the chat island.
-pub const CHAT_H: f32 = 38.0;
-/// Height of a dock button.
-const BUTTON_H: f32 = 32.0;
-/// Icons of the dock's buttons.
+/// Room between an island's edge and its buttons, above and below.
+const V_PAD: f32 = 4.0;
+/// Icons of the dock's buttons (smaller in the reduced buttons).
 const BUTTON_ICON: f32 = 18.0;
-/// Narrowest dock button, when the buttons do not fit in their width.
+/// The reduced buttons, when the others do not fit in the screen's width.
 const MIN_BUTTON: f32 = 24.0;
 /// Room between the chat island and the dock, at the least.
 const AFTER_CHAT: f32 = 12.0;
@@ -33,10 +29,6 @@ const MIN_CHAT: f32 = 200.0;
 /// Room in the chat field before the text and after the emoji.
 const FIELD_PAD: f32 = 9.0;
 const EMOJI_ICON: f32 = 15.0;
-
-/// What the windows keep free above the bottom islands: the dock and the
-/// usual 8 px gap (`islands::work_area`).
-pub const RESERVED: f32 = MARGIN + DOCK_H + MARGIN;
 
 /// A screen under 1408 px wide (the mockup's 1280) takes the narrower
 /// chat island and buttons.
@@ -50,18 +42,30 @@ pub fn default_chat_width(screen: Rect) -> f32 {
 }
 
 /// Where the bottom islands stand on `screen`: the chat island, the dock,
-/// and the width of its buttons (the Speak button is `DOCK_MIC_W` wide).
+/// the size of the dock's buttons (square; the Speak button is
+/// `DOCK_MIC_W` wide, as high as the others) and the one height of both
+/// islands, the buttons' and their margins (the human's rule: the two
+/// islands share their top and their bottom).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Geometry {
     pub chat: Rect,
     pub dock: Rect,
     pub button: f32,
+    pub height: f32,
+}
+
+impl Geometry {
+    /// What the windows keep free above the bottom islands: the islands
+    /// and the usual 8 px gap (`islands::work_area`).
+    pub fn reserved(&self) -> f32 {
+        MARGIN + self.height + MARGIN
+    }
 }
 
 fn dock_width(buttons: usize, mic: bool, button: f32) -> f32 {
     if buttons == 0 {
         // an empty dock keeps one slot, where a button can be dropped
-        return PAD * 2.0 + BUTTON_H;
+        return PAD * 2.0 + button;
     }
     let plain = buttons - usize::from(mic);
     PAD * 2.0 + plain as f32 * button + if mic { DOCK_MIC_W } else { 0.0 } + GAP * (buttons - 1) as f32
@@ -69,8 +73,10 @@ fn dock_width(buttons: usize, mic: bool, button: f32) -> f32 {
 
 /// The bottom islands' layout: the chat island on the left, `chat_width`
 /// wide (its default when 0), the dock centred on the screen but at least
-/// `AFTER_CHAT` after the chat island; buttons that do not fit narrow down
-/// to `MIN_BUTTON`, and a chat island that would push the dock out shrinks.
+/// `AFTER_CHAT` after the chat island; when the buttons do not fit, they
+/// all take the reduced size (`MIN_BUTTON`), and a chat island that would
+/// still push the dock out shrinks. Both islands are as high as the
+/// buttons and their margins.
 pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geometry {
     let bottom = screen.bottom() - MARGIN;
     let left = screen.left() + MARGIN;
@@ -78,23 +84,31 @@ pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geo
     let wanted = if chat_width > 0.0 { chat_width } else { default_chat_width(screen) };
     let max_chat = (right - left - AFTER_CHAT - dock_width(buttons, mic, MIN_BUTTON)).max(MIN_CHAT);
     let chat_w = wanted.clamp(MIN_CHAT, max_chat);
-    let chat = Rect::from_min_max(Pos2::new(left, bottom - CHAT_H), Pos2::new(left + chat_w, bottom));
+    let chat_right = left + chat_w;
+    let place = |button: f32| {
+        let width = dock_width(buttons, mic, button);
+        let x = (left + ((right - left - width) / 2.0).round()).max(chat_right + AFTER_CHAT);
+        (x, width)
+    };
     let mut button = if narrow(screen) { 32.0 } else { 34.0 };
-    let mut width = dock_width(buttons, mic, button);
-    let mut x = (left + ((right - left - width) / 2.0).round()).max(chat.right() + AFTER_CHAT);
-    if x + width > right && buttons > usize::from(mic) {
-        x = chat.right() + AFTER_CHAT;
-        let plain = (buttons - usize::from(mic)) as f32;
-        let fixed = PAD * 2.0 + if mic { DOCK_MIC_W } else { 0.0 } + GAP * (buttons - 1) as f32;
-        button = ((right - x - fixed) / plain).floor().max(MIN_BUTTON);
-        width = dock_width(buttons, mic, button);
+    let (mut x, mut width) = place(button);
+    if x + width > right {
+        button = MIN_BUTTON;
+        (x, width) = place(button);
     }
-    let dock = Rect::from_min_max(Pos2::new(x, bottom - DOCK_H), Pos2::new(x + width, bottom));
-    Geometry { chat, dock, button }
+    let height = button + V_PAD * 2.0;
+    let chat = Rect::from_min_max(Pos2::new(left, bottom - height), Pos2::new(chat_right, bottom));
+    let dock = Rect::from_min_max(Pos2::new(x, bottom - height), Pos2::new(x + width, bottom));
+    Geometry {
+        chat,
+        dock,
+        button,
+        height,
+    }
 }
 
 /// The bottom islands. Returns what the chat field sent, the dock's
-/// action, the top of what the islands keep (`RESERVED` above the screen's
+/// action, the top of what the islands keep (`Geometry::reserved` above the screen's
 /// bottom: the windows' work area and the chat lines stop there) and
 /// whether the chat island's width was set (to save).
 #[allow(clippy::too_many_arguments)]
@@ -129,19 +143,25 @@ pub fn bottom(
         // the dock's background: its right-click menu and the drop target
         let target = ui.interact(geo.dock, Id::new("toolbar_background"), Sense::click());
         toolbar.context(&target, p, None, row.locked);
-        let inner = geo.dock.shrink2(Vec2::new(PAD, (DOCK_H - BUTTON_H) / 2.0));
+        let inner = geo.dock.shrink2(Vec2::new(PAD, V_PAD));
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(inner)
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         child.spacing_mut().item_spacing.x = GAP;
+        // Speak keeps its width for its arrow, within the common height
         let look = |b: &crate::ui::skin::ToolButton| ButtonLook {
-            size: Vec2::new(if b.command == "speak" { DOCK_MIC_W } else { geo.button }, BUTTON_H),
-            icon: BUTTON_ICON,
+            size: Vec2::new(if b.command == "speak" { DOCK_MIC_W } else { geo.button }, geo.button),
+            icon: BUTTON_ICON.min(geo.button - 6.0),
             dock: true,
         };
         let rects = toolbar_row(&mut child, p, icons, buttons, look, toolbar, panels, mic, row, &mut action);
+        if cfg!(test)
+            && let Some(speak) = buttons.iter().position(|b| b.command == "speak").and_then(|i| rects.get(i))
+        {
+            ctx.data_mut(|d| d.insert_temp(Id::new("dock_speak_rect"), *speak));
+        }
         // a button dropped a little past either end still lands in the dock;
         // the marker spans the buttons' row less 2 px at each end, the
         // mockup's 28 px `.dropguide`
@@ -152,7 +172,7 @@ pub fn bottom(
         );
         toolbar.drop_bar(&drop, &rects, p, row.locked);
     });
-    (out, action, screen.bottom() - RESERVED, committed)
+    (out, action, screen.bottom() - geo.reserved(), committed)
 }
 
 /// The chat island: the field with "Nearby chat" as its placeholder and the
@@ -174,9 +194,11 @@ fn chat_island(
     committed: &mut bool,
 ) -> Option<crate::ui::chat::OutgoingChat> {
     let island = geo.chat;
-    let top = island.center().y - SLOT / 2.0;
-    let button = Rect::from_min_size(Pos2::new(island.right() - PAD - SLOT, top), Vec2::splat(SLOT));
-    let field = Rect::from_min_max(Pos2::new(island.left() + PAD, top), Pos2::new(button.left() - GAP, top + SLOT));
+    // the field and the button, centred in the islands' common height
+    let slot = geo.button - 4.0;
+    let top = island.center().y - slot / 2.0;
+    let button = Rect::from_min_size(Pos2::new(island.right() - PAD - slot, top), Vec2::splat(slot));
+    let field = Rect::from_min_max(Pos2::new(island.left() + PAD, top), Pos2::new(button.left() - GAP, top + slot));
     let radius = ui.visuals().window_corner_radius;
     ui.painter().rect_filled(field, radius, p.field);
 
@@ -391,8 +413,8 @@ mod tests {
             assert_eq!(g.chat.left(), MARGIN);
             assert_eq!(g.chat.bottom(), s.bottom() - MARGIN);
             assert_eq!(g.dock.bottom(), s.bottom() - MARGIN);
-            assert_eq!(g.dock.height(), DOCK_H);
-            assert_eq!(g.chat.height(), CHAT_H);
+            assert_eq!(g.dock.height(), button + V_PAD * 2.0);
+            assert_eq!(g.chat.height(), g.dock.height());
             assert!((g.dock.center().x - s.center().x).abs() <= 1.0, "{w}: dock {:?}", g.dock);
             assert!(g.dock.left() >= g.chat.right() + AFTER_CHAT);
             assert_eq!(g.dock.width(), PAD * 2.0 + 16.0 * button + DOCK_MIC_W + GAP * 16.0);
@@ -408,13 +430,45 @@ mod tests {
         assert_eq!(g.chat.width(), 700.0);
         assert_eq!(g.dock.left(), g.chat.right() + AFTER_CHAT);
         assert!(g.dock.right() <= s.right() - MARGIN);
-        assert!(g.button < 32.0 && g.button >= MIN_BUTTON);
+        assert_eq!(g.button, MIN_BUTTON);
         let g = geometry(s, 2000.0, 30, true);
         assert!(g.dock.right() <= s.right() - MARGIN + 0.5, "{:?}", g);
         assert!(g.chat.width() >= MIN_CHAT);
         // an empty dock keeps a slot to drop a button on
         let g = geometry(s, 0.0, 0, false);
-        assert_eq!(g.dock.width(), PAD * 2.0 + BUTTON_H);
+        assert_eq!(g.dock.width(), PAD * 2.0 + g.button);
+    }
+
+    /// The chat island and the dock share their top and their bottom (the
+    /// human's rule), at the three widths, with the full or the reduced
+    /// buttons and a widened chat island; Speak stays within them.
+    #[test]
+    fn the_chat_island_and_the_dock_share_their_top_and_bottom() {
+        for w in [1280.0, 1536.0, 1920.0] {
+            for (chat, buttons) in [(0.0, 18), (700.0, 18), (0.0, 30), (900.0, 24)] {
+                let g = geometry(screen(w), chat, buttons, true);
+                let case = format!("{w} chat {chat} buttons {buttons}: {g:?}");
+                assert!((g.chat.top() - g.dock.top()).abs() <= 0.5, "{case}");
+                assert!((g.chat.bottom() - g.dock.bottom()).abs() <= 0.5, "{case}");
+                assert!([32.0, 34.0, MIN_BUTTON].contains(&g.button), "{case}");
+                assert_eq!(g.height, g.button + V_PAD * 2.0, "{case}");
+            }
+        }
+        // the frame's Speak button, within the dock's buttons' row
+        let mut bench = Bench::shown();
+        bench.frame(vec![]);
+        let speak = bench
+            .ctx
+            .data(|d| d.get_temp::<Rect>(Id::new("dock_speak_rect")))
+            .expect("the dock's Speak button");
+        let layout = crate::ui::skin::Layout::default();
+        let docked = super::DockLayout::default().of(&layout).toolbar.len();
+        let g = geometry(screen(1536.0), 0.0, docked, true);
+        assert!(
+            speak.top() >= g.dock.top() + V_PAD - 0.5 && speak.bottom() <= g.dock.bottom() - V_PAD + 0.5,
+            "{speak:?} {g:?}"
+        );
+        assert_eq!(speak.height(), g.button);
     }
 
     /// One viewer frame of the bottom islands on a 1536 × 864 screen.
@@ -455,6 +509,7 @@ mod tests {
             let p = crate::theme::Theme::default().palette();
             let layout = crate::ui::skin::Layout::default();
             let settings = crate::ui::toolbar::ToolbarSettings::default();
+            let view = super::super::favorites::View::default();
             let row = Row {
                 unread: self.unread,
                 latest_unread: self.latest,
@@ -463,6 +518,7 @@ mod tests {
                 mouselook: false,
                 ao_active: false,
                 locked: false,
+                favorites: &view,
             };
             let mut result = (None, 0.0, false);
             let mut output = self.ctx.run_ui(
@@ -512,7 +568,7 @@ mod tests {
         let mut bench = Bench::shown();
         bench.chat.focus_request = true;
         let (_, top, _) = bench.frame(vec![]);
-        assert_eq!(top, 864.0 - RESERVED);
+        assert_eq!(top, 864.0 - geometry(screen(1536.0), 0.0, 17, true).reserved());
         bench.frame(vec![egui::Event::Text("hello".into())]);
         let (out, _, _) = bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
         let out = out.expect("said");
@@ -579,7 +635,7 @@ mod tests {
     fn the_chat_button_opens_the_newest_unread_conversation_or_the_local_chat() {
         let mut bench = Bench::shown();
         let g = geometry(screen(1536.0), 0.0, 17, true);
-        let at = Pos2::new(g.chat.right() - PAD - SLOT / 2.0, g.chat.center().y);
+        let at = Pos2::new(g.chat.right() - PAD - (g.button - 4.0) / 2.0, g.chat.center().y);
         let click = |bench: &mut Bench| {
             let button = |pressed| egui::Event::PointerButton {
                 pos: at,

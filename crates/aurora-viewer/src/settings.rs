@@ -14,6 +14,18 @@ pub enum ChatStyle {
     Legacy,
 }
 
+/// Where the islands show the favourites (Preferences › Interface,
+/// "Favourites access"): a button of the place island and its menu (the
+/// default), a row of pills under the islands, or a button of the dock and
+/// its grid (`ui/bars/favorites.rs`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FavoritesAccess {
+    #[default]
+    Menu,
+    Row,
+    Dock,
+}
+
 /// How notifications arrive (Preferences › Aurora): unrolled from the bell
 /// at the right end of the navigation bar and folded back into it (the
 /// default, `ui/notification_center.rs`), or as Firestorm's toasts stacked
@@ -353,6 +365,10 @@ pub struct Settings {
     /// when there is room (off by default: icons alone, named in their
     /// tooltips).
     pub place_bar_rights_text: bool,
+    /// Where the islands show the favourites.
+    pub favorites_access: FavoritesAccess,
+    /// The row of favourites (`FavoritesAccess::Row`) folded to its tab.
+    pub favorites_row_folded: bool,
     /// People › Near you as Firestorm's radar table (`ui/people/radar.rs`)
     /// instead of the rows grouped by range and the sheet of
     /// `ui/people/nearby.rs`.
@@ -834,6 +850,8 @@ impl Default for Settings {
             classic_bars: false,
             place_bar_stretch: true,
             place_bar_rights_text: false,
+            favorites_access: FavoritesAccess::Menu,
+            favorites_row_folded: false,
             classic_people: false,
             classic_restart_alert: false,
             region_restart: Default::default(),

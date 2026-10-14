@@ -318,6 +318,148 @@ fn landmarks() -> &'static Vec<(u128, &'static str, (u32, u32), [f32; 3], i64)> 
     })
 }
 
+/// Where the bars' demo favourites start in `landmark_ids`.
+const BAR_FAVORITES: usize = 2000;
+
+/// The favourites of the bars mockup (`AURORA_DEMO_BARS=fav12|added`):
+/// name, region grid, position, created at (newest first: the mockup's
+/// order), and the three colours of the thumbnail's gradient. The last one
+/// is the place we stand on, added from the star with `added`.
+#[allow(clippy::type_complexity)]
+fn bar_favorites() -> &'static Vec<(&'static str, (u32, u32), [f32; 3], i64, [[u8; 3]; 3])> {
+    static TABLE: aurora_i18n::Localized<Vec<(&'static str, (u32, u32), [f32; 3], i64, [[u8; 3]; 3])>> = aurora_i18n::Localized::new();
+    // theme-guard: content — the demo's thumbnails, the mockup's gradients
+    TABLE.get(|| {
+        let g = (1000, 1000);
+        let m = (1001, 1000);
+        let pine = (999, 1000);
+        let sand = (999, 999);
+        let adult = (1000, 1001);
+        vec![
+            (
+                aurora_i18n::tr!("demo-fav-fireflies-beach"),
+                g,
+                [60.0, 40.0, 22.0],
+                1_760_000_000,
+                [[0xff, 0xcf, 0x8a], [0xe0, 0x7a, 0x9a], [0x2b, 0x3a, 0x7a]],
+            ),
+            (
+                aurora_i18n::tr!("demo-fav-nova-market"),
+                m,
+                [128.0, 90.0, 22.0],
+                1_759_000_000,
+                [[0xf9, 0xd3, 0x6b], [0xc2, 0x60, 0x3f], [0x3a, 0x23, 0x48]],
+            ),
+            (
+                aurora_i18n::tr!("demo-fav-mist-garden"),
+                pine,
+                [80.0, 160.0, 24.0],
+                1_758_000_000,
+                [[0xb8, 0xf0, 0xd8], [0x4f, 0xa3, 0x9a], [0x1f, 0x3b, 0x4a]],
+            ),
+            (
+                aurora_i18n::tr!("demo-fav-neon-club"),
+                m,
+                [200.0, 60.0, 22.0],
+                1_757_000_000,
+                [[0xff, 0x7a, 0xd9], [0x7a, 0x3c, 0xff], [0x14, 0x0b, 0x33]],
+            ),
+            (
+                aurora_i18n::tr!("demo-fav-north-lighthouse"),
+                pine,
+                [30.0, 220.0, 24.0],
+                1_756_000_000,
+                [[0xd6, 0xe8, 0xff], [0x6b, 0x8f, 0xc9], [0x1a, 0x25, 0x47]],
+            ),
+            (
+                aurora_i18n::tr!("demo-fav-alexandria-library"),
+                g,
+                [200.0, 200.0, 25.0],
+                1_755_000_000,
+                [[0xf2, 0xe2, 0xc0], [0xb0, 0x8a, 0x55], [0x3b, 0x2c, 0x1c]],
+            ),
+            (
+                aurora_i18n::tr!("demo-fav-sandbox-workshop"),
+                sand,
+                [128.0, 128.0, 22.0],
+                1_754_000_000,
+                [[0xff, 0xe0, 0x8a], [0x9b, 0xc9, 0x6b], [0x2f, 0x4a, 0x2a]],
+            ),
+            (
+                aurora_i18n::tr!("demo-fav-light-cafe"),
+                g,
+                [90.0, 120.0, 25.0],
+                1_753_000_000,
+                [[0xff, 0xd1, 0xa8], [0xb5, 0x73, 0x4e], [0x2d, 0x1d, 0x1a]],
+            ),
+            (
+                aurora_i18n::tr!("demo-fav-cats-island"),
+                sand,
+                [40.0, 40.0, 22.0],
+                1_752_000_000,
+                [[0xa8, 0xe6, 0xff], [0x3f, 0xa0, 0xc9], [0x10, 0x3a, 0x52]],
+            ),
+            (
+                aurora_i18n::tr!("demo-fav-prism-gallery"),
+                m,
+                [60.0, 180.0, 22.0],
+                1_751_000_000,
+                [[0xe4, 0xd4, 0xff], [0x8a, 0x6b, 0xd6], [0x24, 0x1a, 0x46]],
+            ),
+            (
+                aurora_i18n::tr!("demo-fav-shadow-forest"),
+                adult,
+                [128.0, 128.0, 30.0],
+                1_750_000_000,
+                [[0x9f, 0xd6, 0x8a], [0x2f, 0x6b, 0x3f], [0x0e, 0x1f, 0x14]],
+            ),
+            (
+                aurora_i18n::tr!("demo-fav-orbital-station"),
+                m,
+                [240.0, 240.0, 40.0],
+                1_749_000_000,
+                [[0xc9, 0xd6, 0xff], [0x4d, 0x5f, 0xb0], [0x09, 0x0c, 0x24]],
+            ),
+            (
+                aurora_i18n::tr!("demo-bars-parcel"),
+                g,
+                [132.0, 126.0, 33.0],
+                1_761_000_000,
+                [[0xe3, 0xa5, 0x81], [0x4f, 0x55, 0xa3], [0x1b, 0x21, 0x47]],
+            ),
+        ]
+    })
+}
+
+/// Whether the demo shows the k-th of the bars' favourites: the twelve, or
+/// eleven and this place with `added` (the mockup's twelve).
+fn bar_favorite_shown(k: usize) -> bool {
+    match crate::ui::bars::demo::get().favorites {
+        Some(crate::ui::bars::demo::Favorites::Twelve) => k < 12,
+        Some(crate::ui::bars::demo::Favorites::Added) => k < 11 || k == 12,
+        _ => false,
+    }
+}
+
+/// The favourite `added` marks as just added from the star.
+pub fn added_favorite() -> Option<Uuid> {
+    (crate::ui::bars::demo::get().favorites == Some(crate::ui::bars::demo::Favorites::Added)).then(|| landmark_ids(BAR_FAVORITES + 12).0)
+}
+
+/// The thumbnails of the bars' favourites: (texture id, gradient colours).
+pub fn favorite_thumbnails() -> Vec<(Uuid, [[u8; 3]; 3])> {
+    bar_favorites().iter().enumerate().map(|(n, f)| (thumbnail_id(n), f.4)).collect()
+}
+
+/// The item of the k-th of the bars' favourites.
+pub fn bar_favorite_item(k: usize) -> Uuid {
+    landmark_ids(BAR_FAVORITES + k).0
+}
+
+fn thumbnail_id(n: usize) -> Uuid {
+    u(0x1C_0000 + n as u128)
+}
+
 /// Item and asset ids of the n-th demo landmark.
 pub(crate) fn landmark_ids(n: usize) -> (Uuid, Uuid) {
     (u(0x1A_0000 + n as u128), u(0x1B_0000 + n as u128))
@@ -329,7 +471,14 @@ pub fn landmark_asset(asset: Uuid) -> Option<String> {
         .iter()
         .enumerate()
         .find(|(n, _)| landmark_ids(*n).1 == asset)
-        .map(|(_, l)| (l.2, l.3));
+        .map(|(_, l)| (l.2, l.3))
+        .or_else(|| {
+            bar_favorites()
+                .iter()
+                .enumerate()
+                .find(|(n, _)| landmark_ids(BAR_FAVORITES + n).1 == asset)
+                .map(|(_, f)| (f.1, f.2))
+        });
     let (grid, pos) = match table {
         Some((grid, pos)) => (grid, pos),
         None => {
@@ -441,6 +590,20 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
         })
         .chain(extra)
         .collect();
+    // AURORA_DEMO_BARS's favourites take the place of the demo's own
+    let items = if n == FAVORITES_FOLDER && crate::ui::bars::demo::get().favorites.is_some() {
+        bar_favorites()
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| bar_favorite_shown(*k))
+            .map(|(k, f)| InvItem {
+                thumbnail: thumbnail_id(k),
+                ..item(BAR_FAVORITES + k, f.0, f.3)
+            })
+            .collect()
+    } else {
+        items
+    };
     Some(FolderContents {
         folder_id,
         owner_id: owner,

@@ -15,6 +15,7 @@ pub mod env_edit;
 pub mod env_select;
 pub mod estate;
 pub mod experiences;
+pub mod favorites;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
@@ -162,6 +163,8 @@ pub struct World {
     pub hud_zoom: f32,
     pub hud_scales: hud_scale::HudScales,
     pub hover_height: hover_height::HoverHeight,
+    /// The favourites in the account's order (`favorites.rs`).
+    pub favorites: favorites::Favorites,
     /// What left the notification list, kept per account (the center's
     /// History).
     pub notification_history: notification_history::History,
@@ -396,6 +399,7 @@ impl World {
             hud_zoom: 1.0,
             hud_scales: Default::default(),
             hover_height: Default::default(),
+            favorites: Default::default(),
             notification_history: Default::default(),
             ui_sounds: Vec::new(),
             im_messages: Vec::new(),

@@ -6,6 +6,7 @@
 
 pub(crate) mod demo;
 pub mod dock;
+pub mod favorites;
 pub mod islands;
 mod place;
 
@@ -78,10 +79,10 @@ pub enum BarAction {
         stretch: bool,
         rights_text: bool,
     },
-    /// Places › Favorites (the Favorites button of the place island).
-    OpenFavorites,
     /// The bug report button shown or hidden (the menu island's right click).
     ShowBugButton(bool),
+    /// A click in the favourites (`favorites.rs`).
+    Favorite(favorites::FavAction),
 }
 
 /// How the islands of Aurora's top bar are set (Preferences › Interface).
@@ -148,6 +149,8 @@ pub struct StatusInfo<'a> {
     /// The last places of the teleport history, newest first, without the
     /// one we are in (the place menu).
     pub recent: Vec<RecentPlace>,
+    /// The favourites and where they live.
+    pub favorites: &'a favorites::View,
 }
 
 /// The navigation bar's star (LLLocationInputCtrl's add landmark button).
@@ -1798,7 +1801,7 @@ fn mic_mode(
 }
 
 /// What lights the toolbar's buttons, besides the open windows.
-pub(crate) struct Row {
+pub(crate) struct Row<'a> {
     pub unread: usize,
     /// The conversation the chat island's button opens while there are
     /// unread lines (`Social::latest_unread`).
@@ -1808,6 +1811,8 @@ pub(crate) struct Row {
     pub mouselook: bool,
     pub ao_active: bool,
     pub locked: bool,
+    /// The favourites, for the Favorites button (F3, or added by hand).
+    pub favorites: &'a favorites::View,
 }
 
 /// The toolbar's buttons one after the other in `ui` (Firestorm's bar or
@@ -1859,9 +1864,28 @@ pub(crate) fn toolbar_row(
         } else {
             super::toolbar::label(b).to_owned()
         };
+        // the Favorites button: its grid of favourites opens upwards
+        let grid_id = egui::Id::new("bars_favorites_grid_open");
+        let active = active || (b.command == "favorites" && ui.ctx().data(|d| d.get_temp::<bool>(grid_id)).unwrap_or(false));
         let response = tool_button(ui, p, icons, &b.command, &b.icon, &tip, active, look(b), count);
         rects.push(response.rect);
         toolbar.button(&response, b, p, row.locked);
+        if b.command == "favorites" {
+            islands::demo_open(ui.ctx(), &response, demo::Open::Favorites);
+            let mut fav = None;
+            let open = menu::dropdown_placed(
+                &response,
+                p,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                Some((egui::RectAlign::TOP, 12.0)),
+                |ui| favorites::grid_body(ui, p, icons, row.favorites, &mut fav),
+            );
+            ui.ctx().data_mut(|d| d.insert_temp(grid_id, open));
+            if let Some(a) = fav {
+                *action = BarAction::Favorite(a);
+            }
+            continue;
+        }
         if response.clicked() {
             let a = run_command(ui.ctx(), &b.command, panels);
             if !matches!(a, BarAction::None) {
@@ -1897,6 +1921,7 @@ pub fn bottom_bar(
     ao_active: bool,
     islands: bool,
     emoji: Option<&mut super::emoji::Emoji>,
+    favorites: &favorites::View,
 ) -> (Option<super::chat::OutgoingChat>, BarAction, f32, bool) {
     if islands {
         let row = Row {
@@ -1907,6 +1932,7 @@ pub fn bottom_bar(
             mouselook,
             ao_active,
             locked: toolbar_settings.locked,
+            favorites,
         };
         return dock::bottom(
             ui,
@@ -2001,6 +2027,7 @@ pub fn bottom_bar(
                                 mouselook,
                                 ao_active,
                                 locked: toolbar_settings.locked,
+                                favorites,
                             };
                             rects = toolbar_row(
                                 ui,

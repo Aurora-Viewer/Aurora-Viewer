@@ -180,6 +180,11 @@ pub struct App {
     toolbar_ui: ui::toolbar::ToolbarUi,
     /// The skin's toolbar as the dock of the islands has it by default.
     dock_layout: ui::bars::dock::DockLayout,
+    /// Where the favourites lived when the toolbar last followed it (the
+    /// dock's Favorites button comes and goes with `FavoritesAccess::Dock`).
+    favorites_access_applied: Option<crate::settings::FavoritesAccess>,
+    /// Thumbnails of the favourites to load.
+    favorite_images: std::collections::HashSet<uuid::Uuid>,
     /// The History window (a conversation's whole transcript).
     history_ui: ui::chat::history::HistoryUi,
     perf: PerfData,
@@ -694,6 +699,8 @@ impl App {
             chat_ui: ChatUi::default(),
             toolbar_ui: Default::default(),
             dock_layout: Default::default(),
+            favorites_access_applied: None,
+            favorite_images: Default::default(),
             history_ui: Default::default(),
             perf: PerfData::default(),
             frame_profile: FrameProfile::default(),
@@ -2048,6 +2055,11 @@ impl App {
                     crate::world::hover_height::HoverHeight::load(
                         crate::settings::account_dir(&l.agent_id).join(crate::world::hover_height::FILE),
                     )
+                };
+                self.world.favorites = if self.demo {
+                    Default::default()
+                } else {
+                    crate::world::favorites::Favorites::load(crate::settings::account_dir(&l.agent_id).join(crate::world::favorites::FILE))
                 };
                 self.restore_gestures(&l.raw);
                 self.net_profile.reset();
@@ -4558,6 +4570,7 @@ impl App {
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
         images.extend(self.day_editor.wanted_images.drain());
+        images.extend(self.favorite_images.drain());
         for note in self.task_notecards.values_mut() {
             images.extend(note.state.wanted_images.drain());
         }
@@ -5850,6 +5863,7 @@ impl App {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
             raw.events
                 .extend(ui::toolbar::demo_events(&ctx, self.frame_count, &mut self.toolbar_ui));
+            raw.events.extend(ui::bars::favorites::demo_events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::resize_events(&ctx, self.frame_count));
@@ -7364,11 +7378,185 @@ impl App {
                 self.settings.show_bug_report = shown;
                 self.settings.save();
             }
-            BarAction::OpenFavorites => {
-                // Places › Favorites, the first tab
-                self.places_ui.tab = 0;
-                ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
+            BarAction::Favorite(f) => self.favorite_action(f),
+        }
+    }
+
+    /// Places › Favorites, the first tab.
+    fn open_places_favorites(&mut self) {
+        self.places_ui.tab = 0;
+        ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
+    }
+
+    /// A click in the favourites of the islands.
+    fn favorite_action(&mut self, action: ui::bars::favorites::FavAction) {
+        use ui::bars::favorites::FavAction;
+        match action {
+            // LLFavoritesBarCtrl::onButtonClick: no confirmation
+            FavAction::Teleport(asset) => {
+                self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
+                self.send(NetCommand::TeleportLandmark(asset));
             }
+            FavAction::ShowOnMap(g) => {
+                self.world.map.track_location(g.x, g.y, g.z as f32, false);
+                self.panels.world_map = true;
+            }
+            FavAction::Edit(item) => self.landmark_star(ui::bars::StarAction::Edit(item)),
+            FavAction::Move(item, rank) => self.world.favorites.rearrange(&self.world.inventory, item, rank),
+            FavAction::AddHere => self.landmark_star(ui::bars::StarAction::AddFavorite),
+            FavAction::OpenPlaces => self.open_places_favorites(),
+            FavAction::Access(access) => {
+                self.settings.favorites_access = access;
+                self.settings.save();
+            }
+            FavAction::Fold(folded) => {
+                self.settings.favorites_row_folded = folded;
+                self.settings.save();
+            }
+        }
+    }
+
+    /// Where the favourites live: the setting, or what `AURORA_DEMO_BARS`
+    /// asks for in demo (never saved).
+    fn favorites_access(&self) -> crate::settings::FavoritesAccess {
+        let demo = if self.demo { ui::bars::demo::get().access } else { None };
+        demo.unwrap_or(self.settings.favorites_access)
+    }
+
+    /// The dock's Favorites button follows where the favourites live: it
+    /// comes with `FavoritesAccess::Dock` (after Places, as in the mockup)
+    /// and goes when they move elsewhere. A button added by hand stays as
+    /// long as the choice does not change.
+    fn follow_favorites_access(&mut self) {
+        use crate::settings::FavoritesAccess;
+        if self.demo && ui::bars::demo::get().access.is_some() {
+            return;
+        }
+        let access = self.settings.favorites_access;
+        let before = self.favorites_access_applied.replace(access);
+        if before.is_none() || before == Some(access) {
+            return;
+        }
+        let layout = self.dock_layout.of(&self.skin.layout).clone();
+        let toolbar = self.settings.toolbar.get_or_insert_default();
+        let mut buttons = toolbar.buttons(&layout).to_vec();
+        let has = buttons.iter().any(|b| b.command == "favorites");
+        if access == FavoritesAccess::Dock && !has {
+            let at = buttons.iter().position(|b| b.command == "places").map_or(buttons.len(), |i| i + 1);
+            buttons.insert(
+                at,
+                ui::skin::ToolButton {
+                    icon: "bookmarks-filled".into(),
+                    command: "favorites".into(),
+                    tooltip: String::new(),
+                },
+            );
+        } else if access != FavoritesAccess::Dock && has {
+            buttons.retain(|b| b.command != "favorites");
+        } else {
+            return;
+        }
+        toolbar.buttons = Some(buttons);
+        self.settings.save();
+    }
+
+    /// The favourites as the bars show them this frame. Their landmarks,
+    /// regions and thumbnails are asked for only while they are on screen
+    /// (the row always is), as LLFavoritesOrderStorage asks the landmarks
+    /// for its SLURLs.
+    fn favorites_view(&mut self, shown: bool, here: bool) -> ui::bars::favorites::View {
+        use crate::settings::FavoritesAccess;
+        use crate::world::inventory::FetchState;
+        let access = self.favorites_access();
+        // AURORA_DEMO_BARS=added: the last one comes from the star
+        if self.demo
+            && self.world.favorites.added.is_none()
+            && let Some(id) = crate::demo::place::added_favorite()
+            && self.world.inventory.items.contains_key(&id)
+        {
+            self.world.favorites.added = Some((id, std::time::Instant::now()));
+        }
+        let shown = shown || access == FavoritesAccess::Row;
+        let folder = crate::world::appearance::system_folder(&self.world.inventory, crate::world::favorites::FOLDER_FAVORITES);
+        let state = folder.and_then(|f| self.world.inventory.folders.get(&f)).map(|f| f.state);
+        if shown
+            && let Some(f) = folder
+            && matches!(state, Some(FetchState::Unknown | FetchState::Failed))
+        {
+            self.world.inventory.request(f);
+        }
+        let ids = self.world.favorites.list(&self.world.inventory).to_vec();
+        let mut list = Vec::with_capacity(ids.len());
+        for id in ids {
+            let Some(item) = self.world.inventory.items.get(&id) else {
+                continue;
+            };
+            let (asset, name, thumb) = (item.asset_id, item.name.clone(), item.thumbnail);
+            let global = match self.world.landmarks.peek(asset) {
+                crate::world::landmarks::Resolved::Ready { global, .. } => Some(global),
+                crate::world::landmarks::Resolved::Pending if shown => {
+                    self.world.landmarks.resolve(asset);
+                    None
+                }
+                _ => None,
+            };
+            let sim = global.and_then(|g| self.world.map.sim_at_global(g.x, g.y).map(|(_, s)| (s.name.clone(), s.access)));
+            if shown
+                && sim.is_none()
+                && let Some(g) = global
+            {
+                let (x, y) = ((g.x / 256.0) as i64, (g.y / 256.0) as i64);
+                self.world.map.want_regions(x, y, x, y);
+            }
+            let thumbnail = (!thumb.is_nil()).then_some(thumb).and_then(|t| {
+                let loaded = self.ui_images.get(&t).map(|h| h.id());
+                if loaded.is_none() && shown {
+                    self.favorite_images.insert(t);
+                }
+                loaded
+            });
+            let slurl = global.zip(sim.as_ref()).map(|(g, (region, _))| {
+                let pos = glam::Vec3::new(g.x.rem_euclid(256.0) as f32, g.y.rem_euclid(256.0) as f32, g.z as f32);
+                crate::slurl::make(region, pos)
+            });
+            list.push(ui::bars::favorites::Favorite {
+                item: id,
+                asset,
+                name,
+                region: sim.as_ref().map(|s| s.0.clone()).unwrap_or_default(),
+                rating: sim.as_ref().map_or("", |s| ui::bars::maturity_name(s.1)),
+                global,
+                slurl,
+                thumbnail,
+            });
+        }
+        // marked as just added for a minute
+        let added = self
+            .world
+            .favorites
+            .added
+            .filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(60))
+            .map(|(id, _)| id);
+        // this parcel is a favourite: the parcel's landmark is one, or one of
+        // the favourites lies in it
+        let parcel_cells = self.world.parcel.as_ref().zip(self.world.main_origin());
+        let here = here
+            || list.iter().any(|f| {
+                f.global
+                    .zip(parcel_cells)
+                    .is_some_and(|(g, (parcel, origin))| crate::world::landmarks::in_parcel(&parcel.bitmap, origin, g))
+            });
+        ui::bars::favorites::View {
+            list,
+            added,
+            here,
+            access,
+            folded: if self.demo {
+                ui::bars::demo::get().folded.unwrap_or(self.settings.favorites_row_folded)
+            } else {
+                self.settings.favorites_row_folded
+            },
+            loading: state != Some(FetchState::Fetched),
         }
     }
 
@@ -7469,7 +7657,11 @@ impl App {
         use ui::bars::StarAction;
         use ui::landmark_create::{FOLDER_FAVORITES, FOLDER_LANDMARKS};
         let cmd = match action {
-            StarAction::AddFavorite => self.create_landmark_ui.quick(&self.world, FOLDER_FAVORITES),
+            StarAction::AddFavorite => {
+                // its row is marked as just added once it arrives
+                self.world.favorites.expect_added();
+                self.create_landmark_ui.quick(&self.world, FOLDER_FAVORITES)
+            }
             StarAction::AddLandmark => self.create_landmark_ui.quick(&self.world, FOLDER_LANDMARKS),
             StarAction::MoreOptions => self.create_landmark_ui.open(&self.world, None),
             StarAction::Edit(item) => {
@@ -8142,6 +8334,10 @@ impl App {
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 t = self.ui_parts.lap(Part::UiTags, t);
                 let parcel_landmark = self.parcel_landmark();
+                self.follow_favorites_access();
+                let favorites_shown = ui::bars::favorites::take_shown(&ctx);
+                let here = parcel_landmark.as_ref().is_some_and(|lm| lm.favorite);
+                let favorites = self.favorites_view(favorites_shown, here);
                 let (classic_bars, islands) = self.bars_look();
                 let own_name = self.world.own_name();
                 // AURORA_DEMO_BARS: the long parcel name of the mockup (the
@@ -8202,6 +8398,7 @@ impl App {
                     own_name: &own_name,
                     own_pic: self.avatar_pics.get(&self.world.agent_id),
                     recent: if classic_bars { Vec::new() } else { self.recent_places() },
+                    favorites: &favorites,
                 };
                 let media = ui::audio::MediaState {
                     music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
@@ -8270,8 +8467,31 @@ impl App {
                     }),
                     ..Default::default()
                 };
+                self.toolbar_ui.favorites_access = self.favorites_access();
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
-                let toolbar_settings = self.settings.toolbar.get_or_insert_default();
+                let mut demo_toolbar = None;
+                if self.demo && ui::bars::demo::get().access == Some(crate::settings::FavoritesAccess::Dock) {
+                    let layout = self.dock_layout.of(layout).clone();
+                    let mut t = self.settings.toolbar.clone().unwrap_or_default();
+                    let mut buttons = t.buttons(&layout).to_vec();
+                    if !buttons.iter().any(|b| b.command == "favorites") {
+                        let at = buttons.iter().position(|b| b.command == "places").map_or(buttons.len(), |i| i + 1);
+                        buttons.insert(
+                            at,
+                            ui::skin::ToolButton {
+                                icon: "bookmarks-filled".into(),
+                                command: "favorites".into(),
+                                tooltip: String::new(),
+                            },
+                        );
+                    }
+                    t.buttons = Some(buttons);
+                    demo_toolbar = Some(t);
+                }
+                let toolbar_settings = match demo_toolbar.as_mut() {
+                    Some(t) => t,
+                    None => self.settings.toolbar.get_or_insert_default(),
+                };
                 // the dock leaves the Conversations button out of its default
                 let bar_layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
                 let (chat, bar2, bottom_top, chat_width_set) = ui::bars::bottom_bar(
@@ -8298,6 +8518,7 @@ impl App {
                     self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused,
                     !classic_bars,
                     Some(&mut self.emoji),
+                    &favorites,
                 );
                 // what the bars leave: where the windows are laid out, moved
                 // and snapped this frame (above the dock with the islands)
@@ -8305,12 +8526,21 @@ impl App {
                 let area = if classic_bars {
                     left
                 } else {
-                    ui::bars::islands::work_area(left, bottom_top)
+                    let mut area = ui::bars::islands::work_area(left, bottom_top);
+                    if let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
+                        area.min.y = area.min.y.max(row + ui::bars::islands::MARGIN);
+                    }
+                    area
                 };
                 ui::layout::set_work_area(ui.ctx(), area);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
                 if self.toolbar_ui.commit(bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
+                    self.settings.save();
+                }
+                // the Favorites button's right click: where the favourites live
+                if let Some(access) = self.toolbar_ui.access_choice.take() {
+                    self.settings.favorites_access = access;
                     self.settings.save();
                 }
                 self.mic_on = mic.on;
@@ -9745,6 +9975,14 @@ impl ApplicationHandler for App {
                 for (id, settings, map) in crate::demo::env::settings_assets() {
                     self.scene.settings.insert_local(id, settings, Some(map));
                 }
+            }
+            // AURORA_DEMO_BARS's favourites: the mockup's gradients as thumbnails
+            for (id, colors) in crate::demo::place::favorite_thumbnails() {
+                let image = ui::bars::favorites::demo_thumbnail(colors);
+                let t = self
+                    .egui_ctx
+                    .load_texture(format!("demo-favorite-{id}"), image, egui::TextureOptions::LINEAR);
+                self.ui_images.insert(id, t);
             }
             // AURORA_DEMO_PERF=compact|full|network: the performance window in
             // that view (network: full, with its Network section open)
