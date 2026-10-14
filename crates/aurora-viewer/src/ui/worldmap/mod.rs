@@ -1338,7 +1338,7 @@ mod coordinate_tests {
             self.time += 0.1;
             let p = crate::theme::Theme::default().palette();
             let ctx = self.ctx.clone();
-            let _ = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 200.0))),
                     time: Some(self.time),
@@ -1352,6 +1352,8 @@ mod coordinate_tests {
                     self.remove = self.map.clear_button(ui, &mut self.world).rect;
                 },
             );
+            // This headless bench intentionally has no GPU texture consumer.
+            output.textures_delta.clear();
         }
 
         fn type_value(&mut self, field: usize, value: &str) {
