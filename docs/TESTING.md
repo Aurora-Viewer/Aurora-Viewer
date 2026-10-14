@@ -1285,6 +1285,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent |
+| `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or `search:<text>` | World map and mini-map, the region search |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
@@ -1884,6 +1885,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   ("Isolated real installation" above: exe copied into
   `<root>\install`, `AURORA_UPDATE_TEST_ROOT=<root>`): the histories
   are then under `<root>\profile\accounts\`.
+- **`AURORA_DEMO_REPORT_ABUSE=menu|avatar|object|chat|pick|send|missing|copyright`**:
+  the Report Abuse window opens at frame 600, from Help › Report Abuse
+  (`menu`), on Nova (`avatar`), on the nearest object (`object`, its name
+  and owner come from the demo server), on a chat line of Nova (`chat`),
+  or with the object picker armed (`pick`: the next click in the world
+  designates). `send` fills the form and presses "Report Abuse" at frame
+  700: the thank-you notice, and a `demo abuse report:` line in the log
+  with what would have left; `missing` presses it on a blank form (the
+  category notice), `copyright` with "copyright" in the details (the
+  intellectual property notice). Capture with `AURORA_FPS_LIMIT=60` and
+  `AURORA_CAPTURE_FRAMES=780` so that the screenshot is in. Nothing ever
+  leaves the demo; a real report is only made on the grid.
 - **`AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab]`**: a profile window
   (tab 0 Second Life, 1 Feed, 2 Favorites, 3 Classifieds, 4 Real life, 5 Notes).
 - **`AURORA_DEMO_FEED=<url>`**: the user name and `/?feed_only=true`

@@ -185,8 +185,8 @@ impl App {
             object_id: r.object_id,
             abuser_id: r.abuser_id,
             summary: rules::summary(&r.form, &self.world.region_name(), beta),
-            details: rules::details(&r.form, &version),
-            version_string: rules::version_string(&version, CPU.get().map_or("", |s| s.as_str()), &renderer, &driver),
+            details: rules::details(&r.form, version),
+            version_string: rules::version_string(version, CPU.get().map_or("", |s| s.as_str()), &renderer, &driver),
             screenshot: r.screenshot.as_ref().and_then(|s| s.j2c.clone()),
         };
         // reset in case the next report also contains this text

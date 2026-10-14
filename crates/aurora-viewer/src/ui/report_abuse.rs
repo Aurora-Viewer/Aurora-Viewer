@@ -15,7 +15,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 const WIDTH: f32 = 420.0;
-const SHOT_HEIGHT: f32 = 200.0;
+const SHOT_HEIGHT: f32 = 150.0;
 const LABEL: f32 = 12.0;
 
 /// The screenshot, shown and ready to upload.
@@ -170,23 +170,20 @@ impl ReportAbuseUi {
         Floater::new(
             "report_abuse",
             aurora_i18n::tr!("report-abuse-title"),
-            egui::pos2(
-                screen.center().x - WIDTH * 0.5,
-                (screen.center().y - 360.0).max(screen.top() + 40.0),
-            ),
+            egui::pos2(screen.center().x - WIDTH * 0.5, screen.top() + 40.0),
             Vec2::new(WIDTH, 700.0),
         )
         .auto_height()
         .show(ctx, p, &mut open, |ui| {
             ui.set_width(WIDTH - 24.0);
             self.screenshot_row(ui, p, &mut actions);
-            ui.add_space(8.0);
-            self.place_rows(ui, p, world);
             ui.add_space(6.0);
+            self.place_rows(ui, p, world);
+            ui.add_space(4.0);
             self.object_rows(ui, p, &mut actions);
-            ui.add_space(8.0);
+            ui.add_space(6.0);
             self.form_rows(ui, p);
-            ui.add_space(10.0);
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let send = ui
                     .add_enabled_ui(!self.sending && self.capture_at.is_none() && self.shot_job.is_none(), |ui| {
@@ -255,7 +252,7 @@ impl ReportAbuseUi {
     fn place_rows(&self, ui: &mut egui::Ui, p: &Palette, world: &World) {
         egui::Grid::new("report_abuse_place")
             .num_columns(2)
-            .spacing([10.0, 3.0])
+            .spacing([10.0, 1.0])
             .show(ui, |ui| {
                 let row = |ui: &mut egui::Ui, label: &str, value: String| {
                     ui.label(RichText::new(label).size(LABEL).strong().color(p.ink));
@@ -287,7 +284,7 @@ impl ReportAbuseUi {
             ui.add_space(6.0);
             egui::Grid::new("report_abuse_object")
                 .num_columns(2)
-                .spacing([10.0, 3.0])
+                .spacing([10.0, 1.0])
                 .show(ui, |ui| {
                     let waiting = self.awaiting_object.is_some();
                     for (label, value) in [
@@ -308,7 +305,7 @@ impl ReportAbuseUi {
 
     fn form_rows(&mut self, ui: &mut egui::Ui, p: &Palette) {
         let heading = |ui: &mut egui::Ui, text: &str| {
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             ui.label(RichText::new(text).size(LABEL).strong().color(p.ink));
         };
         let width = ui.available_width();
@@ -376,7 +373,7 @@ impl ReportAbuseUi {
             .add(
                 egui::TextEdit::multiline(&mut self.form.details)
                     .desired_width(width)
-                    .desired_rows(5),
+                    .desired_rows(4),
             )
             .changed()
         {
