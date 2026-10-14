@@ -435,7 +435,7 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &
     badges_row(&mut b, c, v, actions);
     let used = b.min_rect().bottom().max(badges_top + 40.0);
     ui.allocate_rect(Rect::from_min_max(top, Pos2::new(banner_rect.right(), used)), Sense::hover());
-    tabs(ui, p, v, tab);
+    tabs(ui, p, v, tab, c.world.group_data.unread(&v.id));
     clicked
 }
 
@@ -625,7 +625,7 @@ fn tab_button(
 
 /// Home, Members and the tabs still to port (greyed: notices, land and
 /// L$, experiences).
-fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab) {
+fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) {
     ui.add_space(12.0);
     ui.horizontal(|ui| {
         ui.add_space(4.0);
@@ -657,15 +657,21 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab) {
         {
             *tab = Tab::Members;
         }
-        tab_button(
+        // the unread notices on the tab
+        let unread = (unread > 0).then(|| aurora_i18n::integer(unread as i64));
+        if tab_button(
             ui,
             p,
             "speakerphone",
             aurora_i18n::tr!("ui-group-profile-notices"),
-            None,
-            false,
-            false,
-        );
+            unread,
+            *tab == Tab::Notices,
+            super::notices::visible(v),
+        )
+        .clicked()
+        {
+            *tab = Tab::Notices;
+        }
         tab_button(ui, p, "map-2", aurora_i18n::tr!("ui-group-profile-land"), None, false, false);
         tab_button(
             ui,

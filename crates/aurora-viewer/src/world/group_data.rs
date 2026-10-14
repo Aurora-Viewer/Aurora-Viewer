@@ -248,6 +248,11 @@ impl GroupMgr {
         }
     }
 
+    /// The notices read in a group, set as a whole (the demo's).
+    pub fn set_read(&mut self, group: Uuid, ids: Vec<Uuid>) {
+        self.read.insert(group, ids.into_iter().collect());
+    }
+
     /// The notices of a group not read yet.
     pub fn unread(&self, group: &Uuid) -> usize {
         let read = self.read.get(group);
@@ -289,7 +294,10 @@ impl GroupMgr {
         for (g, ids) in &self.read {
             let mut ids: Vec<Uuid> = ids.iter().copied().collect();
             ids.sort();
-            map.insert(g.to_string(), aurora_llsd::Llsd::from(ids.into_iter().map(aurora_llsd::Llsd::from).collect::<Vec<_>>()));
+            map.insert(
+                g.to_string(),
+                aurora_llsd::Llsd::from(ids.into_iter().map(aurora_llsd::Llsd::from).collect::<Vec<_>>()),
+            );
         }
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -316,7 +324,11 @@ impl GroupMgr {
         {
             self.out.push(offer_answer(from, tx, None));
         }
-        let timestamp = g.notices.as_ref().and_then(|l| l.iter().find(|n| n.id == id)).map_or(im.timestamp, |n| n.timestamp);
+        let timestamp = g
+            .notices
+            .as_ref()
+            .and_then(|l| l.iter().find(|n| n.id == id))
+            .map_or(im.timestamp, |n| n.timestamp);
         g.notice = Some(NoticeView {
             id,
             subject,
@@ -340,6 +352,28 @@ impl GroupMgr {
             n.saved = true;
             self.out.push(offer_answer(from, tx, Some(folder)));
         }
+    }
+
+    /// onClickSendMessage: the notice sent, shown at once in the list (the
+    /// server's copy comes with the next refresh).
+    pub fn add_sent_notice(&mut self, group: Uuid, subject: String, from: String, has_attachment: bool) {
+        let id = Uuid::new_v4();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as u32);
+        let list = self.data(group).notices.get_or_insert_with(Vec::new);
+        list.insert(
+            0,
+            NoticeSummary {
+                id,
+                timestamp,
+                from,
+                subject,
+                has_attachment,
+                asset_type: 0,
+            },
+        );
+        self.read.entry(group).or_default().insert(id);
     }
 
     /// LLGroupMgr::sendGroupTitleUpdate: sent, and our copy follows at once.

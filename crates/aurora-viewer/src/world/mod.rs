@@ -2419,7 +2419,13 @@ impl World {
     /// "Save to inventory" of a notice's attachment: into the system folder
     /// of its type, as an offer accepted (LLOfferInfo::mFolderID).
     pub fn save_notice_attachment(&mut self, group: Uuid) {
-        let Some(asset_type) = self.group_data.get(&group).and_then(|g| g.notice.as_ref()).and_then(|n| n.attachment.as_ref()).map(|a| a.1) else {
+        let Some(asset_type) = self
+            .group_data
+            .get(&group)
+            .and_then(|g| g.notice.as_ref())
+            .and_then(|n| n.attachment.as_ref())
+            .map(|a| a.1)
+        else {
             return;
         };
         let inv = &self.inventory;

@@ -1069,6 +1069,12 @@ demo-group-notice-workshop = Texture workshop Saturday 8 pm
 demo-group-notice-sandbox = New sandbox open
 demo-group-notice-rules = Building rules updated
 demo-group-notice-photos = Photo contest: the winners
+demo-group-notice-workshop-body = Meet at the sandbox for a workshop on PBR textures. The kit is attached: copy it into your inventory before Saturday.
+demo-group-notice-workshop-kit = Texture kit
+demo-group-notice-sandbox-body = A new sandbox is open east of the plaza, objects are returned after 4 hours.
+demo-group-notice-rules-body = The building rules are updated: keep your builds under 500 prims per parcel and ask before rezzing near the plaza.
+demo-group-notice-photos-body = Thanks to everyone who took part! The winning photos are in the attached album.
+demo-group-notice-photos-album = Winning photos
 world-profiles-original-beta-tester = Original beta tester
 ui-options-disk-cache = Disk cache
 ui-perf-hidden-occlusion = Hidden (occlusion)
@@ -5273,6 +5279,23 @@ ui-group-profile-roles = Roles
 ui-group-profile-roles-of = { $name } · roles
 ui-group-profile-pick-a-member = Choose a member to see their roles.
 ui-group-profile-fixed = fixed
+ui-group-profile-all-notices = All notices ›
+ui-group-notices-search = Search…
+ui-group-notices-new = New notice
+ui-group-notices-kept = Notices stay 14 days on the server.
+ui-group-notices-pick = Choose a notice to read it.
+ui-group-notices-save = Save to inventory
+ui-group-notices-saved = Saved
+ui-group-notices-attachment = Attachment
+ui-group-notices-subject = Subject
+ui-group-notices-message = Message…
+ui-group-notices-drop = Drag an item from the inventory (copy + transfer)
+ui-group-notices-not-attachable = This item cannot be attached: it must be copyable and transferable, and not worn.
+ui-group-notices-remove-attachment = Remove the attachment
+ui-group-notices-send = { $count ->
+    [one] Send to { $shown } member
+   *[other] Send to { $shown } members
+    }
 ui-group-invite-title = Invite to { $group }
 ui-group-invite-help = You can select several residents to invite to the group: choose them with the resident chooser.
 ui-group-invite-choose = Open Resident Chooser
