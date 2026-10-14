@@ -312,6 +312,19 @@ pub enum LandCommand {
         day_length: i32,
         day_offset: i32,
     },
+    /// updateParcel / updateRegion with a day cycle sent inline (the
+    /// editors' "Apply To Parcel / Region" of changed settings, About Land's
+    /// "Custom"): `day` is the settings map (LLSettingsDay::getSettings).
+    /// `local_id` [`REGION_PARCEL_ID`] addresses the whole region.
+    EnvironmentApplyDay {
+        local_id: i32,
+        track: Option<i32>,
+        day: Llsd,
+        /// LLSettingsBase flags of the day.
+        flags: u32,
+        day_length: i32,
+        day_offset: i32,
+    },
     /// LLExperienceCache::findExperienceByName (the experience picker).
     ExperienceSearch { query: String, page: i32 },
     /// Names of experiences (GetExperienceInfo capability).
@@ -545,6 +558,50 @@ pub fn environment_apply_body(whole_day: bool, asset: Uuid, name: &str, flags: u
     if !name.is_empty() {
         env.insert("day_name", name);
     }
+    env.insert("flags", flags as i32);
+    let mut body = Llsd::new_map();
+    body.insert("environment", env);
+    body
+}
+
+/// The parcel id of a region-wide environment request (INVALID_PARCEL_ID):
+/// the ExtEnvironment URL then carries no `parcelid`.
+pub const REGION_PARCEL_ID: i32 = -1;
+
+/// The query of an ExtEnvironment request (coroUpdateEnvironment /
+/// coroResetEnvironment / coroRequestEnvironment): `parcelid` unless the
+/// whole region is addressed, then `trackno` for a single track.
+pub fn environment_query(local_id: i32, track: Option<i32>) -> String {
+    let mut parts = Vec::new();
+    if local_id != REGION_PARCEL_ID {
+        parts.push(format!("parcelid={local_id}"));
+    }
+    if let Some(t) = track {
+        parts.push(format!("trackno={t}"));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", parts.join("&"))
+    }
+}
+
+/// Body of the ExtEnvironment PUT applying settings inline
+/// (coroUpdateEnvironment with an UpdateInfo of a day, `mDayp`): the day
+/// length and offset only for the whole day, then `day_cycle` (the day's
+/// settings map) and `flags`. No `day_name`: Firestorm sends it only with an
+/// asset.
+pub fn environment_day_body(whole_day: bool, day: &Llsd, flags: u32, day_length: i32, day_offset: i32) -> Llsd {
+    let mut env = Llsd::new_map();
+    if whole_day {
+        if day_length > 0 {
+            env.insert("day_length", day_length);
+        }
+        if day_offset > 0 {
+            env.insert("day_offset", day_offset);
+        }
+    }
+    env.insert("day_cycle", day.clone());
     env.insert("flags", flags as i32);
     let mut body = Llsd::new_map();
     body.insert("environment", env);
@@ -871,6 +928,31 @@ mod tests {
         assert!(!track["environment"].has("day_length") && !track["environment"].has("day_name"));
         let none = environment_apply_body(true, asset, "x", 0, -1, -1);
         assert!(!none["environment"].has("day_length") && !none["environment"].has("day_offset"));
+    }
+
+    #[test]
+    fn environment_day_inline_like_coro_update_environment() {
+        let day = aurora_llsd::llsd_map! {"type" => "daycycle", "name" => "Dusk", "frames" => Llsd::new_map()};
+        let whole = environment_day_body(true, &day, 2, 14400, 57600);
+        let env = &whole["environment"];
+        assert_eq!(env["day_cycle"], day);
+        assert_eq!(env["day_length"].as_i32(), 14400);
+        assert_eq!(env["day_offset"].as_i32(), 57600);
+        assert_eq!(env["flags"].as_i32(), 2);
+        assert!(!env.has("day_asset") && !env.has("day_name"), "the day goes inline, without a name");
+        // the editors send -1: neither length nor offset
+        let editor = environment_day_body(true, &day, 0, -1, -1);
+        assert!(!editor["environment"].has("day_length") && !editor["environment"].has("day_offset"));
+        let track = environment_day_body(false, &day, 0, 14400, 57600);
+        assert!(!track["environment"].has("day_length"));
+    }
+
+    #[test]
+    fn environment_query_leaves_the_parcel_out_for_the_region() {
+        assert_eq!(environment_query(7, None), "?parcelid=7");
+        assert_eq!(environment_query(7, Some(2)), "?parcelid=7&trackno=2");
+        assert_eq!(environment_query(REGION_PARCEL_ID, None), "");
+        assert_eq!(environment_query(REGION_PARCEL_ID, Some(0)), "?trackno=0");
     }
 
     #[test]

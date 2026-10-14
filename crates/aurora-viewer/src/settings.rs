@@ -161,6 +161,10 @@ pub struct Settings {
     pub show_bug_report: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
     pub show_huds: bool,
+    /// sunbeacon / moonbeacon: a line from the avatar towards the sun or
+    /// the moon ("Show Beacon" of the Sun & Moon tab).
+    pub sun_beacon: bool,
+    pub moon_beacon: bool,
     /// Debug overlays (not saved).
     #[serde(skip)]
     pub debug: DebugView,
@@ -241,6 +245,9 @@ pub struct Settings {
     /// box "Do not show again" of the confirmation turns it off). Firestorm
     /// keeps one "ignore" per notification: one setting here for the three.
     pub confirm_teleports: bool,
+    /// SettingsMakeNoTrans is asked (its "ignore" box turns it off; shown
+    /// by default like the notification).
+    pub confirm_no_transfer_settings: bool,
     /// Ask before a payment above `payment_confirm_threshold` L$
     /// (FSConfirmPayments, on by default).
     pub confirm_payments: bool,
@@ -674,6 +681,8 @@ impl Default for Settings {
             language_is_public: true,
             show_bug_report: true,
             show_huds: true,
+            sun_beacon: false,
+            moon_beacon: false,
             debug: DebugView::default(),
             build: Default::default(),
             camera: Default::default(),
@@ -722,6 +731,7 @@ impl Default for Settings {
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             landmarks_by_date: true,
             confirm_teleports: true,
+            confirm_no_transfer_settings: true,
             confirm_payments: true,
             payment_confirm_threshold: 200,
             maps: MapSettings::default(),

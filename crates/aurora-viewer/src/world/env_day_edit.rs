@@ -335,6 +335,77 @@ impl DayDoc {
     }
 }
 
+/// Why a Windlight day could not be imported (WLImportFail's REASONS).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LegacyError {
+    /// SettingImportFileError: a file could not be opened (its path).
+    Open(String),
+    /// SettingParseFileError: a file is not LLSD XML (its path).
+    Parse(String),
+    /// SettingValidationError: nothing could be converted (the preset).
+    Invalid(String),
+}
+
+/// The folders next to a Windlight day's `days` folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyFolder {
+    Skies,
+    Water,
+}
+
+/// The file names read_legacy_preset_data tries for a preset, in order:
+/// the name, LLURI::escape of it, then with its dashes escaped too.
+pub fn legacy_file_names(name: &str) -> [String; 3] {
+    let escaped = aurora_net::land::uri_escape(name);
+    [
+        format!("{name}.xml"),
+        format!("{escaped}.xml"),
+        format!("{}.xml", escaped.replace('-', "%2D")),
+    ]
+}
+
+impl DayDoc {
+    /// LLSettingsVODay::buildFromLegacyPreset: a Windlight day file (an
+    /// array of [position, sky name]) becomes a day whose water is the
+    /// `Default` preset of the water folder and whose ground track holds the
+    /// skies of the skies folder. `read` returns a preset's bytes and path,
+    /// or the path it could not open.
+    pub fn import_legacy(
+        day_xml: &[u8],
+        day_path: &str,
+        name: &str,
+        read: &mut dyn FnMut(LegacyFolder, &str) -> Result<(Vec<u8>, String), String>,
+    ) -> Result<DayDoc, LegacyError> {
+        let keys = aurora_llsd::from_xml(day_xml).map_err(|_| LegacyError::Parse(day_path.to_owned()))?;
+        let mut frames = aurora_llsd::Map::new();
+        let (data, path) = read(LegacyFolder::Water, "Default").map_err(LegacyError::Open)?;
+        aurora_llsd::from_xml(&data).map_err(|_| LegacyError::Parse(path))?;
+        let water = SettingsDoc::import_legacy_water(&data, "Default").ok_or_else(|| LegacyError::Invalid("Default".into()))?;
+        frames.insert("water:Default".into(), water.into_llsd());
+        let mut sky_track = Vec::new();
+        for key in keys.as_array() {
+            let sky = key.at(1).to_string_value();
+            sky_track.push(aurora_llsd::llsd_map! {"key_keyframe" => key.at(0).as_f64(), "key_name" => format!("sky:{sky}")});
+            if frames.contains_key(&format!("sky:{sky}")) {
+                continue;
+            }
+            let (data, path) = read(LegacyFolder::Skies, &sky).map_err(LegacyError::Open)?;
+            aurora_llsd::from_xml(&data).map_err(|_| LegacyError::Parse(path))?;
+            let shown = super::env_edit::legacy_preset_name(&sky);
+            let frame = SettingsDoc::import_legacy_sky(&data, &shown).ok_or(LegacyError::Invalid(shown))?;
+            frames.insert(format!("sky:{sky}"), frame.into_llsd());
+        }
+        let water_track = Llsd::Array(vec![aurora_llsd::llsd_map! {"key_keyframe" => 0.0, "key_name" => "water:Default"}]);
+        let day = aurora_llsd::llsd_map! {
+            "type" => "daycycle",
+            "name" => super::env_edit::legacy_preset_name(name),
+            "frames" => Llsd::Map(frames),
+            "tracks" => Llsd::Array(vec![water_track, Llsd::Array(sky_track)]),
+        };
+        DayDoc::from_llsd(day).ok_or_else(|| LegacyError::Invalid(name.to_owned()))
+    }
+}
+
 /// Frames carry no name of their own in a day.
 fn without_name(mut v: Llsd) -> Llsd {
     if let Llsd::Map(m) = &mut v {
@@ -447,6 +518,66 @@ mod tests {
         // a higher track is shown once it has frames
         let (sky, _) = d.frames_at(&d.day(), 0.5, 3);
         assert!((sky.gamma - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn windlight_days_take_their_skies_and_the_default_water() {
+        let day = br#"<llsd><array>
+            <array><real>0</real><string>A-12AM</string></array>
+            <array><real>0.5</real><string>Noon</string></array>
+            <array><real>0.75</real><string>A-12AM</string></array>
+        </array></llsd>"#;
+        let sky = |gamma: f32| {
+            format!("<llsd><map><key>gamma</key><array><real>{gamma}</real><real>0</real><real>0</real><real>1</real></array></map></llsd>")
+                .into_bytes()
+        };
+        let mut asked = Vec::new();
+        let mut read = |folder: LegacyFolder, name: &str| -> Result<(Vec<u8>, String), String> {
+            asked.push((folder, name.to_owned()));
+            match (folder, name) {
+                (LegacyFolder::Water, "Default") => Ok((
+                    b"<llsd><map><key>waterFogDensity</key><real>16</real></map></llsd>".to_vec(),
+                    "water/Default.xml".into(),
+                )),
+                (LegacyFolder::Skies, "A-12AM") => Ok((sky(1.5), "skies/A%2D12AM.xml".into())),
+                (LegacyFolder::Skies, "Noon") => Ok((sky(2.5), "skies/Noon.xml".into())),
+                _ => Err(format!("{name}.xml")),
+            }
+        };
+        let d = DayDoc::import_legacy(day, "days/Mine.xml", "My%20Day", &mut read).expect("imported");
+        assert_eq!(d.name(), "My Day");
+        assert_eq!(d.tracks[TRACK_GROUND].len(), 3);
+        assert_eq!(
+            asked.iter().filter(|(_, n)| n == "A-12AM").count(),
+            1,
+            "a sky used twice is read once"
+        );
+        let rendered = d.day();
+        assert!((rendered.sky_at(0.5, 0).gamma - 2.5).abs() < 1e-6);
+        assert!((rendered.water_at(0.1).fog_density - 16.0).abs() < 1e-6);
+        // a missing sky names its file, a broken day file its path
+        let mut missing = |folder: LegacyFolder, name: &str| -> Result<(Vec<u8>, String), String> {
+            match folder {
+                LegacyFolder::Water => Ok((
+                    b"<llsd><map><key>waterFogDensity</key><real>2</real></map></llsd>".to_vec(),
+                    "w".into(),
+                )),
+                LegacyFolder::Skies => Err(format!("skies/{name}.xml")),
+            }
+        };
+        assert_eq!(
+            DayDoc::import_legacy(day, "d", "x", &mut missing),
+            Err(LegacyError::Open("skies/A-12AM.xml".into()))
+        );
+        assert_eq!(
+            DayDoc::import_legacy(b"not xml", "days/x.xml", "x", &mut missing),
+            Err(LegacyError::Parse("days/x.xml".into()))
+        );
+        assert_eq!(
+            legacy_file_names("A-12AM"),
+            ["A-12AM.xml".to_owned(), "A-12AM.xml".to_owned(), "A%2D12AM.xml".to_owned()]
+        );
+        assert_eq!(legacy_file_names("Nacon's")[1], "Nacon%27s.xml");
     }
 
     #[test]

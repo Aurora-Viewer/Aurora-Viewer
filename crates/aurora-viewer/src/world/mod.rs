@@ -9,6 +9,7 @@ pub mod contact_sets;
 pub mod eep;
 pub mod eep_env;
 pub mod env;
+pub mod env_apply;
 pub mod env_day_edit;
 pub mod env_edit;
 pub mod env_select;
@@ -45,6 +46,7 @@ pub mod teleport_invites;
 pub mod terrain;
 pub mod tphistory;
 pub mod transcripts;
+pub mod windlight_presets;
 pub mod worldmap;
 
 #[cfg(test)]
@@ -226,6 +228,9 @@ pub struct World {
     pub land_credit: i32,
     pub upload_cost: Option<i32>,
     pub local_assets: HashMap<Uuid, (String, bool)>,
+    /// ExtEnvironment answers of the frame (parcel local id, error), for the
+    /// environment editors' "Apply To Parcel / Region" (drained by the app).
+    pub environment_answers: Vec<(i32, Result<(), String>)>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
     pub health: f32,
     /// Interface sounds to play (drained by the app).
@@ -279,6 +284,9 @@ pub struct World {
     env_clock: Instant,
     /// Accumulated cloud scroll (LLEnvironment::mCloudScrollDelta).
     pub cloud_scroll: glam::Vec2,
+    /// Directions of the shown sun and moon (the sky frame's), for their
+    /// beacons.
+    pub sky_directions: (glam::Vec3, glam::Vec3),
     /// Name of the parcel the agent stands on.
     pub parcel_name: String,
     /// Full description of that parcel (navigation bar icons, media, voice).
@@ -414,6 +422,7 @@ impl World {
             land_credit: 0,
             upload_cost: None,
             local_assets: HashMap::new(),
+            environment_answers: Vec::new(),
             health: 100.0,
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -438,6 +447,7 @@ impl World {
             eep: eep_env::EnvSelector::default(),
             env_clock: Instant::now(),
             cloud_scroll: glam::Vec2::ZERO,
+            sky_directions: (glam::Vec3::Z, glam::Vec3::NEG_Z),
             parcel_name: String::new(),
             parcel: None,
             land: land::Land::default(),
@@ -1962,6 +1972,11 @@ impl World {
                     && !info.is_group_owned
                 {
                     self.social.want_name(info.owner_id);
+                }
+                // the environment editors wait for the answer of what they applied
+                if let aurora_net::land::LandEvent::Environment { local_id, result } = &ev {
+                    self.environment_answers
+                        .push((*local_id, result.as_ref().map(|_| ()).map_err(Clone::clone)));
                 }
                 self.land.apply(ev, &ctx);
                 None

@@ -42,6 +42,19 @@ pub fn editor() -> Option<&'static str> {
     (!s.is_empty() && s != "0").then_some(s.as_str())
 }
 
+/// `AURORA_DEMO_ENV_EDITOR=parcel|region|custom` (or `…-refused`,
+/// `custom-follow`): the
+/// editors' parcel and region scenarios. The avatar owns its parcel (and
+/// manages the estate for `region`), the region has an EEP day.
+pub fn parcel_scenario() -> bool {
+    editor().is_some_and(|s| matches!(s.split('-').next(), Some("parcel" | "region" | "custom")))
+}
+
+/// `AURORA_DEMO_ENV_EDITOR=region…`: the avatar manages the demo estate.
+pub fn estate_manager() -> bool {
+    editor().is_some_and(|s| s.starts_with("region"))
+}
+
 /// The library and the user's Settings folder: for the selector's and the
 /// editors' scenarios, and for About Land's (its environment picker).
 pub fn enabled() -> bool {
@@ -51,6 +64,28 @@ pub fn enabled() -> bool {
 /// The user's day cycle item the `day` editor scenarios open.
 pub fn day_item() -> Uuid {
     u(0x503 + 0x1000)
+}
+
+/// The library's no-transfer "Annan Adored Pink Sky" item.
+pub fn no_transfer_sky_item() -> Uuid {
+    u(0x206 + 0x1000)
+}
+
+/// The folder a demo settings item is in.
+pub fn folder_of(item: Uuid) -> Uuid {
+    let a = (item.as_u128() & 0xFFFF) - 0x1000;
+    let f = items().iter().find(|(.., asset)| *asset == a).map_or(USER_SETTINGS, |(f, ..)| *f);
+    u(f)
+}
+
+/// The library's "Dynamic Day".
+pub fn library_day_asset() -> Uuid {
+    u(0x402)
+}
+
+/// The asset of the user's day cycle item.
+pub fn day_asset() -> Uuid {
+    u(0x503)
 }
 
 /// The item the `item` editor scenario opens.
@@ -193,7 +228,9 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
             next_owner_mask: 0,
             thumbnail: Uuid::nil(),
             base_mask: 0x7fffffff,
-            owner_mask: 0x7fffffff,
+            // "Annan Adored Pink Sky" cannot be transferred: loaded into a
+            // day, it asks to make the day no-transfer (SettingsMakeNoTrans)
+            owner_mask: if *a == 0x206 { 0x7fffffff & !0x2000 } else { 0x7fffffff },
             last_owner: uuid::Uuid::nil(),
             group_id: uuid::Uuid::nil(),
             group_owned: false,
@@ -301,11 +338,24 @@ fn sunset() -> Llsd {
     )
 }
 
-/// Settings assets of the demo items (parsed like downloaded ones).
-pub fn settings_assets() -> Vec<(Uuid, Settings)> {
-    defs()
-        .into_iter()
-        .filter_map(|(n, v)| Settings::from_llsd(&v).map(|s| (u(n), s)))
+/// Settings assets of the demo items (parsed like downloaded ones), with
+/// their settings maps. The editors' scenarios also get a stand-in for
+/// Firestorm's default day asset (the library's "Default Day Cycle"): the
+/// day cycle editor starts a new day from it.
+pub fn settings_assets() -> Vec<(Uuid, Settings, Llsd)> {
+    let mut defs = defs();
+    if editor().is_some()
+        && let Some((_, v)) = defs.iter().find(|(n, _)| *n == 0x401)
+    {
+        let mut v = v.clone();
+        v.insert("name", "Default Day Cycle");
+        defs.push((crate::world::eep::DEFAULT_DAY_ASSET.as_u128(), v));
+    }
+    defs.into_iter()
+        .filter_map(|(n, v)| {
+            let id = if n > 0xFFFF { Uuid::from_u128(n) } else { u(n) };
+            Settings::from_llsd(&v).map(|s| (id, s, v))
+        })
         .collect()
 }
 
@@ -439,7 +489,7 @@ mod tests {
         let assets = settings_assets();
         assert_eq!(assets.len(), items().len());
         for (_, _, kind, a) in items() {
-            let s = assets.iter().find(|(id, _)| *id == u(*a)).map(|(_, s)| s);
+            let s = assets.iter().find(|(id, ..)| *id == u(*a)).map(|(_, s, _)| s);
             let ok = match (kind, s) {
                 (SettingsKind::Sky, Some(Settings::Sky(_))) | (SettingsKind::Water, Some(Settings::Water(_))) => true,
                 (SettingsKind::Day, Some(Settings::Day(d))) => d.is_valid(),

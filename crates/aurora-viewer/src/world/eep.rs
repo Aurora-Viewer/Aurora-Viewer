@@ -7,6 +7,7 @@
 
 use aurora_llsd::Llsd;
 use glam::{Quat, Vec2, Vec3};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Default cloud noise texture (LLSettingsSky DEFAULT_CLOUD_ID).
@@ -169,6 +170,9 @@ pub struct EnvAnswer {
     /// The day cycle, when the answer carries one (it may still be unusable,
     /// see [`DayCycle::is_valid`]).
     pub day: Option<DayCycle>,
+    /// The day cycle's settings map as received (EnvironmentInfo::mDayCycle),
+    /// what the editors clone (createDayCycleFromEnvironment).
+    pub day_settings: Option<Arc<Llsd>>,
     /// Altitudes (m) where sky tracks 1..=4 start: 0 and `track_altitudes`
     /// (all 0 when absent, as EnvironmentInfo's constructor leaves them).
     pub altitudes: [f32; 4],
@@ -451,6 +455,7 @@ impl EnvAnswer {
             DayCycle::from_settings(&env["day_cycle"], length, offset)
         });
         EnvAnswer {
+            day_settings: env.has("day_cycle").then(|| Arc::new(env["day_cycle"].clone())),
             parcel_id: if env.has("parcel_id") {
                 env["parcel_id"].as_i32()
             } else {

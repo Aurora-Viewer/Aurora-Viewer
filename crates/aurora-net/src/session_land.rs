@@ -340,6 +340,17 @@ impl Session<'_> {
                 let body = land::environment_apply_body(track.is_none(), asset, &name, flags, day_length, day_offset);
                 self.parcel_environment(local_id, track, EnvVerb::Put(body));
             }
+            LandCommand::EnvironmentApplyDay {
+                local_id,
+                track,
+                day,
+                flags,
+                day_length,
+                day_offset,
+            } => {
+                let body = land::environment_day_body(track.is_none(), &day, flags, day_length, day_offset);
+                self.parcel_environment(local_id, track, EnvVerb::Put(body));
+            }
             LandCommand::ExperienceSearch { query, page } => self.experience_search(query, page),
             LandCommand::ExperienceInfo(ids) => self.request_experience_info(ids),
             LandCommand::AvatarSearch { query } => self.avatar_search(query),
@@ -477,17 +488,15 @@ impl Session<'_> {
     }
 
     /// LLEnvironment::requestParcel / coroUpdateEnvironment /
-    /// coroResetEnvironment on `ExtEnvironment?parcelid=N` of the agent region.
+    /// coroResetEnvironment on `ExtEnvironment?parcelid=N` of the agent
+    /// region, or without a parcel for the whole region (REGION_PARCEL_ID).
     fn parcel_environment(&mut self, local_id: i32, track: Option<i32>, verb: EnvVerb) {
         let Some(url) = self.main_cap("ExtEnvironment") else {
             let result = Err(aurora_i18n::tr!("session-land-the-region-does-not-provide-the-extenvironment-capability").to_owned());
             emit(self.sh, NetEvent::Land(LandEvent::Environment { local_id, result }));
             return;
         };
-        let url = match track {
-            Some(t) => format!("{url}?parcelid={local_id}&trackno={t}"),
-            None => format!("{url}?parcelid={local_id}"),
-        };
+        let url = format!("{url}{}", land::environment_query(local_id, track));
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
