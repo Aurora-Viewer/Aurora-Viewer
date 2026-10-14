@@ -183,15 +183,28 @@ fn icon(icon: &'static str, ok: bool, tip: &str) -> ParcelIcon {
 }
 
 const GAP: f32 = 2.0;
+/// Height of an icon's slot in the location field, the side of its glyph
+/// and the width of a slot without a label: the landmark star of the bar
+/// (`bars.rs`) uses the same ones to line up with these icons.
+pub const SLOT_HEIGHT: f32 = 18.0;
+pub const GLYPH: f32 = 14.0;
+pub const SLOT_WIDTH: f32 = 16.0;
+
+/// The glyph's square in a slot: centered on the slot's height, half a slot
+/// from its left edge.
+pub fn glyph_rect(slot: egui::Rect) -> egui::Rect {
+    egui::Rect::from_center_size(egui::pos2(slot.left() + SLOT_WIDTH / 2.0, slot.center().y), Vec2::splat(GLYPH))
+}
 
 fn label_font() -> egui::FontId {
     egui::FontId::proportional(10.5)
 }
 
 fn item_width(ui: &egui::Ui, it: &ParcelIcon) -> f32 {
-    16.0 + it.label.as_ref().map_or(0.0, |t| {
-        ui.painter().layout_no_wrap(t.clone(), label_font(), Color32::PLACEHOLDER).size().x + 2.0
-    })
+    SLOT_WIDTH
+        + it.label.as_ref().map_or(0.0, |t| {
+            ui.painter().layout_no_wrap(t.clone(), label_font(), Color32::PLACEHOLDER).size().x + 2.0
+        })
 }
 
 /// Width taken by `show` (to reserve it at the right of the field).
@@ -209,12 +222,12 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, icons: &Icons, items: &[ParcelIcon],
         let col = if it.ok { p.success } else { p.danger };
         let label = it.label.as_ref().map(|t| ui.painter().layout_no_wrap(t.clone(), label_font(), col));
         let w = item_width(ui, it);
-        let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 18.0), egui::Sense::click());
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, SLOT_HEIGHT), egui::Sense::click());
         if resp.hovered() {
             ui.painter()
                 .rect_filled(rect.expand(1.0), ui.visuals().window_corner_radius, p.raised);
         }
-        let ir = egui::Rect::from_center_size(egui::pos2(rect.left() + 8.0, rect.center().y), Vec2::splat(14.0));
+        let ir = glyph_rect(rect);
         if let Some(t) = icons.get(it.icon) {
             let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
             ui.painter().image(t.id(), ir, uv, col);

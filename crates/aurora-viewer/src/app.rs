@@ -338,6 +338,10 @@ pub struct App {
     /// Mini-map and world map state, map server tiles.
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
+    /// World › Landmark this Place (LLFloaterCreateLandmark).
+    create_landmark_ui: ui::landmark_create::CreateLandmarkUi,
+    /// Inventory generation whose Favorites / Landmarks folders were asked for.
+    landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
     /// Report Abuse (LLFloaterReporter).
     report_abuse: ui::report_abuse::ReportAbuseUi,
@@ -735,6 +739,8 @@ impl App {
             contacts_ui: Default::default(),
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
+            create_landmark_ui: Default::default(),
+            landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
             report_abuse: Default::default(),
             dof_focus: Default::default(),
@@ -1188,7 +1194,20 @@ impl App {
             }
             if let NetCommand::CreateInventoryItem { parent, kind, name } = &cmd {
                 let (asset, inventory, subtype) = kind.types();
+                // a landmark's asset is written by the server from where the
+                // agent stands (the demo region has no id: a version 1
+                // landmark, with the global position)
+                let asset_id = match (kind, self.world.agent_global()) {
+                    (aurora_net::inventory::operations::NewItem::Landmark, Some(g)) => {
+                        let id = uuid::Uuid::new_v4();
+                        let text = format!("Landmark version 1\nposition {} {} {}\n", g.x, g.y, g.z);
+                        self.world.landmarks.on_data(id, Some(text.as_bytes()));
+                        id
+                    }
+                    _ => uuid::Uuid::nil(),
+                };
                 let item = aurora_net::inventory::InvItem {
+                    asset_id,
                     id: uuid::Uuid::new_v4(),
                     parent: *parent,
                     name: name.clone(),
@@ -1533,6 +1552,11 @@ impl App {
         if let NetEvent::InventoryCreated(item) = ev {
             let gesture = item.asset_type == 21;
             let id = item.id;
+            if self.create_landmark_ui.created(id, item.parent, item.asset_type) {
+                // the Create Landmark window edits it: no rename in the inventory
+                self.world.inventory.add_items(vec![item]);
+                return;
+            }
             self.world.inventory.add_items(vec![item]);
             self.inventory_ui.show_original(&self.world.inventory, id);
             self.inventory_ui.begin_rename(&self.world.inventory, id);
@@ -1588,6 +1612,18 @@ impl App {
                 return;
             }
             if self.build.replacement_inventory_result(request, &result) {
+                return;
+            }
+            if self.create_landmark_ui.edits.remove(&request) {
+                match result {
+                    Ok(reply) => {
+                        self.create_landmark_ui.folder_created(&reply.created);
+                        self.world.inventory.remove(&reply.removed);
+                        self.world.inventory.apply(reply.contents);
+                        self.world.inventory.created_folders(reply.folders);
+                    }
+                    Err(reason) => log::warn!("landmark change not saved: {reason}"),
+                }
                 return;
             }
             if self.world_edits.remove(&request) {
@@ -4256,6 +4292,32 @@ impl App {
                 self.demo_place = Some(source);
             } else {
                 self.show_place_profile(source);
+            }
+        }
+        // AURORA_DEMO_LANDMARK: World › Landmark this place, or a landmark of
+        // the plaza already made, once the agent stands on a parcel
+        let folder_ready = |kind: i32| {
+            let inv = &self.world.inventory;
+            crate::world::appearance::system_folder(inv, kind)
+                .and_then(|f| inv.folders.get(&f))
+                .is_some_and(|f| f.state == crate::world::inventory::FetchState::Fetched)
+        };
+        let ready = match self.create_landmark_ui.demo_pending {
+            Some(ui::landmark_create::DemoStart::Quick(kind)) => folder_ready(kind),
+            _ => true,
+        };
+        if self.world.movement_complete
+            && self.world.parcel.is_some()
+            && ready
+            && let Some(start) = self.create_landmark_ui.demo_pending.take()
+        {
+            match start {
+                ui::landmark_create::DemoStart::Window => self.open_create_landmark(None),
+                ui::landmark_create::DemoStart::Quick(kind) => {
+                    if let Some(cmd) = self.create_landmark_ui.quick(&self.world, kind) {
+                        self.send(cmd);
+                    }
+                }
             }
         }
         self.world.flush_arrival(now);
@@ -6933,6 +6995,8 @@ impl App {
             BarAction::BanLines(v) => self.settings.maps.ban_lines = v,
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
             BarAction::TeleportHistory => self.toggle_teleport_history(),
+            BarAction::CreateLandmark => self.open_create_landmark(None),
+            BarAction::LandmarkStar(star) => self.landmark_star(star),
         }
     }
 
@@ -6964,6 +7028,49 @@ impl App {
             aurora_i18n::language(),
             self.search_session(),
         )
+    }
+
+    /// LLFloaterReg::showInstance("add_landmark"): World › Landmark this
+    /// Place, the Places "add" entries and About Land's Landmark button;
+    /// `dest` is the folder chosen in Places.
+    pub(super) fn open_create_landmark(&mut self, dest: Option<uuid::Uuid>) {
+        if let Some(cmd) = self.create_landmark_ui.open(&self.world, dest) {
+            self.send(cmd);
+        }
+    }
+
+    /// hasParcelLandmark: the landmark lying on the agent's parcel (the lit
+    /// star; the "add landmark" entries are greyed out meanwhile).
+    fn parcel_landmark(&mut self) -> Option<ui::landmark_create::ParcelLandmark> {
+        // the Favorites and Landmarks folders are fetched for it, as
+        // Firestorm has them after its background inventory fetch
+        if self.world.inventory.generation != self.landmark_folders_checked {
+            for id in crate::world::landmarks::unfetched_folders(&self.world.inventory) {
+                self.world.inventory.request(id);
+            }
+            self.landmark_folders_checked = self.world.inventory.generation;
+        }
+        let origin = self.world.main_origin();
+        self.create_landmark_ui
+            .parcel_landmark(&self.world.inventory, &mut self.world.landmarks, self.world.parcel.as_ref(), origin)
+    }
+
+    /// The navigation bar's star.
+    fn landmark_star(&mut self, action: ui::bars::StarAction) {
+        use ui::bars::StarAction;
+        use ui::landmark_create::{FOLDER_FAVORITES, FOLDER_LANDMARKS};
+        let cmd = match action {
+            StarAction::AddFavorite => self.create_landmark_ui.quick(&self.world, FOLDER_FAVORITES),
+            StarAction::AddLandmark => self.create_landmark_ui.quick(&self.world, FOLDER_LANDMARKS),
+            StarAction::MoreOptions => self.create_landmark_ui.open(&self.world, None),
+            StarAction::Edit(item) => {
+                self.create_landmark_ui.open_edit(&self.world.inventory, item);
+                None
+            }
+        };
+        if let Some(cmd) = cmd {
+            self.send(cmd);
+        }
     }
 
     /// The Marketplace page of the grid (World › SL Marketplace), None on a
@@ -7501,6 +7608,7 @@ impl App {
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 t = self.ui_parts.lap(Part::UiTags, t);
+                let parcel_landmark = self.parcel_landmark();
                 let icons = &self.skin.icons;
                 let layout = &self.skin.layout;
                 let maturity = self
@@ -7530,6 +7638,7 @@ impl App {
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
                     double_click: self.double_click_action(),
+                    parcel_landmark,
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
@@ -8148,6 +8257,9 @@ impl App {
                 }
                 self.panels.about_land = open;
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
+                for cmd in self.create_landmark_ui.show(&ctx, &p, &self.world.inventory) {
+                    self.send(cmd);
+                }
                 // the experience profile (the permission question's link)
                 if let Some((experience, change)) = ui::experience_profile::show(&ctx, &p, &mut self.world) {
                     self.world.experiences.change(experience, change);
@@ -8260,6 +8372,9 @@ impl App {
                     }
                 }
                 // place profiles: standalone windows and "Places"
+                if self.panels.places {
+                    self.places_ui.landmark_here = self.parcel_landmark().is_some();
+                }
                 let mut c = ui::place_details::Ctx {
                     p: &p,
                     world: &self.world,
@@ -8298,6 +8413,7 @@ impl App {
                     match pa {
                         PlacesAction::Teleport(g) => self.world.map.track_location(g.x, g.y, g.z as f32, true),
                         PlacesAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                        PlacesAction::CreateLandmark(dest) => self.open_create_landmark(dest),
                         PlacesAction::ShowOnMap(g) => {
                             self.world.map.track_location(g.x, g.y, g.z as f32, false);
                             self.panels.world_map = true;
@@ -9018,6 +9134,10 @@ impl ApplicationHandler for App {
             // entry's profile (asked once the inventory is there: demo_pending)
             if let Some(source) = crate::demo::place::profile_scenario() {
                 self.demo_place = Some(source);
+                self.panels.perf = false;
+            }
+            if let Some(start) = ui::landmark_create::DemoStart::from_env() {
+                self.create_landmark_ui.demo_pending = Some(start);
                 self.panels.perf = false;
             }
             // AURORA_DEMO_PLACES=favorites|landmarks|history: "Places" on a tab

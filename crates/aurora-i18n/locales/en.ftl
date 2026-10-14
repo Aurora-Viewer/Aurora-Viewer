@@ -1395,6 +1395,23 @@ common-create-favorite = Create favorite
 ui-profile-create-place = Create place
 ui-contacts-create-a-new-contact-set-named = Create a new contact set named:
 ui-places-create-landmark = Create landmark
+landmark-create-here = Landmark this place
+landmark-create-details = Landmark details
+landmark-create-name = Name:
+landmark-create-folder = Save this landmark in:
+landmark-create-new-folder = Create new folder
+landmark-create-notes = My notes:
+landmark-create-favorites-bar = Favorites bar
+landmark-create-folder-prompt = Choose a name for the folder:
+landmark-edit-title = Edit landmark
+landmark-star-add = Add a landmark for this parcel
+landmark-star-in-favorites = In Favorites: { $name }
+    Click to edit it
+landmark-star-in-landmarks = In Landmarks: { $name }
+    Click to edit it
+landmark-star-add-favorites = Add to Favorites
+landmark-star-add-landmarks = Add to Landmarks
+landmark-star-more = More options…
 ui-options-commands-create-a-platform-under-your-avatar = Create a platform under your avatar
 ui-contacts-create-2 = Create...
 ui-place-details-created-on = Created on:

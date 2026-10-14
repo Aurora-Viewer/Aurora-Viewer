@@ -1398,6 +1398,23 @@ common-create-favorite = Créer un favori
 ui-profile-create-place = Créer un lieu
 ui-contacts-create-a-new-contact-set-named = Créer un nouveau groupe de contacts avec le nom :
 ui-places-create-landmark = Créer un repère
+landmark-create-here = Créer un repère pour ce lieu
+landmark-create-details = Détails du repère
+landmark-create-name = Nom :
+landmark-create-folder = Emplacement :
+landmark-create-new-folder = Créer un nouveau dossier
+landmark-create-notes = Notes :
+landmark-create-favorites-bar = Barre des favoris
+landmark-create-folder-prompt = Choisissez un nom pour le dossier :
+landmark-edit-title = Modifier le repère
+landmark-star-add = Créer un repère pour cette parcelle
+landmark-star-in-favorites = Dans les favoris : { $name }
+    Cliquez pour le modifier
+landmark-star-in-landmarks = Dans les repères : { $name }
+    Cliquez pour le modifier
+landmark-star-add-favorites = Ajouter aux favoris
+landmark-star-add-landmarks = Ajouter aux repères
+landmark-star-more = Plus d'options…
 ui-options-commands-create-a-platform-under-your-avatar = Créer une plateforme sous l'avatar
 ui-contacts-create-2 = Créer...
 ui-place-details-created-on = Créé le :

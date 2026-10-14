@@ -1323,6 +1323,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
+| `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab, search done |
@@ -2009,6 +2010,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_PLACES=favorites|landmarks|history`**: the Favorites
   and Landmarks folders of the demo (with a subfolder) and a teleport
   history over several months.
+- **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
+  stands on its parcel, `create` opens World › Landmark this place: the
+  landmark is created at once, named after the parcel; OK renames it,
+  gives it its notes and moves it to the chosen folder, Cancel deletes it.
+  `favorite` / `landmark` make a landmark of the plaza in Favorites /
+  Landmarks, as the star's menu does: the star at the right end of the
+  location field turns amber (its tooltip names the folder and the
+  landmark), a click on it edits that landmark, and World › Landmark this
+  place is greyed out. Without the variable the star is an outline and
+  opens its menu. The demo parcel is the 128 m square around the plaza
+  (x and y 64..192): a landmark made there lights the star, wherever in it
+  the avatar stands. With `AURORA_DEMO_PLACES` the folder list shows the
+  demo's subfolder.
 - **`AURORA_DEMO_SEARCH=web|people|groups|places|land|events|classifieds[:text]`**:
   the "Search" window on this tab, the search for the text already
   run (`aurora` by default): the list is filled by the directory of the
