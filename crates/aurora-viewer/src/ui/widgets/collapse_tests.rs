@@ -29,6 +29,9 @@ impl Fixture {
             text: "kept contents".into(),
             bodies: 0,
         };
+        // as the theme sets it: the short title of a minimized bar is
+        // dragged, not selected
+        fixture.ctx.all_styles_mut(|s| s.interaction.selectable_labels = false);
         for _ in 0..8 {
             fixture.show(vec![]);
         }
@@ -138,7 +141,7 @@ fn title_double_click_collapses_and_restores_size_and_contents() {
         let title = f.title();
         let collapsed = f.double_click(title);
         assert!(collapsed.height() < 40.0, "{collapsed:?}");
-        assert!((collapsed.width() - expanded.width()).abs() < 1.0);
+        assert!((collapsed.width() - MINIMIZED_W).abs() < 1.0, "{collapsed:?}");
         let bodies = f.bodies;
         f.show(vec![]);
         assert_eq!(f.bodies, bodies, "hidden contents must not run");
@@ -184,7 +187,7 @@ fn inspector_header_restores_geometry_and_preserves_hidden_contents() {
     let expanded = f.show(vec![]);
     let collapsed = f.double_click(f.title());
     assert!(collapsed.height() >= 40.0 && collapsed.height() < 50.0, "{collapsed:?}");
-    assert!((collapsed.width() - expanded.width()).abs() < 1.0);
+    assert!((collapsed.width() - MINIMIZED_W).abs() < 1.0, "{collapsed:?}");
     let bodies = f.bodies;
     for _ in 0..40 {
         f.show(vec![]);
@@ -194,6 +197,78 @@ fn inspector_header_restores_geometry_and_preserves_hidden_contents() {
     assert!((restored.size() - expanded.size()).length() < 1.0, "{expanded:?} -> {restored:?}");
     assert_eq!(f.text, "kept contents");
     assert!(f.open);
+}
+
+/// The toolbar button of a minimized window expands it instead of closing
+/// it (issue #269, LLFloaterReg::toggleInstance); shown, it closes.
+#[test]
+fn toggling_a_minimized_floater_expands_it_and_a_shown_one_closes() {
+    let mut f = Fixture::new(false);
+    let expanded = f.show(vec![]);
+    f.double_click(f.title());
+    assert!(floater_minimized(&f.ctx, "collapse_fixture"));
+    let bodies = f.bodies;
+    toggle_floater(&f.ctx, "collapse_fixture", &mut f.open);
+    assert!(f.open, "a minimized window stays open");
+    for _ in 0..8 {
+        f.show(vec![]);
+    }
+    let restored = f.show(vec![]);
+    assert!(!floater_minimized(&f.ctx, "collapse_fixture"));
+    assert!((restored.size() - expanded.size()).length() < 1.0, "{expanded:?} -> {restored:?}");
+    assert!(f.bodies > bodies, "the contents are shown again");
+    toggle_floater(&f.ctx, "collapse_fixture", &mut f.open);
+    assert!(!f.open, "a window shown closes");
+}
+
+/// A window closed while minimized, by its close button or from outside,
+/// opens again expanded (LLFloater::closeFloater and openFloater unminimize).
+#[test]
+fn a_floater_closed_minimized_opens_again_expanded() {
+    // closed by its own close button
+    let mut f = Fixture::new(false);
+    let expanded = f.show(vec![]);
+    f.double_click(f.title());
+    for _ in 0..40 {
+        f.show(vec![]);
+    }
+    // the close button ends the bar, inside its margin
+    let bar = f.show(vec![]);
+    let close = egui::pos2(bar.right() - 18.0, f.title().y);
+    f.show(vec![egui::Event::PointerMoved(close)]);
+    f.button(close, true);
+    f.button(close, false);
+    f.show(vec![]);
+    assert!(!f.open, "the close button closes the minimized window");
+    toggle_floater(&f.ctx, "collapse_fixture", &mut f.open);
+    assert!(f.open);
+    for _ in 0..8 {
+        f.show(vec![]);
+    }
+    let reopened = f.show(vec![]);
+    assert!((reopened.size() - expanded.size()).length() < 1.0, "{expanded:?} -> {reopened:?}");
+
+    // closed from outside (an older layout, a command): opened by a menu entry
+    let mut f = Fixture::new(false);
+    let expanded = f.show(vec![]);
+    f.double_click(f.title());
+    f.open = false;
+    f.show(vec![]);
+    open_floater(&f.ctx, "collapse_fixture", &mut f.open);
+    for _ in 0..8 {
+        f.show(vec![]);
+    }
+    let reopened = f.show(vec![]);
+    assert!(f.open);
+    assert!((reopened.size() - expanded.size()).length() < 1.0, "{expanded:?} -> {reopened:?}");
+}
+
+/// The bar of a minimized window is short (issue #276, UIMinimizedWidth);
+/// a window narrower than it keeps its own width.
+#[test]
+fn a_minimized_floater_is_a_short_bar() {
+    assert_eq!(minimized_width(440.0), MINIMIZED_W);
+    assert_eq!(minimized_width(150.0), 150.0);
 }
 
 #[test]

@@ -84,6 +84,15 @@ fn fit_in(area: egui::Rect, pos: egui::Pos2, size: Vec2) -> egui::Pos2 {
     pos.clamp(area.min, max)
 }
 
+/// Width of a minimized floater: its icon, a title cut short and its
+/// buttons. Firestorm's is fixed (UIMinimizedWidth, 160) for a smaller
+/// title font; a narrower window keeps its own width.
+const MINIMIZED_W: f32 = 200.0;
+
+fn minimized_width(expanded: f32) -> f32 {
+    expanded.min(MINIMIZED_W)
+}
+
 /// Height of a floater's title bar, and the width of it that stays inside
 /// the room at least: enough to grab it and bring the window back.
 const TITLE_BAR_H: f32 = 38.0;
@@ -128,6 +137,9 @@ pub struct Floater<'a> {
     pub auto_height: bool,
     /// Put a toolbar directly beneath the title, without a separator layout row.
     pub compact_header: bool,
+    /// Something new waits inside (unread messages): the minimized bar shows
+    /// it, as Firestorm flashes the conversations button.
+    pub attention: bool,
 }
 
 impl<'a> Floater<'a> {
@@ -145,6 +157,7 @@ impl<'a> Floater<'a> {
             framed_header: None,
             auto_height: false,
             compact_header: false,
+            attention: false,
         }
     }
 
@@ -185,6 +198,12 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// Mark the minimized bar while `waiting` (unread messages inside).
+    pub fn attention(mut self, waiting: bool) -> Self {
+        self.attention = waiting;
+        self
+    }
+
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         if !*open {
@@ -217,7 +236,9 @@ impl<'a> Floater<'a> {
                 }
             });
         let mut close = false;
-        let mut toggle_min = false;
+        // the toolbar button, a menu entry or a shortcut asked to expand it
+        let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new(self.id).with(EXPAND)));
+        let mut toggle_min = minimized && expand_asked.unwrap_or(false);
         let mut out = None;
         let window_id = egui::Id::new(self.id);
         let expanded_id = window_id.with("expanded_size");
@@ -268,7 +289,10 @@ impl<'a> Floater<'a> {
         // forgets it when clamped to the header. Restore that size once.
         // Aurora keeps the dragged bar's current position when restoring.
         if minimized {
-            w = w.fixed_size(Vec2::new(expanded.x, if self.framed_header.is_some() { 40.0 } else { 38.0 }));
+            w = w.fixed_size(Vec2::new(
+                minimized_width(expanded.x),
+                if self.framed_header.is_some() { 40.0 } else { 38.0 },
+            ));
         } else if restore && !self.auto_height {
             w = w.fixed_size(expanded.min(work.size()));
         } else if let Some(size) = shrink {
@@ -442,6 +466,14 @@ impl<'a> Floater<'a> {
             }
             if !minimized {
                 ctx.data_mut(|d| d.insert_persisted(expanded_id, response.response.rect.size()));
+            } else if self.attention {
+                // the bar lights up in the accent while something waits inside
+                ctx.layer_painter(response.response.layer_id).rect_stroke(
+                    response.response.rect,
+                    ctx.global_style().visuals.window_corner_radius,
+                    Stroke::new(1.5, p.violet_light),
+                    egui::StrokeKind::Inside,
+                );
             }
             if let (Some(drag), Some(requested)) = (resize_drag, resized) {
                 drag.finish(ctx, window_id, requested, response.response.rect);
@@ -452,8 +484,10 @@ impl<'a> Floater<'a> {
         }
         if close {
             *open = false;
-        }
-        if toggle_min {
+            // LLFloater::closeFloater: "Always unminimize before trying to
+            // close", the window opens again expanded
+            unminimize_quietly(ctx, self.id);
+        } else if toggle_min {
             ctx.data_mut(|d| d.insert_persisted(min_id, !minimized));
             if minimized {
                 ctx.data_mut(|d| d.insert_temp(restore_id, true));
@@ -544,6 +578,62 @@ pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2)
 pub fn minimize_floater(ctx: &egui::Context, id: &str) {
     ctx.data_mut(|d| d.insert_persisted(egui::Id::new((id, "minimized")), true));
 }
+
+/// Is the floater `id` reduced to its title bar?
+pub fn floater_minimized(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data_mut(|d| d.get_persisted::<bool>(egui::Id::new((id, "minimized"))))
+        .unwrap_or(false)
+}
+
+/// Expand the minimized floater `id` on its next frame and bring it to the
+/// front, as its title button does (LLFloater::openFloater on a minimized
+/// floater: setMinimized(false), setVisibleAndFrontmost).
+pub fn expand_floater(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(id).with(EXPAND), true));
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(id)));
+}
+
+/// The toolbar button, menu entry or shortcut of the floater `id`
+/// (LLFloaterReg::toggleInstance): a floater shown closes, a minimized one
+/// expands, a closed one opens expanded. LLFloater::openFloater and
+/// closeFloater both unminimize, so a window closed while minimized does not
+/// come back as a bar.
+pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    if *open && floater_minimized(ctx, id) {
+        expand_floater(ctx, id);
+        return;
+    }
+    *open = !*open;
+    unminimize_quietly(ctx, id);
+}
+
+/// Open the floater `id` (LLFloaterReg::showInstance): expanded, whether it
+/// was closed or minimized.
+pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    if *open {
+        if floater_minimized(ctx, id) {
+            expand_floater(ctx, id);
+        }
+    } else {
+        *open = true;
+        unminimize_quietly(ctx, id);
+    }
+}
+
+/// Forget that a floater not on screen was minimized: it opens expanded, at
+/// its expanded size, without the sound of the title button.
+fn unminimize_quietly(ctx: &egui::Context, id: &str) {
+    if floater_minimized(ctx, id) {
+        let window_id = egui::Id::new(id);
+        ctx.data_mut(|d| {
+            d.insert_persisted(egui::Id::new((id, "minimized")), false);
+            d.insert_temp(window_id.with("restore_size"), true);
+        });
+    }
+}
+
+/// Temporary flag of a floater asked to expand (`expand_floater`).
+const EXPAND: &str = "expand";
 
 /// Title bar button with a Tabler icon (drawn by hand if it is missing).
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {

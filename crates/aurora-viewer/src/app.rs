@@ -2044,18 +2044,20 @@ impl App {
             Action::ResetCamera => self.reset_camera_view(),
             Action::Chat => self.chat_ui.focus_request = true,
             Action::ToggleMic => self.mic_on = !self.mic_on,
-            Action::Conversations => self.panels.chat = !self.panels.chat,
+            // the shortcuts of the windows, like their toolbar buttons: a
+            // minimized window expands (LLFloaterReg::toggleInstance)
+            Action::Conversations => ui::widgets::toggle_floater(&self.egui_ctx, "conversations", &mut self.panels.chat),
             Action::People => {
-                self.panels.people = !self.panels.people;
+                ui::widgets::toggle_floater(&self.egui_ctx, "people", &mut self.panels.people);
                 self.panels.people_tab = 0;
             }
-            Action::Inventory => self.panels.inventory = !self.panels.inventory,
+            Action::Inventory => ui::widgets::toggle_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
-            Action::WorldMap => self.panels.world_map = !self.panels.world_map,
+            Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
             Action::TeleportHistory => self.toggle_teleport_history(),
-            Action::Search => self.panels.search = !self.panels.search,
-            Action::Performance => self.panels.perf = !self.panels.perf,
-            Action::Preferences => self.panels.settings = !self.panels.settings,
+            Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
+            Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
+            Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
             Action::Import => self.imports.open_file_picker(crate::imports::Choice::Bulk),
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
@@ -4861,6 +4863,7 @@ impl App {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
+            raw.events.extend(ui::widgets::demo::minimized_events(&ctx, self.frame_count));
             raw.events.extend(ui::color_picker::demo::events(
                 &self.egui_ctx,
                 &self.build.ui.color_picker,
@@ -8612,9 +8615,9 @@ impl ApplicationHandler for App {
                 }
                 if mode.starts_with("drag") || mode.starts_with("scale") || mode == "edit-scroll" {
                     let code = match mode.as_str() {
-                        "drag-ctrl" | "scale-ctrl" => KeyCode::ControlLeft,
+                        "drag-secondary" | "scale-secondary" => KeyCode::AltLeft,
                         "drag-key" | "scale-key" => KeyCode::KeyB,
-                        _ => KeyCode::AltLeft,
+                        _ => KeyCode::ControlLeft,
                     };
                     self.settings.keybinds.set(
                         Action::HudDrag,
