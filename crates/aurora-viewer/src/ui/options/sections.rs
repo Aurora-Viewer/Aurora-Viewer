@@ -71,7 +71,10 @@ sections! {
         log_show_history, log_dated_names, autoresponse, mute_all_groups, mute_groups_without_notices,
         report_blocks,
     ],
-    4 => [mouse_sensitivity, invert_mouse, arrows_strafe, lookat.head_yaw, lookat.head_pitch, lookat.static_eyes],
+    4 => [
+        mouse_sensitivity, invert_mouse, arrows_strafe, double_click, lookat.head_yaw, lookat.head_pitch,
+        lookat.static_eyes,
+    ],
     5 => [colors],
     6 => [bandwidth_kbps, cache_size_mb],
     TAB_AUDIO => [audio, media],
