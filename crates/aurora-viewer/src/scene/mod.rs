@@ -3877,7 +3877,7 @@ impl Scene {
     }
 
     /// Where a look-at target is (LLHUDEffectLookAt::calcTargetPosition).
-    fn look_target_pos(&self, world: &World, source: Uuid, t: &crate::world::lookat::Target, now: Instant) -> Option<Vec3> {
+    pub fn look_target_pos(&self, world: &World, source: Uuid, t: &crate::world::lookat::Target, now: Instant) -> Option<Vec3> {
         use crate::world::lookat::{FREELOOK, MOUSELOOK};
         let off = t.offset.as_vec3();
         match t.object {

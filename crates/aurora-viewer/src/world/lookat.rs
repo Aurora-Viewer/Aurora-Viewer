@@ -48,6 +48,144 @@ pub fn clamped(kind: u8) -> bool {
     !matches!(kind, NONE | IDLE | RESPOND | CONVERSATION | FREELOOK | AUTO_LISTEN)
 }
 
+/// Look-at preferences, those of Firestorm with its defaults: Privacy ›
+/// LookAt (panel_preferences_privacy.xml) and Firestorm › Avatar
+/// (panel_preferences_firestorm.xml).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    /// DebugLookAt: crosshairs where the avatars look.
+    pub show_targets: bool,
+    /// DebugLookAtShowNames: name over each crosshair (0 none, 1 complete
+    /// name, 2 display name, 3 legacy name, 4 username).
+    pub show_names: u8,
+    /// DebugLookAtHideOwn: not our own crosshair.
+    pub hide_own: bool,
+    /// ExodusLookAtLines: a line from the crosshair to its avatar.
+    pub lines: bool,
+    /// PrivateLookAtTarget: the others get a dull target instead of ours.
+    pub private: bool,
+    /// PrivateLocalLookAtTarget: no target at all, our head stays straight.
+    pub private_local: bool,
+    /// FSLookAtTargetLimitDistance / FSLookAtTargetMaxDistance (m): a
+    /// farther target is brought back to this distance from our head.
+    pub limit_distance: bool,
+    pub max_distance: f32,
+    /// YawFromMousePosition / PitchFromMousePosition: how far (degrees,
+    /// across the whole window) the head follows the cursor.
+    pub head_yaw: f32,
+    pub head_pitch: f32,
+    /// FSStaticEyes: an animation that stops the random eye movements.
+    pub static_eyes: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            show_targets: false,
+            show_names: 1,
+            hide_own: true,
+            lines: false,
+            private: false,
+            private_local: false,
+            limit_distance: false,
+            max_distance: 1.0,
+            head_yaw: 90.0,
+            head_pitch: 90.0,
+            static_eyes: false,
+        }
+    }
+}
+
+/// FSLookAtTargetMaxDistance slider (m).
+pub const MAX_DISTANCE: std::ops::RangeInclusive<f32> = 1.0..=32.0;
+/// Yaw / PitchFromMousePosition sliders (degrees).
+pub const HEAD_RANGE: std::ops::RangeInclusive<f32> = 0.0..=120.0;
+/// FSStaticEyesUUID: the priority 2 animation that holds the eyes still.
+pub const STATIC_EYES: Uuid = uuid::uuid!("592a9fb4-5e02-77bb-e1e5-da4d17d27336");
+
+impl Settings {
+    pub fn sanitized(mut self) -> Settings {
+        let clamp = |v: f32, r: &std::ops::RangeInclusive<f32>, d: f32| if v.is_finite() { v.clamp(*r.start(), *r.end()) } else { d };
+        self.max_distance = clamp(self.max_distance, &MAX_DISTANCE, 1.0);
+        self.head_yaw = clamp(self.head_yaw, &HEAD_RANGE, 90.0);
+        self.head_pitch = clamp(self.head_pitch, &HEAD_RANGE, 90.0);
+        self.show_names = self.show_names.min(4);
+        self
+    }
+
+    /// The former single "Look-at tracking" switch and its range: off meant
+    /// nothing shown nor sent, a range under `former_unlimited` a limit.
+    pub fn from_former(on: Option<bool>, range: Option<f32>, former_unlimited: f32) -> Settings {
+        let mut s = Settings::default();
+        if let Some(on) = on {
+            s.private = !on;
+            s.private_local = !on;
+        }
+        if let Some(r) = range.filter(|r| r.is_finite()) {
+            s.limit_distance = r < former_unlimited;
+            if s.limit_distance {
+                s.max_distance = r.clamp(*MAX_DISTANCE.start(), *MAX_DISTANCE.end());
+            }
+        }
+        s
+    }
+}
+
+/// What the others get of our target (LLHUDEffectLookAt::packData): nothing
+/// when both privacy settings are on; with PrivateLookAtTarget alone, a
+/// dull target 2.5 m ahead of us ("auto listen"), unless ours already is an
+/// auto-listen one, which goes out as it is.
+pub fn outgoing(target: Target, me: Uuid, private: bool, private_local: bool) -> Option<Target> {
+    if private && private_local {
+        None
+    } else if private && target.kind != AUTO_LISTEN {
+        Some(Target {
+            kind: AUTO_LISTEN,
+            object: Some(me),
+            offset: DVec3::new(2.5, 0.0, 0.0),
+        })
+    } else {
+        Some(target)
+    }
+}
+
+/// A global target brought back within `range` of the head
+/// (LLHUDEffectLookAt::setLookAt, FIRE-23524).
+pub fn within(head: DVec3, target: DVec3, range: f64) -> DVec3 {
+    let d = target - head;
+    let len = d.length();
+    if len > range && len > 0.0 {
+        head + d * (range / len)
+    } else {
+        target
+    }
+}
+
+/// Color of a crosshair by its type (BOY_ATTS / GIRL_ATTS, the same for
+/// both), in 0..1.
+pub fn color(kind: u8) -> [f32; 3] {
+    const COLORS: [[f32; 3]; NUM as usize] = [
+        [0.3, 0.3, 0.3],
+        [0.5, 0.5, 0.5],
+        [0.5, 0.5, 0.5],
+        [0.5, 0.5, 0.9],
+        [0.0, 0.0, 0.0],
+        [0.5, 0.9, 0.5],
+        [0.1, 0.1, 0.5],
+        [0.9, 0.5, 0.5],
+        [0.9, 0.5, 0.9],
+        [0.9, 0.9, 0.5],
+        [1.0, 1.0, 1.0],
+    ];
+    COLORS[kind.min(NUM - 1) as usize]
+}
+
+/// Types whose crosshair gets a line to its avatar (ExodusLookAtLines).
+pub fn has_line(kind: u8) -> bool {
+    !matches!(kind, NONE | IDLE | AUTO_LISTEN)
+}
+
 /// A look-at target: an object and an offset in its frame (MOUSELOOK /
 /// FREELOOK: a world-space direction), or a global position when the object
 /// is none.
@@ -198,5 +336,61 @@ mod tests {
         assert_eq!(o.target.kind, FREELOOK);
         o.update(t0 + Duration::from_secs_f32(2.5));
         assert_eq!(o.target.kind, NONE);
+    }
+
+    #[test]
+    fn what_the_others_get_follows_the_privacy_settings() {
+        let me = Uuid::from_u128(1);
+        let focus = Target {
+            kind: FOCUS,
+            object: None,
+            offset: DVec3::new(130.0, 120.0, 25.0),
+        };
+        assert_eq!(outgoing(focus, me, false, false), Some(focus));
+        // the local switch alone: the target is already "none", sent as it is
+        assert_eq!(outgoing(Target::NONE, me, false, true), Some(Target::NONE));
+        let dull = Target {
+            kind: AUTO_LISTEN,
+            object: Some(me),
+            offset: DVec3::new(2.5, 0.0, 0.0),
+        };
+        assert_eq!(outgoing(focus, me, true, false), Some(dull));
+        // an auto-listen target is not replaced (packData)
+        let listen = Target {
+            kind: AUTO_LISTEN,
+            object: Some(Uuid::from_u128(2)),
+            offset: DVec3::ZERO,
+        };
+        assert_eq!(outgoing(listen, me, true, false), Some(listen));
+        assert_eq!(outgoing(focus, me, true, true), None);
+    }
+
+    #[test]
+    fn far_targets_are_brought_back_to_the_range() {
+        let head = DVec3::new(10.0, 10.0, 21.0);
+        let far = DVec3::new(20.0, 10.0, 21.0);
+        assert!((within(head, far, 2.0) - DVec3::new(12.0, 10.0, 21.0)).length() < 1e-9);
+        let near = DVec3::new(10.5, 10.0, 21.0);
+        assert_eq!(within(head, near, 2.0), near);
+        assert_eq!(within(head, head, 2.0), head);
+    }
+
+    #[test]
+    fn the_former_switch_keeps_what_the_user_had() {
+        let off = Settings::from_former(Some(false), Some(10.0), 64.0);
+        assert!(off.private && off.private_local);
+        assert!(off.limit_distance && off.max_distance == 10.0);
+        let on = Settings::from_former(Some(true), Some(64.0), 64.0);
+        assert!(!on.private && !on.private_local && !on.limit_distance);
+        assert_eq!(Settings::from_former(Some(true), Some(50.0), 64.0).max_distance, 32.0);
+        assert_eq!(Settings::from_former(None, None, 64.0), Settings::default());
+    }
+
+    #[test]
+    fn firestorm_defaults() {
+        let s = Settings::default();
+        assert!(!s.show_targets && s.show_names == 1 && s.hide_own && !s.lines);
+        assert!(!s.private && !s.private_local && !s.limit_distance);
+        assert_eq!((s.max_distance, s.head_yaw, s.head_pitch, s.static_eyes), (1.0, 90.0, 90.0, false));
     }
 }

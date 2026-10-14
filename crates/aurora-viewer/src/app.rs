@@ -220,11 +220,19 @@ pub struct App {
     turn_since: Option<Instant>,
     /// Since when each camera key is held (CameraKeys rate ramp).
     cam_key_since: [Option<Instant>; 10],
-    /// Look-at: setting last frame, camera focus, cursor and body heading
+    /// Look-at: the privacy settings (PrivateLookAtTarget,
+    /// PrivateLocalLookAtTarget) our last ViewerEffect followed (none before
+    /// the first frame), camera focus, cursor and body heading
     /// (LLAgentCamera::updateLookAt).
-    look_at_was_on: bool,
+    look_at_privacy: Option<(bool, bool)>,
+    /// What the simulator was told of the static eyes animation this
+    /// session (FSStaticEyes); none before the arrival.
+    static_eyes_sent: Option<bool>,
     /// Offline demo: eye tracking on without touching the saved settings.
     demo_look_at: bool,
+    /// AURORA_DEMO_LOOKAT=targets: the crosshairs shown, every avatar
+    /// looking somewhere.
+    demo_look_at_targets: bool,
     look_focus: Option<Vec3>,
     look_cursor: (f32, f32),
     look_root_at: Vec3,
@@ -597,8 +605,10 @@ impl App {
             fb_since: None,
             turn_since: None,
             cam_key_since: [None; 10],
-            look_at_was_on: false,
+            look_at_privacy: None,
+            static_eyes_sent: None,
             demo_look_at: false,
+            demo_look_at_targets: false,
             look_focus: None,
             look_cursor: (0.0, 0.0),
             look_root_at: Vec3::X,
@@ -1292,6 +1302,7 @@ impl App {
         self.login_form.error = error;
         self.login_progress = None;
         self.move_complete_at = None;
+        self.static_eyes_sent = None;
         self.set_mouselook_grab(false);
         self.camera = Camera::default();
     }
@@ -2334,21 +2345,36 @@ impl App {
     /// Right click in the world: menu for what is under the cursor.
     /// Keep the audio engine in step with the settings and the parcel music
     /// (LLViewerParcelMedia / LLViewerAudio: autoplay on entering a parcel).
-    /// Our look-at target (LLAgentCamera::setLookAt): off = nothing shown
-    /// nor sent (PrivateLocalLookAtTarget + PrivateLookAtTarget); with a
-    /// range, a target away from us is brought back within it
-    /// (FSLookAtTargetLimitDistance).
+    /// The look-at preferences, as the demo scenario wants them: everything
+    /// shown and sent.
+    fn look_at_settings(&self) -> crate::world::lookat::Settings {
+        let mut s = self.settings.lookat;
+        if self.demo_look_at {
+            s.private = false;
+            s.private_local = false;
+        }
+        if self.demo_look_at_targets {
+            s.show_targets = true;
+            s.hide_own = false;
+            s.lines = true;
+        }
+        s
+    }
+
+    /// Our look-at target (LLAgentCamera::setLookAt): none at all with
+    /// PrivateLocalLookAtTarget; with a range, a target away from us is
+    /// brought back within it (FSLookAtTargetLimitDistance).
     fn set_look_at(&mut self, kind: u8, object: Option<uuid::Uuid>, offset: glam::DVec3) {
         use crate::world::lookat;
         let now = Instant::now();
         let me = self.world.agent_id;
-        if !(self.settings.look_at || self.demo_look_at) {
+        let prefs = self.look_at_settings();
+        if prefs.private_local {
             self.world.look_at.own.set(lookat::NONE, Some(me), glam::DVec3::ZERO, now);
             return;
         }
         let (mut object, mut offset) = (object, offset);
-        let range = self.settings.look_at_range;
-        if lookat::clamped(kind) && range < crate::settings::LOOK_AT_UNLIMITED && object != Some(me) {
+        if lookat::clamped(kind) && prefs.limit_distance && object != Some(me) {
             let Some((mx, my)) = self.world.main_origin() else {
                 return;
             };
@@ -2370,12 +2396,7 @@ impl App {
                 object = None;
             }
             let head = self.scene.head_world(&self.world, &me, now).unwrap_or(self.world.agent.position);
-            let head = origin + head.as_dvec3();
-            let d = offset - head;
-            let range = range as f64;
-            if d.length() > range {
-                offset = head + d * (range / d.length());
-            }
+            offset = lookat::within(origin + head.as_dvec3(), offset, prefs.max_distance as f64);
         }
         self.world.look_at.own.set(kind, object, offset, now);
     }
@@ -2386,18 +2407,25 @@ impl App {
         use crate::world::lookat;
         let now = Instant::now();
         let me = self.world.agent_id;
-        let on = self.settings.look_at || self.demo_look_at;
-        if self.look_at_was_on && !on {
-            // switched off: the others stop showing our last target
-            self.send(NetCommand::LookAt {
-                effect: self.world.look_at.own.effect,
-                target: uuid::Uuid::nil(),
-                offset: [0.0; 3],
-                kind: lookat::NONE,
-                duration: 0.0,
-            });
+        let prefs = self.look_at_settings();
+        let privacy = (prefs.private, prefs.private_local);
+        if self.look_at_privacy.is_some_and(|was| was != privacy) {
+            if prefs.private && prefs.private_local {
+                // nothing is sent any more: the others stop showing our
+                // last target
+                self.send(NetCommand::LookAt {
+                    effect: self.world.look_at.own.effect,
+                    target: uuid::Uuid::nil(),
+                    offset: [0.0; 3],
+                    kind: lookat::NONE,
+                    duration: 0.0,
+                });
+            } else {
+                // what the others get changed: tell them now
+                self.world.look_at.own.needs_send = true;
+            }
         }
-        self.look_at_was_on = on;
+        self.look_at_privacy = Some(privacy);
         // the camera aims at a point (Ctrl+Alt+click, zoom): FOCUS, then CLEAR
         if self.camera.focus_point() != self.look_focus {
             self.look_focus = self.camera.focus_point();
@@ -2439,30 +2467,114 @@ impl App {
         } else if self.camera.mouselook() {
             (lookat::MOUSELOOK, self.camera.forward())
         } else {
-            // YawFromMousePosition / PitchFromMousePosition = 90°
+            // YawFromMousePosition / PitchFromMousePosition: degrees
+            // across the whole window
             let fwd = self.camera.forward();
             let xc = cx / width.max(1.0) - 0.5;
             let yc = 0.5 - cy / height.max(1.0);
             let left = Vec3::Z.cross(fwd).normalize_or(Vec3::Y);
-            let dir = glam::Quat::from_axis_angle(Vec3::Z, -xc * std::f32::consts::FRAC_PI_2)
-                * glam::Quat::from_axis_angle(left, -yc * std::f32::consts::FRAC_PI_2)
+            let dir = glam::Quat::from_axis_angle(Vec3::Z, -xc * prefs.head_yaw.to_radians())
+                * glam::Quat::from_axis_angle(left, -yc * prefs.head_pitch.to_radians())
                 * fwd;
             (lookat::FREELOOK, dir)
         };
         self.set_look_at(kind, Some(me), offset.as_dvec3());
         let own = &mut self.world.look_at.own;
         own.update(now);
-        if on && own.needs_send {
-            let t = own.target;
-            let cmd = NetCommand::LookAt {
-                effect: own.effect,
-                target: t.object.unwrap_or_default(),
-                offset: t.offset.to_array(),
-                kind: t.kind,
-                duration: own.duration,
-            };
+        if own.needs_send {
+            let sent = lookat::outgoing(own.target, me, prefs.private, prefs.private_local);
             own.sent(now);
-            self.send(cmd);
+            if let Some(t) = sent {
+                let cmd = NetCommand::LookAt {
+                    effect: own.effect,
+                    target: t.object.unwrap_or_default(),
+                    offset: t.offset.to_array(),
+                    kind: t.kind,
+                    duration: own.duration,
+                };
+                self.send(cmd);
+            }
+        }
+    }
+
+    /// AURORA_DEMO_LOOKAT=targets: every other avatar sends a look-at, of a
+    /// type and toward a target that change from one round to the next: a
+    /// point, another avatar, the cursor, mouselook.
+    fn demo_look_at_everyone(&mut self) {
+        use crate::world::lookat;
+        let Some((mx, my)) = self.world.main_origin() else {
+            return;
+        };
+        let origin = glam::DVec3::new(mx as f64, my as f64, 0.0);
+        let now = Instant::now();
+        let me = self.world.agent_id;
+        let avatars: Vec<(uuid::Uuid, Vec3, glam::Quat)> = self
+            .world
+            .objects
+            .avatars()
+            .filter(|(_, o)| o.full_id != me)
+            .filter_map(|(idx, o)| {
+                let (p, r, _) = crate::scene::Scene::object_transform(&self.world, idx, now, 0)?;
+                Some((o.full_id, p, r))
+            })
+            .collect();
+        let round = (self.frame_count / 120) as usize;
+        let mut events = Vec::new();
+        for (i, (id, p, r)) in avatars.iter().enumerate() {
+            let turn = (i * 7 + round * 3) as f32 * 0.9;
+            let ahead = *r * glam::Quat::from_rotation_z(turn.sin() * 0.8) * Vec3::X;
+            let step = (i + round) % 5;
+            let (kind, target, offset) = match step {
+                // a point in front, on the ground or above it
+                0 | 3 => {
+                    let at = *p + ahead * (2.0 + (i % 4) as f32) + Vec3::Z * (turn.cos() * 0.8);
+                    let kind = if step == 0 { lookat::FOCUS } else { lookat::SELECT };
+                    (kind, uuid::Uuid::nil(), (origin + at.as_dvec3()).to_array())
+                }
+                // the next avatar's eyes
+                1 => {
+                    let (other, _, _) = avatars[(i + 1) % avatars.len()];
+                    (lookat::CONVERSATION, other, [0.0; 3])
+                }
+                // where its cursor points: a direction from its head
+                2 => (lookat::FREELOOK, *id, (ahead * 2.0).as_dvec3().to_array()),
+                _ => (lookat::MOUSELOOK, *id, (ahead * 3.0).as_dvec3().to_array()),
+            };
+            events.push(NetEvent::LookAt {
+                effect: uuid::Uuid::from_u128(0x1000_0000 + i as u128),
+                source: *id,
+                target,
+                offset,
+                kind,
+                duration: lookat::MAX_TIMEOUT,
+            });
+        }
+        for ev in events {
+            if let Some(e) = self.world.apply(ev) {
+                self.on_app_event(e);
+            }
+        }
+    }
+
+    /// FSStaticEyes (update_static_eyes in llstartup.cpp, its setting's
+    /// listener in llviewercontrol.cpp): the animation that holds the eyes
+    /// still is started once arrived, then started or stopped as the setting
+    /// changes.
+    fn sync_static_eyes(&mut self) {
+        if self.move_complete_at.is_none() {
+            return;
+        }
+        let want = self.settings.lookat.static_eyes;
+        match self.static_eyes_sent {
+            Some(sent) if sent == want => {}
+            None if !want => self.static_eyes_sent = Some(false),
+            _ => {
+                self.send(NetCommand::AgentAnimation {
+                    anim: crate::world::lookat::STATIC_EYES,
+                    start: want,
+                });
+                self.static_eyes_sent = Some(want);
+            }
         }
     }
 
@@ -3977,6 +4089,7 @@ impl App {
         }
         self.frame_profile.lap(Lap::Events);
         self.poll_ao();
+        self.sync_static_eyes();
         if self.in_world() && self.last_social_poll.elapsed() > Duration::from_millis(500) {
             self.last_social_poll = Instant::now();
             self.poll_names();
@@ -5611,9 +5724,16 @@ impl App {
             self.demo_buy_currency();
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
-        // the window, moving), Violet Wolf looks at a point north of him
-        if self.demo && std::env::var_os("AURORA_DEMO_LOOKAT").is_some() {
+        // the window, moving), Violet Wolf looks at a point north of him;
+        // =targets: the crosshairs too, every avatar looking somewhere
+        if self.demo
+            && let Some(mode) = std::env::var_os("AURORA_DEMO_LOOKAT")
+        {
             self.demo_look_at = true;
+            self.demo_look_at_targets = mode == "targets";
+            if self.demo_look_at_targets && self.frame_count >= 200 && self.frame_count.is_multiple_of(120) {
+                self.demo_look_at_everyone();
+            }
             if let Some(g) = self.gfx.as_ref() {
                 let (w, h) = g.renderer.size();
                 self.cursor_pos = (w as f32 * 0.15 + (self.frame_count % 2) as f32, h as f32 * 0.3);
@@ -6524,6 +6644,15 @@ impl App {
                 } else {
                     self.voice.levels(self.world.agent_id)
                 };
+                // the look-at crosshairs under the name tags
+                ui::lookat_targets::draw(
+                    &ctx,
+                    &self.world,
+                    &self.scene,
+                    projector,
+                    self.camera.position,
+                    &self.look_at_settings(),
+                );
                 let classic_tags = self.classic_name_tags();
                 self.name_tags = ui::hud::draw(
                     &ctx,
