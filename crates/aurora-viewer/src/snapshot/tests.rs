@@ -314,3 +314,94 @@ fn inventory_photos_encode_to_a_texture_of_their_size() {
     assert_eq!((info.width, info.height), texture);
     assert!(inventory::encode(w, h, &rgba[..10], texture).is_err());
 }
+
+#[test]
+fn profile_posts_escape_their_caption_like_lluri() {
+    assert_eq!(profile::escape("Coucher de soleil é&=?"), "Coucher%20de%20soleil%20%C3%A9%26%3D%3F");
+    assert_eq!(profile::escape("a-b_c.d~e"), "a-b_c.d~e");
+    // getProfileURL(""): lowercase, ends with a slash
+    assert_eq!(
+        profile::profile_url("https://My.SecondLife.com").as_deref(),
+        Some("https://my.secondlife.com/")
+    );
+    assert_eq!(profile::profile_url("  "), None);
+    assert_eq!(
+        profile::grid_web_profile(&crate::settings::GridChoice::SecondLife, "").as_deref(),
+        Some("https://my.secondlife.com/")
+    );
+    assert_eq!(profile::grid_web_profile(&crate::settings::GridChoice::Custom, ""), None);
+}
+
+#[test]
+fn profile_photos_take_firestorms_sizes() {
+    use profile::{ProfileSize, capture_size};
+    assert_eq!(capture_size(Aspect::R4x3, ProfileSize::S640, (1600, 900)), (640, 480));
+    assert_eq!(capture_size(Aspect::R4x3, ProfileSize::S1024, (1600, 900)), (1024, 768));
+    assert_eq!(capture_size(Aspect::Window, ProfileSize::S800, (1600, 900)), (800, 450));
+    assert_eq!(capture_size(Aspect::Window, ProfileSize::Window, (1600, 900)), (1600, 900));
+}
+
+#[test]
+fn the_profile_form_keeps_firestorms_fields_and_order() {
+    let data = serde_json::json!({"key": "k", "AWSAccessKeyId": "id", "acl": "public-read", "Content-Type": "image/png",
+        "policy": "p", "signature": "s", "success_action_redirect": "https://x/done"});
+    let body = profile::form(&data, b"PNGDATA");
+    let text = String::from_utf8_lossy(&body);
+    let names: Vec<&str> = text.split("; name=\"").skip(1).filter_map(|s| s.split('"').next()).collect();
+    assert_eq!(names, profile::demo::FIELDS);
+    // buildPostData's boundary
+    let delimiter = format!("--{}", "----------------------------0123abcdefab");
+    assert!(text.starts_with(&format!("{delimiter}\r\n")));
+    assert!(text.contains("filename=\"snapshot.png\"\r\nContent-Type: image/png\r\n\r\nPNGDATA\r\n"));
+    assert!(text.ends_with(&format!("\r\n{delimiter}--\r\n")));
+}
+
+/// The whole post against the demo's web profile: the session cookie for
+/// the OpenID cookie, the configuration with the caption, the form and its
+/// 303, as LLWebProfile::uploadImageCoro.
+#[test]
+fn a_photo_is_posted_to_the_web_profile() {
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+    let server = profile::demo::start(false).expect("demo profile");
+    let web = profile::Web {
+        profile: server.url.clone(),
+        openid: profile::demo::OPENID.into(),
+        user_agent: "test".into(),
+    };
+    let rgba: Vec<u8> = (0..64 * 48).flat_map(|i| [(i % 256) as u8, 40, 90, 255]).collect();
+    let png = profile::encode_png(64, 48, &rgba).expect("PNG");
+    assert!(profile::encode_png(64, 48, &rgba[..8]).is_err());
+    rt.block_on(async {
+        let auth = profile::auth_cookie(&web).await.expect("auth cookie");
+        assert_eq!(auth, "_my_session=demo-auth");
+        profile::post(&web, &auth, png.clone(), "Sunset & sea", true).await.expect("posted");
+        // without the OpenID cookie the profile gives no session
+        let stranger = profile::Web {
+            openid: "other=1".into(),
+            ..web.clone()
+        };
+        assert_eq!(profile::auth_cookie(&stranger).await, Err(profile::Error::NoCookie));
+    });
+    let posts = server.posts.lock();
+    let post = posts.last().expect("a post");
+    assert_eq!(post.caption, "Sunset & sea");
+    assert!(post.add_location && post.finished);
+    assert_eq!(post.fields, profile::demo::FIELDS);
+    assert_eq!(post.png, png);
+    // both cookies, like buildDefaultHeaders + the auth cookie
+    assert!(post.cookies.iter().any(|c| c.contains(profile::demo::OPENID)));
+    assert!(post.cookies.iter().any(|c| c.contains("_my_session=demo-auth")));
+}
+
+#[test]
+fn a_refused_configuration_stops_the_post() {
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+    let server = profile::demo::start(true).expect("demo profile");
+    let web = profile::Web {
+        profile: server.url.clone(),
+        openid: profile::demo::OPENID.into(),
+        user_agent: "test".into(),
+    };
+    let result = rt.block_on(profile::post(&web, "_my_session=demo-auth", vec![1, 2, 3], "", false));
+    assert_eq!(result, Err(profile::Error::Config(500)));
+}

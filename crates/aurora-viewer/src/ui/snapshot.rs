@@ -7,6 +7,7 @@
 
 use super::widgets::{self, ActionKind, Floater};
 use crate::snapshot::inventory::TextureSize;
+use crate::snapshot::profile::ProfileSize;
 use crate::snapshot::{Aspect, FileFormat, Guide, Resolution, Settings};
 use crate::theme::Palette;
 use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
@@ -27,6 +28,8 @@ pub struct SnapshotUi {
     /// Where "Take the photo" sends it (the disk each time the viewer
     /// starts: a photo that costs L$ is never one by surprise).
     pub destination: Destination,
+    /// The caption of a profile post (not kept, like Firestorm's editor).
+    pub caption: String,
 }
 
 /// Where a photo goes (Firestorm's snapshot panels; the profile feed
@@ -36,6 +39,16 @@ pub enum Destination {
     #[default]
     Disk,
     Inventory,
+    Profile,
+}
+
+/// A photo for the profile feed.
+pub struct ProfileView {
+    /// Logged in (or in demo).
+    pub connected: bool,
+    /// The web profile knows who we are (the login's OpenID cookie came).
+    pub ready: bool,
+    pub size: (u32, u32),
 }
 
 /// A photo for the inventory: the texture it becomes and its price.
@@ -65,6 +78,10 @@ pub struct View<'a> {
     pub inventory: Option<InventoryView>,
     /// The message tells of a photo saved to the inventory ("Show").
     pub item_saved: bool,
+    /// The destination is the profile feed.
+    pub profile: Option<ProfileView>,
+    /// The message tells of a post to the profile feed ("View").
+    pub profile_posted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,6 +100,8 @@ pub enum Action {
     Saved,
     /// Show the photo saved to the inventory.
     ShowItem,
+    /// Open our profile (its feed shows the post).
+    ShowProfile,
     /// The upload's price was confirmed (true) or not.
     Confirm(bool),
     /// The "cannot afford" message was closed.
@@ -158,8 +177,24 @@ impl SnapshotUi {
 
         ui.add_space(4.0);
         let busy = view.busy.is_some();
-        ui.horizontal(|ui| match &view.inventory {
-            Some(inv) => {
+        ui.horizontal(|ui| match (&view.inventory, &view.profile) {
+            (_, Some(prof)) => {
+                let ready = !busy && prof.connected && prof.ready;
+                if widgets::action_button_if(
+                    ui,
+                    p,
+                    "send-filled",
+                    aurora_i18n::tr!("photo-profile-post"),
+                    ActionKind::Primary,
+                    Vec2::new(ui.available_width(), 32.0),
+                    ready,
+                )
+                .clicked()
+                {
+                    out.push(Action::Take);
+                }
+            }
+            (Some(inv), None) => {
                 let ready = !busy && inv.connected && inv.cost.is_some();
                 if widgets::action_button_if(
                     ui,
@@ -175,7 +210,7 @@ impl SnapshotUi {
                     out.push(Action::Take);
                 }
             }
-            None => {
+            (None, None) => {
                 let take_w = ui.available_width() - 34.0;
                 ui.add_enabled_ui(!busy, |ui| {
                     if widgets::action_button(
@@ -202,19 +237,27 @@ impl SnapshotUi {
         if let Some((fraction, what)) = &view.busy {
             widgets::progress(ui, p, "photo_progress", *fraction, ui.available_width(), what, None);
         } else if let Some((text, error)) = view.message {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(text).size(12.0).color(if *error { p.danger } else { p.success }));
-                if *error {
-                    // nothing to open
-                } else if view.item_saved {
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-show-in-inventory")).clicked() {
-                        out.push(Action::ShowItem);
-                    }
-                } else if let Some(path) = view.last_saved
-                    && widgets::flat_button(ui, p, aurora_i18n::tr!("photo-open")).clicked()
+            // the button on the right, the text cut before it (a long file
+            // name never widens the window)
+            let line = Vec2::new(ui.available_width(), 26.0);
+            ui.allocate_ui_with_layout(line, egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let button = match () {
+                    _ if *error => None,
+                    _ if view.item_saved => Some((aurora_i18n::tr!("photo-show-in-inventory"), Action::ShowItem)),
+                    _ if view.profile_posted => Some((aurora_i18n::tr!("photo-profile-show"), Action::ShowProfile)),
+                    _ => view
+                        .last_saved
+                        .map(|path| (aurora_i18n::tr!("photo-open"), Action::OpenPhoto(path.to_path_buf()))),
+                };
+                if let Some((label, action)) = button
+                    && widgets::flat_button(ui, p, label).clicked()
                 {
-                    out.push(Action::OpenPhoto(path.to_path_buf()));
+                    out.push(action);
                 }
+                let color = if *error { p.danger } else { p.success };
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(egui::Label::new(RichText::new(text).size(12.0).color(color)).truncate());
+                });
             });
         }
         gallery(ui, p, view, out);
@@ -224,6 +267,7 @@ impl SnapshotUi {
                 || s.resolution != before.resolution
                 || s.custom != before.custom
                 || s.inventory_size != before.inventory_size
+                || s.profile_size != before.profile_size
                 || s.interface != before.interface
                 || s.huds != before.huds;
             out.push(if photo_changed { Action::Changed } else { Action::Saved });
@@ -254,15 +298,17 @@ impl SnapshotUi {
         });
 
         section(ui, p, "dimensions", aurora_i18n::tr!("photo-section-resolution"));
-        match &view.inventory {
-            Some(inv) => texture_sizes(ui, p, s, inv),
-            None => resolutions(ui, p, s, view),
+        match (&view.inventory, &view.profile) {
+            (_, Some(prof)) => profile_sizes(ui, p, s, prof),
+            (Some(inv), None) => texture_sizes(ui, p, s, inv),
+            (None, None) => resolutions(ui, p, s, view),
         }
 
         section(ui, p, "send-filled", aurora_i18n::tr!("photo-section-destination"));
         let mut dest = match self.destination {
             Destination::Disk => 0,
             Destination::Inventory => 1,
+            Destination::Profile => 2,
         };
         if widgets::segmented(
             ui,
@@ -271,15 +317,36 @@ impl SnapshotUi {
             &[
                 (aurora_i18n::tr!("photo-destination-disk"), true),
                 (aurora_i18n::tr!("photo-destination-inventory"), true),
-                (aurora_i18n::tr!("photo-destination-profile"), false),
+                (aurora_i18n::tr!("photo-destination-profile"), true),
             ],
         ) {
-            self.destination = if dest == 1 { Destination::Inventory } else { Destination::Disk };
+            self.destination = match dest {
+                1 => Destination::Inventory,
+                2 => Destination::Profile,
+                _ => Destination::Disk,
+            };
             out.push(Action::Changed);
         }
-        ui.label(RichText::new(aurora_i18n::tr!("photo-destination-soon")).size(11.5).color(p.muted));
-        match &view.inventory {
-            Some(inv) => {
+        match (&view.inventory, &view.profile) {
+            (_, Some(prof)) => {
+                if !prof.connected {
+                    ui.label(RichText::new(aurora_i18n::tr!("photo-profile-offline")).color(p.muted));
+                } else if !prof.ready {
+                    ui.label(RichText::new(aurora_i18n::tr!("photo-profile-not-ready")).color(p.muted));
+                }
+                ui.label(RichText::new(aurora_i18n::tr!("photo-profile-caption")).color(p.ink));
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.caption)
+                        .hint_text(aurora_i18n::tr!("photo-profile-caption-hint"))
+                        .char_limit(crate::snapshot::profile::MAX_CAPTION)
+                        .desired_rows(2)
+                        .desired_width(f32::INFINITY),
+                );
+                row(ui, p, aurora_i18n::tr!("photo-profile-location"), None, |ui| {
+                    widgets::switch(ui, p, &mut s.profile_location);
+                });
+            }
+            (Some(inv), None) => {
                 let cost = match (inv.connected, inv.cost) {
                     (false, _) => aurora_i18n::tr!("photo-inventory-offline").to_string(),
                     (true, Some(cost)) => aurora_i18n::tr!("photo-upload-cost", cost = cost).to_string(),
@@ -287,7 +354,7 @@ impl SnapshotUi {
                 };
                 ui.label(RichText::new(cost).color(p.ink));
             }
-            None => {
+            (None, None) => {
                 row(ui, p, aurora_i18n::tr!("photo-file-format"), None, |ui| {
                     let mut i = FileFormat::ALL.iter().position(|f| *f == s.format).unwrap_or(0);
                     let options: Vec<(&str, bool)> = FileFormat::ALL.iter().map(|f| (f.label(), true)).collect();
@@ -584,6 +651,25 @@ fn resolutions(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, view: &View) {
     });
 }
 
+/// The profile feed's sizes (panel_snapshot_profile.xml's combo); the post
+/// is a PNG.
+fn profile_sizes(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, prof: &ProfileView) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+        for size in ProfileSize::ALL {
+            let label = match size.side() {
+                Some(side) => side.to_string(),
+                None => aurora_i18n::tr!("photo-resolution-window").to_string(),
+            };
+            if chip(ui, p, &label, None, s.profile_size == size, true).clicked() {
+                s.profile_size = size;
+            }
+        }
+    });
+    let (w, h) = prof.size;
+    ui.label(RichText::new(aurora_i18n::tr!("photo-size", width = w, height = h)).color(p.ink));
+}
+
 /// The inventory's sizes (panel_snapshot_inventory.xml's combo) and the
 /// texture the photo becomes.
 fn texture_sizes(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, inv: &InventoryView) {
@@ -706,9 +792,10 @@ fn preview(ui: &mut egui::Ui, p: &Palette, s: &Settings, view: &View) -> bool {
     }
     guide_lines(ui.painter(), rect, s.guide, p.ink.gamma_multiply(0.55));
     // the size badge
-    let badge = match &view.inventory {
-        Some(inv) => aurora_i18n::tr!("photo-texture-size", width = inv.texture.0, height = inv.texture.1).to_string(),
-        None => format!("{} × {} · {}", view.photo.0, view.photo.1, s.format.label()),
+    let badge = match (&view.inventory, &view.profile) {
+        (_, Some(prof)) => format!("{} × {} · PNG", prof.size.0, prof.size.1),
+        (Some(inv), None) => aurora_i18n::tr!("photo-texture-size", width = inv.texture.0, height = inv.texture.1).to_string(),
+        (None, None) => format!("{} × {} · {}", view.photo.0, view.photo.1, s.format.label()),
     };
     let galley = ui.painter().layout_no_wrap(badge, egui::FontId::proportional(11.0), p.ink);
     let badge_rect = Rect::from_min_size(
