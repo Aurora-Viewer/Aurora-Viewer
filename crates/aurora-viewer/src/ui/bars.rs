@@ -865,9 +865,20 @@ fn small(text: impl Into<String>, color: Color32) -> RichText {
     RichText::new(text).size(12.0).color(color)
 }
 
+/// The bell of the navigation bar: its count, its style (Preferences ›
+/// Aurora › Notifications) and do not disturb (Aurora's paused bell).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BellState {
+    pub unread: usize,
+    pub aurora: bool,
+    pub dnd: bool,
+}
+
 /// Top chrome: a single navigation bar (Aurora menu, notifications,
 /// teleport history, location) with the status on its right (balance,
-/// time, ping, media and volumes, frame rate).
+/// time, ping, media and volumes, frame rate). Aurora's notification center
+/// puts its bell at the right end (`bell.aurora`), Firestorm's next to the
+/// wolf.
 #[allow(clippy::too_many_arguments)]
 pub fn top_bars(
     ui: &mut egui::Ui,
@@ -880,7 +891,7 @@ pub fn top_bars(
     audio_ui: &mut super::audio::AudioUi,
     media: super::audio::MediaState,
     notif: &mut super::notifications::NotifUi,
-    unread: usize,
+    bell: BellState,
 ) -> (BarAction, super::audio::AudioAction) {
     let mut action = BarAction::None;
     let mut audio_action = super::audio::AudioAction::None;
@@ -904,11 +915,14 @@ pub fn top_bars(
                     })
                     .on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
                 }
-                // notification center (bell) next to the wolf
-                let (clicked, bell) = super::notifications::bell(ui, p, icons, unread, notif.open);
-                notif.anchor = Some(bell.left_bottom());
-                if clicked {
-                    notif.open = !notif.open;
+                // Firestorm's notification well: the bell next to the wolf
+                if !bell.aurora {
+                    let (clicked, rect) = super::notifications::bell(ui, p, icons, bell.unread, notif.open);
+                    notif.anchor = Some(rect.left_bottom());
+                    notif.bell = Some(rect);
+                    if clicked {
+                        notif.open = !notif.open;
+                    }
                 }
                 // online status (away, do not disturb, automatic responses)
                 if st.show_bug_report && icon_button(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), TOP_ICON) {
@@ -932,6 +946,19 @@ pub fn top_bars(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
                     ui.add_space(2.0);
+                    // Aurora's center: the bell at the right end, after the
+                    // frame rate, its cards unroll under it
+                    if bell.aurora {
+                        // room for the count at the window's edge
+                        ui.add_space(4.0);
+                        let (clicked, rect) =
+                            super::notification_center::bell(ui, p, icons, &notif.center, bell.unread, notif.open, bell.dnd);
+                        notif.anchor = Some(rect.left_bottom());
+                        notif.bell = Some(rect);
+                        if clicked {
+                            notif.open = !notif.open;
+                        }
+                    }
                     let fps_col = if st.fps >= 50.0 {
                         p.teal
                     } else if st.fps >= 25.0 {

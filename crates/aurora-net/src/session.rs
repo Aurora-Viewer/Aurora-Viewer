@@ -1520,6 +1520,24 @@ impl Session<'_> {
                 m.request_data.region_handle = handle;
                 self.send_main(&m, true);
             }
+            NetCommand::TrackAgent(prey) => {
+                let mut m = TrackAgent::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.target_data.prey_id = prey;
+                self.send_main(&m, true);
+            }
+            NetCommand::FindAgent(prey) => {
+                let mut m = FindAgent::default();
+                m.agent_block.hunter = self.agent_id();
+                m.agent_block.prey = prey;
+                // SpaceIP is filled in by the simulator
+                m.location_block.push(find_agent::LocationBlock {
+                    global_x: 0.0,
+                    global_y: 0.0,
+                });
+                self.send_main(&m, true);
+            }
             NetCommand::TeleportLandmark(asset) => {
                 let mut m = TeleportLandmarkRequest::default();
                 m.info.agent_id = self.agent_id();
@@ -3506,6 +3524,19 @@ impl Session<'_> {
                     items,
                 },
             );
+        } else if id == FindAgent::ID {
+            // LLAvatarTracker::processAgentFound: the answer reuses the request
+            let m: FindAgent = pkt.decode()?;
+            if let Some(l) = m.location_block.first() {
+                emit(
+                    self.sh,
+                    NetEvent::AgentFound {
+                        prey: m.agent_block.prey,
+                        x: l.global_x,
+                        y: l.global_y,
+                    },
+                );
+            }
         } else if id == UUIDNameReply::ID {
             let m: UUIDNameReply = pkt.decode()?;
             let names = m

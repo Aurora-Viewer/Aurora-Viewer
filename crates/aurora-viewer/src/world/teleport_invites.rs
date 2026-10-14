@@ -354,6 +354,14 @@ impl World {
         }
         v.answer = if accept { Answer::Accepted } else { Answer::Declined };
         let (from, kind, notification, rating) = (v.from, v.kind.clone(), v.notification, v.rating);
+        self.notifications.note(
+            notification,
+            if accept {
+                super::notification_history::Outcome::Answered
+            } else {
+                super::notification_history::Outcome::Declined
+            },
+        );
         self.notifications.list.retain(|n| n.id != notification);
         match (kind, accept) {
             (InviteKind::Offer { lure, godlike, .. }, true) => {

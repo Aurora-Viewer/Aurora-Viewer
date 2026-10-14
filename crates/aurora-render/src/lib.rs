@@ -7,6 +7,7 @@
 
 pub mod arena;
 pub mod bc7;
+mod dof;
 mod drawn_pick;
 pub mod gpu_cull;
 mod helpers;

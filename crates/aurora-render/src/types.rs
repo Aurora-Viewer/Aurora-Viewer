@@ -824,6 +824,26 @@ pub struct FrameParams {
     pub probe_walk_list: bool,
     /// Debug views and checks asked from the interface.
     pub debug: DebugRender,
+    /// Depth of field (RenderDepthOfField); None: off, at no cost.
+    pub dof: Option<DepthOfField>,
+}
+
+/// The lens of the depth of field, worked out by the viewer for the frame
+/// (LLPipeline::renderDoF's uniforms of cofF.glsl).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DepthOfField {
+    /// Circle of confusion in pixels of the image for (s - z) / z, s the
+    /// focus distance and z a point's distance along the view axis.
+    pub coc_scale: f32,
+    /// Focus distance along the view axis (m).
+    pub focus: f32,
+    /// Largest circle (pixels of the image; CameraMaxCoF at the window's
+    /// height).
+    pub max_coc: f32,
+    /// Samples of the blur's gather.
+    pub samples: u32,
+    /// Debug: near field red, far field blue, sharp grey.
+    pub debug: bool,
 }
 
 /// Views shown instead of the image, and checks painted over it

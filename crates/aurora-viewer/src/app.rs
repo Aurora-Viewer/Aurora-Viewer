@@ -32,6 +32,7 @@ mod click_pick;
 mod color_picker;
 mod context_menu;
 mod cursor_hold;
+mod dof;
 mod double_click;
 mod gestures;
 mod hover_height;
@@ -337,6 +338,8 @@ pub struct App {
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// The depth of field's focus distance and its transition.
+    dof_focus: crate::dof::Focus,
     /// Photos: the window, the frames drawn at their size, the saves.
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
@@ -728,6 +731,7 @@ impl App {
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
             hover_height_ui: Default::default(),
+            dof_focus: Default::default(),
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
@@ -1800,6 +1804,13 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.world.notification_history = if self.demo {
+                    Default::default()
+                } else {
+                    crate::world::notification_history::History::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::notification_history::FILE),
+                    )
+                };
                 self.world.hover_height = if self.demo {
                     Default::default()
                 } else {
@@ -2901,6 +2912,50 @@ impl App {
             // RUST_LOG=info,ui_sound=debug (Firestorm UISndDebugSpamToggle)
             log::debug!(target: "ui_sound", "UISnd{} ({id})", s.entry().name);
             self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
+        }
+    }
+
+    /// Aurora's notification center (Preferences › Aurora › Notifications),
+    /// or Firestorm's toasts; AURORA_DEMO_NOTIFS=legacy shows the latter for
+    /// the session without saving it.
+    fn notifications_aurora(&self) -> bool {
+        if self.demo && crate::demo::notifs::mode().is_some_and(|m| m.starts_with("legacy")) {
+            return false;
+        }
+        self.settings.notifications_style == crate::settings::NotificationsStyle::Aurora
+    }
+
+    /// A click in the center besides an answer: the paused bell's banner, an
+    /// entry of the history.
+    fn on_notification_ask(&mut self, ctx: &egui::Context, ask: ui::notification_center::Ask) {
+        use crate::world::notification_history::Follow;
+        match ask {
+            ui::notification_center::Ask::EndDnd => self.world.set_dnd(false),
+            ui::notification_center::Ask::Follow(e) => match e.follow.clone() {
+                Follow::None => {}
+                Follow::Restore => {
+                    self.world.notifications.restore(&e);
+                }
+                Follow::Conversation(session) => {
+                    if !self.world.social.ims.iter().any(|s| s.other == session) {
+                        self.world.social.session_mut(session);
+                    }
+                    self.world.social.focus_im = Some(session);
+                    self.notif_ui.open = false;
+                    ui::notifications::open_conversations(ctx, &mut self.panels.chat);
+                }
+                Follow::Place(link) => {
+                    if let Some(l) = crate::slurl::parse(&link) {
+                        self.notif_ui.open = false;
+                        ui::context::request(ctx, ui::context::CtxAction::ShowPlace(l.region, l.pos));
+                    }
+                }
+                Follow::Inventory(item) => {
+                    self.inventory_ui.show_original(&self.world.inventory, item);
+                    self.panels.inventory = true;
+                    self.notif_ui.open = false;
+                }
+            },
         }
     }
 
@@ -4051,6 +4106,7 @@ impl App {
             wanted.push(self.world.agent_id);
         }
         wanted.extend(self.profile_ui.wanted_pics.drain());
+        wanted.extend(self.worldmap_ui.wanted_pics.drain());
         wanted.extend(self.contacts_ui.wanted_pics.drain());
         wanted.extend(self.plates.wanted_pics.drain());
         wanted.extend(self.search_ui.wanted_pics.drain());
@@ -4107,6 +4163,7 @@ impl App {
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
+        images.extend(self.worldmap_ui.wanted_images.drain());
         for note in self.task_notecards.values_mut() {
             images.extend(note.state.wanted_images.drain());
         }
@@ -4167,7 +4224,7 @@ impl App {
         for asset in self.places_ui.want_landmarks.drain() {
             self.world.landmarks.resolve(asset);
         }
-        for folder in self.places_ui.want_folders.drain() {
+        for folder in self.places_ui.want_folders.drain().chain(self.worldmap_ui.want_folders.drain()) {
             self.world.inventory.request(folder);
         }
         for g in self.place_groups.drain() {
@@ -5235,6 +5292,16 @@ impl App {
             all_lights: self.frame_profile.all_lights(),
             probe_walk_list: self.frame_profile.probe_walk_list(),
             debug: self.settings.debug.render(),
+            dof: {
+                // the image's own vertical field of view (a photo's may be
+                // wider than the window's)
+                let lens_proj = match &photo {
+                    Some(f) => self.camera.photo_proj(f.aspect, window_aspect),
+                    None => self.camera.proj(aspect),
+                };
+                let fov = 2.0 * (1.0 / lens_proj.y_axis.y.max(1e-6)).atan();
+                self.dof_frame(&mut gfx.renderer, dt, fov, lod_height, h)
+            },
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -5786,6 +5853,49 @@ impl App {
             }
             if let Some((avatar, animations)) = crate::demo::deform::reset_at(self.frame_count, mode) {
                 self.on_ctx_action(ui::context::CtxAction::ResetSkeleton { avatar, animations });
+            }
+        }
+        if self.demo
+            && let Some(mode) = crate::demo::notifs::mode()
+        {
+            let agent = self.world.agent_id;
+            if self.frame_count == crate::demo::notifs::DND_AT && mode == "dnd" {
+                self.world.set_dnd(true);
+            }
+            for event in crate::demo::notifs::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+            if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
+                // a few cards answered or closed: they go to the history
+                let ids: Vec<(u64, bool)> = self.world.notifications.listed().map(|n| (n.id, n.interactive())).collect();
+                for (id, interactive) in ids.into_iter().take(4) {
+                    // the teleport offer refused (its place stays), the rest kept or read
+                    let lure = self
+                        .world
+                        .notifications
+                        .list
+                        .iter()
+                        .any(|n| n.id == id && matches!(n.data, crate::world::notifications::Data::Lure { .. }));
+                    let r = if lure {
+                        crate::world::notifications::Response::Decline
+                    } else if interactive {
+                        crate::world::notifications::Response::Accept
+                    } else {
+                        crate::world::notifications::Response::Dismiss
+                    };
+                    let (cmds, _) = self.world.respond_notification(id, r);
+                    for c in cmds.into_iter().filter(|c| !matches!(c, NetCommand::AcceptLure { .. })) {
+                        self.send(c);
+                    }
+                }
+            }
+            if self.frame_count == crate::demo::notifs::LIST_AT && matches!(mode.as_str(), "list" | "history" | "dnd" | "legacy-history") {
+                self.notif_ui.open = true;
+                if mode.ends_with("history") {
+                    self.notif_ui.center.tab = ui::notification_center::Tab::History;
+                }
             }
         }
         if self.demo
@@ -7365,6 +7475,16 @@ impl App {
                         && self.world.parcel.as_ref().is_some_and(|pc| !pc.media_url.trim().is_empty()),
                     media_playing: self.media.parcel_playing(),
                 };
+                let aurora = self.notifications_aurora();
+                let bell = ui::bars::BellState {
+                    unread: if aurora {
+                        ui::notification_center::bell_count(&self.world.notifications, &self.notif_ui.center)
+                    } else {
+                        self.world.notifications.unread()
+                    },
+                    aurora,
+                    dnd: self.world.status.dnd,
+                };
                 let (bar, audio_action) = ui::bars::top_bars(
                     ui,
                     &p,
@@ -7376,7 +7496,7 @@ impl App {
                     &mut self.audio_ui,
                     media,
                     &mut self.notif_ui,
-                    self.world.notifications.unread(),
+                    bell,
                 );
                 a.bar = bar;
                 a.audio = Some(audio_action);
@@ -7864,23 +7984,45 @@ impl App {
                         n.read = true;
                     }
                 }
-                // nothing over the view in mouselook or the photo's full frame
-                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame();
+                // nothing over the view in mouselook or the photo's full frame;
+                // Firestorm's toasts wait in the bell in do not disturb too
+                let aurora = self.notifications_aurora();
+                let dnd = self.world.status.dnd;
+                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || (dnd && !aurora);
+                self.world.notifications.aurora = aurora;
                 let mut toast_env = ui::notifications::ToastEnv {
                     pics: &self.avatar_pics,
                     emoji: &mut self.emoji,
                     hidden: toasts_hidden,
                     message_seconds: f64::from(self.settings.im_toast_seconds),
                 };
-                let answers = ui::notifications::show(
-                    &ctx,
-                    &p,
-                    &self.skin.icons,
-                    &self.world.map.ratings,
-                    &mut self.world.notifications,
-                    &mut self.notif_ui,
-                    &mut toast_env,
-                );
+                let (answers, asks) = if aurora {
+                    ui::notification_center::show(
+                        &ctx,
+                        &p,
+                        &self.skin.icons,
+                        &self.world.map.ratings,
+                        &mut self.world.notifications,
+                        &mut self.world.notification_history,
+                        &mut self.notif_ui,
+                        &mut toast_env,
+                        dnd,
+                    )
+                } else {
+                    ui::notifications::show(
+                        &ctx,
+                        &p,
+                        &self.skin.icons,
+                        &self.world.map.ratings,
+                        &mut self.world.notifications,
+                        &mut self.world.notification_history,
+                        &mut self.notif_ui,
+                        &mut toast_env,
+                    )
+                };
+                for ask in asks {
+                    self.on_notification_ask(&ctx, ask);
+                }
                 for (id, r) in answers {
                     if matches!(r, crate::world::notifications::Response::Open) {
                         let presence = self
@@ -7909,6 +8051,7 @@ impl App {
                         ctx.open_url(egui::OpenUrl::new_tab(u));
                     }
                 }
+                self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
                 let mut open = self.panels.about_land;
                 // the mini-map's image of the selection's region, for the header
@@ -8156,7 +8299,7 @@ impl App {
                     match ma {
                         ui::minimap::MiniMapAction::Teleport { x, y, z } => self.world.map.track_location(x, y, z, true),
                         ui::minimap::MiniMapAction::Track { x, y, z } => self.world.map.track_location(x, y, z, false),
-                        ui::minimap::MiniMapAction::StopTracking => self.world.map.track = None,
+                        ui::minimap::MiniMapAction::StopTracking => self.world.map.clear_track(),
                         ui::minimap::MiniMapAction::OpenWorldMap => self.panels.world_map = true,
                         ui::minimap::MiniMapAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::minimap::MiniMapAction::AboutLand(gx, gy) => {
@@ -8168,6 +8311,10 @@ impl App {
                     }
                 }
                 let mut open = self.panels.world_map;
+                let pictures = ui::worldmap::MapPictures {
+                    images: &self.ui_images,
+                    avatars: &self.avatar_pics,
+                };
                 let wm = self.worldmap_ui.show(
                     &ctx,
                     &p,
@@ -8175,6 +8322,8 @@ impl App {
                     &mut self.map_tiles,
                     &map_cam,
                     &mut self.settings.maps,
+                    self.settings.world_map_style,
+                    &pictures,
                     &mut open,
                 );
                 self.panels.world_map = open;
@@ -8185,6 +8334,7 @@ impl App {
                             self.panels.world_map = false;
                         }
                         ui::worldmap::WorldMapAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                        ui::worldmap::WorldMapAction::OpenPlace(source) => self.show_place_profile(source),
                     }
                 }
                 t = self.ui_parts.lap(Part::UiMaps, t);
@@ -8931,17 +9081,27 @@ impl ApplicationHandler for App {
             }
             // captures: AURORA_DEMO_MAP=1 opens the mini-map and the world map
             // (with a tracked spot east of the plaza)
-            if std::env::var_os("AURORA_DEMO_MAP").is_some() {
+            if let Ok(scenario) = std::env::var("AURORA_DEMO_MAP") {
                 self.panels.minimap = true;
-                self.panels.world_map = std::env::var("AURORA_DEMO_MAP").as_deref() != Ok("mini");
+                self.panels.world_map = scenario != "mini";
                 self.panels.perf = false;
                 self.world.map.track_location(256000.0 + 200.0, 256000.0 + 150.0, 25.0, false);
-                // =search:<text>: the region search with its results
-                if let Some(text) = std::env::var("AURORA_DEMO_MAP")
-                    .ok()
-                    .and_then(|v| v.strip_prefix("search:").map(str::to_owned))
-                {
-                    self.worldmap_ui.demo_search(&mut self.world, &text);
+                // words separated by commas: search:<text> (the search with its
+                // suggestions), drawer:<landmarks|history|friends>, landmarks
+                // (212 of them, the drawer open), friend (Nova followed),
+                // legacy (the side panel layout, the setting untouched)
+                for word in scenario.split(',').map(str::trim) {
+                    if let Some(text) = word.strip_prefix("search:") {
+                        self.worldmap_ui.demo_search(&mut self.world, text);
+                    } else if let Some(tab) = word.strip_prefix("drawer:") {
+                        self.worldmap_ui.demo_drawer(tab);
+                    } else if word == "landmarks" {
+                        self.worldmap_ui.demo_drawer("landmarks");
+                    } else if word == "friend" {
+                        self.world.map.track_avatar(crate::demo::DEMO_FRIEND, "Nova ♪");
+                    } else if word == "legacy" {
+                        self.worldmap_ui.demo_style = Some(crate::settings::WorldMapStyle::Legacy);
+                    }
                 }
             }
             // captures: AURORA_DEMO_SIT keeps the toolbar sit button visible
@@ -8951,6 +9111,12 @@ impl ApplicationHandler for App {
             // captures: AURORA_DEMO_NOTIF=1 opens the notification list
             if std::env::var_os("AURORA_DEMO_NOTIF").is_some() {
                 self.notif_ui.open = true;
+            }
+            // AURORA_DEMO_NOTIFS: nothing else open over the corners
+            if crate::demo::notifs::mode().is_some() {
+                self.panels.perf = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
             }
             // AURORA_DEMO_TOASTS: the toasts arrive with the Conversations
             // window closed, or minimized for `minimized`
