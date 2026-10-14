@@ -36,6 +36,7 @@ pub mod login;
 pub mod lookat_targets;
 pub mod map_tiles;
 pub mod marketplace;
+pub mod marketplace_listings;
 pub mod media;
 pub mod menu;
 pub mod minimap;
