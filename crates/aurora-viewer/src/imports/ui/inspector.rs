@@ -147,7 +147,17 @@ pub(super) fn show(
                     if imports.demo_mode == "mesh-options" {
                         details = details.vertical_scroll_offset(0.0);
                     }
-                    details.show(ui, |ui| {
+                    // the details stay in their column: while the scroll bar
+                    // slides in, rows a frame behind its strip would otherwise
+                    // widen the window a little each frame
+                    let column = ui.max_rect();
+                    let mut column_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(column)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    column_ui.set_clip_rect(column.intersect(ui.clip_rect()));
+                    details.show(&mut column_ui, |ui| {
                         let detail_top = ui.cursor().top();
                         if let Some(entry) = imports.active.and_then(|id| imports.entries.iter_mut().find(|e| e.id == id)) {
                             apply_preview_colors(&mut entry.view, p, prefs);
@@ -382,6 +392,7 @@ pub(super) fn show(
                             });
                         }
                     });
+                    ui.allocate_rect(column_ui.min_rect().intersect(column), egui::Sense::hover());
                 },
             );
         });

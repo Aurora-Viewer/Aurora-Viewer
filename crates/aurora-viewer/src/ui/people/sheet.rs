@@ -93,14 +93,6 @@ pub(super) fn child(ui: &mut egui::Ui, rect: Rect, salt: impl std::hash::Hash + 
     )
 }
 
-/// The child that holds a sheet's scrolling part: its bar in a strip of its
-/// own, never over a switch, a button or a value.
-pub(super) fn scroll_body(ui: &mut egui::Ui, rect: Rect, salt: impl std::hash::Hash + std::fmt::Debug) -> egui::Ui {
-    let mut body = child(ui, rect, salt);
-    widgets::reserved_scroll_bar(&mut body);
-    body
-}
-
 /// The sheet of `id` over the whole of `ui`, with what the radar knows of
 /// them when they are around (in Near you, it says when they left). Returns
 /// true when its cross was clicked.
@@ -128,7 +120,7 @@ pub(super) fn show(
     egui::ScrollArea::vertical()
         .id_salt(("people-sheet-scroll", id))
         .auto_shrink([false, false])
-        .show(&mut scroll_body(ui, rest, ("people-sheet-body", id)), |ui| {
+        .show(&mut child(ui, rest, ("people-sheet-body", id)), |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             buttons(ui, p, world, st, id, friend.as_ref(), actions);
             if let Some(f) = &friend {

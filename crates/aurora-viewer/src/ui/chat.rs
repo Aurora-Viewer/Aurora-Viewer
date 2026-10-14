@@ -1074,7 +1074,9 @@ fn list_entry(
     unread: usize,
     close: Option<&str>,
 ) -> ListEntry {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ENTRY_W, LIST_ENTRY_H), egui::Sense::click());
+    // narrower beside the list's scroll bar, when it shows
+    let width = ENTRY_W.min(ui.available_width());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, LIST_ENTRY_H), egui::Sense::click());
     // the close button stands over the entry and takes its hover: the entry
     // keeps its hovered face while the pointer is on the button
     let over = resp.hovered() || (close.is_some() && ui.rect_contains_pointer(rect));

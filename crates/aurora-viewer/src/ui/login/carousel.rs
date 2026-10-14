@@ -202,7 +202,15 @@ pub fn show(
     egui::Area::new(Id::new("accounts_content"))
         .fixed_pos(egui::pos2(screen.center().x - layout.main_width / 2.0, top))
         .show(&ctx, |ui| {
-            ui.set_width(layout.main_width);
+            // a scroll bar, when the content is taller than the room, takes
+            // a strip right of the main width: the cards stay centred on
+            // the screen and whole
+            let strip = if content_height > available_height {
+                widgets::scroll_strip(ui)
+            } else {
+                0.0
+            };
+            ui.set_width(layout.main_width + strip);
             ui.set_max_height(available_height);
             ui.spacing_mut().item_spacing.y = 4.0;
             let scroll = egui::ScrollArea::vertical()

@@ -814,7 +814,10 @@ fn friend_table(
     let status_w = 20.0;
     let right_w = 18.0;
     let rights_w = if settings.column_permissions { right_w * 5.0 } else { 0.0 };
-    let name_w = ((width - status_w - rights_w - 4.0) / names.len().max(1) as f32).max(40.0);
+    // the rows leave the list's scroll bar its strip; the header's columns
+    // follow them
+    let rows_w = width - widgets::scroll_strip(ui);
+    let name_w = ((rows_w - status_w - rights_w - 4.0) / names.len().max(1) as f32).max(40.0);
     // header
     let (hrect, _) = ui.allocate_exact_size(Vec2::new(width, 20.0), Sense::hover());
     ui.painter().rect_filled(hrect, 0.0, p.field);
@@ -837,7 +840,7 @@ fn friend_table(
         x += name_w;
     }
     if settings.column_permissions {
-        let rx = hrect.right() - rights_w;
+        let rx = hrect.left() + rows_w - rights_w;
         for (i, (icon, tip)) in rights_cols.iter().enumerate() {
             let cell = egui::Rect::from_min_size(egui::pos2(rx + i as f32 * right_w, hrect.top()), Vec2::new(right_w, 20.0));
             if let Some(t) = super::icons::global(icon) {
@@ -869,7 +872,7 @@ fn friend_table(
                 }
                 for r in rows {
                     // dragged onto a conversation, a friend joins it
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click_and_drag());
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(rows_w, ROW_H), Sense::click_and_drag());
                     resp.dnd_set_drag_payload(super::call_invite::PersonDrag(r.id));
                     if !ui.is_rect_visible(rect) {
                         continue;
@@ -1274,6 +1277,8 @@ fn group_list(
         .fill(p.field.gamma_multiply(0.6))
         .show(ui, |ui| {
             ui.set_width(list_w);
+            // the rows leave the scroll bar its strip
+            let rows_w = list_w - widgets::scroll_strip(ui);
             egui::ScrollArea::vertical()
                 .id_salt("group_list")
                 .auto_shrink([false, false])
@@ -1303,17 +1308,17 @@ fn group_list(
                     }
                     // "none" on top when not filtering (LLGroupList::refresh)
                     if filter.is_empty() && !groups.is_empty() {
-                        group_row(ui, p, world, st, pics, None, list_w, actions);
+                        group_row(ui, p, world, st, pics, None, rows_w, actions);
                     }
                     let pinned = shown.iter().filter(|g| world.groups.favorites.contains(&g.id)).count();
                     for (i, g) in shown.iter().enumerate() {
                         if filter.is_empty() && pinned > 0 && i == pinned && pinned < shown.len() {
                             // LLGroupListSeparator after the pinned groups
-                            let (r, _) = ui.allocate_exact_size(Vec2::new(list_w, 7.0), Sense::hover());
+                            let (r, _) = ui.allocate_exact_size(Vec2::new(rows_w, 7.0), Sense::hover());
                             ui.painter()
                                 .hline(r.x_range().shrink(6.0), r.center().y, widgets::divider_stroke(p));
                         }
-                        group_row(ui, p, world, st, pics, Some(g), list_w, actions);
+                        group_row(ui, p, world, st, pics, Some(g), rows_w, actions);
                     }
                 });
         })
@@ -1622,7 +1627,7 @@ fn sets_tab(
                         }
                         let row_h = if settings.set_list_icons { 22.0 } else { ROW_H };
                         for (id, name, on, color) in &rows {
-                            let (rect, resp) = ui.allocate_exact_size(Vec2::new(list_w, row_h), Sense::click());
+                            let (rect, resp) = ui.allocate_exact_size(Vec2::new(list_w - widgets::scroll_strip(ui), row_h), Sense::click());
                             if !ui.is_rect_visible(rect) {
                                 continue;
                             }

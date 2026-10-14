@@ -210,6 +210,8 @@ impl Theme {
         style.spacing.button_padding = egui::vec2(10.0, 5.0);
         style.spacing.interact_size.y = 26.0;
         style.spacing.text_edit_width = 280.0;
+        // never egui's floating bar, drawn over the content's right edge
+        style.spacing.scroll = crate::ui::widgets::reserved_scroll_style();
         // egui makes every label selectable by default; like Firestorm's
         // LLTextBox, UI text (window titles, captions) is not. Text meant to be
         // copied (chat and IM messages, notification bodies, profile texts,

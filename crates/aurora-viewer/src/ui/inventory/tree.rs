@@ -78,11 +78,6 @@ pub fn frame<R>(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::Ui)
 }
 
 pub fn scroll(ui: &mut egui::Ui, height: f32) -> egui::ScrollArea {
-    ui.spacing_mut().scroll = egui::style::ScrollStyle {
-        dormant_background_opacity: 0.2,
-        dormant_handle_opacity: 0.6,
-        ..egui::style::ScrollStyle::solid()
-    };
     egui::ScrollArea::both()
         .auto_shrink([false, false])
         .max_width(ui.available_width())

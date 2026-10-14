@@ -278,7 +278,12 @@ pub(super) fn card(
         p.raised.gamma_multiply(0.55)
     };
     let script = matches!(n.data, Data::Dialog { .. });
-    let width = if aurora { ui.available_width() - 16.0 } else { WIDTH - 18.0 };
+    // narrower in the list beside its scroll bar's strip, when it shows
+    let width = if aurora {
+        ui.available_width() - 16.0
+    } else {
+        (WIDTH - 18.0).min(ui.available_width() - 16.0)
+    };
     // the text and the answers line up after the kind's icon
     let indent = if aurora { 0.0 } else { 22.0 };
     let mut content = |ui: &mut egui::Ui| {

@@ -283,7 +283,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
             // Keep a complete row (both hints, captions and value) reachable
             // at the minimum viewport. Fixed row geometry makes virtualisation
             // accurate even while asynchronous previews replace placeholders.
-            let image_size = ((ui.available_width() - 8.0) * 0.5)
+            let image_size = ((widgets::scrolled_width(ui) - 8.0) * 0.5)
                 .min(128.0)
                 .min((available - 80.0).clamp(64.0, 128.0));
             let row_height = if st.hints { image_size + 80.0 } else { 67.0 };

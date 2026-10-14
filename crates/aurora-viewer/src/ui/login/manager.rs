@@ -159,6 +159,8 @@ fn show_impl(ctx: &Context, p: &Palette, icons: &Icons, settings: &mut Settings,
                 })
                 .max_height(list_height)
                 .show(ui, |ui| {
+                    // beside the scroll bar's strip, when it shows
+                    let width = ui.available_width().min(width);
                     ui.set_width(width);
                     list_painter = Some(ui.painter().clone());
                     if accounts.is_empty() {

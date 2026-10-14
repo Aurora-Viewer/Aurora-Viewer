@@ -91,11 +91,11 @@ fn not_available(v: &View, world: &World) -> Option<&'static str> {
 }
 
 /// Columns of a list: (title, width, right aligned); a zero width shares
-/// the room left.
+/// the room left, beside the strip of the scroll bar of the rows below.
 fn head(ui: &mut egui::Ui, p: &Palette, cols: &[(&str, f32, bool)]) -> Vec<f32> {
     let flex = cols.iter().filter(|c| c.1 == 0.0).count().max(1) as f32;
     let fixed: f32 = cols.iter().map(|c| c.1).sum();
-    let share = ((ui.available_width() - fixed) / flex).max(60.0);
+    let share = ((widgets::scrolled_width(ui) - fixed) / flex).max(60.0);
     let widths: Vec<f32> = cols.iter().map(|c| if c.1 == 0.0 { share } else { c.1 }).collect();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
