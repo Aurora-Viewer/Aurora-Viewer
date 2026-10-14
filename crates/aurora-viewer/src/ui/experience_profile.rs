@@ -2,7 +2,7 @@
 //! for it, with Firestorm's Allow / Forget / Block buttons
 //! (LLFloaterExperienceProfile, indra/newview/llfloaterexperienceprofile.cpp,
 //! originally LGPL 2.1). The minimal part of it: the name and description,
-//! rating, scope, location and owner, without editing or the abuse report.
+//! rating, scope, location and owner, and "Report Abuse", without editing.
 
 use super::widgets::{ActionKind, Floater, action_button_if};
 use crate::theme::Palette;
@@ -161,6 +161,28 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World) -> Option<(uuid
             .clicked()
             {
                 change = Some(ExperiencePermissionChange::Block);
+            }
+        });
+        // LLFloaterExperienceProfile::onReportExperience: Report Abuse on
+        // the experience (LLFloaterReporter::showFromExperience); on its own
+        // row, the window is too narrow for a fourth button
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if action_button_if(
+                ui,
+                p,
+                "flag-filled",
+                aurora_i18n::tr!("report-abuse-title"),
+                ActionKind::Flat,
+                Vec2::new(0.0, 26.0),
+                true,
+            )
+            .clicked()
+            {
+                crate::ui::context::request(
+                    ui.ctx(),
+                    crate::ui::context::CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Experience(id)),
+                );
             }
         });
     });

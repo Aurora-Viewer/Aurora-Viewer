@@ -346,6 +346,20 @@ pub struct Settings {
     /// instead of the rows grouped by range and the sheet of
     /// `ui/people/nearby.rs`.
     pub classic_people: bool,
+    /// Firestorm's yellow region restart box (floater_region_restarting.xml)
+    /// instead of the alert card of `ui/region_restart.rs`.
+    pub classic_restart_alert: bool,
+    /// The region restart alert (Preferences › Interface › Region restart).
+    pub region_restart: crate::world::region_restart::Settings,
+    /// "Reduce animations": the interface's pulses, shakes and spinners
+    /// stand still (the region restart alert, for now).
+    pub reduce_motion: bool,
+    /// Firestorm's camera and movement windows (floater_camera.xml,
+    /// floater_moveview.xml) instead of `ui/controls.rs`.
+    pub classic_controls: bool,
+    /// Camera positions saved from the Controls window (Firestorm's camera
+    /// presets); kept apart from `camera`, which "Reset" sets back.
+    pub camera_shots: Vec<crate::camera::CameraShot>,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
@@ -363,6 +377,9 @@ pub struct Settings {
     /// About Land as Firestorm's nine tabs (`ui/land`) instead of the
     /// overview and the settings grouped by intent (`ui/land/aurora`).
     pub classic_about_land: bool,
+    /// Region / Estate as Firestorm's eight tabs (not ported yet: the
+    /// Aurora window opens meanwhile) instead of Aurora's (`ui/region`).
+    pub classic_region_estate: bool,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// What a double click on the ground does (Preferences › Controls, the
@@ -454,6 +471,13 @@ pub struct Settings {
     pub bandwidth_kbps: u32,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
+    /// Shared toolbar, like the window layout and graphics preferences.
+    /// None delays migration until the first account enters the world.
+    #[serde(rename = "toolbar_common", default)]
+    pub toolbar: Option<crate::ui::toolbar::ToolbarSettings>,
+    /// Keep the earlier per-account layouts through saves made before login.
+    #[serde(rename = "toolbar", default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub(crate) legacy_toolbars: std::collections::HashMap<uuid::Uuid, crate::ui::toolbar::ToolbarSettings>,
     /// Volumes and toggles (Firestorm volume panel).
     pub audio: AudioSettings,
     /// Parcel media and media on a prim.
@@ -480,7 +504,7 @@ pub struct Settings {
     pub new_profile: bool,
 }
 
-const SETTINGS_VERSION: u32 = 11;
+const SETTINGS_VERSION: u32 = 12;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -793,6 +817,11 @@ impl Default for Settings {
             place_bar_stretch: true,
             place_bar_rights_text: false,
             classic_people: false,
+            classic_restart_alert: false,
+            region_restart: Default::default(),
+            reduce_motion: false,
+            classic_controls: false,
+            camera_shots: Vec::new(),
             plates_friends_only_full: false,
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,
@@ -802,6 +831,7 @@ impl Default for Settings {
             photo_window: PhotoWindowStyle::Aurora,
             photo_held: None,
             classic_about_land: false,
+            classic_region_estate: false,
             invert_mouse: false,
             arrows_strafe: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
@@ -841,6 +871,8 @@ impl Default for Settings {
             cache_size_mb: 20480,
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             chat_bar_width: 0.0,
+            toolbar: Default::default(),
+            legacy_toolbars: Default::default(),
             audio: AudioSettings::default(),
             media: Default::default(),
             colors: ColorSettings::default(),
@@ -1153,6 +1185,10 @@ impl Settings {
             // walking: arrow keys only (no more WASD / ZQSD by default)
             self.keybinds.drop_letter_walk();
         }
+        if self.settings_version < 12 {
+            // letter shortcuts follow the layout (M is the M key on AZERTY)
+            self.keybinds.follow_layout_letters();
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -1192,6 +1228,12 @@ impl Settings {
         }
         self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
         self.chat_commands.sanitize();
+        if let Some(toolbar) = &mut self.toolbar {
+            toolbar.sanitize();
+        }
+        for toolbar in self.legacy_toolbars.values_mut() {
+            toolbar.sanitize();
+        }
         self.snapshot.sanitize();
         self.dof.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
@@ -1217,6 +1259,22 @@ impl Settings {
             self.machine_id = uuid::Uuid::new_v4().to_string();
         }
         self
+    }
+
+    /// Deliberate difference from Firestorm's per-account toolbars.xml, at the
+    /// human's request: every account uses the same toolbar. Resolve the old
+    /// layout only once, after login, to retain the account being tested.
+    pub fn migrate_toolbar(&mut self, account: uuid::Uuid) -> bool {
+        let mut changed = false;
+        if self.toolbar.is_none() {
+            self.toolbar = Some(self.legacy_toolbars.remove(&account).unwrap_or_default());
+            changed = true;
+        }
+        if !self.legacy_toolbars.is_empty() {
+            self.legacy_toolbars.clear();
+            changed = true;
+        }
+        changed
     }
 
     /// Back to the defaults ("Reset everything"), keeping the account and
@@ -1720,6 +1778,35 @@ mod tests {
         let bytes = serde_json::to_vec(&existing).expect("serialize synthetic settings");
         let saved: Settings = serde_json::from_slice(&bytes).expect("read synthetic settings");
         assert_eq!(saved.sanitized().keybinds, existing.keybinds);
+    }
+
+    /// The move of the letter shortcuts to the layout's letters runs once
+    /// (`KeyBindings::follow_layout_letters`, tested per layout there): a
+    /// key chosen afterwards, even the former QWERTY place, is kept.
+    #[test]
+    fn letter_shortcuts_follow_the_layout_once_and_keep_choices() {
+        let plain = |code| {
+            Some(crate::keybinds::Binding {
+                input: Input::key(code),
+                ctrl: false,
+                shift: false,
+                alt: false,
+            })
+        };
+        for version in [11, SETTINGS_VERSION] {
+            let mut file = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            file.keybinds.set(Action::Mouselook, 0, plain(KeyCode::KeyK));
+            file.keybinds.set(Action::Mouselook, 1, None);
+            let loaded = file.sanitized();
+            assert_eq!(loaded.keybinds.get(Action::Mouselook), [plain(KeyCode::KeyK), None]);
+            assert_eq!(loaded.settings_version, SETTINGS_VERSION);
+        }
+        let mut chosen = Settings::default();
+        chosen.keybinds.set(Action::Mouselook, 0, plain(KeyCode::KeyM));
+        assert_eq!(chosen.sanitized().keybinds.get(Action::Mouselook)[0], plain(KeyCode::KeyM));
     }
 
     #[test]

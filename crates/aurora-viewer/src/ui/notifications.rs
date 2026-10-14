@@ -49,6 +49,9 @@ pub struct ToastEnv<'a> {
     pub hidden: bool,
     /// Seconds a message toast stays (NotificationToastLifeTime).
     pub message_seconds: f64,
+    /// The region restart counting down: its card in Aurora's center shows
+    /// the live count (`ui::region_restart::bell_card`).
+    pub restart: Option<super::region_restart::BellInfo>,
 }
 
 /// Show the Conversations window for a clicked card: opened if closed,
@@ -350,8 +353,9 @@ pub(super) fn card(
             }
             let mut buttons: Vec<(String, Response, bool)> = Vec::new();
             match &n.data {
-                // drawn by `person_card`
-                Data::None | Data::Presence { .. } | Data::Message { .. } => {}
+                // drawn by `person_card`; the restart's live card by
+                // `region_restart::bell_card`, its text alone here
+                Data::None | Data::Presence { .. } | Data::Message { .. } | Data::RegionRestart => {}
                 Data::Lure { change_rating, .. } => {
                     let accept = if *change_rating {
                         aurora_i18n::tr!("ui-chat-invite-change-and-continue")
@@ -542,7 +546,7 @@ fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_
     // stay clear, or they were already seen where they arrived: a card in
     // the conversation in sight)
     for n in list.list.iter().filter(|n| n.id > nui.last_seen) {
-        if !nui.open && !hidden && !n.read {
+        if !nui.open && !hidden && !n.read && !n.quiet {
             nui.toasts.push((n.id, now + toast_seconds(n, message_seconds)));
         }
     }

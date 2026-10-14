@@ -20,8 +20,7 @@ use crate::world::World;
 use crate::world::land::{can_agent_buy, powers};
 use aurora_net::land::OS_LEASE_PENDING;
 use aurora_net::{ParcelInfo, parcel_flags as pf, region_flags as rf};
-use egui::epaint::{Mesh, Vertex, WHITE_UV};
-use egui::{Color32, RichText, Vec2};
+use egui::{RichText, Vec2};
 use glam::Vec3;
 use uuid::Uuid;
 
@@ -254,7 +253,7 @@ pub(super) fn stream_host(url: &str) -> &str {
 }
 
 /// "Mar 12, 2025" in SLT, the date of a time stamp without its hour.
-pub(super) fn day(secs: i64) -> String {
+pub(crate) fn day(secs: i64) -> String {
     let (y, m, d, ..) = super::slt_parts(secs);
     aurora_i18n::tr!(
         "ui-land-overview-date",
@@ -564,23 +563,7 @@ fn description_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wo
 
 /// The bottom of the covenant excerpt fading into the card.
 fn fade(ui: &egui::Ui, p: &Palette, rect: egui::Rect) {
-    let top = rect.bottom() - COVENANT_FADE;
-    let clear = p.field.gamma_multiply(0.0);
-    let v = |x: f32, y: f32, color: Color32| Vertex {
-        pos: egui::pos2(x, y),
-        uv: WHITE_UV,
-        color,
-    };
-    let mut m = Mesh::default();
-    m.vertices.extend([
-        v(rect.left(), top, clear),
-        v(rect.right(), top, clear),
-        v(rect.right(), rect.bottom(), p.field),
-        v(rect.left(), rect.bottom(), p.field),
-    ]);
-    m.add_triangle(0, 1, 2);
-    m.add_triangle(0, 2, 3);
-    ui.painter().add(egui::Shape::mesh(m));
+    crate::ui::sheet::fade(ui, p, rect, COVENANT_FADE);
 }
 
 fn info_card(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World, parcel: &ParcelInfo) {
@@ -603,6 +586,11 @@ fn info_card(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World, parcel
         value(ui, p, region.map_or(aurora_i18n::tr!("common-loading"), |r| r.name.as_str()));
         if let Some(r) = region {
             widgets::maturity_badge_of(ui, p, r.sim_access, 15.0);
+        }
+        // the agent's region: its Region / Estate window
+        if v.same_region {
+            ui.add_space(6.0);
+            region_link(ui, p);
         }
     });
     kv(ui, p, aurora_i18n::tr!("ui-land-overview-in-search"), |ui| {
@@ -687,6 +675,21 @@ fn info_card(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World, parcel
         };
         value(ui, p, format!("{kind} · {page}"));
     });
+}
+
+/// "Region / Estate ›": the window of the region the parcel is in.
+fn region_link(ui: &mut egui::Ui, p: &Palette) {
+    let r = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            widgets::glyph(ui, "building-castle", p.violet_light, 13.0);
+            let text = format!("{} ›", aurora_i18n::tr!("region-title"));
+            ui.add(egui::Label::new(super::aurora::semibold(ui, &text, 12.0, p.violet_light)).sense(egui::Sense::click()))
+        })
+        .inner;
+    if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        crate::ui::region::request_open(ui.ctx());
+    }
 }
 
 /// A value of the information card.

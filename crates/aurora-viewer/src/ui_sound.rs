@@ -44,6 +44,8 @@ pub enum UiSound {
     /// UISndPieMenuSliceHighlight0..7.
     PieMenuSlice(u8),
     Restart,
+    /// The region restart notice of an OpenSim grid (UISndRestartOpenSim).
+    RestartOpenSim,
     /// A photo taken (UISndSnapshot).
     Snapshot,
     ScriptFloaterOpen,
@@ -95,7 +97,7 @@ use UiSound as S;
 
 /// Every interface sound, in the order of the preferences list.
 #[rustfmt::skip]
-pub const CATALOG: [Entry; 43] = [
+pub const CATALOG: [Entry; 44] = [
     e!(S::Click, "Click", aurora_i18n::tr!("ui-sound-click-button-pressed"), CLICK, true),
     e!(S::ClickRelease, "ClickRelease", aurora_i18n::tr!("ui-sound-click-button-released"), CLICK, true),
     e!(S::BadKeystroke, "BadKeystroke", aurora_i18n::tr!("ui-sound-key-rejected"), u(0x2ca849ba_2885_4bc3_90ef_d4987a5b983a), true),
@@ -115,6 +117,7 @@ pub const CATALOG: [Entry; 43] = [
     e!(S::PieMenuSlice(7), "PieMenuSliceHighlight7", aurora_i18n::tr!("ui-sound-menu-option-8-hovered"), u(0xc1f334fb_a5be_8fe7_22b3_29631c21cf0b), true),
     e!(S::Alert, "Alert", aurora_i18n::tr!("ui-sound-alert"), ALERT, true),
     e!(S::Restart, "Restart", aurora_i18n::tr!("ui-sound-region-restart"), u(0xb92a0f64_7709_8811_40c5_16afd624a45f), true),
+    e!(S::RestartOpenSim, "RestartOpenSim", aurora_i18n::tr!("ui-sound-region-restart-opensim"), u(0x4174f859_0d3d_c517_c424_72923dc21f65), true),
     e!(S::TeleportOut, "TeleportOut", aurora_i18n::tr!("common-teleport-2"), u(0xd7a9a565_a013_2a69_797d_5332baa1a947), true),
     e!(S::MoneyChangeUp, "MoneyChangeUp", aurora_i18n::tr!("ui-sound-l-received"), u(0x77a018af_098e_c037_51a6_178f05877c6f), true),
     e!(S::MoneyChangeDown, "MoneyChangeDown", aurora_i18n::tr!("ui-sound-l-spent"), u(0x104974e3_dfda_428b_99ee_b0d4e748d3a3), true),

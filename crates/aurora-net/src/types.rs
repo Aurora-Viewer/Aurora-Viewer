@@ -227,12 +227,14 @@ pub mod parcel_flags {
 /// `REGION_FLAGS_*` (llregionflags.h) of RegionHandshake / SimStats.
 pub mod region_flags {
     pub const ALLOW_DAMAGE: u32 = 1 << 0;
+    pub const BLOCK_TERRAFORM: u32 = 1 << 6;
     pub const BLOCK_LAND_RESELL: u32 = 1 << 7;
     pub const SKIP_SCRIPTS: u32 = 1 << 13;
     pub const BLOCK_FLY: u32 = 1 << 19;
     pub const ESTATE_SKIP_SCRIPTS: u32 = 1 << 21;
     pub const RESTRICT_PUSHOBJECT: u32 = 1 << 22;
     pub const ALLOW_PARCEL_CHANGES: u32 = 1 << 26;
+    pub const BLOCK_FLYOVER: u32 = 1 << 27;
     pub const ALLOW_VOICE: u32 = 1 << 28;
     pub const BLOCK_PARCEL_SEARCH: u32 = 1 << 29;
 }
@@ -549,6 +551,11 @@ pub enum NetEvent {
     Alert {
         message: String,
     },
+    /// The agent's region will restart (AlertInfo RegionRestartMinutes /
+    /// RegionRestartSeconds, or OpenSim's `/RESTART_X_…`; region_restart.rs).
+    RegionRestart(crate::region_restart::Notice),
+    /// "Region restart cancelled." (region_restart.rs).
+    RegionRestartCancelled,
     Disconnected {
         reason: String,
     },
@@ -808,6 +815,8 @@ pub enum NetEvent {
     AgentParcel(Arc<ParcelInfo>),
     /// About Land: selected parcel, its lists, covenant... (land.rs).
     Land(crate::land::LandEvent),
+    /// Region / Estate window (estate.rs).
+    Estate(crate::estate::EstateEvent),
     /// ParcelMediaCommandMessage: llParcelMediaCommandList (flags of the
     /// PARCEL_MEDIA_COMMAND_* bits, command, time).
     ParcelMediaCommand {
@@ -1526,6 +1535,8 @@ pub enum NetCommand {
     RegionHandleRequest(Uuid),
     /// About Land requests (land.rs).
     Land(crate::land::LandCommand),
+    /// Region / Estate window (estate.rs).
+    Estate(crate::estate::EstateCommand),
     /// GrantUserRights: rights we give a friend (1 online, 2 map, 4 modify).
     GrantUserRights {
         friend: Uuid,
@@ -1560,6 +1571,10 @@ pub enum NetCommand {
         message: String,
     },
     TeleportLandmark(Uuid),
+    /// Cancel the restart of the agent's region (estate managers):
+    /// EstateOwnerMessage `restart` with -1, as Region / Estate › Debug ›
+    /// "Cancel restart" (LLPanelRegionDebugInfo::onClickCancelRestart).
+    CancelRegionRestart,
     /// Teleport to a region by name (map lookup), position in the region.
     TeleportToRegion {
         name: String,
