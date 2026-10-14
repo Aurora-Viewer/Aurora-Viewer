@@ -1159,6 +1159,8 @@ pub(crate) struct Backend {
     post_sampler: wgpu::Sampler,
     shadow_sampler: wgpu::Sampler,
     glow: Glow,
+    /// Depth of field, made the first time it is on.
+    dof: Option<crate::dof::Dof>,
     smaa: Smaa,
     smaa_targets: Option<SmaaTargets>,
     targets: Targets,
@@ -2246,6 +2248,7 @@ impl Backend {
             post_sampler,
             shadow_sampler,
             glow,
+            dof: None,
             smaa,
             smaa_targets: None,
             targets,
@@ -5228,6 +5231,7 @@ impl Backend {
         );
         // ---- temporal anti-aliasing
         let mut post_bg = &self.targets.post_bind_group;
+        let mut post_src = &self.targets.color;
         if let Some(taa) = &mut self.taa {
             let w = taa.parity;
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
@@ -5267,6 +5271,36 @@ impl Backend {
             taa.reset = false;
             taa.parity = 1 - w;
             post_bg = &taa.post_bgs[w];
+            post_src = &taa.history[w];
+        }
+        // ---- depth of field, on the resolved (and TAA-steady) image,
+        // before the glow and the tone mapping (not in probe captures)
+        match &f.dof {
+            Some(params) => {
+                let dof = self.dof.get_or_insert_with(|| crate::dof::Dof::new(&self.device, HDR_FORMAT));
+                post_bg = dof.encode(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    post_src,
+                    &self.targets.depth_ss,
+                    f.proj,
+                    (self.config.width, self.config.height),
+                    params,
+                    HDR_FORMAT,
+                    &crate::dof::PostInputs {
+                        layout: &self.post_layout,
+                        sampler: &self.post_sampler,
+                        buffer: &self.post_buffer,
+                        glow: &self.glow.views[1],
+                    },
+                );
+            }
+            None => {
+                if let Some(dof) = &mut self.dof {
+                    dof.release();
+                }
+            }
         }
         self.prev_view_proj = Some(unjittered_vp);
         self.last_inv_vp = unjittered_vp.inverse();
