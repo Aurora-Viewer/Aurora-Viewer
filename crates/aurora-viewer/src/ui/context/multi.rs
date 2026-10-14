@@ -50,7 +50,7 @@ pub fn avatars_menu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &[Uuid])
     {
         act(CtxAction::AddFriend(*id));
     }
-    menu::todo(ui, p, "users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+    super::contact_set_submenu(ui, p, world, ids, aurora_i18n::tr!("ui-context-add-to-contact-set"));
     if menu::item_if(
         ui,
         p,

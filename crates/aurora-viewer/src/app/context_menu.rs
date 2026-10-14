@@ -508,6 +508,7 @@ impl App {
                 self.panels.chat = true;
             }
             CtxAction::GroupChatBlocked(id, on) => self.world.set_group_chat_blocked(id, on),
+            CtxAction::ContactSet(edit) => crate::ui::contacts::apply_set_edit(&mut self.world, edit),
             CtxAction::ShowHistory(conversation) => {
                 let (title, file) = self.world.transcript_of(conversation);
                 self.history_ui.show_file(title, file);

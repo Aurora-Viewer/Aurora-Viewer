@@ -1804,6 +1804,11 @@ ui-profile-let-other-residents-know-your-favorite-places-in-second = Faites conn
 build-ui-tools-drag-to-move-ctrl-to-lift-ctrl-shift-to = Faites glisser pour déplacer, appuyez sur Ctrl pour soulever, Ctrl-Maj pour pivoter
 ui-places-drag-a-landmark-here-to-add-it-to-your = Faites glisser un repère ici pour l'ajouter à vos Favoris.
 demo-family = Famille
+demo-shop = Boutique
+demo-boreal-lagoon = Lagune Boréale
+demo-spammer = Spammeur
+demo-shadow = Ombre
+demo-noisy-seller = Vendeur bruyant
 build-ui-object-phantom = Fantôme
 common-favorites = Favoris
 ui-sound-window-closed = Fenêtre fermée
@@ -5281,6 +5286,68 @@ people-friends-view-permissions = Afficher les droits accordés
 people-group-profile = Profil du groupe
 people-group-notices-on = Notices du groupe reçues (cliquer pour ne plus les recevoir)
 people-group-notices-off = Notices du groupe désactivées (cliquer pour les recevoir)
+people-tab-sets = Cercles
+people-filter-short = Filtrer…
+people-display-options = Options d'affichage
+people-sort-online-first = En ligne d'abord
+people-set = Cercle
+people-friends-filter = Filtrer les amis…
+people-friends-online = En ligne · { $count }
+people-friends-offline = Hors ligne · { $count }
+people-sheet-nickname-sets = Surnom et cercles
+people-sheet-nickname-hint = Surnom…
+people-sheet-add-set = Cercle
+people-groups-filter = Filtrer les groupes…
+people-groups-join = Rejoindre…
+people-groups-join-tip = Rechercher des groupes à rejoindre
+people-groups-count = { $count ->
+    [one] Vous faites partie de { $count } groupe sur { $limit }
+   *[other] Vous faites partie de { $count } groupes sur { $limit }
+}
+people-groups-count-unlimited = { $count ->
+    [one] Vous faites partie de { $count } groupe
+   *[other] Vous faites partie de { $count } groupes
+}
+people-groups-none = Aucun groupe actif
+people-groups-none-sub = Aucun titre affiché au-dessus de votre nom
+people-groups-active-tag = actif
+people-groups-active = Groupe actif
+people-groups-member = Membre
+people-groups-title = Titre : { $title }
+people-groups-online = { $count } en ligne
+people-groups-chat-off = chat coupé
+people-groups-notices = { $count ->
+    [one] { $count } avis
+   *[other] { $count } avis
+}
+people-groups-unread = { $count ->
+    [one] { $count } avis non lu
+   *[other] { $count } avis non lus
+}
+people-groups-pinned = Épinglé
+people-groups-info = Infos
+people-groups-invite = Inviter
+people-groups-me = Moi dans ce groupe
+people-groups-active-switch = Groupe actif
+people-groups-title-shown = Titre affiché
+people-groups-settings = Réglages
+people-groups-receive-notices = Recevoir les avis
+people-groups-receive-chat = Recevoir le chat du groupe
+people-groups-in-profile = Afficher dans mon profil
+people-groups-pin = Épingler en haut de la liste
+people-groups-slurl = SLURL
+people-groups-leave = Quitter le groupe
+people-sets-new = Nouveau
+people-sets-gear = Couleur, nom, suppression et options
+people-sets-nickname-of = surnom · { $name }
+people-sets-non-friend = non-ami
+people-recent-ago = il y a { $when }
+people-recent-empty = Personne pour l'instant : les résidents avec qui vous parlez apparaissent ici.
+people-blocked-all = Tout
+people-blocked-voice = Voix
+people-blocked-text = Texte
+people-blocked-sounds = Sons
+people-blocked-block = Bloquer
 ui-bars-invisible = Invisible
 ui-bars-invisible-tip = Vos amis ne voient pas que vous êtes en ligne.
 world-status-invisible-on = { $count ->

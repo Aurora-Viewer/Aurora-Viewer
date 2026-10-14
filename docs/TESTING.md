@@ -1375,7 +1375,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
-| `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet` or `legacy` | People › Near you with the mock-up's residents: rich rows, compact crowd, a person's sheet, Firestorm's table |
+| `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `recent` or `blocked` | People with the mock-up's contents: Near you (rich rows, compact crowd, a person's sheet, Firestorm's table) and the other tabs |
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
@@ -2054,7 +2054,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `AURORA_FPS_LIMIT=60`, they are greyed out at frame 780 and removed from the
   list at frame 1400. `friends` and `groups`: these tabs. `profile`: the
   Groups tab and the "Group Profile" window of the first group.
-- **`AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy`**: People › Near you in
+- **`AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy|friends|groups|sets|recent|blocked`**: People › Near you in
   Aurora's look, with the residents of the People mock-up (names, ranges,
   states, arrivals), alone on screen. `rows`: the rich rows grouped by
   range (whisper 10 m, say 20 m, shout 100 m, beyond), Tess selected with
@@ -2069,6 +2069,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   residents in Firestorm's table, for this run only (the preference is
   not changed). Capture `crowd` at frame 900 or later: the profiles
   (payment info, notes) arrive four a second.
+  The other tabs, with the mock-up's contents and windows (the contact
+  sets, the nickname, the pinned group and the recent people are set for
+  the run only, nothing is written to the account's files): `friends`
+  (860 × 600: Nova and Orion online, pixelboutique and testtouch offline,
+  the rights each way on the rows, Nova's sheet with "Nickname and contact
+  sets"), `groups` (860 × 500: "No active group", Aurora Builders active,
+  pinned, two notices unread and its sheet open, the market's chat
+  blocked, "3 groups out of 42"), `sets` (520 × 430: Family, Clubbing and
+  Shop, the wolf's nickname, a non-friend, Nova chosen with her quick
+  actions out: move, take out, menu), `recent` (420 × 300: four residents
+  met lately, how long ago and where) and `blocked` (420 × 300: a resident
+  blocked in full with "Unblock" out, one for voice and text, an object
+  for its sounds). Each tab keeps its menu of several people (Ctrl /
+  Shift) and its sheet; a window too narrow for the six tabs shows the
+  ones around the open tab beside "…".
 - **`AURORA_DEMO_STATUSMENU=1|invisible`**: the menu of the status
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing

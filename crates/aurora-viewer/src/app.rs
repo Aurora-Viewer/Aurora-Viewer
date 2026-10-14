@@ -4511,6 +4511,7 @@ impl App {
         images.extend(self.land_ui.wanted_images.drain());
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
+        images.extend(self.people_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
@@ -6546,6 +6547,10 @@ impl App {
         if self.demo && self.frame_count == 60 && std::env::var_os("AURORA_DEMO_CONTACTS").is_some() {
             crate::demo::seed_contact_sets(&mut self.world);
         }
+        // AURORA_DEMO_PEOPLE's tabs: the mock-up's sets, pins and recent people
+        if self.demo && self.frame_count == 60 {
+            crate::demo::people::seed(&mut self.world);
+        }
         // AURORA_DEMO_NAVEDIT=1: click in the location field at frame 230
         if self.demo && self.frame_count == 230 && std::env::var_os("AURORA_DEMO_NAVEDIT").is_some() {
             self.panels.nav_edit = Some(crate::slurl::make(&self.world.region_name(), self.world.agent.position));
@@ -8354,7 +8359,13 @@ impl App {
                     self.panels.contacts = open;
                 }
                 // their confirmations, also asked from the other menus
-                contact_actions.extend(ui::contacts::dialog_windows(&ctx, &p, &mut self.world, &mut self.contacts_ui));
+                contact_actions.extend(ui::contacts::dialog_windows(
+                    &ctx,
+                    &p,
+                    &mut self.world,
+                    &mut self.contacts_ui,
+                    &mut self.settings.contacts,
+                ));
                 // residents added to a conversation: a conversation with one
                 // resident that became a conference closes (FSFloaterIM::
                 // addP2PSessionParticipants)
@@ -8396,6 +8407,11 @@ impl App {
                     &mut self.people_ui,
                     &mut radar,
                     &mut self.settings.friends_list,
+                    ui::people::ContactsParts {
+                        ui: &mut self.contacts_ui,
+                        settings: &mut self.settings.contacts,
+                        images: &self.ui_images,
+                    },
                     &mut people_map,
                     !self.settings.classic_people && !(self.demo && crate::demo::people::legacy()),
                 );
@@ -8405,6 +8421,8 @@ impl App {
                 for pa in people {
                     match pa {
                         ui::people::PeopleAction::OpenIm(id) => {
+                            // LLAvatarActions::startIM: they join the recent people
+                            self.world.met(id);
                             self.world.ui_sounds.push(UiSound::StartIm);
                             self.world.social.session_mut(id);
                             self.world.social.focus_im = Some(id);
@@ -8440,6 +8458,16 @@ impl App {
                                 self.world.unblock(id, &name, flag);
                             }
                         }
+                        ui::people::PeopleAction::SearchGroups => {
+                            self.panels.search = true;
+                            self.search_ui.open_tab(crate::world::search::Tab::Groups);
+                        }
+                        ui::people::PeopleAction::GroupData(group) => self.world.group_data.open(group, true),
+                        ui::people::PeopleAction::GroupTitle { group, role } => self.world.group_data.set_title(group, role),
+                        ui::people::PeopleAction::GroupFlags { group, notices, profile } => {
+                            self.world.groups.set_flags(group, notices, profile)
+                        }
+                        ui::people::PeopleAction::InviteToGroup(group) => self.group_profile_ui.open_with_invite(&mut self.world, group),
                     }
                 }
                 t = self.ui_parts.lap(Part::UiPeople, t);
@@ -9632,19 +9660,32 @@ impl ApplicationHandler for App {
                 // the density is the list's own toggle; the look is forced
                 // for the run only (`demo::people::legacy`), not saved
                 self.settings.radar.compact = crate::demo::people::compact();
+                // the friends tab opens sorted as the mock-up's (online first)
+                self.settings.friends_list.sort = ui::people::FriendsSettings::default().sort;
                 if let Some(id) = crate::demo::people::sheet() {
                     self.people_ui.radar_selected = vec![id];
                     self.people_ui.open_sheet(id);
-                    // the mock-up's window with a sheet
+                }
+                if crate::demo::people::mode() == Some(crate::demo::people::Mode::Groups) {
+                    self.people_ui.open_group_sheet(crate::demo::DEMO_GROUP1);
+                    self.world.group_data.open(crate::demo::DEMO_GROUP1, true);
+                }
+                // the mock-up's window
+                if let Some((w, h)) = crate::demo::people::window_size() {
                     let pos = ui::people::default_pos(ui::layout::work_area(&self.egui_ctx));
-                    ui::widgets::place_floater(&self.egui_ctx, ui::people::WINDOW, pos, egui::vec2(860.0, 600.0));
+                    ui::widgets::place_floater(&self.egui_ctx, ui::people::WINDOW, pos, egui::vec2(w, h));
                 }
                 if let Some(id) = crate::demo::people::hovered() {
                     self.people_ui.radar_selected = vec![id];
                     self.people_ui.demo_hover = Some(id);
                 }
+                // the contact sets tab: the family, Nova chosen
+                if crate::demo::people::mode() == Some(crate::demo::people::Mode::Sets) {
+                    self.contacts_ui.set_choice = Some(aurora_i18n::tr!("demo-family").to_owned());
+                    self.people_ui.select(vec![crate::demo::people::NOVA]);
+                }
                 self.panels.people = true;
-                self.panels.people_tab = 0;
+                self.panels.people_tab = crate::demo::people::tab();
                 self.panels.inventory = false;
                 self.panels.chat = false;
                 self.panels.minimap = false;

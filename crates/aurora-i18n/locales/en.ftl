@@ -1801,6 +1801,11 @@ ui-profile-let-other-residents-know-your-favorite-places-in-second = Let other r
 build-ui-tools-drag-to-move-ctrl-to-lift-ctrl-shift-to = Drag to move, Ctrl to lift, Ctrl-Shift to rotate
 ui-places-drag-a-landmark-here-to-add-it-to-your = Drag a landmark here to add it to your Favorites.
 demo-family = Family
+demo-shop = Shop
+demo-boreal-lagoon = Boreal Lagoon
+demo-spammer = Spammer
+demo-shadow = Shadow
+demo-noisy-seller = Noisy seller
 build-ui-object-phantom = Phantom
 common-favorites = Favorites
 ui-sound-window-closed = Window closed
@@ -5279,6 +5284,68 @@ people-friends-view-permissions = View permissions granted
 people-group-profile = Group profile
 people-group-notices-on = Group notices received (click to stop receiving them)
 people-group-notices-off = Group notices turned off (click to receive them)
+people-tab-sets = Contact sets
+people-filter-short = Filter…
+people-display-options = Display options
+people-sort-online-first = Online first
+people-set = Set
+people-friends-filter = Filter friends…
+people-friends-online = Online · { $count }
+people-friends-offline = Offline · { $count }
+people-sheet-nickname-sets = Nickname and contact sets
+people-sheet-nickname-hint = Nickname…
+people-sheet-add-set = Set
+people-groups-filter = Filter groups…
+people-groups-join = Join…
+people-groups-join-tip = Search for groups to join
+people-groups-count = { $count ->
+    [one] You belong to { $count } group out of { $limit }
+   *[other] You belong to { $count } groups out of { $limit }
+}
+people-groups-count-unlimited = { $count ->
+    [one] You belong to { $count } group
+   *[other] You belong to { $count } groups
+}
+people-groups-none = No active group
+people-groups-none-sub = No title shown above your name
+people-groups-active-tag = active
+people-groups-active = Active group
+people-groups-member = Member
+people-groups-title = Title: { $title }
+people-groups-online = { $count } online
+people-groups-chat-off = chat blocked
+people-groups-notices = { $count ->
+    [one] { $count } notice
+   *[other] { $count } notices
+}
+people-groups-unread = { $count ->
+    [one] { $count } unread notice
+   *[other] { $count } unread notices
+}
+people-groups-pinned = Pinned
+people-groups-info = Info
+people-groups-invite = Invite
+people-groups-me = Me in this group
+people-groups-active-switch = Active group
+people-groups-title-shown = Title shown
+people-groups-settings = Settings
+people-groups-receive-notices = Receive group notices
+people-groups-receive-chat = Receive the group chat
+people-groups-in-profile = Show in my profile
+people-groups-pin = Pin at the top of the list
+people-groups-slurl = SLurl
+people-groups-leave = Leave the group
+people-sets-new = New
+people-sets-gear = Color, name, deletion and options
+people-sets-nickname-of = nickname · { $name }
+people-sets-non-friend = not a friend
+people-recent-ago = { $when } ago
+people-recent-empty = Nobody yet: the residents you talk with show up here.
+people-blocked-all = Everything
+people-blocked-voice = Voice
+people-blocked-text = Text
+people-blocked-sounds = Sounds
+people-blocked-block = Block
 ui-bars-invisible = Invisible
 ui-bars-invisible-tip = Your friends do not see that you are online.
 world-status-invisible-on = { $count ->

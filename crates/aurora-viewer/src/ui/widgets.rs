@@ -17,7 +17,7 @@ mod pills;
 mod resize;
 mod workspace;
 pub use color::color_button;
-pub use pills::{filter_pill, pill_tab, pill_tab_wide, search_box};
+pub use pills::{dot_pill, dot_pill_width, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide, search_box};
 pub use workspace::{Modal, collapsing, collapsing_forced, glyph, navigation, navigation_wrapped, section_header, stat, surface};
 pub(crate) use workspace::{finish_bar_glass, inventory_item_label, inventory_spacing, overlay, overlay_frame, paint_world_label};
 
@@ -690,6 +690,25 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
         }
     }
     resp
+}
+
+/// The scroll bars of the scroll areas `ui` opens next: thin and solid, in a
+/// strip of their own at the right of the content (egui's default floating
+/// bar is drawn over the content when hovered, over the buttons and values
+/// at the right edge). The strip is taken only when the content overflows.
+/// The inventory tree's bar (`inventory::tree::scroll`) has the same look.
+pub fn reserved_scroll_bar(ui: &mut egui::Ui) {
+    ui.spacing_mut().scroll = reserved_scroll_style();
+}
+
+/// The style `reserved_scroll_bar` sets: 6 points of bar, 4 between it and
+/// the content, faintly shown at rest.
+pub fn reserved_scroll_style() -> egui::style::ScrollStyle {
+    egui::style::ScrollStyle {
+        dormant_background_opacity: 0.2,
+        dormant_handle_opacity: 0.6,
+        ..egui::style::ScrollStyle::solid()
+    }
 }
 
 /// Stroke of every divider of the interface: a thin line of a neutral

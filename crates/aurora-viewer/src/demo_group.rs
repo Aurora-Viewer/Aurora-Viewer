@@ -432,7 +432,12 @@ fn notice_im(notice: &Uuid) -> Option<NetEvent> {
 pub fn notices_tab() -> Option<(Uuid, Vec<Uuid>, bool)> {
     let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
     let mode = v.split(':').nth(1)?;
-    matches!(mode, "notices" | "compose").then(|| (DEMO_GROUP1, notices().iter().skip(2).map(|n| n.id).collect(), mode == "compose"))
+    matches!(mode, "notices" | "compose").then(|| (DEMO_GROUP1, read_but_two(), mode == "compose"))
+}
+
+/// The first group's notices read, all but the two latest.
+pub fn read_but_two() -> Vec<Uuid> {
+    notices().iter().skip(2).map(|n| n.id).collect()
 }
 
 /// Our land given to "Aurora Builders" (AgentGroupDataUpdate), in m².

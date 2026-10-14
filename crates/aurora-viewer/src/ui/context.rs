@@ -298,6 +298,27 @@ pub enum CtxAction {
     LeaveGroup(Uuid),
     /// Block / unblock a group's chat (exoGroupMuteList).
     GroupChatBlocked(Uuid, bool),
+    /// Contact sets and nicknames (LGGContactSets).
+    ContactSet(crate::ui::contacts::SetEdit),
+}
+
+/// "Add to contact set": one entry per set (menu_fs_contacts_friends.xml,
+/// LLAvatarActions::addToContactSet).
+pub fn contact_set_submenu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &[Uuid], label: &str) {
+    let sets = world.contact_sets.set_names();
+    menu::submenu(ui, p, "users-group", label, !ids.is_empty(), |ui| {
+        if sets.is_empty() {
+            menu::item_if(ui, p, "users-group", aurora_i18n::tr!("ui-contacts-no-contact-sets"), false);
+        }
+        for set in sets {
+            if menu::item(ui, p, "users-group", &set) {
+                request(
+                    ui.ctx(),
+                    CtxAction::ContactSet(crate::ui::contacts::SetEdit::Add { set, ids: ids.to_vec() }),
+                );
+            }
+        }
+    });
 }
 
 /// egui temp data: actions chosen in menus this frame.
@@ -502,7 +523,7 @@ fn avatar_menu_reporting(
             menu::separator(ui, p);
             add_friend(ui);
             remove_friend(ui);
-            menu::todo(ui, p, "users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+            contact_set_submenu(ui, p, world, &[id], aurora_i18n::tr!("ui-context-add-to-contact-set"));
             menu::todo(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
             menu::separator(ui, p);
             zoom(ui);
@@ -519,7 +540,7 @@ fn avatar_menu_reporting(
             profile(ui);
             im(ui);
             history(ui);
-            menu::todo(ui, p, "users-group", aurora_i18n::tr!("common-add-to-contact-set"));
+            contact_set_submenu(ui, p, world, &[id], aurora_i18n::tr!("common-add-to-contact-set"));
             zoom(ui);
             tp_to(ui);
             offer_tp(ui);
@@ -555,7 +576,7 @@ fn avatar_menu_reporting(
             im(ui);
             history(ui);
             add_friend(ui);
-            menu::todo(ui, p, "users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+            contact_set_submenu(ui, p, world, &[id], aurora_i18n::tr!("ui-context-add-to-contact-set"));
             zoom(ui);
             tp_to(ui);
             offer_tp(ui);
