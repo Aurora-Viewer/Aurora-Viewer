@@ -2031,7 +2031,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   with the mockup's long parcel name. Words, separated by commas:
   `normal` (the islands as set), `legacy` (Firestorm's bars), `compact`
   (the place island as wide as its content), `rights` (the parcel rights
-  named when there is room); and one menu opened at frame 300: `menu`
+  named when there is room), `nobug` / `bug` (the bug report button
+  hidden / shown: the menu island holds the wolf alone, the place follows
+  8 px away); and one menu opened at frame 300: `menu`
   (the place), `options` (right click on the place island), `favorites`,
   `star`, `status` (the account's picture). Capture at
   `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
