@@ -125,6 +125,17 @@ pub fn context_menu_of_button(resp: &egui::Response, p: &Palette, body: impl FnO
     context_menu_popup(Popup::context_menu(resp).id(resp.id.with("context_menu")), p, body)
 }
 
+/// [`context_menu_of_button`] that `also` opens at the pointer: a right
+/// click on the buttons laid over `resp`, which take it (the system island's
+/// audio controls).
+pub fn context_menu_also(resp: &egui::Response, p: &Palette, also: bool, body: impl FnOnce(&mut Ui)) -> bool {
+    let mut popup = Popup::context_menu(resp).id(resp.id.with("context_menu"));
+    if also {
+        popup = popup.open_memory(egui::SetOpenCommand::Bool(true));
+    }
+    context_menu_popup(popup, p, body)
+}
+
 fn context_menu_popup(popup: Popup<'_>, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
     // below-right of the pointer like the world menu, pushed back into the
     // window by the area's constraint instead of flipping above it

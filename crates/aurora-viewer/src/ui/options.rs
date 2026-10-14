@@ -162,6 +162,7 @@ fn tab_count() -> usize {
 /// Order of the tabs in the sidebar.
 const ORDER: [usize; 14] = [TAB_AURORA, 0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, 8, 5, TAB_PRIVACY, 6, 9];
 
+pub const TAB_GRAPHICS: usize = 0;
 pub const TAB_AUDIO: usize = 7;
 pub const TAB_CHAT: usize = 3;
 pub const TAB_CAMERA: usize = 10;
@@ -1734,6 +1735,14 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         });
                         changed
                     },
+                );
+                // also in the system island's right click
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-traffic-indicator"),
+                    aurora_i18n::tr!("ui-options-traffic-indicator-help"),
+                    |ui| toggle(ui, p, &mut s.show_net_stats),
                 );
                 c |= row(ui, p, aurora_i18n::tr!("ui-options-interface-scale"), "", |ui| {
                     slider(ui, &mut s.ui_scale, 0.75..=2.0, "×")

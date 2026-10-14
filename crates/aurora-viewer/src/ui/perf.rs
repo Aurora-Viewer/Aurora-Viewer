@@ -69,7 +69,7 @@ fn fmt_ms(ms: f32) -> String {
 }
 
 /// A rate in the unit that reads best: kb/s, Mb/s or Gb/s.
-fn fmt_rate(kbps: f32) -> String {
+pub(crate) fn fmt_rate(kbps: f32) -> String {
     if kbps >= 1e6 {
         format!("{:.2} Gb/s", kbps / 1e6)
     } else if kbps >= 1e3 {
@@ -308,6 +308,23 @@ pub fn set_full(ctx: &egui::Context, full: bool) {
     ctx.data_mut(|d| d.insert_persisted(full_id(), full));
 }
 
+/// The full view for this opening only (`show_network`): the saved choice
+/// of the window's button stays.
+fn full_once_id() -> egui::Id {
+    egui::Id::new(("perf", "full-once"))
+}
+
+/// The window on its Network section, from the bars (the system island's
+/// right click, its tooltip, the traffic indicator): the full view for this
+/// opening only, the section unfolded once (it can be folded again) and
+/// scrolled to. The caller opens the window.
+pub fn show_network(ctx: &egui::Context) {
+    ctx.data_mut(|d| {
+        d.insert_temp(full_once_id(), true);
+        d.insert_temp(network_open_id(), true);
+    });
+}
+
 /// Where the window stands before the user moves it: under the mini-map of
 /// a first launch (`minimap::default_rect`), on its right edge.
 pub(crate) fn default_pos(work: egui::Rect, width: f32) -> egui::Pos2 {
@@ -316,7 +333,8 @@ pub(crate) fn default_pos(work: egui::Rect, width: f32) -> egui::Pos2 {
 }
 
 pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
-    let full = ctx.data_mut(|d| d.get_persisted::<bool>(full_id())).unwrap_or(false);
+    let once = ctx.data(|d| d.get_temp::<bool>(full_once_id())).unwrap_or(false);
+    let full = once || ctx.data_mut(|d| d.get_persisted::<bool>(full_id())).unwrap_or(false);
     let (icon, tip) = if full {
         ("arrows-minimize", aurora_i18n::tr!("ui-perf-compact-version"))
     } else {
@@ -340,11 +358,23 @@ pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
         ui.add_space(6.0);
         graph(ui, p, v.data);
         if full {
-            details(ui, p, v);
+            // what does not fit above the bottom of the work area scrolls
+            // (the Network section unfolded under the GPU and CPU parts at
+            // 864 px), so `show_network` can bring it into view
+            let room = (work.bottom() - ui.cursor().top() - 12.0).max(160.0);
+            egui::ScrollArea::vertical()
+                .id_salt("perf-details")
+                .max_height(room)
+                .auto_shrink([false, true])
+                .show(ui, |ui| details(ui, p, v));
         }
     });
     if toggle {
         set_full(ctx, !full);
+    }
+    // the view of one opening ends with it, or with the button
+    if toggle || !*open {
+        ctx.data_mut(|d| d.remove_temp::<bool>(full_once_id()));
     }
 }
 
@@ -472,6 +502,47 @@ fn graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
     }
 }
 
+/// The network rates of the last minute in `rect`: incoming, a line over a
+/// light area, and outgoing, on the window's scale, `inset` above and
+/// below. Shared by the window's graph and the islands' small one (the
+/// system island's tooltip and traffic indicator), on the same data; None
+/// before two samples. Returns the two lines' points.
+pub fn net_curve(painter: &egui::Painter, p: &Palette, rect: Rect, inset: f32, d: &PerfData) -> Option<(Vec<egui::Pos2>, Vec<egui::Pos2>)> {
+    let n = d.net_hist.len();
+    if n < 2 {
+        return None;
+    }
+    let top = d.net_top.max(1.0);
+    let plot = rect.shrink2(vec2(0.0, inset));
+    let y = |kbps: f32| plot.bottom() - (kbps / top).min(1.0) * plot.height();
+    let step = rect.width() / (NET_HISTORY - 1) as f32;
+    let x0 = rect.right() - (n - 1) as f32 * step;
+    let x = |i: usize| x0 + i as f32 * step;
+    let ins: Vec<egui::Pos2> = d.net_hist.iter().enumerate().map(|(i, s)| pos2(x(i), y(s.0))).collect();
+    let outs: Vec<egui::Pos2> = d.net_hist.iter().enumerate().map(|(i, s)| pos2(x(i), y(s.1))).collect();
+    let fill = p.teal.gamma_multiply(0.12);
+    let mut mesh = egui::Mesh::default();
+    for (i, pt) in ins.iter().enumerate() {
+        mesh.colored_vertex(*pt, fill);
+        mesh.colored_vertex(pos2(pt.x, rect.bottom()), fill);
+        if i > 0 {
+            let k = i as u32 * 2;
+            mesh.add_triangle(k - 2, k - 1, k);
+            mesh.add_triangle(k - 1, k + 1, k);
+        }
+    }
+    painter.add(mesh);
+    painter.add(egui::Shape::line(outs.clone(), Stroke::new(1.5, p.rose)));
+    painter.add(egui::Shape::line(ins.clone(), Stroke::new(1.5, p.teal)));
+    Some((ins, outs))
+}
+
+/// The incoming rate of the last sample (kb/s, UDP and HTTP), the
+/// outgoing one.
+pub fn last_rates(d: &PerfData) -> (f32, f32) {
+    d.net_hist.back().copied().unwrap_or_default()
+}
+
 /// Network rates of the last minute: incoming (line over a light area)
 /// and outgoing, marks at round rates, both values under the pointer.
 fn net_graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
@@ -508,28 +579,12 @@ fn net_graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
     painter.line_segment([pos2(rect.left(), y0), pos2(rect.right(), y0)], Stroke::new(1.0, p.raised));
 
     let n = d.net_hist.len();
-    if n < 2 {
+    let Some((ins, outs)) = net_curve(&painter, p, rect, 4.0, d) else {
         return;
-    }
+    };
     let step = rect.width() / (NET_HISTORY - 1) as f32;
     let x0 = rect.right() - (n - 1) as f32 * step;
     let x = |i: usize| x0 + i as f32 * step;
-    let ins: Vec<egui::Pos2> = d.net_hist.iter().enumerate().map(|(i, s)| pos2(x(i), y(s.0))).collect();
-    let outs: Vec<egui::Pos2> = d.net_hist.iter().enumerate().map(|(i, s)| pos2(x(i), y(s.1))).collect();
-    let fill = p.teal.gamma_multiply(0.12);
-    let mut mesh = egui::Mesh::default();
-    for (i, pt) in ins.iter().enumerate() {
-        mesh.colored_vertex(*pt, fill);
-        mesh.colored_vertex(pos2(pt.x, rect.bottom()), fill);
-        if i > 0 {
-            let k = i as u32 * 2;
-            mesh.add_triangle(k - 2, k - 1, k);
-            mesh.add_triangle(k - 1, k + 1, k);
-        }
-    }
-    painter.add(mesh);
-    painter.add(egui::Shape::line(outs.clone(), Stroke::new(1.5, p.rose)));
-    painter.add(egui::Shape::line(ins.clone(), Stroke::new(1.5, p.teal)));
 
     if let Some(pos) = resp.hover_pos() {
         let i = (((pos.x - x0) / step).round().max(0.0) as usize).min(n - 1);
@@ -785,24 +840,59 @@ fn row(ui: &mut egui::Ui, p: &Palette, k: &str, v: String) {
 }
 
 fn group(ui: &mut egui::Ui, p: &Palette, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
-    group_forced(ui, p, title, open, None, body);
+    let _ = group_forced(ui, p, title, open, None, body);
 }
 
-/// [`group`] that `forced` can hold open whatever the user's choice.
-fn group_forced(ui: &mut egui::Ui, p: &Palette, title: &str, open: bool, forced: Option<bool>, body: impl FnOnce(&mut egui::Ui)) {
+/// [`group`] that `forced` can open whatever the user's choice; its header.
+fn group_forced(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    title: &str,
+    open: bool,
+    forced: Option<bool>,
+    body: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
     super::widgets::collapsing_forced(ui, p, ("perf", title), title, open, forced, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         body(ui);
-    });
+    })
+    .header
 }
 
 fn network_open_id() -> egui::Id {
     egui::Id::new(("perf", "network-open"))
 }
 
-/// Demo captures (AURORA_DEMO_PERF=network): the Network section stays open.
-pub fn open_network(ctx: &egui::Context) {
-    ctx.data_mut(|d| d.insert_temp(network_open_id(), true));
+/// The demo has no circuit: counters that grow like a session's traffic
+/// (about 1.2 Mb/s in and 100 kb/s out, in waves), added to the network's,
+/// so that the graphs of the window and the bars show a minute of traffic
+/// through the same data (`PerfData::frame`).
+pub fn demo_traffic(net: &mut NetStatsSnapshot) {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let t = START.get_or_init(Instant::now).elapsed().as_secs_f64();
+    net.bytes_in += demo_count(150_000.0, t) as u64;
+    net.bytes_out += demo_count(12_000.0, t) as u64;
+    net.packets_in += demo_count(120.0, t) as u64;
+    net.packets_out += demo_count(40.0, t) as u64;
+}
+
+/// What the demo's traffic counts `t` seconds in: the integral of a rate of
+/// `base` × (1 + 0.35 sin 0.7t + 0.2 sin 2.3t) a second.
+fn demo_count(base: f64, t: f64) -> f64 {
+    base * (t + 0.5 * (1.0 - (0.7 * t).cos()) + 0.2 / 2.3 * (1.0 - (2.3 * t).cos()))
+}
+
+impl PerfData {
+    /// The demo's minute of traffic before it started (`demo_traffic`
+    /// goes on from there), so that its graphs are full from the start.
+    pub fn demo_history(&mut self) {
+        self.net_hist.clear();
+        for s in -(NET_HISTORY as i32 - 1)..0 {
+            let t = f64::from(s);
+            let rate = |base: f64| ((demo_count(base, t + 1.0) - demo_count(base, t)) * 8.0 / 1000.0) as f32;
+            self.net_hist.push_back((rate(150_000.0), rate(12_000.0)));
+        }
+    }
 }
 
 fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
@@ -1002,8 +1092,10 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
         row(ui, p, aurora_i18n::tr!("ui-perf-network-meshes"), format!("{}", v.meshes_fetching));
         row(ui, p, aurora_i18n::tr!("ui-perf-gpu-records"), format!("{}", v.render.records));
     });
-    let network_open = ui.ctx().data(|d| d.get_temp::<bool>(network_open_id())).filter(|open| *open);
-    group_forced(ui, p, aurora_i18n::tr!("ui-perf-network"), false, network_open, |ui| {
+    // asked once (`show_network`, the demo): unfolded and scrolled to, then
+    // the user's to fold
+    let network_open = ui.ctx().data_mut(|d| d.remove_temp::<bool>(network_open_id())).filter(|open| *open);
+    let header = group_forced(ui, p, aurora_i18n::tr!("ui-perf-network"), false, network_open, |ui| {
         let last = d.net_hist.back().copied().unwrap_or_default();
         let parts = vec![
             Part {
@@ -1026,6 +1118,16 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
         net_graph(ui, p, d);
         ui.add_space(6.0);
         row(ui, p, aurora_i18n::tr!("ui-perf-ping"), format!("{} ms", v.net.ping_ms));
+        // packets that never came, as Firestorm's traffic indicator counts them
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-perf-losses"),
+            format!(
+                "{} %",
+                aurora_i18n::number_text(&format!("{:.1}", crate::net_profile::loss_percent(v.link.0)))
+            ),
+        );
         let (link, totals) = v.link;
         // what the user feels beyond the ping: how late a key leaves, how
         // often the simulator moves the avatar back, how long an update
@@ -1101,6 +1203,9 @@ fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
         );
         row(ui, p, aurora_i18n::tr!("ui-perf-regions"), format!("{}", v.regions));
     });
+    if network_open.is_some() {
+        header.scroll_to_me(Some(egui::Align::TOP));
+    }
     group(ui, p, aurora_i18n::tr!("ui-perf-graphics-card"), false, |ui| {
         row(ui, p, aurora_i18n::tr!("common-map"), v.gpu.name.clone());
         row(ui, p, "API", format!("{} (wgpu)", v.gpu.backend));

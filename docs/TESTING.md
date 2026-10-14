@@ -1450,7 +1450,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
 | `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `recent` or `blocked` | People with the mock-up's contents: Near you (rich rows, compact crowd, a person's sheet, Firestorm's table) and the other tabs |
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
-| `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
+| `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or as the bars open it on its Network section (full for this opening, the section unfolded and scrolled to) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
@@ -2251,6 +2251,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   at frame 300, the mockup's row or tile under the pointer from frame 700.
   `chatname`: the newest resident's name of the chat pills clicked at
   frame 700, its profile opens (an object's name inspects the object).
+  The system island: `systip` (its detailed tooltip shown, the network's
+  last minute under its losses and bandwidth), `sysmenu` (its right click,
+  under the island at its right end as the mockup draws it, from frame
+  300), `netgraph` (Firestorm's traffic indicator shown before the audio
+  controls). In demo the network's graphs show a synthetic minute of
+  traffic (about 1.2 Mb/s in, waves), no packet lost.
   Capture at
   `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
   at frame 780: at 1280 the place shows the parcel and the region, at

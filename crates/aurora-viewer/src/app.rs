@@ -6474,8 +6474,11 @@ impl App {
                 }
             }
         }
-        self.perf
-            .frame(dt * 1000.0, self.net.stats.snapshot(), &self.last_render, &self.scene.stats);
+        let mut net = self.net.stats.snapshot();
+        if self.demo {
+            ui::perf::demo_traffic(&mut net);
+        }
+        self.perf.frame(dt * 1000.0, net, &self.last_render, &self.scene.stats);
         self.frame_profile.lap(Lap::Tail);
         self.end_profile_frame(w, h);
         self.gfx = Some(gfx);
@@ -7393,6 +7396,39 @@ impl App {
                 self.settings.save();
             }
             BarAction::Favorite(f) => self.favorite_action(f),
+            BarAction::SystemIsland(shown) => {
+                self.settings.system_island = shown;
+                self.settings.save();
+            }
+            BarAction::NetStats(on) => {
+                self.settings.show_net_stats = on;
+                self.settings.save();
+            }
+            BarAction::GraphicsPreset(level) => {
+                // LLPanelPresetsPulldown: the level at once, as Preferences
+                // › Graphics sets it
+                level.apply(&mut self.settings);
+                self.settings.save();
+                self.snapshots.settings_changed = true;
+            }
+            BarAction::CameraPreset(preset) => {
+                // as the camera controls' presets (LLFloaterCamera::switchToPreset)
+                self.settings.camera.apply_preset(preset);
+                self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+                self.settings.save();
+            }
+            BarAction::GraphicsPreferences => {
+                ui::widgets::open_floater(&self.egui_ctx, "options", &mut self.panels.settings);
+                self.options_ui.tab = ui::options::TAB_GRAPHICS;
+            }
+            BarAction::CameraControls => self.panels.camera_controls = true,
+            BarAction::NetworkGraph => {
+                ui::widgets::open_floater(&self.egui_ctx, "perf", &mut self.panels.perf);
+                ui::perf::show_network(&self.egui_ctx);
+                self.egui_ctx
+                    .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("perf")));
+            }
+            BarAction::CustomizeBars => self.toolbar_ui.open = true,
         }
     }
 
@@ -8413,6 +8449,16 @@ impl App {
                     own_pic: self.avatar_pics.get(&self.world.agent_id),
                     recent: if classic_bars { Vec::new() } else { self.recent_places() },
                     favorites: &favorites,
+                    system_island: self.settings.system_island,
+                    net_stats: if self.demo {
+                        ui::bars::demo::get().net_stats.unwrap_or(self.settings.show_net_stats)
+                    } else {
+                        self.settings.show_net_stats
+                    },
+                    perf: &self.perf,
+                    net_loss: crate::net_profile::loss_percent(&self.net_profile.last),
+                    graphics_preset: crate::graphics_presets::Preset::matching(&self.settings),
+                    camera_preset: self.settings.camera.preset,
                 };
                 let media = ui::audio::MediaState {
                     music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
@@ -10002,12 +10048,14 @@ impl ApplicationHandler for App {
             }
             // AURORA_DEMO_PERF=compact|full|network: the performance window in
             // that view (network: full, with its Network section open)
+            // a minute of synthetic traffic for the network's graphs
+            self.perf.demo_history();
             if let Ok(v) = std::env::var("AURORA_DEMO_PERF") {
                 self.panels.perf = true;
-                let network = v.trim() == "network";
-                ui::perf::set_full(&self.egui_ctx, network || v.trim() == "full");
-                if network {
-                    ui::perf::open_network(&self.egui_ctx);
+                if v.trim() == "network" {
+                    ui::perf::show_network(&self.egui_ctx);
+                } else {
+                    ui::perf::set_full(&self.egui_ctx, v.trim() == "full");
                 }
             }
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {

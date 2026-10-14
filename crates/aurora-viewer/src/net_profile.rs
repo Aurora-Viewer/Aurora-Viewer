@@ -79,6 +79,20 @@ pub struct NetProfile {
     pub totals: NetTotals,
 }
 
+/// The share of the simulators' packets lost over a period (%): the
+/// sequence numbers they skipped less the packets that only came late, out
+/// of all those sent (Firestorm's PACKETS_LOST_PERCENT, the traffic
+/// indicator of its status bar).
+pub fn loss_percent(period: &NetPeriod) -> f32 {
+    let lost = period.gaps.saturating_sub(period.late) as f32;
+    let sent = period.packets_in + lost;
+    if sent <= 0.0 {
+        0.0
+    } else {
+        (lost / sent * 100.0).clamp(0.0, 100.0)
+    }
+}
+
 impl Default for NetProfile {
     fn default() -> Self {
         NetProfile::new(std::env::var_os("AURORA_PROFILE").is_some())
@@ -325,5 +339,24 @@ mod tests {
         assert!(p.end_frame_at(&stats, t + PERIOD).is_none());
         in_session(&stats);
         assert!(p.end_frame_at(&stats, t + PERIOD * 2).is_some());
+    }
+
+    /// The packets lost are the sequence numbers skipped less those that
+    /// only came late, out of all the simulators sent; none sent, none lost.
+    #[test]
+    fn the_losses_count_what_never_came() {
+        assert_eq!(loss_percent(&NetPeriod::default()), 0.0);
+        let period = |packets_in: f32, gaps: u64, late: u64| NetPeriod {
+            packets_in,
+            gaps,
+            late,
+            ..NetPeriod::default()
+        };
+        assert_eq!(loss_percent(&period(99.0, 1, 0)), 1.0);
+        // late packets were not lost
+        assert_eq!(loss_percent(&period(100.0, 3, 3)), 0.0);
+        assert_eq!(loss_percent(&period(97.0, 4, 1)), 3.0);
+        // nothing came: all lost
+        assert_eq!(loss_percent(&period(0.0, 5, 0)), 100.0);
     }
 }
