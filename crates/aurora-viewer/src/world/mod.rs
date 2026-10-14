@@ -894,6 +894,14 @@ impl World {
         self.chat_unread += 1;
     }
 
+    /// Count on the Conversations button of the bottom bar: the unread IMs,
+    /// group chats and conferences, like Firestorm's chiclet counters. Nearby
+    /// chat keeps its own counter in the conversation list only, or a busy
+    /// region would never let the button rest.
+    pub fn conversations_badge(&self) -> usize {
+        self.social.total_unread()
+    }
+
     /// Ask for an avatar's profile (once).
     pub fn want_profile(&mut self, id: Uuid) {
         self.profiles.want(id);
@@ -2583,8 +2591,8 @@ impl World {
             self.ui_sounds
                 .push(if online { UiSound::FriendOnline } else { UiSound::FriendOffline });
             // the toast of LLNotificationTipHandler (ChatOnlineNotification),
-            // never in do not disturb nor for a blocked resident
-            if self.notifications.toasts.presence && !self.status.dnd && !self.mutes.is_muted_id(&id) {
+            // never during login, in do not disturb nor for a blocked resident
+            if self.notifications.toasts.presence && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
                 self.notifications.push_presence(id, n.clone(), online);
             }
             // the line of nearby chat stays: Firestorm's own skin sends the

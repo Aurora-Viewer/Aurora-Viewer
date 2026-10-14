@@ -258,6 +258,11 @@ pub struct Notifications {
     /// Our legacy full name ("First Last"), for the answers that carry it.
     pub own_name: String,
     pub toasts: ToastPrefs,
+    /// The world is shown (the loading screen gone). Before that, the
+    /// friends already online that the server announces at login get no
+    /// toast: Firestorm's tip channel drops them until handleLoginComplete
+    /// (LLScreenChannel::addToast, mWasStartUpToastShown).
+    pub started: bool,
 }
 
 const MAX: usize = 100;

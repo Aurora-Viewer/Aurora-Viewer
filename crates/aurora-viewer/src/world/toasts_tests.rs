@@ -16,6 +16,8 @@ fn world() -> World {
     w.social.names.insert(JANE, "Jane Doe".into());
     w.social.names.insert(TOM, "Tom Smith".into());
     w.notifications.toasts = ToastPrefs::default();
+    // the world is shown, past the login
+    w.notifications.started = true;
     w
 }
 
@@ -56,6 +58,25 @@ fn messages(w: &World) -> Vec<(Uuid, usize, String)> {
 }
 
 #[test]
+fn nearby_chat_does_not_raise_the_conversations_button_count() {
+    let mut w = world();
+    w.push_chat(ChatLine {
+        time: SystemTime::now(),
+        from: "Tom Smith".into(),
+        text: "hello everyone".into(),
+        kind: ChatKind::Local(aurora_net::ChatType::Normal),
+        source: TOM,
+        origin: Origin::Live,
+    });
+    // the conversation list still counts it on its nearby chat row
+    assert_eq!(w.chat_unread, 1);
+    assert_eq!(w.conversations_badge(), 0);
+    receive(&mut w, JANE, JANE, "hi", ImKind::Private, false);
+    receive(&mut w, GROUP, TOM, "meeting", ImKind::Group, false);
+    assert_eq!(w.conversations_badge(), 2);
+}
+
+#[test]
 fn a_friend_online_is_a_toast_that_never_enters_the_bell() {
     let mut w = world();
     w.social.form_friendship(JANE);
@@ -82,6 +103,26 @@ fn a_friend_online_is_a_toast_that_never_enters_the_bell() {
     let off = w.notifications.list.iter().rev().find(|n| n.kind == Kind::Presence).unwrap();
     assert!(matches!(off.data, Data::Presence { online: false, .. }) && !off.opens());
     assert_eq!(w.notifications.unread(), 0);
+}
+
+#[test]
+fn friends_announced_during_login_get_no_toast_but_keep_their_line() {
+    let mut w = world();
+    w.notifications.started = false;
+    w.social.form_friendship(JANE);
+    w.social.form_friendship(TOM);
+    // the friends already online, announced while the loading screen shows
+    w.social.set_online(&[JANE], true);
+    w.flush_online_notices();
+    assert!(!w.notifications.list.iter().any(|n| n.kind == Kind::Presence));
+    assert!(w.chat.iter().any(|l| l.kind == ChatKind::System && l.text.contains("Jane Doe")));
+    // once the world is shown, a friend logging in gets their toast
+    w.notifications.started = true;
+    w.social.set_online(&[TOM], true);
+    w.flush_online_notices();
+    let toasts: Vec<_> = w.notifications.list.iter().filter(|n| n.kind == Kind::Presence).collect();
+    assert_eq!(toasts.len(), 1);
+    assert!(matches!(toasts[0].data, Data::Presence { who: TOM, online: true }));
 }
 
 #[test]

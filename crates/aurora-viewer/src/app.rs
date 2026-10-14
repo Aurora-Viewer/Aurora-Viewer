@@ -1822,6 +1822,7 @@ impl App {
                     self.world.social.avatar_names.load(&path);
                 }
                 self.screen = Screen::Loading { since: Instant::now() };
+                self.world.notifications.started = false;
                 self.loading_frac = 0.0;
                 self.loading_target = 0.0;
                 self.loading_stage = aurora_i18n::tr!("common-connecting-to-region").into();
@@ -4893,6 +4894,7 @@ impl App {
             let terrain = self.world.terrain_progress();
             if self.world.movement_complete && since.elapsed() > Duration::from_millis(1500) && (terrain > 0.97 || moved > 6.0) {
                 self.screen = Screen::World;
+                self.world.notifications.started = true;
                 self.camera.snap();
                 // the loading screen fades out over the world
                 let mut o = TpOverlay::new(String::new(), true);
@@ -7282,7 +7284,7 @@ impl App {
                     &mut self.panels,
                     &mut self.chat_ui,
                     &self.gesture_state.manager,
-                    self.world.chat_unread + self.world.social.total_unread(),
+                    self.world.conversations_badge(),
                     self.world.agent.flying,
                     self.world.agent.is_sitting(),
                     self.camera.mouselook(),
