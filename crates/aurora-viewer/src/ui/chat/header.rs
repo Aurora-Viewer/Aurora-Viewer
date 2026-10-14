@@ -250,7 +250,9 @@ fn more_menu(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, act
             Some(other) => {
                 menu::todo(ui, p, "user-plus", aurora_i18n::tr!("ui-chat-add-friend-coming-soon"));
                 menu::todo(ui, p, "gift-filled", aurora_i18n::tr!("ui-chat-give-object-coming-soon"));
-                menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("ui-chat-pay-coming-soon"));
+                if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("ui-chat-pay")) {
+                    crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(other));
+                }
                 let blocked = world.is_avatar_blocked(&other);
                 let label = if blocked {
                     aurora_i18n::tr!("common-unblock")

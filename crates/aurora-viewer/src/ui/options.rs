@@ -1774,6 +1774,35 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     |ui| toggle(ui, p, &mut s.confirm_teleports),
                 );
             });
+            // FSConfirmPayments / FSPaymentConfirmationThreshold
+            // (panel_preferences_firestorm.xml)
+            group(ui, p, aurora_i18n::tr!("ui-options-payments"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-confirm-payments"),
+                    aurora_i18n::tr!("ui-options-confirm-payments-help"),
+                    |ui| toggle(ui, p, &mut s.confirm_payments),
+                );
+                ui.add_enabled_ui(s.confirm_payments, |ui| {
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-payment-threshold"),
+                        aurora_i18n::tr!("ui-options-payment-threshold-help"),
+                        |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut s.payment_confirm_threshold)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .range(0..=i32::MAX)
+                                    .speed(1.0)
+                                    .suffix(" L$"),
+                            )
+                            .changed()
+                        },
+                    );
+                });
+            });
             group(ui, p, aurora_i18n::tr!("common-inventory"), |ui| {
                 c |= super::inventory::preferences(ui, p, &mut s.inventory);
             });

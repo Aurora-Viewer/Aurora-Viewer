@@ -46,6 +46,7 @@ mod inventory_drag;
 mod inventory_thumbnail;
 mod marketplace_listings;
 mod object_actions;
+mod pay;
 mod plate_click;
 mod report_abuse;
 mod reset_skeleton;
@@ -359,6 +360,8 @@ pub struct App {
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
+    /// The Pay window of a resident or a group (`ui/pay.rs`).
+    pay_ui: ui::pay::PayUi,
     /// Buy Land (LLFloaterBuyLand), and the selection it follows.
     buy_land_ui: ui::buy_land::BuyLandUi,
     buy_land_source: buy_land::BuyLandSource,
@@ -765,6 +768,7 @@ impl App {
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
+            pay_ui: Default::default(),
             buy_land_ui: Default::default(),
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
@@ -1016,13 +1020,14 @@ impl App {
             }
             let expense = match &cmd {
                 NetCommand::BuyObject { price, .. } => Some((*price, "achat")),
-                NetCommand::PayObject { amount, .. } => Some((*amount, "paiement")),
+                NetCommand::PayObject { amount, .. } | NetCommand::PayResident { amount, .. } => Some((*amount, "paiement")),
                 _ => None,
             };
             if let Some((amount, kind)) = expense {
                 log::info!("demo action: {kind} L$ {amount}");
                 let balance = self.world.balance.unwrap_or(250).saturating_sub(amount);
                 self.world.apply(NetEvent::Balance(balance));
+                self.pay_ui.on_balance(balance);
                 self.world.system_message(aurora_i18n::tr!(
                     "app-demo-of-l-simulated",
                     kind = kind.to_string(),
@@ -1602,6 +1607,20 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if let NetEvent::MoneyTransaction {
+            success,
+            kind,
+            dest,
+            ref description,
+            ..
+        } = ev
+        {
+            self.pay_ui.on_transaction(success, kind, dest, description);
+            return;
+        }
+        if let NetEvent::Balance(balance) = ev {
+            self.pay_ui.on_balance(balance);
+        }
         if let NetEvent::ScriptTeleportRequest { .. } = ev {
             // llMapDestination asked for the map (BEACON_SHOW_MAP)
             self.panels.world_map = true;
@@ -6532,6 +6551,7 @@ impl App {
             }
             self.demo_buy_currency();
             self.demo_buy_land();
+            self.demo_pay();
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
         // the window, moving), Violet Wolf looks at a point north of him;
@@ -8331,7 +8351,7 @@ impl App {
                 if let Some(c) = self.media_cursor {
                     ctx.set_cursor_icon(c);
                 }
-                a.object_confirm = ui::object_actions::show(&ctx, &p, &mut self.interactions, &self.world);
+                self.show_pay(&ctx, &p, &mut a);
                 for document in ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world) {
                     match document {
                         ui::object_actions::ContentsOpen::Script(object, item) => {

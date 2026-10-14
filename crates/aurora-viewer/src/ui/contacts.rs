@@ -920,7 +920,9 @@ fn friend_menu(
     if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport")) {
         st.ask_teleport_request(id, world.status.cfg.reject_teleports);
     }
-    menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"));
+    if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+        context::request(ui.ctx(), CtxAction::PayResident(id));
+    }
     menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("common-follow"));
     if menu::item(ui, p, "user-minus", aurora_i18n::tr!("common-remove-this-friend")) {
         st.dialog = Some(Dialog::RemoveFriends(ids.clone()));
@@ -1098,7 +1100,15 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
         }
     }
     side_button(ui, p, aurora_i18n::tr!("ui-contacts-map"), soon, false);
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-pay"), soon, false);
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-contacts-pay"),
+        aurora_i18n::tr!("ui-contacts-pay-help"),
+        n == 1,
+    ) {
+        crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(sel[0]));
+    }
     if side_button(
         ui,
         p,
