@@ -5477,6 +5477,8 @@ impl App {
         env.sky.sun_texture = slots[1];
         env.sky.moon_texture = slots[2];
         env.water.normal_texture = slots[3];
+        env.sky.rainbow_texture = slots[4];
+        env.sky.halo_texture = slots[5];
         t_part = self.scene.parts.lap(Part::ParamsEnv, t_part);
         let mirror = if in_world && self.settings.mirrors > 0 {
             self.scene.find_mirror(&self.world, &cull, Instant::now())
@@ -6205,6 +6207,9 @@ impl App {
         }
         if self.demo {
             for event in crate::demo::eep::events(self.frame_count) {
+                self.world.apply(event);
+            }
+            for event in crate::demo::sky::events(self.frame_count) {
                 self.world.apply(event);
             }
             if let Some(step) = crate::demo::env::step(self.frame_count) {
@@ -9809,6 +9814,14 @@ impl ApplicationHandler for App {
                 for ev in crate::demo::selection_cycle_events() {
                     self.world.apply(ev);
                 }
+            }
+            // AURORA_DEMO_SKY_OPTICS: from behind the avatar, up at the eastern sky
+            if let Some(dir) = crate::demo::sky::view_direction()
+                && std::env::var_os("AURORA_DEMO_CAM").is_none()
+            {
+                let eye = self.world.agent.position + Vec3::new(-3.0, 0.0, 2.5);
+                self.camera
+                    .set_view(eye, eye + dir * 30.0, &mut self.world.agent, &self.settings.camera);
             }
             if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                 let focus = Vec3::new(135.5, 125.0, crate::demo::floor_at(135.0, 125.0) + 1.3);

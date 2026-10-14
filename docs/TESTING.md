@@ -1004,6 +1004,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
 | `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>]]` | Classic EEP sky with this gamma |
+| `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
@@ -1091,6 +1092,17 @@ To check with these scenarios:
   `AURORA_DEMO_SKY=1.62,0.8,1.1` and `AURORA_DEMO_PBR_OVERRIDE=1`, the surround
   of each bump of the slabs must be darkened by ambient occlusion, and no
   longer be once ambient occlusion is turned off in the settings.
+- **`AURORA_DEMO_SKY_OPTICS=rainbow|halo|clear`**: the region's sky carries a
+  moisture level of 1 (`rainbow`, sun 12° up in the west) or an ice level of
+  1 (`halo`, sun 14° up in the east), and the camera looks east from behind
+  the avatar (`demo_sky.rs`). `rainbow`: a bow over the eastern horizon, its
+  top about 30° up, red outside and violet inside, the sky brighter inside
+  it. `halo`: a ring 22° around the sun, red on its inner edge, darker sky
+  inside it. `clear`: the sky and the view of `rainbow` without the bow, to
+  compare. Offline, the textures are stand-ins drawn by the demo (the grid
+  sends Second Life's own, `rainbow_id` and `halo_id`); the shape, the place
+  and the colors' order are those of skyF.glsl. Capture in `AURORA_AA=3` and
+  `AURORA_AA=6`.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`, `lod`, `shadows`, `ao`, `check_lights`,

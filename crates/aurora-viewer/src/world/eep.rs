@@ -15,6 +15,9 @@ pub const DEFAULT_CLOUD_ID: Uuid = uuid::uuid!("1dc1368f-e8fe-f02d-a08d-9d9f11c1
 pub const DEFAULT_MOON_ID: Uuid = uuid::uuid!("d07f6eed-b96a-47cd-b51d-400ad4a1c428");
 /// Default water normal map (DEFAULT_WATER_NORMAL).
 pub const DEFAULT_WATER_NORMAL: Uuid = uuid::uuid!("822ded49-9a6c-f61c-cb89-6df54f42cdf4");
+/// Default rainbow and 22° halo textures (LLSettingsSky IMG_RAINBOW, IMG_HALO).
+pub const DEFAULT_RAINBOW_ID: Uuid = uuid::uuid!("11b4c57c-56b3-04ed-1f82-2004363882e4");
+pub const DEFAULT_HALO_ID: Uuid = uuid::uuid!("12149143-f599-91a7-77ac-b52a3c0f59cd");
 
 #[derive(Debug, Clone, Copy)]
 pub struct SkyFrame {
@@ -50,6 +53,13 @@ pub struct SkyFrame {
     pub probe_ambiance: f32,
     /// No reflection_probe_ambiance key: a "classic" sky (LLSettingsSky::canAutoAdjust).
     pub can_auto_adjust: bool,
+    /// Rainbow strength (0..1), droplet radius (5..1000) and 22° halo
+    /// strength (0..1).
+    pub moisture_level: f32,
+    pub droplet_radius: f32,
+    pub ice_level: f32,
+    pub rainbow_id: Uuid,
+    pub halo_id: Uuid,
 }
 
 impl Default for SkyFrame {
@@ -87,6 +97,11 @@ impl Default for SkyFrame {
             dome_radius: 15000.0,
             probe_ambiance: 0.0,
             can_auto_adjust: true,
+            moisture_level: 0.0,
+            droplet_radius: 800.0,
+            ice_level: 0.0,
+            rainbow_id: DEFAULT_RAINBOW_ID,
+            halo_id: DEFAULT_HALO_ID,
         }
     }
 }
@@ -255,6 +270,12 @@ fn sky_frame(s: &Llsd) -> Option<SkyFrame> {
         dome_radius: real(s, "dome_radius", d.dome_radius).clamp(1000.0, 2_000_000.0),
         probe_ambiance: real(s, "reflection_probe_ambiance", d.probe_ambiance),
         can_auto_adjust: !s.has("reflection_probe_ambiance"),
+        // ranges of LLSettingsSky's validation
+        moisture_level: real(s, "moisture_level", d.moisture_level).clamp(0.0, 1.0),
+        droplet_radius: real(s, "droplet_radius", d.droplet_radius).clamp(5.0, 1000.0),
+        ice_level: real(s, "ice_level", d.ice_level).clamp(0.0, 1.0),
+        rainbow_id: uuid(s, "rainbow_id", d.rainbow_id),
+        halo_id: uuid(s, "halo_id", d.halo_id),
     })
 }
 
@@ -538,6 +559,11 @@ impl SkyFrame {
             dome_radius: lf(a.dome_radius, b.dome_radius),
             probe_ambiance: lf(a.probe_ambiance, b.probe_ambiance),
             can_auto_adjust: a.can_auto_adjust && b.can_auto_adjust,
+            moisture_level: lf(a.moisture_level, b.moisture_level),
+            droplet_radius: lf(a.droplet_radius, b.droplet_radius),
+            ice_level: lf(a.ice_level, b.ice_level),
+            rainbow_id: pick(a.rainbow_id, b.rainbow_id),
+            halo_id: pick(a.halo_id, b.halo_id),
         }
     }
 
@@ -632,6 +658,11 @@ impl SkyFrame {
             "gamma" => self.gamma,
             "dome_offset" => self.dome_offset,
             "dome_radius" => self.dome_radius,
+            "moisture_level" => self.moisture_level,
+            "droplet_radius" => self.droplet_radius,
+            "ice_level" => self.ice_level,
+            "rainbow_id" => self.rainbow_id,
+            "halo_id" => self.halo_id,
         };
         // a classic sky has no probe ambiance key (canAutoAdjust)
         if !self.can_auto_adjust {
@@ -675,11 +706,16 @@ mod tests {
             cloud_shadow: 0.8,
             probe_ambiance: 0.6,
             can_auto_adjust: false,
+            moisture_level: 0.75,
+            droplet_radius: 250.0,
+            ice_level: 0.5,
             ..SkyFrame::with_sun(Vec3::new(0.3, -0.2, 0.9))
         };
         let Some(Settings::Sky(back)) = Settings::from_llsd(&sky.settings_llsd()) else {
             panic!("sky expected");
         };
+        assert_eq!((back.moisture_level, back.droplet_radius, back.ice_level), (0.75, 250.0, 0.5));
+        assert_eq!((back.rainbow_id, back.halo_id), (DEFAULT_RAINBOW_ID, DEFAULT_HALO_ID));
         assert_eq!(back.gamma, sky.gamma);
         assert_eq!(back.haze_density, sky.haze_density);
         assert_eq!(back.ambient, sky.ambient);
