@@ -144,7 +144,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
-| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic` | The Controls window open on a tab, or Firestorm's two windows |
+| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
 
 `AURORA_CAPTURE_LAYOUT`: a screenshot otherwise starts from the default
 layout, to be reproducible. With this variable it reloads that of the
@@ -203,7 +203,16 @@ reset, saved positions, the alt-camera keys), `movement` on its Movement tab
 (the eight buttons with the keys of the keyboard's layout, walk / run / fly),
 `compact` the window minimized (its joysticks and zoom only),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
-not saved).
+not saved). `free` opens the photo window with its "Free camera" switch on:
+the Controls window opens by itself on its camera tab, which drives the free
+camera (the "Free camera / The avatar stays put" banner with Back and its
+key, the move and look joysticks with up / down and their keys between them,
+the speed at 2 m/s, "No collisions" on, the keys); at frame 640 the camera
+has flown 2 m to the left and 1 m up and turned, the avatar where it was
+(the log gives `free camera: on at …` and `demo free camera: flown to …`).
+`free-compact` is the same window minimized: its title is "Free camera", the
+two joysticks with up / down, the speed and Back. Escape, Back or closing the
+photo window brings the camera back (`free camera: back to the avatar`).
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
@@ -1375,7 +1384,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
-| `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet` or `legacy` | People › Near you with the mock-up's residents: rich rows, compact crowd, a person's sheet, Firestorm's table |
+| `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `recent` or `blocked` | People with the mock-up's contents: Near you (rich rows, compact crowd, a person's sheet, Firestorm's table) and the other tabs |
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
@@ -1396,6 +1405,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
+| `AURORA_DEMO_BARS=<words>` | Top bar: islands, Firestorm's bars, place island stretched or not, rights named, a menu open |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
@@ -2054,7 +2064,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `AURORA_FPS_LIMIT=60`, they are greyed out at frame 780 and removed from the
   list at frame 1400. `friends` and `groups`: these tabs. `profile`: the
   Groups tab and the "Group Profile" window of the first group.
-- **`AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy`**: People › Near you in
+- **`AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy|friends|groups|sets|recent|blocked`**: People › Near you in
   Aurora's look, with the residents of the People mock-up (names, ranges,
   states, arrivals), alone on screen. `rows`: the rich rows grouped by
   range (whisper 10 m, say 20 m, shout 100 m, beyond), Tess selected with
@@ -2069,10 +2079,40 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   residents in Firestorm's table, for this run only (the preference is
   not changed). Capture `crowd` at frame 900 or later: the profiles
   (payment info, notes) arrive four a second.
+  The other tabs, with the mock-up's contents and windows (the contact
+  sets, the nickname, the pinned group and the recent people are set for
+  the run only, nothing is written to the account's files): `friends`
+  (860 × 600: Nova and Orion online, pixelboutique and testtouch offline,
+  the rights each way on the rows, Nova's sheet with "Nickname and contact
+  sets"), `groups` (860 × 500: "No active group", Aurora Builders active,
+  pinned, two notices unread and its sheet open, the market's chat
+  blocked, "3 groups out of 42"), `sets` (520 × 430: Family, Clubbing and
+  Shop, the wolf's nickname, a non-friend, Nova chosen with her quick
+  actions out: move, take out, menu), `recent` (420 × 300: four residents
+  met lately, how long ago and where) and `blocked` (420 × 300: a resident
+  blocked in full with "Unblock" out, one for voice and text, an object
+  for its sounds). Each tab keeps its menu of several people (Ctrl /
+  Shift) and its sheet; a window too narrow for the six tabs shows the
+  ones around the open tab beside "…".
 - **`AURORA_DEMO_STATUSMENU=1|invisible`**: the menu of the status
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing
   is saved.
+- **`AURORA_DEMO_BARS=<words>`**: the states of the top bar for the
+  comparisons with the bars mockup, for this run only (nothing is saved),
+  with the mockup's long parcel name. Words, separated by commas:
+  `normal` (the islands as set), `legacy` (Firestorm's bars), `compact`
+  (the place island as wide as its content), `rights` (the parcel rights
+  named when there is room), `nobug` / `bug` (the bug report button
+  hidden / shown: the menu island holds the wolf alone, the place follows
+  8 px away); and one menu opened at frame 300: `menu`
+  (the place), `options` (right click on the place island), `favorites`,
+  `star`, `status` (the account's picture). Capture at
+  `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
+  at frame 780: at 1280 the place shows the parcel and the region, at
+  1536 the position too, with `rights` the forbidden rights are named at
+  1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
+  the bell's violet counter.
 - **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident

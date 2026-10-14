@@ -479,7 +479,7 @@ fn demo_raw() -> Llsd {
     let people = people::friends();
     let mut buddies: Vec<Llsd> = (0..4)
         .map(|i| u(100 + i))
-        .filter(|id| people.iter().all(|(f, _, _)| f != id))
+        .filter(|id| people.iter().all(|(f, _, _)| f != id) && !people::hides_buddy(id))
         .map(|id| {
             let i = (id.as_u128() & 0xFF) as usize - 100;
             llsd_map! {"buddy_id" => id, "buddy_rights_given" => [1, 3, 7, 0][i], "buddy_rights_has" => if i.is_multiple_of(2) { 3 } else { 1 }}
@@ -510,6 +510,12 @@ fn demo_raw() -> Llsd {
         && let Llsd::Map(m) = &mut raw
     {
         env::library_login(m);
+    }
+    // AURORA_DEMO_PEOPLE's groups tab: "3 groups out of 42"
+    if let Some(limit) = people::group_limit()
+        && let Llsd::Map(m) = &mut raw
+    {
+        m.insert("max-agent-groups".to_owned(), Llsd::from(limit));
     }
     raw
 }
@@ -1474,6 +1480,10 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         }
         // block list: Violet Wolf, an object, a name and the chat of group 2
         aurora_net::NetCommand::RequestMuteList { .. } => {
+            // AURORA_DEMO_PEOPLE's tabs: their own block list
+            if let Some(text) = people::mute_list() {
+                return vec![NetEvent::MuteList(aurora_net::MuteListSource::File(text))];
+            }
             let text = aurora_i18n::tr!(
                 "demo-1-violet-wolf-0-2-spam-box-0-0",
                 value0 = format!("{}", DEMO_LOUP),

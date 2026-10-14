@@ -115,9 +115,20 @@ pub fn glaze(ctx: &egui::Context, p: &Palette) {
 /// Right-click menu of a widget (replaces `Response::context_menu`).
 /// Returns whether the menu is open.
 pub fn context_menu(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
+    context_menu_popup(Popup::context_menu(resp), p, body)
+}
+
+/// [`context_menu`] of a widget that also opens a [`dropdown`] on a left
+/// click: the right-click menu needs an id of its own (egui keys both on
+/// the widget's).
+pub fn context_menu_of_button(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
+    context_menu_popup(Popup::context_menu(resp).id(resp.id.with("context_menu")), p, body)
+}
+
+fn context_menu_popup(popup: Popup<'_>, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
     // below-right of the pointer like the world menu, pushed back into the
     // window by the area's constraint instead of flipping above it
-    Popup::context_menu(resp)
+    popup
         .align(egui::RectAlign::BOTTOM_START)
         .align_alternatives(&[])
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
@@ -132,10 +143,27 @@ pub fn context_menu(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut U
 /// `menu_button` closes on any of them, `CloseOnClickOutside` leaves the menu
 /// open until an entry closes it. Returns whether the menu is open.
 pub fn dropdown(resp: &egui::Response, p: &Palette, close: PopupCloseBehavior, body: impl FnOnce(&mut Ui)) -> bool {
+    dropdown_placed(resp, p, close, None, body)
+}
+
+/// [`dropdown`] at a given side of the widget and distance from it: the
+/// menus of the bars' islands open 10 points under their island, those at
+/// its right end aligned on its right (`RectAlign::BOTTOM_END`).
+pub fn dropdown_placed(
+    resp: &egui::Response,
+    p: &Palette,
+    close: PopupCloseBehavior,
+    place: Option<(egui::RectAlign, f32)>,
+    body: impl FnOnce(&mut Ui),
+) -> bool {
     use egui::containers::menu::MenuConfig;
     // the tag hands the same style and rule to the sub-menus
     let config = MenuConfig::new().close_behavior(close).style(style(p));
-    Popup::menu(resp)
+    let mut popup = Popup::menu(resp);
+    if let Some((align, gap)) = place {
+        popup = popup.align(align).gap(gap);
+    }
+    popup
         .close_behavior(close)
         .style(style(p))
         .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(MenuConfig::MENU_CONFIG_TAG, config))
@@ -447,20 +475,69 @@ pub fn separator(ui: &mut Ui, p: &Palette) {
 
 /// Muted line that is not an action (an avatar's complexity…).
 pub fn info(ui: &mut Ui, p: &Palette, icon: &str, text: &str) {
-    let font = FontId::proportional(11.5);
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, p.muted);
+    info_line(
+        ui,
+        icon,
+        text,
+        FontId::proportional(11.5),
+        ICON - 2.0,
+        ROW_H - 2.0,
+        p.muted,
+        p.muted,
+    );
+}
+
+/// A line that is not an action, at a row's size, its icon and its text in
+/// their own colours (a parcel's right, red when forbidden). Returns its
+/// response, for a tooltip.
+pub fn info_colored(ui: &mut Ui, icon: &str, text: &str, icon_color: Color32, color: Color32) -> egui::Response {
+    info_line(ui, icon, text, FontId::proportional(12.5), ICON, ROW_H, icon_color, color)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn info_line(
+    ui: &mut Ui,
+    icon: &str,
+    text: &str,
+    font: FontId,
+    icon_size: f32,
+    h: f32,
+    icon_color: Color32,
+    color: Color32,
+) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
     let natural = (PAD + ICON + PAD + galley.size().x + PAD).max(MIN_W);
     let w = if ui.is_sizing_pass() {
         natural
     } else {
         ui.available_width().max(natural)
     };
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, ROW_H - 2.0), Sense::hover());
-    let icon_rect = egui::Rect::from_center_size(rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0), Vec2::splat(ICON - 2.0));
-    paint_icon(ui.painter(), icon, icon_rect, p.muted);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+    let icon_rect = egui::Rect::from_center_size(rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0), Vec2::splat(icon_size));
+    paint_icon(ui.painter(), icon, icon_rect, icon_color);
     ui.painter().galley(
         egui::pos2(rect.left() + PAD + ICON + PAD, rect.center().y - galley.size().y * 0.5),
         galley,
-        p.muted,
+        color,
+    );
+    resp
+}
+
+/// The title of a group of rows, in small capitals (the parcel's rights,
+/// the recent places of the place menu).
+pub fn heading(ui: &mut Ui, p: &Palette, text: &str) {
+    let font = FontId::new(10.5, super::fonts::semibold(ui.ctx()));
+    let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, p.muted_dim);
+    let natural = (PAD + galley.size().x + PAD).max(MIN_W);
+    let w = if ui.is_sizing_pass() {
+        natural
+    } else {
+        ui.available_width().max(natural)
+    };
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 21.0), Sense::hover());
+    ui.painter().galley(
+        egui::pos2(rect.left() + PAD, rect.bottom() - 3.0 - galley.size().y),
+        galley,
+        p.muted_dim,
     );
 }

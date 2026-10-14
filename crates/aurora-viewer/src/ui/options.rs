@@ -1673,6 +1673,21 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(ui, p, aurora_i18n::tr!("bug-toolbar"), aurora_i18n::tr!("bug-toolbar-help"), |ui| {
                     toggle(ui, p, &mut s.show_bug_report)
                 });
+                // the place island of the Aurora bars (also in its right-click menu)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-place-bar-stretch"),
+                    aurora_i18n::tr!("ui-options-place-bar-stretch-help"),
+                    |ui| toggle(ui, p, &mut s.place_bar_stretch),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-place-bar-rights-text"),
+                    aurora_i18n::tr!("ui-options-place-bar-rights-text-help"),
+                    |ui| toggle(ui, p, &mut s.place_bar_rights_text),
+                );
                 c |= row(ui, p, aurora_i18n::tr!("ui-options-interface-scale"), "", |ui| {
                     slider(ui, &mut s.ui_scale, 0.75..=2.0, "×")
                 });

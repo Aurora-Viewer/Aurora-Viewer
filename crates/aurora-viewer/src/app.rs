@@ -236,6 +236,8 @@ pub struct App {
     /// world focuses the camera, as with Alt (LLToolCamera).
     controls_ui: ui::controls::ControlsUi,
     controls_held: Vec<Action>,
+    /// Its free camera joysticks this frame: move, look.
+    controls_free: (egui::Vec2, egui::Vec2),
     object_view: bool,
     /// Double click on the ground (src/autopilot.rs): the presses of the
     /// left button on the world, whether the one being handled is the
@@ -722,6 +724,7 @@ impl App {
             always_run: false,
             controls_ui: Default::default(),
             controls_held: Vec::new(),
+            controls_free: (egui::Vec2::ZERO, egui::Vec2::ZERO),
             object_view: false,
             double_click: Default::default(),
             double_press: false,
@@ -2319,7 +2322,11 @@ impl App {
             if !self.right_gesture.motion(dx, dy, self.egui_ctx.pixels_per_point()) {
                 return; // maybe a click: do not move the camera yet
             }
-            self.camera.orbit_drag(dx, dy, s, &mut self.world.agent);
+            match self.camera.free_mut() {
+                // the free camera looks around instead of orbiting
+                Some(free) => free.drag(dx, dy, s),
+                None => self.camera.orbit_drag(dx, dy, s, &mut self.world.agent),
+            }
         }
     }
 
@@ -4162,6 +4169,18 @@ impl App {
         i.strafe_right |= held(Action::StrafeRight);
         i.up |= held(Action::Up);
         i.down |= held(Action::Down);
+        if self.camera.free().is_some() {
+            // the photo's free camera takes the movement keys: the avatar
+            // stays where it is (no walk, turn, jump or flight start)
+            self.photo_free_move(&i, dt);
+            self.input = MoveInput::default();
+            self.fb_since = None;
+            self.lr_since = None;
+            self.up_since = None;
+            self.turn_since = None;
+            self.cam_key_since = [None; 10];
+            return;
+        }
         if self.mouse_mode == MouseMode::Steer {
             // left button held on the avatar (Firestorm): the avatar faces the
             // camera; the arrows are camera-relative and turn the avatar toward
@@ -4512,6 +4531,7 @@ impl App {
         images.extend(self.region_ui.wanted_images.drain());
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
+        images.extend(self.people_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
@@ -6547,6 +6567,10 @@ impl App {
         if self.demo && self.frame_count == 60 && std::env::var_os("AURORA_DEMO_CONTACTS").is_some() {
             crate::demo::seed_contact_sets(&mut self.world);
         }
+        // AURORA_DEMO_PEOPLE's tabs: the mock-up's sets, pins and recent people
+        if self.demo && self.frame_count == 60 {
+            crate::demo::people::seed(&mut self.world);
+        }
         // AURORA_DEMO_NAVEDIT=1: click in the location field at frame 230
         if self.demo && self.frame_count == 230 && std::env::var_os("AURORA_DEMO_NAVEDIT").is_some() {
             self.panels.nav_edit = Some(crate::slurl::make(&self.world.region_name(), self.world.agent.position));
@@ -7308,7 +7332,58 @@ impl App {
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::LandmarkStar(star) => self.landmark_star(star),
+            BarAction::PlaceBar { stretch, rights_text } => {
+                self.settings.place_bar_stretch = stretch;
+                self.settings.place_bar_rights_text = rights_text;
+                self.settings.save();
+            }
+            BarAction::ShowBugButton(shown) => {
+                self.settings.show_bug_report = shown;
+                self.settings.save();
+            }
+            BarAction::OpenFavorites => {
+                // Places › Favorites, the first tab
+                self.places_ui.tab = 0;
+                ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
+            }
         }
+    }
+
+    /// Firestorm's bars or the islands, and how the islands are set: the
+    /// settings, or what `AURORA_DEMO_BARS` asks for in demo (never saved).
+    fn bars_look(&self) -> (bool, ui::bars::IslandsLook) {
+        let s = &self.settings;
+        let demo = if self.demo { ui::bars::demo::get() } else { Default::default() };
+        let look = ui::bars::IslandsLook {
+            stretch: demo.stretch.unwrap_or(s.place_bar_stretch),
+            rights_text: demo.rights_text.unwrap_or(s.place_bar_rights_text),
+        };
+        (demo.classic.unwrap_or(s.classic_bars), look)
+    }
+
+    /// The last places of the teleport history for the place menu, newest
+    /// first, without the one we stand in (its last entry): two, as in the
+    /// mockup.
+    fn recent_places(&self) -> Vec<ui::bars::RecentPlace> {
+        self.world
+            .tp_storage
+            .items
+            .iter()
+            .rev()
+            .skip(1)
+            .take(2)
+            .map(|item| {
+                let (name, region) = match item.title.rsplit_once(", ") {
+                    Some((name, region)) => (name.to_owned(), region.to_owned()),
+                    None => (item.title.clone(), String::new()),
+                };
+                ui::bars::RecentPlace {
+                    name,
+                    region,
+                    slurl: item.slurl.clone(),
+                }
+            })
+            .collect()
     }
 
     /// The grid of the session for the web search: only the main grid's
@@ -8040,6 +8115,15 @@ impl App {
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 t = self.ui_parts.lap(Part::UiTags, t);
                 let parcel_landmark = self.parcel_landmark();
+                let (classic_bars, islands) = self.bars_look();
+                let own_name = self.world.own_name();
+                // AURORA_DEMO_BARS: the long parcel name of the mockup (the
+                // islands only: Firestorm's bars stay as they were)
+                let parcel_name = if self.demo && ui::bars::demo::get().on && !classic_bars {
+                    aurora_i18n::tr!("demo-bars-parcel")
+                } else {
+                    self.world.parcel_name.as_str()
+                };
                 let icons = &self.skin.icons;
                 let layout = &self.skin.layout;
                 let maturity = self
@@ -8049,12 +8133,16 @@ impl App {
                     .map(|i| ui::bars::maturity_name(i.sim_access))
                     .unwrap_or("");
                 let status = ui::bars::StatusInfo {
-                    show_bug_report: self.settings.show_bug_report,
+                    show_bug_report: if self.demo {
+                        ui::bars::demo::get().bug.unwrap_or(self.settings.show_bug_report)
+                    } else {
+                        self.settings.show_bug_report
+                    },
                     show_huds: self.settings.show_huds,
                     hud_zoom: self.world.hud_zoom,
                     ban_lines: self.settings.maps.ban_lines,
                     region: &self.world.region_name(),
-                    parcel: &self.world.parcel_name,
+                    parcel: parcel_name,
                     maturity,
                     position: self.world.agent.position,
                     fps: self.perf.fps,
@@ -8082,6 +8170,11 @@ impl App {
                         }),
                         _ => Vec::new(),
                     },
+                    classic_bars,
+                    islands,
+                    own_name: &own_name,
+                    own_pic: self.avatar_pics.get(&self.world.agent_id),
+                    recent: if classic_bars { Vec::new() } else { self.recent_places() },
                 };
                 let media = ui::audio::MediaState {
                     music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
@@ -8132,6 +8225,7 @@ impl App {
                     output_device: self.settings.audio.output_device.clone(),
                     input_devices: &self.options_ui.input_devices,
                     output_devices: &self.options_ui.output_devices,
+                    voice_dot: (!classic_bars).then(|| (self.voice.light, self.voice.status.clone())),
                     ..Default::default()
                 };
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
@@ -8156,7 +8250,13 @@ impl App {
                 );
                 // what the bars leave: where the windows are laid out, moved
                 // and snapped this frame
-                ui::layout::set_work_area(ui.ctx(), ui.available_rect_before_wrap());
+                let left = ui.available_rect_before_wrap();
+                let area = if classic_bars {
+                    left
+                } else {
+                    ui::bars::islands::work_area(left, left.bottom())
+                };
+                ui::layout::set_work_area(ui.ctx(), area);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.toolbar_ui.show(ui.ctx(), &p, layout, toolbar_settings);
                 if self.toolbar_ui.commit(layout, toolbar_settings) || chat_width_set || toolbar_migrated {
@@ -8355,7 +8455,13 @@ impl App {
                     self.panels.contacts = open;
                 }
                 // their confirmations, also asked from the other menus
-                contact_actions.extend(ui::contacts::dialog_windows(&ctx, &p, &mut self.world, &mut self.contacts_ui));
+                contact_actions.extend(ui::contacts::dialog_windows(
+                    &ctx,
+                    &p,
+                    &mut self.world,
+                    &mut self.contacts_ui,
+                    &mut self.settings.contacts,
+                ));
                 // residents added to a conversation: a conversation with one
                 // resident that became a conference closes (FSFloaterIM::
                 // addP2PSessionParticipants)
@@ -8397,6 +8503,11 @@ impl App {
                     &mut self.people_ui,
                     &mut radar,
                     &mut self.settings.friends_list,
+                    ui::people::ContactsParts {
+                        ui: &mut self.contacts_ui,
+                        settings: &mut self.settings.contacts,
+                        images: &self.ui_images,
+                    },
                     &mut people_map,
                     !self.settings.classic_people && !(self.demo && crate::demo::people::legacy()),
                 );
@@ -8406,6 +8517,8 @@ impl App {
                 for pa in people {
                     match pa {
                         ui::people::PeopleAction::OpenIm(id) => {
+                            // LLAvatarActions::startIM: they join the recent people
+                            self.world.met(id);
                             self.world.ui_sounds.push(UiSound::StartIm);
                             self.world.social.session_mut(id);
                             self.world.social.focus_im = Some(id);
@@ -8441,6 +8554,16 @@ impl App {
                                 self.world.unblock(id, &name, flag);
                             }
                         }
+                        ui::people::PeopleAction::SearchGroups => {
+                            self.panels.search = true;
+                            self.search_ui.open_tab(crate::world::search::Tab::Groups);
+                        }
+                        ui::people::PeopleAction::GroupData(group) => self.world.group_data.open(group, true),
+                        ui::people::PeopleAction::GroupTitle { group, role } => self.world.group_data.set_title(group, role),
+                        ui::people::PeopleAction::GroupFlags { group, notices, profile } => {
+                            self.world.groups.set_flags(group, notices, profile)
+                        }
+                        ui::people::PeopleAction::InviteToGroup(group) => self.group_profile_ui.open_with_invite(&mut self.world, group),
                     }
                 }
                 t = self.ui_parts.lap(Part::UiPeople, t);
@@ -8598,7 +8721,8 @@ impl App {
                     &self.skin.icons,
                     &mut self.media,
                     &mut self.media_ui,
-                    self.skin.layout.nav_bar_height,
+                    // under the top bar or the islands
+                    ui::layout::work_area(&ctx).top() - ctx.content_rect().top(),
                 );
                 if let Some(c) = self.media_cursor {
                     ctx.set_cursor_icon(c);
@@ -9643,19 +9767,32 @@ impl ApplicationHandler for App {
                 // the density is the list's own toggle; the look is forced
                 // for the run only (`demo::people::legacy`), not saved
                 self.settings.radar.compact = crate::demo::people::compact();
+                // the friends tab opens sorted as the mock-up's (online first)
+                self.settings.friends_list.sort = ui::people::FriendsSettings::default().sort;
                 if let Some(id) = crate::demo::people::sheet() {
                     self.people_ui.radar_selected = vec![id];
                     self.people_ui.open_sheet(id);
-                    // the mock-up's window with a sheet
+                }
+                if crate::demo::people::mode() == Some(crate::demo::people::Mode::Groups) {
+                    self.people_ui.open_group_sheet(crate::demo::DEMO_GROUP1);
+                    self.world.group_data.open(crate::demo::DEMO_GROUP1, true);
+                }
+                // the mock-up's window
+                if let Some((w, h)) = crate::demo::people::window_size() {
                     let pos = ui::people::default_pos(ui::layout::work_area(&self.egui_ctx));
-                    ui::widgets::place_floater(&self.egui_ctx, ui::people::WINDOW, pos, egui::vec2(860.0, 600.0));
+                    ui::widgets::place_floater(&self.egui_ctx, ui::people::WINDOW, pos, egui::vec2(w, h));
                 }
                 if let Some(id) = crate::demo::people::hovered() {
                     self.people_ui.radar_selected = vec![id];
                     self.people_ui.demo_hover = Some(id);
                 }
+                // the contact sets tab: the family, Nova chosen
+                if crate::demo::people::mode() == Some(crate::demo::people::Mode::Sets) {
+                    self.contacts_ui.set_choice = Some(aurora_i18n::tr!("demo-family").to_owned());
+                    self.people_ui.select(vec![crate::demo::people::NOVA]);
+                }
                 self.panels.people = true;
-                self.panels.people_tab = 0;
+                self.panels.people_tab = crate::demo::people::tab();
                 self.panels.inventory = false;
                 self.panels.chat = false;
                 self.panels.minimap = false;
@@ -10913,7 +11050,9 @@ impl ApplicationHandler for App {
                     }
                     None => false,
                 };
-                if !on_media {
+                // (the free camera has no zoom: the wheel would change the
+                // avatar's view behind it, or enter mouselook)
+                if !on_media && self.camera.free().is_none() {
                     // SL wheel clicks: positive zooms out
                     let was = self.camera.mouselook();
                     self.camera

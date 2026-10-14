@@ -10,6 +10,13 @@
 //! disturb come from their animations, as on the grid); the farther ones
 //! are coarse locations only. Our friends of the scenario are the wolf of
 //! the plaza ("Orion le Grand" here) and the first friend of the demo list.
+//!
+//! The other tabs, with the mock-up's contents: `friends` (four friends,
+//! two online, Nova's sheet open), `groups` (the demo's three groups, the
+//! first one pinned and its sheet open, the market's chat blocked), `sets`
+//! (Family, Clubbing and Shop, a nickname and a non-friend, a row under the
+//! pointer), `recent` (four residents met lately) and `blocked` (a resident
+//! blocked in full, one for voice and text, an object for its sounds).
 
 use super::{DEMO_LOUP, HANDLE, IDLE_ANIM, floor_at, prim, shape, te};
 use crate::world::radar::{ANIM_AGENT_SIT_GROUND, ANIM_AGENT_TYPE};
@@ -31,6 +38,11 @@ pub enum Mode {
     CrowdHover,
     Sheet,
     Legacy,
+    Friends,
+    Groups,
+    Sets,
+    Recent,
+    Blocked,
 }
 
 pub fn mode() -> Option<Mode> {
@@ -41,8 +53,152 @@ pub fn mode() -> Option<Mode> {
         "crowd-hover" => Some(Mode::CrowdHover),
         "sheet" | "fiche" => Some(Mode::Sheet),
         "legacy" => Some(Mode::Legacy),
+        "friends" | "amis" => Some(Mode::Friends),
+        "groups" | "groupes" => Some(Mode::Groups),
+        "sets" | "cercles" => Some(Mode::Sets),
+        "recent" | "récent" => Some(Mode::Recent),
+        "blocked" | "bloqué" => Some(Mode::Blocked),
         _ => Some(Mode::Rows),
     })
+}
+
+/// The modes of the tabs after Near you.
+fn contacts_mode() -> bool {
+    matches!(
+        mode(),
+        Some(Mode::Friends | Mode::Groups | Mode::Sets | Mode::Recent | Mode::Blocked)
+    )
+}
+
+/// The tab People opens on (ui::people::TAB_*).
+pub fn tab() -> u8 {
+    use crate::ui::people::{TAB_BLOCKED, TAB_FRIENDS, TAB_GROUPS, TAB_NEARBY, TAB_RECENT, TAB_SETS};
+    match mode() {
+        Some(Mode::Friends) => TAB_FRIENDS,
+        Some(Mode::Groups) => TAB_GROUPS,
+        Some(Mode::Sets) => TAB_SETS,
+        Some(Mode::Recent) => TAB_RECENT,
+        Some(Mode::Blocked) => TAB_BLOCKED,
+        _ => TAB_NEARBY,
+    }
+}
+
+/// The window's size in the mock-up, when it is not the default one.
+pub fn window_size() -> Option<(f32, f32)> {
+    match mode()? {
+        Mode::Sheet | Mode::Friends => Some((860.0, 600.0)),
+        Mode::Groups => Some((860.0, 500.0)),
+        Mode::Sets => Some((520.0, 430.0)),
+        Mode::Recent | Mode::Blocked => Some((420.0, 300.0)),
+        _ => None,
+    }
+}
+
+/// A resident of the demo's buddy list (`demo::u`).
+const fn buddy(n: u128) -> Uuid {
+    Uuid::from_u128(super::DEMO_FRIEND.as_u128() - 100 + n)
+}
+
+/// The mock-up's non-friend of the family set, and the blocked residents.
+const ORION_EXAMPLE: Uuid = buddy(102);
+pub const ZED: Uuid = id(30);
+const KAEL: Uuid = id(31);
+const NOISY_SELLER: Uuid = id(32);
+
+/// The names of the tabs' residents who are not around: (first, last,
+/// chosen display name).
+fn contacts_name(agent: &Uuid) -> Option<(&'static str, &'static str, &'static str)> {
+    if !contacts_mode() {
+        return None;
+    }
+    let example = aurora_i18n::tr!("demo-example");
+    Some(match *agent {
+        a if a == buddy(101) => ("pixelboutique", "Resident", ""),
+        a if a == ORION_EXAMPLE => ("Orion", example, ""),
+        a if a == buddy(103) => ("testtouch", "Resident", ""),
+        _ => return None,
+    })
+}
+
+/// The buddies of the demo's list the tabs leave out: they have their own.
+pub fn hides_buddy(id: &Uuid) -> bool {
+    contacts_mode() && *id == ORION_EXAMPLE
+}
+
+/// AURORA_DEMO_PEOPLE=blocked|groups: the block list (a set flag means "not
+/// blocked", LLMute flags); `groups`: the market's chat only.
+pub fn mute_list() -> Option<String> {
+    use crate::world::mutes::flag;
+    match mode()? {
+        Mode::Blocked => Some(format!(
+            "1 {ZED} Zed {}|0\n1 {KAEL} Kael {}|{}\n2 {NOISY_SELLER} {}|{}\n",
+            aurora_i18n::tr!("demo-spammer"),
+            aurora_i18n::tr!("demo-shadow"),
+            flag::PARTICLES | flag::OBJECT_SOUNDS,
+            aurora_i18n::tr!("demo-noisy-seller"),
+            flag::TEXT_CHAT | flag::VOICE_CHAT | flag::PARTICLES,
+        )),
+        Mode::Groups => Some(format!("0 {} Group:{}|\n", Uuid::nil(), super::DEMO_GROUP3)),
+        _ if contacts_mode() => Some(String::new()),
+        _ => None,
+    }
+}
+
+/// The account's group limit for the groups tab's count.
+pub fn group_limit() -> Option<i32> {
+    contacts_mode().then_some(42)
+}
+
+/// The mock-up's contact sets, nickname, pinned group and recent people,
+/// set for the run (nothing is written to the account's files), once the
+/// buddy list is in.
+pub fn seed(world: &mut crate::world::World) {
+    if !contacts_mode() {
+        return;
+    }
+    let mut sets = crate::world::contact_sets::ContactSets::default();
+    let friends: Vec<Uuid> = world.social.friends.iter().map(|f| f.id).collect();
+    let is_friend = |id: &Uuid| friends.contains(id);
+    for (name, color, members) in [
+        (
+            aurora_i18n::tr!("demo-family"),
+            [0.957, 0.447, 0.714, 1.0],
+            vec![DEMO_LOUP, NOVA, ORION_EXAMPLE],
+        ),
+        (
+            "Clubbing",
+            [0.369, 0.918, 0.831, 1.0],
+            vec![id(1), id(2), id(5), id(6), id(7), id(8), id(9), id(10)],
+        ),
+        (
+            aurora_i18n::tr!("demo-shop"),
+            [0.988, 0.827, 0.302, 1.0],
+            vec![id(3), id(11), id(12), id(13), id(14)],
+        ),
+    ] {
+        sets.add_set(name);
+        sets.set_color(name, color);
+        sets.add_to_set(&members, name, is_friend);
+    }
+    // the contact sets tab: the wolf's display name is his nickname
+    if mode() == Some(Mode::Sets) {
+        sets.set_pseudonym(&[DEMO_LOUP], aurora_i18n::tr!("demo-orion-the-great"), is_friend);
+    }
+    world.contact_sets = sets;
+    world.groups.favorites.insert(super::DEMO_GROUP1);
+    // "2 notices" on the first group
+    world.group_data.set_read(super::DEMO_GROUP1, super::group::read_but_two());
+    let now = std::time::SystemTime::now();
+    let here = world.region_name();
+    for (who, minutes, region) in [
+        (id(8), 120, here.as_str()),
+        (buddy(101), 64, aurora_i18n::tr!("demo-boreal-lagoon")),
+        (id(1), 12, here.as_str()),
+        (NOVA, 3, here.as_str()),
+    ] {
+        let when = now - std::time::Duration::from_secs(minutes * 60);
+        world.recent.add(world.agent_id, who, false, region, when);
+    }
 }
 
 /// The crowd's density: `crowd` and `crowd-hover`.
@@ -292,14 +448,26 @@ pub fn friends() -> Vec<(Uuid, i32, i32)> {
     match mode() {
         None => Vec::new(),
         Some(_) if compact() => [100, 110, 120].into_iter().map(|n| (id(n), 3, 1)).collect(),
+        // the friends tab's four: pixelboutique sees us online, testtouch
+        // nothing
+        Some(_) if contacts_mode() => vec![(NOVA, 3, 7), (DEMO_LOUP, 7, 3), (buddy(101), 1, 1), (buddy(103), 0, 1)],
         // Nova: online status and map granted, her map and objects received
         Some(_) => vec![(NOVA, 3, 7), (DEMO_LOUP, 7, 3)],
     }
 }
 
-/// The resident whose sheet opens with `sheet`.
+/// Our friends online: Nova and the wolf in the tabs' modes.
+fn online_friends() -> Vec<Uuid> {
+    if contacts_mode() {
+        vec![NOVA, DEMO_LOUP]
+    } else {
+        friends().into_iter().map(|(id, _, _)| id).collect()
+    }
+}
+
+/// The resident whose sheet opens with `sheet` and `friends`.
 pub fn sheet() -> Option<Uuid> {
-    (mode() == Some(Mode::Sheet)).then_some(NOVA)
+    matches!(mode(), Some(Mode::Sheet | Mode::Friends)).then_some(NOVA)
 }
 
 /// The row shown selected and under the pointer with `rows`, as in the
@@ -309,12 +477,17 @@ pub fn hovered() -> Option<Uuid> {
         Mode::Rows => Some(id(2)),
         Mode::Hover => Some(DEMO_LOUP),
         Mode::CrowdHover => Some(id(100)),
+        Mode::Sets => Some(NOVA),
+        Mode::Blocked => Some(ZED),
         _ => None,
     }
 }
 
 /// Names of the scenario's residents: (first, last, chosen display name).
 pub fn name(agent: &Uuid) -> Option<(&'static str, &'static str, &'static str)> {
+    if let Some(n) = contacts_name(agent) {
+        return Some(n);
+    }
     let r = residents().iter().find(|r| r.id == *agent)?;
     Some((r.first, r.last, r.display))
 }
@@ -468,7 +641,7 @@ pub fn state_events(time: f64, sent: &mut bool) -> Vec<NetEvent> {
         })
         .collect();
     events.push(NetEvent::FriendsOnline {
-        ids: friends().into_iter().map(|(id, _, _)| id).collect(),
+        ids: online_friends(),
         online: true,
     });
     // the crowd is the mock-up's forty: the wolf of the plaza leaves
