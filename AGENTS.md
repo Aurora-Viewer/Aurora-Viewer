@@ -107,7 +107,12 @@ worktree, branch, `target` folder and logs.
 - The worktree is created in `../work/<name>` from an up-to-date
   `origin/main`. Its `target/` is its own: your builds do not disturb the
   other agents and theirs do not disturb you.
-- The first build of a worktree takes a few minutes; that is normal.
+- The first build of a worktree takes a few minutes; that is normal. When
+  sccache is installed, the scripts point Cargo at a compiler cache shared by
+  all the worktrees (`<project folder>\.sccache`, through
+  `<project folder>\.cargo\config.toml`): the dependencies another task
+  already built come from there. Do not change or delete these two, and do
+  not set `RUSTC_WRAPPER` yourself.
 - **Build only in your worktree**, with its default `target/`: no custom
   `CARGO_TARGET_DIR` and no build folder elsewhere (each build folder weighs
   several GB and ends up forgotten). `end-task.ps1` deletes it with the
@@ -176,6 +181,18 @@ Before each significant commit, and always before the PR:
 ```powershell
 ./scripts/check.ps1   # cargo fmt --check, clippy -D warnings, tests
 ```
+
+- **Build slots**: several agents share the PC. Before clippy and the tests,
+  `check.ps1` takes one of two build slots, and waits for one to be free
+  ("Waiting for a build slot…") while two other heavy builds run, then
+  holds it until the end. That wait is normal: let it run, do not kill it
+  nor go around it (`AURORA_BUILD_SLOTS` is the human's setting). A demo
+  launch (`cargo run`) takes no slot.
+- **Tests: always the whole workspace**, filtered by name if needed:
+  `cargo test --workspace <filter>`, never `cargo test -p <crate>` alone.
+  One crate alone resolves the features of its dependencies differently, and
+  Cargo builds them a second time (about a minute, then again at the next
+  `--workspace` build).
 
 - **Zero clippy warnings** (`-D warnings`), formatted code (`rustfmt.toml`).
 - **No `unwrap()` / `expect()` on external data** (network, files, assets,

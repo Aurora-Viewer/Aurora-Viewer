@@ -86,6 +86,22 @@ function Get-Checks($P, [switch]$Offline) {
     & $add (New-Check work 'work\ folder (tasks)' $(if ($work) { 'present' }) $(if ($work) { 'ok' } else { 'todo' }) $(if ($work) { 'nothing to do' } else { 'created' }))
     & $add (New-Check crates 'Rust toolchain and crates' $null always 'installed or updated (cargo fetch)')
 
+    # shared compiler cache of the worktrees (scripts/common.ps1)
+    $common = Join-Path $P.Repo 'scripts\common.ps1'
+    if (Test-Path $common) {
+        . $common
+        $sccache = Find-Sccache
+        $wired = Test-Path (Join-Path $P.Root '.cargo\config.toml')
+        if (-not $sccache) {
+            & $add (New-Check sccache 'Compiler cache (sccache)' $null todo 'installed with winget (for your account), shared by the tasks')
+        } elseif (-not $wired) {
+            & $add (New-Check sccache 'Compiler cache (sccache)' 'installed, not used by Cargo' todo 'set up for the repository and the tasks')
+        } else {
+            $version = (& $sccache --version 2>$null) -replace '^sccache\s+', ''
+            & $add (New-Check sccache 'Compiler cache (sccache)' $version ok 'nothing to do')
+        }
+    }
+
     $login = $null
     if ($gh) {
         gh auth status *> $null
@@ -193,6 +209,19 @@ function Invoke-Repair($P) {
     } finally {
         Pop-Location
     }
+
+    Write-Title 'Compiler cache (sccache)'
+    # the tasks take the dependencies already built by another one from it
+    . (Join-Path $P.Repo 'scripts\common.ps1')
+    if (-not (Find-Sccache)) {
+        try { Install-Tool 'Mozilla.sccache' 'sccache' } catch { Write-Color "  Not installed ($($_.Exception.Message)): the builds work without it." warn }
+    } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
+        # nothing to do when it is up to date; refused while a build uses it
+        winget upgrade --id Mozilla.sccache --exact --source winget --accept-package-agreements --accept-source-agreements *> $null
+        Update-SessionPath
+    }
+    Sync-BuildCache $P.Root
+    if (Find-Sccache) { Write-Color "  Shared by the tasks: $(Join-Path $P.Root '.sccache')." success }
 
     Write-Title 'GitHub'
     gh auth status *> $null
