@@ -304,6 +304,10 @@ pub struct Settings {
     /// by default).
     pub plates_hover_expand: bool,
     pub plate_click: PlateClick,
+    /// Profiles in Firestorm's tabbed window (Second Life, Feed, Favorites…)
+    /// instead of the header and cards of `ui/profile/aurora.rs`; group
+    /// profiles in the classic window too (`ui/group_profile.rs`).
+    pub classic_profiles: bool,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
@@ -722,6 +726,7 @@ impl Default for Settings {
             chat_commands: Default::default(),
             name_tag_distance: 64.0,
             classic_name_tags: false,
+            classic_profiles: false,
             plates_friends_only_full: false,
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,

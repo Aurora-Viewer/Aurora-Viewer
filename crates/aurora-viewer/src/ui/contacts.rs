@@ -231,6 +231,12 @@ impl ContactsUi {
     pub fn ask_leave_group(&mut self, id: Uuid) {
         self.dialog = Some(Dialog::LeaveGroup(id));
     }
+
+    /// The right to modify our objects changed from a profile: asked first,
+    /// as from the list (GrantModifyRights / RevokeModifyRights).
+    pub fn ask_modify_rights(&mut self, friend: Uuid, rights: i32, grant: bool) {
+        self.dialog = Some(Dialog::ModifyRights { friend, rights, grant });
+    }
 }
 
 /// The confirmations and prompts, shown whether the contact list is open
@@ -278,7 +284,7 @@ fn click_select(sel: &mut Vec<Uuid>, anchor: &mut Option<Uuid>, order: &[Uuid], 
 
 /// The rights we give after ticking a box (applyRightsToFriends): the map
 /// needs the online status, so they go on / off together.
-fn rights_after(current: i32, bit: i32, on: bool) -> i32 {
+pub(crate) fn rights_after(current: i32, bit: i32, on: bool) -> i32 {
     match (bit, on) {
         (rights::ONLINE_STATUS, false) => current & !(rights::ONLINE_STATUS | rights::MAP_LOCATION),
         (rights::MAP_LOCATION, true) => current | rights::MAP_LOCATION | rights::ONLINE_STATUS,
@@ -716,11 +722,14 @@ fn friend_table(
         ),
         ("map-pin-filled", aurora_i18n::tr!("ui-contacts-this-person-can-locate-you")),
         (
-            "box",
+            "pencil-filled",
             aurora_i18n::tr!("ui-contacts-this-person-can-modify-delete-or-take-your-objects"),
         ),
         ("map-pin-filled", aurora_i18n::tr!("ui-contacts-you-can-locate-this-person")),
-        ("box", aurora_i18n::tr!("ui-contacts-you-can-edit-delete-or-take-this-person-s")),
+        (
+            "pencil-filled",
+            aurora_i18n::tr!("ui-contacts-you-can-edit-delete-or-take-this-person-s"),
+        ),
     ];
     let status_w = 20.0;
     let right_w = 18.0;

@@ -665,6 +665,33 @@ pub enum NetEvent {
     EventInfo(Box<crate::search::EventInfo>),
     /// GroupProfileReply (LLGroupMgr::processGroupPropertiesReply).
     GroupProfile(Box<crate::search::GroupProfile>),
+    /// Members of a group: one GroupMembersReply packet, or the whole list
+    /// of the GroupMemberData capability.
+    GroupMembers(Box<crate::groups::MembersPage>),
+    /// Roles of a group (GroupRoleDataReply, one packet).
+    GroupRoles(Box<crate::groups::RolesPage>),
+    /// Role / member pairs of a group (GroupRoleMembersReply, one packet).
+    GroupRoleMembers(Box<crate::groups::RoleMembersPage>),
+    /// The titles we can wear in a group (GroupTitlesReply).
+    GroupTitles {
+        group: Uuid,
+        request: Uuid,
+        titles: Vec<crate::groups::GroupTitle>,
+    },
+    /// The notice list of a group (GroupNoticesListReply, one packet).
+    GroupNotices {
+        group: Uuid,
+        notices: Vec<crate::groups::NoticeSummary>,
+    },
+    /// JoinGroupReply / LeaveGroupReply.
+    GroupJoined {
+        group: Uuid,
+        success: bool,
+    },
+    GroupLeft {
+        group: Uuid,
+        success: bool,
+    },
     /// Land types of the grid, (ProductSKU, description) (ProductInfoRequest).
     ProductInfo(Vec<(String, String)>),
     /// RegionIDAndHandleReply (LLLandmark::processRegionIDAndHandle).
@@ -1280,6 +1307,40 @@ pub enum NetCommand {
     EventInfoRequest(u32),
     /// GroupProfileRequest: the details of a group found.
     GroupProfileRequest(Uuid),
+    /// The members of a group (LLGroupMgr::sendCapGroupMembersRequest: the
+    /// GroupMemberData capability, GroupMembersRequest without it).
+    GroupMembersRequest {
+        group: Uuid,
+        request: Uuid,
+    },
+    /// GroupRoleDataRequest / GroupRoleMembersRequest / GroupTitlesRequest.
+    GroupRoleDataRequest {
+        group: Uuid,
+        request: Uuid,
+    },
+    GroupRoleMembersRequest {
+        group: Uuid,
+        request: Uuid,
+    },
+    GroupTitlesRequest {
+        group: Uuid,
+        request: Uuid,
+    },
+    /// Wear the title of one of our roles (GroupTitleUpdate).
+    GroupTitleUpdate {
+        group: Uuid,
+        role: Uuid,
+    },
+    /// GroupNoticesListRequest.
+    GroupNoticesListRequest(Uuid),
+    /// Join a group (JoinGroupRequest).
+    JoinGroup(Uuid),
+    /// Invite residents into a group, each into a role (InviteGroupRequest,
+    /// (invitee, role) pairs).
+    InviteToGroup {
+        group: Uuid,
+        invites: Vec<(Uuid, Uuid)>,
+    },
     /// The land types of the grid (ProductInfoRequest capability).
     ProductInfoRequest,
     /// The parcel at a point of any region, by the RemoteParcelRequest

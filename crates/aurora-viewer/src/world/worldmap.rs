@@ -312,7 +312,7 @@ impl WorldMap {
             && (t.x - x).hypot(t.y - y) < 3.0
             && (t.z - z).abs() * 0.5 < 3.0
         {
-            self.track = None;
+            self.clear_track();
         }
     }
 
@@ -613,10 +613,13 @@ impl WorldMap {
         self.track_parcel.as_ref().filter(|p| p.x == t.x && p.y == t.y)?.id
     }
 
-    /// Forget the tracked location, and the friend it follows.
+    /// Forget the destination and its followed friend or pending place
+    /// lookup, so a later reply cannot recreate the dismissed beacon.
     pub fn clear_track(&mut self) {
         self.stop_avatar();
         self.track = None;
+        self.wanted_place = None;
+        self.focus_track = false;
     }
 
     /// Track a spot set by hand (a region of the search): no friend is
@@ -777,6 +780,30 @@ pub fn teleport_command(x: f64, y: f64, z: f32) -> NetCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clearing_a_pending_place_does_not_recreate_it_when_the_reply_arrives() {
+        let mut m = WorldMap::default();
+        m.map_destination("YIFF", glam::Vec3::new(10.0, 20.0, 30.0), aurora_net::beacon::FOCUS_MAP);
+        m.clear_track();
+        m.apply_blocks(vec![yiff()]);
+        assert!(m.track.is_none());
+        assert!(!m.focus_track);
+    }
+
+    #[test]
+    fn arrival_keeps_the_existing_horizontal_and_vertical_thresholds() {
+        let mut m = WorldMap::default();
+        m.apply_blocks(vec![yiff()]);
+        m.track_region("YIFF", glam::Vec3::new(10.0, 20.0, 30.0));
+        let t = m.track.as_ref().expect("tracked").clone();
+        m.check_arrival(t.x + 3.0, t.y, t.z);
+        assert!(m.track.is_some());
+        m.check_arrival(t.x, t.y, t.z + 6.0);
+        assert!(m.track.is_some());
+        m.check_arrival(t.x + 2.9, t.y, t.z + 5.9);
+        assert!(m.track.is_none());
+    }
 
     #[test]
     fn home_from_login() {

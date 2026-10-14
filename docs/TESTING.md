@@ -1289,7 +1289,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent |
-| `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy` | World map and mini-map, the search, the drawer, 204 more landmarks, a followed friend, the side panel layout |
+| `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
@@ -1304,7 +1304,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
-| `AURORA_DEMO_PROFILE=<avatar>[:tab]` | An avatar's profile window |
+| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -1316,7 +1316,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:owner]` | "About Land" on a tab |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_GROUP_PROFILE=1` | Profile window of the demo parcel's group |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -1782,6 +1782,29 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   buttons on one line), the layer pills at the top right (greyed when zoomed
   out), zoom / my position / home at the bottom right; the panels fade while
   the map is dragged and never let a click through to the map.
+  `beacon` shows a nearby destination without the world-map window: the
+  bright upper column stays visible up to the screen edge, with a pin and a
+  readable location / distance label. A second column descends from the
+  destination to altitude zero, as in Firestorm; with the default skin it
+  is mauve (`violet_light`), while the upper column is red. Both use the same
+  glow and viewport clipping. The pin has no extra circle; its information
+  card shows the frosted scene under the theme's tint, border and shadow,
+  including beside the off-screen arrow. Opaque skins keep an opaque card.
+  Hover the pin or its label for
+  "Click to remove beacon"; click either to remove it from the scene
+  and mini-map. `beacon-offscreen` puts the destination behind the camera:
+  a clickable direction arrow and its label stay within the screen.
+  `beacon-click` presses the pin at frame 700 through the normal mouse
+  input path; the log must say `cleared=true`, `mouse_mode=None`,
+  `pending_pick=false`. Capture frames 650 and 780 for before / after.
+  With `legacy`, "Remove beacon" is in the position actions, at the former
+  "Clear" button's location. Its tooltip explains removal from all three
+  views. The full-frame card's removal tooltip uses the same name and
+  explanation. `coordinates,legacy` opens the side panel without a beacon:
+  X / Y / Z show our current position and remain editable. Commit a new
+  value with Enter or
+  by leaving the field: a destination appears without teleporting. Remove
+  it: the coordinates return to our position and can be edited again.
 - **`AURORA_DEMO_SLURLS=1|offer`**: Tess Touch's conversation, the chat
   console and the notification list show the same place links, one per
   SLURL form: the plaza (General), the lagoon (Moderate), Nordheim (Adult),
@@ -1906,8 +1929,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   ("Isolated real installation" above: exe copied into
   `<root>\install`, `AURORA_UPDATE_TEST_ROOT=<root>`): the histories
   are then under `<root>\profile\accounts\`.
-- **`AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab]`**: a profile window
-  (tab 0 Second Life, 1 Feed, 2 Favorites, 3 Classifieds, 4 Real life, 5 Notes).
+- **`AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab|edit|compact]`**: a
+  profile window (tab 0 Second Life / Profile, 1 Feed / Web, 2 Favorites,
+  3 Classifieds, 4 Real life / First life, 5 Notes). The window is the
+  Aurora one unless Preferences › Aurora › Profiles is on the classic
+  window. `:edit` opens our own profile in edit mode, `:compact` gives the
+  window the width of the compact layout (380 px). With this variable the
+  three residents of the scenarios have a profile picture, so a banner:
+  the scenarios of the profile mock-up are
+  - a friend: `friend` (Nova, Premium, a contact set if
+    `AURORA_DEMO_CONTACTS` seeded one, rights bar, three favorite places,
+    two groups of which one in common, private notes);
+  - a stranger: `wolf` (blocked: red badge, "Unblock"; "Add as friend" in
+    place of the rights bar);
+  - my profile: `self`, then `self:edit` (camera button, pencil, About
+    editor, Visibility, the unsaved bar once About is changed);
+  - compact: `wolf:compact` (icons in a row, the tabs in a drop-down list).
 - **`AURORA_DEMO_FEED=<url>`**: the user name and `/?feed_only=true`
   are appended to the address; a `data:` URL can put them in a comment.
 - **`AURORA_DEMO_LAND=<tab>[:owner]`**: tabs `general`, `covenant`,
@@ -1923,9 +1960,23 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_GROUP_PROFILE=1`**: the profile of the group "Aurora
-  Builders", as after a click on the group or the owner in
-  "About Land".
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members]`**:
+  the group profile, as after a click on the group or the owner in "About
+  Land". A simulated group server (`demo_group.rs`) answers the members
+  (1,248, five of them online), roles, role pairs, titles and notices of
+  "Aurora Builders". `1` or `member`: we are one of its builders (Chat,
+  Leave, "Me in this group"); `officer`: an officer, who sees Invite and
+  the Roles and Donation columns; `owner`: an owner, every ability;
+  `guest`: the profile of "Boreal Photographers", a group we are not in,
+  with an open enrollment and a L$ 250 fee: "Join · L$ 250" asks to
+  confirm (or says the balance is short), then the group joins our list
+  and the window becomes a member's. `:members` opens the Members tab with
+  a builder selected. Check the header against the mockup (banner,
+  insignia, badges, tabs), the switches of "Me in this group" (the active
+  group follows in the top bar, the title in the Title shown list), the
+  filter, the pills and the column sorts of Members, "Leave" (confirmed,
+  then the guest's view) and, in Preferences › Aurora › Profiles, the
+  classic window with its "Members and roles" section.
 - **`AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown|landmark|history`**:
   "Places" on a place profile, as after a click on a place link.
   `1`: the home of Violet Wolf on Aurora Demo (the parcel of "About

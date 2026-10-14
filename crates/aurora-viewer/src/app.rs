@@ -397,6 +397,8 @@ pub struct App {
     /// Avatar name tags on screen last frame, far first: a click on one
     /// counts as one on its avatar.
     name_tags: Vec<ui::hud::NameTag>,
+    /// Clickable destination marker last painted under the HUDs and UI.
+    beacon_hit: Option<ui::minimap::BeaconHit>,
     /// The avatar whose plate is under the pointer (app/plate_click.rs).
     plate_hover: Option<uuid::Uuid>,
     /// Block list version applied to object sounds, and the objects whose
@@ -781,6 +783,7 @@ impl App {
             voice_tags: Default::default(),
             plates: Default::default(),
             name_tags: Vec::new(),
+            beacon_hit: None,
             plate_hover: None,
             sound_blocks: Default::default(),
             sound_changes: Vec::new(),
@@ -2040,6 +2043,28 @@ impl App {
     }
 
     // ------------------------------------------------------------------ input
+
+    /// LLTracker::handleMouseDown: only the visible destination marker
+    /// takes the press. UI, worn HUDs and camera modifiers keep priority.
+    fn beacon_hover(&self) -> bool {
+        let ppp = self.egui_ctx.pixels_per_point();
+        let at = egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp);
+        matches!(self.screen, Screen::World)
+            && !self.camera.mouselook()
+            && !self.alt
+            && !self.ctrl
+            && !self.shift
+            && !self.color_pipette()
+            && !self.exit_prompt.open
+            && !self.cursor_hold.held()
+            && self.mouse_mode == MouseMode::None
+            && self
+                .beacon_hit
+                .as_ref()
+                .zip(self.world.map.track.as_ref())
+                .is_some_and(|(hit, track)| hit.contains(at, track))
+            && (!self.settings.show_huds || self.scene.hud_pick(&self.world, self.cursor_pos, true).is_none())
+    }
 
     /// The camera drag a left click would start under the pointer, like
     /// LLToolCamera::handleHover (lltoolfocus.cpp): Alt held over the world,
@@ -4146,6 +4171,7 @@ impl App {
         wanted.extend(self.contacts_ui.wanted_pics.drain());
         wanted.extend(self.plates.wanted_pics.drain());
         wanted.extend(self.search_ui.wanted_pics.drain());
+        wanted.extend(self.group_profile_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
         for agent in wanted {
@@ -4168,6 +4194,12 @@ impl App {
             {
                 let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
                 let t = self.egui_ctx.load_texture(format!("pic-{agent}"), ci, egui::TextureOptions::LINEAR);
+                // the Aurora profile's banner: a few pixels the filter blurs
+                let banner = ui::profile::banner_image(w as usize, h as usize, &rgba);
+                let banner = self
+                    .egui_ctx
+                    .load_texture(format!("banner-{image}"), banner, egui::TextureOptions::LINEAR);
+                self.profile_ui.banners.insert(image, banner);
                 self.avatar_pic_images.insert(image, t.clone());
                 self.avatar_pics.insert(agent, t);
                 if agent == self.world.agent_id && !self.demo {
@@ -5674,6 +5706,10 @@ impl App {
             full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
             full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
         }
+        if !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover() {
+            full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
+            full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
+        }
         if let Some(h) = &self.interactions.held {
             if h.physical {
                 full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Grab, false);
@@ -6050,6 +6086,20 @@ impl App {
         self.resolve_clicks();
         self.demo_action_steps();
         self.demo_click_steps();
+        if self.demo && self.frame_count == 700 && std::env::var("AURORA_DEMO_MAP").as_deref() == Ok("beacon-click") {
+            if let Some(hit) = &self.beacon_hit {
+                let at = hit.rect.center() * self.egui_ctx.pixels_per_point();
+                self.cursor_pos = (at.x, at.y);
+                self.mouse_input(MouseButton::Left, true, false);
+                self.mouse_input(MouseButton::Left, false, false);
+            }
+            log::info!(
+                "demo beacon click: cleared={}, mouse_mode={:?}, pending_pick={}",
+                self.world.map.track.is_none(),
+                self.mouse_mode,
+                self.clicks.waiting(),
+            );
+        }
         if self.demo {
             self.demo_double_click_steps();
         }
@@ -7063,6 +7113,36 @@ impl App {
         }
     }
 
+    /// What the group profile window asked (LLGroupActions).
+    fn apply_group_actions(&mut self, ctx: &egui::Context, actions: Vec<ui::group_profile::GroupAction>) {
+        use ui::group_profile::GroupAction;
+        let mut search = Vec::new();
+        for a in actions {
+            match a {
+                GroupAction::Search(a) => search.push(a),
+                GroupAction::Load { group, member } => self.world.group_data.open(group, member),
+                GroupAction::Refresh { group, member } => {
+                    self.send(NetCommand::GroupProfileRequest(group));
+                    self.world.group_data.refresh(group, member);
+                }
+                GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
+                GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
+                GroupAction::SetTitle { group, role } => self.world.group_data.set_title(group, role),
+                GroupAction::SetFlags {
+                    group,
+                    accept_notices,
+                    list_in_profile,
+                } => self.world.groups.set_flags(group, accept_notices, list_in_profile),
+                GroupAction::ShowInPeople(name) => {
+                    self.panels.people = true;
+                    self.panels.people_tab = 2;
+                    self.people_ui.filter = name;
+                }
+            }
+        }
+        self.apply_search_actions(ctx, search);
+    }
+
     /// toggleTeleportHistory (llviewermenu.cpp) without the standalone
     /// history floater: hide Places when shown, else open it on the history.
     fn toggle_teleport_history(&mut self) {
@@ -7297,6 +7377,8 @@ impl App {
         let mut a = UiActions::default();
         let p = self.palette;
         let ctx = ui.ctx().clone();
+        let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
+        self.beacon_hit = None;
         let mut t = Instant::now();
         if self.exit_prompt.open {
             ui.disable();
@@ -7497,7 +7579,7 @@ impl App {
                     )
                 };
                 if !self.camera.mouselook() && !held {
-                    ui::minimap::draw_beacon(&ctx, &self.world, projector);
+                    self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
                 }
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
@@ -8234,6 +8316,7 @@ impl App {
                     &mut self.world,
                     &mut self.chat_ui.wanted_names,
                     &web,
+                    self.settings.classic_profiles,
                 );
                 for pa in acts {
                     match pa {
@@ -8241,6 +8324,9 @@ impl App {
                         ui::profile::ProfileAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::profile::ProfileAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::profile::ProfileAction::DisplayName => self.display_name_ui.open(),
+                        ui::profile::ProfileAction::ModifyRights { friend, rights, grant } => {
+                            self.contacts_ui.ask_modify_rights(friend, rights, grant)
+                        }
                         ui::profile::ProfileAction::GroupChat(id) => {
                             self.world.start_group_chat(id);
                             self.panels.chat = true;
@@ -8356,10 +8442,15 @@ impl App {
                     .show(&ctx, &mut c, &self.avatar_pics, &mut self.settings.search, &search_web, &mut open);
                 // the profile of a group, whose name was clicked anywhere
                 // (LLGroupActions::show)
-                let group_acts = self.group_profile_ui.show(&ctx, &mut c);
+                let group_env = ui::group_profile::Env {
+                    avatar_pics: &self.avatar_pics,
+                    classic: self.settings.classic_profiles,
+                    now: ctx.input(|i| i.time),
+                };
+                let group_acts = self.group_profile_ui.show(&ctx, &mut c, &group_env);
                 self.panels.search = open;
                 self.apply_search_actions(&ctx, search_acts);
-                self.apply_search_actions(&ctx, group_acts);
+                self.apply_group_actions(&ctx, group_acts);
                 if let Some(id) = ui::group_profile::take_open_request(&ctx) {
                     self.group_profile_ui.open(&mut self.world, id);
                 }
@@ -9075,9 +9166,10 @@ impl ApplicationHandler for App {
             if std::env::var_os("AURORA_DEMO_PLACE_WINDOW").is_some() {
                 self.settings.standalone_place_details = true;
             }
-            // AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab]: a profile window
+            // AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab|edit|compact]:
+            // a profile window
             if let Ok(v) = std::env::var("AURORA_DEMO_PROFILE") {
-                let (who, tab) = v.split_once(':').unwrap_or((v.as_str(), "0"));
+                let (who, option) = v.split_once(':').unwrap_or((v.as_str(), "0"));
                 let id = match who {
                     "self" => crate::demo::DEMO_AGENT,
                     "nova" => crate::demo::DEMO_NOVA,
@@ -9085,7 +9177,7 @@ impl ApplicationHandler for App {
                     _ => crate::demo::DEMO_LOUP,
                 };
                 self.profile_ui.open(&mut self.world, id);
-                self.profile_ui.set_tab(id, tab.parse().unwrap_or(0));
+                self.profile_ui.demo(&self.egui_ctx, id, option);
                 self.panels.perf = false;
             }
             // AURORA_DEMO_LAND=<tab>[:owner]: About Land on that tab
@@ -9094,10 +9186,14 @@ impl ApplicationHandler for App {
                 self.panels.about_land = true;
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_GROUP_PROFILE=1: the profile of the demo parcel's
-            // group, as after a click on its name
+            // AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest: the
+            // profile of the demo parcel's group, as after a click on its
+            // name (a guest's: a group we are not in)
             if std::env::var_os("AURORA_DEMO_GROUP_PROFILE").is_some() {
-                self.group_profile_ui.open(&mut self.world, crate::demo::DEMO_GROUP1);
+                self.group_profile_ui.open(&mut self.world, crate::demo::group::shown_group());
+                if let Some(member) = crate::demo::group::members_tab() {
+                    self.group_profile_ui.show_member(member);
+                }
                 self.panels.perf = false;
             }
             // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add: the
@@ -9162,10 +9258,18 @@ impl ApplicationHandler for App {
             // captures: AURORA_DEMO_MAP=1 opens the mini-map and the world map
             // (with a tracked spot east of the plaza)
             if let Ok(scenario) = std::env::var("AURORA_DEMO_MAP") {
+                let mode = scenario.split(',').next().unwrap_or_default().trim();
                 self.panels.minimap = true;
-                self.panels.world_map = scenario != "mini";
+                self.panels.world_map = mode != "mini" && !mode.starts_with("beacon");
                 self.panels.perf = false;
-                self.world.map.track_location(256000.0 + 200.0, 256000.0 + 150.0, 25.0, false);
+                let (x, y, z) = match mode {
+                    "beacon" | "beacon-click" => (160.0, 128.0, 30.0),
+                    "beacon-offscreen" => (80.0, 128.0, 30.0),
+                    _ => (200.0, 150.0, 25.0),
+                };
+                if mode != "coordinates" {
+                    self.world.map.track_location(256000.0 + x, 256000.0 + y, z, false);
+                }
                 // words separated by commas: search:<text> (the search with its
                 // suggestions), drawer:<landmarks|history|friends>, landmarks
                 // (212 of them, the drawer open), friend (Nova followed),
