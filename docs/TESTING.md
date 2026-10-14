@@ -22,6 +22,12 @@ with the language selector. Remove the argument to check the immediate
 change and the choice saved at the next launch. The details of the
 catalogues, dates and plurals are in [TRANSLATING.md](TRANSLATING.md).
 
+**Unit tests**: always on the whole workspace, filtered by name if needed:
+`cargo test --workspace render_thread`, never `cargo test -p <crate>`. A
+single crate resolves the features of its dependencies on its own, so Cargo
+builds a second copy of them (`cargo test -p aurora-render` alone: 67 s of
+dependencies, then again for the next `--workspace` build).
+
 **To add a variable**: one short line in the table of its topic (the name
 alone in the first column, one sentence in the second); if it takes more
 than one sentence, or if there are several modes, a "Details" paragraph
@@ -1467,7 +1473,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   are matched by suffix; the source files stay intact.
   The result is aggregated, without personal names or paths. Native
   animations keep their bytes and their poses are sampled.
-  Run `cargo test -p aurora-viewer local_asset_directory -- --ignored --nocapture`.
+  Run `cargo test --workspace local_asset_directory -- --ignored --nocapture`.
 
 - **Walkthrough of the window redesign**: open the inventory and select
   a folder in the tree, then an item; check search, permissions,
