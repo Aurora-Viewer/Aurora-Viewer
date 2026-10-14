@@ -20,6 +20,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "DeclineGroupInvite",
     "EnvironmentSettings",
     "EventQueueGet",
+    // allow, block and forget an experience (LLExperienceCache::setExperiencePermission)
+    "ExperiencePreferences",
     "ExtEnvironment",
     "FetchInventory2",
     "FetchInventoryDescendents2",

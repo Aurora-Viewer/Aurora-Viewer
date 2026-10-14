@@ -1264,6 +1264,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
 | `AURORA_DEMO_MATURITY=agree\|disagree\|fail` | Content rating changed, the server's answer |
+| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
@@ -1694,6 +1695,32 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Adult" and the notification list shows "Content rating not changed".
   `fail`: the request fails, the same notice at once. A teleport asked
   meanwhile waits for the answer and is dropped on a failure.
+- **`AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive`**: experiences
+  asking for permissions; the demo plays the simulator, GetExperienceInfo and
+  ExperiencePreferences. In SL a script may ask from any event (a click, a
+  collision, the arrival on the parcel, a timer): the viewer only sees the
+  ScriptQuestion, shown whatever the cause, even for an object out of view.
+  `1`: a violet "Club door" in front of the camera, above the avatar's head
+  (136, 128.5), with the touch cursor. A click asks "Experience: Aurora Club
+  Teleport": the object and its owner, the land-scope experience, "Teleport
+  you", Yes / No / Block object / Block experience, and an "Experience
+  profile" link that keeps the question. Yes teleports up to (150, 140, 60);
+  once allowed, the next clicks teleport without asking. No: the door says
+  it needs the permission. Block experience refuses and blocks: the next
+  clicks only print "you have blocked this experience". The profile (the
+  link) shows the rating, the scope, the location, the owner and the
+  permission, with Allow / Forget / Block; Forget lets the door ask again.
+  `auto` asks at frame 420 without a click (captures), `profile` also opens
+  the profile; `blocked` starts with the experience blocked.
+  `walk`: a translucent teal "Teleport pad" on the floor in front of the
+  avatar (135.5, 126), a phantom volume: walking forward into it (W / up
+  arrow) asks the same question (collision_start), once per entry; Yes
+  teleports.
+  `walk` and `arrive` place no door. `arrive`: the plaza's land-scope
+  experience "Aurora Plaza Welcome" asks at frame 420 from a "Plaza greeter"
+  the viewer has never seen (out of view, no click): "Animate your avatar"
+  and "Change your environment settings"; Yes says "welcome to the plaza" in
+  the chat.
 - **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy|exceeded|exceeded-continue|blocked`**:
   teleports received from Tess Touch (issue #280, parts B1 and B2). Each
   offer and request opens her conversation (unread) with its card and has

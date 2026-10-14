@@ -413,6 +413,8 @@ pub struct App {
     stream_demo: Option<crate::demo::stream::StreamDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
+    /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
+    experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_GEOMETRY: meshes filling the geometry arena.
     geometry_demo: Option<crate::demo::geometry::GeometryDemo>,
     /// Detail levels of the objects around the camera, while the debug
@@ -769,6 +771,7 @@ impl App {
             demo_place: None,
             stream_demo: None,
             tex_refresh_demo: None,
+            experience_demo: None,
             geometry_demo: None,
             lod_infos: Vec::new(),
             place_groups: Default::default(),
@@ -814,6 +817,21 @@ impl App {
         })
     }
 
+    /// What the experience demo's simulator answers or does on its own.
+    fn apply_experience_demo(&mut self, reply: crate::demo::experience::Reply) {
+        match reply {
+            crate::demo::experience::Reply::Events(events) => {
+                for ev in events {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+            }
+            crate::demo::experience::Reply::Say(text) => self.world.system_message(text),
+            crate::demo::experience::Reply::Nothing => {}
+        }
+    }
+
     fn send(&mut self, cmd: NetCommand) {
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
         // preference is not in sync with the server (TELEPORT_PENDING)
@@ -829,6 +847,13 @@ impl App {
         {
             log::info!("teleport: waiting for the maturity preference");
             self.world.maturity.hold(cmd);
+            return;
+        }
+        // AURORA_DEMO_EXPERIENCE: the simulator and the capabilities
+        if self.demo
+            && let Some(reply) = self.experience_demo.as_mut().and_then(|demo| demo.reply(&cmd))
+        {
+            self.apply_experience_demo(reply);
             return;
         }
         // AURORA_DEMO_MATURITY: the server agrees, keeps its value or fails
@@ -4167,6 +4192,10 @@ impl App {
         for c in self.world.maturity.take_commands() {
             self.send(c);
         }
+        // experiences' details and permissions (questions, profile)
+        for c in self.world.experiences.take_commands() {
+            self.send(c);
+        }
         // where the teleport offers lead, and the gods' lures accepted at once
         self.world.refresh_teleport_places();
         for c in self.world.teleport_invites.take_commands() {
@@ -5896,6 +5925,15 @@ impl App {
             && let Some(object) = demo.tick(self.frame_count, &mut self.world, self.scene.textures.cache_dir())
         {
             self.refresh_object_textures(object);
+        }
+        // AURORA_DEMO_EXPERIENCE: the door or the pad, and what asks
+        // without a click (walking into the pad, arriving)
+        if let Some(reply) = self
+            .experience_demo
+            .as_mut()
+            .and_then(|demo| demo.tick(self.frame_count, &mut self.world))
+        {
+            self.apply_experience_demo(reply);
         }
         // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back
         if self.demo
@@ -7679,6 +7717,10 @@ impl App {
                 }
                 self.panels.about_land = open;
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
+                // the experience profile (the permission question's link)
+                if let Some((experience, change)) = ui::experience_profile::show(&ctx, &p, &mut self.world) {
+                    self.world.experiences.change(experience, change);
+                }
                 self.photo_ui(&ctx, &p, renderer);
                 let hover_enabled = self.world.hover_height_available();
                 if self.hover_height_ui.show(
@@ -9112,6 +9154,7 @@ impl ApplicationHandler for App {
             }
             self.stream_demo = crate::demo::stream::StreamDemo::from_env();
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
+            self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             if let Some(n) = crate::demo::texture_stress_count() {
                 if let Some(g) = &mut self.gfx {
