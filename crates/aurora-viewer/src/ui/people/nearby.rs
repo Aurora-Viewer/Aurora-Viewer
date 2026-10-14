@@ -309,6 +309,10 @@ fn list_part(
         sort_pills(ui, p, data);
         ui.add_space(7.0);
     }
+    // the demo's row "under the pointer" lasts until the real pointer moves
+    if st.demo_hover.is_some() && ui.input(|i| i.pointer.delta() != Vec2::ZERO) {
+        st.demo_hover = None;
+    }
     let filter = st.filter.trim().to_lowercase();
     let list = radar::rows(world, data, &filter);
     summary(
