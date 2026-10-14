@@ -535,7 +535,7 @@ pub struct SceneStats {
 pub struct Scene {
     auto_hover: auto_hover::AutoHover,
     /// Optional local-only diagnostic toggle, exposed in Hover Height by
-    /// AURORA_TEST_NEUTRAL_POSE. Keep evaluating the real motion controller
+    /// AURORA_TEST_NEUTRAL_POSE, initially off. Keep evaluating the real motion controller
     /// while displaying the exact shaped rest skeleton used by auto hover.
     pub neutral_pose_test: Option<bool>,
     pub jobs: Jobs,
@@ -1036,7 +1036,7 @@ impl Scene {
             motions: HashMap::new(),
             skin_binds: Default::default(),
             auto_hover: Default::default(),
-            neutral_pose_test: (std::env::var("AURORA_TEST_NEUTRAL_POSE").as_deref() == Ok("1")).then_some(true),
+            neutral_pose_test: (std::env::var("AURORA_TEST_NEUTRAL_POSE").as_deref() == Ok("1")).then_some(false),
         }
     }
 
@@ -4614,7 +4614,11 @@ mod tests {
         animation.looping = true;
         animation.ease_in = 0.0;
         let mut scene = Scene::new(std::path::PathBuf::new(), lib);
-        scene.neutral_pose_test = Some(false);
+        assert_ne!(
+            scene.neutral_pose_test,
+            Some(true),
+            "test launches must start with normal animations"
+        );
         scene.anims.insert(animation_id, Arc::new(anim::BoundAnim::bind(animation, &rig)));
         for avatar in [world.agent_id, crate::demo::DEMO_LOUP] {
             scene.palette_base(avatar);

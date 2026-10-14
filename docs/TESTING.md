@@ -96,11 +96,12 @@ gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 `AURORA_DEMO_DIALOG` adds only the requested dialog;
 `AURORA_DEMO_INVENTORY=offer|offer-reject` adds only the received item.
 
-`AURORA_TEST_NEUTRAL_POSE=1`: starts our avatar in the exact shaped neutral
-skeleton used by automatic hover height, including worn-mesh joint offsets.
-Appearance › Hover Height exposes "Neutral pose — local test" to switch
-between that pose and the normal animated pose. Rigged meshes and rigid
-attachments follow the same neutral palette. This is local only, not saved:
+`AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
+Appearance › Hover Height, initially off. Our avatar starts with normal
+animations; enable the switch to display the exact shaped neutral skeleton
+used by automatic hover height, including worn-mesh joint offsets.
+Rigged meshes and rigid attachments follow the same neutral palette.
+This is local only, not saved:
 the motion controller and server animation signals continue normally, and
 other avatars are unchanged. Use it online to compare the reported roughly
 10 cm grounding discrepancy with/without the normal pose. The option is
