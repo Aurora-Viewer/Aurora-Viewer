@@ -55,6 +55,7 @@ impl Default for Layout {
                 tb("Command_View_Icon", "mouselook", aurora_i18n::tr!("common-mouselook-m")),
                 tb("Command_People_Icon", "people", aurora_i18n::tr!("common-people")),
                 tb("Command_Inventory_Icon", "inventory", aurora_i18n::tr!("common-inventory")),
+                tb("Command_Gestures_Icon", "gestures", aurora_i18n::tr!("gesture-title")),
                 tb("Command_Appearance_Icon", "appearance", aurora_i18n::tr!("common-appearance")),
                 tb("Command_Search_Icon", "search", aurora_i18n::tr!("search-title")),
                 tb("Command_Places_Icon", "places", aurora_i18n::tr!("common-places")),

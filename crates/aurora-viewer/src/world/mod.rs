@@ -215,6 +215,7 @@ pub struct World {
     /// Online status (away, do not disturb...) and automatic responses.
     pub status: status::Status,
     pub inventory: inventory::Inventory,
+    pub active_gestures: std::collections::BTreeSet<Uuid>,
     /// The inventory cache being read by its thread since the login reply
     /// (`poll_inventory_cache`), and when the read started.
     inventory_cache: Option<(crossbeam_channel::Receiver<Option<inventory::CachedInventory>>, Instant)>,
@@ -367,6 +368,7 @@ impl World {
             groups: groups::GroupChats::default(),
             status: status::Status::default(),
             inventory: inventory::Inventory::default(),
+            active_gestures: Default::default(),
             inventory_cache: None,
             inventory_edits: Vec::new(),
             animations: HashMap::new(),

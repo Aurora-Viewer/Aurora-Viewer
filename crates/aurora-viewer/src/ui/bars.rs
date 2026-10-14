@@ -408,6 +408,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "conversations",
             &mut panels.chat,
         );
+        if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), "Ctrl+G") {
+            super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
+        }
         for (tab, icon, label) in [
             (1, "users", aurora_i18n::tr!("common-friends")),
             (0, "radar-filled", aurora_i18n::tr!("common-nearby-people")),
@@ -545,6 +548,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             &mut panels.inventory,
         );
         import_menu(ui, p, action);
+        if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), "Ctrl+G") {
+            super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
+        }
     });
     if advanced {
         menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("common-advanced"), true, |ui| {
@@ -1023,6 +1029,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
             panels.people_tab = 1;
         }
         "inventory" => toggle("inventory", &mut panels.inventory),
+        "gestures" => toggle("gestures", &mut panels.gestures),
         "appearance" => toggle("appearance", &mut panels.appearance),
         "ao" => toggle("ao", &mut panels.ao),
         "minimap" => panels.minimap = !panels.minimap,
@@ -1045,6 +1052,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "conversations" => panels.chat,
         "people" | "friends" => panels.people,
         "inventory" => panels.inventory,
+        "gestures" => panels.gestures,
         "appearance" => panels.appearance,
         "minimap" => panels.minimap,
         "worldmap" => panels.world_map,
@@ -1442,6 +1450,7 @@ pub fn bottom_bar(
     layout: &Layout,
     panels: &mut Panels,
     chat: &mut super::chat::ChatUi,
+    gestures: &crate::gestures::Manager,
     unread: usize,
     flying: bool,
     seated: bool,
@@ -1473,7 +1482,7 @@ pub fn bottom_bar(
                     total * layout.chat_bar_fraction
                 };
                 let chat_w = wanted.clamp(120.0, max_chat);
-                out = super::chat::bar(ui, p, chat, chat_w);
+                out = super::chat::bar(ui, p, chat, gestures, chat_w);
 
                 // draggable separator (dotted, like Firestorm's) between chat and toolbar
                 let (handle, hresp) = ui.allocate_exact_size(Vec2::new(10.0, 22.0), egui::Sense::drag());
@@ -1727,6 +1736,7 @@ mod tests {
         for (cmd, id, open) in [
             ("conversations", "conversations", (|p| p.chat) as fn(&Panels) -> bool),
             ("inventory", "inventory", |p| p.inventory),
+            ("gestures", "gestures", |p| p.gestures),
             ("people", "people", |p| p.people),
             ("preferences", "options", |p| p.settings),
         ] {

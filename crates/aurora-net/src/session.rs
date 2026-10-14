@@ -6,6 +6,7 @@
 mod asset_imports;
 mod build_cmds;
 mod currency;
+mod gestures;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
@@ -1709,6 +1710,9 @@ impl Session<'_> {
                     });
                 });
             }
+            NetCommand::LoadGesture { item, asset } => self.load_gesture(item, asset),
+            NetCommand::SetGestureActive { item, asset, active } => self.set_gesture_active(item, asset, active),
+            NetCommand::GestureSound { asset, position } => self.gesture_sound(asset, position),
             NetCommand::PreviewTaskNotecard { handle, object, item } => self.preview_task_notecard(handle, object, *item),
             NetCommand::SaveTaskNotecard {
                 request,
@@ -1768,6 +1772,7 @@ impl Session<'_> {
                 let name = match asset_type {
                     7 => "UpdateNotecardAgentInventory",
                     10 => "UpdateScriptAgent",
+                    21 => "UpdateGestureAgentInventory",
                     _ => "",
                 };
                 let Some((cap, fetch)) = self.main_cap(name).zip(self.main_cap("FetchInventory2")) else {
