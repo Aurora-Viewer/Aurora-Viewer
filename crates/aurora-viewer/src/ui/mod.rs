@@ -19,6 +19,7 @@ pub mod display_name;
 pub mod emoji;
 pub mod environment;
 pub mod exit;
+pub mod experience_profile;
 pub mod find_shortcut;
 pub mod fonts;
 pub mod gestures;

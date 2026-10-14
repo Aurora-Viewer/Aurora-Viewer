@@ -31,22 +31,31 @@ pub mod im {
     pub const FRIENDSHIP_ACCEPTED: u8 = 39;
 }
 
-/// LSL permission bits (llRequestPermissions) with their French wording.
+/// LSL permission bits (llRequestPermissions) with their wording
+/// (SCRIPT_PERMISSIONS of llscriptruntimeperms.h).
 fn permissions() -> &'static Vec<(i32, &'static str)> {
     static TABLE: aurora_i18n::Localized<Vec<(i32, &'static str)>> = aurora_i18n::Localized::new();
     TABLE.get(|| {
         vec![
             (0x2, aurora_i18n::tr!("world-notifications-take-l-from-your-account")),
             (0x4, aurora_i18n::tr!("world-notifications-take-control-of-your-keys")),
+            (0x8, aurora_i18n::tr!("world-notifications-remap-your-control-inputs")),
             (0x10, aurora_i18n::tr!("world-notifications-animate-your-avatar")),
             (0x20, aurora_i18n::tr!("world-notifications-attach-to-your-avatar")),
+            (0x40, aurora_i18n::tr!("world-notifications-release-ownership")),
             (0x80, aurora_i18n::tr!("world-notifications-link-and-unlink-objects")),
+            (0x100, aurora_i18n::tr!("world-notifications-add-and-remove-joints")),
+            (0x200, aurora_i18n::tr!("world-notifications-change-its-permissions")),
             (0x400, aurora_i18n::tr!("world-notifications-follow-your-camera")),
             (0x800, aurora_i18n::tr!("world-notifications-control-your-camera")),
             (0x1000, aurora_i18n::tr!("world-notifications-teleport")),
+            // 0x2000 (JoinAnExperience) has no line, like Firestorm's empty string
             (0x4000, aurora_i18n::tr!("world-notifications-manage-estate-silently")),
             (0x8000, aurora_i18n::tr!("world-notifications-override-your-animations")),
             (0x10000, aurora_i18n::tr!("world-notifications-return-objects")),
+            (0x20000, aurora_i18n::tr!("world-notifications-force-your-avatar-to-sit")),
+            (0x40000, aurora_i18n::tr!("world-notifications-change-your-environment-settings")),
+            (0x80000, aurora_i18n::tr!("world-notifications-sell-land-on-your-behalf")),
         ]
     })
 }
@@ -120,8 +129,22 @@ pub enum Data {
         task: Uuid,
         item: Uuid,
         questions: i32,
+        /// The simulator that asked, which gets the answer.
+        region: aurora_net::RegionHandle,
+        /// The question of an experience (ScriptQuestionExperience).
+        experience: Option<ExperiencePrompt>,
     },
     Url(String),
+}
+
+/// What the question of an experience shows besides the permissions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExperiencePrompt {
+    pub id: Uuid,
+    /// The experience's name (its id when its details are unknown).
+    pub name: String,
+    /// The source object, blocked by "Block object".
+    pub object_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -157,8 +180,14 @@ impl Notification {
 #[derive(Debug, Clone)]
 pub enum Response {
     Dismiss,
-    /// Block the source object and discard its script menus, without replying.
+    /// Block the source object and discard its script menus, without replying
+    /// (a permission question is refused first, script_question_mute).
     Block,
+    /// Refuse an experience's question and block the experience
+    /// (script_question_cb, "BlockExperience").
+    BlockExperience,
+    /// Open the profile of the experience; the question stays.
+    OpenExperience(Uuid),
     Accept,
     Decline,
     /// Script dialog button (index).
@@ -298,12 +327,23 @@ impl Notifications {
                     label: n.text.clone(),
                 });
             }
-            (Data::Permissions { task, item, questions }, _) => {
-                // ScriptAnswerYes with the granted bits (0 = refuse)
+            (
+                Data::Permissions {
+                    task,
+                    item,
+                    questions,
+                    region,
+                    ..
+                },
+                _,
+            ) => {
+                // ScriptAnswerYes with the granted bits (0 = refuse), to the
+                // simulator that asked
                 out.push(NetCommand::ScriptAnswer {
                     task_id: *task,
                     item_id: *item,
                     questions: if accept { *questions } else { 0 },
+                    region: *region,
                 });
             }
             (Data::Url(u), Response::OpenUrl) => url = Some(u.clone()),
@@ -505,10 +545,19 @@ mod tests {
                 task: Uuid::nil(),
                 item: Uuid::nil(),
                 questions: 0x10,
+                region: 42,
+                experience: None,
             },
         );
         let (cmds, _) = n.respond(id, Response::Decline, |_| Uuid::nil(), Uuid::nil());
-        assert!(matches!(&cmds[..], [NetCommand::ScriptAnswer { questions: 0, .. }]));
+        assert!(matches!(
+            &cmds[..],
+            [NetCommand::ScriptAnswer {
+                questions: 0,
+                region: 42,
+                ..
+            }]
+        ));
         assert_eq!(
             permission_lines(0x10 | 0x20),
             vec![

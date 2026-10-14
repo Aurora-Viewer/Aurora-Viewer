@@ -1199,6 +1199,7 @@ impl Session<'_> {
                 task_id,
                 item_id,
                 questions,
+                region,
             } => {
                 let mut m = ScriptAnswerYes::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -1206,8 +1207,15 @@ impl Session<'_> {
                 m.data.task_id = task_id;
                 m.data.item_id = item_id;
                 m.data.questions = questions;
-                self.send_main(&m, true);
+                // script_question_cb answers the simulator that asked (the
+                // object's, a neighbour's for an object across the border)
+                match self.sim_for_handle(region) {
+                    Some(addr) => self.send(addr, &m, true),
+                    None => self.send_main(&m, true),
+                }
             }
+            NetCommand::ExperienceInfo(ids) => self.request_experiences(ids),
+            NetCommand::ExperiencePermission { experience, change } => self.experience_permission(experience, change),
             NetCommand::Touch { local_id } => {
                 // a click is a grab immediately followed by a release (LLToolGrab)
                 let mut g = ObjectGrab::default();
@@ -2308,6 +2316,36 @@ impl Session<'_> {
         });
     }
 
+    /// LLExperienceCache::requestExperiences: the details of experiences, on
+    /// a task; the answer always names every one asked for.
+    fn request_experiences(&self, ids: Vec<Uuid>) {
+        let base = self.main_cap("GetExperienceInfo");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let details = crate::experience::fetch_info(&http, base.as_deref(), &ids).await;
+            let _ = events.send(NetEvent::ExperienceInfo(details));
+        });
+    }
+
+    /// LLExperienceCache::get / set / forgetExperiencePermission.
+    fn experience_permission(&self, experience: Uuid, change: crate::experience::ExperiencePermissionChange) {
+        let cap = self.main_cap("ExperiencePreferences");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let result = crate::experience::permission(&http, cap.as_deref(), experience, change).await;
+            if let Err(e) = &result {
+                log::warn!("experience {experience} permission ({change:?}): {e}");
+            }
+            let _ = events.send(NetEvent::ExperiencePermission {
+                experience,
+                change,
+                result,
+            });
+        });
+    }
+
     /// LLVOAvatarSelf::sendHoverHeight. A delayed command must never write
     /// to a different region after teleporting; never log a capability URL.
     fn set_hover_height(&self, region: RegionHandle, request: u64, value: f32) {
@@ -2959,6 +2997,8 @@ impl Session<'_> {
         } else if id == ScriptQuestion::ID {
             let m: ScriptQuestion = pkt.decode()?;
             let d = &m.data;
+            // the Experience block is missing from older simulators: read
+            // as zeros, a nil experience (process_script_question, msg->has)
             emit(
                 self.sh,
                 NetEvent::ScriptQuestion {
@@ -2967,6 +3007,8 @@ impl Session<'_> {
                     object_name: field_str(&d.object_name),
                     owner_name: field_str(&d.object_owner),
                     questions: d.questions,
+                    experience: m.experience.experience_id,
+                    region: self.handle_of(from),
                 },
             );
         } else if id == LoadURL::ID {

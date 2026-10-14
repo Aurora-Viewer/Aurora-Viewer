@@ -575,13 +575,28 @@ pub enum NetEvent {
         channel: i32,
         buttons: Vec<String>,
     },
-    /// A script asks for permissions (llRequestPermissions).
+    /// A script asks for permissions (llRequestPermissions), possibly on
+    /// behalf of an experience (llRequestExperiencePermissions; nil if not).
+    /// `region`: the simulator that asked, which gets the answer
+    /// (process_script_question keeps the sender).
     ScriptQuestion {
         task_id: Uuid,
         item_id: Uuid,
         object_name: String,
         owner_name: String,
         questions: i32,
+        experience: Uuid,
+        region: RegionHandle,
+    },
+    /// GetExperienceInfo: the details of the experiences asked for (unknown
+    /// ones when they could not be read).
+    ExperienceInfo(Vec<crate::experience::ExperienceDetails>),
+    /// ExperiencePreferences: the agent's permission for an experience after
+    /// reading or changing it.
+    ExperiencePermission {
+        experience: Uuid,
+        change: crate::experience::ExperiencePermissionChange,
+        result: Result<crate::experience::ExperiencePermission, String>,
     },
     /// AvatarSitResponse: the seat's camera (llSetCameraEyeOffset /
     /// llSetCameraAtOffset, seat-relative) and llForceMouselook.
@@ -1131,11 +1146,20 @@ pub enum NetCommand {
         index: i32,
         label: String,
     },
-    /// Grant script permissions (ScriptAnswerYes; questions = granted bits).
+    /// Grant script permissions (ScriptAnswerYes; questions = granted bits),
+    /// sent to the simulator that asked (`region`).
     ScriptAnswer {
         task_id: Uuid,
         item_id: Uuid,
         questions: i32,
+        region: RegionHandle,
+    },
+    /// GetExperienceInfo for these experiences.
+    ExperienceInfo(Vec<Uuid>),
+    /// ExperiencePreferences: read, allow, block or forget an experience.
+    ExperiencePermission {
+        experience: Uuid,
+        change: crate::experience::ExperiencePermissionChange,
     },
     /// Touch an object (ObjectGrab + ObjectDeGrab), like a left click in SL.
     Touch {
