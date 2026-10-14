@@ -660,7 +660,13 @@ fn friends_tab(
                     if widgets::icon_button(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), f.online) {
                         actions.push(PeopleAction::OfferTeleport(f.id));
                     }
-                    if widgets::icon_button(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-people-instant-message-im"), true) {
+                    if widgets::icon_button(
+                        ui,
+                        p,
+                        "message-circle-filled",
+                        aurora_i18n::tr!("ui-people-instant-message-im"),
+                        true,
+                    ) {
                         actions.push(PeopleAction::OpenIm(f.id));
                     }
                     if widgets::icon_button(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), true) {
