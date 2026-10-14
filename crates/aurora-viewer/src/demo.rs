@@ -1599,7 +1599,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             }
         }
         // voice calls: the simulated ChatSessionRequest (AURORA_DEMO_CALL)
-        aurora_net::NetCommand::Call { method, session, .. } => calls::reply(*method, *session),
+        aurora_net::NetCommand::Call { method, session, .. } => calls::reply(method.clone(), *session),
         // the request made once after login: what the grid kept while we
         // were away (AURORA_DEMO_CHATLOG=offline), else nothing
         aurora_net::NetCommand::RequestOfflineMessages => match chatlog::mode() {

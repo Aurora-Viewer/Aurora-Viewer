@@ -6,6 +6,7 @@
 
 use super::{ChatUi, ConvAction, tool};
 use crate::theme::Palette;
+use crate::ui::menu;
 use crate::ui::widgets::{ActionKind, action_button, avatar_disc};
 use crate::world::World;
 use crate::world::calls::{Call, CallState};
@@ -78,13 +79,16 @@ pub(super) fn strip(
                     for m in others.iter().take(SHOWN) {
                         st.wanted_pics.insert(m.id);
                         let name = world.social.name_of(&m.id);
-                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(MEMBER, MEMBER), egui::Sense::hover());
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(MEMBER, MEMBER), egui::Sense::click());
                         avatar_disc(ui, p, rect, pics.get(&m.id), &name, false);
                         if m.speaking {
                             ui.painter()
                                 .circle_stroke(rect.center(), MEMBER * 0.5 + 1.5, egui::Stroke::new(2.0, p.success));
                         }
-                        resp.on_hover_text(name);
+                        let resp = resp
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(aurora_i18n::tr!("ui-call-volume-of", name = name.as_str()));
+                        volume_menu(&resp, p, &name, m.id, st, actions);
                     }
                     if others.len() > SHOWN {
                         ui.label(RichText::new(format!("+{}", others.len() - SHOWN)).size(11.5).color(p.muted));
@@ -113,6 +117,117 @@ pub(super) fn strip(
                         if tool(ui, p, icons, icon, tip, true, on) {
                             actions.push(ConvAction::ToggleMic);
                         }
+                    }
+                });
+            });
+        });
+}
+
+/// A participant's volume, opened by a click on their picture (the
+/// participant list's volume slider, LLSpeakerVolumeStorage: 0..1, 0.5 as
+/// they send it).
+fn volume_menu(resp: &egui::Response, p: &Palette, name: &str, id: uuid::Uuid, st: &ChatUi, actions: &mut Vec<ConvAction>) {
+    menu::dropdown(resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        ui.set_min_width(200.0);
+        ui.label(RichText::new(name).size(12.0).strong().color(p.ink));
+        let mut v = st.volumes.get(&id).copied().unwrap_or(0.5);
+        let before = v;
+        ui.horizontal(|ui| {
+            crate::ui::widgets::glyph(ui, "volume", p.muted, 14.0);
+            ui.add(egui::Slider::new(&mut v, 0.0..=1.0).show_value(false));
+        });
+        if (v - before).abs() > f32::EPSILON {
+            actions.push(ConvAction::SetVolume(id, v));
+        }
+        if menu::item_if(
+            ui,
+            p,
+            "restore",
+            aurora_i18n::tr!("ui-call-volume-reset"),
+            (before - 0.5).abs() > 0.001,
+        ) {
+            actions.push(ConvAction::SetVolume(id, 0.5));
+        }
+    });
+}
+
+/// "<Name> is calling you" in the conversation of a call invitation, with
+/// the answers of its card (LLIncomingCallDialog: Accept, Reject, Start IM).
+pub(super) fn ringing(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    invite: &crate::world::calls::PendingInvite,
+    actions: &mut Vec<ConvAction>,
+) {
+    use crate::world::calls::InviteAnswer;
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+    let inv = &invite.invite;
+    let name = if inv.from_name.is_empty() {
+        world.social.name_of(&inv.from)
+    } else {
+        inv.from_name.clone()
+    };
+    let session = inv.session;
+    egui::Frame::new()
+        .fill(p.field)
+        .corner_radius(ui.visuals().window_corner_radius)
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let t = ui.input(|i| i.time) as f32;
+                crate::ui::widgets::glyph(
+                    ui,
+                    "phone-filled",
+                    p.success.gamma_multiply(0.55 + 0.45 * (t * 4.0).sin().abs()),
+                    16.0,
+                );
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-call-calls-you", name = name.as_str()))
+                        .size(12.0)
+                        .strong()
+                        .color(p.ink),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let size = egui::vec2(0.0, 24.0);
+                    if inv.p2p
+                        && action_button(
+                            ui,
+                            p,
+                            "message-filled",
+                            aurora_i18n::tr!("ui-notifications-call-start-im"),
+                            ActionKind::Flat,
+                            size,
+                        )
+                        .clicked()
+                    {
+                        actions.push(ConvAction::AnswerCall {
+                            session,
+                            answer: InviteAnswer::Text,
+                        });
+                    }
+                    if action_button(
+                        ui,
+                        p,
+                        "phone-off",
+                        aurora_i18n::tr!("ui-notifications-decline"),
+                        ActionKind::FlatDanger,
+                        size,
+                    )
+                    .clicked()
+                    {
+                        actions.push(ConvAction::AnswerCall {
+                            session,
+                            answer: InviteAnswer::Decline,
+                        });
+                    }
+                    if action_button(ui, p, "phone-filled", aurora_i18n::tr!("ui-call-answer"), ActionKind::Primary, size).clicked() {
+                        actions.push(ConvAction::AnswerCall {
+                            session,
+                            answer: InviteAnswer::Accept,
+                        });
                     }
                 });
             });

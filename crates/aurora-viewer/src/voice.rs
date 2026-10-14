@@ -80,6 +80,8 @@ pub struct Voice {
     pub mic_level: f32,
     /// Participants muted for us in the current session (block list).
     muted: HashSet<Uuid>,
+    /// Volumes sent to the current session, per resident.
+    volumes: HashMap<Uuid, f32>,
 }
 
 impl Voice {
@@ -195,6 +197,7 @@ impl Voice {
                         s.set_mic(self.mic.clone());
                         self.session = Some((key, s));
                         self.muted.clear();
+                        self.volumes.clear();
                     }
                 }
             }
@@ -255,6 +258,26 @@ impl Voice {
                 } else {
                     self.muted.remove(&p.agent_id);
                 }
+            }
+        }
+    }
+
+    /// Each resident's volume (0..1, 0.5 as sent) for the participants of
+    /// the session (LLSpeakerVolumeStorage, setUserVolume); only changes are
+    /// sent, a resident without a saved volume is heard at 0.5.
+    pub fn apply_volumes(&mut self, saved: &std::collections::BTreeMap<Uuid, f32>) {
+        let Some((_, s)) = &self.session else {
+            return;
+        };
+        if !self.connected {
+            return;
+        }
+        for p in s.participants() {
+            let want = saved.get(&p.agent_id).copied().unwrap_or(0.5);
+            let sent = self.volumes.get(&p.agent_id).copied().unwrap_or(0.5);
+            if (want - sent).abs() > f32::EPSILON {
+                s.set_user_volume(p.agent_id, want);
+                self.volumes.insert(p.agent_id, want);
             }
         }
     }

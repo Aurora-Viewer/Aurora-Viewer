@@ -16,7 +16,7 @@
 use super::{ChatKind, ChatLine, Origin, World, notifications};
 use aurora_llsd::Llsd;
 use aurora_net::{CallMethod, NetCommand, SessionMethod, VoiceInvite};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use uuid::Uuid;
 
 /// Who is called.
@@ -125,18 +125,71 @@ pub enum ChannelStatus {
 /// DEFAULT_RETRIES_COUNT (llvoicechannel.cpp).
 const RETRIES: u8 = 3;
 
+/// How long an invitation waits for its answer before it is declined: the
+/// "lifetime" of floater_incoming_call.xml (LLIncomingCallDialog::
+/// onLifetimeExpired; a WebRTC call has no incoming call interface to keep
+/// it alive).
+pub const INVITE_LIFETIME: Duration = Duration::from_secs(30);
+
+/// A voice invitation waiting for its answer: its card in the notifications
+/// and the strip of its conversation answer it alike.
+#[derive(Debug, Clone)]
+pub struct PendingInvite {
+    pub invite: VoiceInvite,
+    /// Its notification card.
+    pub notification: u64,
+    pub since: Instant,
+}
+
+impl PendingInvite {
+    /// The conversation it shows in (the caller for a resident's call).
+    pub fn conversation(&self) -> Uuid {
+        if self.invite.p2p { self.invite.from } else { self.invite.session }
+    }
+}
+
+/// The answers of an invitation (processCallResponse 0, 1 and 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InviteAnswer {
+    Accept,
+    Decline,
+    /// "Start IM": the conversation without the call (residents only).
+    Text,
+}
+
 /// The calls: the one in progress and the invitations waiting for an answer.
 #[derive(Default)]
 pub struct Calls {
     pub active: Option<Call>,
+    pub invites: Vec<PendingInvite>,
     /// Voice is enabled and working: invitations are shown only then
     /// (LLViewerChatterBoxInvitation::post).
     pub voice_enabled: bool,
     /// The region's VoiceServerType, sent with the requests.
     pub server_type: String,
+    /// VoiceCallsRejectGroup / AdHoc / P2P, given by the app.
+    pub reject_group: bool,
+    pub reject_adhoc: bool,
+    pub reject_p2p: bool,
     /// The microphone state wanted when a call connects or ends:
     /// Some(on) once, taken by the app (setUserPTTState, AutoDisengageMic).
     pub mic: Option<bool>,
+}
+
+impl Calls {
+    /// The invitation waiting in a conversation.
+    pub fn invite_for(&self, conversation: &Uuid) -> Option<&PendingInvite> {
+        self.invites.iter().find(|p| p.conversation() == *conversation)
+    }
+}
+
+/// A Second Life staff member's name ("… Linden", LLMuteList::isLinden):
+/// never filtered by "friends only".
+fn is_linden(name: &str) -> bool {
+    name.trim()
+        .rsplit(' ')
+        .next()
+        .is_some_and(|last| last.eq_ignore_ascii_case("linden"))
 }
 
 /// A voice invitation waiting for its answer, in a notification.
@@ -184,6 +237,13 @@ impl World {
             },
             false,
         );
+    }
+
+    /// "Only friends and groups can call or IM me" (VoiceCallsFriendsOnly):
+    /// what a resident who is not a friend sends is dropped, Lindens apart
+    /// (llimprocessing.cpp, LLIMMgr::addMessage).
+    pub(super) fn friends_only_drops(&self, from: &Uuid, name: &str) -> bool {
+        self.status.cfg.friends_only && *from != self.agent_id && !self.is_friend(from) && !is_linden(name)
     }
 
     /// The call of a conversation, if it is the one in progress.
@@ -249,6 +309,47 @@ impl World {
         });
     }
 
+    /// A voice conference with several residents (LLAvatarActions::
+    /// startAdhocCall): a conference session under a temporary id
+    /// ("start conference"), whose call starts once the server answered
+    /// with the session's real id (autoStartCallOnStartup).
+    pub fn start_conference(&mut self, residents: Vec<Uuid>) {
+        let me = self.agent_id;
+        let mut agents: Vec<Uuid> = Vec::new();
+        for id in residents {
+            if !id.is_nil() && id != me && !agents.contains(&id) {
+                agents.push(id);
+            }
+        }
+        match agents.len() {
+            0 => return,
+            1 => return self.start_call(agents[0]),
+            _ => {}
+        }
+        self.end_call();
+        let session = Uuid::new_v4();
+        let name = aurora_i18n::tr!("world-groups-conference").to_owned();
+        log::info!("call: starting a conference with {} residents", agents.len());
+        self.info_mut(session, &name).started_by_us = true;
+        self.session_lines(session);
+        self.social.focus_im = Some(session);
+        self.call_request(CallMethod::StartConference { agents }, session);
+        self.ui_sounds.push(crate::ui_sound::UiSound::StartIm);
+        self.calls.active = Some(Call {
+            session,
+            kind: CallKind::AdHoc,
+            name,
+            incoming: false,
+            state: CallState::Requesting,
+            channel: None,
+            wait_session: true,
+            retries: RETRIES,
+            others_joined: false,
+            connected_at: None,
+            members: Vec::new(),
+        });
+    }
+
     /// Hang up (LLIMMgr::endCall → LLVoiceChannel::deactivate): back to the
     /// spatial channel, the microphone off (AutoDisengageMic).
     pub fn end_call(&mut self) {
@@ -296,12 +397,23 @@ impl World {
         }
     }
 
-    /// The group session we waited for is started: ask the credentials.
-    pub(super) fn call_session_started(&mut self, session: Uuid, success: bool) {
-        let Some(c) = self.calls.active.as_mut().filter(|c| c.session == session && c.wait_session) else {
+    /// The session we waited for is started: ask the credentials. A
+    /// conference's temporary id becomes the server's
+    /// (processSessionInitializedReply).
+    pub(super) fn call_session_started(&mut self, temp: Uuid, session: Uuid, success: bool) {
+        let Some(c) = self
+            .calls
+            .active
+            .as_mut()
+            .filter(|c| (c.session == session || (!temp.is_nil() && c.session == temp)) && c.wait_session)
+        else {
             return;
         };
         c.wait_session = false;
+        if success && !session.is_nil() {
+            c.session = session;
+        }
+        let session = c.session;
         if success {
             self.call_request(CallMethod::Call, session);
         } else {
@@ -315,6 +427,7 @@ impl World {
         if self.calls.active.as_ref().is_some_and(|c| c.session == session) {
             self.end_call();
         }
+        self.invite_withdrawn(session);
     }
 
     fn on_call_reply(&mut self, method: CallMethod, session: Uuid, result: Result<Llsd, u16>) {
@@ -323,6 +436,13 @@ impl World {
         };
         let name = c.name.clone();
         match (method, result) {
+            // startConferenceCoro: the call starts with the session's start
+            // reply (ChatterBoxSessionStartReply)
+            (CallMethod::StartConference { .. }, Ok(_)) => {}
+            (CallMethod::StartConference { .. }, Err(status)) => {
+                log::warn!("call: start conference failed ({status})");
+                self.call_failed(aurora_i18n::tr!("world-calls-generic-error", name = name.as_str()));
+            }
             // startP2PVoiceCoro: the session exists, the credentials next
             (CallMethod::StartP2p { .. }, Ok(_)) => self.call_request(CallMethod::Call, session),
             (CallMethod::StartP2p { .. }, Err(status)) => {
@@ -413,28 +533,40 @@ impl World {
             self.accept_voice_invite(inv);
             return;
         }
-        // muted residents and do not disturb decline silently
-        let blocked = self.is_avatar_blocked(&inv.from);
-        if blocked || self.status.dnd {
+        // muted residents are declined without a word
+        if self.is_avatar_blocked(&inv.from) {
+            log::info!("call: invitation from {} declined (blocked)", inv.from);
+            self.decline_voice_invite(&inv);
+            return;
+        }
+        // VoiceCallsRejectGroup / AdHoc / P2P, VoiceCallsFriendsOnly and do
+        // not disturb decline silently; do not disturb alone tells it in the
+        // conversation and answers the caller (send_do_not_disturb_message)
+        let c = &self.calls;
+        let rejected = (group && c.reject_group)
+            || (!group && !inv.p2p && c.reject_adhoc)
+            || (inv.p2p && c.reject_p2p)
+            || (self.status.cfg.friends_only && !self.is_friend(&inv.from) && !is_linden(&inv.from_name));
+        if rejected || self.status.dnd {
             log::info!(
                 "call: invitation from {} declined ({})",
                 inv.from,
-                if blocked { "blocked" } else { "do not disturb" }
+                if rejected { "settings" } else { "do not disturb" }
             );
-            if self.status.dnd && !blocked && inv.p2p {
-                self.social.session_mut(inv.from);
-                self.call_note(inv.from, aurora_i18n::tr!("world-calls-auto-rejected").to_owned());
+            if !rejected {
+                let conversation = if inv.p2p { inv.from } else { inv.session };
+                if inv.p2p {
+                    self.social.session_mut(inv.from);
+                }
+                self.call_note(conversation, aurora_i18n::tr!("world-calls-auto-rejected").to_owned());
+                let text = self.status.cfg.dnd_text.clone();
+                self.auto_im(inv.from, inv.session, &text);
             }
             self.decline_voice_invite(&inv);
             return;
         }
         // one card per session
-        if self
-            .notifications
-            .list
-            .iter()
-            .any(|n| matches!(&n.data, notifications::Data::Call { invite } if invite.session == inv.session))
-        {
+        if self.calls.invites.iter().any(|p| p.invite.session == inv.session) {
             return;
         }
         let text = invite_text(&inv, group);
@@ -443,13 +575,105 @@ impl World {
         } else {
             inv.from_name.clone()
         };
-        self.notifications.push(
+        // the conversation shows the call too (created as Firestorm's
+        // invitation does, brought up and flashing like an unread message)
+        let conversation = if inv.p2p {
+            self.social.session_mut(inv.from);
+            inv.from
+        } else {
+            let name = if inv.session_name.is_empty() {
+                aurora_i18n::tr!("world-groups-conference").to_owned()
+            } else {
+                inv.session_name.clone()
+            };
+            self.info_mut(inv.session, &name);
+            self.session_lines(inv.session);
+            inv.session
+        };
+        self.conversation_push(
+            conversation,
+            ChatLine {
+                time: SystemTime::now(),
+                from: String::new(),
+                text: text.clone(),
+                kind: ChatKind::System,
+                source: Uuid::nil(),
+                origin: Origin::Live,
+            },
+            true,
+        );
+        let notification = self.notifications.push(
             notifications::Kind::Call,
             title,
             text,
-            notifications::Data::Call { invite: Box::new(inv) },
+            notifications::Data::Call {
+                invite: Box::new(inv.clone()),
+            },
         );
-        self.ui_sounds.push(crate::ui_sound::UiSound::StartIm);
+        self.calls.invites.push(PendingInvite {
+            invite: inv,
+            notification,
+            since: Instant::now(),
+        });
+        // LLIncomingCallDialog::onOpen
+        self.ui_sounds.push(crate::ui_sound::UiSound::IncomingVoiceCall);
+    }
+
+    /// Answer the invitation of a session from its conversation's strip:
+    /// its card leaves the notifications with the same answer.
+    pub fn answer_call_invite(&mut self, session: Uuid, answer: InviteAnswer) {
+        let Some(i) = self.calls.invites.iter().position(|p| p.invite.session == session) else {
+            return;
+        };
+        let p = self.calls.invites.remove(i);
+        let response = match answer {
+            InviteAnswer::Accept => notifications::Response::Accept,
+            InviteAnswer::Decline => notifications::Response::Decline,
+            InviteAnswer::Text => notifications::Response::Button(0),
+        };
+        self.notifications.respond(p.notification, response, |_| Uuid::nil(), Uuid::nil());
+        self.apply_invite_answer(p.invite, answer);
+    }
+
+    /// The card of an invitation was answered: its strip goes too.
+    pub(super) fn invite_card_answered(&mut self, invite: VoiceInvite, answer: InviteAnswer) {
+        self.calls.invites.retain(|p| p.invite.session != invite.session);
+        self.apply_invite_answer(invite, answer);
+    }
+
+    fn apply_invite_answer(&mut self, invite: VoiceInvite, answer: InviteAnswer) {
+        match answer {
+            InviteAnswer::Accept => self.accept_voice_invite(invite),
+            InviteAnswer::Text if invite.p2p => self.answer_voice_invite_by_im(&invite),
+            _ => self.decline_voice_invite(&invite),
+        }
+    }
+
+    /// Invitations left unanswered for INVITE_LIFETIME are declined, their
+    /// card and strip closed (LLIncomingCallDialog::onLifetimeExpired).
+    pub fn expire_call_invites(&mut self) {
+        let expired: Vec<Uuid> = self
+            .calls
+            .invites
+            .iter()
+            .filter(|p| p.since.elapsed() >= INVITE_LIFETIME)
+            .map(|p| p.invite.session)
+            .collect();
+        for session in expired {
+            log::info!("call: invitation for {session} expired");
+            self.answer_call_invite(session, InviteAnswer::Decline);
+        }
+    }
+
+    /// The server closed the session of an invitation: the caller gave up.
+    fn invite_withdrawn(&mut self, session: Uuid) {
+        let (gone, kept) = std::mem::take(&mut self.calls.invites)
+            .into_iter()
+            .partition(|p| p.invite.session == session);
+        self.calls.invites = kept;
+        for p in gone {
+            self.notifications.list.retain(|n| n.id != p.notification);
+        }
     }
 
     /// Accept (processCallResponse 0): the conversation opens and the call
@@ -672,5 +896,115 @@ mod tests {
         assert!(w.calls.active.is_some());
         w.conversation_closed(&other);
         assert!(w.calls.active.is_none());
+    }
+
+    fn p2p_invite(from: u128) -> VoiceInvite {
+        VoiceInvite {
+            session: Uuid::from_u128(1 ^ from),
+            session_name: String::new(),
+            from: Uuid::from_u128(from),
+            from_name: "Tess Touch".into(),
+            p2p: true,
+            voice: llsd_map! { "channel_uri" => "chan", "channel_credentials" => "c" },
+        }
+    }
+
+    #[test]
+    fn the_strip_and_the_card_answer_the_same_invitation() {
+        let mut w = world();
+        let inv = p2p_invite(7);
+        w.on_call_event(NetEvent::VoiceInvite(inv.clone()));
+        // the conversation exists, unread, with the strip's invitation
+        let s = w.social.ims.iter().find(|s| s.other == inv.from).expect("conversation");
+        assert_eq!(s.unread, 1);
+        assert!(w.calls.invite_for(&inv.from).is_some());
+        assert_eq!(w.notifications.list.len(), 1);
+        // answered from the strip: the card goes
+        w.answer_call_invite(inv.session, InviteAnswer::Decline);
+        assert!(w.notifications.list.is_empty());
+        assert!(w.calls.invites.is_empty());
+        assert_eq!(calls_sent(&mut w), vec![(CallMethod::DeclineP2p, inv.session)]);
+        // answered from the card: the strip goes
+        w.on_call_event(NetEvent::VoiceInvite(inv.clone()));
+        let id = w.notifications.list[0].id;
+        w.respond_notification(id, notifications::Response::Accept);
+        assert!(w.calls.invites.is_empty());
+        assert!(w.calls.active.as_ref().is_some_and(|c| c.incoming));
+    }
+
+    #[test]
+    fn an_unanswered_or_withdrawn_invitation_closes_card_and_strip() {
+        let mut w = world();
+        let inv = p2p_invite(7);
+        w.on_call_event(NetEvent::VoiceInvite(inv.clone()));
+        w.calls.invites[0].since = Instant::now().checked_sub(INVITE_LIFETIME).expect("past");
+        w.expire_call_invites();
+        assert!(w.calls.invites.is_empty() && w.notifications.list.is_empty());
+        assert_eq!(calls_sent(&mut w), vec![(CallMethod::DeclineP2p, inv.session)]);
+        let group = VoiceInvite {
+            p2p: false,
+            session: Uuid::from_u128(40),
+            ..p2p_invite(8)
+        };
+        w.on_call_event(NetEvent::VoiceInvite(group.clone()));
+        assert_eq!(w.calls.invites.len(), 1);
+        w.call_session_closed(group.session);
+        assert!(w.calls.invites.is_empty() && w.notifications.list.is_empty());
+    }
+
+    #[test]
+    fn reject_settings_and_friends_only_decline_silently() {
+        let inv = p2p_invite(7);
+        for setup in [(|w: &mut World| w.calls.reject_p2p = true) as fn(&mut World), |w: &mut World| {
+            w.status.cfg.friends_only = true
+        }] {
+            let mut w = world();
+            setup(&mut w);
+            w.on_call_event(NetEvent::VoiceInvite(inv.clone()));
+            assert!(w.notifications.list.is_empty());
+            assert!(!w.social.ims.iter().any(|s| s.other == inv.from), "no notice");
+            assert_eq!(calls_sent(&mut w), vec![(CallMethod::DeclineP2p, inv.session)]);
+        }
+        // the group setting leaves a resident's call alone
+        let mut w = world();
+        w.calls.reject_group = true;
+        w.on_call_event(NetEvent::VoiceInvite(inv.clone()));
+        assert_eq!(w.calls.invites.len(), 1);
+        // do not disturb answers the caller with its text
+        let mut w = world();
+        w.status.dnd = true;
+        w.on_call_event(NetEvent::VoiceInvite(inv.clone()));
+        assert!(w.groups.out.iter().any(|c| matches!(c,
+            NetCommand::SendImDialog { to, dialog, .. } if *to == inv.from && *dialog == super::super::status::AUTO_RESPONSE)));
+        // friends only: a Linden still gets through, a friend too
+        let mut w = world();
+        w.status.cfg.friends_only = true;
+        assert!(w.friends_only_drops(&inv.from, "Tess Touch"));
+        assert!(!w.friends_only_drops(&inv.from, "Oz Linden"));
+    }
+
+    #[test]
+    fn a_conference_starts_its_call_under_the_servers_session_id() {
+        let mut w = world();
+        let (a, b) = (Uuid::from_u128(2), Uuid::from_u128(3));
+        w.start_conference(vec![a, b, a]);
+        let temp = w.calls.active.as_ref().expect("call").session;
+        let sent = calls_sent(&mut w);
+        assert_eq!(sent, vec![(CallMethod::StartConference { agents: vec![a, b] }, temp)]);
+        let real = Uuid::from_u128(99);
+        w.apply(NetEvent::SessionStarted {
+            temp_session: temp,
+            session: real,
+            success: true,
+            error: String::new(),
+            agents: Vec::new(),
+        });
+        assert_eq!(w.calls.active.as_ref().map(|c| c.session), Some(real));
+        assert_eq!(calls_sent(&mut w), vec![(CallMethod::Call, real)]);
+        assert!(w.groups.sessions.contains_key(&real));
+        // one resident only: a plain call
+        let mut w = world();
+        w.start_conference(vec![a]);
+        assert!(w.calls.active.as_ref().is_some_and(|c| c.p2p()));
     }
 }

@@ -118,7 +118,7 @@ impl Session<'_> {
                 method,
                 session,
                 server_type,
-            } => self.call_request(*method, *session, server_type),
+            } => self.call_request(method.clone(), *session, server_type),
             NetCommand::AgentAnimation { anim, start } => {
                 // LLAgent::sendAnimationRequest
                 let mut m = AgentAnimation::default();

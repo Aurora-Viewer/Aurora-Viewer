@@ -618,6 +618,14 @@ pub struct AudioSettings {
     /// Saved music stream URLs (FSStreamList "audio", FIRE-593), offered by
     /// the "Sound" tab of About Land.
     pub saved_streams: Vec<String>,
+    /// Decline every incoming group / conference / resident voice call
+    /// (VoiceCallsRejectGroup / AdHoc / P2P, off).
+    pub reject_group_calls: bool,
+    pub reject_adhoc_calls: bool,
+    pub reject_p2p_calls: bool,
+    /// Volume of each resident heard in voice (0..1, 0.5 = as sent),
+    /// LLSpeakerVolumeStorage; residents left at 0.5 are not kept.
+    pub speaker_volumes: std::collections::BTreeMap<uuid::Uuid, f32>,
 }
 
 impl Default for AudioSettings {
@@ -638,6 +646,10 @@ impl Default for AudioSettings {
             ui_sounds: true,
             ui: Default::default(),
             saved_streams: Vec::new(),
+            reject_group_calls: false,
+            reject_adhoc_calls: false,
+            reject_p2p_calls: false,
+            speaker_volumes: Default::default(),
         }
     }
 }

@@ -205,7 +205,7 @@ pub fn parse_voice_invitation(body: &Llsd) -> Option<VoiceInvite> {
 
 /// ChatSessionRequest methods of the voice calls (llvoicechannel.cpp,
 /// llimview.cpp).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallMethod {
     /// Ask the channel credentials of a group / ad-hoc / P2P session
     /// (LLVoiceChannelGroup::voiceCallCapCoro).
@@ -214,21 +214,31 @@ pub enum CallMethod {
     StartP2p { other: Uuid },
     /// Decline a P2P call (LLIncomingCallDialog::processCallResponse).
     DeclineP2p,
+    /// Start an ad-hoc conference with these residents, under a temporary
+    /// session id the server replaces (startConferenceCoro).
+    StartConference { agents: Vec<Uuid> },
 }
 
 impl CallMethod {
-    pub fn name(self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             CallMethod::Call => "call",
             CallMethod::StartP2p { .. } => "start p2p voice",
             CallMethod::DeclineP2p => "decline p2p voice",
+            CallMethod::StartConference { .. } => "start conference",
         }
     }
 
     /// The POST body, as Firestorm builds it. `server_type` is the region's
     /// voice server type (VoiceServerType unset: getVersion's).
-    pub fn body(self, session: Uuid, server_type: &str) -> Llsd {
+    pub fn body(&self, session: Uuid, server_type: &str) -> Llsd {
         match self {
+            CallMethod::StartConference { agents } => aurora_llsd::llsd_map! {
+                "method" => self.name(),
+                "session-id" => session,
+                "params" => Llsd::Array(agents.iter().map(|a| Llsd::from(*a)).collect()),
+                "alt_params" => aurora_llsd::llsd_map! { "voice_server_type" => server_type },
+            },
             CallMethod::Call => aurora_llsd::llsd_map! {
                 "method" => self.name(),
                 "session-id" => session,
@@ -237,7 +247,7 @@ impl CallMethod {
             CallMethod::StartP2p { other } => aurora_llsd::llsd_map! {
                 "method" => self.name(),
                 "session-id" => session,
-                "params" => other,
+                "params" => *other,
                 "alt_params" => aurora_llsd::llsd_map! { "voice_server_type" => server_type },
             },
             CallMethod::DeclineP2p => aurora_llsd::llsd_map! {
@@ -336,6 +346,11 @@ mod tests {
         assert_eq!(start["method"].as_str(), "start p2p voice");
         assert_eq!(start["params"].as_uuid(), other);
         assert_eq!(start["alt_params"]["voice_server_type"].as_str(), "webrtc");
+        let conference = CallMethod::StartConference { agents: vec![other, s] }.body(s, "webrtc");
+        assert_eq!(conference["method"].as_str(), "start conference");
+        assert_eq!(conference["params"].as_array().len(), 2);
+        assert_eq!(conference["params"][0].as_uuid(), other);
+        assert_eq!(conference["alt_params"]["voice_server_type"].as_str(), "webrtc");
         let decline = CallMethod::DeclineP2p.body(s, "webrtc");
         assert_eq!(decline["method"].as_str(), "decline p2p voice");
         assert!(decline.as_map().is_some_and(|m| !m.contains_key("alt_params")));

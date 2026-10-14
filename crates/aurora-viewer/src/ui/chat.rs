@@ -52,6 +52,8 @@ pub struct ChatUi {
     /// The microphone in toggle mode (None: hold to talk), for the call's
     /// mute button.
     pub mic: Option<bool>,
+    /// Residents' voice volumes, for the call's participants.
+    pub volumes: std::collections::BTreeMap<uuid::Uuid, f32>,
 }
 
 /// How a conversation's lines are drawn (`LineEnv::bubbles`): legacy lines,
@@ -461,6 +463,13 @@ pub enum ConvAction {
     HangUp,
     /// Mute / unmute the microphone (toggle mode).
     ToggleMic,
+    /// Answer the call invitation of a session from its strip.
+    AnswerCall {
+        session: uuid::Uuid,
+        answer: crate::world::calls::InviteAnswer,
+    },
+    /// A participant's voice volume (0..1, 0.5 as sent).
+    SetVolume(uuid::Uuid, f32),
 }
 
 use super::widgets::initials;
@@ -1302,6 +1311,9 @@ pub fn show(
                 // the call of this conversation, while it is in progress
                 if let Some(call) = st.selected.and_then(|s| world.call_of(&s)) {
                     call::strip(ui, p, icons, pics, world, call, st, &mut actions);
+                    ui.add_space(4.0);
+                } else if let Some(invite) = st.selected.and_then(|s| world.calls.invite_for(&s)) {
+                    call::ringing(ui, p, world, invite, &mut actions);
                     ui.add_space(4.0);
                 }
                 // profile card

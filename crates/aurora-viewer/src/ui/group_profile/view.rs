@@ -325,8 +325,7 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &
         {
             clicked = Some(Header::Invite);
         }
-        // LLGroupActions::startCall: group voice comes with the voice calls
-        // (`Env::group_calls`)
+        // LLGroupActions::startCall, enabled with voice (`Env::group_calls`)
         let call = widgets::action_button_if(
             &mut acts,
             p,
@@ -336,7 +335,7 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &
             size,
             env.group_calls,
         )
-        .on_disabled_hover_text(menu::not_yet());
+        .on_disabled_hover_text(aurora_i18n::tr!("ui-call-voice-off"));
         if call.clicked() {
             actions.push(GroupAction::Call(v.id));
         }

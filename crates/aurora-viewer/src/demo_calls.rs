@@ -6,13 +6,15 @@
 //! - `p2p`: we call Tess; she answers after 3 s, then the two talk in turn;
 //! - `hangup`: the same, and Tess hangs up after 12 s;
 //! - `group`: a call in the group Aurora Builders (Nova, Tess, Orion);
+//! - `conference`: a voice conference with Tess and Nova ("start
+//!   conference", then the call once the session has its id);
 //! - `incoming`: Tess calls us (the card with Accept / Decline / Reply by
 //!   text);
 //! - `incoming-group`: Nova starts a call in Aurora Builders.
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
 use crate::world::World;
-use crate::world::calls::{CallMember, ChannelStatus};
+use crate::world::calls::{CallKind, CallMember, ChannelStatus};
 use aurora_net::{CallMethod, NetEvent, VoiceInvite};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -22,6 +24,7 @@ pub enum Mode {
     P2p,
     Hangup,
     Group,
+    Conference,
     Incoming,
     IncomingGroup,
 }
@@ -31,6 +34,7 @@ pub fn mode() -> Option<Mode> {
         "p2p" => Some(Mode::P2p),
         "hangup" => Some(Mode::Hangup),
         "group" => Some(Mode::Group),
+        "conference" => Some(Mode::Conference),
         "incoming" => Some(Mode::Incoming),
         "incoming-group" => Some(Mode::IncomingGroup),
         _ => None,
@@ -58,8 +62,32 @@ pub struct CallDemo {
 /// The answers of ChatSessionRequest: a P2P session always starts and every
 /// session gets a channel.
 pub fn reply(method: CallMethod, session: Uuid) -> Vec<NetEvent> {
+    // a conference gets its real id in the session's start reply
+    if let CallMethod::StartConference { agents } = &method {
+        let real = Uuid::from_u128(session.as_u128() ^ 0xC0F);
+        let present = |agent: Uuid| aurora_net::SessionAgent {
+            agent,
+            present: Some(true),
+            moderator: None,
+            text_muted: None,
+        };
+        return vec![
+            NetEvent::CallReply {
+                method: method.clone(),
+                session,
+                result: Ok(aurora_llsd::Llsd::Undef),
+            },
+            NetEvent::SessionStarted {
+                temp_session: session,
+                session: real,
+                success: true,
+                error: String::new(),
+                agents: std::iter::once(DEMO_AGENT).chain(agents.iter().copied()).map(present).collect(),
+            },
+        ];
+    }
     let result = match method {
-        CallMethod::StartP2p { .. } | CallMethod::DeclineP2p => Ok(aurora_llsd::Llsd::Undef),
+        CallMethod::StartP2p { .. } | CallMethod::DeclineP2p | CallMethod::StartConference { .. } => Ok(aurora_llsd::Llsd::Undef),
         CallMethod::Call => Ok(aurora_llsd::llsd_map! {
             "voice_credentials" => aurora_llsd::llsd_map! {
                 "channel_uri" => format!("demo-{session}"),
@@ -116,6 +144,7 @@ impl CallDemo {
         match mode {
             Mode::P2p | Mode::Hangup => world.start_call(DEMO_NOVA),
             Mode::Group => world.start_call(DEMO_GROUP1),
+            Mode::Conference => world.start_conference(vec![DEMO_NOVA, DEMO_TESS]),
             Mode::Incoming => return vec![NetEvent::VoiceInvite(invite(false))],
             Mode::IncomingGroup => return vec![NetEvent::VoiceInvite(invite(true))],
         }
@@ -162,8 +191,22 @@ impl CallDemo {
                 members.push(member(call.conversation(), 0, 1));
             }
         } else {
-            for (i, id) in [DEMO_TESS, DEMO_NOVA, DEMO_LOUP].into_iter().enumerate() {
-                members.push(member(id, i, 3));
+            // a conference: its participants; a group: three of its members
+            let mut ids: Vec<Uuid> = match call.kind {
+                CallKind::AdHoc => world
+                    .groups
+                    .sessions
+                    .get(&call.session)
+                    .map(|s| s.participants.iter().copied().filter(|id| *id != world.agent_id).collect())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            if ids.is_empty() {
+                ids = vec![DEMO_TESS, DEMO_NOVA, DEMO_LOUP];
+            }
+            let n = ids.len();
+            for (i, id) in ids.into_iter().enumerate() {
+                members.push(member(id, i, n));
             }
         }
         Some((ChannelStatus::Connected, members))

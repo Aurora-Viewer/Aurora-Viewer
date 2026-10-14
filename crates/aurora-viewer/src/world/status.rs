@@ -77,6 +77,9 @@ pub struct AutoResponse {
     pub reject_friendship_text: String,
     /// AFKTimeout in minutes (0 = never away automatically).
     pub away_after_minutes: u32,
+    /// "Only friends and groups can call or IM me" (VoiceCallsFriendsOnly,
+    /// per account, off).
+    pub friends_only: bool,
 }
 
 impl Default for AutoResponse {
@@ -102,6 +105,7 @@ impl Default for AutoResponse {
             dont_reject_friends_teleports: false,
             reject_friendship_text: aurora_i18n::tr!("world-status-the-resident-you-messaged-has-enabled-aurora-viewer-s").into(),
             away_after_minutes: 0,
+            friends_only: false,
         }
     }
 }
@@ -239,11 +243,11 @@ impl Status {
 }
 
 impl World {
-    fn is_friend(&self, id: &Uuid) -> bool {
+    pub(super) fn is_friend(&self, id: &Uuid) -> bool {
         self.social.friends.iter().any(|f| f.id == *id)
     }
 
-    fn auto_im(&mut self, to: Uuid, session: Uuid, text: &str) {
+    pub(super) fn auto_im(&mut self, to: Uuid, session: Uuid, text: &str) {
         self.groups.out.push(NetCommand::SendImDialog {
             to,
             dialog: AUTO_RESPONSE,

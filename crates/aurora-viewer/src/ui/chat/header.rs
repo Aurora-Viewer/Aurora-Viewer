@@ -208,9 +208,21 @@ fn call_tool(ui: &mut egui::Ui, p: &Palette, icons: &crate::ui::icons::Icons, wo
         return;
     };
     if world.call_of(&other).is_some() {
-        if tool(ui, p, icons, "phone-off", aurora_i18n::tr!("ui-call-hang-up"), true, true) {
-            actions.push(ConvAction::HangUp);
+        // in a call: the strip under the head hangs up; the phone stays,
+        // greyed and green
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::hover());
+        if let Some(t) = icons.get("phone-filled") {
+            ui.painter().image(
+                t.id(),
+                egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                p.success.gamma_multiply(0.7),
+            );
         }
+        resp.on_hover_text(aurora_i18n::tr!("ui-call-in-progress"));
+    } else if world.calls.invite_for(&other).is_some() {
+        // ringing: answered from the strip
+        tool(ui, p, icons, "phone-filled", aurora_i18n::tr!("ui-call-ringing"), false, false);
     } else if st.voice_on {
         if tool(ui, p, icons, "phone-filled", aurora_i18n::tr!("common-voice-call"), true, false) {
             actions.push(ConvAction::Call(other));

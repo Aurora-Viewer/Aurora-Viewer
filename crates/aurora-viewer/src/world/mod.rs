@@ -1492,7 +1492,12 @@ impl World {
             | NetEvent::SessionClosed { .. }
             | NetEvent::ChatSessionReply { .. }) => {
                 match &ev {
-                    NetEvent::SessionStarted { session, success, .. } => self.call_session_started(*session, *success),
+                    NetEvent::SessionStarted {
+                        temp_session,
+                        session,
+                        success,
+                        ..
+                    } => self.call_session_started(*temp_session, *session, *success),
                     NetEvent::SessionClosed { session, .. } => self.call_session_closed(*session),
                     _ => {}
                 }
@@ -2230,6 +2235,12 @@ impl World {
         if self.im_blocked(&im) || self.on_session_im(&im) || self.on_status_im(&im) || self.on_im_offer(&im) {
             return;
         }
+        // VoiceCallsFriendsOnly: a non-friend's message is neither shown nor
+        // answered
+        if im.dialog == 0 && self.friends_only_drops(&im.from_agent_id, &im.from_name) {
+            log::info!("message from a non-friend dropped (friends only)");
+            return;
+        }
         // decided before the message opens its conversation
         let autoresponse = self.autoresponse_due(&im);
         // 0 = message from user, 19 = message from object; others are notices etc.
@@ -2549,11 +2560,12 @@ impl World {
         if let Some(notifications::Data::Call { invite }) = &data {
             let invite = (**invite).clone();
             self.notifications.respond(id, r.clone(), |_| Uuid::nil(), Uuid::nil());
-            match r {
-                notifications::Response::Accept => self.accept_voice_invite(invite),
-                notifications::Response::Button(0) if invite.p2p => self.answer_voice_invite_by_im(&invite),
-                _ => self.decline_voice_invite(&invite),
-            }
+            let answer = match r {
+                notifications::Response::Accept => calls::InviteAnswer::Accept,
+                notifications::Response::Button(0) => calls::InviteAnswer::Text,
+                _ => calls::InviteAnswer::Decline,
+            };
+            self.invite_card_answered(invite, answer);
             return (std::mem::take(&mut self.groups.out), None);
         }
         // teleport offers and requests: answered through their invitation,
