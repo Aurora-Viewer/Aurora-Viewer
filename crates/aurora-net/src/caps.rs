@@ -60,6 +60,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "SetDisplayName",
     "SimulatorFeatures",
     "UpdateAvatarAppearance",
+    // the maturity preference (LLAgent::sendMaturityPreferenceToServer)
+    "UpdateAgentInformation",
     "UpdateAgentLanguage",
     "UpdateMaterialAgentInventory",
     "UpdateMaterialTaskInventory",
@@ -78,6 +80,18 @@ pub fn agent_language_body(language: &str, public: bool) -> Llsd {
     llsd_map! { "language" => language, "language_is_public" => public }
 }
 
+/// LLAgent::sendMaturityPreferenceToServer: `{"access_prefs": {"max": "M"}}`
+/// (LLViewerRegion::accessToShortString).
+pub fn maturity_preference_body(maturity: u8) -> Llsd {
+    llsd_map! { "access_prefs" => llsd_map! { "max" => crate::search::access_short_string(maturity) } }
+}
+
+/// LLAgent::processMaturityPreferenceFromServer: the preference the server
+/// kept, `access_prefs.max` ("PG", "M", "A"); SIM_ACCESS_MIN when missing.
+pub fn maturity_preference_reply(reply: &Llsd) -> u8 {
+    crate::search::short_string_to_access(reply["access_prefs"]["max"].as_str().trim())
+}
+
 /// LLVOAvatarSelf::sendHoverHeight, including MIN/MAX_HOVER_Z (-3..3 m).
 pub fn hover_height_body(value: f32) -> Option<Llsd> {
     value.is_finite().then(|| llsd_map! { "hover_height" => value.clamp(-3.0, 3.0) })
@@ -86,6 +100,18 @@ pub fn hover_height_body(value: f32) -> Option<Llsd> {
 #[cfg(test)]
 mod language_tests {
     use super::*;
+
+    #[test]
+    fn maturity_preference_is_sent_and_read_as_short_strings() {
+        assert!(REQUESTED_CAPS.contains(&"UpdateAgentInformation"));
+        let body = maturity_preference_body(crate::search::SIM_ACCESS_MATURE);
+        let decoded = aurora_llsd::from_xml(&aurora_llsd::to_xml(&body)).unwrap();
+        assert_eq!(decoded["access_prefs"]["max"].as_str(), "M");
+        assert_eq!(maturity_preference_reply(&decoded), crate::search::SIM_ACCESS_MATURE);
+        let adult = llsd_map! { "access_prefs" => llsd_map! { "max" => " A " } };
+        assert_eq!(maturity_preference_reply(&adult), crate::search::SIM_ACCESS_ADULT);
+        assert_eq!(maturity_preference_reply(&Llsd::Undef), 0);
+    }
 
     #[test]
     fn hover_height_payload_is_one_finite_bounded_real() {

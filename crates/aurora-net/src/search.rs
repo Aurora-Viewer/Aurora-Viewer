@@ -76,6 +76,26 @@ pub const SIM_ACCESS_PG: u8 = 13;
 pub const SIM_ACCESS_MATURE: u8 = 21;
 pub const SIM_ACCESS_ADULT: u8 = 42;
 
+/// LLViewerRegion::accessToShortString.
+pub fn access_short_string(access: u8) -> &'static str {
+    match access {
+        SIM_ACCESS_ADULT => "A",
+        SIM_ACCESS_MATURE => "M",
+        SIM_ACCESS_PG => "PG",
+        _ => "U",
+    }
+}
+
+/// LLViewerRegion::shortStringToAccess; SIM_ACCESS_MIN (0) when unknown.
+pub fn short_string_to_access(text: &str) -> u8 {
+    match text {
+        "A" => SIM_ACCESS_ADULT,
+        "M" => SIM_ACCESS_MATURE,
+        "PG" => SIM_ACCESS_PG,
+        _ => 0,
+    }
+}
+
 /// LLParcel::C_ANY: every parcel category of a places search.
 pub const PLACE_CATEGORY_ANY: i8 = -1;
 

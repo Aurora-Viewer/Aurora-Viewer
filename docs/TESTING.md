@@ -1225,6 +1225,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
+| `AURORA_DEMO_MATURITY=agree\|disagree\|fail` | Content rating changed, the server's answer |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
@@ -1643,6 +1644,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (that notice only goes to the resident's transcript, when instant messages
   are logged). `tp:reject`: "Request teleport" while teleports are rejected
   only shows the warning, with OK and no message to type.
+- **`AURORA_DEMO_MATURITY=agree|disagree|fail`**: the Preferences open on
+  Interface › Content and the demo account (adult, every rating) asks for
+  "General". `agree`: the server accepts, the list shows "General".
+  `disagree`: the server keeps "Adult"; the request is sent three more times
+  (the log shows each retry), then the list goes back to "General, Moderate,
+  Adult" and the notification list shows "Content rating not changed".
+  `fail`: the request fails, the same notice at once. A teleport asked
+  meanwhile waits for the answer and is dropped on a failure.
 - **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy`**:
   teleports received from Tess Touch (issue #280, parts B1 and B2). Each
   offer and request opens her conversation (unread) with its card and has

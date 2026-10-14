@@ -720,6 +720,24 @@ impl LureScene {
     }
 }
 
+/// AURORA_DEMO_MATURITY=agree|disagree|fail: the Preferences open on the
+/// content rating, which asks the server for "General" (the demo account is
+/// adult and wants every rating). The demo server agrees, keeps "Adult"
+/// (the request is sent three more times, then MaturityChangeError), or
+/// fails (MaturityChangeError at once).
+pub fn maturity_scene() -> Option<String> {
+    std::env::var("AURORA_DEMO_MATURITY").ok()
+}
+
+/// The demo server's answer to a maturity preference request.
+pub fn maturity_reply(asked: u8) -> Option<u8> {
+    match maturity_scene().as_deref() {
+        Some("disagree") => Some(aurora_net::search::SIM_ACCESS_ADULT),
+        Some("fail") => None,
+        _ => Some(asked),
+    }
+}
+
 pub fn lure_scene() -> Option<LureScene> {
     match std::env::var("AURORA_DEMO_LURE").ok()?.as_str() {
         "offer" => Some(LureScene::Offer),

@@ -786,6 +786,31 @@ impl App {
     }
 
     fn send(&mut self, cmd: NetCommand) {
+        // LLAgent::startTeleportRequest: a teleport waits while the maturity
+        // preference is not in sync with the server (TELEPORT_PENDING)
+        if !self.world.maturity.synced()
+            && matches!(
+                cmd,
+                NetCommand::TeleportTo { .. }
+                    | NetCommand::TeleportLandmark(_)
+                    | NetCommand::TeleportToRegion { .. }
+                    | NetCommand::TeleportHome
+                    | NetCommand::AcceptLure { .. }
+            )
+        {
+            log::info!("teleport: waiting for the maturity preference");
+            self.world.maturity.hold(cmd);
+            return;
+        }
+        // AURORA_DEMO_MATURITY: the server agrees, keeps its value or fails
+        if self.demo
+            && let NetCommand::SetMaturityPreference(maturity) = cmd
+        {
+            let result = crate::demo::maturity_reply(maturity);
+            log::info!("demo maturity: asked {maturity}, answer {result:?}");
+            self.world.apply(NetEvent::MaturityPreference(result));
+            return;
+        }
         if self.demo && self.gesture_demo_command(&cmd) {
             return;
         }
@@ -4082,6 +4107,11 @@ impl App {
             self.send(c);
         }
         self.update_places();
+        // the maturity preference's requests, and the teleport that waited
+        // for it
+        for c in self.world.maturity.take_commands() {
+            self.send(c);
+        }
         // where the teleport offers lead, and the gods' lures accepted at once
         self.world.refresh_teleport_places();
         for c in self.world.teleport_invites.take_commands() {
@@ -6371,7 +6401,7 @@ impl App {
         }
         if let Some(asset) = a.landmark {
             self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
-            self.net.send(NetCommand::TeleportLandmark(asset));
+            self.send(NetCommand::TeleportLandmark(asset));
         }
         if a.cancel_loading {
             self.net.send(NetCommand::Logout);
@@ -6440,7 +6470,7 @@ impl App {
             }
             BarAction::TeleportHome => {
                 self.begin_teleport(aurora_i18n::tr!("common-home").into(), false);
-                self.net.send(NetCommand::TeleportHome);
+                self.send(NetCommand::TeleportHome);
             }
             BarAction::TeleportBack => self.teleport_history(true),
             BarAction::TeleportForward => self.teleport_history(false),
@@ -6740,7 +6770,11 @@ impl App {
                 }
             };
         }
+        self.options_ui.maturity = self.world.login.is_some().then(|| self.world.agent_access());
         let res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        if let Some(maturity) = res.maturity {
+            self.world.set_maturity_preference(maturity);
+        }
         if !open {
             self.options_ui.capture = None;
         }
@@ -7504,7 +7538,7 @@ impl App {
                         self.begin_teleport(String::new(), false);
                     }
                     for c in cmds {
-                        self.net.send(c);
+                        self.send(c);
                     }
                     // only web links (llLoadURL / goto URL), opened after the user's click
                     if let Some(u) = url.filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
@@ -8473,6 +8507,14 @@ impl ApplicationHandler for App {
             if std::env::var_os("AURORA_DEMO_NOTIF").is_some() {
                 self.notif_ui.open = true;
             }
+            // AURORA_DEMO_MATURITY: the content rating changed in the
+            // Preferences, answered by the demo server
+            if let Some(mode) = crate::demo::maturity_scene() {
+                self.panels.settings = true;
+                self.panels.perf = false;
+                self.options_ui.tab = 1;
+                self.notif_ui.open = mode != "agree";
+            }
             // AURORA_DEMO_LURE: teleports received, with the notification list
             // (and the conversation the answers go to)
             if let Some(scene) = crate::demo::lure_scene() {
@@ -8510,6 +8552,10 @@ impl ApplicationHandler for App {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
+            }
+            // AURORA_DEMO_MATURITY: "General" asked once the login is known
+            if crate::demo::maturity_scene().is_some() {
+                self.world.set_maturity_preference(aurora_net::search::SIM_ACCESS_PG);
             }
             // AURORA_DEMO_LURE=card-answered / notification-answered: the
             // offer answered by its card's button, or by its entry's
