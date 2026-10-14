@@ -5,14 +5,14 @@
 //! Dullahan / CEF, `media_plugin_libvlc` for video and audio streams) and
 //! talks to the viewer through LLSD XML messages on a loopback TCP socket;
 //! pixels arrive in a shared memory segment. This crate is the viewer side
-//! of that protocol, so the very same plugins as Firestorm's can be used:
+//! of that protocol, so the very same plugins as Firestorm's are used:
 //!
 //! * [`process::PluginProcess`]: LLPluginProcessParent (launch, handshake,
 //!   heartbeat, shared memory, shutdown).
 //! * [`media::MediaPlugin`]: LLPluginClassMedia (size negotiation, frames,
 //!   events, input, navigation, transport, volume).
 //! * [`process::PluginPaths`]: where SLPlugin and the plugins are found
-//!   (the viewer's own `llplugin` folder, else an installed Firestorm / SL).
+//!   (a folder chosen by the user, the viewer's own, else Aurora's pack).
 //!
 //! Derived from indra/llplugin of the Second Life / Firestorm viewer source,
 //! Copyright (C) Linden Research, Inc. and The Phoenix Firestorm Project,

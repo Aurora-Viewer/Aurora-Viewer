@@ -22,7 +22,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{Window, WindowId};
 
 mod ao;
 mod bug_report;
@@ -31,6 +31,7 @@ mod chat_commands;
 mod click_pick;
 mod color_picker;
 mod context_menu;
+mod cursor_hold;
 mod hover_height;
 mod hud_drag;
 mod imports;
@@ -180,9 +181,8 @@ pub struct App {
     prev_dt: f32,
     start: Instant,
     right_drag: bool,
-    cursor_grabbed: bool,
-    /// Where the cursor was when the camera took it (physical pixels).
-    grab_origin: Option<(f32, f32)>,
+    /// The system cursor hidden and locked by mouselook or a camera drag.
+    cursor_hold: cursor_hold::CursorHold,
     numeric_drag: ui::numeric_drag::NumericDrag,
     alt: bool,
     left_down: bool,
@@ -338,6 +338,8 @@ pub struct App {
     login_info: ui::news::LoginInfo,
     update_demo: Option<ui::update::UpdateDemo>,
     updater: crate::updater::Updater,
+    /// Aurora's media plugins pack: installed, downloading or missing.
+    plugin_pack: crate::media::pack::PluginPack,
     update_acknowledged: bool,
     /// Smoothed speaking outlines of the avatar name tags.
     voice_tags: ui::voice_tag::VoiceTags,
@@ -481,6 +483,9 @@ impl App {
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
         let updater = crate::updater::Updater::new(net.runtime());
+        let plugin_pack = crate::media::pack::PluginPack::new(crate::settings::media_plugins_dir());
+        let mut media = crate::media::MediaManager::default();
+        media.set_pack_dir(plugin_pack.dir());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
         let lib = Arc::new(AvatarLibrary::load());
         let cache = crate::settings::cache_dir();
@@ -574,8 +579,7 @@ impl App {
             prev_dt: 0.0,
             start: Instant::now(),
             right_drag: false,
-            cursor_grabbed: false,
-            grab_origin: None,
+            cursor_hold: Default::default(),
             numeric_drag: Default::default(),
             alt: false,
             left_down: false,
@@ -677,13 +681,14 @@ impl App {
             music_parcel_url: String::new(),
             music_override: None,
             key_to_name: Vec::new(),
-            media: Default::default(),
+            media,
             media_ui: Default::default(),
             media_cursor: None,
             voice: Default::default(),
             voice_http,
             update_demo,
             updater,
+            plugin_pack,
             update_acknowledged: false,
             login_info,
             voice_tags: Default::default(),
@@ -1788,43 +1793,6 @@ impl App {
         })
     }
 
-    fn set_mouselook_grab(&mut self, on: bool) {
-        let Some(g) = &self.gfx else {
-            return;
-        };
-        if on == self.cursor_grabbed {
-            return;
-        }
-        if on && self.clicks.scripted() {
-            // AURORA_DEMO_CLICKS: several camera drags a second must not
-            // take the real cursor of someone using the PC
-            return;
-        }
-        if on {
-            let ok = g
-                .window
-                .set_cursor_grab(CursorGrabMode::Locked)
-                .or_else(|_| g.window.set_cursor_grab(CursorGrabMode::Confined))
-                .is_ok();
-            g.window.set_cursor_visible(false);
-            self.cursor_grabbed = ok;
-            self.grab_origin = ok.then_some(self.cursor_pos);
-        } else {
-            let _ = g.window.set_cursor_grab(CursorGrabMode::None);
-            // LLToolCamera::handleMouseUp (lltoolfocus.cpp) puts the cursor
-            // back where the drag started: a confined cursor moved while
-            // hidden.
-            if let Some((x, y)) = self.grab_origin.take() {
-                let _ = g
-                    .window
-                    .set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
-                self.cursor_pos = (x, y);
-            }
-            g.window.set_cursor_visible(true);
-            self.cursor_grabbed = false;
-        }
-    }
-
     fn toggle_mouselook(&mut self) {
         self.camera.toggle_mouselook(&mut self.world.agent, &self.settings.camera);
         let ml = self.camera.mouselook();
@@ -2082,18 +2050,20 @@ impl App {
             Action::ResetCamera => self.reset_camera_view(),
             Action::Chat => self.chat_ui.focus_request = true,
             Action::ToggleMic => self.mic_on = !self.mic_on,
-            Action::Conversations => self.panels.chat = !self.panels.chat,
+            // the shortcuts of the windows, like their toolbar buttons: a
+            // minimized window expands (LLFloaterReg::toggleInstance)
+            Action::Conversations => ui::widgets::toggle_floater(&self.egui_ctx, "conversations", &mut self.panels.chat),
             Action::People => {
-                self.panels.people = !self.panels.people;
+                ui::widgets::toggle_floater(&self.egui_ctx, "people", &mut self.panels.people);
                 self.panels.people_tab = 0;
             }
-            Action::Inventory => self.panels.inventory = !self.panels.inventory,
+            Action::Inventory => ui::widgets::toggle_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
-            Action::WorldMap => self.panels.world_map = !self.panels.world_map,
+            Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
             Action::TeleportHistory => self.toggle_teleport_history(),
-            Action::Search => self.panels.search = !self.panels.search,
-            Action::Performance => self.panels.perf = !self.panels.perf,
-            Action::Preferences => self.panels.settings = !self.panels.settings,
+            Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
+            Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
+            Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
             Action::Import => self.imports.open_file_picker(crate::imports::Choice::Bulk),
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
@@ -3635,6 +3605,10 @@ impl App {
             }
             ContactsAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
             ContactsAction::OfferTeleport(id) => a.offer_tp.push(id),
+            ContactsAction::SendTeleportOffer { to, message } => {
+                let cmd = self.world.offer_teleport(to, &message);
+                self.send(cmd);
+            }
             ContactsAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.start_group_chat(id);
@@ -3916,6 +3890,17 @@ impl App {
             self.shutdown(event_loop);
             return;
         }
+        // Aurora's media plugins: downloaded once, when none are found (the
+        // web pages of the profiles need them even with media disabled)
+        let plugins_wanted = self.media.plugins(&self.settings.media).is_none();
+        if std::mem::take(&mut self.options_ui.media_pack_retry) {
+            self.plugin_pack.retry(self.net.runtime());
+        }
+        if self.plugin_pack.poll(plugins_wanted, self.net.runtime()) {
+            self.media.set_pack_dir(self.plugin_pack.dir());
+        }
+        self.options_ui.media_pack = self.plugin_pack.state();
+        ui::web_view::set_plugins_status(&self.egui_ctx, self.plugin_pack.state());
         self.poll_inventory_images();
         // a click whose depth is back already (the render thread finished
         // the last frame while this thread waited for its next one)
@@ -3932,7 +3917,7 @@ impl App {
                 ui::exit::Action::Cancel => {}
             }
         }
-        if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_grabbed {
+        if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_hold.held() {
             self.set_mouselook_grab(true);
         }
         let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
@@ -4899,6 +4884,7 @@ impl App {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
+            raw.events.extend(ui::widgets::demo::minimized_events(&ctx, self.frame_count));
             raw.events.extend(ui::color_picker::demo::events(
                 &self.egui_ctx,
                 &self.build.ui.color_picker,
@@ -5008,7 +4994,7 @@ impl App {
         if let Some(anchor) = self.numeric_drag.after(
             &ctx,
             &full.platform_output.events,
-            self.focused && !self.cursor_grabbed && !self.exit_prompt.open,
+            self.focused && !self.cursor_hold.held() && !self.exit_prompt.open,
         ) {
             let position = winit::dpi::PhysicalPosition::new(anchor.x * ctx.pixels_per_point(), anchor.y * ctx.pixels_per_point());
             if (self.cursor_pos.0 - position.x).abs() > 0.5 || (self.cursor_pos.1 - position.y).abs() > 0.5 {
@@ -5131,7 +5117,7 @@ impl App {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
             full.platform_output.cursor_image = self.cursors.pipette();
         }
-        if self.cursor_grabbed {
+        if self.cursor_hold.held() {
             // the camera holds the hidden cursor: a cursor change from egui
             // would show it again in the middle of the drag
             full.platform_output.cursor_icon = egui::CursorIcon::None;
@@ -6075,12 +6061,9 @@ impl App {
         for cmd in a.currency {
             self.send(cmd);
         }
-        for to in a.offer_tp {
-            self.net.send(NetCommand::OfferTeleport {
-                to,
-                message: aurora_i18n::tr!("common-join-me").into(),
-            });
-            self.world.system_message(aurora_i18n::tr!("common-teleport-offer-sent"));
+        // the invitation to edit first (handle_lure), for all those chosen
+        if !a.offer_tp.is_empty() {
+            self.contacts_ui.ask_teleport_offer(a.offer_tp, &self.world.region_name());
         }
         if let Some(asset) = a.landmark {
             self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
@@ -6745,6 +6728,20 @@ impl App {
                     let c = ctx.content_rect().center();
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("xhair")));
                     painter.circle_stroke(c, 4.0, egui::Stroke::new(1.5, p.ink));
+                    if self.settings.camera.show_mouselook_instructions {
+                        // LLViewerWindow::drawMouselookInstructions: the way
+                        // out, half transparent above the bottom bar (the
+                        // hidden cursor cannot reach its button)
+                        let key = self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0]
+                            .as_ref()
+                            .map_or_else(|| aurora_i18n::tr!("keybinds-esc").to_string(), |b| b.label());
+                        let text = aurora_i18n::tr!("app-mouselook-leave", key = key);
+                        let at = egui::pos2(c.x, bottom_top - 16.0);
+                        let font = egui::FontId::proportional(18.0);
+                        let shadow = at + egui::vec2(1.0, 1.0);
+                        painter.text(shadow, egui::Align2::CENTER_BOTTOM, &text, font.clone(), p.navy.gamma_multiply(0.6));
+                        painter.text(at, egui::Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.6));
+                    }
                 }
                 if self.skin.layout.chat_toasts && !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)) {
                     ui::chat::toasts(
@@ -8059,6 +8056,11 @@ impl ApplicationHandler for App {
                 self.chat_ui.selected = crate::demo::bubbles_conversation(view);
                 self.chat_ui.local_bubbles = view == crate::demo::Bubbles::Local;
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 300.0), egui::vec2(700.0, 460.0));
+            } else if crate::demo::teleport_offer_scene().is_some() {
+                self.panels.chat = true;
+                self.panels.perf = false;
+                self.chat_ui.open(crate::demo::DEMO_NOVA);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
             } else if std::env::var_os("AURORA_DEMO_CONV").is_some() {
                 self.panels.chat = true;
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
@@ -8098,6 +8100,24 @@ impl ApplicationHandler for App {
             }
             if let Some(view) = crate::demo::bubbles_scenario() {
                 crate::demo::bubbles_lines(&mut self.world, view);
+            }
+            // AURORA_DEMO_CONV=tp[:sent|reject]: the avatar menu's teleport
+            // offer (its invitation, or sent as invited to the resident whose
+            // conversation is open and to one without any), or a request
+            // while we reject teleports
+            {
+                use crate::demo::{DEMO_NOVA, DEMO_TESS, TeleportOfferScene};
+                use ui::context::CtxAction;
+                match crate::demo::teleport_offer_scene() {
+                    Some(TeleportOfferScene::Invitation) => self.on_ctx_action(CtxAction::OfferTeleport(DEMO_NOVA)),
+                    Some(TeleportOfferScene::Sent) => {
+                        let invitation = aurora_i18n::tr!("common-join-me-in", region = self.world.region_name());
+                        let cmd = self.world.offer_teleport(vec![DEMO_NOVA, DEMO_TESS], &invitation);
+                        self.send(cmd);
+                    }
+                    Some(TeleportOfferScene::Reject) => self.contacts_ui.ask_teleport_request(DEMO_NOVA, true),
+                    None => {}
+                }
             }
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces")) {
                 let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
@@ -8761,6 +8781,9 @@ impl ApplicationHandler for App {
                 self.mic_button_held = false;
                 self.drop_clicks();
                 self.on_left_release();
+                // LLViewerWindow::handleFocusLost: the cursor shown and free
+                // again, also in mouselook (taken back with the focus)
+                self.release_cursor(true);
                 if self.temp_run.take().is_some() && !self.always_run {
                     self.send(NetCommand::SetAlwaysRun(false));
                 }

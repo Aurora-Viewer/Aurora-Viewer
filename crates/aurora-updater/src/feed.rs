@@ -9,6 +9,7 @@ use std::time::Duration;
 
 pub const RELEASES: &str = "https://api.github.com/repos/Aurora-Viewer/Aurora-Viewer/releases?per_page=100";
 pub const RELEASE_PAGE: &str = "https://github.com/Aurora-Viewer/Aurora-Viewer/releases";
+const DOWNLOADS: &str = "https://github.com/Aurora-Viewer/Aurora-Viewer/releases/download";
 pub const POLICY: &str = "aurora-update-policy.json";
 pub const MAX_ARCHIVE: u64 = 2 * 1024 * 1024 * 1024;
 
@@ -59,6 +60,17 @@ impl Source {
             );
         }
         Ok(())
+    }
+
+    /// Address of a file of the release `tag`, known without asking the feed
+    /// (a test feed serves it from its own origin).
+    pub fn asset_url(&self, tag: &str, name: &str) -> Result<String> {
+        let path = format!("{tag}/{name}");
+        if self.loopback {
+            Ok(Url::parse(&self.url)?.join(&format!("/download/{path}"))?.into())
+        } else {
+            Ok(format!("{DOWNLOADS}/{path}"))
+        }
     }
 
     pub fn client(&self) -> Result<Client> {

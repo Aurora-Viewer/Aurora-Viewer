@@ -16,7 +16,8 @@
 //!   keyboard then go to the page; Escape or a click elsewhere releases it.
 //!
 //! Plugins run out of process through `aurora-media` (SLPlugin + the
-//! CEF / LibVLC plugins of an installed Firestorm, or our own `llplugin`).
+//! CEF / LibVLC plugins of Aurora's pack, `pack.rs`, or of a folder chosen
+//! in the preferences).
 //!
 //! Derived from indra/newview (llviewermedia.cpp, llviewerparcelmedia.cpp,
 //! llviewerparcelmediaautoplay.cpp, llviewermediafocus.cpp, llvovolume.cpp),
@@ -27,6 +28,7 @@ pub mod entry;
 mod interact;
 pub mod keys;
 pub mod openid;
+pub mod pack;
 pub mod pick;
 pub mod private_profile;
 mod update;
@@ -382,6 +384,7 @@ pub struct MediaManager {
     pub build_mode: bool,
     paths: Option<PluginPaths>,
     paths_for: Option<String>,
+    pack_dir: Option<std::path::PathBuf>,
     pub impls: Vec<MediaImpl>,
     objects: HashMap<Uuid, ObjMedia>,
     client: MediaDataClient,
@@ -436,6 +439,7 @@ impl Default for MediaManager {
             build_mode: false,
             paths: None,
             paths_for: None,
+            pack_dir: None,
             impls: Vec::new(),
             objects: HashMap::new(),
             client: MediaDataClient::default(),
@@ -503,18 +507,28 @@ fn sanitize(url: &str) -> String {
 }
 
 impl MediaManager {
-    /// SLPlugin / llplugin (searched once per configured folder).
+    /// SLPlugin / llplugin (searched once per configured folder and per state
+    /// of Aurora's pack).
     pub fn plugins(&mut self, settings: &MediaSettings) -> Option<&PluginPaths> {
         if self.paths_for.as_deref() != Some(settings.plugin_dir.as_str()) {
             let dir = settings.plugin_dir.trim();
-            self.paths = PluginPaths::discover((!dir.is_empty()).then(|| std::path::Path::new(dir)));
+            self.paths = PluginPaths::discover((!dir.is_empty()).then(|| std::path::Path::new(dir)), self.pack_dir.as_deref());
             self.paths_for = Some(settings.plugin_dir.clone());
             match &self.paths {
                 Some(p) => log::info!("media: plugins in {} (launcher {})", p.plugin_dir.display(), p.launcher.display()),
-                None => log::warn!("media: no SLPlugin / llplugin folder found: web and video media disabled"),
+                None => log::warn!("media: no media plugins yet: web and video media wait for Aurora's pack"),
             }
         }
         self.paths.as_ref()
+    }
+
+    /// Where Aurora's media plugins pack is installed (`None` until it is).
+    /// Media that were waiting for plugins start at the next update.
+    pub fn set_pack_dir(&mut self, dir: Option<&std::path::Path>) {
+        if self.pack_dir.as_deref() != dir {
+            self.pack_dir = dir.map(Into::into);
+            self.paths_for = None;
+        }
     }
 
     pub fn plugins_found(&self) -> Option<&PluginPaths> {

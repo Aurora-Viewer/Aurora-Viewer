@@ -4,7 +4,7 @@
 use aurora_updater::{
     Cancel, Failure,
     feed::{Asset, Release, Source},
-    install, package,
+    install, media_pack, package,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -288,6 +288,149 @@ fn success_removes_backup_only_after_launch_and_refuses_foreign_files_or_concurr
     .expect("swap committed");
     assert_eq!(fs::read(path.join("aurora-viewer.exe")).expect("new viewer"), b"new");
     assert!(!work.root.join("backup").exists());
+}
+
+const PACK_ROUTE: &str = "/download/media-plugins-2/Aurora-Media-Plugins-2-windows-x64.zip";
+
+fn pack_zip(with_cef: bool) -> Vec<u8> {
+    let mut entries: Vec<(&str, &[u8])> = vec![
+        (
+            "Aurora-Media-Plugins-2-windows-x64/aurora-media-plugins.json",
+            br#"{"schema":1,"version":"2"}"#,
+        ),
+        ("Aurora-Media-Plugins-2-windows-x64/llplugin/SLPlugin.exe", b"launcher"),
+        ("Aurora-Media-Plugins-2-windows-x64/llplugin/media_plugin_libvlc.dll", b"vlc"),
+        ("Aurora-Media-Plugins-2-windows-x64/llplugin/locales/fr.pak", b"fr"),
+    ];
+    if with_cef {
+        entries.push(("Aurora-Media-Plugins-2-windows-x64/llplugin/media_plugin_cef.dll", b"cef"));
+    }
+    zip(&entries)
+}
+
+fn pack(bytes: &[u8], sha256: String) -> media_pack::Pack {
+    media_pack::Pack {
+        version: "2",
+        size: bytes.len() as u64,
+        sha256: Box::leak(sha256.into_boxed_str()),
+    }
+}
+
+/// Folders of `root` whose name starts with a dot (staging, trash).
+fn hidden(root: &Path) -> usize {
+    fs::read_dir(root)
+        .expect("root")
+        .filter(|e| {
+            let e = e.as_ref().expect("entry");
+            e.path().is_dir() && e.file_name().to_string_lossy().starts_with('.')
+        })
+        .count()
+}
+
+#[test]
+fn media_pack_installs_once_and_replaces_what_older_viewers_left() {
+    let bytes = pack_zip(true);
+    let pack = pack(&bytes, digest(&bytes));
+    let server = Server::new(HashMap::from([(PACK_ROUTE.into(), bytes)]));
+    let temp = Temp::new();
+    let root = temp.0.join("media-plugins");
+    fs::create_dir_all(root.join("1/llplugin")).expect("older pack");
+    fs::write(root.join("1/llplugin/SLPlugin.exe"), b"old").expect("older pack");
+    fs::create_dir_all(root.join(".staging-interrupted")).expect("leftover");
+    fs::write(root.join(".staging-interrupted/download.zip"), b"partial").expect("leftover");
+    assert!(media_pack::installed(&root, &pack).is_none());
+    let dir = run(media_pack::install(&server.source(), &pack, &root, &Cancel::default(), |_| {})).expect("installed pack");
+    assert_eq!(dir, root.join("2"));
+    assert_eq!(media_pack::installed(&root, &pack), Some(root.join("2")));
+    assert_eq!(fs::read(dir.join("llplugin/SLPlugin.exe")).expect("launcher"), b"launcher");
+    assert_eq!(fs::read(dir.join("llplugin/locales/fr.pak")).expect("resource"), b"fr");
+    assert!(!root.join("1").exists(), "the pack of an older viewer is removed");
+    // the staging folder is deleted on its own thread
+    for _ in 0..100 {
+        if hidden(&root) == 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(hidden(&root), 0);
+    // an installed pack asks nothing of the network
+    drop(server);
+    let offline = Source::local("http://127.0.0.1:9/releases").expect("feed");
+    assert_eq!(
+        run(media_pack::install(&offline, &pack, &root, &Cancel::default(), |_| {})).expect("already installed"),
+        root.join("2")
+    );
+    // the same version built again is another archive: it replaces the folder
+    let rebuilt = zip(&[
+        (
+            "Aurora-Media-Plugins-2-windows-x64/aurora-media-plugins.json",
+            br#"{"schema":1,"version":"2"}"#,
+        ),
+        ("Aurora-Media-Plugins-2-windows-x64/llplugin/SLPlugin.exe", b"launcher built again"),
+        ("Aurora-Media-Plugins-2-windows-x64/llplugin/media_plugin_libvlc.dll", b"vlc"),
+        ("Aurora-Media-Plugins-2-windows-x64/llplugin/media_plugin_cef.dll", b"cef"),
+    ]);
+    let rebuilt_pack = self::pack(&rebuilt, digest(&rebuilt));
+    assert!(media_pack::installed(&root, &rebuilt_pack).is_none());
+    let server = Server::new(HashMap::from([(PACK_ROUTE.into(), rebuilt)]));
+    run(media_pack::install(
+        &server.source(),
+        &rebuilt_pack,
+        &root,
+        &Cancel::default(),
+        |_| {},
+    ))
+    .expect("rebuilt pack");
+    assert_eq!(media_pack::installed(&root, &rebuilt_pack), Some(root.join("2")));
+    assert!(media_pack::installed(&root, &pack).is_none());
+    assert_eq!(
+        fs::read(root.join("2/llplugin/SLPlugin.exe")).expect("launcher"),
+        b"launcher built again"
+    );
+    assert!(!root.join("2/llplugin/locales").exists(), "nothing of the replaced folder is left");
+}
+
+#[test]
+fn media_pack_is_refused_when_altered_incomplete_or_being_installed() {
+    let bytes = pack_zip(true);
+    let incomplete = pack_zip(false);
+    for (served, pack, expected) in [
+        (bytes.clone(), pack(&bytes, "0".repeat(64)), Failure::Integrity),
+        (
+            bytes.clone(),
+            media_pack::Pack {
+                size: bytes.len() as u64 + 1,
+                ..pack(&bytes, digest(&bytes))
+            },
+            Failure::Integrity,
+        ),
+        (incomplete.clone(), pack(&incomplete, digest(&incomplete)), Failure::Package),
+    ] {
+        let server = Server::new(HashMap::from([(PACK_ROUTE.into(), served)]));
+        let temp = Temp::new();
+        let root = temp.0.join("media-plugins");
+        let outcome = run(media_pack::install(&server.source(), &pack, &root, &Cancel::default(), |_| {}));
+        assert!(
+            matches!(
+                (&outcome, expected),
+                (Err(Failure::Integrity), Failure::Integrity) | (Err(Failure::Package), Failure::Package)
+            ),
+            "install outcome: {outcome:?}"
+        );
+        assert!(media_pack::installed(&root, &pack).is_none());
+        assert!(!root.join("2").exists());
+    }
+    // a second viewer does not download while the first one installs
+    let pack = pack(&bytes, digest(&bytes));
+    let server = Server::new(HashMap::from([(PACK_ROUTE.into(), bytes)]));
+    let temp = Temp::new();
+    let root = temp.0.join("media-plugins");
+    fs::create_dir_all(&root).expect("root");
+    let lock = fs::File::create(root.join(".lock")).expect("lock file");
+    lock.try_lock().expect("first viewer");
+    let outcome = run(media_pack::install(&server.source(), &pack, &root, &Cancel::default(), |_| {}));
+    assert!(matches!(outcome, Err(Failure::Busy)), "install outcome: {outcome:?}");
+    assert_eq!(hidden(&root), 0);
 }
 
 #[test]

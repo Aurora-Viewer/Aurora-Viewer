@@ -1216,8 +1216,9 @@ pub enum NetCommand {
         to: Uuid,
         message: String,
     },
+    /// StartLure: one message for every invitee (send_lures).
     OfferTeleport {
-        to: Uuid,
+        to: Vec<Uuid>,
         message: String,
     },
     TeleportLandmark(Uuid),

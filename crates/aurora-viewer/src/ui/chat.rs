@@ -1089,7 +1089,8 @@ pub fn show(
     };
     let own_name = world.own_name();
     let mut tear_off = false;
-    let mut floater = super::widgets::Floater::new("conversations", title, default.min, default.size());
+    let mut floater = super::widgets::Floater::new("conversations", title, default.min, default.size())
+        .attention(world.chat_unread + world.social.total_unread() > 0);
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);

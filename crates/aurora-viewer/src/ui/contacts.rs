@@ -35,6 +35,11 @@ const GP_SESSION_JOIN: u64 = 1 << 16;
 /// IM dialogs.
 const IM_FRIENDSHIP_OFFERED: u8 = 38;
 const IM_TELEPORT_REQUEST: u8 = 26;
+/// Invitees of one teleport offer (OFFER_RECIPIENT_LIMIT, handle_lure_callback).
+const MAX_LURES: usize = 250;
+/// Length of the invitation (teleport_offer_invitation_max_length: 254 less
+/// the 76 of the location SLURL send_lures adds).
+pub const LURE_MESSAGE_MAX: usize = 178;
 
 /// Firestorm settings of the contacts window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +90,11 @@ pub enum ContactsAction {
     Im(Uuid),
     Profile(Uuid),
     OfferTeleport(Uuid),
+    /// The OfferTeleport prompt was confirmed: send the invitation.
+    SendTeleportOffer {
+        to: Vec<Uuid>,
+        message: String,
+    },
     GroupChat(Uuid),
     /// Sent as is (rights, friendship end, group activation...).
     Net(NetCommand),
@@ -115,6 +125,13 @@ enum Dialog {
     /// TeleportRequest prompt.
     TeleportRequest {
         to: Uuid,
+        message: String,
+    },
+    /// RejectTeleportOffersModeWarning: no request while we reject them.
+    RejectingTeleports,
+    /// OfferTeleport: the invitation, "Join me in <region>" to edit.
+    OfferTeleport {
+        to: Vec<Uuid>,
         message: String,
     },
     AddSet(String),
@@ -180,12 +197,34 @@ impl ContactsUi {
         self.dialog = Some(Dialog::RemoveFriends(vec![id]));
     }
 
-    /// "Request teleport" of any menu (TeleportRequest).
-    pub fn ask_teleport_request(&mut self, to: Uuid) {
-        self.dialog = Some(Dialog::TeleportRequest {
-            to,
-            message: String::new(),
+    /// "Request teleport" of any menu (LLAvatarActions::teleportRequest):
+    /// refused with a warning while we reject teleport offers and requests
+    /// ourselves (FSRejectTeleportOffersMode).
+    pub fn ask_teleport_request(&mut self, to: Uuid, rejecting: bool) {
+        self.dialog = Some(if rejecting {
+            Dialog::RejectingTeleports
+        } else {
+            Dialog::TeleportRequest {
+                to,
+                message: String::new(),
+            }
         });
+    }
+
+    /// "Offer teleport" of any menu (handle_lure): the invitation to edit,
+    /// "Join me in <region>", for at most `MAX_LURES` residents.
+    pub fn ask_teleport_offer(&mut self, mut to: Vec<Uuid>, region: &str) {
+        let mut seen = HashSet::new();
+        to.retain(|id| seen.insert(*id));
+        to.truncate(MAX_LURES);
+        if to.is_empty() {
+            return;
+        }
+        let message = aurora_i18n::tr!("common-join-me-in", region = region.to_string())
+            .chars()
+            .take(LURE_MESSAGE_MAX)
+            .collect();
+        self.dialog = Some(Dialog::OfferTeleport { to, message });
     }
 
     /// "Quit" of any group menu (GroupLeaveConfirmMember).
@@ -867,7 +906,7 @@ fn friend_menu(
         actions.push(ContactsAction::OfferTeleport(id));
     }
     if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport")) {
-        st.ask_teleport_request(id);
+        st.ask_teleport_request(id, world.status.cfg.reject_teleports);
     }
     menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"));
     menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("common-follow"));
@@ -1796,6 +1835,25 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
             aurora_i18n::tr!("common-send"),
             true,
         ),
+        Dialog::RejectingTeleports => (
+            aurora_i18n::tr!("common-request-teleport"),
+            aurora_i18n::tr!("ui-contacts-no-teleport-request-while-rejecting").into(),
+            aurora_i18n::tr!("common-ok"),
+            false,
+        ),
+        Dialog::OfferTeleport { to, .. } => {
+            let text = if to.len() > 1 {
+                aurora_i18n::tr!("ui-contacts-offer-teleport-to-residents", count = to.len())
+            } else {
+                aurora_i18n::tr!("ui-contacts-offer-teleport-to", value0 = name(&to[0]).to_string())
+            };
+            (
+                aurora_i18n::tr!("common-offer-teleport"),
+                text,
+                aurora_i18n::tr!("common-send"),
+                true,
+            )
+        }
         Dialog::AddSet(_) => (
             aurora_i18n::tr!("ui-contacts-new-contact-set"),
             aurora_i18n::tr!("ui-contacts-create-a-new-contact-set-named").into(),
@@ -1844,6 +1902,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
             )
         }
     };
+    let notice = matches!(d, Dialog::RejectingTeleports);
     let mut done: Option<bool> = None;
     let modal = crate::ui::widgets::Modal::new(egui::Id::new("contacts_dialog")).show(ctx, |ui| {
         ui.set_width(360.0);
@@ -1852,13 +1911,20 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         ui.label(RichText::new(&text).size(12.5).color(p.muted));
         if has_input {
             ui.add_space(6.0);
+            let limit = if matches!(d, Dialog::OfferTeleport { .. }) {
+                LURE_MESSAGE_MAX
+            } else {
+                usize::MAX
+            };
             let buf = match d {
-                Dialog::Friendship { message, .. } | Dialog::TeleportRequest { message, .. } => message,
+                Dialog::Friendship { message, .. } | Dialog::TeleportRequest { message, .. } | Dialog::OfferTeleport { message, .. } => {
+                    message
+                }
                 Dialog::AddSet(s) => s,
                 Dialog::SetAlias { alias, .. } => alias,
                 _ => unreachable!("dialog without input"),
             };
-            let r = ui.add(egui::TextEdit::singleline(buf).desired_width(f32::INFINITY));
+            let r = ui.add(egui::TextEdit::singleline(buf).char_limit(limit).desired_width(f32::INFINITY));
             if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 done = Some(true);
             }
@@ -1869,8 +1935,9 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
             if widgets::action_button(ui, p, icon, ok, kind, size).clicked() {
                 done = Some(true);
             }
+            // a warning has nothing to cancel
             let cancel = aurora_i18n::tr!("common-cancel");
-            if widgets::action_button(ui, p, "x", cancel, widgets::ActionKind::Flat, size).clicked() {
+            if !notice && widgets::action_button(ui, p, "x", cancel, widgets::ActionKind::Flat, size).clicked() {
                 done = Some(false);
             }
         });
@@ -1907,6 +1974,8 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
             message,
             bucket: Vec::new(),
         })),
+        Dialog::RejectingTeleports => {}
+        Dialog::OfferTeleport { to, message } => actions.push(ContactsAction::SendTeleportOffer { to, message }),
         Dialog::AddSet(name) => {
             if world.contact_sets.add_set(&name) {
                 st.set_choice = Some(name.trim().to_owned());
@@ -2002,5 +2071,29 @@ mod tests {
             group_count_text(3, 0),
             aurora_i18n::tr!("ui-contacts-you-belong-to-groups", count = "3").as_str()
         );
+    }
+
+    #[test]
+    fn teleport_prompts() {
+        let mut st = ContactsUi::default();
+        // a request while we reject teleports only warns
+        st.ask_teleport_request(id(2), true);
+        assert!(matches!(st.dialog, Some(Dialog::RejectingTeleports)));
+        st.ask_teleport_request(id(2), false);
+        assert!(matches!(&st.dialog, Some(Dialog::TeleportRequest { to, message }) if *to == id(2) && message.is_empty()));
+        // an offer: the invitation names the region, within its length,
+        // for each invitee once and at most MAX_LURES of them
+        st.ask_teleport_offer(vec![id(3), id(3), id(4)], "Ahern");
+        let Some(Dialog::OfferTeleport { to, message }) = &st.dialog else {
+            panic!("no teleport offer prompt");
+        };
+        assert_eq!(to, &[id(3), id(4)]);
+        assert!(message.contains("Ahern"), "{message}");
+        st.ask_teleport_offer((0..300).map(id).collect(), &"x".repeat(300));
+        let Some(Dialog::OfferTeleport { to, message }) = &st.dialog else {
+            panic!("no teleport offer prompt");
+        };
+        assert_eq!(to.len(), MAX_LURES);
+        assert_eq!(message.chars().count(), LURE_MESSAGE_MAX);
     }
 }
