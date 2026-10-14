@@ -151,6 +151,10 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
         system_pill(ui, env, line, mark);
         return;
     }
+    if let ChatKind::Invite(invite) = line.kind {
+        super::invite_card::draw_card(ui, env, line, invite, PIC + PIC_GAP);
+        return;
+    }
     let logged = line.origin != Origin::Live;
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     let own = line.kind == ChatKind::Own;

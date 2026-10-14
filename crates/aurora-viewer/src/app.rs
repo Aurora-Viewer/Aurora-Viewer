@@ -7446,6 +7446,22 @@ impl App {
                 if let Some(action) = ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);
                 }
+                // a teleport invitation whose card is in sight needs no toast
+                // (LLOfferHandler: a toast only when the IM floater is closed)
+                if self.panels.chat
+                    && let Some(open) = self.chat_ui.selected
+                {
+                    let seen: Vec<u64> = self
+                        .world
+                        .teleport_invites
+                        .pending_notifications()
+                        .filter(|(_, from)| *from == open)
+                        .map(|(n, _)| n)
+                        .collect();
+                    for n in self.world.notifications.list.iter_mut().filter(|n| seen.contains(&n.id)) {
+                        n.read = true;
+                    }
+                }
                 for (id, r) in ui::notifications::show(&ctx, &p, &self.skin.icons, &mut self.world.notifications, &mut self.notif_ui) {
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
@@ -8422,10 +8438,17 @@ impl ApplicationHandler for App {
                 if scene == LureScene::Reject {
                     self.world.status.cfg.reject_teleports = true;
                 }
-                if scene == LureScene::Answers {
+                if scene == LureScene::Answers || scene.shows_card() {
                     self.panels.chat = true;
                     self.chat_ui.open(crate::demo::DEMO_NOVA);
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
+                }
+                // the card alone: the list stays closed where no answer is shown
+                if matches!(scene, LureScene::OfferCard | LureScene::RequestCard | LureScene::Legacy) {
+                    self.notif_ui.open = false;
+                }
+                if scene == LureScene::Legacy {
+                    self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
                 }
             }
             // AURORA_DEMO_TALK=1: microphone on (voice dot of our avatar)
@@ -8442,6 +8465,23 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            // AURORA_DEMO_LURE=card-answered / notification-answered: the
+            // offer answered by its card's button, or by its entry's
+            if let Some(scene) = crate::demo::lure_scene()
+                && let Some(v) = self.world.teleport_invites.list.first().map(|v| (v.id, v.notification))
+            {
+                use crate::demo::LureScene;
+                match scene {
+                    LureScene::CardAnswered => self.on_ctx_action(ui::context::CtxAction::AnswerTeleport { invite: v.0, accept: true }),
+                    LureScene::NotificationAnswered => {
+                        let (cmds, _) = self.world.respond_notification(v.1, crate::world::notifications::Response::Decline);
+                        for c in cmds {
+                            self.send(c);
+                        }
+                    }
+                    _ => {}
                 }
             }
             if let Some(view) = crate::demo::bubbles_scenario() {

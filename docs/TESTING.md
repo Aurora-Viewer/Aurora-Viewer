@@ -1610,14 +1610,23 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (that notice only goes to the resident's transcript, when instant messages
   are logged). `tp:reject`: "Request teleport" while teleports are rejected
   only shows the warning, with OK and no message to type.
-- **`AURORA_DEMO_LURE=offer|request|god|answers|reject`**: teleports received
-  from Tess Touch, with the notification list open (issue #280, part B1).
-  `offer`: "Tess Touch offers you a teleport", the place ("Location: Aurora
-  Demo (128, 130, 25)") above her invitation, Teleport / Decline; nothing in
-  the nearby chat and no conversation opened. `request`: "Tess Touch is
-  requesting to be teleported to your location", her message, "Offer a
-  teleport?", Yes / No; Yes writes "Teleport offer sent to Tess …" (in her
-  transcript, she has no conversation). `god`: no notification, the
+- **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy`**:
+  teleports received from Tess Touch (issue #280, parts B1 and B2). Each
+  offer and request opens her conversation (unread) with its card and has
+  an entry in the notification centre; answering one closes the entry and
+  leaves the card with its answer, greyed.
+  `offer`, with the notification list open: "Tess Touch offers you a
+  teleport", the place ("Location: Aurora Demo (128, 130, 25)") above her
+  invitation, Teleport / Decline; nothing in the nearby chat. `request`:
+  "Tess Touch is requesting to be teleported to your location", her
+  message, "Offer a teleport?", Yes / No; Yes writes "Teleport offer sent to
+  Tess …" in her conversation. `offer-card` / `request-card`: her
+  conversation in sight with the card (teal edge, Teleport / Decline or
+  Yes / No), and no toast. `card-answered`: the offer accepted from the
+  card: "Accepted" on the card, the list empty, the teleport starts and fails
+  offline. `notification-answered`: the offer declined from its entry:
+  "Declined" on the card. `legacy`: the card as one line of the legacy
+  style, its buttons at the end. `god`: no notification, the
   teleport starts at once and fails offline (two lines in the nearby chat).
   `answers`: her conversation is open with "Tess … declined your teleport
   offer" as a system line, without a notification; Nova's acceptance goes to

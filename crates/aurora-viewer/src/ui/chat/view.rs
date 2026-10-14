@@ -165,7 +165,7 @@ impl<'a> Grouping<'a> {
             }
             self.prev_day = Some(day);
         }
-        if line.kind == crate::world::ChatKind::System {
+        if line.kind.is_notice() {
             self.prev = None;
             return look;
         }
@@ -251,7 +251,7 @@ impl View {
             .filter(|&i| s.filter.is_empty() || matches(&s.lines[i], s.filter))
             .collect();
         let mut looks: Vec<Look> = shown.iter().map(|&i| grouping.look(&s.lines[i])).collect();
-        mark_tails(&mut looks, |k| s.lines[shown[k]].kind == crate::world::ChatKind::System);
+        mark_tails(&mut looks, |k| s.lines[shown[k]].kind.is_notice());
         let mut y = 0.0;
         for (&i, look) in shown.iter().zip(looks) {
             let line = &s.lines[i];

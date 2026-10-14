@@ -694,6 +694,23 @@ pub enum LureScene {
     God,
     Answers,
     Reject,
+    /// The offer's card, her conversation in sight (no toast).
+    OfferCard,
+    /// The request's card, her conversation in sight.
+    RequestCard,
+    /// The offer accepted from its card: "Accepted", the entry gone.
+    CardAnswered,
+    /// The offer declined from the notification centre: the card says so.
+    NotificationAnswered,
+    /// The offer's card in the legacy lines.
+    Legacy,
+}
+
+impl LureScene {
+    /// Her conversation is open on the card.
+    pub fn shows_card(self) -> bool {
+        !matches!(self, LureScene::Offer | LureScene::Request | LureScene::God | LureScene::Reject)
+    }
 }
 
 pub fn lure_scene() -> Option<LureScene> {
@@ -703,6 +720,11 @@ pub fn lure_scene() -> Option<LureScene> {
         "god" => Some(LureScene::God),
         "answers" => Some(LureScene::Answers),
         "reject" => Some(LureScene::Reject),
+        "offer-card" => Some(LureScene::OfferCard),
+        "request-card" => Some(LureScene::RequestCard),
+        "card-answered" => Some(LureScene::CardAnswered),
+        "notification-answered" => Some(LureScene::NotificationAnswered),
+        "legacy" => Some(LureScene::Legacy),
         _ => None,
     }
 }
@@ -726,13 +748,17 @@ pub fn lure_events(scene: LureScene, agent: Uuid) -> Vec<NetEvent> {
     };
     // the plaza, as a lure's bucket carries it (parse_lure_bucket)
     let plaza = b"256000|256000|128|130|25|0|1|0|PG";
+    // as send_lures writes it: the text, then the sender's place
     let invitation = format!(
-        "{}\r\nhttp://maps.secondlife.com/secondlife/Aurora%20Demo/128/130/25",
-        aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset")
+        "{}\r\n{}",
+        aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"),
+        crate::slurl::make(aurora_i18n::tr!("common-aurora-demo"), glam::Vec3::new(128.0, 130.0, 25.0))
     );
     match scene {
-        LureScene::Offer => vec![im(d::LURE_USER, &invitation, plaza)],
-        LureScene::Request => vec![im(d::TELEPORT_REQUEST, aurora_i18n::tr!("demo-can-i-join-you"), b"")],
+        LureScene::Offer | LureScene::OfferCard | LureScene::CardAnswered | LureScene::NotificationAnswered | LureScene::Legacy => {
+            vec![im(d::LURE_USER, &invitation, plaza)]
+        }
+        LureScene::Request | LureScene::RequestCard => vec![im(d::TELEPORT_REQUEST, aurora_i18n::tr!("demo-can-i-join-you"), b"")],
         LureScene::God => vec![im(d::GODLIKE_LURE_USER, &invitation, plaza)],
         LureScene::Answers => vec![
             im(0, aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"), b""),
