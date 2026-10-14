@@ -409,7 +409,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             &mut panels.chat,
         );
         if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), "Ctrl+G") {
-            panels.gestures = !panels.gestures;
+            super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
         }
         for (tab, icon, label) in [
             (1, "users", aurora_i18n::tr!("common-friends")),
@@ -549,7 +549,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         );
         import_menu(ui, p, action);
         if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), "Ctrl+G") {
-            panels.gestures = !panels.gestures;
+            super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
         }
     });
     if advanced {
@@ -1736,6 +1736,7 @@ mod tests {
         for (cmd, id, open) in [
             ("conversations", "conversations", (|p| p.chat) as fn(&Panels) -> bool),
             ("inventory", "inventory", |p| p.inventory),
+            ("gestures", "gestures", |p| p.gestures),
             ("people", "people", |p| p.people),
             ("preferences", "options", |p| p.settings),
         ] {
