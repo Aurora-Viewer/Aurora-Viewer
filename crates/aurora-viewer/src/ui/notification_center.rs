@@ -14,7 +14,8 @@ use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
 use crate::world::notification_history::{self as history, Entry, Follow, History, Outcome};
 use crate::world::notifications::{Data, Notification, Notifications, Response};
-use egui::{Color32, Rect, RichText, Vec2};
+use crate::world::worldmap::RegionRatings;
+use egui::{Rect, RichText, Vec2};
 
 /// Width of the panel under the bell (the mockup's 360 px).
 pub const WIDTH: f32 = 360.0;
@@ -29,6 +30,10 @@ pub const MAX_PEEK: usize = 3;
 /// The bell's bounce and ring (380 and 520 ms).
 const BUMP: f64 = 0.38;
 const RING: f64 = 0.52;
+/// A friend online / offline: a small toast apart from the center, then a
+/// fade (the mockup's 3.5 s and 300 ms).
+pub const PRESENCE: f64 = 3.5;
+const PRESENCE_FADE: f64 = 0.3;
 
 /// A card rolled out under the bell.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +68,8 @@ pub struct CenterUi {
     shown_count: usize,
     bump_at: Option<f64>,
     ring_at: Option<f64>,
+    /// Friends' online / offline toasts shown, and since when.
+    pub presence: Vec<(u64, f64)>,
 }
 
 /// What the frame tells the center besides its notifications.
@@ -82,7 +89,7 @@ pub struct Moment {
 /// How long `n` stays rolled out.
 pub fn show_seconds(n: &Notification, message_seconds: f64) -> f64 {
     match n.data {
-        Data::Message { .. } => message_seconds.min(SHOW_ANSWER).max(SHOW_INFO),
+        Data::Message { .. } => message_seconds.clamp(SHOW_INFO, SHOW_ANSWER),
         _ if n.interactive() => SHOW_ANSWER,
         _ => SHOW_INFO,
     }
@@ -91,9 +98,7 @@ pub fn show_seconds(n: &Notification, message_seconds: f64) -> f64 {
 /// The count on the bell: what waits in "To do", without the cards still
 /// rolled out (they are counted when they fold in).
 pub fn bell_count(list: &Notifications, c: &CenterUi) -> usize {
-    list.listed()
-        .filter(|n| !n.read && !c.peek.iter().any(|p| p.id == n.id))
-        .count()
+    list.listed().filter(|n| !n.read && !c.peek.iter().any(|p| p.id == n.id)).count()
 }
 
 /// Advance the cards: new arrivals unroll (unless the bell is paused, the
@@ -103,6 +108,14 @@ pub fn bell_count(list: &Notifications, c: &CenterUi) -> usize {
 pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds: f64) -> bool {
     let dt = c.last_time.map_or(0.0, |t| (m.now - t).max(0.0));
     c.last_time = Some(m.now);
+    // a friend online: its own small toast, never a card nor a count
+    for n in list.list.iter().filter(|n| n.id > c.last_seen && n.transient) {
+        if !m.hidden {
+            c.presence.push((n.id, m.now));
+        }
+    }
+    c.presence
+        .retain(|(id, t)| m.now - t < PRESENCE + PRESENCE_FADE && list.list.iter().any(|n| n.id == *id));
     for n in list.listed().filter(|n| n.id > c.last_seen) {
         if !n.read && !m.dnd && !m.hidden && !m.open {
             let total = show_seconds(n, message_seconds);
@@ -144,7 +157,7 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
     }
     c.shown_count = count;
     let bell_moves = c.bump_at.is_some_and(|t| m.now - t < RING.max(BUMP));
-    !c.peek.is_empty() || bell_moves
+    !c.peek.is_empty() || !c.presence.is_empty() || bell_moves
 }
 
 /// The cards shown rolled out (the newest three) and how many wait behind.
@@ -161,7 +174,8 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, c: &CenterUi, unread:
     let now = ui.input(|i| i.time);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(26.0, 22.0), egui::Sense::click());
     if resp.hovered() || open {
-        ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
+        ui.painter()
+            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
     }
     let icon = if dnd { "bell-z-filled" } else { "bell-filled" };
     let col = if dnd { p.muted } else { p.ink };
@@ -174,10 +188,7 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, c: &CenterUi, unread:
         .map_or(0.0, |t| (t * std::f32::consts::TAU * 2.0).sin() * 0.25 * (1.0 - t));
     if let Some(t) = icons.get(icon) {
         let r = Rect::from_center_size(rect.center(), Vec2::splat(16.0));
-        egui::Image::new(t)
-            .tint(col)
-            .rotate(angle, Vec2::new(0.5, 0.1))
-            .paint_at(ui, r);
+        egui::Image::new(t).tint(col).rotate(angle, Vec2::new(0.5, 0.1)).paint_at(ui, r);
     }
     if dnd && let Some(t) = icons.get("moon-filled") {
         let r = Rect::from_center_size(rect.left_bottom() + Vec2::new(5.0, -5.0), Vec2::splat(9.0));
@@ -200,7 +211,7 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, c: &CenterUi, unread:
         super::widgets::paint_ink_centered(ui.painter(), galley, badge.center(), ink);
     }
     let tip = if dnd {
-        aurora_i18n::tr!("ui-notifications-bell-paused")
+        aurora_i18n::tr!("ui-notifications-bell-paused").to_owned()
     } else {
         aurora_i18n::tr!("notifications-unread-count", count = unread)
     };
@@ -223,6 +234,7 @@ pub fn show(
     ctx: &egui::Context,
     p: &Palette,
     icons: &Icons,
+    ratings: &RegionRatings,
     list: &mut Notifications,
     hist: &mut History,
     nui: &mut NotifUi,
@@ -249,9 +261,13 @@ pub fn show(
         },
         env.message_seconds,
     );
+    // a friend's notice leaves the list with its toast
+    let presence = &nui.center.presence;
+    list.list.retain(|n| !n.transient || presence.iter().any(|(id, _)| *id == n.id));
     let Some(bell) = nui.bell else {
         return (answers, asks);
     };
+    presence_toasts(ctx, p, list, nui, env, egui::pos2(12.0, bell.bottom() + 6.0), now, &mut answers);
     let screen = ctx.content_rect();
     let x = (bell.right() + 4.0).min(screen.right() - 6.0) - WIDTH;
     let pos = egui::pos2(x.max(screen.left() + 6.0), bell.bottom() + 6.0);
@@ -281,13 +297,31 @@ pub fn show(
             super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.set_width(WIDTH - 12.0);
                 if nui.open {
-                    full_list(ui, p, icons, list, hist, nui, env, dnd, &mut answers, &mut asks);
+                    full_list(ui, p, icons, ratings, list, hist, nui, env, dnd, &mut answers, &mut asks);
                 } else {
-                    rolled_out(ui, p, icons, list, nui, env, now, &mut answers);
+                    rolled_out(ui, p, icons, ratings, list, nui, env, now, &mut answers);
                 }
             });
         });
     nui.center.panel = Some(area.response.rect);
+    // the rolled-out cards wait while the pointer is on them: say so beside
+    if hovered && !nui.open && !nui.center.peek.is_empty() {
+        egui::Area::new(egui::Id::new("notification_center_paused"))
+            .fade_in(false)
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::RIGHT_TOP)
+            .fixed_pos(pos + Vec2::new(-6.0, 4.0))
+            .interactable(false)
+            .show(ctx, |ui| {
+                super::widgets::overlay(ui, p, egui::Margin::symmetric(7, 3), |ui| {
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-notifications-paused-hint"))
+                            .size(11.0)
+                            .color(p.muted),
+                    );
+                });
+            });
+    }
     if nui.open {
         // a click outside closes the list (not on the bell: it toggles itself)
         let out = ctx.input(|i| i.pointer.any_pressed())
@@ -310,6 +344,7 @@ fn rolled_out(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
+    ratings: &RegionRatings,
     list: &mut Notifications,
     nui: &mut NotifUi,
     env: &mut ToastEnv<'_>,
@@ -335,11 +370,7 @@ fn rolled_out(
             child.set_clip_rect(Rect::from_min_size(top, Vec2::new(WIDTH, full_h * keep)).intersect(ui.clip_rect()));
             child.multiply_opacity(keep);
         }
-        let r = if matches!(n.data, Data::Message { .. }) {
-            cards::person_card(&mut child, p, icons, env, &mut nui.wanted_pics, n, false)
-        } else {
-            cards::card(&mut child, p, icons, n, false, true)
-        };
+        let r = center_card(&mut child, p, icons, ratings, env, &mut nui.wanted_pics, n);
         let card = child.min_rect();
         nui.center.heights.insert(peek.id, card.height());
         // the time left, a fine violet bar along the card's bottom
@@ -379,6 +410,7 @@ fn full_list(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
+    ratings: &RegionRatings,
     list: &mut Notifications,
     hist: &mut History,
     nui: &mut NotifUi,
@@ -398,17 +430,22 @@ fn full_list(
                 .color(p.ink),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let any = list.listed().next().is_some();
+            let any = list.listed().any(|n| !n.interactive());
             if ui
                 .add_enabled(
                     any,
-                    egui::Button::new(RichText::new(aurora_i18n::tr!("ui-notifications-mark-all-read")).size(11.5).color(p.muted))
-                        .frame(false),
+                    egui::Button::new(
+                        RichText::new(aurora_i18n::tr!("ui-notifications-mark-all-read"))
+                            .size(11.5)
+                            .color(p.muted),
+                    )
+                    .frame(false),
                 )
                 .on_hover_text(aurora_i18n::tr!("ui-notifications-mark-all-read-tip"))
                 .clicked()
             {
-                list.mark_all_read_to_history();
+                // information goes to the history, offers stay to be answered
+                list.clear_info();
             }
         });
     });
@@ -424,12 +461,22 @@ fn full_list(
                     if let Some(t) = icons.get("moon-filled") {
                         ui.add(egui::Image::new(t).tint(p.danger).fit_to_exact_size(Vec2::splat(12.0)));
                     }
-                    ui.label(RichText::new(aurora_i18n::tr!("ui-notifications-dnd-banner")).size(11.5).strong().color(p.danger));
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-notifications-dnd-banner"))
+                            .size(11.5)
+                            .strong()
+                            .color(p.danger),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let off = ui
                             .add(
-                                egui::Label::new(RichText::new(aurora_i18n::tr!("ui-notifications-dnd-off")).size(11.5).strong().color(p.ink))
-                                    .sense(egui::Sense::click()),
+                                egui::Label::new(
+                                    RichText::new(aurora_i18n::tr!("ui-notifications-dnd-off"))
+                                        .size(11.5)
+                                        .strong()
+                                        .color(p.ink),
+                                )
+                                .sense(egui::Sense::click()),
                             )
                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                         if off.clicked() {
@@ -441,7 +488,10 @@ fn full_list(
     }
     ui.add_space(4.0);
     let mut tab = nui.center.tab == Tab::History;
-    let options = [aurora_i18n::tr!("ui-notifications-to-do"), aurora_i18n::tr!("ui-notifications-history")];
+    let options = [
+        (aurora_i18n::tr!("ui-notifications-to-do"), false),
+        (aurora_i18n::tr!("ui-notifications-history"), false),
+    ];
     let mut i = usize::from(tab);
     if super::widgets::segmented(ui, p, &mut i, &options) {
         tab = i == 1;
@@ -458,12 +508,7 @@ fn full_list(
             egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 for n in list.list.iter_mut().rev().filter(|n| !n.transient) {
-                    let r = if matches!(n.data, Data::Message { .. }) {
-                        cards::person_card(ui, p, icons, env, &mut nui.wanted_pics, n, false)
-                    } else {
-                        cards::card(ui, p, icons, n, false, true)
-                    };
-                    if let Some(r) = r {
+                    if let Some(r) = center_card(ui, p, icons, ratings, env, &mut nui.wanted_pics, n) {
                         answers.push((n.id, r));
                     }
                 }
@@ -509,6 +554,97 @@ fn full_list(
     }
 }
 
+/// A card of the center; unread, it has the violet edge.
+fn center_card(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    ratings: &RegionRatings,
+    env: &mut ToastEnv<'_>,
+    wanted: &mut std::collections::HashSet<uuid::Uuid>,
+    n: &mut Notification,
+) -> Option<Response> {
+    let read = n.read;
+    let inner = ui.scope(|ui| {
+        if matches!(n.data, Data::Message { .. }) {
+            cards::person_card(ui, p, icons, env, wanted, n, false)
+        } else {
+            cards::card(ui, p, icons, ratings, n, false, true)
+        }
+    });
+    if !read {
+        let r = inner.response.rect;
+        ui.painter().rect_filled(
+            Rect::from_min_max(r.left_top(), egui::pos2(r.left() + 2.0, r.bottom())),
+            0.0,
+            p.violet,
+        );
+    }
+    inner.inner
+}
+
+/// A friend online / offline: a small toast at the top left of the view,
+/// apart from the center (never a card nor a count); clicking it opens an IM.
+#[allow(clippy::too_many_arguments)]
+fn presence_toasts(
+    ctx: &egui::Context,
+    p: &Palette,
+    list: &Notifications,
+    nui: &mut NotifUi,
+    env: &mut ToastEnv<'_>,
+    pos: egui::Pos2,
+    now: f64,
+    answers: &mut Vec<(u64, Response)>,
+) {
+    if nui.center.presence.is_empty() || env.hidden {
+        return;
+    }
+    egui::Area::new(egui::Id::new("notification_presence"))
+        .fade_in(false)
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos)
+        .show(ctx, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            for (id, since) in nui.center.presence.clone() {
+                let Some(n) = list.list.iter().find(|n| n.id == id) else {
+                    continue;
+                };
+                let Data::Presence { who, online } = n.data else {
+                    continue;
+                };
+                let fade = ((now - since - PRESENCE) / PRESENCE_FADE).clamp(0.0, 1.0) as f32;
+                let mut child = ui.new_child(egui::UiBuilder::new());
+                child.multiply_opacity(1.0 - fade);
+                let frame = super::widgets::overlay(&mut child, p, egui::Margin::symmetric(12, 8), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 9.0;
+                        let (pic, _) = ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::hover());
+                        nui.wanted_pics.insert(who);
+                        super::widgets::avatar_disc(ui, p, pic, env.pics.get(&who), &n.title, false);
+                        let status = if online {
+                            super::presence::Status::Online
+                        } else {
+                            super::presence::Status::Offline
+                        };
+                        super::presence::paint_dot(ui.painter(), p, pic, status, p.panel);
+                        ui.label(RichText::new(&n.title).size(12.5).color(p.ink));
+                    });
+                })
+                .response;
+                ui.advance_cursor_after_rect(frame.rect);
+                let click = ui.interact(frame.rect, egui::Id::new(("notification_presence", id)), egui::Sense::click());
+                if n.opens() {
+                    let click = click
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(aurora_i18n::tr!("ui-notifications-send-im"));
+                    if click.clicked() {
+                        answers.push((id, Response::Open));
+                    }
+                }
+            }
+        });
+}
+
 fn empty(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add_space(12.0);
     ui.vertical_centered(|ui| {
@@ -535,7 +671,13 @@ pub fn day_label(time: u64, now: u64) -> String {
         aurora_i18n::tr!("ui-chat-yesterday").to_owned()
     } else {
         let month = crate::ui::land::months()[(d.1.clamp(1, 12) - 1) as usize];
-        aurora_i18n::tr!("ui-chat-day", day = d.2.to_string(), month = month.to_string(), year = d.0.to_string()).to_owned()
+        aurora_i18n::tr!(
+            "ui-chat-day",
+            day = d.2.to_string(),
+            month = month.to_string(),
+            year = d.0.to_string()
+        )
+        .to_owned()
     }
 }
 
@@ -592,7 +734,10 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, e: &Entry) -> Opt
                             });
                         if let Some(label) = follow_label(&e.follow) {
                             let link = ui
-                                .add(egui::Label::new(RichText::new(label).size(11.0).strong().color(p.violet_light)).sense(egui::Sense::click()))
+                                .add(
+                                    egui::Label::new(RichText::new(label).size(11.0).strong().color(p.violet_light))
+                                        .sense(egui::Sense::click()),
+                                )
                                 .on_hover_cursor(egui::CursorIcon::PointingHand);
                             if link.clicked() {
                                 out = Some(e.follow.clone());

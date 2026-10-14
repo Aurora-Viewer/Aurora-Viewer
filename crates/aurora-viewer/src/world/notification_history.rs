@@ -23,8 +23,6 @@ pub const MAX_AGE_SECS: u64 = 30 * 24 * 3600;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Look {
-    #[serde(other)]
-    Info,
     Alert,
     Teleport,
     Friendship,
@@ -34,6 +32,9 @@ pub enum Look {
     Permissions,
     Url,
     Message,
+    /// Information, and a kind a newer version wrote.
+    #[serde(other)]
+    Info,
 }
 
 /// What became of the notification.
@@ -142,36 +143,38 @@ impl History {
     pub fn load(path: PathBuf) -> Self {
         let (loaded_tx, loaded) = mpsc::bounded(1);
         let (writer, writes) = mpsc::unbounded::<Vec<Entry>>();
-        let worker = std::thread::Builder::new().name("aurora-notification-history".into()).spawn(move || {
-            let entries = match std::fs::read(&path) {
-                Ok(bytes) => crate::tolerant::from_slice::<Saved>(&bytes, FILE)
-                    .map(|r| r.value.entries)
-                    .unwrap_or_default(),
-                Err(error) => {
-                    if error.kind() != std::io::ErrorKind::NotFound {
-                        log::warn!("Cannot read the notification history: {error}");
+        let worker = std::thread::Builder::new()
+            .name("aurora-notification-history".into())
+            .spawn(move || {
+                let entries = match std::fs::read(&path) {
+                    Ok(bytes) => crate::tolerant::from_slice::<Saved>(&bytes, FILE)
+                        .map(|r| r.value.entries)
+                        .unwrap_or_default(),
+                    Err(error) => {
+                        if error.kind() != std::io::ErrorKind::NotFound {
+                            log::warn!("Cannot read the notification history: {error}");
+                        }
+                        Vec::new()
                     }
-                    Vec::new()
-                }
-            };
-            let _ = loaded_tx.send(entries);
-            while let Ok(mut entries) = writes.recv() {
-                // only the latest state matters
-                while let Ok(newer) = writes.try_recv() {
-                    entries = newer;
-                }
-                let save = || -> std::io::Result<()> {
-                    if let Some(parent) = path.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    let bytes = serde_json::to_vec(&Saved { entries }).map_err(std::io::Error::other)?;
-                    crate::atomic_file::write(&path, &bytes)
                 };
-                if let Err(error) = save() {
-                    log::warn!("Cannot save the notification history: {error}");
+                let _ = loaded_tx.send(entries);
+                while let Ok(mut entries) = writes.recv() {
+                    // only the latest state matters
+                    while let Ok(newer) = writes.try_recv() {
+                        entries = newer;
+                    }
+                    let save = || -> std::io::Result<()> {
+                        if let Some(parent) = path.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        let bytes = serde_json::to_vec(&Saved { entries }).map_err(std::io::Error::other)?;
+                        crate::atomic_file::write(&path, &bytes)
+                    };
+                    if let Err(error) = save() {
+                        log::warn!("Cannot save the notification history: {error}");
+                    }
                 }
-            }
-        });
+            });
         match worker {
             Ok(worker) => History {
                 storage: Some(Storage {
@@ -223,7 +226,11 @@ impl History {
     /// Put an entry back (information acknowledged by mistake): it leaves the
     /// history and is returned to become a notification again.
     pub fn take(&mut self, index: usize) -> Option<Entry> {
-        let e = self.entries.remove(index)?;
+        // the order of `entries`: the early ones first
+        if index < self.early.len() {
+            return Some(self.early.remove(index));
+        }
+        let e = self.entries.remove(index - self.early.len())?;
         self.save();
         Some(e)
     }
@@ -232,10 +239,12 @@ impl History {
         self.early.iter().chain(self.entries.iter())
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.entries.len() + self.early.len()
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -258,8 +267,7 @@ impl History {
 pub fn search<'a>(history: &'a History, query: &str) -> Vec<(usize, &'a Entry)> {
     let q = query.trim().to_lowercase();
     history
-        .entries
-        .iter()
+        .entries()
         .enumerate()
         .filter(|(_, e)| q.is_empty() || e.title.to_lowercase().contains(&q) || e.body.to_lowercase().contains(&q))
         .collect()
@@ -329,7 +337,10 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert_eq!(h.entries().map(|e| e.title.as_str()).collect::<Vec<_>>(), vec!["early", "from disk"]);
+        assert_eq!(
+            h.entries().map(|e| e.title.as_str()).collect::<Vec<_>>(),
+            vec!["early", "from disk"]
+        );
         drop(h);
         let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
     }
@@ -344,7 +355,10 @@ mod tests {
             h.add(entry(now, &format!("n{i}")));
         }
         assert_eq!(h.len(), MAX_ENTRIES);
-        assert_eq!(h.entries().next().map(|e| e.title.as_str()), Some(format!("n{}", MAX_ENTRIES + 19).as_str()));
+        assert_eq!(
+            h.entries().next().map(|e| e.title.as_str()),
+            Some(format!("n{}", MAX_ENTRIES + 19).as_str())
+        );
     }
 
     #[test]

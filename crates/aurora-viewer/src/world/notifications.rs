@@ -430,15 +430,6 @@ impl Notifications {
         self.list.retain(|n| n.interactive());
     }
 
-    /// "Mark all read" of Aurora's center: information goes to the history,
-    /// what waits for an answer stays in "To do", marked read.
-    pub fn mark_all_read_to_history(&mut self) {
-        for n in self.list.iter_mut() {
-            n.read = true;
-        }
-        self.clear_info();
-    }
-
     /// Record what became of `id` before it leaves the list some other way
     /// than `respond` (a card answered in a conversation, a block).
     pub fn note(&mut self, id: u64, outcome: Outcome) {
@@ -804,7 +795,7 @@ mod tests {
         n.push_presence(from, "Orion is online.", true);
         assert!(n.take_departures().is_empty());
         n.respond(offer, Response::Accept, |_| Uuid::nil(), Uuid::nil());
-        n.mark_all_read_to_history();
+        n.clear_info();
         let gone = n.take_departures();
         assert_eq!(gone.len(), 2);
         let kept = gone.iter().find(|e| e.title.starts_with("Orion")).expect("offer");

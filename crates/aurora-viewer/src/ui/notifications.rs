@@ -35,6 +35,10 @@ pub struct NotifUi {
     last_seen: u64,
     /// Profile pictures the cards of friends and messages want.
     pub wanted_pics: HashSet<Uuid>,
+    /// The bell's rectangle (Aurora's center unrolls under it).
+    pub bell: Option<egui::Rect>,
+    /// Aurora's center (`ui::notification_center`).
+    pub center: super::notification_center::CenterUi,
 }
 
 /// What the cards of friends and messages draw with, and when toasts stay

@@ -27,7 +27,11 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
     s.lookat.aim = if aurora { Aim::Point } else { Aim::Direction };
-    s.notifications_style = if aurora { NotificationsStyle::Aurora } else { NotificationsStyle::Legacy };
+    s.notifications_style = if aurora {
+        NotificationsStyle::Aurora
+    } else {
+        NotificationsStyle::Legacy
+    };
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -437,6 +441,21 @@ mod tests {
         assert_eq!(s.notifications_style, NotificationsStyle::Aurora);
         assert_eq!(fresh.notifications_style, NotificationsStyle::Aurora);
         assert!(s.plates_friends_only_full);
+    }
+
+    /// The notifications' style is saved; a file from before it was added
+    /// gets the animated bell.
+    #[test]
+    fn the_notifications_style_is_saved() {
+        let s = Settings {
+            notifications_style: NotificationsStyle::Legacy,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&s).expect("settings serialize");
+        let back: Settings = serde_json::from_str(&json).expect("settings read back");
+        assert_eq!(back.notifications_style, NotificationsStyle::Legacy);
+        let old: Settings = serde_json::from_str("{}").expect("empty settings");
+        assert_eq!(old.notifications_style, NotificationsStyle::Aurora);
     }
 
     #[test]

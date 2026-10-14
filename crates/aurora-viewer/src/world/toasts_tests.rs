@@ -194,6 +194,12 @@ fn no_message_entry_in_sight_in_dnd_from_a_blocked_resident_or_when_turned_off()
     w.status.dnd = true;
     receive(&mut w, JANE, JANE, "hello", ImKind::Private, false);
     assert!(messages(&w).is_empty());
+    // Aurora's paused bell keeps it in "To do", silently
+    let mut w = world();
+    w.notifications.aurora = true;
+    w.status.dnd = true;
+    receive(&mut w, JANE, JANE, "hello", ImKind::Private, false);
+    assert_eq!(messages(&w).len(), 1);
     // a blocked resident in a group chat
     let mut w = world();
     w.notifications.toasts.group_im = true;

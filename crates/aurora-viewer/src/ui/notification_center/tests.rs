@@ -7,10 +7,7 @@ fn info(list: &mut Notifications, title: &str) -> u64 {
 }
 
 fn at(now: f64) -> Moment {
-    Moment {
-        now,
-        ..Moment::default()
-    }
+    Moment { now, ..Moment::default() }
 }
 
 /// A new card unrolls (not counted yet), runs out, folds into the bell and
@@ -114,10 +111,14 @@ fn do_not_disturb_pauses_the_bell() {
 fn a_friend_online_never_enters_the_center() {
     let mut list = Notifications::default();
     let mut c = CenterUi::default();
-    list.push_presence(Uuid::from_u128(2), "Orion is online.", true);
+    let id = list.push_presence(Uuid::from_u128(2), "Orion is online.", true);
     update(&list, &mut c, at(0.0), 30.0);
     assert!(c.peek.is_empty());
     assert_eq!(bell_count(&list, &c), 0);
+    // its own small toast, gone after a few seconds
+    assert_eq!(c.presence, vec![(id, 0.0)]);
+    update(&list, &mut c, at(PRESENCE + 1.0), 30.0);
+    assert!(c.presence.is_empty());
 }
 
 /// An answered card folds away at once and is not counted.

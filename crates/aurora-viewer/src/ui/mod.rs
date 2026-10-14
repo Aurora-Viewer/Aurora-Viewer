@@ -41,6 +41,7 @@ pub mod menu;
 pub mod minimap;
 pub mod nameplate;
 pub mod news;
+pub mod notification_center;
 pub mod notifications;
 pub(crate) mod numeric_drag;
 pub mod object_actions;

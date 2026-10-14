@@ -1787,6 +1787,13 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.world.notification_history = if self.demo {
+                    Default::default()
+                } else {
+                    crate::world::notification_history::History::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::notification_history::FILE),
+                    )
+                };
                 self.world.hover_height = if self.demo {
                     Default::default()
                 } else {
@@ -2888,6 +2895,50 @@ impl App {
             // RUST_LOG=info,ui_sound=debug (Firestorm UISndDebugSpamToggle)
             log::debug!(target: "ui_sound", "UISnd{} ({id})", s.entry().name);
             self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
+        }
+    }
+
+    /// Aurora's notification center (Preferences › Aurora › Notifications),
+    /// or Firestorm's toasts; AURORA_DEMO_NOTIFS=legacy shows the latter for
+    /// the session without saving it.
+    fn notifications_aurora(&self) -> bool {
+        if self.demo && crate::demo::notifs::mode().as_deref() == Some("legacy") {
+            return false;
+        }
+        self.settings.notifications_style == crate::settings::NotificationsStyle::Aurora
+    }
+
+    /// A click in the center besides an answer: the paused bell's banner, an
+    /// entry of the history.
+    fn on_notification_ask(&mut self, ctx: &egui::Context, ask: ui::notification_center::Ask) {
+        use crate::world::notification_history::Follow;
+        match ask {
+            ui::notification_center::Ask::EndDnd => self.world.set_dnd(false),
+            ui::notification_center::Ask::Follow(e) => match e.follow.clone() {
+                Follow::None => {}
+                Follow::Restore => {
+                    self.world.notifications.restore(&e);
+                }
+                Follow::Conversation(session) => {
+                    if !self.world.social.ims.iter().any(|s| s.other == session) {
+                        self.world.social.session_mut(session);
+                    }
+                    self.world.social.focus_im = Some(session);
+                    self.notif_ui.open = false;
+                    ui::notifications::open_conversations(ctx, &mut self.panels.chat);
+                }
+                Follow::Place(link) => {
+                    if let Some(l) = crate::slurl::parse(&link) {
+                        self.notif_ui.open = false;
+                        ui::context::request(ctx, ui::context::CtxAction::ShowPlace(l.region, l.pos));
+                    }
+                }
+                Follow::Inventory(item) => {
+                    self.inventory_ui.show_original(&self.world.inventory, item);
+                    self.panels.inventory = true;
+                    self.notif_ui.open = false;
+                }
+            },
         }
     }
 
@@ -5774,6 +5825,49 @@ impl App {
             }
         }
         if self.demo
+            && let Some(mode) = crate::demo::notifs::mode()
+        {
+            let agent = self.world.agent_id;
+            if self.frame_count == crate::demo::notifs::DND_AT && mode == "dnd" {
+                self.world.set_dnd(true);
+            }
+            for event in crate::demo::notifs::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+            if self.frame_count == crate::demo::notifs::ANSWER_AT && mode == "history" {
+                // a few cards answered or closed: they go to the history
+                let ids: Vec<(u64, bool)> = self.world.notifications.listed().map(|n| (n.id, n.interactive())).collect();
+                for (id, interactive) in ids.into_iter().take(4) {
+                    // the teleport offer refused (its place stays), the rest kept or read
+                    let lure = self
+                        .world
+                        .notifications
+                        .list
+                        .iter()
+                        .any(|n| n.id == id && matches!(n.data, crate::world::notifications::Data::Lure { .. }));
+                    let r = if lure {
+                        crate::world::notifications::Response::Decline
+                    } else if interactive {
+                        crate::world::notifications::Response::Accept
+                    } else {
+                        crate::world::notifications::Response::Dismiss
+                    };
+                    let (cmds, _) = self.world.respond_notification(id, r);
+                    for c in cmds.into_iter().filter(|c| !matches!(c, NetCommand::AcceptLure { .. })) {
+                        self.send(c);
+                    }
+                }
+            }
+            if self.frame_count == crate::demo::notifs::LIST_AT && matches!(mode.as_str(), "list" | "history" | "dnd") {
+                self.notif_ui.open = true;
+                if mode == "history" {
+                    self.notif_ui.center.tab = ui::notification_center::Tab::History;
+                }
+            }
+        }
+        if self.demo
             && let Some(mode) = crate::demo::toasts::mode()
         {
             let agent = self.world.agent_id;
@@ -7318,6 +7412,16 @@ impl App {
                         && self.world.parcel.as_ref().is_some_and(|pc| !pc.media_url.trim().is_empty()),
                     media_playing: self.media.parcel_playing(),
                 };
+                let aurora = self.notifications_aurora();
+                let bell = ui::bars::BellState {
+                    unread: if aurora {
+                        ui::notification_center::bell_count(&self.world.notifications, &self.notif_ui.center)
+                    } else {
+                        self.world.notifications.unread()
+                    },
+                    aurora,
+                    dnd: self.world.status.dnd,
+                };
                 let (bar, audio_action) = ui::bars::top_bars(
                     ui,
                     &p,
@@ -7329,7 +7433,7 @@ impl App {
                     &mut self.audio_ui,
                     media,
                     &mut self.notif_ui,
-                    self.world.notifications.unread(),
+                    bell,
                 );
                 a.bar = bar;
                 a.audio = Some(audio_action);
@@ -7817,23 +7921,45 @@ impl App {
                         n.read = true;
                     }
                 }
-                // nothing over the view in mouselook or the photo's full frame
-                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame();
+                // nothing over the view in mouselook or the photo's full frame;
+                // Firestorm's toasts wait in the bell in do not disturb too
+                let aurora = self.notifications_aurora();
+                let dnd = self.world.status.dnd;
+                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || (dnd && !aurora);
+                self.world.notifications.aurora = aurora;
                 let mut toast_env = ui::notifications::ToastEnv {
                     pics: &self.avatar_pics,
                     emoji: &mut self.emoji,
                     hidden: toasts_hidden,
                     message_seconds: f64::from(self.settings.im_toast_seconds),
                 };
-                let answers = ui::notifications::show(
-                    &ctx,
-                    &p,
-                    &self.skin.icons,
-                    &self.world.map.ratings,
-                    &mut self.world.notifications,
-                    &mut self.notif_ui,
-                    &mut toast_env,
-                );
+                let (answers, asks) = if aurora {
+                    ui::notification_center::show(
+                        &ctx,
+                        &p,
+                        &self.skin.icons,
+                        &self.world.map.ratings,
+                        &mut self.world.notifications,
+                        &mut self.world.notification_history,
+                        &mut self.notif_ui,
+                        &mut toast_env,
+                        dnd,
+                    )
+                } else {
+                    let answers = ui::notifications::show(
+                        &ctx,
+                        &p,
+                        &self.skin.icons,
+                        &self.world.map.ratings,
+                        &mut self.world.notifications,
+                        &mut self.notif_ui,
+                        &mut toast_env,
+                    );
+                    (answers, Vec::new())
+                };
+                for ask in asks {
+                    self.on_notification_ask(&ctx, ask);
+                }
                 for (id, r) in answers {
                     if matches!(r, crate::world::notifications::Response::Open) {
                         let presence = self
@@ -7862,6 +7988,7 @@ impl App {
                         ctx.open_url(egui::OpenUrl::new_tab(u));
                     }
                 }
+                self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
                 let mut open = self.panels.about_land;
                 // the mini-map's image of the selection's region, for the header
@@ -8887,6 +9014,11 @@ impl ApplicationHandler for App {
             // captures: AURORA_DEMO_NOTIF=1 opens the notification list
             if std::env::var_os("AURORA_DEMO_NOTIF").is_some() {
                 self.notif_ui.open = true;
+            }
+            // AURORA_DEMO_NOTIFS: nothing else open over the corners
+            if crate::demo::notifs::mode().is_some() {
+                self.panels.perf = false;
+                self.panels.chat = false;
             }
             // AURORA_DEMO_TOASTS: the toasts arrive with the Conversations
             // window closed, or minimized for `minimized`

@@ -150,6 +150,9 @@ pub struct World {
     pub hud_zoom: f32,
     pub hud_scales: hud_scale::HudScales,
     pub hover_height: hover_height::HoverHeight,
+    /// What left the notification list, kept per account (the center's
+    /// History).
+    pub notification_history: notification_history::History,
     pub login: Option<Arc<LoginResponse>>,
     pub agent_id: Uuid,
     pub regions: HashMap<RegionHandle, Region>,
@@ -344,6 +347,7 @@ impl World {
             hud_zoom: 1.0,
             hud_scales: Default::default(),
             hover_height: Default::default(),
+            notification_history: Default::default(),
             ui_sounds: Vec::new(),
             im_messages: Vec::new(),
             balance_changes: Vec::new(),
@@ -2655,6 +2659,15 @@ impl World {
         self.acknowledge_read_messages();
         self.social.focus_im = Some(session);
         Some(session)
+    }
+
+    /// Each frame: the file of the history once read, and what left the
+    /// notification list since.
+    pub fn record_notification_history(&mut self) {
+        self.notification_history.poll();
+        for e in self.notifications.take_departures() {
+            self.notification_history.add(e);
+        }
     }
 
     /// The message entries whose conversation has been read leave the bell.

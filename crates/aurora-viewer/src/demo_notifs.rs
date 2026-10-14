@@ -85,7 +85,15 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
     use super::{DEMO_NOVA, DEMO_TESS};
     // the mockup's times from frame 700, at 60 frames a second
     match frame {
-        700 => vec![im(agent, DEMO_NOVA, "Nova Exemple", 0, Uuid::nil(), aurora_i18n::tr!("demo-toast-hello"), b"")],
+        700 => vec![im(
+            agent,
+            DEMO_NOVA,
+            "Nova Exemple",
+            0,
+            Uuid::nil(),
+            aurora_i18n::tr!("demo-toast-hello"),
+            b"",
+        )],
         1190 => vec![NetEvent::FriendsOnline {
             ids: vec![friend()],
             online: true,
@@ -93,11 +101,27 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
         1270 => vec![lure(agent)],
         1325 => vec![gift(agent, 1)],
         // the burst of five, 0.45 s apart
-        2110 => vec![im(agent, DEMO_NOVA, "Nova Exemple", 0, Uuid::nil(), aurora_i18n::tr!("demo-toast-are-you-there"), b"")],
+        2110 => vec![im(
+            agent,
+            DEMO_NOVA,
+            "Nova Exemple",
+            0,
+            Uuid::nil(),
+            aurora_i18n::tr!("demo-toast-are-you-there"),
+            b"",
+        )],
         2137 => vec![notice(agent, aurora_i18n::tr!("demo-notifs-group-notice"))],
         2164 => vec![notice(agent, aurora_i18n::tr!("demo-notifs-paid"))],
         2191 => vec![gift(agent, 2)],
-        2218 => vec![im(agent, DEMO_TESS, "Tess Touch", 0, Uuid::nil(), aurora_i18n::tr!("demo-toast-hello"), b"")],
+        2218 => vec![im(
+            agent,
+            DEMO_TESS,
+            "Tess Touch",
+            0,
+            Uuid::nil(),
+            aurora_i18n::tr!("demo-toast-hello"),
+            b"",
+        )],
         _ => Vec::new(),
     }
 }
