@@ -1777,10 +1777,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   buttons on one line), the layer pills at the top right (greyed when zoomed
   out), zoom / my position / home at the bottom right; the panels fade while
   the map is dragged and never let a click through to the map.
-  `beacon` shows a nearby destination without the world-map window:
-  the
-  bright column stays visible up to the screen edge, with a pin and a
-  readable location / distance label. Hover the pin or its label for
+  `beacon` shows a nearby destination without the world-map window: the
+  bright upper column stays visible up to the screen edge, with a pin and a
+  readable location / distance label. A second column descends from the
+  destination to altitude zero, as in Firestorm; with the default skin it
+  is turquoise, while the upper column is red. Both use the same glow and
+  viewport clipping. Hover the pin or its label for
   "Click to remove beacon"; click either to remove it from the scene
   and mini-map. `beacon-offscreen` puts the destination behind the camera:
   a clickable direction arrow and its label stay within the screen.

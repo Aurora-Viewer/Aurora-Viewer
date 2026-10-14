@@ -1303,13 +1303,18 @@ pub fn draw_beacon(ctx: &egui::Context, p: &Palette, world: &World, proj: &super
     let inner = screen.shrink2(vec2(40.0, 60.0));
     let clip = proj.view_proj * base.extend(1.0);
     let (at, on_screen, direction) = beacon_marker(clip, inner, proj)?;
-    if let Some([a, b]) = beacon_segment(clip, proj.view_proj * (base + Vec3::Z * 200.0).extend(1.0), proj) {
-        // The summit often lies above the viewport. Clip the column before
-        // perspective division instead of dropping it with Projector::project.
-        painter.line_segment([a, b], Stroke::new(16.0, p.danger.gamma_multiply(0.12)));
-        painter.line_segment([a, b], Stroke::new(8.0, p.danger.gamma_multiply(0.25)));
-        painter.line_segment([a, b], Stroke::new(3.0, p.danger));
-        painter.line_segment([a, b], Stroke::new(1.0, p.on_accent.gamma_multiply(0.85)));
+    // LLTracker::renderBeacon draws two colours: above the destination and
+    // below it down to altitude zero. Clip each column before perspective
+    // division so a summit or a foot outside the viewport keeps its beam.
+    for (end, color) in [(base + Vec3::Z * 200.0, p.danger), (Vec3::new(base.x, base.y, 0.0), p.teal)] {
+        if end != base
+            && let Some([a, b]) = beacon_segment(clip, proj.view_proj * end.extend(1.0), proj)
+        {
+            painter.line_segment([a, b], Stroke::new(16.0, color.gamma_multiply(0.12)));
+            painter.line_segment([a, b], Stroke::new(8.0, color.gamma_multiply(0.25)));
+            painter.line_segment([a, b], Stroke::new(3.0, color));
+            painter.line_segment([a, b], Stroke::new(1.0, p.on_accent.gamma_multiply(0.85)));
+        }
     }
     let icon_center = if on_screen { at - vec2(0.0, 19.0) } else { at };
     let icon_rect = Rect::from_center_size(icon_center, vec2(32.0, 32.0));
@@ -1440,14 +1445,15 @@ mod beacon_tests {
     }
 
     #[test]
-    fn column_keeps_its_visible_part_when_the_summit_is_above_the_screen() {
+    fn column_keeps_its_visible_part_above_and_below_the_screen() {
         for ppp in [1.0, 1.5, 2.0] {
-            let [base, top] =
-                beacon_segment(Vec4::new(0.2, -0.4, 0.0, 1.0), Vec4::new(0.2, 4.0, 0.0, 1.0), &projector(ppp)).expect("visible column");
-            assert!((base.x - 960.0 / ppp).abs() < 0.01);
-            assert!((base.y - 630.0 / ppp).abs() < 0.01);
-            assert!((top.x - base.x).abs() < 0.01);
-            assert!(top.y.abs() < 0.01);
+            for (end, edge_y) in [(Vec4::new(0.2, 4.0, 0.0, 1.0), 0.0), (Vec4::new(0.2, -4.0, 0.0, 1.0), 900.0)] {
+                let [base, edge] = beacon_segment(Vec4::new(0.2, -0.4, 0.0, 1.0), end, &projector(ppp)).expect("visible column");
+                assert!((base.x - 960.0 / ppp).abs() < 0.01);
+                assert!((base.y - 630.0 / ppp).abs() < 0.01);
+                assert!((edge.x - base.x).abs() < 0.01);
+                assert!((edge.y - edge_y / ppp).abs() < 0.01);
+            }
         }
     }
 
