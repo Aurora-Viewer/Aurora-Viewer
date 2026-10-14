@@ -12,7 +12,7 @@ fn settings_only_show_permissions_and_payment_and_sharing_clicks_are_per_type() 
     };
     let mut prefs = Preferences::default();
     let frame = |imports: &mut Imports, prefs: &mut Preferences, events| {
-        ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
                 events,
@@ -21,7 +21,9 @@ fn settings_only_show_permissions_and_payment_and_sharing_clicks_are_per_type() 
             |ui| {
                 show(ui.ctx(), &theme.palette(), imports, prefs, &world, &Default::default());
             },
-        )
+        );
+        output.textures_delta.clear();
+        output
     };
     for _ in 0..8 {
         drop(frame(&mut imports, &mut prefs, Vec::new()));
@@ -106,7 +108,7 @@ fn mesh_palette_uses_the_shared_picker_and_applies_every_color_without_rebuildin
     let mut prefs = Preferences::default();
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     let frame = |imports: &mut Imports, prefs: &mut Preferences, events| {
-        ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
                 events,
@@ -115,7 +117,9 @@ fn mesh_palette_uses_the_shared_picker_and_applies_every_color_without_rebuildin
             |ui| {
                 show(ui.ctx(), &theme.palette(), imports, prefs, &world, &Default::default());
             },
-        )
+        );
+        output.textures_delta.clear();
+        output
     };
     let events = |pos, pressed| {
         vec![
@@ -507,7 +511,7 @@ fn sound_split_and_amplification_controls_fit_inside_the_first_opened_window() {
     };
     let mut prefs = Preferences::default();
     let mut frame = || {
-        ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
                 ..Default::default()
@@ -515,7 +519,9 @@ fn sound_split_and_amplification_controls_fit_inside_the_first_opened_window() {
             |ui| {
                 show(ui.ctx(), &theme.palette(), &mut imports, &mut prefs, &world, &Default::default());
             },
-        )
+        );
+        output.textures_delta.clear();
+        output
     };
     for _ in 0..60 {
         drop(frame());
