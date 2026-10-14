@@ -190,7 +190,8 @@ when unfocused") is ignored during a screenshot.
   fixed camera, to compare consecutive screenshots); `drift`: the same
   close-up, then a very slow orbit (one fiftieth of a mouse pixel per frame)
   until frame 1200; press on our own name plate then drag (steering);
-  entering / leaving mouselook; wheel; pulling back in flight; sitting on a
+  entering / leaving mouselook (frame 650 shows "Press Esc to return to
+  world view" above the bottom bar); wheel; pulling back in flight; sitting on a
   seat that rotates, with a seat camera and an animation started by a linked
   prim (frame 300), then standing up and a request to stop it (frame 700;
   `camera/demo.rs`).

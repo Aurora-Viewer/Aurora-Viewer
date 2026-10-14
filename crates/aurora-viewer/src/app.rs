@@ -22,7 +22,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{Window, WindowId};
 
 mod ao;
 mod bug_report;
@@ -31,6 +31,7 @@ mod chat_commands;
 mod click_pick;
 mod color_picker;
 mod context_menu;
+mod cursor_hold;
 mod hover_height;
 mod hud_drag;
 mod imports;
@@ -180,9 +181,8 @@ pub struct App {
     prev_dt: f32,
     start: Instant,
     right_drag: bool,
-    cursor_grabbed: bool,
-    /// Where the cursor was when the camera took it (physical pixels).
-    grab_origin: Option<(f32, f32)>,
+    /// The system cursor hidden and locked by mouselook or a camera drag.
+    cursor_hold: cursor_hold::CursorHold,
     numeric_drag: ui::numeric_drag::NumericDrag,
     alt: bool,
     left_down: bool,
@@ -574,8 +574,7 @@ impl App {
             prev_dt: 0.0,
             start: Instant::now(),
             right_drag: false,
-            cursor_grabbed: false,
-            grab_origin: None,
+            cursor_hold: Default::default(),
             numeric_drag: Default::default(),
             alt: false,
             left_down: false,
@@ -1786,43 +1785,6 @@ impl App {
         } else {
             ToolMode::from_mods(self.ctrl, self.shift)
         })
-    }
-
-    fn set_mouselook_grab(&mut self, on: bool) {
-        let Some(g) = &self.gfx else {
-            return;
-        };
-        if on == self.cursor_grabbed {
-            return;
-        }
-        if on && self.clicks.scripted() {
-            // AURORA_DEMO_CLICKS: several camera drags a second must not
-            // take the real cursor of someone using the PC
-            return;
-        }
-        if on {
-            let ok = g
-                .window
-                .set_cursor_grab(CursorGrabMode::Locked)
-                .or_else(|_| g.window.set_cursor_grab(CursorGrabMode::Confined))
-                .is_ok();
-            g.window.set_cursor_visible(false);
-            self.cursor_grabbed = ok;
-            self.grab_origin = ok.then_some(self.cursor_pos);
-        } else {
-            let _ = g.window.set_cursor_grab(CursorGrabMode::None);
-            // LLToolCamera::handleMouseUp (lltoolfocus.cpp) puts the cursor
-            // back where the drag started: a confined cursor moved while
-            // hidden.
-            if let Some((x, y)) = self.grab_origin.take() {
-                let _ = g
-                    .window
-                    .set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
-                self.cursor_pos = (x, y);
-            }
-            g.window.set_cursor_visible(true);
-            self.cursor_grabbed = false;
-        }
     }
 
     fn toggle_mouselook(&mut self) {
@@ -3938,7 +3900,7 @@ impl App {
                 ui::exit::Action::Cancel => {}
             }
         }
-        if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_grabbed {
+        if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_hold.held() {
             self.set_mouselook_grab(true);
         }
         let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
@@ -5015,7 +4977,7 @@ impl App {
         if let Some(anchor) = self.numeric_drag.after(
             &ctx,
             &full.platform_output.events,
-            self.focused && !self.cursor_grabbed && !self.exit_prompt.open,
+            self.focused && !self.cursor_hold.held() && !self.exit_prompt.open,
         ) {
             let position = winit::dpi::PhysicalPosition::new(anchor.x * ctx.pixels_per_point(), anchor.y * ctx.pixels_per_point());
             if (self.cursor_pos.0 - position.x).abs() > 0.5 || (self.cursor_pos.1 - position.y).abs() > 0.5 {
@@ -5138,7 +5100,7 @@ impl App {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
             full.platform_output.cursor_image = self.cursors.pipette();
         }
-        if self.cursor_grabbed {
+        if self.cursor_hold.held() {
             // the camera holds the hidden cursor: a cursor change from egui
             // would show it again in the middle of the drag
             full.platform_output.cursor_icon = egui::CursorIcon::None;
@@ -6749,6 +6711,20 @@ impl App {
                     let c = ctx.content_rect().center();
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("xhair")));
                     painter.circle_stroke(c, 4.0, egui::Stroke::new(1.5, p.ink));
+                    if self.settings.camera.show_mouselook_instructions {
+                        // LLViewerWindow::drawMouselookInstructions: the way
+                        // out, half transparent above the bottom bar (the
+                        // hidden cursor cannot reach its button)
+                        let key = self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0]
+                            .as_ref()
+                            .map_or_else(|| aurora_i18n::tr!("keybinds-esc").to_string(), |b| b.label());
+                        let text = aurora_i18n::tr!("app-mouselook-leave", key = key);
+                        let at = egui::pos2(c.x, bottom_top - 16.0);
+                        let font = egui::FontId::proportional(18.0);
+                        let shadow = at + egui::vec2(1.0, 1.0);
+                        painter.text(shadow, egui::Align2::CENTER_BOTTOM, &text, font.clone(), p.navy.gamma_multiply(0.6));
+                        painter.text(at, egui::Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.6));
+                    }
                 }
                 if self.skin.layout.chat_toasts && !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)) {
                     ui::chat::toasts(
@@ -8777,6 +8753,9 @@ impl ApplicationHandler for App {
                 self.mic_button_held = false;
                 self.drop_clicks();
                 self.on_left_release();
+                // LLViewerWindow::handleFocusLost: the cursor shown and free
+                // again, also in mouselook (taken back with the focus)
+                self.release_cursor(true);
                 if self.temp_run.take().is_some() && !self.always_run {
                     self.send(NetCommand::SetAlwaysRun(false));
                 }

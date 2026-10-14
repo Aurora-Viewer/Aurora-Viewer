@@ -92,6 +92,8 @@ pub struct CameraSettings {
     pub enable_mouselook: bool,
     /// FSScrollWheelExitsMouselook.
     pub wheel_exits_mouselook: bool,
+    /// FSShowMouselookInstructions: "Press Esc to return to world view".
+    pub show_mouselook_instructions: bool,
 }
 
 impl Default for CameraSettings {
@@ -117,6 +119,7 @@ impl Default for CameraSettings {
             track_focus_object: true,
             enable_mouselook: true,
             wheel_exits_mouselook: true,
+            show_mouselook_instructions: true,
         }
     }
 }
