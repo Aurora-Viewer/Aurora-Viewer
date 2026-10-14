@@ -16,6 +16,7 @@ pub mod color_picker;
 pub mod colors;
 pub mod contacts;
 pub mod context;
+pub mod controls;
 pub mod debug_overlay;
 pub mod display_name;
 pub mod emoji;
@@ -109,6 +110,11 @@ pub struct Panels {
     pub places: bool,
     /// "Search" (Firestorm's legacy search floater, Ctrl+F).
     pub search: bool,
+    /// The Controls window on its Camera tab (Firestorm's camera window
+    /// with Preferences › Aurora), and on its Movement tab (the movement
+    /// window).
+    pub camera_controls: bool,
+    pub movement_controls: bool,
     /// Navigation bar location being edited (text) and "just opened" (select all).
     pub nav_edit: Option<String>,
     pub nav_edit_new: bool,
@@ -140,6 +146,8 @@ impl Panels {
             about_land: false,
             places: false,
             search: false,
+            camera_controls: false,
+            movement_controls: false,
             nav_edit: None,
             nav_edit_new: false,
         }

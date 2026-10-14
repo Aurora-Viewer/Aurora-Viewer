@@ -118,7 +118,7 @@ impl App {
     /// chosen, the action runs and the world does not get the click. Alt,
     /// Ctrl and Shift keep their meaning (camera, grab).
     pub(super) fn plate_press(&mut self, hit: Option<Vec3>, ray: Option<(Vec3, Vec3)>) -> bool {
-        if self.alt || self.ctrl || self.shift || self.classic_name_tags() {
+        if self.alt || self.object_view || self.ctrl || self.shift || self.classic_name_tags() {
             return false;
         }
         let action = self.plate_click_action();
