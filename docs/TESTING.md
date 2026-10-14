@@ -82,6 +82,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
+| `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
 
 The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
@@ -96,6 +97,12 @@ already saved are kept.
 (0 to 4000 m). Used to see what single precision does to the frame at
 height: between 2048 and 4096 m, a position only varies in steps of
 0.24 mm, about one pixel in a close-up.
+
+`AURORA_GRAPHICS_PRESET` writes the quality settings of a level of
+Preferences › Graphics › Presets (`graphics_presets.rs`) at start, as a
+click on it would, and they are saved with the profile; the single
+overrides of the table then still apply on top (`AURORA_AA=3` with a level
+reads as "Custom" in the page).
 
 `AURORA_AA`: 0 none, 1 FXAA, 2 to 4 MSAA 2x / 4x / 8x, 5 TAA, 6 SMAA. Without
 it, the demo keeps the setting saved in its profile: 6 (SMAA) for a new
@@ -1436,7 +1443,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   element at once (conversations, name tags, look-at targets with
   `AURORA_DEMO_LOOKAT=own`, gaze under the cursor). `<section>:end` (other
   than `8`) opens the page scrolled to its end, for example `13:end` for the
-  Avatar plates group.
+  Avatar plates group. `<section>:reset` (other than `8`) opens the "Reset
+  this section" confirmation of that page, for example `0:reset` ("Reset
+  Graphics?"). `0` shows the Presets row at the top of the Graphics page:
+  with `AURORA_GRAPHICS_PRESET` its level is lit, otherwise (the defaults)
+  no segment is and "Custom" follows the row.
   With `AURORA_DEMO_LOGIN` (for example `empty` or `cards`) the preferences
   open over the login screen, as its top right cogwheel does: every page
   works before login, and Chat › Conversation logs says that the folder

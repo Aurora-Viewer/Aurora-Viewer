@@ -476,7 +476,14 @@ impl App {
             // Exercise a first launch without changing the user's bindings.
             settings.keybinds = Default::default();
         }
-        // test overrides (used by automated captures)
+        // test overrides (used by automated captures); the graphics level
+        // first, so that the single settings below can still change it
+        if let Some(level) = std::env::var("AURORA_GRAPHICS_PRESET")
+            .ok()
+            .and_then(|v| crate::graphics_presets::Preset::from_name(&v))
+        {
+            level.apply(&mut settings);
+        }
         if let Some(v) = std::env::var("AURORA_FPS_LIMIT")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
@@ -6810,6 +6817,14 @@ impl App {
             self.world.system_message(aurora_i18n::tr!("app-all-settings-have-been-reset"));
             ui::layout::forget(ctx);
         }
+        if let Some(tab) = res.reset_section {
+            if tab == 0 {
+                self.panels.time_of_day = self.settings.time_of_day;
+            }
+            self.settings.save();
+            self.world
+                .system_message(aurora_i18n::tr!("app-section-settings-reset", section = ui::options::tab_name(tab)));
+        }
         if self.panels.settings && !open {
             self.settings.save();
         }
@@ -8135,6 +8150,9 @@ impl ApplicationHandler for App {
                 self.options_ui.tab = tab.parse().unwrap_or(0);
                 if self.options_ui.tab == 8 {
                     self.options_ui.shortcut_filter = filter.to_owned();
+                } else if filter == "reset" {
+                    // the "Reset this section" confirmation, for captures
+                    self.options_ui.ask_reset_section();
                 } else {
                     self.options_ui.scroll_to_end = filter == "end";
                 }

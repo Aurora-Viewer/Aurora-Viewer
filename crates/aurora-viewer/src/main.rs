@@ -19,6 +19,7 @@ mod demo;
 mod frame_par;
 mod frame_profile;
 mod gestures;
+mod graphics_presets;
 mod imports;
 mod interaction;
 mod keybinds;
