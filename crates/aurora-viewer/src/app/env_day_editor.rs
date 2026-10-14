@@ -4,8 +4,9 @@
 //! and LLFloaterEditEnvironmentBase, originally LGPL 2.1).
 
 use super::App;
-use crate::ui::env_day_editor::DayAction;
+use crate::ui::env_day_editor::{DayAction, DayContext, NoTransLoad};
 use crate::world::env_day_edit::DayDoc;
+use crate::world::env_edit::FLAG_NOTRANS;
 use crate::world::env_edit::{Rights, SettingsDoc};
 use aurora_net::NetCommand;
 use uuid::Uuid;
@@ -29,6 +30,13 @@ impl App {
             self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-unable-to-edit").into(), true));
             return;
         }
+        // LLSettingsBridgeAction opens the inventory context
+        self.day_editor.context = DayContext::Inventory;
+        self.day_editor.committed = None;
+        self.day_editor.timing = (-1, -1);
+        self.day_editor.day_length = None;
+        self.day_editor.altitudes = None;
+        self.day_editor.wait_default = false;
         self.day_editor.start_loading(item);
         if !self.env_scan {
             self.env_scan = true;
@@ -67,12 +75,31 @@ impl App {
         }
         self.day_fetch = None;
         let mut out = Vec::new();
+        // onAssetLoadedForInsertion: settings that cannot be transferred or
+        // copied make the edited day no-transfer, after SettingsMakeNoTrans
+        let restricted = self
+            .world
+            .inventory
+            .items
+            .get(&item)
+            .is_some_and(|it| it.owner_mask & 0x2000 == 0 || it.owner_mask & 0x8000 == 0);
+        let edited_no_trans = match self.day_editor.item.and_then(|id| self.world.inventory.items.get(&id)) {
+            Some(it) => it.owner_mask & 0x2000 == 0,
+            None => self.day_editor.doc.as_ref().is_some_and(|d| d.flags() & FLAG_NOTRANS != 0),
+        };
+        let make_no_trans = restricted && !edited_no_trans;
+        // the question's "ignore": its default answer, Yes, without asking
+        let ask = make_no_trans && self.settings.confirm_no_transfer_settings;
         match (purpose, result) {
             (DayFetch::Frame, Ok(data)) => match SettingsDoc::from_asset(data) {
+                Some(frame) if ask => self.day_editor.no_trans_ask = Some(NoTransLoad::Frame(frame)),
+                Some(frame) if make_no_trans => self.day_editor.accept_no_trans(NoTransLoad::Frame(frame), &mut out),
                 Some(frame) => self.day_editor.put_loaded_frame(&frame, &mut out),
                 None => self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-load-failed", name = ""), true)),
             },
             (DayFetch::Track, Ok(data)) => match DayDoc::from_asset(data) {
+                Some(day) if ask => self.day_editor.no_trans_ask = Some(NoTransLoad::Track(day)),
+                Some(day) if make_no_trans => self.day_editor.accept_no_trans(NoTransLoad::Track(day), &mut out),
                 Some(day) => self.day_editor.track_source = Some(day),
                 None => self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-load-failed", name = ""), true)),
             },
@@ -85,7 +112,7 @@ impl App {
     }
 
     /// The edit slot shows the day at the editor's time cursor.
-    fn show_day_edit(&mut self) {
+    pub(super) fn show_day_edit(&mut self) {
         if let Some((sky, water)) = self.day_editor.shown() {
             self.world.eep.set_edit(sky, water);
         }
@@ -98,20 +125,50 @@ impl App {
             self.day_editor.wait_item = None;
             self.day_editor_load(item);
         }
+        self.day_editor_imported();
         if !self.day_editor.open {
             return;
         }
-        let can_inventory =
-            self.demo
-                || self.world.main_region.and_then(|h| self.world.regions.get(&h)).is_some_and(|r| {
-                    r.caps.contains_key("UpdateSettingsAgentInventory") && r.caps.contains_key("UpdateSettingsTaskInventory")
-                });
-        let actions = self.day_editor.show(ctx, p, &self.world.inventory, &self.ui_images, can_inventory);
+        self.day_editor_default();
+        self.day_editor_follow_parcel();
+        if !self.day_editor.open {
+            return;
+        }
+        self.day_editor.extended = self.extended_environment();
+        let access = self.env_editor_access();
+        self.day_editor.beacons = [self.settings.sun_beacon, self.settings.moon_beacon];
+        let actions = self.day_editor.show(ctx, p, &self.world.inventory, &self.ui_images, access);
+        if self.day_editor.open {
+            self.set_env_beacons(self.day_editor.beacons);
+        }
+        if std::mem::take(&mut self.day_editor.stop_asking_no_trans) {
+            self.settings.confirm_no_transfer_settings = false;
+            self.settings.save();
+        }
         if self.day_editor.show_picker(ctx, p, &mut self.world, &self.ui_images) {
             self.show_day_edit();
         }
         for action in actions {
+            // onButtonApply: nothing leaves with a local texture
+            let checked = matches!(
+                action,
+                DayAction::Save
+                    | DayAction::SaveAsAsk
+                    | DayAction::ApplyLocal
+                    | DayAction::ApplyParcel
+                    | DayAction::ApplyRegion
+                    | DayAction::Commit
+            );
+            if checked && !self.day_editor_settings_ok() {
+                continue;
+            }
             match action {
+                DayAction::Import => self.day_editor_import(),
+                DayAction::SaveAsAsk => self.day_editor.ask_save_as(),
+                DayAction::ApplyParcel => self.day_editor_apply(false),
+                DayAction::ApplyRegion => self.day_editor_apply(true),
+                DayAction::Commit if !self.day_editor.commit_lost => self.day_editor_commit(),
+                DayAction::Commit => {}
                 DayAction::Changed => self.show_day_edit(),
                 DayAction::LoadFrame(item) | DayAction::LoadTrack(item) => {
                     let purpose = if matches!(action, DayAction::LoadFrame(_)) {
@@ -224,6 +281,20 @@ impl App {
                 let folder = Uuid::from_u128(item.as_u128() & !0xFFFF | crate::demo::env::USER_SETTINGS);
                 self.world.inventory.request(folder);
                 self.day_editor.wait_item = Some(item);
+            }
+            // day-notrans: the library's no-transfer sky loaded at 60 %
+            // (SettingsMakeNoTrans asks first)
+            450 if scenario == "day-notrans" => {
+                let sky = crate::demo::env::no_transfer_sky_item();
+                self.world.inventory.request(crate::demo::env::folder_of(sky));
+            }
+            900 if scenario == "day-notrans" => {
+                self.day_editor.set_pos(0.6);
+                let sky = crate::demo::env::no_transfer_sky_item();
+                if let Some(it) = self.world.inventory.items.get(&sky).cloned() {
+                    self.day_fetch = Some((sky, DayFetch::Frame));
+                    self.send(NetCommand::PreviewInventoryItem(it));
+                }
             }
             900 if scenario == "day-play" => self.day_editor.start_play(),
             900 if scenario == "day-edit" => {

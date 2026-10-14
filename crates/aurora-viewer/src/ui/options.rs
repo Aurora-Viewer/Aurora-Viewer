@@ -1774,6 +1774,17 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     |ui| toggle(ui, p, &mut s.confirm_teleports),
                 );
             });
+            // the "ignore" box of SettingsMakeNoTrans (Firestorm: Preferences ›
+            // Notifications › Alerts)
+            group(ui, p, aurora_i18n::tr!("common-environment"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-confirm-no-transfer-settings"),
+                    aurora_i18n::tr!("ui-options-confirm-no-transfer-settings-help"),
+                    |ui| toggle(ui, p, &mut s.confirm_no_transfer_settings),
+                );
+            });
             // FSConfirmPayments / FSPaymentConfirmationThreshold
             // (panel_preferences_firestorm.xml)
             group(ui, p, aurora_i18n::tr!("ui-options-payments"), |ui| {

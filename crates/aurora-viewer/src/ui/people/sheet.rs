@@ -1,0 +1,440 @@
+//! The sheet of a person at the right of People (the mock-up's "fiche"):
+//! who they are, the actions of the avatar menu as buttons, the rights of a
+//! friendship (the ones we grant, changed with a switch as the contact
+//! list's boxes change them, applyRightsToFriends; the ones we receive),
+//! what the radar knows of them, then the map, the payment and the
+//! friendship at the bottom. "…" holds the rest of the avatar menu
+//! (menu_people_nearby.xml): nothing of Firestorm's menus is lost.
+
+use super::nearby::{Band, distance_text, seen_text};
+use super::radar::{Age, Payment, RadarData, Row};
+use super::{PeopleAction, PeopleUi};
+use crate::theme::Palette;
+use crate::ui::context::{self, AvatarList, CtxAction};
+use crate::ui::widgets::{self, ActionKind};
+use crate::ui::{menu, presence};
+use crate::world::World;
+use crate::world::social::{Friend, rights};
+use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
+use uuid::Uuid;
+
+/// Height of the buttons, of the bar of buttons at the bottom, and of a line
+/// of a section.
+const BUTTON_H: f32 = 28.0;
+const LINE_H: f32 = 25.0;
+/// Room around the content.
+const PAD_X: f32 = 12.0;
+const PAD_Y: f32 = 10.0;
+/// The window's margin the sheet's face covers: 10 points, its outline
+/// left alone.
+const SHEET_BLEED: f32 = 9.0;
+
+/// The rights we grant, as the switches say them.
+const GRANTS: [(i32, &str, &str); 3] = [
+    (rights::ONLINE_STATUS, "eye-filled", "ui-profile-see-when-i-am-online"),
+    (rights::MAP_LOCATION, "map-pin-filled", "people-sheet-grant-map"),
+    (
+        rights::MODIFY_OBJECTS,
+        "pencil-filled",
+        "ui-profile-modify-delete-or-take-my-objects",
+    ),
+];
+
+/// The same rights, received.
+const RECEIVED: [(i32, &str, &str); 3] = [
+    (rights::ONLINE_STATUS, "eye-filled", "people-sheet-has-online"),
+    (rights::MAP_LOCATION, "map-pin-filled", "people-sheet-has-map"),
+    (rights::MODIFY_OBJECTS, "pencil-filled", "ui-people-i-can-modify-their-objects"),
+];
+
+fn semibold(ui: &egui::Ui, size: f32, color: Color32) -> egui::TextFormat {
+    crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), size, color)
+}
+
+/// The sheet of `id` over the whole of `ui`; `row` is what the radar shows
+/// of them, when they are around. Returns true when its cross was clicked.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn show(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    data: &RadarData,
+    st: &mut PeopleUi,
+    id: Uuid,
+    row: Option<&Row>,
+    actions: &mut Vec<PeopleAction>,
+) -> bool {
+    let rect = ui.max_rect();
+    // a quieter face than the list's, out to the window's right and bottom
+    // edges (over the frame's margins, inside its outline)
+    let face = Rect::from_min_max(rect.min, rect.max + Vec2::splat(SHEET_BLEED));
+    let painter = ui.painter().with_clip_rect(face);
+    painter.rect_filled(face, 0.0, p.bar.gamma_multiply(0.5));
+    painter.vline(rect.left(), face.y_range(), widgets::divider_stroke(p));
+    let inner = rect.shrink2(Vec2::new(PAD_X, PAD_Y));
+    let friend = world.social.friends.iter().find(|f| f.id == id).cloned();
+    let (bottom, content) = {
+        let top = inner.bottom() - BUTTON_H;
+        (
+            Rect::from_min_max(Pos2::new(inner.left(), top), inner.max),
+            Rect::from_min_max(inner.min, Pos2::new(inner.right(), top - 8.0)),
+        )
+    };
+    let mut closed = false;
+    let mut body = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(("people-sheet-body", id))
+            .max_rect(content)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    egui::ScrollArea::vertical()
+        .id_salt(("people-sheet-scroll", id))
+        .auto_shrink([false, false])
+        .show(&mut body, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if !data.pics.contains_key(&id) {
+                st.want_pic(id, ui.input(|i| i.time));
+            }
+            closed = head(ui, p, world, data, id, row);
+            ui.add_space(10.0);
+            buttons(ui, p, world, st, id, friend.as_ref(), actions);
+            if let Some(f) = &friend {
+                let name = world.social.display_name_of(&id);
+                ui.add_space(12.0);
+                granted(ui, p, f, &name, actions);
+                ui.add_space(10.0);
+                received(ui, p, f, &name);
+            }
+            ui.add_space(10.0);
+            match row {
+                Some(row) => nearby(ui, p, data, row),
+                None => {
+                    ui.label(egui::RichText::new(aurora_i18n::tr!("people-sheet-gone")).size(12.0).color(p.muted));
+                }
+            }
+        });
+    let mut foot = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(("people-sheet-foot", id))
+            .max_rect(bottom)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    footer(&mut foot, p, world, id, row.is_some(), friend.as_ref());
+    closed
+}
+
+/// The picture with its status dot, the names, and the cross.
+fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uuid, row: Option<&Row>) -> bool {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::hover());
+    let names = &world.social.avatar_names;
+    let display = world.social.display_name_of(&id);
+    let disc = Rect::from_center_size(Pos2::new(rect.left() + 20.0, rect.center().y), Vec2::splat(40.0));
+    widgets::avatar_disc(ui, p, disc, data.pics.get(&id), &display, row.is_some_and(|r| r.muted));
+    let status = presence::of(world, &id);
+    if status != presence::Status::Unknown {
+        presence::paint_dot(ui.painter(), p, disc, status, p.panel);
+    }
+    // the cross at the right, the names between
+    let cross = Rect::from_center_size(Pos2::new(rect.right() - 10.0, rect.center().y), Vec2::splat(20.0));
+    let resp = ui.interact(cross, ui.id().with(("people-sheet-close", id)), Sense::click());
+    if resp.hovered() {
+        ui.painter()
+            .rect_filled(cross, ui.visuals().widgets.inactive.corner_radius, p.raised);
+    }
+    super::radar::icon(ui, "x", cross, 14.0, if resp.hovered() { p.ink } else { p.muted });
+    let left = disc.right() + 10.0;
+    let width = (cross.left() - 8.0 - left).max(20.0);
+    // "Legacy Name · account name" under the display name: who they are
+    // whatever the name preferences
+    let sub = names.get(&id).map(|n| {
+        let legacy = crate::world::social::format_name(&n.legacy_first, &n.legacy_last);
+        if n.is_default || legacy.is_empty() {
+            n.username.clone()
+        } else {
+            format!("{legacy} · {}", n.username)
+        }
+    });
+    let mut job = egui::text::LayoutJob::single_section(display, semibold(ui, 15.0, p.ink));
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    let name_g = ui.painter().layout_job(job);
+    let mut job = egui::text::LayoutJob::single_section(
+        sub.unwrap_or_default(),
+        egui::TextFormat::simple(FontId::proportional(12.0), p.muted),
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    let sub_g = ui.painter().layout_job(job);
+    let top = rect.center().y - (name_g.size().y + sub_g.size().y) / 2.0;
+    let name_h = name_g.size().y;
+    ui.painter().galley(Pos2::new(left, top), name_g, p.ink);
+    ui.painter().galley(Pos2::new(left, top + name_h), sub_g, p.muted);
+    resp.on_hover_text(aurora_i18n::tr!("common-close")).clicked()
+}
+
+/// The actions of the avatar menu people use the most, the rest under "…".
+fn buttons(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut PeopleUi,
+    id: Uuid,
+    friend: Option<&Friend>,
+    actions: &mut Vec<PeopleAction>,
+) {
+    let online = friend.is_none_or(|f| f.online);
+    let own = id == world.agent_id;
+    let size = Vec2::new(0.0, BUTTON_H);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(5.0, 5.0);
+        if widgets::action_button(
+            ui,
+            p,
+            "message-filled",
+            aurora_i18n::tr!("people-sheet-im"),
+            ActionKind::Primary,
+            size,
+        )
+        .clicked()
+        {
+            actions.push(PeopleAction::OpenIm(id));
+        }
+        let call = widgets::action_button_if(
+            ui,
+            p,
+            "phone-filled",
+            aurora_i18n::tr!("ui-profile-aurora-call"),
+            ActionKind::Flat,
+            size,
+            world.calls.voice_enabled && !own,
+        );
+        if call.clicked() {
+            context::request(ui.ctx(), CtxAction::Call(id));
+        }
+        if widgets::action_button(ui, p, "user-filled", aurora_i18n::tr!("common-profile"), ActionKind::Flat, size).clicked() {
+            actions.push(PeopleAction::Profile(id));
+        }
+        let tp = widgets::action_button_if(
+            ui,
+            p,
+            "send-filled",
+            aurora_i18n::tr!("ui-profile-aurora-offer-tp"),
+            ActionKind::Flat,
+            size,
+            online && !own,
+        );
+        if tp.clicked() {
+            actions.push(PeopleAction::OfferTeleport(id));
+        }
+        let more = widgets::action_button(ui, p, "dots-filled", "", ActionKind::Flat, Vec2::new(BUTTON_H + 4.0, BUTTON_H))
+            .on_hover_text(aurora_i18n::tr!("ui-chat-more"));
+        let open = menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+            context::avatar_list_menu(ui, p, world, id, AvatarList::Nearby);
+        });
+        // the sheet's own menu is not a row's
+        if open {
+            st.row_menu = None;
+        }
+    });
+}
+
+/// The title of a part of the sheet, in small capitals.
+fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
+    ui.label(
+        egui::RichText::new(title.to_uppercase())
+            .font(FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
+            .color(p.muted_dim),
+    );
+    ui.add_space(4.0);
+}
+
+/// One line of a part: its icon and its label at the left, `control` (its
+/// width) at the right edge.
+fn line(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, control_w: f32, control: impl FnOnce(&mut egui::Ui)) {
+    let width = ui.available_width();
+    let text_w = (width - 26.0 - control_w - 8.0).max(40.0);
+    let galley = ui.painter().layout(label.to_owned(), FontId::proportional(12.5), p.ink, text_w);
+    let h = (galley.size().y + 6.0).max(LINE_H);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, h), Sense::hover());
+    super::radar::icon(
+        ui,
+        icon,
+        Rect::from_center_size(Pos2::new(rect.left() + 9.0, rect.center().y), Vec2::splat(18.0)),
+        15.0,
+        p.muted,
+    );
+    ui.painter().galley(
+        Pos2::new(rect.left() + 26.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        p.ink,
+    );
+    let slot = Rect::from_min_max(Pos2::new(rect.right() - control_w, rect.top()), rect.max);
+    control(
+        &mut ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(slot)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        ),
+    );
+}
+
+/// What we grant the friend, a switch each. The map goes with the online
+/// status (applyRightsToFriends); the right to modify our objects is asked
+/// first (GrantModifyRights / RevokeModifyRights).
+fn granted(ui: &mut egui::Ui, p: &Palette, f: &Friend, name: &str, actions: &mut Vec<PeopleAction>) {
+    section(ui, p, &aurora_i18n::tr!("people-sheet-i-grant", name = name.to_owned()));
+    for (bit, icon, key) in GRANTS {
+        let mut on = f.rights_given & bit != 0;
+        line(ui, p, icon, aurora_i18n::text(key), widgets::SWITCH_SIZE.x, |ui| {
+            if widgets::switch(ui, p, &mut on).changed() {
+                let rights = crate::ui::contacts::rights_after(f.rights_given, bit, on);
+                if bit == rights::MODIFY_OBJECTS {
+                    actions.push(PeopleAction::ModifyRights {
+                        friend: f.id,
+                        rights,
+                        grant: on,
+                    });
+                } else {
+                    context::request(ui.ctx(), CtxAction::GrantRights { friend: f.id, rights });
+                }
+            }
+        });
+    }
+}
+
+/// What the friend grants us: read only.
+fn received(ui: &mut egui::Ui, p: &Palette, f: &Friend, name: &str) {
+    section(ui, p, &aurora_i18n::tr!("people-sheet-they-grant", name = name.to_owned()));
+    for (bit, icon, key) in RECEIVED {
+        let on = f.rights_has & bit != 0;
+        let (text, format) = if on {
+            (aurora_i18n::text("common-yes").to_lowercase(), semibold(ui, 11.5, p.success))
+        } else {
+            (
+                aurora_i18n::text("common-no").to_lowercase(),
+                egui::TextFormat::simple(FontId::proportional(11.5), p.muted_dim),
+            )
+        };
+        let galley = ui.painter().layout_job(egui::text::LayoutJob::single_section(text, format));
+        let w = galley.size().x;
+        line(ui, p, icon, aurora_i18n::text(key), w, |ui| {
+            ui.label(galley);
+        });
+    }
+}
+
+/// What the radar knows of them: range, time here, voice, age, payment
+/// info and our note (the columns of Firestorm's table).
+fn nearby(ui: &mut egui::Ui, p: &Palette, data: &RadarData, row: &Row) {
+    section(ui, p, aurora_i18n::tr!("ui-people-near-you"));
+    let value = |ui: &mut egui::Ui, text: String, color: Color32| {
+        ui.label(egui::RichText::new(text).size(12.0).color(color));
+    };
+    let band = Band::of(row.range);
+    let range = match row.range {
+        Some(_) => format!("{} · {}", distance_text(row.range, data.draw_distance), band.title()),
+        None => distance_text(None, data.draw_distance),
+    };
+    let color = if row.range.is_some() { band.color(p) } else { p.muted };
+    let w = |ui: &egui::Ui, text: &str| -> f32 {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), FontId::proportional(12.0), Color32::PLACEHOLDER)
+            .size()
+            .x
+            + 2.0
+    };
+    line(ui, p, "map-pin-filled", aurora_i18n::tr!("common-distance"), w(ui, &range), |ui| {
+        value(ui, range.clone(), color)
+    });
+    let seen = seen_text(row.seen);
+    line(ui, p, "hourglass-filled", aurora_i18n::tr!("radar-col-seen"), w(ui, &seen), |ui| {
+        value(ui, seen.clone(), p.muted)
+    });
+    if row.same_region {
+        let yes = aurora_i18n::text("common-yes").to_lowercase();
+        line(ui, p, "location-filled", aurora_i18n::tr!("radar-col-region"), w(ui, &yes), |ui| {
+            value(ui, yes.clone(), p.muted)
+        });
+    }
+    if let Some(speaking) = row.voice {
+        let text = if speaking {
+            aurora_i18n::tr!("radar-voice-speaking")
+        } else {
+            aurora_i18n::tr!("radar-voice-connected")
+        };
+        let color = if speaking { p.success } else { p.muted };
+        line(ui, p, "microphone-filled", aurora_i18n::tr!("common-voice"), w(ui, text), |ui| {
+            value(ui, text.to_owned(), color)
+        });
+    }
+    let age = match row.age {
+        Age::Unknown => None,
+        Age::Hidden => Some((aurora_i18n::tr!("radar-age-hidden").to_owned(), p.muted_dim)),
+        Age::Days(days) => {
+            // red up to the age alert's threshold, as in the radar table
+            let young = (0..=i64::from(data.settings.age_alert_days)).contains(&days);
+            Some((
+                aurora_i18n::tr!("radar-age-days", days = days),
+                if young { p.danger } else { p.muted },
+            ))
+        }
+    };
+    if let Some((text, color)) = age {
+        line(ui, p, "cake", aurora_i18n::tr!("radar-col-age"), w(ui, &text), |ui| {
+            value(ui, text.clone(), color)
+        });
+    }
+    let payment = match row.payment {
+        Payment::Unknown => None,
+        Payment::None => Some((aurora_i18n::tr!("radar-payment-none"), p.muted_dim)),
+        Payment::OnFile => Some((aurora_i18n::tr!("radar-payment-on-file"), p.amber)),
+        Payment::Used => Some((aurora_i18n::tr!("radar-payment-used"), p.success)),
+    };
+    if let Some((text, color)) = payment {
+        line(ui, p, "credit-card-filled", aurora_i18n::tr!("radar-col-payment"), 0.0, |_| {});
+        // under its label: the three texts are long
+        ui.horizontal(|ui| {
+            ui.add_space(26.0);
+            value(ui, text.to_owned(), color);
+        });
+        ui.add_space(4.0);
+    }
+    if !row.note.is_empty() {
+        line(ui, p, "note", aurora_i18n::tr!("radar-col-notes"), 0.0, |_| {});
+        ui.horizontal(|ui| {
+            ui.add_space(26.0);
+            ui.add(egui::Label::new(egui::RichText::new(&row.note).size(12.0).color(p.teal)).wrap());
+        });
+    }
+}
+
+/// The map, the payment and the friendship, at the bottom.
+fn footer(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, here: bool, friend: Option<&Friend>) {
+    if id == world.agent_id {
+        return;
+    }
+    ui.spacing_mut().item_spacing.x = 5.0;
+    let size = Vec2::new(0.0, BUTTON_H);
+    // a friend who lets us see them on the map can be shown there from afar
+    let mappable = here || friend.is_some_and(|f| f.online && f.rights_has & rights::MAP_LOCATION != 0);
+    if widgets::action_button_if(ui, p, "map", aurora_i18n::tr!("common-map"), ActionKind::Flat, size, mappable).clicked() {
+        context::request(ui.ctx(), CtxAction::ShowOnMap(id));
+    }
+    if widgets::action_button(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, size).clicked() {
+        context::request(ui.ctx(), CtxAction::PayResident(id));
+    }
+    if friend.is_some() {
+        if widgets::action_button(
+            ui,
+            p,
+            "user-minus",
+            aurora_i18n::tr!("ui-profile-aurora-remove-friend"),
+            ActionKind::SoftDanger,
+            size,
+        )
+        .clicked()
+        {
+            context::request(ui.ctx(), CtxAction::RemoveFriend(id));
+        }
+    } else if widgets::action_button(ui, p, "user-plus", aurora_i18n::tr!("radar-add-friend"), ActionKind::Flat, size).clicked() {
+        context::request(ui.ctx(), CtxAction::AddFriend(id));
+    }
+}

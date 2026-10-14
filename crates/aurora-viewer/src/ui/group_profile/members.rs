@@ -180,33 +180,7 @@ pub fn rows(v: &View, names: &dyn Fn(&Uuid) -> String, filter: &str, show: Show,
 
 /// A filter pill of the bar.
 pub(super) fn pill(ui: &mut egui::Ui, p: &Palette, label: &str, on: bool) -> egui::Response {
-    let font = FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx()));
-    let ink = if on { p.ink } else { p.muted };
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(galley.size().x + 18.0, 26.0), Sense::click());
-    let radius = ui.visuals().window_corner_radius;
-    let fill = if on {
-        p.violet.gamma_multiply(0.28)
-    } else if resp.hovered() {
-        p.raised
-    } else {
-        p.bar
-    };
-    ui.painter().rect_filled(rect, radius, fill);
-    if on {
-        ui.painter().rect_stroke(
-            rect.shrink(0.5),
-            radius,
-            egui::Stroke::new(1.0, p.violet_light.gamma_multiply(0.5)),
-            egui::StrokeKind::Inside,
-        );
-    }
-    ui.painter().galley(
-        Pos2::new(rect.left() + 9.0, rect.center().y - galley.size().y / 2.0).round(),
-        galley,
-        ink,
-    );
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    widgets::filter_pill(ui, p, "", label, on)
 }
 
 /// A round picture with its status dot.

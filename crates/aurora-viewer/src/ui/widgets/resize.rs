@@ -1,7 +1,29 @@
 //! Floater edges follow LLResizeBar::handleHover (indra/llui/llresizebar.cpp):
 //! clamp the size before moving the dragged edge, keeping its opposite fixed.
 //! egui 0.36's window edges move the area before applying the size constraint.
-use egui::{Context, CursorIcon, Id, Rect, Sense, Ui, UiBuilder, Vec2};
+use crate::theme::Palette;
+use egui::epaint::tessellator::path::add_circle_quadrant;
+use egui::{Context, CursorIcon, Id, Pos2, Rect, Sense, Shape, Stroke, Ui, UiBuilder, Vec2, pos2, vec2};
+
+/// Grab areas, from the window's outline (points). Firestorm's corner
+/// handle is 11 px, inside the floater (LLResizeHandle,
+/// RESIZE_HANDLE_WIDTH), its side bars 3 px (LLFloater,
+/// RESIZE_BAR_THICKNESS): the corners keep a 16 point grip inside the
+/// window plus a little outside it, however small the mark drawn there.
+const CORNER_IN: f32 = 16.0;
+const CORNER_OUT: f32 = 4.0;
+const SIDE_IN: f32 = 4.0;
+const SIDE_OUT: f32 = 3.0;
+
+/// The mark of the bottom-right corner: an arc of the frame, as thick as
+/// two outlines, whose arms reach this far along the edges at rest and
+/// when the corner is hovered or dragged.
+const ARC_WIDTH: f32 = 2.0;
+const ARC_REST: f32 = 11.0;
+const ARC_HOT: f32 = 16.0;
+/// Strength of the outline of the edges that would move, while hovered
+/// (they are fully lit while dragged).
+const LIT_HOVER: f32 = 0.7;
 
 #[derive(Clone, Copy)]
 enum Edge {
@@ -52,18 +74,26 @@ impl Edge {
         }
     }
 
-    fn hit_rect(self, rect: Rect, side: f32, corner: f32) -> Rect {
-        let corner_rect = |pos| Rect::from_center_size(pos, Vec2::splat(2.0 * corner));
+    /// Where this edge of the window `rect` (its outline) is grabbed.
+    fn hit_rect(self, rect: Rect) -> Rect {
+        // `out` points away from the window
+        let corner = |pos: Pos2, out: Vec2| Rect::from_two_pos(pos - out * CORNER_IN, pos + out * CORNER_OUT);
+        let (x, y) = (rect.x_range().shrink(CORNER_IN), rect.y_range().shrink(CORNER_IN));
         match self {
-            Self::Left => Rect::from_min_max(rect.left_top(), rect.left_bottom()).expand2(egui::vec2(side, -corner)),
-            Self::Right => Rect::from_min_max(rect.right_top(), rect.right_bottom()).expand2(egui::vec2(side, -corner)),
-            Self::Top => Rect::from_min_max(rect.left_top(), rect.right_top()).expand2(egui::vec2(-corner, side)),
-            Self::Bottom => Rect::from_min_max(rect.left_bottom(), rect.right_bottom()).expand2(egui::vec2(-corner, side)),
-            Self::LeftTop => corner_rect(rect.left_top()),
-            Self::LeftBottom => corner_rect(rect.left_bottom()),
-            Self::RightTop => corner_rect(rect.right_top()),
-            Self::RightBottom => corner_rect(rect.right_bottom()),
+            Self::Left => Rect::from_x_y_ranges(rect.left() - SIDE_OUT..=rect.left() + SIDE_IN, y),
+            Self::Right => Rect::from_x_y_ranges(rect.right() - SIDE_IN..=rect.right() + SIDE_OUT, y),
+            Self::Top => Rect::from_x_y_ranges(x, rect.top() - SIDE_OUT..=rect.top() + SIDE_IN),
+            Self::Bottom => Rect::from_x_y_ranges(x, rect.bottom() - SIDE_IN..=rect.bottom() + SIDE_OUT),
+            Self::LeftTop => corner(rect.left_top(), vec2(-1.0, -1.0)),
+            Self::LeftBottom => corner(rect.left_bottom(), vec2(-1.0, 1.0)),
+            Self::RightTop => corner(rect.right_top(), vec2(1.0, -1.0)),
+            Self::RightBottom => corner(rect.right_bottom(), vec2(1.0, 1.0)),
         }
+    }
+
+    /// The sides this edge moves: left, right, top, bottom.
+    fn sides(self) -> [bool; 4] {
+        [self.left(), self.right(), self.top(), self.bottom()]
     }
 }
 
@@ -171,11 +201,14 @@ impl Drag {
     }
 }
 
-pub(super) fn handles(ctx: &Context, response: &egui::Response) {
-    let style = ctx.global_style();
-    let side = style.interaction.resize_grab_radius_side;
-    let corner = style.interaction.resize_grab_radius_corner;
-    let rect = response.rect.shrink(0.5);
+/// The edges and corners that resize the window of `response`, and their
+/// marks: an arc of the frame around the bottom-right corner, in
+/// `muted_dim` at rest, longer and in `violet_light` when hovered or
+/// dragged; and the outline of the sides that would move, lit in
+/// `violet_light` meanwhile (as egui's own windows light theirs,
+/// `paint_frame_interaction`), both faded in and out.
+pub(super) fn handles(ctx: &Context, p: &Palette, response: &egui::Response) {
+    let window = response.layer_id.id;
     let mut ui = Ui::new(
         ctx.clone(),
         response.id.with("floater_resize_ui"),
@@ -183,11 +216,12 @@ pub(super) fn handles(ctx: &Context, response: &egui::Response) {
     );
     ui.set_clip_rect(ctx.content_rect());
     ui.set_min_size(response.rect.size());
+    let (mut hovered, mut dragged, mut corner) = ([false; 4], [false; 4], false);
     for edge in Edge::ALL {
         let response = ui
             .interact_opt(
-                edge.hit_rect(rect, side, corner),
-                edge.id(response.layer_id.id),
+                edge.hit_rect(response.rect),
+                edge.id(window),
                 Sense::DRAG,
                 egui::InteractOptions { move_to_top: true },
             )
@@ -196,14 +230,92 @@ pub(super) fn handles(ctx: &Context, response: &egui::Response) {
         if response.dragged() {
             ctx.set_cursor_icon(edge.cursor());
         }
+        for (side, moves) in edge.sides().into_iter().enumerate() {
+            hovered[side] |= moves && response.hovered();
+            dragged[side] |= moves && response.dragged();
+        }
+        if matches!(edge, Edge::RightBottom) {
+            corner = response.hovered() || response.dragged();
+        }
     }
-    // Native handles are disabled; retain the usual corner cue.
-    let stroke = style.visuals.widgets.noninteractive.fg_stroke;
-    for fraction in [0.25, 0.5, 0.75] {
-        let offset = style.visuals.resize_corner_size * fraction;
-        ui.painter()
-            .line_segment([rect.max - egui::vec2(offset, 0.0), rect.max - egui::vec2(0.0, offset)], stroke);
+    let (lit, strength) = if dragged.contains(&true) {
+        (dragged, 1.0)
+    } else {
+        (hovered, LIT_HOVER)
+    };
+    let lit = std::array::from_fn(|side| strength * ctx.animate_bool(window.with(("floater_edge_lit", side)), lit[side]));
+    let painter = ui.painter();
+    outline(painter, p, response.rect, lit);
+    corner_arc(
+        painter,
+        p,
+        response.rect,
+        ctx.animate_bool(window.with("floater_corner_lit"), corner),
+    );
+}
+
+/// The outline of the window `rect` along the sides lit (left, right, top,
+/// bottom: how much), over its frame, with the window's rounded corners.
+fn outline(painter: &egui::Painter, p: &Palette, rect: Rect, lit: [f32; 4]) {
+    let [left, right, top, bottom] = lit;
+    let radius = painter.ctx().global_style().visuals.window_corner_radius;
+    // on the outline's pixels, as egui paints the frame
+    let line = rect.shrink(0.5);
+    let r = |corner: u8| (f32::from(corner) - 0.5).max(0.0);
+    let (nw, ne, sw, se) = (r(radius.nw), r(radius.ne), r(radius.sw), r(radius.se));
+    let stroke = |strength: f32| Stroke::new(1.0, p.violet_light.gamma_multiply(strength));
+    let side = |strength: f32, from: Pos2, to: Pos2| {
+        if strength > 0.0 {
+            painter.line_segment([from, to], stroke(strength));
+        }
+    };
+    side(left, pos2(line.left(), line.top() + nw), pos2(line.left(), line.bottom() - sw));
+    side(right, pos2(line.right(), line.top() + ne), pos2(line.right(), line.bottom() - se));
+    side(top, pos2(line.left() + nw, line.top()), pos2(line.right() - ne, line.top()));
+    side(
+        bottom,
+        pos2(line.left() + sw, line.bottom()),
+        pos2(line.right() - se, line.bottom()),
+    );
+    // a corner between two lit sides (quadrants: 0 bottom-right, 1
+    // bottom-left, 2 top-left, 3 top-right)
+    let corners = [
+        (right.min(bottom), pos2(line.right() - se, line.bottom() - se), se, 0.0),
+        (left.min(bottom), pos2(line.left() + sw, line.bottom() - sw), sw, 1.0),
+        (left.min(top), pos2(line.left() + nw, line.top() + nw), nw, 2.0),
+        (right.min(top), pos2(line.right() - ne, line.top() + ne), ne, 3.0),
+    ];
+    for (strength, center, radius, quadrant) in corners {
+        if strength > 0.0 && radius > 0.0 {
+            let mut points = Vec::new();
+            add_circle_quadrant(&mut points, center, radius, quadrant);
+            painter.add(Shape::line(points, stroke(strength)));
+        }
     }
+}
+
+/// The mark of the bottom-right corner: the frame thickened around its
+/// rounded corner, `hot` (0 at rest, 1 hovered or dragged) lengthening it
+/// and turning it from `muted_dim` to `violet_light`.
+fn corner_arc(painter: &egui::Painter, p: &Palette, rect: Rect, hot: f32) {
+    let radius = f32::from(painter.ctx().global_style().visuals.window_corner_radius.se);
+    // concentric with the outline, half the mark's width in: the inner
+    // radius of the theme (`widgets::inner_radius`), never rounder
+    let inset = ARC_WIDTH / 2.0;
+    let arc = (radius - inset).max(0.0);
+    let center = rect.max - Vec2::splat(inset + arc);
+    let reach = egui::lerp(ARC_REST..=ARC_HOT, hot);
+    let mut points = vec![pos2(rect.right() - inset, rect.bottom() - reach)];
+    if arc > 0.0 {
+        add_circle_quadrant(&mut points, center, arc, 0.0);
+    } else {
+        points.push(center);
+    }
+    points.push(pos2(rect.right() - reach, rect.bottom() - inset));
+    painter.add(Shape::line(
+        points,
+        Stroke::new(ARC_WIDTH, p.muted_dim.lerp_to_gamma(p.violet_light, hot)),
+    ));
 }
 
 #[cfg(test)]
@@ -280,7 +392,7 @@ mod tests {
                 for _ in 0..8 {
                     original = fixture.show(vec![]);
                 }
-                let pos = edge.hit_rect(original.shrink(0.5), 6.0, 10.0).center();
+                let pos = edge.hit_rect(original).center();
                 fixture.press(pos);
                 let inward = egui::vec2(
                     if edge.left() {
@@ -323,7 +435,7 @@ mod tests {
                 fixed(fixture.release(pos + inward * 1.4));
                 let limit = limit.unwrap();
                 // Start a new gesture at the actual edge, then expand normally.
-                let pos = edge.hit_rect(limit.shrink(0.5), 6.0, 10.0).center();
+                let pos = edge.hit_rect(limit).center();
                 fixture.press(pos);
                 let target = pos - inward * 0.2;
                 let expanded = fixture.show(vec![egui::Event::PointerMoved(target)]);
@@ -396,6 +508,33 @@ mod tests {
             modifiers: Default::default(),
         }]);
         assert_eq!(result.2, 1, "body actions remain clickable");
+    }
+
+    #[test]
+    fn grab_areas_reach_16_points_into_the_corners_and_a_few_outside() {
+        let window = Rect::from_min_size(egui::pos2(300.0, 200.0), egui::vec2(440.0, 300.0));
+        let corner = Edge::RightBottom.hit_rect(window);
+        assert_eq!(corner.size(), Vec2::splat(CORNER_IN + CORNER_OUT));
+        assert_eq!(corner.min, window.max - Vec2::splat(CORNER_IN));
+        assert_eq!(Edge::LeftTop.hit_rect(window).max, window.min + Vec2::splat(CORNER_IN));
+        let right = Edge::Right.hit_rect(window);
+        assert_eq!(
+            right.x_range(),
+            egui::Rangef::new(window.right() - SIDE_IN, window.right() + SIDE_OUT)
+        );
+        assert_eq!(
+            right.y_range(),
+            egui::Rangef::new(window.top() + CORNER_IN, window.bottom() - CORNER_IN)
+        );
+        let top = Edge::Top.hit_rect(window);
+        assert_eq!(top.y_range(), egui::Rangef::new(window.top() - SIDE_OUT, window.top() + SIDE_IN));
+        const { assert!(CORNER_IN + CORNER_OUT >= 16.0 && SIDE_IN + SIDE_OUT >= 6.0) };
+        // every point of the outline is grabbed by exactly one edge or corner
+        for t in [0.0, 0.5, 15.0, 17.0, 150.0, 299.5] {
+            let point = egui::pos2(window.right() - 0.5, window.top() + t);
+            let hits = Edge::ALL.iter().filter(|edge| edge.hit_rect(window).contains(point)).count();
+            assert_eq!(hits, 1, "{t}");
+        }
     }
 
     #[test]

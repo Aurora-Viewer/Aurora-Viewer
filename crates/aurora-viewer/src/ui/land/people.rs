@@ -11,11 +11,12 @@ use super::dialogs::Confirm;
 use super::manage::{card_begin, card_end, missing_power};
 use super::{Dialog, LandUi, PickFor, View};
 use crate::theme::Palette;
-use crate::ui::{presence, widgets};
+use crate::ui::sheet::{Person, ROW_H, list_title, matches, names, person_row};
+use crate::ui::widgets;
 use crate::world::World;
 use crate::world::land::{OwnerList, powers};
 use aurora_net::land::{AL_ACCESS, AL_BAN, AccessEntry, ObjectOwner, PARCEL_MAX_ACCESS_LIST};
-use egui::{FontId, Rect, RichText, Sense, Vec2};
+use egui::{Rect, RichText, Sense, Vec2};
 use uuid::Uuid;
 
 /// The time an entry has left, "4 h" or "24 min"; None for always.
@@ -31,22 +32,6 @@ pub(super) fn time_left(time: i32, now: i64) -> Option<String> {
     } else {
         format!("{s} s")
     })
-}
-
-/// A resident's display name and user name (when the settings show both).
-fn names(world: &mut World, id: &Uuid) -> (String, Option<String>) {
-    world.social.want_name(*id);
-    let names = &world.social.avatar_names;
-    match names.get(id) {
-        Some(n) => (n.display(&names.options), n.chat_username(&names.options)),
-        None => (world.social.name_of(id), None),
-    }
-}
-
-/// A list row filtered by the search field: its name or user name.
-pub(super) fn matches(filter: &str, name: &str, username: Option<&str>) -> bool {
-    let f = filter.trim().to_lowercase();
-    f.is_empty() || name.to_lowercase().contains(&f) || username.is_some_and(|u| u.to_lowercase().contains(&f))
 }
 
 /// "today 09:12", "yesterday", a weekday, then the date: when an owner's
@@ -97,9 +82,6 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     super::access::poll_files(s, world);
 }
 
-/// Height of a resident's row.
-const ROW_H: f32 = 40.0;
-
 fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut World, pics: &Pictures, kind: u32) {
     let ban = kind == AL_BAN;
     let parcel = v.parcel.clone();
@@ -119,33 +101,22 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
         .unwrap_or_default();
     let full = list.len() >= PARCEL_MAX_ACCESS_LIST;
     // head: title, count, add
-    ui.horizontal(|ui| {
-        ui.set_min_height(26.0);
-        ui.spacing_mut().item_spacing.x = 7.0;
-        widgets::glyph(ui, if ban { "ban" } else { "user-check" }, p.violet_light, 15.0);
-        let title = if ban {
-            aurora_i18n::tr!("ui-land-people-banned")
+    let title = if ban {
+        aurora_i18n::tr!("ui-land-people-banned")
+    } else {
+        aurora_i18n::tr!("ui-land-people-allowed")
+    };
+    let count = format!("{} / {PARCEL_MAX_ACCESS_LIST}", list.len());
+    list_title(ui, p, if ban { "ban" } else { "user-check" }, title, &count, |ui| {
+        let label = if ban {
+            aurora_i18n::tr!("ui-land-people-ban")
         } else {
-            aurora_i18n::tr!("ui-land-people-allowed")
+            aurora_i18n::tr!("common-add")
         };
-        ui.label(semibold(ui, title, 13.0, p.ink));
-        ui.label(semibold(
-            ui,
-            &format!("{} / {PARCEL_MAX_ACCESS_LIST}", list.len()),
-            11.0,
-            p.muted_dim,
-        ));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let label = if ban {
-                aurora_i18n::tr!("ui-land-people-ban")
-            } else {
-                aurora_i18n::tr!("common-add")
-            };
-            if widgets::action_button_if(ui, p, "plus", label, widgets::ActionKind::Flat, Vec2::new(0.0, 26.0), can && !full).clicked() {
-                s.pick_for = Some(if ban { PickFor::Ban } else { PickFor::Access });
-                s.picker.open("land_avatar_picker", ban);
-            }
-        });
+        if widgets::action_button_if(ui, p, "plus", label, widgets::ActionKind::Flat, Vec2::new(0.0, 26.0), can && !full).clicked() {
+            s.pick_for = Some(if ban { PickFor::Ban } else { PickFor::Access });
+            s.picker.open("land_avatar_picker", ban);
+        }
     });
     if !can && let Some(m) = missing_power(v, power) {
         ui.label(RichText::new(m).size(11.5).color(p.amber));
@@ -155,7 +126,7 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
         ui.spacing_mut().item_spacing.x = 6.0;
         let filter = if ban { &mut s.ban_filter } else { &mut s.access_filter };
         let width = ui.available_width() - 2.0 * 26.0 - 12.0;
-        search_field(ui, p, filter, width);
+        widgets::search_box(ui, p, filter, aurora_i18n::tr!("common-search"), width);
         if widgets::icon_button(
             ui,
             p,
@@ -209,20 +180,17 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
                     (Some(l), false) => aurora_i18n::tr!("ui-land-people-left", left = l.clone()),
                 };
                 let is_sel = selected.contains(&e.id);
-                let r = person_row(
-                    ui,
-                    p,
-                    s_pics(pics, e.id),
-                    world,
-                    e.id,
+                let row = Person {
+                    id: e.id,
+                    pic: pics.avatars.get(&e.id),
                     name,
-                    user.as_deref(),
-                    &exp,
-                    left.is_some(),
-                    is_sel,
+                    user: user.as_deref(),
+                    exp: &exp,
+                    timed: left.is_some(),
+                    selected: is_sel,
                     can,
-                    width,
-                );
+                };
+                let r = person_row(ui, p, world, &row, width);
                 if r.toggled {
                     if is_sel {
                         selected.remove(&e.id);
@@ -299,120 +267,6 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
             }
         });
     });
-}
-
-/// The search field of a list: a magnifier then the text, on the field's
-/// face like the mockup's.
-fn search_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, width: f32) {
-    egui::Frame::new()
-        .fill(p.bar)
-        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
-        .inner_margin(egui::Margin::symmetric(9, 4))
-        .show(ui, |ui| {
-            ui.set_width(width - 18.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 7.0;
-                widgets::glyph(ui, "search-filled", p.muted, 13.0);
-                ui.add(
-                    egui::TextEdit::singleline(text)
-                        .frame(egui::Frame::NONE)
-                        .hint_text(aurora_i18n::tr!("common-search"))
-                        .desired_width(f32::INFINITY),
-                );
-            });
-        });
-}
-
-fn s_pics<'a>(pics: &'a Pictures, id: Uuid) -> Option<&'a egui::TextureHandle> {
-    pics.avatars.get(&id)
-}
-
-/// What a click on a row asks for.
-struct RowAnswer {
-    toggled: bool,
-    wants_pic: bool,
-}
-
-/// A resident's row: box, round picture with status, names, time left.
-#[allow(clippy::too_many_arguments)]
-fn person_row(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    pic: Option<&egui::TextureHandle>,
-    world: &World,
-    id: Uuid,
-    name: &str,
-    user: Option<&str>,
-    exp: &str,
-    timed: bool,
-    selected: bool,
-    can: bool,
-    width: f32,
-) -> RowAnswer {
-    let (rect, r) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click());
-    let radius = ui.visuals().widgets.inactive.corner_radius;
-    if selected {
-        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));
-    } else if r.hovered() {
-        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.35));
-    }
-    // the box
-    let mut on = selected;
-    let boxed = Rect::from_min_size(rect.left_top() + Vec2::new(6.0, 0.0), Vec2::new(20.0, ROW_H));
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(boxed)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    if !can {
-        child.disable();
-    }
-    let toggled = widgets::checkbox(&mut child, p, &mut on, "").changed() || (can && r.clicked());
-    // picture and status
-    let disc = Rect::from_center_size(egui::pos2(rect.left() + 26.0 + 9.0 + 15.0, rect.center().y), Vec2::splat(30.0));
-    widgets::avatar_disc(ui, p, disc, pic, name, false);
-    let status = if id == world.agent_id {
-        presence::Status::Online
-    } else {
-        presence::of(world, &id)
-    };
-    if status != presence::Status::Unknown {
-        presence::paint_dot(ui.painter(), p, disc, status, p.field);
-    }
-    // time left, then the names in the room before it
-    let exp_g = ui
-        .painter()
-        .layout_no_wrap(exp.to_owned(), FontId::proportional(11.5), if timed { p.amber } else { p.muted });
-    let exp_w = exp_g.size().x;
-    ui.painter().galley(
-        egui::pos2(rect.right() - 8.0 - exp_w, rect.center().y - exp_g.size().y / 2.0),
-        exp_g,
-        p.muted,
-    );
-    let text_left = disc.right() + 9.0;
-    let text_w = (rect.right() - 16.0 - exp_w - text_left).max(20.0);
-    let mut job = semibold(ui, name, 12.5, p.ink);
-    job.wrap = egui::text::TextWrapping::truncate_at_width(text_w);
-    let name_g = ui.painter().layout_job(job);
-    let user_g = user.map(|u| {
-        let mut job = egui::text::LayoutJob::simple_singleline(u.to_owned(), FontId::proportional(11.5), p.muted);
-        job.wrap = egui::text::TextWrapping::truncate_at_width(text_w);
-        ui.painter().layout_job(job)
-    });
-    let h = name_g.size().y + user_g.as_ref().map_or(0.0, |g| g.size().y);
-    let top = rect.center().y - h / 2.0;
-    let name_h = name_g.size().y;
-    ui.painter().galley(egui::pos2(text_left, top), name_g, p.ink);
-    if let Some(g) = user_g {
-        ui.painter().galley(egui::pos2(text_left, top + name_h), g, p.muted);
-    }
-    if r.double_clicked() {
-        crate::ui::profile::request_open(ui.ctx(), id);
-    }
-    RowAnswer {
-        toggled,
-        wants_pic: pic.is_none(),
-    }
 }
 
 /// sortByColumnIndex(count, descending), as the Objects tab.

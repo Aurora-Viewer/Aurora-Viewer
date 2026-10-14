@@ -51,6 +51,9 @@ pub enum BarAction {
     /// World › Environment › Use shared environments
     /// (setSharedEnvironment: drops every local choice).
     SharedEnvironment,
+    /// World › Environment › New sky / water / day cycle (World.EnvPreset
+    /// new_sky, new_water, new_day_cycle).
+    NewEnvironment(crate::world::env_select::SettingsKind),
     /// World › Teleport history (ToggleTeleportHistory, Alt+H).
     TeleportHistory,
     /// The balance, or Me › Buy L$ (LLStatusBar::onClickBuyCurrency).
@@ -582,8 +585,27 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             if menu::item(ui, p, "adjustments-filled", aurora_i18n::tr!("common-personal-lighting")) {
                 panels.personal_lighting = true;
             }
+            // Firestorm's Phototools "New preset" buttons (World.EnvPreset)
+            menu::separator(ui, p);
+            use crate::world::env_select::SettingsKind;
+            for (kind, icon, label) in [
+                (SettingsKind::Sky, "sun-filled", aurora_i18n::tr!("ui-bars-new-sky")),
+                (SettingsKind::Water, "droplet-filled", aurora_i18n::tr!("ui-bars-new-water")),
+                (SettingsKind::Day, "sunset-2-filled", aurora_i18n::tr!("ui-bars-new-day-cycle")),
+            ] {
+                if menu::item(ui, p, icon, label) {
+                    *action = BarAction::NewEnvironment(kind);
+                }
+            }
         });
         menu::separator(ui, p);
+        // Firestorm's View › Camera Controls and Movement Controls
+        if menu::item_keys(ui, p, "video-filled", aurora_i18n::tr!("controls-camera-title"), "Ctrl+Shift+C") {
+            panels.camera_controls = true;
+        }
+        if menu::item(ui, p, "walk", aurora_i18n::tr!("controls-movement-title")) {
+            panels.movement_controls = true;
+        }
         if menu::item(ui, p, "eye-filled", aurora_i18n::tr!("common-mouselook-m")) {
             *action = BarAction::ToggleMouselook;
         }
@@ -1192,6 +1214,9 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "performance" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
         "preferences" => toggle("options", &mut panels.settings),
+        // Firestorm's Move and View buttons open the controls
+        "move" => panels.movement_controls = !panels.movement_controls,
+        "view" => panels.camera_controls = !panels.camera_controls,
         "fly" => return BarAction::ToggleFly,
         "mouselook" => return BarAction::ToggleMouselook,
         "sit" => return BarAction::SitGround,
@@ -1215,6 +1240,8 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "performance" => panels.perf,
         "snapshot" => panels.snapshot,
         "preferences" => panels.settings,
+        "move" => panels.movement_controls,
+        "view" => panels.camera_controls,
         "fly" => flying,
         "sit" => seated,
         "mouselook" => mouselook,

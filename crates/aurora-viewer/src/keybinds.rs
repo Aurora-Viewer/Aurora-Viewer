@@ -286,6 +286,9 @@ pub enum Action {
     AlwaysRun,
     Mouselook,
     ResetCamera,
+    /// The Controls window, on its Camera tab (Firestorm's View › Camera
+    /// Controls).
+    CameraControls,
     /// Firestorm camera keys (spin_around_cw / ccw, spin_over / under,
     /// move_forward / backward, pan_*).
     CamOrbitCw,
@@ -380,6 +383,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::Mouselook, aurora_i18n::tr!("common-mouselook")),
                     (Action::ResetCamera, aurora_i18n::tr!("keybinds-return-to-avatar")),
+                    (Action::CameraControls, aurora_i18n::tr!("controls-camera-title")),
                     (Action::CamOrbitCw, aurora_i18n::tr!("keybinds-orbit-clockwise")),
                     (Action::CamOrbitCcw, aurora_i18n::tr!("keybinds-orbit-counterclockwise")),
                     (Action::CamOrbitOver, aurora_i18n::tr!("keybinds-move-above")),
@@ -545,6 +549,7 @@ impl KeyBindings {
             (Action::AlwaysRun, [kmod(K::KeyR, true, false), None]),
             (Action::Mouselook, [k(K::KeyM), None]),
             (Action::ResetCamera, [k(K::Escape), None]),
+            (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
             (Action::CamOrbitCw, [kalt(K::ArrowLeft, false, false), None]),
             (Action::CamOrbitCcw, [kalt(K::ArrowRight, false, false), None]),
             (Action::CamOrbitOver, [kalt(K::PageUp, false, false), kalt(K::ArrowUp, true, false)]),

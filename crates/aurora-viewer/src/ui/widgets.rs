@@ -13,9 +13,11 @@ pub mod demo;
 #[cfg(test)]
 pub(crate) mod elide_tests;
 pub(crate) mod keycap;
+mod pills;
 mod resize;
 mod workspace;
 pub use color::color_button;
+pub use pills::{filter_pill, pill_tab, pill_tab_wide, search_box};
 pub use workspace::{Modal, collapsing, collapsing_forced, glyph, navigation, navigation_wrapped, section_header, stat, surface};
 pub(crate) use workspace::{finish_bar_glass, inventory_item_label, inventory_spacing, overlay, overlay_frame, paint_world_label};
 
@@ -140,6 +142,10 @@ pub struct Floater<'a> {
     /// Something new waits inside (unread messages): the minimized bar shows
     /// it, as Firestorm flashes the conversations button.
     pub attention: bool,
+    /// Minimized, the window keeps a compact body under its title bar
+    /// instead of the bar alone, at this width: the body is still drawn and
+    /// asks `floater_minimized` what to show.
+    pub compact_minimized: Option<f32>,
 }
 
 impl<'a> Floater<'a> {
@@ -158,6 +164,7 @@ impl<'a> Floater<'a> {
             auto_height: false,
             compact_header: false,
             attention: false,
+            compact_minimized: None,
         }
     }
 
@@ -198,6 +205,12 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// Minimized, keep a compact body `width` wide (see `compact_minimized`).
+    pub fn compact_when_minimized(mut self, width: f32) -> Self {
+        self.compact_minimized = Some(width);
+        self
+    }
+
     /// Mark the minimized bar while `waiting` (unread messages inside).
     pub fn attention(mut self, waiting: bool) -> Self {
         self.attention = waiting;
@@ -212,6 +225,8 @@ impl<'a> Floater<'a> {
         let min_id = egui::Id::new((self.id, "minimized"));
         // persisted with the UI layout (ui_layout.ron)
         let minimized = ctx.data_mut(|d| d.get_persisted::<bool>(min_id)).unwrap_or(false);
+        // minimized with its compact body: sized by that body
+        let compact = minimized && self.compact_minimized.is_some();
         if !self.silent {
             super::sound_cues::floater_shown(ctx, egui::Id::new(self.id));
         }
@@ -231,8 +246,8 @@ impl<'a> Floater<'a> {
                 egui::Margin {
                     left: 10,
                     right: 10,
-                    top: if minimized { 4 } else { 5 },
-                    bottom: if minimized { 4 } else { 10 },
+                    top: if minimized && !compact { 4 } else { 5 },
+                    bottom: if minimized && !compact { 4 } else { 10 },
                 }
             });
         let mut close = false;
@@ -288,7 +303,9 @@ impl<'a> Floater<'a> {
         // otherwise retains the old height when the body disappears, and then
         // forgets it when clamped to the header. Restore that size once.
         // Aurora keeps the dragged bar's current position when restoring.
-        if minimized {
+        if let Some(width) = self.compact_minimized.filter(|_| compact) {
+            w = w.auto_sized().min_width(width).max_width(width);
+        } else if minimized {
             w = w.fixed_size(Vec2::new(
                 minimized_width(expanded.x),
                 if self.framed_header.is_some() { 40.0 } else { 38.0 },
@@ -347,7 +364,7 @@ impl<'a> Floater<'a> {
                     // a fixed floater is as wide as its title; a resizable one
                     // cuts a long title short before the buttons (LLFloater
                     // titles end with an ellipsis)
-                    let truncate = self.resizable || minimized || self.auto_height;
+                    let truncate = self.resizable || (minimized && !compact) || self.auto_height;
                     if !truncate {
                         glyph(ui, workspace::window_icon(self.id), p.violet_light, 18.0);
                         ui.label(title.clone());
@@ -423,7 +440,11 @@ impl<'a> Floater<'a> {
             {
                 toggle_min = true;
             }
-            if !minimized {
+            if compact {
+                divider(ui, p);
+                ui.add_space(5.0);
+                out = Some(body(ui));
+            } else if !minimized {
                 if framed_header.is_none() {
                     if self.compact_header {
                         ui.painter()
@@ -479,7 +500,7 @@ impl<'a> Floater<'a> {
                 drag.finish(ctx, window_id, requested, response.response.rect);
             }
             if resizable {
-                resize::handles(ctx, &response.response);
+                resize::handles(ctx, p, &response.response);
             }
         }
         if close {
@@ -550,7 +571,7 @@ pub(crate) fn bare_window(
     if let (Some(drag), Some(requested)) = (drag, resized) {
         drag.finish(ctx, window_id, requested, shown.response.rect);
     }
-    resize::handles(ctx, &shown.response);
+    resize::handles(ctx, p, &shown.response);
 }
 
 const PLACE_POS: &str = "place_pos";
@@ -1238,6 +1259,22 @@ pub fn action_button_if(
     size: Vec2,
     enabled: bool,
 ) -> egui::Response {
+    action_button_keyed(ui, p, icon, label, kind, size, enabled, None)
+}
+
+/// `action_button_if` with the keycaps of its shortcut after the label
+/// ("Stop flying F"); in a button too narrow for all three, the icon goes.
+#[allow(clippy::too_many_arguments)]
+pub fn action_button_keyed(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    kind: ActionKind,
+    size: Vec2,
+    enabled: bool,
+    key: Option<&crate::keybinds::Binding>,
+) -> egui::Response {
     const ICON: f32 = 15.0;
     const GAP: f32 = 7.0;
     let enabled = enabled && ui.is_enabled();
@@ -1254,7 +1291,14 @@ pub fn action_button_if(
         (false, true) => ICON,
         (false, false) => ICON + GAP,
     };
-    let content = lead + width(ui);
+    let caps_w = key.map_or(0.0, |b| GAP + keycap::row_width(&keycap::caps(ui, b, Color32::PLACEHOLDER)));
+    let icon = if key.is_some() && size.x > 0.0 && lead + width(ui) + caps_w + 2.0 * GAP > size.x {
+        ""
+    } else {
+        icon
+    };
+    let lead = if icon.is_empty() { 0.0 } else { lead };
+    let content = lead + width(ui) + caps_w;
     let desired = Vec2::new(if size.x > 0.0 { size.x } else { content + 24.0 }, size.y);
     let (rect, resp) = ui.allocate_exact_size(desired, if enabled { Sense::click() } else { Sense::hover() });
     let hot = enabled && (resp.hovered() || resp.has_focus());
@@ -1283,7 +1327,13 @@ pub fn action_button_if(
     }
     // centered on the line, not on the ink: a row of buttons shares a baseline
     let text = egui::pos2(left + lead, rect.center().y - galley.size().y / 2.0).round();
+    let text_w = galley.size().x;
     ui.painter().galley(text, galley, ink);
+    if let Some(b) = key {
+        let behind = fill.gamma_multiply(fade);
+        let caps = keycap::caps(ui, b, behind);
+        keycap::paint_row(ui, p, &caps, egui::pos2(left + lead + text_w + GAP, rect.center().y), behind);
+    }
     if hot {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }

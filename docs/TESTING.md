@@ -144,6 +144,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
+| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic` | The Controls window open on a tab, or Firestorm's two windows |
 
 `AURORA_CAPTURE_LAYOUT`: a screenshot otherwise starts from the default
 layout, to be reproducible. With this variable it reloads that of the
@@ -195,6 +196,14 @@ of day 3`); the saved `time_of_day` and `exposure` stay the user's.
 `classic` shows Firestorm's floater instead of the panel for this run
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
+
+`AURORA_DEMO_CONTROLS` opens the Controls window at frame 600: `camera` on
+its Camera tab (joysticks, zoom, the four views, object view, mouselook,
+reset, saved positions, the alt-camera keys), `movement` on its Movement tab
+(the eight buttons with the keys of the keyboard's layout, walk / run / fly),
+`compact` the window minimized (its joysticks and zoom only),
+`classic` Firestorm's camera and movement windows (Preferences › Aurora,
+not saved).
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
@@ -1142,7 +1151,7 @@ To check with these scenarios:
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
   (2500).
-- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save|day|day-play|day-edit`**: sky,
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame
   400: midnight, the purple sky at 25 %, noon, sunset), the ground track and
@@ -1159,6 +1168,33 @@ To check with these scenarios:
   900), then saves it as "my purple sky, brighter" (1100): both saves
   are logged (`environment settings saved`) and the second item shows in
   the Settings folder.
+  The parcel and region scenarios (`app/env_apply.rs`) make the avatar the
+  owner of its parcel, give the region a dusk EEP day (as
+  `AURORA_DEMO_EEP_PARCEL=1`) and the demo simulator answers ExtEnvironment
+  updates: an inline day becomes the parcel's (or the region's) and the
+  sky follows. `parcel`: the sky editor on "my purple sky" (400), applied
+  to the parcel unchanged, as its asset (900, logged `environment: applying
+  to Parcel(1)` without a new day), then brightened and applied inline in
+  the region's day (1000, `parcel 1 takes the day`); the footer says
+  "Applied to the parcel." and the sky turns purple. `region`: the avatar
+  manages the estate; the day cycle editor opens on the region's day in the
+  region context (400: skies named "Sky 1000m"…, the timeline in hours,
+  "Apply To Region" as the main button), its first frame is brightened
+  (900) and committed (1000): the editor closes and the region's sky
+  brightens. `custom`: About Land opens on the environment as the parcel's
+  owner, whose parcel has "my day cycle" applied, and "Custom" is chosen
+  (400): the day cycle editor in the parcel context, "Apply To Parcel" as
+  the main button, left to the tester. Add `-refused` (`parcel-refused`…)
+  and the simulator refuses inline days: Firestorm's WLRegionApplyFail
+  alert with the demo's reason. `custom-follow`: as `custom`, then the
+  library's "Dynamic Day" is applied to the parcel (900): the open editor
+  follows it (two ground frames instead of four, logged `the editor follows
+  it`). `day-notrans`: as `day`, then the library's no-transfer "Annan
+  Adored Pink Sky" is loaded at 60 % (900): Firestorm's question about
+  making the day no-transfer comes first, with its "Do not show again" box (Preferences › General › Environment turns it back on). `beacons`: the sky editor on its
+  Sun & Moon tab with both beacons on: a line from the avatar towards the
+  sun (amber) and the moon (violet), named at the bottom left; they go off again when the editor
+  closes (a capture's exit skips that: the demo profile keeps them on).
 
 ## Load and smoothness
 
@@ -1325,9 +1361,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WINDOWS=<mode>` | Collapse, move and restore of the inventory title bar |
 | `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: guide, snap, grouped move, resize |
+| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner dragged |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
+| `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet` or `legacy` | People › Near you with the mock-up's residents: rich rows, compact crowd, a person's sheet, Firestorm's table |
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
@@ -1373,7 +1411,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:land]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -1569,6 +1607,18 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   bottom edge of Conversations to 4 px from the bottom line of People: the
   edge snaps to it under the pointer, with its guide line. Take screenshots at
   `800,960,1060,1160` with `AURORA_FPS_LIMIT=60`.
+- **`AURORA_DEMO_RESIZE=corner|edge|drag[,<window>]`**: from frame 600,
+  the pointer rests 6 points inside the bottom-right corner of a real
+  window (`corner`), 1 point inside its right edge, halfway down
+  (`edge`), or presses that corner and holds it 40 × 30 further out until
+  frame 1000 (`drag`). The window is Conversations by default, or the id
+  of another open floater (`about_land_aurora` with `AURORA_DEMO_LAND=manage`)
+  or `minimap`. At rest the corner carries a short arc of the frame in
+  `muted_dim`; hovered or dragged, the arc grows and turns `violet_light`
+  and the outline of the edges that move lights up in `violet_light`
+  (the bottom and right ones for the corner, the right one alone for the
+  edge), with the system resize cursor. Capture with
+  `AURORA_FPS_LIMIT=60` at frame 780.
 - **`AURORA_DEMO_NOTIF=1`**: the "Aurora lantern" offer is from a
   resident: the object is already in the inventory (Objects folder) when
   the offer arrives. "Keep", or closing the offer in the list, leaves it
@@ -1970,6 +2020,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `AURORA_FPS_LIMIT=60`, they are greyed out at frame 780 and removed from the
   list at frame 1400. `friends` and `groups`: these tabs. `profile`: the
   Groups tab and the "Group Profile" window of the first group.
+- **`AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy`**: People › Near you in
+  Aurora's look, with the residents of the People mock-up (names, ranges,
+  states, arrivals), alone on screen. `rows`: the rich rows grouped by
+  range (whisper 10 m, say 20 m, shout 100 m, beyond), Tess selected with
+  her quick actions out as under the pointer. `sheet`: the window at the
+  mock-up's 860 × 600 with Nova's sheet (the rights she has and the ones
+  we grant her, what the radar knows); a click on a row of a narrower
+  window widens it by the sheet, and its cross gives the width back.
+  `crowd`: forty residents in the compact density. `hover` and
+  `crowd-hover`: `rows` and `crowd` with a friend under the pointer
+  carrying every badge: the quick actions take the place of the time and
+  the range, beside the badges, never over them. `legacy`: the same
+  residents in Firestorm's table, for this run only (the preference is
+  not changed). Capture `crowd` at frame 900 or later: the profiles
+  (payment info, notes) arrive four a second.
 - **`AURORA_DEMO_STATUSMENU=1|invisible`**: the menu of the status
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing
@@ -2086,7 +2151,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:land]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -2138,13 +2203,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (balance, credits, debits, total, next stipend day), the details and
   the sales of this week and of the eight weeks before (the arrows; the
   sales arrive in two packets, both shown; nothing after six weeks).
+  `:experiences` opens the Experiences tab (its count, 1, shows on the tab
+  as soon as the window opens): "Sandbox doors", General, owned by the
+  group, land-scope; "Profile ›" opens the experience profile, whose
+  Allow / Forget / Block log `demo group: experience permission …`.
   Check the header against the mockup (banner,
   insignia, badges, tabs), the switches of "Me in this group" (the active
   group follows in the top bar, the title in the Title shown list), the
   filter, the pills and the column sorts of Members, "Leave" (confirmed,
   then the guest's view) and, in Preferences › Aurora › Profiles, the
-  classic window with its "Members and roles", "Notices" and "Land and
-  L$" sections.
+  classic window with its "Members and roles", "Notices", "Land and L$"
+  and "Experiences" sections.
 - **`AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown|landmark|history`**:
   "Places" on a place profile, as after a click on a place link.
   `1`: the home of Violet Wolf on Aurora Demo (the parcel of "About

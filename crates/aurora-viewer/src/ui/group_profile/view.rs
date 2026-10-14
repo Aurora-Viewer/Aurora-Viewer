@@ -434,7 +434,15 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &
     badges_row(&mut b, c, v, actions);
     let used = b.min_rect().bottom().max(badges_top + 40.0);
     ui.allocate_rect(Rect::from_min_max(top, Pos2::new(banner_rect.right(), used)), Sense::hover());
-    tabs(ui, p, v, tab, c.world.group_data.unread(&v.id));
+    let experiences = c
+        .world
+        .experiences
+        .groups
+        .get(&v.id)
+        .and_then(|l| l.as_ref())
+        .map(Vec::len)
+        .filter(|_| v.member.is_some());
+    tabs(ui, p, v, tab, c.world.group_data.unread(&v.id), experiences);
     clicked
 }
 
@@ -635,9 +643,9 @@ fn tab_button(
     }
 }
 
-/// Home, Members, Notices, Land and L$ and the tab still to port
-/// (Experiences, greyed).
-fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) {
+/// Home, Members, Notices, Land and L$, Experiences, and Administration at
+/// the right.
+fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize, experiences: Option<usize>) {
     // LLPanelGroupNotices / LLPanelGroupLandMoney::isVisibleByAgent: the
     // tabs a guest does not see are greyed with the reason
     let members_only = |visible: bool| {
@@ -710,16 +718,22 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
         {
             *tab = Tab::Land;
         }
-        tab_button(
+        // the count of the group's experiences, once the list answered
+        let count = experiences.map(|n| aurora_i18n::integer(n as i64));
+        if tab_button(
             ui,
             p,
             "flask-filled",
             aurora_i18n::tr!("ui-group-profile-experiences"),
-            None,
+            count,
             false,
-            false,
-            Err(menu::not_yet()),
-        );
+            *tab == Tab::Experiences,
+            members_only(super::experiences::visible(v)),
+        )
+        .clicked()
+        {
+            *tab = Tab::Experiences;
+        }
         // Administration at the right, in amber, with an admin ability
         if super::administration::visible(v) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

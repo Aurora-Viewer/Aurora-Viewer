@@ -43,6 +43,13 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetObjectCost",
     "GetObjectPhysicsData",
     "GetTexture",
+    // the group profile (llviewerregion.cpp buildCapabilityNames): the ban
+    // list (LLGroupMgr::sendGroupBanRequest), the experiences a group owns
+    // (LLExperienceCache::getGroupExperiences), the member list
+    // (LLGroupMgr::sendCapGroupMembersRequest)
+    "GroupAPIv1",
+    "GroupExperiences",
+    "GroupMemberData",
     // rebake (LLAppearanceMgr::syncCofVersionAndRefresh, Firestorm's
     // buildCapabilityNames)
     "IncrementCOFVersion",
@@ -143,6 +150,13 @@ mod language_tests {
         }
         assert!(hover_height_body(f32::NAN).is_none());
         assert!(hover_height_body(f32::INFINITY).is_none());
+    }
+
+    #[test]
+    fn the_group_profile_capabilities_are_requested() {
+        for cap in ["GroupAPIv1", "GroupExperiences", "GroupMemberData"] {
+            assert!(REQUESTED_CAPS.contains(&cap), "{cap}");
+        }
     }
 
     #[test]

@@ -235,13 +235,8 @@ pub struct LandUi {
     /// The Aurora window's page; on "Manage" the section in view, the one
     /// to scroll to and the folded parts that are open.
     page: Page,
-    manage_section: manage::Section,
-    manage_jump: Option<manage::Section>,
+    manage_nav: crate::ui::sheet::SectionScroll<manage::Section>,
     manage_open: HashSet<manage::Section>,
-    /// Where "Manage" was scrolled, to follow the section in view.
-    manage_scroll: f32,
-    /// When a navigation click scrolled it (its animation is not the user's).
-    manage_jumped_at: f64,
     /// The owner (or an officer) looks at the parcel as a visitor would.
     view_as_visitor: bool,
     /// "People and objects": the search fields of the two lists and the
@@ -279,6 +274,9 @@ pub struct LandUi {
     blocked_exp_sel: Option<Uuid>,
     /// Day length / offset being dragged (hours), committed on release.
     env_drag: Option<(f32, f32)>,
+    /// "Custom" was chosen: the app opens the day cycle editor on the
+    /// parcel's day (taken once).
+    pub custom_day: bool,
     /// Sound tab: the music URL last sent (parcel, URL) and the selection
     /// revision then (FIRE-29157).
     last_music_url: Option<(i32, String)>,
@@ -337,8 +335,7 @@ impl LandUi {
                 manage::Section::Experiences
             };
             self.page = Page::Manage;
-            self.manage_section = section;
-            self.manage_jump = Some(section);
+            self.manage_nav.go(section);
             self.manage_open.insert(section);
             self.dialog = Some(if env {
                 Dialog::EnvironmentPicker(dialogs::EnvironmentPicker {
@@ -355,16 +352,14 @@ impl LandUi {
         }
         if key == "scripts" {
             self.page = Page::Manage;
-            self.manage_section = manage::Section::Sale;
-            self.manage_jump = Some(manage::Section::Sale);
+            self.manage_nav.go(manage::Section::Sale);
             self.manage_open.insert(manage::Section::Sale);
             self.scripts.open();
             return;
         }
         if key == "show-objects" {
             self.page = Page::Manage;
-            self.manage_section = manage::Section::Objects;
-            self.manage_jump = Some(manage::Section::Objects);
+            self.manage_nav.go(manage::Section::Objects);
             self.show_once = true;
             return;
         }
@@ -392,8 +387,7 @@ impl LandUi {
             let (page, section) = Page::of(*t);
             self.page = page;
             if let Some(section) = section {
-                self.manage_section = section;
-                self.manage_jump = Some(section);
+                self.manage_nav.go(section);
                 self.manage_open.insert(section);
             }
         }
