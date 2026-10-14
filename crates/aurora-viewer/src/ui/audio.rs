@@ -58,6 +58,18 @@ fn toggle_master_mute(audio: &mut AudioSettings) {
     audio.muted[0] = !audio.muted[0];
 }
 
+/// What the enable box of a channel of the panel switches. The voice one is
+/// the voice connection itself (EnableVoiceChat of panel_volume_pulldown.xml):
+/// unticked, the voice disconnects, microphone included, the same setting as
+/// Preferences › Sound › Voice. Music and media switch their channel.
+fn enable_box(audio: &mut AudioSettings, i: usize) -> Option<&mut bool> {
+    match i {
+        6 => Some(&mut audio.voice_enabled),
+        _ if PANEL_TOGGLES.contains(&i) => Some(&mut audio.enabled[i]),
+        _ => None,
+    }
+}
+
 /// What the parcel offers and what is playing.
 #[derive(Default, Clone, Copy)]
 pub struct MediaState {
@@ -240,16 +252,15 @@ pub fn top_controls(
                                 {
                                     action = AudioAction::OpenPreferences;
                                 }
-                            } else if PANEL_TOGGLES.contains(&i)
-                                && super::widgets::checkbox(ui, p, &mut audio.enabled[i], "")
-                                    .on_hover_text(if audio.enabled[i] {
-                                        aurora_i18n::tr!("ui-audio-disable")
-                                    } else {
-                                        aurora_i18n::tr!("common-enable")
-                                    })
-                                    .changed()
-                            {
-                                action = AudioAction::Changed;
+                            } else if let Some(on) = enable_box(audio, i) {
+                                let tip = if *on {
+                                    aurora_i18n::tr!("ui-audio-disable")
+                                } else {
+                                    aurora_i18n::tr!("common-enable")
+                                };
+                                if super::widgets::checkbox(ui, p, on, "").on_hover_text(tip).changed() {
+                                    action = AudioAction::Changed;
+                                }
                             }
                             ui.end_row();
                         }
@@ -336,6 +347,25 @@ mod tests {
         st.hover(false, false, true, 2.0);
         st.hover(false, false, true, 5.0);
         assert!(st.panel_open);
+    }
+
+    #[test]
+    fn the_voice_box_is_the_voice_connection_of_the_preferences() {
+        let mut a = AudioSettings::default();
+        assert!(a.voice_enabled);
+        *enable_box(&mut a, 6).expect("the voice has a box") = false;
+        // the very setting the voice system and Preferences › Sound read:
+        // disconnected, microphone included; the voice channel itself stays
+        assert!(!a.voice_enabled);
+        assert!(a.enabled[6]);
+        *enable_box(&mut a, 6).expect("the voice has a box") = true;
+        assert!(a.voice_enabled);
+        // music and media switch their channel
+        *enable_box(&mut a, 4).expect("the music has a box") = false;
+        assert!(!a.enabled[4] && a.voice_enabled);
+        for i in [0, 1, 2, 3] {
+            assert!(enable_box(&mut a, i).is_none());
+        }
     }
 
     #[test]
