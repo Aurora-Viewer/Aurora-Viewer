@@ -380,20 +380,12 @@ pub(super) fn show(
             ui.set_width(200.0);
             ui.spacing_mut().item_spacing.y = 2.0;
             for sec in &sections {
-                let mut r = widgets::navigation(ui, p, sec.icon(), sec.label(), s.manage_section == *sec);
+                let count = nav_count(v, world, *sec);
+                let mut r = widgets::navigation_wrapped(ui, p, sec.icon(), sec.label(), count.as_deref(), s.manage_section == *sec);
                 if banner.is_none()
                     && let Some(m) = missing_power(v, sec.power())
                 {
                     r = r.on_hover_text(m);
-                }
-                if let Some(count) = nav_count(v, world, *sec) {
-                    ui.painter().text(
-                        r.rect.right_center() - Vec2::new(9.0, 0.0),
-                        egui::Align2::RIGHT_CENTER,
-                        count,
-                        FontId::proportional(11.0),
-                        p.muted_dim,
-                    );
                 }
                 if r.clicked() {
                     s.manage_section = *sec;
