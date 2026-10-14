@@ -10,11 +10,11 @@
 
 use super::access::AccessState;
 use super::aurora::semibold;
-use crate::ui::sheet::{self, editable, fold_link, fold_row, line, lock_line, srow, why};
 use super::dialogs::{Confirm, SellForm};
 use super::options::{self, Shown};
 use super::{Dialog, LandUi, View};
 use crate::theme::Palette;
+use crate::ui::sheet::{self, editable, fold_link, fold_row, line, lock_line, srow, why};
 use crate::ui::{menu, widgets};
 
 /// The cards and the banner the other pages share.
