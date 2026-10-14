@@ -19,6 +19,7 @@ done with [the Aurora tools](#the-aurora-tools-aurora-toolscmd).
 | Open the PR, review it, fix, comment, **merge it** | Decide when the agent asks you to (verdict ⚠️ or ❌) |
 | Keep TASKS.md up to date, publish the releases | **Ask** for a release when you want one ("release 0.4.0") |
 | Read the issues and their screenshots / files, analyse them, label them, reply and close them once resolved | Give the details and validations needed, decide the product choices |
+| Answer your questions on what is left to do, the issues and the PRs from fresh data (`origin/main`, GitHub), never from memory | Ask whenever you want a status |
 
 You have **nothing to do on GitHub**: your only job is to test what the agent
 shows you, and to log in to the grid when needed.

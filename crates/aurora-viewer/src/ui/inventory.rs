@@ -24,6 +24,7 @@ mod progress;
 mod properties;
 pub(crate) mod task_drop;
 pub mod thumbnail;
+pub(crate) mod tree;
 pub(crate) mod view;
 pub use controls::preferences;
 pub use view::InventoryPreferences;
@@ -220,6 +221,11 @@ pub struct InventoryWindow {
 /// Inventory cargo shared by world placement and the build contents floater.
 #[derive(Debug, Clone, Copy)]
 pub struct InvDrag(pub Uuid);
+
+/// A folder dragged from the inventory: only the Marketplace listings
+/// window takes it (LLFolderBridge::dragCategoryIntoFolder).
+#[derive(Debug, Clone, Copy)]
+pub struct FolderDrag(pub Uuid);
 
 pub(crate) struct WorldDrag {
     pub item: Uuid,
@@ -435,13 +441,7 @@ impl InventoryUi {
     }
 }
 
-fn folder_icon(type_default: i32, open: bool) -> &'static str {
-    match type_default {
-        14 => "Inv_TrashClosed",
-        _ if open => "Inv_FolderOpen",
-        _ => "Inv_FolderClosed",
-    }
-}
+use tree::folder_icon;
 
 pub fn item_icon(asset_type: i32, inv_type: i32) -> &'static str {
     match (asset_type, inv_type) {
@@ -467,12 +467,7 @@ pub fn item_icon(asset_type: i32, inv_type: i32) -> &'static str {
 }
 
 fn icon(ui: &mut egui::Ui, icons: &Icons, name: &str, p: &Palette) {
-    if let Some(t) = icons.get(name) {
-        let tint = if name.starts_with("Inv_Folder") { p.violet_light } else { p.ink };
-        ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(tint));
-    } else {
-        ui.add_space(16.0);
-    }
+    tree::icon(ui, icons, name, p, None);
 }
 
 fn item_row(
@@ -617,15 +612,8 @@ fn folder_row(
     let fetch_state = folder.state;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let (r, resp) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::click());
+        let resp = tree::caret(ui, p, *open);
         clipboard::demo_caret(&resp, state, id);
-        let c = r.center();
-        let pts = if *open {
-            vec![c + egui::vec2(-4.0, -2.0), c + egui::vec2(4.0, -2.0), c + egui::vec2(0.0, 3.0)]
-        } else {
-            vec![c + egui::vec2(-2.0, -4.0), c + egui::vec2(3.0, 0.0), c + egui::vec2(-2.0, 4.0)]
-        };
-        ui.painter().add(egui::Shape::convex_polygon(pts, p.muted, egui::Stroke::NONE));
         if resp.clicked() {
             *open = !*open;
         }
@@ -639,12 +627,17 @@ fn folder_row(
         if rename_row(ui, p, inv, id, state, prefs, actions) {
             return;
         }
-        let r = ui.add_sized(
-            [ui.available_width(), 20.0],
-            egui::Button::selectable(state.selection.contains(&id), "")
-                .left_text(RichText::new(label).size(13.0).color(p.ink))
-                .wrap_mode(egui::TextWrapMode::Extend),
-        );
+        // personal folders can be dragged to the Marketplace listings window
+        let draggable = rules::movable(inv, id, &prefs.protected) && folder.info.type_default == -1;
+        let sense = if draggable {
+            egui::Sense::click_and_drag()
+        } else {
+            egui::Sense::click()
+        };
+        let r = tree::label(ui, tree::name(&label, p), state.selection.contains(&id), sense, None);
+        if draggable {
+            r.dnd_set_drag_payload(FolderDrag(id));
+        }
         clipboard::demo_row(&r, state, id);
         task_drop::target(ui, p, &r, inv, id, prefs, actions);
         if first_open {
@@ -778,9 +771,7 @@ fn folder_window_contents(
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
 
-fn tree_spacing(ui: &mut egui::Ui) {
-    super::widgets::inventory_spacing(ui);
-}
+use tree::spacing as tree_spacing;
 
 fn prepare_result_tree(st: &mut InventoryUi, inv: &Inventory, root: Uuid) {
     if let Some(open) = st.expand_all.take() {
@@ -799,30 +790,13 @@ fn prepare_result_tree(st: &mut InventoryUi, inv: &Inventory, root: Uuid) {
 
 // LLFolderView::arrange/reshape (indra/llui/llfolderview.cpp): long labels
 // enlarge the scrollable document, rather than the surrounding floater.
-fn list_scroll(ui: &mut egui::Ui, height: f32) -> egui::ScrollArea {
-    ui.spacing_mut().scroll = egui::style::ScrollStyle {
-        dormant_background_opacity: 0.2,
-        dormant_handle_opacity: 0.6,
-        ..egui::style::ScrollStyle::solid()
-    };
-    egui::ScrollArea::both()
-        .auto_shrink([false, false])
-        .max_width(ui.available_width())
-        .max_height(height)
-        .min_scrolled_height((height - ui.spacing().scroll.allocated_width()).max(40.0))
-}
+use tree::{height as list_height, scroll as list_scroll};
 
 fn scroll_to_row(ui: &egui::Ui, row: &egui::Response, align: egui::Align) {
     // Reveal vertically while keeping folder carets and the start of names in
     // view. Aligning a whole, potentially very wide label would also pan right.
     let rect = egui::Rect::from_x_y_ranges(ui.clip_rect().x_range(), row.rect.y_range());
     ui.scroll_to_rect(rect, Some(align));
-}
-
-fn list_height(ui: &egui::Ui) -> f32 {
-    // One fixed-height footer, including the frame margins and layout spacing.
-    // Async messages share this row so fetching never enlarges the floater.
-    (ui.available_height() - 58.0).max(40.0)
 }
 
 fn status(
@@ -1188,38 +1162,33 @@ fn inventory_contents(
     }
     ui.add_space(6.0);
     let list_h = list_height(ui);
-    let zone = egui::Frame::new()
-        .fill(p.field.gamma_multiply(0.72))
-        .corner_radius(ui.visuals().window_corner_radius)
-        .inner_margin(4)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            clipboard::list_focus(ui, st, list_h);
-            if root.is_nil() {
-                list_scroll(ui, list_h).show(ui, |ui| {
-                    let text = if st.tab == RECEIVED_TAB {
-                        aurora_i18n::tr!("ui-inventory-no-received-purchases")
-                    } else {
-                        aurora_i18n::tr!("ui-inventory-inventory-unavailable")
-                    };
-                    ui.label(RichText::new(text).color(p.muted));
-                });
-                return;
-            }
-            if filtered {
-                prepare_result_tree(st, inv, root);
-                search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
-                return;
-            }
+    let zone = tree::frame(ui, p, |ui| {
+        clipboard::list_focus(ui, st, list_h);
+        if root.is_nil() {
             list_scroll(ui, list_h).show(ui, |ui| {
-                let expand = st.expand_all.take();
-                if st.tab == RECEIVED_TAB {
-                    folder_contents(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
+                let text = if st.tab == RECEIVED_TAB {
+                    aurora_i18n::tr!("ui-inventory-no-received-purchases")
                 } else {
-                    folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
-                }
+                    aurora_i18n::tr!("ui-inventory-inventory-unavailable")
+                };
+                ui.label(RichText::new(text).color(p.muted));
             });
+            return;
+        }
+        if filtered {
+            prepare_result_tree(st, inv, root);
+            search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
+            return;
+        }
+        list_scroll(ui, list_h).show(ui, |ui| {
+            let expand = st.expand_all.take();
+            if st.tab == RECEIVED_TAB {
+                folder_contents(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
+            } else {
+                folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
+            }
         });
+    });
     task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
