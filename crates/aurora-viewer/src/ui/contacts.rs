@@ -1903,12 +1903,24 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         }
     };
     let notice = matches!(d, Dialog::RejectingTeleports);
+    // where an offer leads: our region, with its rating badge
+    let here = matches!(d, Dialog::OfferTeleport { .. })
+        .then(|| world.main().and_then(|r| r.info.as_ref()).map(|i| (i.name.clone(), i.sim_access)))
+        .flatten();
     let mut done: Option<bool> = None;
     let modal = crate::ui::widgets::Modal::new(egui::Id::new("contacts_dialog")).show(ctx, |ui| {
         ui.set_width(360.0);
         ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
         ui.add_space(6.0);
         ui.label(RichText::new(&text).size(12.5).color(p.muted));
+        if let Some((region, access)) = &here {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 5.0;
+                widgets::maturity_badge_of(ui, p, *access, 14.0);
+                ui.label(RichText::new(region).size(12.5).color(p.ink));
+            });
+        }
         if has_input {
             ui.add_space(6.0);
             let limit = if matches!(d, Dialog::OfferTeleport { .. }) {

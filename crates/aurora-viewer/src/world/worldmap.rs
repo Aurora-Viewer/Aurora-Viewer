@@ -156,7 +156,78 @@ pub struct WorldMap {
     /// Latest collision parcel and the last "Cannot enter parcel" alert.
     pub collision: Option<Collision>,
     pub blocked_alert: Option<Instant>,
+    /// The rating of each region known by name (lowercase), for the badges
+    /// of the place links.
+    pub ratings: RegionRatings,
     out: Vec<NetCommand>,
+}
+
+/// The rating (SIM_ACCESS_*) of regions by name, for the badges of place
+/// links: what the map, the connected regions and the searches taught,
+/// and the names to ask the server.
+///
+/// Deliberately more than Firestorm, which never looks a region up to show
+/// a link (only when it is clicked, LLURLDispatcher → sendNamedRegionRequest):
+/// a region not known yet is asked once per session with MapNameRequest,
+/// at most `RATING_REQUESTS_PER_SECOND` names a second, and only for the
+/// links shown on screen.
+#[derive(Default)]
+pub struct RegionRatings {
+    by_name: HashMap<String, u8>,
+    /// Names already asked (or queued), never asked again.
+    asked: HashSet<String>,
+    queue: std::collections::VecDeque<String>,
+    last_sent: Option<Instant>,
+}
+
+/// Region name lookups sent per second at most (a burst of links in the
+/// chat waits in the queue).
+pub const RATING_REQUESTS_PER_SECOND: u32 = 4;
+/// Names waiting at most; older ones are dropped (they are asked again
+/// the next time their link is shown).
+const RATING_QUEUE_MAX: usize = 64;
+
+impl RegionRatings {
+    pub fn learn(&mut self, name: &str, access: u8) {
+        if !name.trim().is_empty() {
+            self.by_name.insert(name.trim().to_lowercase(), access);
+        }
+    }
+
+    /// The rating of a region by name, if known.
+    pub fn get(&self, name: &str) -> Option<u8> {
+        self.by_name.get(&name.trim().to_lowercase()).copied()
+    }
+
+    /// A link to this region is on screen: its rating, or None while it is
+    /// unknown (then asked once).
+    pub fn want(&mut self, name: &str) -> Option<u8> {
+        let key = name.trim().to_lowercase();
+        if let Some(access) = self.by_name.get(&key) {
+            return Some(*access);
+        }
+        if !key.is_empty() && self.asked.insert(key.clone()) {
+            if self.queue.len() >= RATING_QUEUE_MAX
+                && let Some(old) = self.queue.pop_front()
+            {
+                self.asked.remove(&old);
+            }
+            self.queue.push_back(key);
+        }
+        None
+    }
+
+    /// The next lookup to send, when the rate allows it.
+    pub fn next_request(&mut self, now: Instant) -> Option<NetCommand> {
+        let interval = std::time::Duration::from_secs(1) / RATING_REQUESTS_PER_SECOND;
+        if self.last_sent.is_some_and(|t| now.duration_since(t) < interval) {
+            return None;
+        }
+        let name = self.queue.pop_front()?;
+        self.last_sent = Some(now);
+        // LLWorldMapMessage::sendNamedRegionRequest, as the map's search
+        Some(NetCommand::MapNameRequest { name })
+    }
 }
 
 impl WorldMap {
@@ -211,6 +282,9 @@ impl WorldMap {
     }
 
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
+        while let Some(c) = self.ratings.next_request(Instant::now()) {
+            self.out.push(c);
+        }
         std::mem::take(&mut self.out)
     }
 
@@ -271,6 +345,7 @@ impl WorldMap {
                 continue;
             }
             self.null_sims.remove(&key);
+            self.ratings.learn(&b.name, b.access);
             self.sims.insert(
                 key,
                 SimInfo {
@@ -638,6 +713,78 @@ mod tests {
         let t = m.track.as_ref().expect("tracked once the region is known");
         assert_eq!((t.x, t.y, t.z), (256168.0, 256405.0, 118.0));
         assert!(m.focus_track, "the open map centres on it next frame");
+    }
+
+    fn lookups(m: &mut WorldMap) -> Vec<String> {
+        m.take_commands()
+            .into_iter()
+            .filter_map(|c| match c {
+                NetCommand::MapNameRequest { name } => Some(name),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_region_rating_is_asked_once_and_learnt_from_the_answer() {
+        let mut m = WorldMap::default();
+        assert_eq!(m.ratings.want("YIFF"), None);
+        assert_eq!(m.ratings.want(" yiff "), None);
+        assert_eq!(lookups(&mut m), vec!["yiff".to_owned()]);
+        // shown again before and after the answer: never asked again
+        assert_eq!(m.ratings.want("Yiff"), None);
+        assert!(lookups(&mut m).is_empty());
+        m.apply_blocks(vec![yiff()]);
+        assert_eq!(m.ratings.want("yiff"), Some(21));
+        assert_eq!(m.ratings.get("YIFF"), Some(21));
+        assert!(lookups(&mut m).is_empty());
+    }
+
+    #[test]
+    fn known_regions_are_never_asked() {
+        let mut m = WorldMap::default();
+        m.ratings.learn("Aurora Démo", 13);
+        m.apply_blocks(vec![yiff()]);
+        assert_eq!(m.ratings.want("aurora démo"), Some(13));
+        assert_eq!(m.ratings.want("Yiff"), Some(21));
+        assert_eq!(m.ratings.want(""), None);
+        assert!(lookups(&mut m).is_empty());
+    }
+
+    #[test]
+    fn a_burst_of_links_is_asked_a_few_a_second() {
+        let mut r = RegionRatings::default();
+        for i in 0..10 {
+            r.want(&format!("Region {i}"));
+        }
+        let t0 = Instant::now();
+        let step = Duration::from_secs(1) / RATING_REQUESTS_PER_SECOND;
+        assert!(r.next_request(t0).is_some());
+        assert!(r.next_request(t0).is_none());
+        assert!(r.next_request(t0 + step / 2).is_none());
+        // over one second, RATING_REQUESTS_PER_SECOND names at most
+        let sent = (1..=RATING_REQUESTS_PER_SECOND)
+            .filter(|k| r.next_request(t0 + step * *k).is_some())
+            .count() as u32;
+        assert_eq!(sent, RATING_REQUESTS_PER_SECOND);
+        let Some(NetCommand::MapNameRequest { name }) = r.next_request(t0 + step * 10) else {
+            panic!("the queue keeps its order");
+        };
+        assert_eq!(name, format!("region {}", RATING_REQUESTS_PER_SECOND + 1));
+    }
+
+    #[test]
+    fn a_full_queue_drops_its_oldest_names_which_may_be_asked_again() {
+        let mut r = RegionRatings::default();
+        for i in 0..RATING_QUEUE_MAX + 2 {
+            r.want(&format!("r{i}"));
+        }
+        assert_eq!(r.queue.len(), RATING_QUEUE_MAX);
+        assert_eq!(r.queue.front().map(String::as_str), Some("r2"));
+        // dropped before being asked: its link asks it again
+        r.want("r0");
+        assert_eq!(r.queue.back().map(String::as_str), Some("r0"));
+        assert_eq!(r.queue.len(), RATING_QUEUE_MAX);
     }
 
     #[test]

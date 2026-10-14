@@ -331,6 +331,8 @@ pub struct App {
     options_ui: ui::options::OptionsUi,
     audio_ui: ui::audio::AudioUi,
     notif_ui: ui::notifications::NotifUi,
+    /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
+    demo_lookups: Vec<(Instant, NetCommand)>,
     /// Parcel music stream on (radio toggle).
     music_playing: bool,
     /// Parcel media and media on a prim (web / video plugins).
@@ -693,6 +695,7 @@ impl App {
             options_ui: Default::default(),
             audio_ui: Default::default(),
             notif_ui: Default::default(),
+            demo_lookups: Vec::new(),
             music_playing: false,
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
                 Ok(e) => {
@@ -812,6 +815,11 @@ impl App {
             return;
         }
         if self.demo && self.gesture_demo_command(&cmd) {
+            return;
+        }
+        // AURORA_DEMO_SLURLS: a region lookup answered a little later
+        if self.demo && crate::demo::slurls_scene() && matches!(cmd, NetCommand::MapNameRequest { .. }) {
+            self.demo_lookups.push((Instant::now() + crate::demo::SLURLS_LOOKUP_DELAY, cmd));
             return;
         }
         if self.demo
@@ -4100,7 +4108,24 @@ impl App {
                         size_x: r.heightmap.size_x.max(256),
                         size_y: r.heightmap.size_y.max(256),
                     });
+                self.world.map.ratings.learn(&i.name, i.sim_access);
             }
+        }
+        // the regions of the place links drawn last frame whose rating is
+        // not known yet: asked once, a few a second (RegionRatings)
+        for name in ui::widgets::take_wanted_regions(&self.egui_ctx) {
+            self.world.map.ratings.want(&name);
+        }
+        let now = Instant::now();
+        let (due, later) = std::mem::take(&mut self.demo_lookups).into_iter().partition(|(at, _)| *at <= now);
+        self.demo_lookups = later;
+        for (_, cmd) in due {
+            for ev in crate::demo::demo_reply(&cmd) {
+                self.world.apply(ev);
+            }
+        }
+        if !self.demo_lookups.is_empty() {
+            self.egui_ctx.request_repaint_after(crate::demo::SLURLS_LOOKUP_DELAY / 4);
         }
         let me = ui::minimap::to_global(&self.world, self.world.agent.position);
         if self.world.movement_complete && !self.world.teleporting {
@@ -7537,7 +7562,14 @@ impl App {
                         n.read = true;
                     }
                 }
-                for (id, r) in ui::notifications::show(&ctx, &p, &self.skin.icons, &mut self.world.notifications, &mut self.notif_ui) {
+                for (id, r) in ui::notifications::show(
+                    &ctx,
+                    &p,
+                    &self.skin.icons,
+                    &self.world.map.ratings,
+                    &mut self.world.notifications,
+                    &mut self.notif_ui,
+                ) {
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
                         self.begin_teleport(String::new(), false);
@@ -8566,6 +8598,59 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            // AURORA_DEMO_SLURLS: place links of every rating, and one unknown
+            if crate::demo::slurls_scene() {
+                for ev in crate::demo::slurls_events() {
+                    self.world.apply(ev);
+                }
+                let text = crate::demo::slurls_text();
+                let agent = self.world.agent_id;
+                self.world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {
+                    from_agent_id: crate::demo::DEMO_NOVA,
+                    from_name: "Tess Touch".into(),
+                    to_agent_id: agent,
+                    dialog: 0,
+                    session_id: uuid::Uuid::nil(),
+                    message: text.clone(),
+                    offline: false,
+                    from_group: false,
+                    binary_bucket: Vec::new(),
+                    timestamp: 0,
+                }));
+                // and said by an object, in the chat console
+                self.world.apply(NetEvent::Chat(aurora_net::ChatMessage {
+                    from_name: aurora_i18n::tr!("demo-places-sign").into(),
+                    source_id: uuid::Uuid::from_u128(0x5106),
+                    owner_id: uuid::Uuid::nil(),
+                    source_type: aurora_net::ChatSourceType::Object,
+                    chat_type: aurora_net::ChatType::Normal,
+                    position: glam::Vec3::ZERO,
+                    message: text.clone(),
+                }));
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    "Tess Touch",
+                    text,
+                    crate::world::notifications::Data::None,
+                );
+                self.notif_ui.open = true;
+                self.panels.perf = false;
+                self.panels.places = false;
+                self.panels.people = false;
+                self.panels.chat = true;
+                self.chat_ui.open(crate::demo::DEMO_NOVA);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
+                // =offer: our teleport offer to her, with our region's badge
+                if std::env::var("AURORA_DEMO_SLURLS").as_deref() == Ok("offer") {
+                    let region = self
+                        .world
+                        .main()
+                        .and_then(|r| r.info.as_ref())
+                        .map(|i| i.name.clone())
+                        .unwrap_or_default();
+                    self.contacts_ui.ask_teleport_offer(vec![crate::demo::DEMO_NOVA], &region);
                 }
             }
             // AURORA_DEMO_MATURITY: "General" asked once the login is known

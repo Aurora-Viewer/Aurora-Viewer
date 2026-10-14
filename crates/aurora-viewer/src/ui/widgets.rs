@@ -1322,25 +1322,83 @@ pub fn maturity_style(p: &Palette, maturity: &str) -> Option<(&'static str, Colo
 }
 
 pub fn maturity_badge(ui: &mut egui::Ui, p: &Palette, maturity: &str, size: f32) -> Option<egui::Response> {
-    let (letter, bg, fg) = maturity_style(p, maturity)?;
+    let (letter, ..) = maturity_style(p, maturity)?;
     let tip = match letter {
         "G" => aurora_i18n::tr!("ui-widgets-general-region-all-ages"),
         "M" => aurora_i18n::tr!("ui-widgets-moderate-region"),
         _ => aurora_i18n::tr!("ui-widgets-adult-region"),
     };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
-    ui.painter().rect_filled(rect, inner_radius(ui.visuals()), bg);
-    // centered on the letter itself, not on the text row
-    let galley = ui
-        .painter()
-        .layout_no_wrap(letter.to_owned(), egui::FontId::proportional(size * 0.72), fg);
-    paint_ink_centered(ui.painter(), galley, rect.center(), fg);
+    paint_maturity_badge(ui.painter(), p, maturity, rect, inner_radius(ui.visuals()));
     Some(resp.on_hover_text(tip))
+}
+
+/// The same badge painted in a given square (labels drawn on a map).
+pub fn paint_maturity_badge(
+    painter: &egui::Painter,
+    p: &Palette,
+    maturity: &str,
+    rect: egui::Rect,
+    radius: impl Into<egui::CornerRadius>,
+) -> bool {
+    let Some((letter, bg, fg)) = maturity_style(p, maturity) else {
+        return false;
+    };
+    painter.rect_filled(rect, radius, bg);
+    // centered on the letter itself, not on the text row
+    let galley = painter.layout_no_wrap(letter.to_owned(), egui::FontId::proportional(rect.height() * 0.72), fg);
+    paint_ink_centered(painter, galley, rect.center(), fg);
+    true
 }
 
 /// The badge of a rating given as SIM_ACCESS_* (the navigation bar's).
 pub fn maturity_badge_of(ui: &mut egui::Ui, p: &Palette, sim_access: u8, size: f32) -> Option<egui::Response> {
     maturity_badge(ui, p, super::bars::maturity_name(sim_access), size)
+}
+
+/// The badge of a region named by a place link, once its rating is known.
+/// An unknown region is handed to `take_wanted_regions` (only the links
+/// actually drawn are asked) and gets its badge when the answer arrives.
+pub fn region_badge(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    ratings: &crate::world::worldmap::RegionRatings,
+    region: &str,
+    size: f32,
+) -> Option<egui::Response> {
+    maturity_badge_of(ui, p, region_rating(ui.ctx(), ratings, region)?, size)
+}
+
+/// A region's rating, for a badge drawn now; an unknown one is asked
+/// (`take_wanted_regions`).
+pub fn region_rating(ctx: &egui::Context, ratings: &crate::world::worldmap::RegionRatings, region: &str) -> Option<u8> {
+    let r = ratings.get(region);
+    if r.is_none() {
+        want_region(ctx, region);
+    }
+    r
+}
+
+fn wanted_regions_id() -> egui::Id {
+    egui::Id::new("aurora-wanted-region-ratings")
+}
+
+fn want_region(ctx: &egui::Context, region: &str) {
+    if region.trim().is_empty() {
+        return;
+    }
+    ctx.data_mut(|d| {
+        let v = d.get_temp_mut_or_default::<Vec<String>>(wanted_regions_id());
+        if !v.iter().any(|n| n == region) {
+            v.push(region.to_owned());
+        }
+    });
+}
+
+/// The regions of the links drawn without a rating since the last call.
+pub fn take_wanted_regions(ctx: &egui::Context) -> Vec<String> {
+    ctx.data_mut(|d| d.remove_temp::<Vec<String>>(wanted_regions_id()))
+        .unwrap_or_default()
 }
 
 /// The ratings a content preference includes, General first (the rating

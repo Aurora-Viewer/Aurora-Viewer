@@ -248,10 +248,9 @@ impl World {
             },
         };
         let id = self.notifications.push(Kind::Teleport, title, body.clone(), data);
-        if let Rating::Exceeded(r) | Rating::Blocked(r) = rating
-            && let Some(n) = self.notifications.list.iter_mut().find(|n| n.id == id)
-        {
-            n.maturity = r;
+        // the destination's rating, as the bucket gives it
+        if let Some(n) = self.notifications.list.iter_mut().find(|n| n.id == id) {
+            n.maturity = region;
         }
         self.set_invite_notification(invite, id);
         if let Rating::Blocked(_) = rating {

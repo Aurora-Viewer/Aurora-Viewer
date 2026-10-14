@@ -443,6 +443,19 @@ impl WorldMapUi {
                 );
             } else {
                 draw_tracking(&painter, rect, sp, TRACK_COLOR, 0.0, Some(&t.label));
+                // the rating of the region there (a llMapDestination, a
+                // place link), left of its label as in the navigation bar
+                if rect.shrink(2.0).contains(sp)
+                    && let Some((_, sim)) = world.map.sim_at_global(t.x, t.y)
+                {
+                    let font = egui::FontId::proportional(11.0);
+                    let label = painter.layout_no_wrap(t.label.clone(), font.clone(), Color32::WHITE);
+                    let row = ui.fonts_mut(|f| f.row_height(&font));
+                    let side = 12.0;
+                    let at = pos2(sp.x - label.size().x * 0.5 - side - 4.0, sp.y + 9.0 + (row - side) * 0.5);
+                    let badge = Rect::from_min_size(at, Vec2::splat(side));
+                    widgets::paint_maturity_badge(&painter, p, super::bars::maturity_name(sim.access), badge, 2);
+                }
             }
         }
 

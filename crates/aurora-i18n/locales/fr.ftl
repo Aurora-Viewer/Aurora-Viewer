@@ -3422,6 +3422,7 @@ ui-options-clear-cache = Vider le cache
 ui-profile-real-life = Vie RL
 ui-profile-second-life = Vie SL
 demo-come-see-the-lagoon-at-sunset = Viens voir le lagon au coucher du soleil !
+demo-places-sign = Panneau des visiteurs
 demo-bubbles-concert = Tu viens au concert ce soir ?
 demo-bubbles-cant = Je ne peux pas, je travaille tard 😕
 demo-bubbles-sorry = Désolée pour hier !
