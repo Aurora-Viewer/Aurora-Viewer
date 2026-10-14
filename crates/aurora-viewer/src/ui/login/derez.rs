@@ -18,7 +18,32 @@ struct Fragment {
     release: f32,
     drift: Vec2,
     spin: f32,
+    /// Opacity at release: 1 for a neighbour card, `ECHO_OPACITY` for the
+    /// echo of a lone card.
+    opacity: f32,
     meshes: Vec<Mesh>,
+}
+
+/// A single account has no neighbour to shatter, which left its validation
+/// without the burst on either side. A faint copy of the card itself breaks
+/// apart instead, each half towards its own side, starting under the card.
+const ECHO_OPACITY: f32 = 0.7;
+
+/// Fragments of a lone card's echo: those left of its centre leave to the
+/// left, the others to the right, each one past its own edge of the card
+/// (they start hidden under it) and then as far as a neighbour's would go.
+fn echo(ctx: &Context, card: &Snapshot) -> Vec<Fragment> {
+    let center = card.rect.center().x;
+    let half = card.rect.width() / 2.0;
+    split(ctx, card, 1.0)
+        .into_iter()
+        .map(|mut piece| {
+            let out = half - (piece.center.x - center).abs() + piece.drift.x.abs() * 1.2;
+            piece.drift.x = if piece.center.x < center { -out } else { out };
+            piece.opacity = ECHO_OPACITY;
+            piece
+        })
+        .collect()
 }
 
 pub struct Transition {
@@ -136,6 +161,7 @@ fn split(ctx: &Context, snapshot: &Snapshot, direction: f32) -> Vec<Fragment> {
                 release: 0.02 + 0.26 * (0.28 * col as f32 / cols as f32 + 0.72 * row as f32 / rows as f32),
                 drift: Vec2::new(direction * (30.0 + 125.0 * noise), -45.0 - 125.0 * (1.0 - noise)),
                 spin: (noise - 0.5) * 1.4,
+                opacity: 1.0,
                 meshes,
             }
         })
@@ -148,12 +174,17 @@ impl Transition {
         let result = fragments.clone();
         let worker_ctx = ctx.clone();
         let cards = others.clone();
+        let lone = selected.clone();
         let center = selected.rect.center().x;
         rayon::spawn(move || {
-            let pieces = cards
-                .iter()
-                .flat_map(|card| split(&worker_ctx, card, if card.rect.center().x < center { -1.0 } else { 1.0 }))
-                .collect();
+            let pieces = if cards.is_empty() {
+                echo(&worker_ctx, &lone)
+            } else {
+                cards
+                    .iter()
+                    .flat_map(|card| split(&worker_ctx, card, if card.rect.center().x < center { -1.0 } else { 1.0 }))
+                    .collect()
+            };
             let _ = result.set(pieces);
             worker_ctx.request_repaint();
         });
@@ -192,7 +223,7 @@ impl Transition {
                 }
                 let fly = age * age * (2.0 - age);
                 let scale = 1.0 - 0.82 * smooth(age);
-                let fade = (1.0 - age).powf(1.55);
+                let fade = (1.0 - age).powf(1.55) * piece.opacity;
                 let (sin, cos) = (piece.spin * fly).sin_cos();
                 for mesh in &piece.meshes {
                     let batch = batches
@@ -288,6 +319,37 @@ mod tests {
         let polygon = clip(vec![vertex(0.0, 0.0), vertex(2.0, 0.0), vertex(0.0, 2.0)], 0, 1.0, true);
         assert_eq!(polygon.len(), 3);
         assert!(polygon.iter().all(|v| v.pos.x >= 1.0 && v.pos == v.uv));
+    }
+
+    #[test]
+    fn a_lone_card_bursts_its_own_echo_to_both_sides() {
+        let ctx = Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let rect = Rect::from_min_size(Pos2::new(160.0, 100.0), Vec2::new(264.0, 400.0));
+        let card = Snapshot {
+            rect,
+            action: Rect::NOTHING,
+            shapes: vec![ClippedShape {
+                clip_rect: rect,
+                shape: Shape::rect_filled(rect, 0.0, p.panel),
+            }],
+        };
+        // tessellation needs the fonts of a first frame
+        let _ = super::super::test_output(ctx.run_ui(egui::RawInput::default(), |_| {}));
+        let pieces = echo(&ctx, &card);
+        assert!(!pieces.is_empty());
+        let left = pieces.iter().filter(|piece| piece.drift.x < 0.0).count();
+        let right = pieces.iter().filter(|piece| piece.drift.x > 0.0).count();
+        assert!(left > 0 && right > 0, "{left} fragments left, {right} right");
+        assert!(
+            pieces
+                .iter()
+                .all(|piece| (piece.drift.x < 0.0) == (piece.center.x < rect.center().x))
+        );
+        assert!(pieces.iter().all(|piece| piece.opacity == ECHO_OPACITY));
+        // neighbours keep their own full-opacity burst away from the chosen card
+        let neighbour = split(&ctx, &card, 1.0);
+        assert!(neighbour.iter().all(|piece| piece.drift.x > 0.0 && piece.opacity == 1.0));
     }
 
     #[test]
