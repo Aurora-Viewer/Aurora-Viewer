@@ -102,7 +102,7 @@ fn tile(ui: &mut egui::Ui, p: &Palette, width: f32, body: impl FnOnce(&mut egui:
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(width - 20.0);
-            ui.set_height(40.0);
+            ui.set_height(42.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 body(ui);
@@ -162,7 +162,6 @@ fn stats(
                     .size(11.5)
                     .color(p.muted),
             );
-            ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 5.0;
                 contribution(st, ui, v, me, actions);
@@ -501,7 +500,7 @@ fn money(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, data
                     }
                 }
             });
-            ui.add_space(6.0);
+            ui.add_space(2.0);
             ui.spacing_mut().item_spacing.y = 7.0;
             match page.and_then(|p| p.body.as_ref().map(|b| (p.interval, b))) {
                 None => {
