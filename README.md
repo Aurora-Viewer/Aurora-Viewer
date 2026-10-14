@@ -282,6 +282,15 @@ for block comments, and Tab / Shift+Tab to indent or outdent the selected
 lines. The arrows in the margin fold the blocks between braces; the Edit menu
 offers Collapse all / Expand all.
 
+### Toolbar buttons
+
+Right-click the bottom toolbar and choose **Edit toolbar buttons** to add
+buttons from the catalogue. Drag them onto the bar or along it to reorder
+them; right-click a button to remove it. The order and the optional lock are
+shared by all accounts in the same local profile. The catalogue also restores
+the skin defaults or clears the bar. An older per-account layout is adopted
+from the first account used after the update.
+
 ### Inventory
 
 The inventory's right-click menu offers "Move to…" for a folder, an item or a

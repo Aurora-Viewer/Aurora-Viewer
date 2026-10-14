@@ -1348,6 +1348,16 @@ To check with these scenarios:
 
 ## Interface
 
+| Variable | Effect |
+|---|---|
+| `AURORA_DEMO_TOOLBAR=1` | Open the bottom toolbar button catalogue. |
+
+`AURORA_DEMO_TOOLBAR`: `1` opens the catalogue; `drag` holds Friends over
+the toolbar with an insertion marker, `add` releases it, `reorder` moves
+Preferences beside Inventory, and `menu` opens a button's context menu.
+Capture after frame 670. Use an unmodified demo toolbar with Friends absent
+for the add/drag scenarios. Changes use the demo's separate saved settings.
+
 The values of these switches are English words. The French words they had
 before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 

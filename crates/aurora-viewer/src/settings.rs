@@ -450,6 +450,13 @@ pub struct Settings {
     pub bandwidth_kbps: u32,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
+    /// Shared toolbar, like the window layout and graphics preferences.
+    /// None delays migration until the first account enters the world.
+    #[serde(rename = "toolbar_common", default)]
+    pub toolbar: Option<crate::ui::toolbar::ToolbarSettings>,
+    /// Keep the earlier per-account layouts through saves made before login.
+    #[serde(rename = "toolbar", default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub(crate) legacy_toolbars: std::collections::HashMap<uuid::Uuid, crate::ui::toolbar::ToolbarSettings>,
     /// Volumes and toggles (Firestorm volume panel).
     pub audio: AudioSettings,
     /// Parcel media and media on a prim.
@@ -836,6 +843,8 @@ impl Default for Settings {
             cache_size_mb: 20480,
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             chat_bar_width: 0.0,
+            toolbar: Default::default(),
+            legacy_toolbars: Default::default(),
             audio: AudioSettings::default(),
             media: Default::default(),
             colors: ColorSettings::default(),
@@ -1187,6 +1196,12 @@ impl Settings {
         }
         self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
         self.chat_commands.sanitize();
+        if let Some(toolbar) = &mut self.toolbar {
+            toolbar.sanitize();
+        }
+        for toolbar in self.legacy_toolbars.values_mut() {
+            toolbar.sanitize();
+        }
         self.snapshot.sanitize();
         self.dof.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
@@ -1212,6 +1227,22 @@ impl Settings {
             self.machine_id = uuid::Uuid::new_v4().to_string();
         }
         self
+    }
+
+    /// Deliberate difference from Firestorm's per-account toolbars.xml, at the
+    /// human's request: every account uses the same toolbar. Resolve the old
+    /// layout only once, after login, to retain the account being tested.
+    pub fn migrate_toolbar(&mut self, account: uuid::Uuid) -> bool {
+        let mut changed = false;
+        if self.toolbar.is_none() {
+            self.toolbar = Some(self.legacy_toolbars.remove(&account).unwrap_or_default());
+            changed = true;
+        }
+        if !self.legacy_toolbars.is_empty() {
+            self.legacy_toolbars.clear();
+            changed = true;
+        }
+        changed
     }
 
     /// Back to the defaults ("Reset everything"), keeping the account and

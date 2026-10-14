@@ -176,6 +176,7 @@ pub struct App {
     demo_mfa_challenge: Option<std::time::Instant>,
     panels: Panels,
     chat_ui: ChatUi,
+    toolbar_ui: ui::toolbar::ToolbarUi,
     /// The History window (a conversation's whole transcript).
     history_ui: ui::chat::history::HistoryUi,
     perf: PerfData,
@@ -683,6 +684,7 @@ impl App {
             demo_mfa_challenge: None,
             panels,
             chat_ui: ChatUi::default(),
+            toolbar_ui: Default::default(),
             history_ui: Default::default(),
             perf: PerfData::default(),
             frame_profile: FrameProfile::default(),
@@ -5772,6 +5774,8 @@ impl App {
             self.gesture_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            raw.events
+                .extend(ui::toolbar::demo_events(&ctx, self.frame_count, &mut self.toolbar_ui));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::resize_events(&ctx, self.frame_count));
@@ -8103,11 +8107,15 @@ impl App {
                     output_devices: &self.options_ui.output_devices,
                     ..Default::default()
                 };
+                let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
+                let toolbar_settings = self.settings.toolbar.get_or_insert_default();
                 let (chat, bar2, bottom_top, chat_width_set) = ui::bars::bottom_bar(
                     ui,
                     &p,
                     icons,
                     layout,
+                    &mut self.toolbar_ui,
+                    toolbar_settings,
                     &mut self.panels,
                     &mut self.chat_ui,
                     &self.gesture_state.manager,
@@ -8119,13 +8127,14 @@ impl App {
                     &mut mic,
                     self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused,
                 );
-                if chat_width_set {
-                    self.settings.save();
-                }
                 // what the bars leave: where the windows are laid out, moved
                 // and snapped this frame
                 ui::layout::set_work_area(ui.ctx(), ui.available_rect_before_wrap());
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
+                self.toolbar_ui.show(ui.ctx(), &p, layout, toolbar_settings);
+                if self.toolbar_ui.commit(layout, toolbar_settings) || chat_width_set || toolbar_migrated {
+                    self.settings.save();
+                }
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
                 if mic.mode_changed || mic.devices_changed {

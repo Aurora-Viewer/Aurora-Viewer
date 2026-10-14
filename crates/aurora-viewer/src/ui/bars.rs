@@ -1278,10 +1278,10 @@ fn tool_button(
     active: bool,
     width: f32,
     unread: usize,
-) -> bool {
+) -> egui::Response {
     let size = Vec2::new(width, 22.0);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-    let resp = ui.interact(rect, tool_button_id(command), egui::Sense::click());
+    let resp = ui.interact(rect, tool_button_id(command), egui::Sense::click_and_drag());
     let icon_size = (width - 6.0).clamp(10.0, 16.0);
     let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
@@ -1312,7 +1312,7 @@ fn tool_button(
     if unread > 0 {
         paint_unread_pill(ui, p, rect, icon_size, unread);
     }
-    resp.on_hover_text(tip).clicked()
+    resp.on_hover_text(tip)
 }
 
 /// The unread count of the Conversations button: the pill of the entries of
@@ -1375,7 +1375,15 @@ pub struct MicButton<'a> {
 /// Width of the arrow's zone, right of the microphone.
 const MIC_ARROW: f32 = 14.0;
 
-fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &mut MicButton) {
+fn mic_button(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    width: f32,
+    mic: &mut MicButton,
+    toolbar_menu: bool,
+    open_requested: bool,
+) -> egui::Response {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 22.0), egui::Sense::hover());
     let icon_size = (width - 6.0).clamp(10.0, 16.0);
     // the microphone stands in the middle of the button, in line with the
@@ -1469,9 +1477,9 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
     let demo = *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_MICMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300;
     let toggle = match &arrow {
         Some(arrow) => arrow.clicked(),
-        None => resp.secondary_clicked(),
+        None => !toolbar_menu && resp.secondary_clicked(),
     };
-    let toggled = toggle || demo;
+    let toggled = toggle || demo || (open_requested && !open);
     mic.list_devices = toggled && !open;
     let anchor = arrow.as_ref().unwrap_or(&resp);
     // a click in the list of a device combo is a click outside the panel:
@@ -1502,6 +1510,7 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
         d.insert_temp(list_id, list_open);
         d.insert_temp(open_id, open_now);
     });
+    arrow.map_or_else(|| resp.clone(), |arrow| resp.union(arrow))
 }
 
 /// Panel of the microphone's arrow: the state of the voice, the two ways to
@@ -1650,6 +1659,8 @@ pub fn bottom_bar(
     p: &Palette,
     icons: &Icons,
     layout: &Layout,
+    toolbar: &mut super::toolbar::ToolbarUi,
+    toolbar_settings: &mut super::toolbar::ToolbarSettings,
     panels: &mut Panels,
     chat: &mut super::chat::ChatUi,
     gestures: &crate::gestures::Manager,
@@ -1673,7 +1684,8 @@ pub fn bottom_bar(
             ui.set_min_width(ui.available_width());
             ui.horizontal_centered(|ui| {
                 let total = ui.available_width();
-                let n = layout.toolbar.len().max(1) as f32;
+                let buttons = toolbar_settings.buttons(layout);
+                let n = buttons.len().max(1) as f32;
                 // the toolbar keeps at least a narrow button per command
                 const MIN_BTN: f32 = 22.0;
                 let label_w = 70.0;
@@ -1717,35 +1729,62 @@ pub fn bottom_bar(
                 let remaining = ui.available_width();
                 let gap = 4.0;
                 let btn_w = ((remaining - gap * (n - 1.0) - 1.0) / n).floor().max(MIN_BTN);
-                ui.spacing_mut().item_spacing.x = gap;
-                for b in &layout.toolbar {
-                    if b.command == "speak" {
-                        mic_button(ui, p, icons, btn_w, mic);
-                        continue;
-                    }
-                    let active = if b.command == "ao" {
-                        ao_active
-                    } else {
-                        command_active(&b.command, panels, flying, seated, mouselook)
-                    };
-                    // Firestorm flashes the button while the conversations
-                    // are closed or minimized (LLIMMgr, flashCommand)
-                    let badge = b.command == "conversations"
-                        && unread > 0
-                        && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
-                    let count = if badge { unread } else { 0 };
-                    let tip = if badge {
-                        aurora_i18n::tr!("ui-bars-unread", value0 = b.tooltip.to_string(), unread = format!("{}", unread))
-                    } else {
-                        b.tooltip.clone()
-                    };
-                    if tool_button(ui, p, icons, &b.command, &b.icon, &tip, active, btn_w, count) {
-                        let a = run_command(ui.ctx(), &b.command, panels);
-                        if !matches!(a, BarAction::None) {
-                            action = a;
-                        }
-                    }
-                }
+                let zone = egui::Rect::from_min_size(ui.cursor().min, Vec2::new(remaining.max(4.0), 22.0));
+                let target = ui.interact(zone, egui::Id::new("toolbar_background"), egui::Sense::click());
+                toolbar.context(&target, p, None, toolbar_settings.locked);
+                let mut rects = Vec::with_capacity(buttons.len());
+                egui::ScrollArea::horizontal()
+                    .id_salt("toolbar_scroll")
+                    .auto_shrink([false, false])
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .max_height(22.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = gap;
+                            for b in buttons {
+                                if b.command == "speak" {
+                                    let open_voice = std::mem::take(&mut toolbar.voice_options);
+                                    let response = mic_button(ui, p, icons, btn_w, mic, true, open_voice);
+                                    rects.push(response.rect);
+                                    toolbar.button(&response, b, p, toolbar_settings.locked);
+                                    if !toolbar_settings.locked && response.dragged() {
+                                        mic.held = false;
+                                    }
+                                    continue;
+                                }
+                                let active = if b.command == "ao" {
+                                    ao_active
+                                } else {
+                                    command_active(&b.command, panels, flying, seated, mouselook)
+                                };
+                                // Firestorm flashes the button while the conversations
+                                // are closed or minimized (LLIMMgr, flashCommand)
+                                let badge = b.command == "conversations"
+                                    && unread > 0
+                                    && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
+                                let count = if badge { unread } else { 0 };
+                                let tip = if badge {
+                                    aurora_i18n::tr!(
+                                        "ui-bars-unread",
+                                        value0 = super::toolbar::label(b).to_string(),
+                                        unread = format!("{}", unread)
+                                    )
+                                } else {
+                                    super::toolbar::label(b).to_owned()
+                                };
+                                let response = tool_button(ui, p, icons, &b.command, &b.icon, &tip, active, btn_w, count);
+                                rects.push(response.rect);
+                                toolbar.button(&response, b, p, toolbar_settings.locked);
+                                if response.clicked() {
+                                    let a = run_command(ui.ctx(), &b.command, panels);
+                                    if !matches!(a, BarAction::None) {
+                                        action = a;
+                                    }
+                                }
+                            }
+                        });
+                    });
+                toolbar.drop_bar(&target, &rects, p, toolbar_settings.locked);
             });
         });
     if let Some((painter, slot)) = glass {
@@ -1757,6 +1796,25 @@ pub fn bottom_bar(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toolbar_microphone_options_still_open_when_the_arrow_does_not_fit() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut mic = MicButton::default();
+        let mut open_id = None;
+        for requested in [false, true, true] {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let response = mic_button(ui, &p, &Icons::default(), 22.0, &mut mic, true, requested);
+                open_id = Some(response.parent_id().with("mic_panel_open"));
+            });
+            output.textures_delta.clear();
+            assert_eq!(
+                ctx.data(|d| d.get_temp::<bool>(open_id.expect("mic parent"))).unwrap_or(false),
+                requested
+            );
+        }
+    }
 
     /// Where the microphone button stands in the test window, and its width.
     const BUTTON: egui::Pos2 = egui::pos2(400.0, 560.0);
@@ -1796,7 +1854,7 @@ mod tests {
                 |ui| {
                     let slot = egui::Rect::from_min_size(BUTTON, Vec2::new(WIDTH, 22.0));
                     ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
-                        mic_button(ui, &p, &icons, WIDTH, &mut mic);
+                        mic_button(ui, &p, &icons, WIDTH, &mut mic, false, false);
                     });
                 },
             );
