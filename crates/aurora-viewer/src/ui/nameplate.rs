@@ -594,7 +594,7 @@ pub struct Plates {
     levels: Vec<Level>,
     glass: Vec<bool>,
     waiting: Vec<Uuid>,
-    /// Preferences › Interface › "Full plates for friends only".
+    /// Preferences › Aurora › "Full plates for friends only".
     pub friends_only_full: bool,
 }
 

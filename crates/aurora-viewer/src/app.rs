@@ -2520,7 +2520,7 @@ impl App {
                 prefs.head_yaw,
                 prefs.head_pitch,
             );
-            lookat::cursor_look(self.look_hover_target(now), me, dir)
+            lookat::cursor_look(prefs.aim, self.look_hover_target(now), me, dir)
         };
         self.set_look_at(kind, object, offset);
         let own = &mut self.world.look_at.own;

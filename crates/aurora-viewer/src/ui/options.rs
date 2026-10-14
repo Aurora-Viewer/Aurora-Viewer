@@ -1,6 +1,7 @@
 //! Preferences floater: categories on the left, grouped settings on the
 //! right (label column + control column), flat Aurora style.
 
+mod aurora;
 mod camera;
 mod commands;
 mod privacy;
@@ -110,7 +111,7 @@ pub struct OptionsResult {
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
-fn categories() -> [(&'static str, &'static str); 13] {
+fn categories() -> [(&'static str, &'static str); 14] {
     [
         (aurora_i18n::tr!("ui-options-graphics"), "device-desktop-filled"),
         (aurora_i18n::tr!("common-interface"), "app-window-filled"),
@@ -125,17 +126,20 @@ fn categories() -> [(&'static str, &'static str); 13] {
         (aurora_i18n::tr!("common-camera"), "camera-filled"),
         (aurora_i18n::tr!("ui-options-commands"), "square-rounded-chevron-right-filled"),
         (aurora_i18n::tr!("ui-options-privacy"), "lock-filled"),
+        (aurora_i18n::tr!("ui-options-aurora"), "sparkles-filled"),
     ]
 }
 
 /// Order of the tabs in the sidebar.
-const ORDER: [usize; 13] = [0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, 8, 5, TAB_PRIVACY, 6, 9];
+const ORDER: [usize; 14] = [TAB_AURORA, 0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, 8, 5, TAB_PRIVACY, 6, 9];
 
 pub const TAB_AUDIO: usize = 7;
 pub const TAB_CHAT: usize = 3;
 pub const TAB_CAMERA: usize = 10;
 pub const TAB_COMMANDS: usize = 11;
 pub const TAB_PRIVACY: usize = 12;
+/// What Aurora does differently from Firestorm, with the way back to it.
+pub const TAB_AURORA: usize = 13;
 
 const LABEL_W: f32 = 180.0;
 
@@ -190,6 +194,9 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("common-teleport-2") => "location-filled",
         value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera-filled",
         value if value == aurora_i18n::text("common-windows") => "layout-grid-filled",
+        value if value == aurora_i18n::text("ui-options-aurora-appearance") => "paint-filled",
+        value if value == aurora_i18n::text("ui-options-aurora-gaze") => "eye-filled",
+        value if value == aurora_i18n::text("ui-options-aurora-avatar-plates") => "tag-filled",
         _ => return None,
     })
 }
@@ -573,7 +580,14 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                 ui.spacing_mut().item_spacing.y = 2.0;
                 for i in ORDER {
                     let (label, icon) = categories()[i];
-                    if category(ui, p, icons, label, icon, st.tab == i) {
+                    let clicked = if i == TAB_AURORA {
+                        let clicked = aurora::nav_entry(ui, p, label, icon, st.tab == i).clicked();
+                        ui.add_space(6.0);
+                        clicked
+                    } else {
+                        category(ui, p, icons, label, icon, st.tab == i)
+                    };
+                    if clicked {
                         st.capture = None;
                         st.tab = i;
                     }
@@ -599,13 +613,17 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
             ui.add_space(6.0);
             // ---- content
             ui.vertical(|ui| {
-                ui.label(
-                    RichText::new(categories()[st.tab.min(categories().len() - 1)].0)
-                        .size(17.0)
-                        .color(p.ink),
-                );
-                ui.add_space(6.0);
-                let mut scroll_height = h - 34.0;
+                // the Aurora page carries its title in its own head
+                let mut scroll_height = h;
+                if st.tab != TAB_AURORA {
+                    ui.label(
+                        RichText::new(categories()[st.tab.min(categories().len() - 1)].0)
+                            .size(17.0)
+                            .color(p.ink),
+                    );
+                    ui.add_space(6.0);
+                    scroll_height -= 34.0;
+                }
                 let mut scroll = egui::ScrollArea::vertical();
                 if st.tab == 8 {
                     let search = shortcut_search(ui, p, st);
@@ -627,6 +645,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
                             TAB_PRIVACY => privacy::page(ui, p, &mut s.lookat),
+                            TAB_AURORA => aurora::page(ui, p, s),
                             _ => content(ui, p, s, st, &mut r),
                         };
                     });
@@ -1469,36 +1488,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-0-hide-avatar-names"),
                     |ui| slider(ui, &mut s.name_tag_distance, 0.0..=128.0, " m"),
                 );
-                c |= row(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-options-name-tag-style"),
-                    aurora_i18n::tr!("ui-options-name-tag-style-help"),
-                    |ui| {
-                        let mut changed = false;
-                        let (plate, classic) = (
-                            aurora_i18n::tr!("ui-options-name-tags-plate"),
-                            aurora_i18n::tr!("ui-options-name-tags-classic"),
-                        );
-                        egui::ComboBox::from_id_salt("name-tag-style")
-                            .selected_text(if s.classic_name_tags { classic } else { plate })
-                            .show_ui(ui, |ui| {
-                                changed |= ui.selectable_value(&mut s.classic_name_tags, false, plate).changed();
-                                changed |= ui.selectable_value(&mut s.classic_name_tags, true, classic).changed();
-                            });
-                        changed
-                    },
-                );
-                if !s.classic_name_tags {
-                    // a row like its neighbours: the switch of the page's other settings
-                    c |= row(
-                        ui,
-                        p,
-                        aurora_i18n::tr!("ui-options-full-plates-friends-only"),
-                        aurora_i18n::tr!("ui-options-full-plates-friends-only-help"),
-                        |ui| toggle(ui, p, &mut s.plates_friends_only_full),
-                    );
-                }
+                // the name tag style and the plates' settings: Preferences › Aurora
                 c |= row(
                     ui,
                     p,

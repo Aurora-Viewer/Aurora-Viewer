@@ -1,0 +1,447 @@
+//! Preferences › Aurora: what Aurora does differently from Firestorm, and
+//! for each redrawn element the way back to Firestorm's look. The entry of
+//! the category list and the head of the page carry the aurora gradient,
+//! the one exception to the theme here (docs/BRANDING.md); the settings
+//! below keep the cards and controls of the other pages.
+
+use super::{group, toggle};
+use crate::settings::{ChatStyle, Settings};
+use crate::theme::Palette;
+use crate::ui::widgets::{self, ActionKind};
+use crate::world::lookat::{Aim, Style};
+use egui::epaint::{Mesh, Vertex, WHITE_UV};
+use egui::{Color32, FontId, Pos2, Rect, Sense, Shape, Vec2};
+
+/// The two looks a redrawn element can take.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Look {
+    Aurora,
+    Firestorm,
+}
+
+/// Every choice of the Appearance and Gaze groups set to one look; the
+/// avatar plates' own settings are left as they are.
+pub fn set_all(s: &mut Settings, look: Look) {
+    let aurora = look == Look::Aurora;
+    s.chat_style = if aurora { ChatStyle::Bubbles } else { ChatStyle::Legacy };
+    s.classic_name_tags = !aurora;
+    s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
+    s.lookat.aim = if aurora { Aim::Point } else { Aim::Direction };
+}
+
+/// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
+/// green, turquoise, indigo, violet and rose, taken from the palette.
+fn aurora_color(p: &Palette, t: f32) -> Color32 {
+    let stops = [p.success, p.teal, p.indigo_light, p.violet_light, p.rose];
+    let x = t.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
+    let i = (x.floor() as usize).min(stops.len() - 2);
+    stops[i].lerp_to_gamma(stops[i + 1], x - i as f32)
+}
+
+fn vertex(pos: Pos2, color: Color32) -> Vertex {
+    Vertex { pos, uv: WHITE_UV, color }
+}
+
+/// A strip of the aurora gradient, along its width when `horizontal`, else
+/// from its top to its bottom.
+fn aurora_strip(p: &Palette, r: Rect, horizontal: bool) -> Shape {
+    const STEPS: usize = 16;
+    let mut m = Mesh::default();
+    for i in 0..=STEPS {
+        let t = i as f32 / STEPS as f32;
+        let c = aurora_color(p, t);
+        if horizontal {
+            let x = r.left() + r.width() * t;
+            m.vertices.push(vertex(Pos2::new(x, r.top()), c));
+            m.vertices.push(vertex(Pos2::new(x, r.bottom()), c));
+        } else {
+            let y = r.top() + r.height() * t;
+            m.vertices.push(vertex(Pos2::new(r.left(), y), c));
+            m.vertices.push(vertex(Pos2::new(r.right(), y), c));
+        }
+        if i > 0 {
+            let k = (i as u32) * 2;
+            m.add_triangle(k - 2, k - 1, k);
+            m.add_triangle(k - 1, k + 1, k);
+        }
+    }
+    Shape::mesh(m)
+}
+
+/// A soft glow: `color` at the centre of an ellipse, transparent at its edge.
+fn glow(center: Pos2, radius: Vec2, color: Color32) -> Shape {
+    const SEGMENTS: u32 = 48;
+    let mut m = Mesh::default();
+    m.vertices.push(vertex(center, color));
+    for i in 0..=SEGMENTS {
+        let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        let pos = center + Vec2::new(a.cos() * radius.x, a.sin() * radius.y);
+        m.vertices.push(vertex(pos, Color32::TRANSPARENT));
+        if i > 0 {
+            m.add_triangle(0, i, i + 1);
+        }
+    }
+    Shape::mesh(m)
+}
+
+/// The entry of the page in the category list: the neighbours' entry, with
+/// the aurora gradient in its edge mark and its name.
+pub fn nav_entry(ui: &mut egui::Ui, p: &Palette, label: &str, icon: &str, selected: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::click());
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let face = if selected {
+        p.violet.gamma_multiply(0.24)
+    } else if response.hovered() {
+        p.raised
+    } else {
+        p.raised.gamma_multiply(0.3)
+    };
+    ui.painter().rect_filled(rect, radius, face);
+    ui.painter().add(aurora_strip(
+        p,
+        Rect::from_min_max(rect.left_top(), Pos2::new(rect.left() + 3.0, rect.bottom())),
+        false,
+    ));
+    if let Some(texture) = crate::ui::icons::global(icon) {
+        ui.painter().image(
+            texture.id(),
+            Rect::from_center_size(rect.left_center() + Vec2::new(17.0, 0.0), Vec2::splat(17.0)),
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            p.teal,
+        );
+    }
+    // the name in the gradient, one letter after the other
+    let font = FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx()));
+    let count = label.chars().count().max(2) as f32 - 1.0;
+    let mut job = egui::text::LayoutJob::default();
+    for (i, ch) in label.chars().enumerate() {
+        let color = aurora_color(p, i as f32 / count);
+        job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
+    }
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(
+        rect.left_center() + Vec2::new(34.0, -galley.size().y / 2.0),
+        galley,
+        p.ink,
+    );
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
+    response.on_hover_text(label)
+}
+
+/// Head of the page: the aurora over the night sky, the title, what the
+/// page is for, and the two buttons that set every look at once.
+fn hero(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+    const PAD: f32 = 16.0;
+    const BUTTON_H: f32 = 26.0;
+    let width = ui.available_width();
+    let title = ui.painter().layout_no_wrap(
+        aurora_i18n::tr!("ui-options-aurora").to_owned(),
+        FontId::new(18.0, crate::ui::fonts::semibold(ui.ctx())),
+        p.ink,
+    );
+    // the text runs under the title and the buttons, as wide as a short line
+    let intro = ui.painter().layout(
+        aurora_i18n::tr!("ui-options-aurora-intro").to_owned(),
+        FontId::proportional(12.5),
+        p.muted,
+        (width - PAD * 2.0).min(560.0),
+    );
+    let intro_top = PAD + title.size().y.max(BUTTON_H) + 4.0;
+    let h = intro_top + intro.size().y + PAD + 2.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, h), Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, ui.visuals().window_corner_radius, p.navy);
+    // the aurora rising from the bottom edge: green, indigo, rose
+    let below = rect.bottom() + h * 0.2;
+    for (x, color, alpha) in [(0.2, p.success, 0.8), (0.55, p.indigo_light, 0.8), (0.9, p.rose, 0.65)] {
+        painter.add(glow(
+            Pos2::new(rect.left() + rect.width() * x, below),
+            Vec2::new(rect.width() * 0.3, h * 0.9),
+            color.gamma_multiply(alpha),
+        ));
+    }
+    // the night darkening toward the bottom, then the hairline
+    let mut veil = Mesh::default();
+    let (top, bottom) = (p.navy.gamma_multiply(0.2), p.navy.gamma_multiply(0.5));
+    veil.vertices.extend([
+        vertex(rect.left_top(), top),
+        vertex(rect.right_top(), top),
+        vertex(rect.right_bottom(), bottom),
+        vertex(rect.left_bottom(), bottom),
+    ]);
+    veil.add_triangle(0, 1, 2);
+    veil.add_triangle(0, 2, 3);
+    painter.add(Shape::mesh(veil));
+    painter.add(aurora_strip(
+        p,
+        Rect::from_min_max(Pos2::new(rect.left(), rect.bottom() - 2.0), rect.right_bottom()),
+        true,
+    ));
+
+    let title_pos = Pos2::new(rect.left() + PAD, rect.top() + PAD + (BUTTON_H - title.size().y).max(0.0) / 2.0);
+    painter.galley(title_pos, title, p.ink);
+    painter.galley(Pos2::new(rect.left() + PAD, rect.top() + intro_top), intro, p.muted);
+
+    // the two buttons at the top right, on the title's line (a child that
+    // leaves the page's cursor where the head ends)
+    let size = Vec2::new(0.0, BUTTON_H);
+    let mut changed = false;
+    let slot = Rect::from_min_max(
+        Pos2::new(rect.left() + PAD, rect.top() + PAD),
+        Pos2::new(rect.right() - PAD, rect.top() + PAD + BUTTON_H),
+    );
+    let mut buttons = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(slot)
+            .layout(egui::Layout::right_to_left(egui::Align::Min)),
+    );
+    buttons.spacing_mut().item_spacing.x = 6.0;
+    let aurora = widgets::action_button(
+        &mut buttons,
+        p,
+        "sparkles-filled",
+        aurora_i18n::tr!("ui-options-aurora-all-aurora"),
+        ActionKind::Primary,
+        size,
+    );
+    let legacy = widgets::action_button(
+        &mut buttons,
+        p,
+        "history",
+        aurora_i18n::tr!("ui-options-aurora-all-firestorm"),
+        ActionKind::Flat,
+        size,
+    );
+    if aurora.clicked() {
+        set_all(s, Look::Aurora);
+        changed = true;
+    }
+    if legacy.clicked() {
+        set_all(s, Look::Firestorm);
+        changed = true;
+    }
+    changed
+}
+
+/// One setting of the page: its name over its description on the left,
+/// its control at the right edge, centred on the text.
+fn item(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, control: Vec2, draw: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
+    const PAD: f32 = 9.0;
+    const GAP: f32 = 16.0;
+    let width = ui.available_width();
+    let text_w = (width - control.x - GAP).max(120.0);
+    let name_g = ui
+        .painter()
+        .layout(name.to_owned(), FontId::new(13.0, crate::ui::fonts::semibold(ui.ctx())), p.ink, text_w);
+    let desc_g = ui
+        .painter()
+        .layout(description.to_owned(), FontId::proportional(12.0), p.muted, text_w);
+    let text_h = name_g.size().y + 2.0 + desc_g.size().y;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, text_h.max(control.y) + PAD * 2.0), Sense::hover());
+    let top = rect.center().y - text_h / 2.0;
+    let desc_top = top + name_g.size().y + 2.0;
+    ui.painter().galley(Pos2::new(rect.left(), top), name_g, p.ink);
+    ui.painter().galley(Pos2::new(rect.left(), desc_top), desc_g, p.muted);
+    let slot = Rect::from_center_size(Pos2::new(rect.right() - control.x / 2.0, rect.center().y), control);
+    // a child that does not move the page's cursor: the row is already laid out
+    draw(&mut ui.new_child(egui::UiBuilder::new().max_rect(slot)))
+}
+
+/// The faint line between two settings of a card.
+fn between(ui: &mut egui::Ui, p: &Palette) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0, p.raised.gamma_multiply(0.5)));
+}
+
+/// A choice between Aurora's look (first, in the accent) and Firestorm's.
+fn look_choice(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, aurora: &str, firestorm: &str, legacy: &mut bool) -> bool {
+    let options = [(aurora, true), (firestorm, false)];
+    let size = widgets::segmented_size(ui, &options);
+    item(ui, p, name, description, size, |ui| {
+        let mut selected = usize::from(*legacy);
+        let changed = widgets::segmented(ui, p, &mut selected, &options);
+        *legacy = selected == 1;
+        changed
+    })
+}
+
+pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+    let mut c = hero(ui, p, s);
+    ui.add_space(14.0);
+    group(ui, p, aurora_i18n::tr!("ui-options-aurora-appearance"), |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let mut legacy = s.chat_style == ChatStyle::Legacy;
+        if look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-conversations"),
+            aurora_i18n::tr!("ui-options-aurora-conversations-help"),
+            aurora_i18n::tr!("ui-options-aurora-bubbles"),
+            aurora_i18n::tr!("ui-options-aurora-lines"),
+            &mut legacy,
+        ) {
+            s.chat_style = if legacy { ChatStyle::Legacy } else { ChatStyle::Bubbles };
+            c = true;
+        }
+        between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-name-tags"),
+            aurora_i18n::tr!("ui-options-aurora-name-tags-help"),
+            aurora_i18n::tr!("ui-options-aurora-plates"),
+            aurora_i18n::tr!("ui-options-aurora-classic"),
+            &mut s.classic_name_tags,
+        );
+        between(ui, p);
+        let mut legacy = s.lookat.style == Style::Legacy;
+        if look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-look-at"),
+            aurora_i18n::tr!("ui-options-aurora-look-at-help"),
+            aurora_i18n::tr!("ui-options-aurora-halo"),
+            aurora_i18n::tr!("ui-options-aurora-crosshair"),
+            &mut legacy,
+        ) {
+            s.lookat.style = if legacy { Style::Legacy } else { Style::Aurora };
+            c = true;
+        }
+    });
+    group(ui, p, aurora_i18n::tr!("ui-options-aurora-gaze"), |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let mut legacy = s.lookat.aim == Aim::Direction;
+        if look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-aim"),
+            aurora_i18n::tr!("ui-options-aurora-aim-help"),
+            aurora_i18n::tr!("ui-options-aurora-aim-point"),
+            aurora_i18n::tr!("ui-options-aurora-aim-direction"),
+            &mut legacy,
+        ) {
+            s.lookat.aim = if legacy { Aim::Direction } else { Aim::Point };
+            c = true;
+        }
+    });
+    group(ui, p, aurora_i18n::tr!("ui-options-aurora-avatar-plates"), |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        // the plates' settings mean nothing to the classic name tags
+        ui.add_enabled_ui(!s.classic_name_tags, |ui| {
+            c |= item(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-options-full-plates-friends-only"),
+                aurora_i18n::tr!("ui-options-full-plates-friends-only-help"),
+                widgets::SWITCH_SIZE,
+                |ui| toggle(ui, p, &mut s.plates_friends_only_full),
+            );
+        });
+    });
+    c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_two_buttons_set_every_look_and_leave_the_plates_alone() {
+        let mut s = Settings::default();
+        s.plates_friends_only_full = true;
+        set_all(&mut s, Look::Firestorm);
+        assert_eq!(s.chat_style, ChatStyle::Legacy);
+        assert!(s.classic_name_tags);
+        assert_eq!(s.lookat.style, Style::Legacy);
+        assert_eq!(s.lookat.aim, Aim::Direction);
+        assert!(s.plates_friends_only_full, "a plate setting is not a look");
+        set_all(&mut s, Look::Aurora);
+        let fresh = Settings::default();
+        assert_eq!(s.chat_style, fresh.chat_style);
+        assert_eq!(s.classic_name_tags, fresh.classic_name_tags);
+        assert_eq!(s.lookat.style, fresh.lookat.style);
+        assert_eq!(s.lookat.aim, fresh.lookat.aim);
+        assert!(s.plates_friends_only_full);
+    }
+
+    #[test]
+    fn the_aurora_gradient_runs_from_green_to_rose() {
+        let p = crate::theme::Theme::default().palette();
+        assert_eq!(aurora_color(&p, 0.0), p.success);
+        assert_eq!(aurora_color(&p, 1.0), p.rose);
+        assert_eq!(aurora_color(&p, 0.5), p.indigo_light);
+    }
+
+    /// The texts of one frame of the page, top to bottom.
+    fn page_texts(settings: &mut Settings) -> Vec<String> {
+        let p = crate::theme::Theme::default().palette();
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(620.0, 1200.0))),
+                ..Default::default()
+            },
+            |ui| {
+                page(ui, &p, settings);
+            },
+        );
+        output.textures_delta.clear();
+        fn collect(shape: &Shape, out: &mut Vec<(f32, String)>) {
+            match shape {
+                Shape::Text(t) => out.push((t.pos.y, t.galley.text().to_owned())),
+                Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+                _ => {}
+            }
+        }
+        let mut texts = Vec::new();
+        output.shapes.iter().for_each(|s| collect(&s.shape, &mut texts));
+        texts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        texts.into_iter().map(|(_, t)| t).collect()
+    }
+
+    /// The groups and settings of the mockup, in its order.
+    #[test]
+    fn the_page_shows_the_mockup_in_its_order() {
+        let mut settings = Settings::default();
+        let texts = page_texts(&mut settings);
+        let order = [
+            "ui-options-aurora",
+            "ui-options-aurora-intro",
+            "ui-options-aurora-appearance",
+            "ui-options-aurora-conversations",
+            "ui-options-aurora-name-tags",
+            "ui-options-aurora-look-at",
+            "ui-options-aurora-gaze",
+            "ui-options-aurora-aim",
+            "ui-options-aurora-avatar-plates",
+            "ui-options-full-plates-friends-only",
+        ]
+        .map(aurora_i18n::text);
+        let mut at = 0;
+        for want in order {
+            let found = texts[at..].iter().position(|t| *t == want);
+            assert!(found.is_some(), "{want:?} comes after the previous one in {texts:?}");
+            at += found.unwrap_or(0) + 1;
+        }
+        // the four choices start on Aurora's look
+        for choice in ["ui-options-aurora-bubbles", "ui-options-aurora-plates", "ui-options-aurora-halo", "ui-options-aurora-aim-point"] {
+            assert!(texts.iter().any(|t| t == aurora_i18n::text(choice)), "{choice}");
+        }
+    }
+
+    /// Each moved setting has one place: the Aurora page, not Interface.
+    #[test]
+    fn the_moved_settings_are_only_on_the_aurora_page() {
+        let options = include_str!("../options.rs");
+        let aurora = include_str!("aurora.rs");
+        for (key, field) in [
+            ("ui-options-full-plates-friends-only\"", "&mut s.plates_friends_only_full"),
+            ("ui-options-aurora-name-tags\"", "&mut s.classic_name_tags"),
+        ] {
+            assert!(aurora.contains(key) && aurora.contains(field), "{key} is on the Aurora page");
+            assert!(!options.contains(key), "{key} is no longer on another page");
+            assert!(!options.contains(field), "{field} is set only on the Aurora page");
+        }
+        assert!(!options.contains("name-tag-style"), "the former name tag style row is gone");
+    }
+}
