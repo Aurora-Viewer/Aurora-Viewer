@@ -2,6 +2,8 @@
 //! LLToolBarView::handleDropTool and LLFloaterToybox (indra/llui/lltoolbar.cpp,
 //! indra/newview/{lltoolbarview,llfloatertoybox}.cpp, originally LGPL 2.1).
 //! Moves commit on release; dropping back in the catalogue removes a button.
+//! At the human's request, the layout and lock are shared by all accounts,
+//! unlike Firestorm's per-account toolbar persistence.
 
 use super::{
     menu,

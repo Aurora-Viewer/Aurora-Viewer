@@ -7984,7 +7984,8 @@ impl App {
                     output_devices: &self.options_ui.output_devices,
                     ..Default::default()
                 };
-                let toolbar_settings = self.settings.toolbar.entry(self.world.agent_id).or_default();
+                let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
+                let toolbar_settings = self.settings.toolbar.get_or_insert_default();
                 let (chat, bar2, bottom_top, chat_width_set) = ui::bars::bottom_bar(
                     ui,
                     &p,
@@ -8008,7 +8009,7 @@ impl App {
                 ui::layout::set_work_area(ui.ctx(), ui.available_rect_before_wrap());
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.toolbar_ui.show(ui.ctx(), &p, layout, toolbar_settings);
-                if self.toolbar_ui.commit(layout, toolbar_settings) || chat_width_set {
+                if self.toolbar_ui.commit(layout, toolbar_settings) || chat_width_set || toolbar_migrated {
                     self.settings.save();
                 }
                 self.mic_on = mic.on;

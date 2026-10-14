@@ -96,8 +96,11 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 ## `aurora-viewer` in detail
 
 `ui/toolbar.rs` owns the bottom toolbar catalogue, context menus and drag/drop
-edits. `Settings::toolbar` stores each account's ordered button override and lock;
-without an override the skin's live layout remains authoritative. Edits save
+edits. `Settings::toolbar` stores one ordered button override and lock shared
+by all accounts, at the human's request. The first account entering the world
+after the update supplies its former per-account layout; an existing shared
+layout always wins. Legacy layouts survive pre-login saves until migration.
+Without an override the skin's live layout remains authoritative. Edits save
 only on release or an explicit action, and an empty override stays empty.
 
 `ui/hover_height.rs` exposes the avatar's -3..3 m hover adjustment and the

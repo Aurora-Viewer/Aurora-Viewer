@@ -108,16 +108,90 @@ fn toolbar_insertion_uses_button_centres_and_scroll_offset() {
 }
 
 #[test]
-fn toolbar_accounts_keep_independent_layouts_and_custom_skin_labels() {
+fn toolbar_layout_and_lock_are_shared_across_accounts_after_restart() {
     let first = uuid::Uuid::from_u128(101);
     let second = uuid::Uuid::from_u128(102);
     let mut settings = crate::settings::Settings::default();
-    settings.toolbar.entry(first).or_default().buttons = Some(vec![button("inventory")]);
-    settings.toolbar.entry(second).or_default().buttons = Some(vec![]);
+    assert!(settings.migrate_toolbar(first));
+    let common = settings.toolbar.as_mut().expect("shared toolbar");
+    common.buttons = Some(vec![button("inventory"), button("people")]);
+    common.locked = true;
     let json = serde_json::to_string(&settings).expect("settings");
-    let restored: crate::settings::Settings = serde_json::from_str(&json).expect("settings round trip");
-    assert_eq!(restored.toolbar[&first].buttons(&layout()).len(), 1);
-    assert!(restored.toolbar[&second].buttons(&layout()).is_empty());
+    let mut restored: crate::settings::Settings = serde_json::from_str(&json).expect("settings round trip");
+    assert!(!restored.migrate_toolbar(second), "account switches keep the shared value");
+    let common = restored.toolbar.as_ref().expect("shared toolbar");
+    assert_eq!(
+        common.buttons(&layout()).iter().map(|b| b.command.as_str()).collect::<Vec<_>>(),
+        ["inventory", "people"]
+    );
+    assert!(common.locked);
+    assert!(!restored.migrate_toolbar(first));
+}
+
+#[test]
+fn toolbar_migration_uses_the_first_connected_accounts_layout_not_another_accounts() {
+    let first = uuid::Uuid::from_u128(101);
+    let second = uuid::Uuid::from_u128(102);
+    let legacy = std::collections::HashMap::from([
+        (
+            first,
+            ToolbarSettings {
+                buttons: Some(vec![button("people")]),
+                locked: false,
+            },
+        ),
+        (
+            second,
+            ToolbarSettings {
+                buttons: Some(vec![button("inventory")]),
+                locked: true,
+            },
+        ),
+    ]);
+    let old = serde_json::json!({ "toolbar": legacy });
+    let settings: crate::settings::Settings = serde_json::from_value(old).expect("previous settings format");
+    // A settings change at login must not lose the account's layout before it
+    // enters the world and the migration knows which layout to adopt.
+    let before_login = serde_json::to_string(&settings).expect("pre-login save");
+    let mut restored: crate::settings::Settings = serde_json::from_str(&before_login).expect("pre-login restart");
+    assert!(restored.migrate_toolbar(second));
+    let common = restored.toolbar.as_ref().expect("migrated toolbar");
+    assert_eq!(common.buttons(&layout()), [button("inventory")]);
+    assert!(common.locked);
+    assert!(!restored.migrate_toolbar(first));
+    let saved = serde_json::to_value(&restored).expect("common settings");
+    assert!(saved.get("toolbar").is_none(), "old account layouts are retired");
+    assert!(saved["toolbar_common"]["locked"].as_bool().expect("lock"));
+}
+
+#[test]
+fn toolbar_shared_empty_layout_wins_over_legacy_accounts_and_defaults_follow_the_skin() {
+    let account = uuid::Uuid::from_u128(101);
+    let legacy = std::collections::HashMap::from([(
+        account,
+        ToolbarSettings {
+            buttons: Some(vec![button("inventory")]),
+            locked: false,
+        },
+    )]);
+    let saved = serde_json::json!({ "toolbar": legacy, "toolbar_common": { "buttons": [], "locked": true } });
+    let mut settings: crate::settings::Settings = serde_json::from_value(saved).expect("mixed settings");
+    assert!(settings.migrate_toolbar(account), "retire stale legacy entries");
+    let common = settings.toolbar.as_ref().expect("common toolbar");
+    assert!(common.buttons(&layout()).is_empty(), "empty is a user choice");
+    assert!(common.locked);
+    assert!(!settings.migrate_toolbar(account));
+
+    let mut missing: crate::settings::Settings = serde_json::from_str("{}").expect("missing settings");
+    assert!(missing.migrate_toolbar(account));
+    assert_eq!(
+        missing.toolbar.as_ref().expect("common defaults").buttons(&layout()),
+        layout().toolbar
+    );
+}
+
+#[test]
+fn toolbar_custom_skin_labels_are_kept_and_built_in_labels_follow_the_language() {
     assert_eq!(label(&button("inventory")), "inventory", "skin's explicit custom label");
     let translated = ToolButton {
         tooltip: aurora_i18n::tr_in!("fr", "common-inventory").into(),
