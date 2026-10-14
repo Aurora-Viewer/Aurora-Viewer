@@ -168,7 +168,13 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
                         chat_text_marked(ui, p, env.emoji, world, env.want_names, &t.message, 12.5, ink, false, None);
                     }
                     if let Some(q) = &t.question {
-                        ui.add(egui::Label::new(RichText::new(q).size(12.0).color(muted)).wrap());
+                        // the region's rating, with the navigation bar's badge
+                        ui.horizontal_top(|ui| {
+                            if let Rating::Exceeded(r) | Rating::Blocked(r) = v.rating {
+                                widgets::maturity_badge_of(ui, p, r, 16.0);
+                            }
+                            ui.add(egui::Label::new(RichText::new(q).size(12.0).color(muted)).wrap());
+                        });
                     }
                     match done {
                         None => {
@@ -226,6 +232,9 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, i
     }
     ui.horizontal_wrapped(|ui| {
         icon(ui, env, if done.is_some() { p.muted_dim } else { p.teal });
+        if let Rating::Exceeded(r) | Rating::Blocked(r) = v.rating {
+            widgets::maturity_badge_of(ui, p, r, 14.0);
+        }
         let world = env.world;
         let color = if done.is_some() { p.muted } else { p.ink };
         chat_text_marked(ui, p, env.emoji, world, env.want_names, &text, 12.5, color, false, None);

@@ -597,7 +597,7 @@ pub fn maturity_choices(access: aurora_net::search::AgentAccess) -> Vec<(u8, &'s
 
 /// "I want to access content rated" (maturity_desired_combobox): a list,
 /// or the rating as text when the account has no choice.
-fn maturity_choice(ui: &mut egui::Ui, access: aurora_net::search::AgentAccess) -> Option<u8> {
+fn maturity_choice(ui: &mut egui::Ui, p: &Palette, access: aurora_net::search::AgentAccess) -> Option<u8> {
     let choices = maturity_choices(access);
     let label = |m: u8| match m {
         aurora_net::search::SIM_ACCESS_ADULT => aurora_i18n::tr!("search-maturity-gma"),
@@ -605,17 +605,32 @@ fn maturity_choice(ui: &mut egui::Ui, access: aurora_net::search::AgentAccess) -
         _ => aurora_i18n::tr!("ui-options-content-general"),
     };
     if choices.is_empty() {
-        ui.label(label(access.preferred));
+        ui.horizontal(|ui| {
+            super::widgets::maturity_badges_up_to(ui, p, access.preferred, 16.0);
+            ui.label(label(access.preferred));
+        });
         return None;
     }
     let mut picked = access.preferred;
-    egui::ComboBox::from_id_salt("ui-maturity")
-        .selected_text(label(access.preferred))
-        .show_ui(ui, |ui| {
-            for (m, name) in &choices {
-                ui.selectable_value(&mut picked, *m, *name);
-            }
-        });
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_id_salt("ui-maturity")
+            .selected_text(label(access.preferred))
+            .show_ui(ui, |ui| {
+                for (m, name) in &choices {
+                    // the badges of the navigation bar, as Firestorm's
+                    // rating icons, before each choice
+                    ui.horizontal(|ui| {
+                        ui.add_sized(Vec2::new(54.0, 16.0), |ui: &mut egui::Ui| {
+                            ui.horizontal(|ui| super::widgets::maturity_badges_up_to(ui, p, *m, 14.0)).response
+                        });
+                        if ui.selectable_label(picked == *m, *name).clicked() {
+                            picked = *m;
+                        }
+                    });
+                }
+            });
+        super::widgets::maturity_badges_up_to(ui, p, access.preferred, 16.0);
+    });
     (picked != access.preferred).then_some(picked)
 }
 
@@ -1617,7 +1632,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         aurora_i18n::tr!("ui-options-content-rated"),
                         aurora_i18n::tr!("ui-options-content-rated-help"),
                         |ui| {
-                            if let Some(m) = maturity_choice(ui, access) {
+                            if let Some(m) = maturity_choice(ui, p, access) {
                                 r.maturity = Some(m);
                             }
                             false

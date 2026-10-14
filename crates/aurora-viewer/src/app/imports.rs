@@ -834,6 +834,7 @@ impl App {
                     aurora_net::inventory::upload::Kind::Animation => 19,
                     aurora_net::inventory::upload::Kind::Material => 26,
                     aurora_net::inventory::upload::Kind::Mesh => 6,
+                    aurora_net::inventory::upload::Kind::Snapshot => 15,
                 },
                 owner: self.world.agent_id,
                 creator: self.world.agent_id,

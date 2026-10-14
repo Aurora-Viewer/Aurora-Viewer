@@ -37,16 +37,20 @@ impl ByType {
             Kind::Animation => self.animation,
             Kind::Mesh => self.mesh,
             Kind::Material => self.material,
+            // a photo gives every right to the next owner (saveTexture)
+            Kind::Snapshot => None,
         }
     }
     pub fn set(&mut self, kind: Kind, row: NextOwner) {
-        *match kind {
+        let slot = match kind {
             Kind::Texture => &mut self.texture,
             Kind::Sound => &mut self.sound,
             Kind::Animation => &mut self.animation,
             Kind::Mesh => &mut self.mesh,
             Kind::Material => &mut self.material,
-        } = Some(row);
+            Kind::Snapshot => return,
+        };
+        *slot = Some(row);
     }
 }
 impl Preferences {

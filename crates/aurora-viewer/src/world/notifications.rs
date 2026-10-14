@@ -182,6 +182,9 @@ pub struct Notification {
     /// Shown as a toast only: never listed under the bell nor counted, and
     /// dropped when its toast ends.
     pub transient: bool,
+    /// A region's rating (SIM_ACCESS_*) the entry is about, shown as the
+    /// navigation bar's badge (0: none).
+    pub maturity: u8,
 }
 
 impl Notification {
@@ -280,6 +283,7 @@ impl Notifications {
             data,
             text: String::new(),
             transient: false,
+            maturity: 0,
         });
         if self.list.len() > MAX {
             // drop the oldest that needs no answer
