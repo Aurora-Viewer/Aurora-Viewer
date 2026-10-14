@@ -802,7 +802,6 @@ fn camera_button(ui: &mut egui::Ui, env: &mut Env, photo: Rect, profile: Option<
 fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Facts, icon_only: bool, width: f32) {
     let p = env.p;
     let id = w.id;
-    let soon = aurora_i18n::tr!("ui-profile-coming-soon");
     let (icon, label, kind, enabled, tip): (&str, &str, ActionKind, bool, Option<&str>) = match act {
         Act::Conversation => (
             "message-filled",
@@ -836,8 +835,7 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             true,
             None,
         ),
-        // paying a resident is not ported yet
-        Act::Pay => ("coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, false, Some(soon)),
+        Act::Pay => ("coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, true, None),
         Act::Block => {
             let label = if f.blocked {
                 aurora_i18n::tr!("common-unblock")
@@ -893,6 +891,8 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
         Act::Conversation => env.actions.push(ProfileAction::Im(id)),
         Act::AddFriend => context::request(ui.ctx(), CtxAction::AddFriend(id)),
         Act::OfferTeleport => env.actions.push(ProfileAction::OfferTeleport(id)),
+        // LLAvatarActions::pay
+        Act::Pay => context::request(ui.ctx(), CtxAction::PayResident(id)),
         Act::Block => env.actions.push(ProfileAction::ToggleBlock(id)),
         Act::Call => context::request(ui.ctx(), CtxAction::Call(id)),
         Act::Edit => w.editing = true,
@@ -901,7 +901,7 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             save_all(w, env.actions);
             w.editing = false;
         }
-        Act::Pay | Act::More => {}
+        Act::More => {}
     }
 }
 

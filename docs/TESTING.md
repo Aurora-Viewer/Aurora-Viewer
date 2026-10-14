@@ -1298,6 +1298,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
+| `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
@@ -1353,6 +1354,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 
 ### Details
 
+- **`AURORA_DEMO_PAY=<mode>`**: gives a balance of L$ 1,000 and opens the
+  Pay window, Tess as the payee, in the look of Preferences › Aurora › Pay
+  window. A payment only moves the demo balance (no L$, no request sent).
+  `resident`: L$ 25 typed, Pay sends it and the window says it was sent.
+  `short`: L$ 1,500, the band with Buy L$ and Pay greyed out. `confirm`:
+  L$ 500, the confirmation asked above the threshold (Preferences ›
+  Payments). `sent`: the end of a payment, with its message. `group`: the
+  demo group as the payee, without a message field. An object's payment
+  is `AURORA_DEMO_ACTIONS=pay`.
 - **`AURORA_DEMO_BUY_CURRENCY=<mode>`**: gives a balance of L$ 479 and opens
   "Buy L$". The purchase service is simulated (made-up rate): no real L$,
   no request sent. `click` opens nothing: click the balance in the top

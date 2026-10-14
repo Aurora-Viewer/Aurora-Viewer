@@ -237,6 +237,8 @@ pub enum CtxAction {
     DeleteConfirmed(Uuid),
     /// Pay / buy / open the object (the click-action dialogs).
     Pay(Uuid),
+    /// Pay a resident (Avatar.Pay, LLAvatarActions::pay).
+    PayResident(Uuid),
     Buy(Uuid),
     Open(Uuid),
     /// Unlink the linkset (Tools.Unlink).
@@ -508,7 +510,9 @@ fn avatar_menu_reporting(
                 act(CtxAction::ShowOnMap(id));
             }
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
-            menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"));
+            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+                act(CtxAction::PayResident(id));
+            }
             block(ui);
         }
         AvatarList::Friend => {
@@ -520,7 +524,9 @@ fn avatar_menu_reporting(
             tp_to(ui);
             offer_tp(ui);
             request_tp(ui);
-            menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"));
+            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+                act(CtxAction::PayResident(id));
+            }
             menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("common-follow"));
             remove_friend(ui);
             menu::separator(ui, p);
