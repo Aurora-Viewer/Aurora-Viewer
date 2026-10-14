@@ -540,16 +540,18 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                         st.tab = i;
                     }
                 }
-                // reset everything, at the bottom of the column
+                // reset everything, at the bottom of the column: a real button
+                // that turns red on hover, like the erasing of the chat logs;
+                // the confirmation below carries the red one (#291)
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                     ui.add_space(4.0);
-                    let b = ui.add(
-                        egui::Button::new(
-                            RichText::new(aurora_i18n::tr!("ui-options-reset-everything-2"))
-                                .size(12.0)
-                                .color(p.muted),
-                        )
-                        .frame(false),
+                    let b = super::widgets::action_button(
+                        ui,
+                        p,
+                        "restore",
+                        aurora_i18n::tr!("ui-options-reset-everything-2"),
+                        super::widgets::ActionKind::FlatDanger,
+                        Vec2::new(ui.available_width(), 26.0),
                     );
                     if b.on_hover_text(aurora_i18n::tr!("ui-options-reset-all-settings")).clicked() {
                         st.confirm_reset = true;
