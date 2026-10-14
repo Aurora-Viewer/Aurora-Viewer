@@ -1834,6 +1834,19 @@ keybinds-left-arrow = Left arrow
 keybinds-up-arrow = Up arrow
 ui-options-arrows-strafe = Arrows: strafe
 ui-options-loading-backdrop = Loading backdrop
+ui-options-reduce-motion = Reduce animations
+ui-options-reduce-motion-help = Pulses, shakes and spinning indicators stand still (the region restart alert).
+ui-options-region-restart = Region restart
+ui-options-region-restart-alert = Show the restart alert
+ui-options-region-restart-alert-help = Countdown, Home and landmarks. Off: a simple toast at each notice of the simulator.
+ui-options-region-restart-shake = Shake when it appears
+ui-options-region-restart-shake-help = The alert trembles once. "The view" shakes the camera like Firestorm.
+ui-options-region-restart-shake-alert = The alert
+ui-options-region-restart-shake-view = The view
+ui-options-region-restart-shake-none = None
+ui-options-region-restart-announce = Announce on a channel
+ui-options-region-restart-announce-help = For HUDs and scripts: whispers region_restart_in:<seconds> on this channel.
+ui-options-region-restart-channel = Channel (473405 by default)
 ui-options-environment-fade = Environment fade
 demo-fountain = Fountain
 build-ui-tools-force = Force
@@ -3051,6 +3064,64 @@ keybinds-move-backward = Move backward
 build-ui-floaters-automatically-resize-media-to-the-object-face = Automatically resize media to the object face
 world-mod-redirecting-to-another-location = Redirecting to another location…
 ui-sound-region-restart = Region restart
+ui-sound-region-restart-opensim = Region restart (OpenSim)
+region-restart-title = Region restart
+region-restart-before = until the restart
+region-restart-seconds = seconds
+region-restart-seconds-short = { $seconds } s
+region-restart-calm-title = { $region } will restart
+region-restart-calm-text = If you stay in the region, you will be logged out.
+region-restart-near-title = One minute left
+region-restart-near-text = Leave { $elide ->
+       *[other] { $region }
+    } to stay connected.
+region-restart-red-title = Leave now
+region-restart-red-text = { $region } restarts in less than 30 seconds.
+region-restart-final-title = Restart imminent
+region-restart-final-text = Stay in { $region } and you will be logged out.
+region-restart-zero-title = { $region } is restarting
+region-restart-zero-text = If you are still here, your connection will be cut.
+region-restart-cancelled-title = Restart cancelled
+region-restart-cancelled-text = A manager cancelled the restart of { $elide ->
+       *[other] { $region }
+    }.
+region-restart-left-title = You left { $region }
+region-restart-left-text = Arrived: { $arrival }. The alert closes.
+region-restart-minimize = Minimize
+region-restart-show = Show the alert
+region-restart-search = Search a landmark…
+region-restart-recent = Recent
+region-restart-no-landmark = No landmark found
+region-restart-neighbour = Neighbour region: { $region }
+region-restart-suggestion = suggestion
+region-restart-last-place = Last place: { $place }
+region-restart-all-landmarks = All landmarks…
+region-restart-manager = You manage this region
+region-restart-cancel = Cancel the restart
+region-restart-region-estate = Region / Estate ›
+region-restart-region-estate-soon = The Region / Estate window is not in Aurora yet.
+region-restart-cancel-confirm-title = Cancel the restart?
+region-restart-cancel-confirm-text = { $region } will not restart, and the residents there will be told.
+region-restart-keep = Keep the restart
+region-restart-pinned = pinned
+region-restart-chat = The region you are in now is about to restart. If you stay in this region you will be logged out.
+region-restart-chat-zero = The region is restarting.
+region-restart-chat-cancelled = The region restart was cancelled.
+region-restart-toast-minutes = The region "{ $region }" will restart in { $count } { $count ->
+        [one] minute
+       *[other] minutes
+    }. If you stay in this region when it shuts down, you will be logged out.
+region-restart-toast-seconds = The region "{ $region }" will restart in { $count } { $count ->
+        [one] second
+       *[other] seconds
+    }. If you stay in this region when it shuts down, you will be logged out.
+region-restart-disconnected = { $region } restarted: the connection was closed.
+region-restart-legacy-text =
+    The region you are in now ({ $region }) is about to restart.
+    If you stay in this region you will be logged out.
+region-restart-legacy-seconds = Seconds until restart
+region-restart-legacy-landmarks = My Landmarks
+region-restart-legacy-teleport = Teleport to Landmark
 ui-options-planar-scene-reflection-high-and-ultra-are-costly = Planar scene reflection; High and Ultra are costly
 ui-options-reflections = Reflections
 ui-options-water-reflections = Water reflections
@@ -3270,6 +3341,7 @@ build-ui-object-sculptie = Sculptie
 ui-perf-scene = Scene
 ui-options-entire-scene = Entire scene
 ui-login-log-in = Log in
+ui-login-reconnect = Reconnect
 ui-bars-log-out = Log out
 common-stand-up = Stand up
 ui-login-remember-me = Remember me
@@ -3725,6 +3797,7 @@ ui-profile-real-life = Real life
 ui-profile-second-life = Second Life
 demo-come-see-the-lagoon-at-sunset = Come see the lagoon at sunset!
 demo-toast-hello = Hi! I'm at the plaza 😄
+demo-restart-toast = Are you coming to the concert tonight?
 demo-toast-are-you-there = Are you there? Come and see the new fountain ✨
 demo-toast-group-message = The meeting starts in ten minutes at the stage
 demo-notifs-lantern = A paper lantern
@@ -5232,6 +5305,10 @@ ui-options-aurora-pay-window = Pay window
 ui-options-aurora-pay-window-help = Paying residents, groups and objects.
 ui-options-aurora-pay-aurora = Aurora
 ui-options-aurora-pay-classic = Classic window (Firestorm)
+ui-options-aurora-restart-alert = Restart alert
+ui-options-aurora-restart-alert-help = A card with a countdown, or Firestorm's yellow box in the middle.
+ui-options-aurora-restart-card = Card
+ui-options-aurora-restart-classic = Yellow box (Firestorm)
 ui-options-aurora-gaze = Gaze
 ui-options-aurora-aim = Where your gaze goes
 ui-options-aurora-aim-help = Your avatar looks at the exact point under the cursor, or turns its head toward the cursor's side like Firestorm.

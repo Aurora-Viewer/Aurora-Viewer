@@ -341,6 +341,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "build_options" => "adjustments-filled",
         "media_settings" => "device-tv-filled",
         "bulk_perms" => "lock-filled",
+        "region_restarting" => "alert-triangle-filled",
         "task_item_props" => "file-info-filled",
         "asset_imports_v3" | "asset_imports_v4" | "asset_imports_v5" | "asset_imports_v6" => "file-upload-filled",
         _ => "layout-grid-filled",

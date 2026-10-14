@@ -168,11 +168,17 @@ pub fn content(
         connection_progress(ui, p, progress);
         return false;
     }
+    // after a region restart cut the session: "Reconnect"
+    let label = if form.reconnect && !new_account {
+        aurora_i18n::tr!("ui-login-reconnect")
+    } else {
+        aurora_i18n::tr!("ui-login-log-in")
+    };
     let pressed = widgets::action_button_if(
         ui,
         p,
         "login-2",
-        aurora_i18n::tr!("ui-login-log-in"),
+        label,
         ActionKind::Primary,
         Vec2::new(ui.available_width(), 38.0),
         can,
@@ -182,6 +188,7 @@ pub fn content(
     if pressed {
         settings.remember_username = true;
         form.show_password = false;
+        form.reconnect = false;
         form.error = None;
         form.tos_message = None;
         form.show_mfa = false;
@@ -217,6 +224,7 @@ pub fn dialog(
         form.editing = false;
         form.adding = false;
         form.error = None;
+        form.reconnect = false;
         form.show_mfa = false;
         form.tos_message = None;
         form.password.clear();

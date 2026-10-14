@@ -251,6 +251,10 @@ pub struct Camera {
     own: Uuid,
     dt: f32,
     initialized: bool,
+    /// A passing pan of the view only (the region restart's shake,
+    /// `world::region_restart::view_shake`): the eye and what it looks at
+    /// move together, the camera itself does not.
+    pub shake: Vec3,
 }
 
 impl Default for Camera {
@@ -307,6 +311,7 @@ impl Default for Camera {
             own: Uuid::nil(),
             dt: 0.0,
             initialized: false,
+            shake: Vec3::ZERO,
         }
     }
 }
@@ -1461,7 +1466,15 @@ impl Camera {
         } else {
             Vec3::Z
         };
-        glam::camera::rh::view::look_to_mat4(self.position, direction, up)
+        glam::camera::rh::view::look_to_mat4(self.position + self.shake, direction, up)
+    }
+
+    /// The view panned by `right` and `up` metres across the screen.
+    pub fn pan_offset(&self, right: f32, up: f32) -> Vec3 {
+        let forward = self.forward();
+        let side = forward.cross(Vec3::Z).normalize_or(Vec3::Y);
+        let above = side.cross(forward).normalize_or(Vec3::Z);
+        side * right + above * up
     }
 
     pub fn proj(&self, aspect: f32) -> Mat4 {

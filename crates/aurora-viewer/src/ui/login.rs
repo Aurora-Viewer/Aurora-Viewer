@@ -54,6 +54,9 @@ pub struct LoginForm {
     pub tos_message: Option<String>,
     pub agree_tos: bool,
     pub error: Option<String>,
+    /// The session ended with its region's restart: the login button reads
+    /// "Reconnect" (region_restart.rs).
+    pub reconnect: bool,
     pub busy: bool,
     /// A visible reason keeps the button and all login paths disabled together.
     pub block_reason: Option<&'static str>,

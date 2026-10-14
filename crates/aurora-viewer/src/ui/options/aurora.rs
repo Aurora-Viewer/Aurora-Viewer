@@ -42,6 +42,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     };
     s.classic_about_land = !aurora;
     s.classic_pay_window = !aurora;
+    s.classic_restart_alert = !aurora;
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -434,6 +435,16 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             aurora_i18n::tr!("ui-options-aurora-pay-classic"),
             &mut s.classic_pay_window,
         );
+        between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-restart-alert"),
+            aurora_i18n::tr!("ui-options-aurora-restart-alert-help"),
+            aurora_i18n::tr!("ui-options-aurora-restart-card"),
+            aurora_i18n::tr!("ui-options-aurora-restart-classic"),
+            &mut s.classic_restart_alert,
+        );
     });
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-gaze"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -519,6 +530,7 @@ mod tests {
         assert_eq!(s.photo_window, PhotoWindowStyle::Legacy);
         assert!(s.classic_about_land, "About Land opens Firestorm's nine tabs");
         assert!(s.classic_pay_window);
+        assert!(s.classic_restart_alert, "Firestorm's yellow restart box");
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
         set_all(&mut s, Look::Aurora);
         let fresh = Settings::default();
@@ -539,6 +551,7 @@ mod tests {
         assert_eq!(s.classic_about_land, fresh.classic_about_land);
         assert!(!fresh.classic_about_land, "the Aurora About Land is the default");
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
+        assert!(!s.classic_restart_alert && !fresh.classic_restart_alert);
         assert!(s.plates_friends_only_full);
     }
 
@@ -610,6 +623,7 @@ mod tests {
             "ui-options-aurora-profiles",
             "ui-options-aurora-about-land",
             "ui-options-aurora-pay-window",
+            "ui-options-aurora-restart-alert",
             "ui-options-aurora-gaze",
             "ui-options-aurora-aim",
             "ui-options-aurora-avatar-plates",

@@ -549,6 +549,11 @@ pub enum NetEvent {
     Alert {
         message: String,
     },
+    /// The agent's region will restart (AlertInfo RegionRestartMinutes /
+    /// RegionRestartSeconds, or OpenSim's `/RESTART_X_…`; region_restart.rs).
+    RegionRestart(crate::region_restart::Notice),
+    /// "Region restart cancelled." (region_restart.rs).
+    RegionRestartCancelled,
     Disconnected {
         reason: String,
     },
@@ -1560,6 +1565,10 @@ pub enum NetCommand {
         message: String,
     },
     TeleportLandmark(Uuid),
+    /// Cancel the restart of the agent's region (estate managers):
+    /// EstateOwnerMessage `restart` with -1, as Region / Estate › Debug ›
+    /// "Cancel restart" (LLPanelRegionDebugInfo::onClickCancelRestart).
+    CancelRegionRestart,
     /// Teleport to a region by name (map lookup), position in the region.
     TeleportToRegion {
         name: String,

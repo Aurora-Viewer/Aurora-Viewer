@@ -336,6 +336,14 @@ pub struct Settings {
     /// instead of the rows grouped by range and the sheet of
     /// `ui/people/nearby.rs`.
     pub classic_people: bool,
+    /// Firestorm's yellow region restart box (floater_region_restarting.xml)
+    /// instead of the alert card of `ui/region_restart.rs`.
+    pub classic_restart_alert: bool,
+    /// The region restart alert (Preferences › Interface › Region restart).
+    pub region_restart: crate::world::region_restart::Settings,
+    /// "Reduce animations": the interface's pulses, shakes and spinners
+    /// stand still (the region restart alert, for now).
+    pub reduce_motion: bool,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
@@ -780,6 +788,9 @@ impl Default for Settings {
             classic_profiles: false,
             classic_pay_window: false,
             classic_people: false,
+            classic_restart_alert: false,
+            region_restart: Default::default(),
+            reduce_motion: false,
             plates_friends_only_full: false,
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,

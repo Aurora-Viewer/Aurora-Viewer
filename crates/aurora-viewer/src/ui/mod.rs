@@ -60,6 +60,7 @@ pub mod place_details;
 pub mod places;
 pub mod presence;
 pub mod profile;
+pub mod region_restart;
 pub mod report_abuse;
 pub mod scripts;
 pub mod search;

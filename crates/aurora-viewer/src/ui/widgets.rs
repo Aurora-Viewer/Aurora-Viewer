@@ -1293,6 +1293,69 @@ pub fn action_button_if(
     resp
 }
 
+/// `action_button` that opens a menu: the chevron after its label says so,
+/// and the face stays lit while the menu is `open`. Its height is `height`,
+/// its width fits the content.
+pub fn action_menu_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, open: bool, height: f32) -> egui::Response {
+    const ICON: f32 = 15.0;
+    const GAP: f32 = 7.0;
+    const CHEVRON: f32 = 13.0;
+    let font = egui::FontId::proportional(12.5);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, p.ink);
+    let lead = if label.is_empty() { ICON } else { ICON + GAP };
+    let content = lead + galley.size().x + 5.0 + CHEVRON;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(content + 22.0, height), Sense::click());
+    let hot = resp.hovered() || resp.has_focus();
+    let fill = if open {
+        p.violet.gamma_multiply(0.28)
+    } else if hot {
+        p.raised.lerp_to_gamma(p.ink, 0.16)
+    } else {
+        p.raised
+    };
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    ui.painter().rect_filled(rect, radius, fill);
+    if open {
+        ui.painter().rect_stroke(
+            rect,
+            radius,
+            Stroke::new(1.0, p.violet_light.gamma_multiply(0.5)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    let left = rect.center().x - content / 2.0;
+    if let Some(texture) = super::icons::global(icon) {
+        let r = egui::Rect::from_center_size(egui::pos2(left + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
+        ui.painter().image(texture.id(), r, uv, p.ink);
+    }
+    let width = galley.size().x;
+    let text = egui::pos2(left + lead, rect.center().y - galley.size().y / 2.0).round();
+    ui.painter().galley(text, galley, p.ink);
+    if let Some(texture) = super::icons::global("chevron-down") {
+        let x = left + lead + width + 5.0 + CHEVRON / 2.0;
+        let r = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), Vec2::splat(CHEVRON));
+        ui.painter().image(texture.id(), r, uv, p.ink);
+    }
+    if hot {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    resp
+}
+
+/// A thin countdown bar (3 px): the track of `progress`, filled with
+/// `color` from the left, gliding to its value like `progress`.
+pub fn countdown_bar(ui: &mut egui::Ui, p: &Palette, id: &str, fraction: f32, width: f32, color: Color32) {
+    let shown = ui.ctx().animate_value_with_time(ui.id().with(id), fraction.clamp(0.0, 1.0), 0.35);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 3.0), Sense::hover());
+    ui.painter().rect_filled(rect, TRACK_RADIUS, p.raised);
+    let fill = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * shown, rect.height()));
+    if fill.width() >= 0.5 {
+        ui.painter().rect_filled(fill, TRACK_RADIUS, color);
+    }
+}
+
 /// One button of `dialog_buttons`.
 #[derive(Clone, Copy, Debug)]
 pub struct DialogButton<'a> {
