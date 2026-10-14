@@ -359,9 +359,13 @@ impl App {
                 }
                 Err(reason) => {
                     log::warn!("environment: not applied to {:?}: {reason}", applying.target);
-                    let text = aurora_i18n::tr!("ui-env-apply-region-fail", reason = reason.as_str());
-                    self.env_alert(title, text.clone());
-                    (text, true)
+                    self.env_alert(title, aurora_i18n::tr!("ui-env-apply-region-fail", reason = reason.as_str()));
+                    // the alert holds the reason, the footer only the outcome
+                    let text = match applying.target {
+                        Target::Region => aurora_i18n::tr!("ui-env-apply-not-region"),
+                        Target::Parcel(_) => aurora_i18n::tr!("ui-env-apply-not-parcel"),
+                    };
+                    (text.to_owned(), true)
                 }
             };
             match applying.sender {

@@ -1134,7 +1134,7 @@ To check with these scenarios:
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
   (2500).
-- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save|day|day-play|day-edit`**: sky,
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save|day|day-play|day-edit|parcel|region|custom`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame
   400: midnight, the purple sky at 25 %, noon, sunset), the ground track and
@@ -1151,6 +1151,25 @@ To check with these scenarios:
   900), then saves it as "my purple sky, brighter" (1100): both saves
   are logged (`environment settings saved`) and the second item shows in
   the Settings folder.
+  The parcel and region scenarios (`app/env_apply.rs`) make the avatar the
+  owner of its parcel, give the region a dusk EEP day (as
+  `AURORA_DEMO_EEP_PARCEL=1`) and the demo simulator answers ExtEnvironment
+  updates: an inline day becomes the parcel's (or the region's) and the
+  sky follows. `parcel`: the sky editor on "my purple sky" (400), applied
+  to the parcel unchanged, as its asset (900, logged `environment: applying
+  to Parcel(1)` without a new day), then brightened and applied inline in
+  the region's day (1000, `parcel 1 takes the day`); the footer says
+  "Applied to the parcel." and the sky turns purple. `region`: the avatar
+  manages the estate; the day cycle editor opens on the region's day in the
+  region context (400: skies named "Sky 1000m"…, the timeline in hours,
+  "Apply To Region" as the main button), its first frame is brightened
+  (900) and committed (1000): the editor closes and the region's sky
+  brightens. `custom`: About Land opens on the environment as the parcel's
+  owner, whose parcel has "my day cycle" applied, and "Custom" is chosen
+  (400): the day cycle editor in the parcel context, "Apply To Parcel" as
+  the main button, left to the tester. Add `-refused` (`parcel-refused`…)
+  and the simulator refuses inline days: Firestorm's WLRegionApplyFail
+  alert with the demo's reason.
 
 ## Load and smoothness
 
