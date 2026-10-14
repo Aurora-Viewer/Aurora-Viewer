@@ -119,6 +119,8 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
     entries.sort_by_cached_key(|m| m.name.to_lowercase());
     let order: Vec<Uuid> = entries.iter().map(row_id).collect();
     st.sel.retain(|id| order.contains(id));
+    // its bar in a strip of its own, never over a row's right end
+    widgets::reserved_scroll_bar(ui);
     egui::ScrollArea::vertical()
         .id_salt("people-blocked-rows")
         .auto_shrink([false, false])

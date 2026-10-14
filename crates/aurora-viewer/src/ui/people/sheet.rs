@@ -69,6 +69,38 @@ pub(super) fn frame(ui: &egui::Ui, p: &Palette) -> (Rect, Rect) {
     )
 }
 
+/// Height of a sheet's head (picture, names, cross), and the gap under it.
+const HEAD_H: f32 = 44.0;
+const HEAD_GAP: f32 = 10.0;
+
+/// A sheet's content split into its fixed head and what scrolls below.
+pub(super) fn split_head(content: Rect) -> (Rect, Rect) {
+    let top = Rect::from_min_size(content.min, Vec2::new(content.width(), HEAD_H));
+    let rest = Rect::from_min_max(
+        Pos2::new(content.left(), (top.bottom() + HEAD_GAP).min(content.bottom())),
+        content.max,
+    );
+    (top, rest)
+}
+
+/// A top-down child of `ui` over `rect`.
+pub(super) fn child(ui: &mut egui::Ui, rect: Rect, salt: impl std::hash::Hash + std::fmt::Debug) -> egui::Ui {
+    ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(salt)
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    )
+}
+
+/// The child that holds a sheet's scrolling part: its bar in a strip of its
+/// own, never over a switch, a button or a value.
+pub(super) fn scroll_body(ui: &mut egui::Ui, rect: Rect, salt: impl std::hash::Hash + std::fmt::Debug) -> egui::Ui {
+    let mut body = child(ui, rect, salt);
+    widgets::reserved_scroll_bar(&mut body);
+    body
+}
+
 /// The sheet of `id` over the whole of `ui`, with what the radar knows of
 /// them when they are around (in Near you, it says when they left). Returns
 /// true when its cross was clicked.
@@ -87,23 +119,17 @@ pub(super) fn show(
     let row = found.as_ref();
     let friend = world.social.friends.iter().find(|f| f.id == id).cloned();
     let (content, bottom) = frame(ui, p);
-    let mut closed = false;
-    let mut body = ui.new_child(
-        egui::UiBuilder::new()
-            .id_salt(("people-sheet-body", id))
-            .max_rect(content)
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-    );
+    if !data.pics.contains_key(&id) {
+        st.want_pic(id, ui.input(|i| i.time));
+    }
+    // the head stays put above what scrolls: its cross is always there
+    let (top, rest) = split_head(content);
+    let closed = head(&mut child(ui, top, ("people-sheet-head", id)), p, world, data, id, row);
     egui::ScrollArea::vertical()
         .id_salt(("people-sheet-scroll", id))
         .auto_shrink([false, false])
-        .show(&mut body, |ui| {
+        .show(&mut scroll_body(ui, rest, ("people-sheet-body", id)), |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            if !data.pics.contains_key(&id) {
-                st.want_pic(id, ui.input(|i| i.time));
-            }
-            closed = head(ui, p, world, data, id, row);
-            ui.add_space(10.0);
             buttons(ui, p, world, st, id, friend.as_ref(), actions);
             if let Some(f) = &friend {
                 let name = world.social.display_name_of(&id);
@@ -558,5 +584,100 @@ fn footer(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, here: bool, f
         }
     } else if widgets::action_button(ui, p, "user-plus", aurora_i18n::tr!("radar-add-friend"), ActionKind::Flat, size).clicked() {
         context::request(ui.ctx(), CtxAction::AddFriend(id));
+    }
+}
+
+/// Draw a sheet with `draw` in a 330 × `height` rectangle for a few frames
+/// (the layout settles), then return the rectangle of its vertical scroll
+/// bar and the widgets (switches, buttons, values, the cross) it crosses.
+#[cfg(test)]
+pub(super) fn scroll_bar_crossings(height: f32, mut draw: impl FnMut(&mut egui::Ui)) -> (Option<Rect>, Vec<Rect>) {
+    let ctx = egui::Context::default();
+    crate::theme::Theme::default().apply(&ctx, 1.0);
+    let sheet = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(super::nearby::SHEET_W, height));
+    let mut layer = None;
+    for _ in 0..4 {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 700.0))),
+                // the pointer on the sheet: a floating bar would show over it
+                events: vec![egui::Event::PointerMoved(sheet.center())],
+                ..Default::default()
+            },
+            |ui| {
+                let mut child = child(ui, sheet, "test-sheet");
+                layer = Some(child.layer_id());
+                draw(&mut child);
+            },
+        );
+        out.textures_delta.clear();
+    }
+    let layer = layer.expect("drawn");
+    let rects: Vec<egui::WidgetRect> = ctx.viewport(|v| v.this_pass.widgets.get_layer(layer).cloned().collect());
+    let bar_w = widgets::reserved_scroll_style().bar_width;
+    // the bar: the one dragged widget as wide as the bar
+    let bar = rects
+        .iter()
+        .find(|w| w.sense.senses_drag() && (w.rect.width() - bar_w).abs() < 0.5 && w.rect.height() > 20.0)
+        .map(|w| w.rect);
+    let Some(bar) = bar else {
+        return (None, Vec::new());
+    };
+    let crossing = rects
+        .iter()
+        .map(|w| w.rect)
+        // the bar itself and the containers around it
+        .filter(|r| *r != bar && !r.contains_rect(bar) && r.area() > 0.0)
+        .filter(|r| r.intersect(bar).area() > 0.0)
+        .collect();
+    (Some(bar), crossing)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// A sheet shorter than its content: its scroll bar is there, in a
+    /// strip of its own, crossing no switch, button, value nor the cross,
+    /// and the head (picture, names, cross) stays out of what scrolls.
+    #[test]
+    fn the_scroll_bar_never_covers_a_persons_sheet() {
+        let p = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let friend = Uuid::from_u128(2);
+        world.social.friends.push(Friend {
+            id: friend,
+            online: true,
+            rights_given: 3,
+            rights_has: 7,
+        });
+        world.contact_sets.add_set("Family");
+        let is_friend = |id: &Uuid| *id == friend;
+        world.contact_sets.add_to_set(&[friend], "Family", is_friend);
+        let radar = crate::world::radar::Radar::default();
+        let mut settings = super::super::RadarSettings::default();
+        let (voice, pics) = (HashMap::new(), HashMap::new());
+        let data = RadarData {
+            radar: &radar,
+            settings: &mut settings,
+            voice: &voice,
+            draw_distance: 64.0,
+            now: 0.0,
+            pics: &pics,
+        };
+        let mut st = PeopleUi::default();
+        let mut actions = Vec::new();
+        for height in [220.0, 300.0, 380.0] {
+            let (bar, crossing) = scroll_bar_crossings(height, |ui| {
+                show(ui, &p, &world, &data, &mut st, friend, false, &mut actions);
+            });
+            assert!(bar.is_some(), "{height}: the content overflows, the bar shows");
+            assert!(crossing.is_empty(), "{height}: the bar {bar:?} crosses {crossing:?}");
+        }
+        // the head is above what scrolls
+        let (top, rest) = split_head(Rect::from_min_size(Pos2::ZERO, Vec2::new(306.0, 300.0)));
+        assert!(top.bottom() < rest.top());
     }
 }

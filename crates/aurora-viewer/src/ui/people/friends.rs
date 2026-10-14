@@ -168,6 +168,8 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
     st.sel.retain(|id| order.contains(id));
     let sections = c.friends.sort == SORT_STATUS;
     let online = all.iter().filter(|l| l.friend.online).count();
+    // its bar in a strip of its own, never over a row's right end
+    widgets::reserved_scroll_bar(ui);
     egui::ScrollArea::vertical()
         .id_salt("people-friends-rows")
         .auto_shrink([false, false])

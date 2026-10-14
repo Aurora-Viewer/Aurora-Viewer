@@ -673,6 +673,25 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     resp
 }
 
+/// The scroll bars of the scroll areas `ui` opens next: thin and solid, in a
+/// strip of their own at the right of the content (egui's default floating
+/// bar is drawn over the content when hovered, over the buttons and values
+/// at the right edge). The strip is taken only when the content overflows.
+/// The inventory tree's bar (`inventory::tree::scroll`) has the same look.
+pub fn reserved_scroll_bar(ui: &mut egui::Ui) {
+    ui.spacing_mut().scroll = reserved_scroll_style();
+}
+
+/// The style `reserved_scroll_bar` sets: 6 points of bar, 4 between it and
+/// the content, faintly shown at rest.
+pub fn reserved_scroll_style() -> egui::style::ScrollStyle {
+    egui::style::ScrollStyle {
+        dormant_background_opacity: 0.2,
+        dormant_handle_opacity: 0.6,
+        ..egui::style::ScrollStyle::solid()
+    }
+}
+
 /// Stroke of every divider of the interface: a thin line of a neutral
 /// hardly lighter than the panels.
 pub fn divider_stroke(p: &Palette) -> Stroke {

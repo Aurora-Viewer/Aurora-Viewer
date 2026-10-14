@@ -332,6 +332,8 @@ fn list_part(
     let order: Vec<Uuid> = list.iter().map(|r| r.id).collect();
     let by_range = Column::ALL.get(data.settings.sort as usize) == Some(&Column::Range);
     let now = ui.input(|i| i.time);
+    // its bar in a strip of its own, never over a row's right end
+    widgets::reserved_scroll_bar(ui);
     egui::ScrollArea::vertical()
         .id_salt("people-nearby-rows")
         .auto_shrink([false, false])

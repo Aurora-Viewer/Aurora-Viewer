@@ -55,6 +55,8 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
         .collect();
     let order: Vec<Uuid> = people.iter().map(|(m, _)| m.id).collect();
     st.sel.retain(|id| order.contains(id));
+    // its bar in a strip of its own, never over a row's right end
+    widgets::reserved_scroll_bar(ui);
     egui::ScrollArea::vertical()
         .id_salt("people-recent-rows")
         .auto_shrink([false, false])

@@ -68,6 +68,8 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, _data: &super::RadarData, st: &mut Peopl
         .into_iter()
         .filter(|g| filter.is_empty() || g.name.to_lowercase().contains(&filter))
         .collect();
+    // its bar in a strip of its own, never over a row's right end
+    widgets::reserved_scroll_bar(ui);
     egui::ScrollArea::vertical()
         .id_salt("people-groups-rows")
         .auto_shrink([false, false])
@@ -313,20 +315,14 @@ fn group_sheet(ui: &mut egui::Ui, c: &mut Ctx, _data: &super::RadarData, st: &mu
         return true;
     };
     let (content, bottom) = super::sheet::frame(ui, p);
-    let mut closed = false;
-    let mut body = ui.new_child(
-        egui::UiBuilder::new()
-            .id_salt(("people-group-sheet", id))
-            .max_rect(content)
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-    );
+    // the head stays put above what scrolls, the bar in its own strip
+    let (top, rest) = super::sheet::split_head(content);
+    let closed = head(&mut super::sheet::child(ui, top, ("people-group-sheet-head", id)), c, st, &g);
     egui::ScrollArea::vertical()
         .id_salt(("people-group-sheet-scroll", id))
         .auto_shrink([false, false])
-        .show(&mut body, |ui| {
+        .show(&mut super::sheet::scroll_body(ui, rest, ("people-group-sheet", id)), |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            closed = head(ui, c, st, &g);
-            ui.add_space(10.0);
             buttons(ui, c, &g);
             ui.add_space(12.0);
             me_in_group(ui, c, &g);
@@ -586,4 +582,62 @@ fn settings(ui: &mut egui::Ui, c: &mut Ctx, g: &GroupMembership) {
         }
     });
     c.actions.extend(changed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// A group's sheet shorter than its content: the scroll bar shows in a
+    /// strip of its own, crossing no switch, button, title nor the cross.
+    #[test]
+    fn the_scroll_bar_never_covers_a_groups_sheet() {
+        let p = crate::theme::Theme::default().palette();
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let group = Uuid::from_u128(9);
+        world.groups.groups.push(GroupMembership {
+            id: group,
+            name: "Aurora Builders".into(),
+            insignia: Uuid::nil(),
+            powers: GP_SESSION_JOIN,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+        world.groups.active = group;
+        world.groups.active_title = "Builder".into();
+        let radar = crate::world::radar::Radar::default();
+        let mut radar_settings = super::super::RadarSettings::default();
+        let (voice, pics, images) = (HashMap::new(), HashMap::new(), HashMap::new());
+        let data = super::super::RadarData {
+            radar: &radar,
+            settings: &mut radar_settings,
+            voice: &voice,
+            draw_distance: 64.0,
+            now: 0.0,
+            pics: &pics,
+        };
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut contact_settings = crate::ui::contacts::ContactsSettings::default();
+        let mut friends = super::super::FriendsSettings::default();
+        let mut actions = Vec::new();
+        let mut st = PeopleUi::default();
+        for height in [200.0, 280.0, 360.0] {
+            let (bar, crossing) = super::super::sheet::scroll_bar_crossings(height, |ui| {
+                let mut c = Ctx {
+                    p: &p,
+                    world: &world,
+                    contacts: &mut contacts,
+                    contact_settings: &mut contact_settings,
+                    friends: &mut friends,
+                    images: &images,
+                    actions: &mut actions,
+                };
+                group_sheet(ui, &mut c, &data, &mut st, group);
+            });
+            assert!(bar.is_some(), "{height}: the content overflows, the bar shows");
+            assert!(crossing.is_empty(), "{height}: the bar {bar:?} crosses {crossing:?}");
+        }
+    }
 }
