@@ -251,6 +251,14 @@ impl Default for Bench {
 
 impl Bench {
     fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
+        // the dock is an egui area: shown from its second frame on
+        if self.islands && self.ctx.cumulative_frame_nr() == 0 {
+            self.frame_once(Vec::new());
+        }
+        self.frame_once(events)
+    }
+
+    fn frame_once(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
         let p = crate::theme::Theme::default().palette();
         let layout = layout();
         let mut output = self.ctx.run_ui(
@@ -331,9 +339,19 @@ impl Bench {
     }
 }
 
+/// Firestorm's bar and the dock of the islands.
 #[test]
 fn toolbar_real_right_click_removes_one_button_without_opening_its_window() {
-    let mut bench = Bench::default();
+    for islands in [false, true] {
+        toolbar_real_right_click_removes_one_button_without_opening_its_window_in(islands);
+    }
+}
+
+fn toolbar_real_right_click_removes_one_button_without_opening_its_window_in(islands: bool) {
+    let mut bench = Bench {
+        islands,
+        ..Bench::default()
+    };
     bench.frame(vec![]);
     let pos = bench.pos("people");
     bench.pointer(pos, true, true);
@@ -346,9 +364,19 @@ fn toolbar_real_right_click_removes_one_button_without_opening_its_window() {
     assert_eq!(bench.saves, 1);
 }
 
+/// Firestorm's bar and the dock of the islands.
 #[test]
 fn toolbar_real_drag_commits_once_on_release_and_escape_cancels() {
-    let mut bench = Bench::default();
+    for islands in [false, true] {
+        toolbar_real_drag_commits_once_on_release_and_escape_cancels_in(islands);
+    }
+}
+
+fn toolbar_real_drag_commits_once_on_release_and_escape_cancels_in(islands: bool) {
+    let mut bench = Bench {
+        islands,
+        ..Bench::default()
+    };
     bench.frame(vec![]);
     let from = bench.pos("inventory");
     let to = bench.pos("preferences") + Vec2::new(30.0, 0.0);
@@ -375,9 +403,19 @@ fn toolbar_real_drag_commits_once_on_release_and_escape_cancels() {
     assert_eq!(bench.saves, 1);
 }
 
+/// Firestorm's bar and the dock of the islands.
 #[test]
 fn toolbar_catalogue_click_and_real_drop_into_empty_bar_add_single_buttons() {
-    let mut bench = Bench::default();
+    for islands in [false, true] {
+        toolbar_catalogue_click_and_real_drop_into_empty_bar_add_single_buttons_in(islands);
+    }
+}
+
+fn toolbar_catalogue_click_and_real_drop_into_empty_bar_add_single_buttons_in(islands: bool) {
+    let mut bench = Bench {
+        islands,
+        ..Bench::default()
+    };
     bench.state.open = true;
     bench.settings.buttons = Some(vec![]);
     bench.frame(vec![]);
@@ -418,9 +456,19 @@ fn toolbar_catalogue_click_and_real_drop_into_empty_bar_add_single_buttons() {
     assert_eq!(bench.saves, 2);
 }
 
+/// Firestorm's bar and the dock of the islands.
 #[test]
 fn toolbar_empty_background_opens_editor_and_locked_buttons_stay_in_place() {
-    let mut bench = Bench::default();
+    for islands in [false, true] {
+        toolbar_empty_background_opens_editor_and_locked_buttons_stay_in_place_in(islands);
+    }
+}
+
+fn toolbar_empty_background_opens_editor_and_locked_buttons_stay_in_place_in(islands: bool) {
+    let mut bench = Bench {
+        islands,
+        ..Bench::default()
+    };
     bench.settings.buttons = Some(vec![]);
     bench.frame(vec![]);
     let background = bench
@@ -449,9 +497,19 @@ fn toolbar_empty_background_opens_editor_and_locked_buttons_stay_in_place() {
     assert!(!egui::DragAndDrop::has_payload_of_type::<Drag>(&bench.ctx));
 }
 
+/// Firestorm's bar and the dock of the islands.
 #[test]
 fn toolbar_drop_outside_cancels_and_drop_back_in_catalogue_removes() {
-    let mut bench = Bench::default();
+    for islands in [false, true] {
+        toolbar_drop_outside_cancels_and_drop_back_in_catalogue_removes_in(islands);
+    }
+}
+
+fn toolbar_drop_outside_cancels_and_drop_back_in_catalogue_removes_in(islands: bool) {
+    let mut bench = Bench {
+        islands,
+        ..Bench::default()
+    };
     bench.frame(vec![]);
     let from = bench.pos("inventory");
     let outside = egui::pos2(20.0, 100.0);

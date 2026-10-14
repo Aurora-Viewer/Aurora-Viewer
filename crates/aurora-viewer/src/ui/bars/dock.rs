@@ -138,7 +138,9 @@ pub fn bottom(
             dock: true,
         };
         let rects = toolbar_row(&mut child, p, icons, buttons, look, toolbar, panels, mic, row, &mut action);
-        toolbar.drop_bar(&target, &rects, p, row.locked);
+        // a button dropped a little past either end still lands in the dock
+        let drop = ui.interact(geo.dock.expand2(Vec2::new(geo.button, 4.0)), Id::new("dock_drop"), Sense::hover());
+        toolbar.drop_bar(&drop, &rects, p, row.locked);
     });
     (out, action, screen.bottom() - RESERVED, committed)
 }
@@ -312,8 +314,8 @@ mod tests {
     #[test]
     fn the_dock_stays_on_screen() {
         let s = screen(1280.0);
-        let g = geometry(s, 500.0, 17, true);
-        assert_eq!(g.chat.width(), 500.0);
+        let g = geometry(s, 700.0, 17, true);
+        assert_eq!(g.chat.width(), 700.0);
         assert_eq!(g.dock.left(), g.chat.right() + AFTER_CHAT);
         assert!(g.dock.right() <= s.right() - MARGIN);
         assert!(g.button < 32.0 && g.button >= MIN_BUTTON);
@@ -323,5 +325,139 @@ mod tests {
         // an empty dock keeps a slot to drop a button on
         let g = geometry(s, 0.0, 0, false);
         assert_eq!(g.dock.width(), PAD * 2.0 + BUTTON_H);
+    }
+
+    /// One viewer frame of the bottom islands on a 1536 × 864 screen.
+    struct Bench {
+        ctx: egui::Context,
+        panels: Panels,
+        chat: crate::ui::chat::ChatUi,
+        width: f32,
+        toolbar: crate::ui::toolbar::ToolbarUi,
+    }
+
+    impl Bench {
+        fn new() -> Self {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            Bench {
+                ctx,
+                panels: Panels::from_settings(&crate::settings::Settings::default()),
+                chat: Default::default(),
+                width: 0.0,
+                toolbar: Default::default(),
+            }
+        }
+
+        /// The islands are egui areas: shown from their second frame on.
+        fn shown() -> Self {
+            let mut bench = Self::new();
+            bench.frame(vec![]);
+            bench.frame(vec![]);
+            bench
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) -> (Option<crate::ui::chat::OutgoingChat>, f32, bool) {
+            let p = crate::theme::Theme::default().palette();
+            let layout = crate::ui::skin::Layout::default();
+            let settings = crate::ui::toolbar::ToolbarSettings::default();
+            let row = Row {
+                unread: 0,
+                flying: false,
+                seated: false,
+                mouselook: false,
+                ao_active: false,
+                locked: false,
+            };
+            let mut result = (None, 0.0, false);
+            let mut output = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen(1536.0)),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let (out, _, top, set) = bottom(
+                        ui,
+                        &p,
+                        &Icons::default(),
+                        &layout,
+                        &mut self.toolbar,
+                        &settings,
+                        &mut self.panels,
+                        &mut self.chat,
+                        &crate::gestures::Manager::default(),
+                        None,
+                        &row,
+                        &mut self.width,
+                        &mut MicButton::default(),
+                    );
+                    result = (out, top, set);
+                },
+            );
+            output.textures_delta.clear();
+            result
+        }
+    }
+
+    fn key(key: egui::Key, pressed: bool, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    /// The island's field is the chat bar's: Enter says, Ctrl+Enter shouts,
+    /// `/5` picks the channel, and the islands keep the 56 px of the dock.
+    #[test]
+    fn the_chat_island_says_and_shouts_like_the_chat_bar() {
+        let mut bench = Bench::shown();
+        bench.chat.focus_request = true;
+        let (_, top, _) = bench.frame(vec![]);
+        assert_eq!(top, 864.0 - RESERVED);
+        bench.frame(vec![egui::Event::Text("hello".into())]);
+        let (out, _, _) = bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
+        let out = out.expect("said");
+        assert_eq!((out.message.as_str(), out.channel), ("hello", 0));
+        assert_eq!(out.chat_type, aurora_net::ChatType::Normal);
+        assert!(bench.chat.input.is_empty());
+        bench.chat.focus_request = true;
+        bench.frame(vec![]);
+        bench.frame(vec![egui::Event::Text("/5 loud".into())]);
+        let (out, _, _) = bench.frame(vec![
+            egui::Event::ModifiersChanged(egui::Modifiers::CTRL),
+            key(egui::Key::Enter, true, egui::Modifiers::CTRL),
+        ]);
+        let out = out.expect("shouted");
+        assert_eq!((out.message.as_str(), out.channel), ("loud", 5));
+        assert_eq!(out.chat_type, aurora_net::ChatType::Shout);
+    }
+
+    /// The handle on the island's right edge sets its width, saved on
+    /// release; a double click goes back to the default.
+    #[test]
+    fn the_chat_island_width_follows_its_handle() {
+        let mut bench = Bench::shown();
+        let g = geometry(screen(1536.0), 0.0, 18, true);
+        let from = Pos2::new(g.chat.right() - 1.0, g.chat.center().y);
+        let to = from + Vec2::new(60.0, 0.0);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        bench.frame(vec![egui::Event::PointerMoved(from), button(from, true)]);
+        bench.frame(vec![egui::Event::PointerMoved(from + Vec2::new(30.0, 0.0))]);
+        bench.frame(vec![egui::Event::PointerMoved(to)]);
+        let (_, _, set) = bench.frame(vec![button(to, false)]);
+        assert!(set, "saved on release");
+        // egui counts the drag from its threshold on: 30 to 60 px wider
+        assert!((410.0..=441.0).contains(&bench.width), "{}", bench.width);
+        let g = geometry(screen(1536.0), bench.width, 18, true);
+        assert!(g.dock.left() >= g.chat.right() + AFTER_CHAT);
     }
 }

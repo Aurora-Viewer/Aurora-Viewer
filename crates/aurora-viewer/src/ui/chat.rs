@@ -2025,6 +2025,42 @@ mod tests {
         assert_eq!(legacy, ChatStyle::Legacy);
     }
 
+    /// The islands' chat pills (the bars mockup): a resident's name in
+    /// semi-bold light violet followed by the text without a colon, an
+    /// object's name in its kind's colour, a system line in italics; the
+    /// full-width bar's lines keep "Name: text" and their colours.
+    #[test]
+    fn chat_pills_name_residents_in_violet_without_a_colon() {
+        let p = crate::theme::Theme::default().palette();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let family = egui::FontFamily::Proportional;
+        let line = |kind, from: &str, text: &str| crate::world::ChatLine {
+            time: std::time::SystemTime::now(),
+            from: from.into(),
+            text: text.into(),
+            kind,
+            source: uuid::Uuid::from_u128(7),
+            origin: Origin::Live,
+        };
+        let job = |l: &crate::world::ChatLine, pill| line_job(l, &p, &world, &mut HashSet::new(), 540.0, 12.0, false, pill).job;
+        let said = line(ChatKind::Local(ChatType::Normal), "Orion Exemple", "Bienvenue");
+        let pill = job(&said, Some(&family));
+        assert_eq!(pill.text, "Orion ExempleBienvenue");
+        let name = &pill.sections[0];
+        assert_eq!(name.format.color, p.violet_light);
+        assert_eq!(pill.sections.last().map(|s| s.leading_space), Some(4.0));
+        assert_eq!(pill.sections.last().map(|s| s.format.color), Some(p.ink));
+        let bar = job(&said, None);
+        assert_eq!(bar.text, "Orion Exemple: Bienvenue");
+        let object = line(ChatKind::Object(ChatType::Normal), "Panneau", "Bonjour");
+        let pill = job(&object, Some(&family));
+        assert_eq!(pill.sections[0].format.color, color_for(object.kind, &p));
+        let online = line(ChatKind::System, "", "Nova est en ligne.");
+        let pill = job(&online, Some(&family));
+        assert!(pill.sections.iter().all(|s| s.format.italics));
+        assert!(!job(&online, None).sections.iter().any(|s| s.format.italics));
+    }
+
     #[test]
     fn channels() {
         assert_eq!(parse_channel("/5 hello"), (5, "hello".into()));

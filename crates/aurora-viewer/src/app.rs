@@ -8208,8 +8208,9 @@ impl App {
                 a.bar = bar;
                 a.audio = Some(audio_action);
                 // AURORA_DEMO_BARS: the mockup's voice (connected; talking
-                // with `voice`) and chat island width, for this run only
-                let demo_bars = if self.demo { ui::bars::demo::get() } else { Default::default() };
+                // with `voice`) and chat island width, for this run only and
+                // with the islands (Firestorm's bars stay as they were)
+                let demo_bars = if self.demo && !classic_bars { ui::bars::demo::get() } else { Default::default() };
                 let mut demo_chat_width = demo_bars.chat_width;
                 let mut mic = ui::bars::MicButton {
                     on: self.mic_on,
