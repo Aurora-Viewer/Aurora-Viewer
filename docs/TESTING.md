@@ -1001,6 +1001,7 @@ To check with these scenarios:
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
+| `AURORA_DEMO_ENV_EDITOR=<mode>` | Sky and water editors |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 
 ### Details
@@ -1114,6 +1115,16 @@ To check with these scenarios:
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
   (2500).
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save`**: sky
+  and water editors (`app/env_editor.rs`), with the library and Settings
+  folder of `AURORA_DEMO_ENV_SELECT`. At frame 400 the editor opens on a
+  snapshot of the shown sky (`sky`, `clouds` and `sun` pick the tab) or
+  water (`water`), or on the user's "my purple sky" item once its folder
+  has loaded (`item`: the sky turns purple at once, Save is enabled).
+  `item-save` also raises its brightness and saves over the item (frame
+  900), then saves it as "my purple sky, brighter" (1100): both saves
+  are logged (`environment settings saved`) and the second item shows in
+  the Settings folder.
 
 ## Load and smoothness
 
@@ -2429,6 +2440,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
+| `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
@@ -2447,6 +2459,21 @@ What the inventory must show with these scenarios:
   With the name plates (default style), the outline is green in the voice
   channel and a tight green halo follows the level; out of voice, the plate
   has neither a coloured outline nor a badge.
+- **`AURORA_DEMO_CALL`**: the demo has no voice server; `demo_calls.rs`
+  answers ChatSessionRequest (a channel for every call) and stands in for
+  the voice session: the call connects after 1.5 s and the others talk in
+  turn, two seconds each (green ring around their picture). Every call made
+  from the interface works with it, without the variable. Three seconds
+  after arriving, `p2p` calls Tess: "Calling…" until she answers 3 s later,
+  then "In call" with a timer; `hangup` is the same and Tess hangs up after
+  12 s (back to nearby voice, a notice in the conversation); `group` calls
+  the group Aurora Builders (Nova, Tess and Orion); `conference` starts a
+  voice conference with Tess and Nova; `incoming` makes Tess call us (the
+  card with Accept, Decline and Reply by text, and the same answers in her
+  conversation, which comes up flashing; unanswered, both close after 30 s)
+  and
+  `incoming-group` makes Nova start a call in Aurora Builders. Voice must be
+  enabled (Preferences › Sound and voice), as on the grid.
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),

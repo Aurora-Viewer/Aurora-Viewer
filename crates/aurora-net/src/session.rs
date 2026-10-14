@@ -1887,6 +1887,14 @@ impl Session<'_> {
                 copy_name,
             } => self.save_wearable(request, *item, data, copy_name),
             NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
+            NetCommand::CreateSettingsItem {
+                request,
+                parent,
+                name,
+                subtype,
+                next_owner_mask,
+                data,
+            } => self.create_settings_item(request, parent, name, subtype, next_owner_mask, data),
             NetCommand::RestoreInventoryObject(it) => {
                 let mut m = RezRestoreToWorld::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -1923,6 +1931,7 @@ impl Session<'_> {
                     7 => "UpdateNotecardAgentInventory",
                     10 => "UpdateScriptAgent",
                     21 => "UpdateGestureAgentInventory",
+                    56 => "UpdateSettingsAgentInventory",
                     _ => "",
                 };
                 let Some((cap, fetch)) = self.main_cap(name).zip(self.main_cap("FetchInventory2")) else {
@@ -2139,7 +2148,8 @@ impl Session<'_> {
             | NetCommand::ObjectGrabUpdate { .. }
             | NetCommand::ObjectRelease { .. }
             | NetCommand::RequestTaskInventory { .. }
-            | NetCommand::ChatSession { .. } => {}
+            | NetCommand::ChatSession { .. }
+            | NetCommand::Call { .. } => {}
             // handled by on_offline_command
             NetCommand::RequestOfflineMessages
             | NetCommand::RequestOfflineMessagesLegacy

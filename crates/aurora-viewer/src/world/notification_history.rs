@@ -32,6 +32,7 @@ pub enum Look {
     Permissions,
     Url,
     Message,
+    Call,
     /// Information, and a kind a newer version wrote.
     #[serde(other)]
     Info,

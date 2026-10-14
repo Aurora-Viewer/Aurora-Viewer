@@ -86,6 +86,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "UpdateGestureAgentInventory",
     "UpdateScriptAgent",
     "UpdateScriptTask",
+    // environment settings items (LLEnvironment::isInventoryEnabled needs both)
+    "UpdateSettingsAgentInventory",
+    "UpdateSettingsTaskInventory",
     "ViewerAsset",
     "ViewerStats",
     "VoiceSignalingRequest",

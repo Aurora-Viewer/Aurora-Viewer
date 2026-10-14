@@ -23,15 +23,46 @@ fn scenario() -> &'static str {
     S.get_or_init(|| std::env::var("AURORA_DEMO_ENV_SELECT").unwrap_or_default().trim().to_owned())
 }
 
-/// The settings items are there for the selector's scenario, and for About
-/// Land's (its environment picker).
-pub fn enabled() -> bool {
-    (!scenario().is_empty() && scenario() != "0") || std::env::var_os("AURORA_DEMO_LAND").is_some()
+/// The selector's scripted run (`AURORA_DEMO_ENV_SELECT`).
+fn select_enabled() -> bool {
+    !scenario().is_empty() && scenario() != "0"
 }
 
 /// The kind of a demo settings asset.
 pub fn kind_of(asset: Uuid) -> Option<SettingsKind> {
     items().iter().find(|(.., a)| u(*a) == asset).map(|(_, _, k, _)| *k)
+}
+
+/// `AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item`: the sky or water
+/// editor opens on a snapshot (on its Clouds or Sun & Moon tab), or on the
+/// user's "My purple sky" item.
+pub fn editor() -> Option<&'static str> {
+    static S: OnceLock<String> = OnceLock::new();
+    let s = S.get_or_init(|| std::env::var("AURORA_DEMO_ENV_EDITOR").unwrap_or_default().trim().to_owned());
+    (!s.is_empty() && s != "0").then_some(s.as_str())
+}
+
+/// The library and the user's Settings folder: for the selector's and the
+/// editors' scenarios, and for About Land's (its environment picker).
+pub fn enabled() -> bool {
+    select_enabled() || editor().is_some() || std::env::var_os("AURORA_DEMO_LAND").is_some()
+}
+
+/// The item the `item` editor scenario opens.
+pub fn editor_item() -> Uuid {
+    u(0x501 + 0x1000)
+}
+
+/// A demo settings asset as it would be downloaded (notation).
+pub fn asset_bytes(asset: Uuid) -> Option<Vec<u8>> {
+    let n = asset.as_u128();
+    if u(n & 0xFFFF) != asset {
+        return None;
+    }
+    defs()
+        .into_iter()
+        .find(|(id, _)| *id == n & 0xFFFF)
+        .map(|(_, v)| format!("<? llsd/notation ?>\n{}", aurora_llsd::to_notation(&v)).into_bytes())
 }
 
 fn u(n: u128) -> Uuid {
@@ -266,7 +297,25 @@ fn sunset() -> Llsd {
 
 /// Settings assets of the demo items (parsed like downloaded ones).
 pub fn settings_assets() -> Vec<(Uuid, Settings)> {
-    let defs: Vec<(u128, Llsd)> = vec![
+    defs()
+        .into_iter()
+        .filter_map(|(n, v)| Settings::from_llsd(&v).map(|s| (u(n), s)))
+        .collect()
+}
+
+fn defs() -> Vec<(u128, Llsd)> {
+    let mut purple = sky(
+        Vec3::new(0.4, -0.3, 0.5),
+        [1.0, 0.7, 1.4],
+        [0.55, 0.35, 0.95],
+        [0.4, 0.2, 0.7],
+        0.8,
+        1.0,
+    );
+    // keys the editors do not show, kept when the item is saved
+    purple.insert("name", aurora_i18n::tr!("demo-env-my-purple-sky"));
+    purple.insert("rayleigh_config", Llsd::Array(vec![llsd_map! {"exp_term" => 1.0, "width" => 0.0}]));
+    vec![
         (0x201, midnight()),
         (
             0x202,
@@ -314,22 +363,9 @@ pub fn settings_assets() -> Vec<(Uuid, Settings)> {
             ),
         ),
         (0x402, day(&[(0.0, sunset()), (0.5, noon())], water([0.05, 0.35, 0.4], 3.0))),
-        (
-            0x501,
-            sky(
-                Vec3::new(0.4, -0.3, 0.5),
-                [1.0, 0.7, 1.4],
-                [0.55, 0.35, 0.95],
-                [0.4, 0.2, 0.7],
-                0.8,
-                1.0,
-            ),
-        ),
+        (0x501, purple),
         (0x502, water([0.05, 0.45, 0.45], 1.5)),
-    ];
-    defs.into_iter()
-        .filter_map(|(n, v)| Settings::from_llsd(&v).map(|s| (u(n), s)))
-        .collect()
+    ]
 }
 
 /// A scripted step of the scenario.
@@ -350,8 +386,9 @@ pub enum Step {
 }
 
 pub fn step(frame: u64) -> Option<Step> {
-    // the selector's own scenario only (About Land just needs the items)
-    if scenario().is_empty() || scenario() == "0" {
+    // the selector's own scenario only (About Land and the editors just
+    // need the items)
+    if !select_enabled() {
         return None;
     }
     let lighting = scenario() == "lighting";

@@ -3,11 +3,13 @@
 pub mod appearance;
 pub mod blocking;
 pub mod body;
+pub mod calls;
 pub mod chat_log;
 pub mod contact_sets;
 pub mod eep;
 pub mod eep_env;
 pub mod env;
+pub mod env_edit;
 pub mod env_select;
 pub mod experiences;
 pub mod group_data;
@@ -240,6 +242,8 @@ pub struct World {
     pub lsl_bridge: lslbridge::LslBridge,
     /// Our groups and the group / conference chat sessions.
     pub groups: groups::GroupChats,
+    /// Voice calls with residents, groups and conferences.
+    pub calls: calls::Calls,
     /// Online status (away, do not disturb...) and automatic responses.
     pub status: status::Status,
     pub inventory: inventory::Inventory,
@@ -409,6 +413,7 @@ impl World {
             mutes: mutes::MuteList::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
             groups: groups::GroupChats::default(),
+            calls: calls::Calls::default(),
             status: status::Status::default(),
             inventory: inventory::Inventory::default(),
             active_gestures: Default::default(),
@@ -1202,6 +1207,7 @@ impl World {
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
                 self.group_data.load_read(account.join(group_data::NOTICES_READ_FILE));
                 self.status.invisible = status::Invisible::load(account.join(status::INVISIBLE_FILE), &self.social.friends);
+                self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
                 self.aliases_synced = u64::MAX;
@@ -1488,7 +1494,23 @@ impl World {
             | NetEvent::SessionAgents { .. }
             | NetEvent::SessionError { .. }
             | NetEvent::SessionClosed { .. }
-            | NetEvent::ChatSessionReply { .. }) => self.on_group_event(ev),
+            | NetEvent::ChatSessionReply { .. }) => {
+                match &ev {
+                    NetEvent::SessionStarted {
+                        temp_session,
+                        session,
+                        success,
+                        ..
+                    } => self.call_session_started(*temp_session, *session, *success),
+                    NetEvent::SessionClosed { session, .. } => self.call_session_closed(*session),
+                    _ => {}
+                }
+                self.on_group_event(ev)
+            }
+            ev @ (NetEvent::VoiceInvite(_) | NetEvent::CallReply { .. } | NetEvent::SessionVoiceChannel { .. }) => {
+                self.on_call_event(ev);
+                None
+            }
             NetEvent::InstantMessage(im) => {
                 self.on_im(im);
                 None
@@ -2231,6 +2253,12 @@ impl World {
         if self.im_blocked(&im) || self.on_session_im(&im) || self.on_status_im(&im) || self.on_im_offer(&im) {
             return;
         }
+        // VoiceCallsFriendsOnly: a non-friend's message is neither shown nor
+        // answered
+        if im.dialog == 0 && self.friends_only_drops(&im.from_agent_id, &im.from_name) {
+            log::info!("message from a non-friend dropped (friends only)");
+            return;
+        }
         // decided before the message opens its conversation
         let autoresponse = self.autoresponse_due(&im);
         // 0 = message from user, 19 = message from object; others are notices etc.
@@ -2567,6 +2595,19 @@ impl World {
                 self.system_message(error);
             }
             return (Vec::new(), None);
+        }
+        // voice calls (LLIncomingCallDialog::processCallResponse): accept,
+        // decline (closing too) or "Start IM"
+        if let Some(notifications::Data::Call { invite }) = &data {
+            let invite = (**invite).clone();
+            self.notifications.respond(id, r.clone(), |_| Uuid::nil(), Uuid::nil());
+            let answer = match r {
+                notifications::Response::Accept => calls::InviteAnswer::Accept,
+                notifications::Response::Button(0) => calls::InviteAnswer::Text,
+                _ => calls::InviteAnswer::Decline,
+            };
+            self.invite_card_answered(invite, answer);
+            return (std::mem::take(&mut self.groups.out), None);
         }
         // teleport offers and requests: answered through their invitation,
         // closing the notification declines (as Firestorm's toasts do)

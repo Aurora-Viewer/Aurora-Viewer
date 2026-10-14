@@ -109,6 +109,7 @@ pub(super) fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
         Kind::Url => ("world-filled", p.teal),
         Kind::Presence => ("user-filled", p.success),
         Kind::Message => ("message-filled", p.violet_light),
+        Kind::Call => ("phone-filled", p.success),
     }
 }
 
@@ -340,6 +341,19 @@ pub(super) fn card(
                 Data::TeleportRequest { .. } => {
                     buttons.push((aurora_i18n::tr!("common-yes").into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("common-no").into(), Response::Decline, false));
+                }
+                // LLIncomingCallDialog: Accept, Reject, and Start IM for a
+                // resident's call
+                Data::Call { invite } => {
+                    buttons.push((aurora_i18n::tr!("ui-notifications-accept").into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
+                    if invite.p2p {
+                        buttons.push((
+                            aurora_i18n::tr!("ui-notifications-call-start-im").into(),
+                            Response::Button(0),
+                            false,
+                        ));
+                    }
                 }
                 Data::Friend { .. } | Data::Group { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-accept").into(), Response::Accept, true));

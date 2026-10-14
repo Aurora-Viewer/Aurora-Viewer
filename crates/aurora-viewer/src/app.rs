@@ -35,6 +35,7 @@ mod context_menu;
 mod cursor_hold;
 mod dof;
 mod double_click;
+mod env_editor;
 mod gestures;
 mod hover_height;
 mod hud_drag;
@@ -232,6 +233,12 @@ pub struct App {
     autopilot_flags: u32,
     /// Microphone switched on (toggle mode).
     mic_on: bool,
+    /// AURORA_DEMO_CALL: the simulated voice server of the calls.
+    call_demo: crate::demo::calls::CallDemo,
+    /// The call whose conversation was last brought up.
+    call_shown: Option<uuid::Uuid>,
+    /// When the voice volumes changed by the call strip are saved.
+    volumes_save_at: Option<Instant>,
     /// Microphone button of the bottom bar held (hold-to-talk mode).
     mic_button_held: bool,
     /// Voice: connected in this region, own speaking level (0..1).
@@ -460,6 +467,10 @@ pub struct App {
     env_scan: bool,
     /// "Personal lighting" was open last frame (captures on opening).
     lighting_was_open: bool,
+    /// Sky and water editors (LLFloaterFixedEnvironment).
+    env_editor: ui::env_editor::EnvEditorUi,
+    /// A Windlight preset being read for "Import" (bytes and preset name).
+    env_import: Option<std::sync::mpsc::Receiver<Option<(Vec<u8>, String)>>>,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
     gesture_state: gestures::State,
@@ -681,6 +692,9 @@ impl App {
             autopilot: None,
             autopilot_flags: 0,
             mic_on: false,
+            call_demo: Default::default(),
+            call_shown: None,
+            volumes_save_at: None,
             mic_button_held: false,
             voice_connected: false,
             voice_level: 0.0,
@@ -820,6 +834,8 @@ impl App {
             env_ui: Default::default(),
             env_scan: false,
             lighting_was_open: false,
+            env_editor: Default::default(),
+            env_import: None,
             demo: false,
             inventory_ui: Default::default(),
             gesture_state: Default::default(),
@@ -1153,10 +1169,54 @@ impl App {
                         it
                     })
                     .ok_or_else(|| aurora_i18n::tr!("common-item-not-found").to_owned());
+                // a saved settings item's new asset, as the simulator would serve it
+                if let Ok(it) = &result
+                    && it.asset_type == 56
+                    && let Some(s) = crate::world::eep::Settings::from_asset(data)
+                {
+                    self.scene.settings.insert_local(it.asset_id, s);
+                }
                 self.on_app_event(NetEvent::InventoryContentSaved {
                     request: *request,
                     item: *item,
                     result,
+                });
+                return;
+            }
+            if let NetCommand::CreateSettingsItem {
+                request,
+                parent,
+                name,
+                subtype,
+                next_owner_mask,
+                data,
+            } = &cmd
+            {
+                let item = aurora_net::inventory::InvItem {
+                    id: uuid::Uuid::new_v4(),
+                    parent: *parent,
+                    name: name.clone(),
+                    asset_type: 56,
+                    inv_type: 25,
+                    asset_id: uuid::Uuid::new_v4(),
+                    flags: u32::from(*subtype),
+                    owner: self.world.agent_id,
+                    creator: self.world.agent_id,
+                    base_mask: 0x7fffffff,
+                    owner_mask: 0x7fffffff,
+                    everyone_mask: 0x8000,
+                    next_owner_mask: next_owner_mask.unwrap_or(0x86000),
+                    ..Default::default()
+                };
+                self.demo_documents.insert(item.id, data.clone());
+                if let Some(s) = crate::world::eep::Settings::from_asset(data) {
+                    self.scene.settings.insert_local(item.asset_id, s);
+                }
+                self.world.inventory.add_items(vec![item.clone()]);
+                self.on_app_event(NetEvent::InventoryContentSaved {
+                    request: *request,
+                    item: item.id,
+                    result: Ok(item),
                 });
                 return;
             }
@@ -1235,7 +1295,8 @@ impl App {
                 return;
             }
             if let NetCommand::PreviewInventoryItem(it) = &cmd {
-                let bytes = self.demo_documents.get(&it.id).cloned().unwrap_or_else(|| match it.asset_type {
+                let library = (it.asset_type == 56).then(|| crate::demo::env::asset_bytes(it.asset_id)).flatten();
+                let bytes = self.demo_documents.get(&it.id).cloned().or(library).unwrap_or_else(|| match it.asset_type {
                     56 => b"<?llsd/notation?>\n{'type':'sky'}".to_vec(),
                     57 => aurora_llsd::to_binary(
                         &aurora_llsd::llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{}]}" },
@@ -1506,6 +1567,9 @@ impl App {
         self.env_scan = false;
         self.panels.environment = false;
         self.panels.personal_lighting = false;
+        self.env_editor.close();
+        self.env_import = None;
+        self.world.eep.clear_edit();
         self.world.save_inventory_cache();
         self.world.save_mute_cache();
         if let Some(path) = self.name_cache_path() {
@@ -1594,6 +1658,10 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if self.env_editor.saving == Some(request) {
+                self.env_editor_saved(result);
+                return;
+            }
             if self.gesture_save_pending(request, item) {
                 self.gesture_saved(request, item, result);
                 return;
@@ -3495,8 +3563,50 @@ impl App {
             transmit,
             avatar: (global(self.world.agent.position), self.world.agent.body_rotation()),
             listener: (global(self.camera.position), cam_rot),
+            call: self.world.calls.active.as_ref().and_then(|c| c.channel.as_ref()),
         };
         self.voice.update(inputs);
+        // the call's channel: its state and participants (the demo has no
+        // voice server and simulates them)
+        let server_type = main.map(|r| r.voice_server.clone()).unwrap_or_default();
+        self.world.calls.voice_enabled = self.settings.audio.voice_enabled;
+        self.world.calls.server_type = server_type;
+        self.world.calls.reject_group = self.settings.audio.reject_group_calls;
+        self.world.calls.reject_adhoc = self.settings.audio.reject_adhoc_calls;
+        self.world.calls.reject_p2p = self.settings.audio.reject_p2p_calls;
+        self.world.expire_call_invites();
+        if self.volumes_save_at.is_some_and(|t| Instant::now() >= t) {
+            self.volumes_save_at = None;
+            self.world.calls.save_volumes();
+        }
+        // each resident's voice volume (LLSpeakerVolumeStorage)
+        self.voice.apply_volumes(&self.world.calls.volumes);
+        let report = if self.demo {
+            let in_world = self.in_world();
+            for ev in self.call_demo.scenario(&mut self.world, in_world) {
+                if let Some(e) = self.world.apply(ev) {
+                    self.on_app_event(e);
+                }
+            }
+            self.call_demo.report(&self.world, transmit)
+        } else {
+            self.voice.call_report()
+        };
+        if let Some((status, members)) = report {
+            self.world.call_voice_update(status, members);
+        }
+        // a new call shows its conversation (started, accepted, answered by text)
+        let call = self.world.calls.active.as_ref().map(|c| c.session);
+        if call.is_some() && call != self.call_shown {
+            ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
+        }
+        self.call_shown = call;
+        // the microphone a call wants when it connects or ends (toggle mode)
+        if let Some(on) = self.world.calls.mic.take()
+            && !self.settings.audio.mic_hold
+        {
+            self.mic_on = on;
+        }
         let world = &self.world;
         self.voice.apply_blocks(|id| world.voice_blocked(id));
         self.voice_connected = self.voice.connected;
@@ -4150,6 +4260,11 @@ impl App {
     fn on_contacts_action(&mut self, c: ui::contacts::ContactsAction, a: &mut UiActions) {
         use ui::contacts::ContactsAction;
         match c {
+            ContactsAction::Call(ids) => match ids.as_slice() {
+                [one] => self.on_ctx_action(ui::context::CtxAction::Call(*one)),
+                _ if self.settings.audio.voice_enabled => self.world.start_conference(ids),
+                _ => {}
+            },
             ContactsAction::Im(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.social.session_mut(id);
@@ -4273,6 +4388,7 @@ impl App {
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
+        images.extend(self.env_editor.wanted_images.drain());
         for note in self.task_notecards.values_mut() {
             images.extend(note.state.wanted_images.drain());
         }
@@ -6072,6 +6188,13 @@ impl App {
             if let Some(step) = crate::demo::env::step(self.frame_count) {
                 self.demo_env_step(step);
             }
+            if let Some(scenario) = crate::demo::env::editor() {
+                if self.frame_count == 400 {
+                    self.demo_env_editor(scenario);
+                } else if scenario == "item-save" {
+                    self.demo_env_editor_step(self.frame_count);
+                }
+            }
         }
         // last view for the loading screens (blurred in a thread, or now when quitting)
         if self.bug_report.capture_pending
@@ -7225,8 +7348,8 @@ impl App {
                     log::info!("group invite: {} resident(s) invited", invites.len());
                     self.send(NetCommand::InviteToGroup { group, invites });
                 }
-                // group voice: connected by the voice calls
-                GroupAction::Call(group) => log::info!("group call {group}: group voice is not connected yet"),
+                // LLGroupActions::startCall
+                GroupAction::Call(group) => self.on_ctx_action(ui::context::CtxAction::Call(group)),
                 GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
                 GroupAction::SetTitle { group, role } => self.world.group_data.set_title(group, role),
                 GroupAction::SetFlags {
@@ -7905,6 +8028,11 @@ impl App {
                 let mut open = self.panels.chat;
                 let mut contact_actions = Vec::new();
                 self.chat_ui.style = self.settings.chat_style;
+                self.chat_ui.voice_on = self.settings.audio.voice_enabled;
+                self.chat_ui.mic = (!self.settings.audio.mic_hold).then_some(self.mic_on);
+                if self.world.calls.active.is_some() {
+                    self.chat_ui.volumes.clone_from(&self.world.calls.volumes);
+                }
                 for c in ui::chat::show(
                     &ctx,
                     &p,
@@ -7925,6 +8053,7 @@ impl App {
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::chat::ConvAction::Close(id) => {
+                            self.world.conversation_closed(&id);
                             self.world.leave_session(id);
                             self.chat_ui.forget(id);
                             // closed from the list, another conversation may be shown
@@ -7933,7 +8062,17 @@ impl App {
                                 self.chat_ui.show_profile = false;
                             }
                         }
+                        ui::chat::ConvAction::Call(id) => a.ctx_action = Some(ui::context::CtxAction::Call(id)),
+                        ui::chat::ConvAction::HangUp => self.world.end_call(),
+                        ui::chat::ConvAction::ToggleMic => self.mic_on = !self.mic_on,
+                        ui::chat::ConvAction::AnswerCall { session, answer } => self.world.answer_call_invite(session, answer),
+                        ui::chat::ConvAction::SetVolume(id, v) => {
+                            self.world.calls.set_volume(id, v);
+                            // saved once the slider rests
+                            self.volumes_save_at = Some(Instant::now() + std::time::Duration::from_millis(500));
+                        }
                         ui::chat::ConvAction::BlockGroupChat(id) => {
+                            self.world.conversation_closed(&id);
                             self.world.set_group_chat_blocked(id, true);
                             self.chat_ui.forget(id);
                             self.chat_ui.selected = None;
@@ -8554,7 +8693,7 @@ impl App {
                     avatar_pics: &self.avatar_pics,
                     classic: self.settings.classic_profiles,
                     now: ctx.input(|i| i.time),
-                    group_calls: false,
+                    group_calls: self.settings.audio.voice_enabled,
                 };
                 let group_acts = self.group_profile_ui.show(&ctx, &mut c, &group_env);
                 self.panels.search = open;
@@ -8680,6 +8819,7 @@ impl App {
                         ui::environment::EnvAction::Preset(n) => self.panels.time_of_day = n,
                     }
                 }
+                self.draw_env_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
                 self.settings.show_chat = self.panels.chat;
                 self.settings.show_perf = self.panels.perf;

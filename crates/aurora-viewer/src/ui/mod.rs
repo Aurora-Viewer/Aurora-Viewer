@@ -18,6 +18,7 @@ pub mod context;
 pub mod debug_overlay;
 pub mod display_name;
 pub mod emoji;
+pub mod env_editor;
 pub mod environment;
 pub mod exit;
 pub mod experience_profile;
