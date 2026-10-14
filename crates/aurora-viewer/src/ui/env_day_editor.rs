@@ -129,6 +129,10 @@ pub struct DayEditorUi {
     pub commit_lost: bool,
     /// Loaded settings waiting for "make the day no-transfer?".
     pub no_trans_ask: Option<NoTransLoad>,
+    /// Its "Do not show again" box, and the request to stop asking (the
+    /// app clears the setting).
+    no_trans_dont_ask: bool,
+    pub stop_asking_no_trans: bool,
     /// The sun and moon beacons (kept by the app).
     pub beacons: [bool; 2],
     /// The region's sky altitudes for the track names (parcel and region
@@ -344,6 +348,20 @@ impl DayEditorUi {
             self.select_at_cursor();
         }
         added
+    }
+
+    /// SettingsMakeNoTrans answered "Yes" (or not asked): the day becomes
+    /// no-transfer and takes the loaded settings.
+    pub fn accept_no_trans(&mut self, load: NoTransLoad, out: &mut Vec<DayAction>) {
+        self.rights.transfer = false;
+        if let Some(doc) = &mut self.doc {
+            doc.set_flags(doc.flags() | env_edit::FLAG_NOTRANS);
+        }
+        self.dirty = true;
+        match load {
+            NoTransLoad::Frame(frame) => self.put_loaded_frame(&frame, out),
+            NoTransLoad::Track(day) => self.track_source = Some(day),
+        }
     }
 
     /// "Clone Track From": track `from` of this day into `to`.
@@ -997,7 +1015,10 @@ impl DayEditorUi {
                     )
                     .wrap(),
                 );
-                ui.add_space(10.0);
+                ui.add_space(8.0);
+                // okcancelignore: the box saved once "Yes" is chosen
+                widgets::checkbox(ui, p, &mut self.no_trans_dont_ask, aurora_i18n::tr!("ui-context-do-not-show-again"));
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let size = Vec2::new(0.0, 26.0);
                     if widgets::action_button(ui, p, "check", aurora_i18n::tr!("common-yes"), ActionKind::Primary, size).clicked() {
@@ -1013,16 +1034,11 @@ impl DayEditorUi {
             }
             if let Some(yes) = answer
                 && let Some(load) = self.no_trans_ask.take()
-                && yes
             {
-                self.rights.transfer = false;
-                if let Some(doc) = &mut self.doc {
-                    doc.set_flags(doc.flags() | env_edit::FLAG_NOTRANS);
-                }
-                self.dirty = true;
-                match load {
-                    NoTransLoad::Frame(frame) => self.put_loaded_frame(&frame, out),
-                    NoTransLoad::Track(day) => self.track_source = Some(day),
+                let dont_ask = std::mem::take(&mut self.no_trans_dont_ask);
+                if yes {
+                    self.stop_asking_no_trans |= dont_ask;
+                    self.accept_no_trans(load, out);
                 }
             }
         }

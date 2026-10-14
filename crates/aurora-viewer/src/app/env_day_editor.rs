@@ -87,15 +87,19 @@ impl App {
             Some(it) => it.owner_mask & 0x2000 == 0,
             None => self.day_editor.doc.as_ref().is_some_and(|d| d.flags() & FLAG_NOTRANS != 0),
         };
-        let ask = restricted && !edited_no_trans;
+        let make_no_trans = restricted && !edited_no_trans;
+        // the question's "ignore": its default answer, Yes, without asking
+        let ask = make_no_trans && self.settings.confirm_no_transfer_settings;
         match (purpose, result) {
             (DayFetch::Frame, Ok(data)) => match SettingsDoc::from_asset(data) {
                 Some(frame) if ask => self.day_editor.no_trans_ask = Some(NoTransLoad::Frame(frame)),
+                Some(frame) if make_no_trans => self.day_editor.accept_no_trans(NoTransLoad::Frame(frame), &mut out),
                 Some(frame) => self.day_editor.put_loaded_frame(&frame, &mut out),
                 None => self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-load-failed", name = ""), true)),
             },
             (DayFetch::Track, Ok(data)) => match DayDoc::from_asset(data) {
                 Some(day) if ask => self.day_editor.no_trans_ask = Some(NoTransLoad::Track(day)),
+                Some(day) if make_no_trans => self.day_editor.accept_no_trans(NoTransLoad::Track(day), &mut out),
                 Some(day) => self.day_editor.track_source = Some(day),
                 None => self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-load-failed", name = ""), true)),
             },
@@ -136,6 +140,10 @@ impl App {
         let actions = self.day_editor.show(ctx, p, &self.world.inventory, &self.ui_images, access);
         if self.day_editor.open {
             self.set_env_beacons(self.day_editor.beacons);
+        }
+        if std::mem::take(&mut self.day_editor.stop_asking_no_trans) {
+            self.settings.confirm_no_transfer_settings = false;
+            self.settings.save();
         }
         if self.day_editor.show_picker(ctx, p, &mut self.world, &self.ui_images) {
             self.show_day_edit();
