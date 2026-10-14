@@ -454,8 +454,9 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         st.members.made_at = env.now;
     }
 
-    // the columns: name, title, (roles), status, (donation)
-    let width = ui.available_width();
+    // the columns: name, title, (roles), status, (donation), left of the
+    // list's scroll bar
+    let width = widgets::scrolled_width(ui);
     // (label, sort, fixed width, or share of the rest when the width is 0)
     let mut cols: Vec<(&str, Option<Sort>, f32, f32)> = vec![
         (aurora_i18n::tr!("ui-group-profile-col-member"), Some(Sort::Name), 0.0, 1.5),
@@ -1012,7 +1013,7 @@ pub fn classic_list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: 
         c.want_names.insert(*id);
     }
     let today = today();
-    let width = ui.available_width();
+    let width = widgets::scrolled_width(ui);
     egui::ScrollArea::vertical()
         .id_salt("group_members_classic")
         .max_height(260.0)

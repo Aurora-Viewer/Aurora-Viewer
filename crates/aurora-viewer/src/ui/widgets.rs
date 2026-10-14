@@ -692,23 +692,28 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     resp
 }
 
-/// The scroll bars of the scroll areas `ui` opens next: thin and solid, in a
-/// strip of their own at the right of the content (egui's default floating
-/// bar is drawn over the content when hovered, over the buttons and values
-/// at the right edge). The strip is taken only when the content overflows.
-/// The inventory tree's bar (`inventory::tree::scroll`) has the same look.
-pub fn reserved_scroll_bar(ui: &mut egui::Ui) {
-    ui.spacing_mut().scroll = reserved_scroll_style();
-}
-
-/// The style `reserved_scroll_bar` sets: 6 points of bar, 4 between it and
-/// the content, faintly shown at rest.
+/// The scroll bars of every scroll area, set once by `Theme::apply`: thin and
+/// solid, in a strip of their own at the right of the content, like
+/// Firestorm's LLScrollContainer, whose visible width loses the bar's
+/// (indra/llui/llscrollcontainer.cpp, calcVisibleSize). egui's default
+/// floating bar is drawn over the content when hovered, over the buttons and
+/// values at the right edge. The strip is taken only when the content
+/// overflows. 6 points of bar, 4 between it and the content, faintly shown
+/// at rest. `ui/theme_guard.rs` keeps windows from setting another style.
 pub fn reserved_scroll_style() -> egui::style::ScrollStyle {
     egui::style::ScrollStyle {
         dormant_background_opacity: 0.2,
         dormant_handle_opacity: 0.6,
         ..egui::style::ScrollStyle::solid()
     }
+}
+
+/// The width left to the rows of a vertical scroll area opened next in `ui`
+/// once its bar shows: for rows sized outside the area (a table whose
+/// header sits above it), which would otherwise run under the bar's strip
+/// and be clipped.
+pub fn scrolled_width(ui: &egui::Ui) -> f32 {
+    (ui.available_width() - ui.spacing().scroll.allocated_width()).max(0.0)
 }
 
 /// Stroke of every divider of the interface: a thin line of a neutral

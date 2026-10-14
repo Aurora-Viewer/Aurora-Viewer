@@ -68,8 +68,6 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, _data: &super::RadarData, st: &mut Peopl
         .into_iter()
         .filter(|g| filter.is_empty() || g.name.to_lowercase().contains(&filter))
         .collect();
-    // its bar in a strip of its own, never over a row's right end
-    widgets::reserved_scroll_bar(ui);
     egui::ScrollArea::vertical()
         .id_salt("people-groups-rows")
         .auto_shrink([false, false])
@@ -321,7 +319,7 @@ fn group_sheet(ui: &mut egui::Ui, c: &mut Ctx, _data: &super::RadarData, st: &mu
     egui::ScrollArea::vertical()
         .id_salt(("people-group-sheet-scroll", id))
         .auto_shrink([false, false])
-        .show(&mut super::sheet::scroll_body(ui, rest, ("people-group-sheet", id)), |ui| {
+        .show(&mut super::sheet::child(ui, rest, ("people-group-sheet", id)), |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             buttons(ui, c, &g);
             ui.add_space(12.0);

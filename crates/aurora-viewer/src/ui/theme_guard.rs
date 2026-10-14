@@ -4,6 +4,8 @@
 //!
 //! - one of egui's stock widgets that Aurora replaced by a shared one of
 //!   `ui/widgets.rs` (check box, radio button, separator, window…);
+//! - a scroll style of its own (egui's floating bar shows over the
+//!   content), when the theme reserves a strip for every bar;
 //! - a value of appearance written in a window: a radius or a color given as
 //!   a number or a named constant, when the theme has the radii
 //!   (`ui.visuals()`) and the `Palette` has the colors.
@@ -106,6 +108,20 @@ const RULES: &[Rule] = &[
         ".separator()",
         "widgets::divider between two zones of a window, menu::separator in a menu, nothing between buttons",
     ),
+    // egui's floating bar is drawn over the content's right edge (switches,
+    // buttons, values): the theme gives every scroll area a reserved one
+    stock(
+        "ScrollStyle",
+        "the theme's scroll bars (Theme::apply sets widgets::reserved_scroll_style): a strip of their own, never over the content",
+    ),
+    stock(
+        "spacing_mut().scroll",
+        "the theme's scroll bars (Theme::apply sets widgets::reserved_scroll_style): a strip of their own, never over the content",
+    ),
+    stock(
+        "spacing.scroll",
+        "the theme's scroll bars (Theme::apply sets widgets::reserved_scroll_style): a strip of their own, never over the content",
+    ),
     radius("rect_filled(", 1),
     radius("rect_stroke(", 1),
     radius("CornerRadius::same(", 0),
@@ -128,6 +144,11 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "ui/widgets.rs",
         "egui::Window::new",
         "the shared windows themselves: Floater and bare_window wrap egui's window",
+    ),
+    (
+        "ui/widgets.rs",
+        "ScrollStyle",
+        "the theme's scroll bars themselves: reserved_scroll_style, which Theme::apply sets",
     ),
     (
         "ui/context/entries.rs",
@@ -395,6 +416,31 @@ fn windows_take_their_appearance_from_the_theme() {
             "src/{file} no longer needs its exception for `{rule}` ({why}): remove it from ALLOWED"
         );
     }
+}
+
+/// The theme's scroll bars take a strip of their own: never egui's default
+/// floating bar, which shows over the content's right edge when hovered.
+#[test]
+fn the_theme_reserves_the_scroll_bars_strip() {
+    let ctx = egui::Context::default();
+    crate::theme::Theme::default().apply(&ctx, 1.0);
+    for theme in [egui::Theme::Dark, egui::Theme::Light] {
+        let scroll = ctx.style_of(theme).spacing.scroll;
+        assert!(!scroll.floating, "{theme:?}: the scroll bars float over the content");
+        assert_eq!(scroll, super::widgets::reserved_scroll_style(), "{theme:?}");
+        assert!(scroll.allocated_width() >= scroll.bar_width, "{theme:?}: no strip for the bar");
+    }
+    // and a window cannot set another style without an exception
+    let report = scan("ui/example.rs", "ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();");
+    assert_eq!(report.violations.len(), 2, "{:?}", report.violations);
+    let report = scan("ui/example.rs", "ui.spacing_mut().scroll.floating = true;");
+    assert_eq!(report.violations.len(), 1, "{:?}", report.violations);
+    // a marker does not allow it: only an entry of ALLOWED
+    let report = scan(
+        "ui/example.rs",
+        "ui.spacing_mut().scroll.floating = true; // theme-guard: content — no",
+    );
+    assert_eq!(report.violations.len(), 1, "{:?}", report.violations);
 }
 
 #[test]

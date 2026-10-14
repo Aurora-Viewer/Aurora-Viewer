@@ -204,6 +204,11 @@ dragging a handle switch to `violet_light`, like any selection.
   above the old one, R G B and hexadecimal fields, eyedropper), never
   egui's `color_edit_button_*`. The colour palette of the build tools stays
   a separate window.
+- **Scroll bars.** Thin and solid, in a strip of their own at the right of
+  what scrolls, faint at rest: the theme sets them for every scroll area
+  (`widgets::reserved_scroll_style`). Never egui's floating bar, which
+  covers the switches, buttons and values of the right edge; a window
+  does not set its own scroll style.
 - **Shared hierarchy.** Window title and controls at the top, stable
   navigation, content grouped by function and accessible actions.
   The inventory keeps a large list and a single status line at the bottom,
