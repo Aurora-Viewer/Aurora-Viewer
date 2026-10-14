@@ -68,13 +68,14 @@ pub(super) fn slot_face(ui: &egui::Ui, p: &Palette, rect: Rect, hot: bool, activ
     }
 }
 
-/// The one unread counter of the islands (the bell; the Conversations
-/// button of the dock): the accent at the theme's radius, its number in
+/// The one unread counter of the islands (the bell, the chat island's
+/// button, a Conversations button added to the dock): the theme's red at
+/// its radius (the human's choice, it was the accent), its number in
 /// `on_accent`, pinned by its top right corner on the slot's, `scale` for
 /// the bell's bounce; grey while do not disturb pauses the bell.
 pub fn count(ui: &egui::Ui, p: &Palette, slot: Rect, unread: usize, scale: f32, paused: bool) {
     let text = if unread > 99 { "99+".to_owned() } else { unread.to_string() };
-    let (fill, ink) = if paused { (p.raised, p.muted) } else { (p.violet, p.on_accent) };
+    let (fill, ink) = if paused { (p.raised, p.muted) } else { (p.danger, p.on_accent) };
     let font = FontId::new(9.5 * scale, crate::ui::fonts::semibold(ui.ctx()));
     let galley = ui.painter().layout_no_wrap(text, font, ink);
     let h = 13.0 * scale;

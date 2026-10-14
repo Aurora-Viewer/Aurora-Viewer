@@ -1469,7 +1469,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
-| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, a menu open |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
@@ -2219,12 +2219,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   emoji picker). The bottom: the chat island on the left, the dock centred
   (buttons 34 px, 32 at 1280), the local chat lines in pills above the
   chat island, all 8 px from the edges; the chat island's button carries the unread counter of the conversations (the dock has no Conversations button by default). With `AURORA_DEMO_TOOLBAR=drag`,
-  frame 654: a toolbar button dragged along the dock. Capture at
+  frame 654: a toolbar button dragged along the dock. The favourites:
+  `fav12` (the mockup's twelve, with their thumbnails), `nofav` (none: the
+  empty state), `added` (eleven and this place, just added from the star:
+  first in the list, as Firestorm orders a new favourite, and "Add this
+  place" greyed out); where they live: `row` (the row under the islands),
+  `folded` (the row folded to its tab), `rowdrag` (frame 654: the second
+  pill dragged after the fourth), `dock` (the dock's Favorites button);
+  with `favorites` the place island's menu or, with `dock`, the grid opens
+  at frame 300, the mockup's row or tile under the pointer from frame 700.
+  Capture at
   `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
   at frame 780: at 1280 the place shows the parcel and the region, at
   1536 the position too, with `rights` the forbidden rights are named at
   1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
-  the bell's violet counter.
+  the bell's red counter.
 - **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
