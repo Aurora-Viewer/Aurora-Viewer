@@ -103,7 +103,8 @@ impl Estate {
     /// last told it (LLRegionInfoModel::sendRegionTerrain).
     pub fn set_terrain(&mut self, handle: RegionHandle, terrain: TerrainSettings) {
         let sun = self.region.as_deref().map(RegionSun::of).unwrap_or_default();
-        self.out.push(NetCommand::Estate(EstateCommand::SetTerrain { handle, terrain, sun }));
+        self.out
+            .push(NetCommand::Estate(EstateCommand::SetTerrain { handle, terrain, sun }));
     }
 
     /// "Bake Terrain", once confirmed.

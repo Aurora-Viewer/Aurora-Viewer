@@ -178,7 +178,11 @@ fn with_sent<R>(f: impl FnOnce(&mut (RegionDetails, u64)) -> R) -> R {
     let state = sent.get_or_insert_with(|| {
         (
             region_details(),
-            ef::EXTERNALLY_VISIBLE | ef::ALLOW_DIRECT_TELEPORT | ef::ALLOW_VOICE | ef::ALLOW_ACCESS_OVERRIDE | ef::ALLOW_ENVIRONMENT_OVERRIDE,
+            ef::EXTERNALLY_VISIBLE
+                | ef::ALLOW_DIRECT_TELEPORT
+                | ef::ALLOW_VOICE
+                | ef::ALLOW_ACCESS_OVERRIDE
+                | ef::ALLOW_ENVIRONMENT_OVERRIDE,
         )
     });
     f(state)

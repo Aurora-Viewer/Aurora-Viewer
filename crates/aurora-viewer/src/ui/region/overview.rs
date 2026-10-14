@@ -183,16 +183,7 @@ pub(super) fn header(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn main_column(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    s: &mut RegionUi,
-    v: &View,
-    world: &mut World,
-    pics: &Pictures,
-    compact: bool,
-    slim: bool,
-) {
+fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World, pics: &Pictures, compact: bool, slim: bool) {
     let details = world.estate.region.clone();
     let stats = world.estate.stats_of(v.handle).cloned();
     // name, rating and type

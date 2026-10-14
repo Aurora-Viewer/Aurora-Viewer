@@ -245,7 +245,11 @@ mod tests {
             ..Default::default()
         };
         let sent = a.applied_to(&e);
-        assert_eq!(sent.flags, ef::ALLOW_ENVIRONMENT_OVERRIDE | ef::ALLOW_VOICE, "other flags kept, fixed sun off");
+        assert_eq!(
+            sent.flags,
+            ef::ALLOW_ENVIRONMENT_OVERRIDE | ef::ALLOW_VOICE,
+            "other flags kept, fixed sun off"
+        );
     }
 
     #[test]

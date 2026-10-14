@@ -13,7 +13,6 @@ mod draft;
 mod manage;
 mod overview;
 
-pub(crate) use confirm::Ask;
 use crate::theme::Palette;
 use crate::ui::sheet::{self, PageTab};
 use crate::ui::texture_picker::TexturePicker;
@@ -21,6 +20,7 @@ use crate::ui::widgets::{self, Floater};
 use crate::world::World;
 use crate::world::estate::{self, Role};
 use aurora_net::RegionHandle;
+pub(crate) use confirm::Ask;
 use egui::Vec2;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;

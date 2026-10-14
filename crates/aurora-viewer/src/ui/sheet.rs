@@ -455,7 +455,15 @@ pub fn lock_line_link(ui: &mut egui::Ui, p: &Palette, text: &str, link: &str) ->
 
 /// `text` then a violet `link` in one wrapped paragraph, and where the
 /// link starts (in characters).
-fn linked_text(ui: &egui::Ui, p: &Palette, text: &str, color: Color32, size: f32, link: &str, width: f32) -> (std::sync::Arc<egui::Galley>, usize) {
+fn linked_text(
+    ui: &egui::Ui,
+    p: &Palette,
+    text: &str,
+    color: Color32,
+    size: f32,
+    link: &str,
+    width: f32,
+) -> (std::sync::Arc<egui::Galley>, usize) {
     let mut job = egui::text::LayoutJob::default();
     let plain = format!("{text} ");
     job.append(&plain, 0.0, egui::TextFormat::simple(FontId::proportional(size), color));
@@ -546,7 +554,9 @@ pub fn srow_ext(ui: &mut egui::Ui, p: &Palette, text: &RowText<'_>, controls_w: 
     let desc_g = match text.link {
         Some(link) => Some(linked_text(ui, p, text.desc, p.muted, 11.5, link, text_w)),
         None => (!text.desc.is_empty()).then(|| {
-            let g = ui.painter().layout(text.desc.to_owned(), FontId::proportional(11.5), p.muted, text_w);
+            let g = ui
+                .painter()
+                .layout(text.desc.to_owned(), FontId::proportional(11.5), p.muted, text_w);
             (g, usize::MAX)
         }),
     };
@@ -599,7 +609,8 @@ pub fn pending_bar(ui: &mut egui::Ui, p: &Palette, count: usize) -> Option<bool>
         .inner_margin(egui::Margin::symmetric(10, 5))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
+            let row = Vec2::new(ui.available_width(), H);
+            ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 widgets::glyph(ui, "pencil-filled", p.violet_pale, 13.0);
                 ui.label(
@@ -629,22 +640,28 @@ pub fn nav_compact(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, lit:
     const H: f32 = 31.0;
     const ICON: f32 = 15.0;
     let ink = if lit { p.ink } else { p.muted };
-    let galley = lit.then(|| {
-        ui.painter()
-            .layout_no_wrap(label.to_owned(), FontId::proportional(12.5), ink)
-    });
+    let galley = lit.then(|| ui.painter().layout_no_wrap(label.to_owned(), FontId::proportional(12.5), ink));
     let w = 16.0 + ICON + galley.as_ref().map_or(0.0, |g| 9.0 + g.size().x);
     let (rect, r) = ui.allocate_exact_size(Vec2::new(w, H), Sense::click());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if lit {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
-        ui.painter()
-            .vline(rect.left() + 1.0, rect.top() + 6.0..=rect.bottom() - 6.0, egui::Stroke::new(2.0, p.violet));
+        ui.painter().vline(
+            rect.left() + 1.0,
+            rect.top() + 6.0..=rect.bottom() - 6.0,
+            egui::Stroke::new(2.0, p.violet),
+        );
     } else if r.hovered() {
         ui.painter().rect_filled(rect, radius, p.raised);
     }
     let icon_tint = if lit { p.violet_pale } else { p.muted };
-    icon_at(ui, icon, egui::pos2(rect.left() + 8.0 + ICON / 2.0, rect.center().y), ICON, icon_tint);
+    icon_at(
+        ui,
+        icon,
+        egui::pos2(rect.left() + 8.0 + ICON / 2.0, rect.center().y),
+        ICON,
+        icon_tint,
+    );
     if let Some(g) = galley {
         let pos = egui::pos2(rect.left() + 8.0 + ICON + 9.0, rect.center().y - g.size().y / 2.0).round();
         ui.painter().galley(pos, g, ink);
@@ -696,6 +713,8 @@ pub struct SectionScroll<S> {
     pub current: S,
     /// The section to bring to the top on the next frame.
     pub jump: Option<S>,
+    /// Bring its end into view instead (a demo shows its bottom bar).
+    pub jump_to_end: bool,
     /// Where the column was scrolled.
     scroll: f32,
     /// When a navigation click scrolled it (its animation is not the user's).
@@ -751,7 +770,9 @@ pub fn sections_with<S: Copy + PartialEq>(
             }
             tail(ui);
         });
-        ui.add_space(10.0);
+        // the mockup's 10 px between the row and the column
+        let spacing = ui.spacing().item_spacing.y;
+        ui.add_space((10.0 - 2.0 * spacing).max(0.0));
         section_column(ui, p, id, list, state, body);
         return;
     }
@@ -791,8 +812,10 @@ fn section_column<S: Copy + PartialEq>(
             body(&mut c.child, *sec);
             let rect = card_end(ui, p, c);
             if state.jump == Some(*sec) {
-                ui.scroll_to_rect(rect, Some(egui::Align::TOP));
+                let align = if state.jump_to_end { egui::Align::BOTTOM } else { egui::Align::TOP };
+                ui.scroll_to_rect(rect, Some(align));
                 state.jump = None;
+                state.jump_to_end = false;
                 state.jumped_at = ui.input(|i| i.time);
             } else if rect.top() <= view_top + 24.0 {
                 current = Some(*sec);

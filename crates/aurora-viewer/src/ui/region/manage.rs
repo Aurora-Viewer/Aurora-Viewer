@@ -94,8 +94,10 @@ pub(super) fn demo(s: &mut RegionUi, v: &View, world: &World) {
         Some(2) => Section::Terrain,
         _ => Section::Access,
     };
-    if section != Section::Access {
+    if section != Section::Access || d.pending {
         s.manage.nav.go(section);
+        // the changes' bar ends the section
+        s.manage.nav.jump_to_end = d.pending;
     }
     let heights = d.ask == Some(Ask::TextureHeights);
     let override_off = d.ask == Some(Ask::AccessOverride);
@@ -478,11 +480,7 @@ fn rules(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut
 /// The General panel's "Apply": a new object bonus is confirmed first
 /// (onBtnSet, ChangeObjectBonusFactor, unless its "ignore" box was ticked).
 fn apply_rules(s: &mut RegionUi, v: &View, world: &mut World, server: &RegionRules) {
-    let bonus_changed = s
-        .manage
-        .rules
-        .editing()
-        .is_some_and(|r| r.object_bonus != server.object_bonus);
+    let bonus_changed = s.manage.rules.editing().is_some_and(|r| r.object_bonus != server.object_bonus);
     if bonus_changed && s.confirm_object_bonus {
         s.ask = Some(Ask::ObjectBonus { dont_ask: false });
     } else {
@@ -662,12 +660,8 @@ fn swatches(
                     }
                 }
                 if can && r.hovered() {
-                    ui.painter().rect_stroke(
-                        rect,
-                        radius,
-                        egui::Stroke::new(1.0, p.violet_light),
-                        egui::StrokeKind::Inside,
-                    );
+                    ui.painter()
+                        .rect_stroke(rect, radius, egui::Stroke::new(1.0, p.violet_light), egui::StrokeKind::Inside);
                 }
                 let label = match i {
                     0 => aurora_i18n::tr!("region-terrain-texture-low").to_owned(),

@@ -610,7 +610,9 @@ mod tests {
         assert!(!r.block_fly && !r.allow_damage && !r.allow_parcel_changes);
         assert_eq!(
             r.strings(),
-            ["Y", "N", "N", "N", "40.000000", "1.500000", "21", "Y", "N"].map(String::from).to_vec()
+            ["Y", "N", "N", "N", "40.000000", "1.500000", "21", "Y", "N"]
+                .map(String::from)
+                .to_vec()
         );
         let body = r.body();
         assert_eq!(body["agent_limit"].as_f64(), 40.0);

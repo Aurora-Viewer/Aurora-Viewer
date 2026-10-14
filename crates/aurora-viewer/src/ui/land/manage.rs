@@ -1220,21 +1220,15 @@ fn sound(
         },
         link: (!voice_region).then_some(aurora_i18n::tr!("ui-land-manage-see-in-region")),
     };
-    let see_region = sheet::srow_ext(
-        ui,
-        p,
-        &voice,
-        40.0,
-        |ui| {
-            editable(ui, can_media && voice_region, |ui| {
-                let mut on = voice_region && allow_voice;
-                widgets::switch(ui, p, &mut on);
-                if voice_region {
-                    set(&mut flags, pf::ALLOW_VOICE_CHAT, on);
-                }
-            });
-        },
-    );
+    let see_region = sheet::srow_ext(ui, p, &voice, 40.0, |ui| {
+        editable(ui, can_media && voice_region, |ui| {
+            let mut on = voice_region && allow_voice;
+            widgets::switch(ui, p, &mut on);
+            if voice_region {
+                set(&mut flags, pf::ALLOW_VOICE_CHAT, on);
+            }
+        });
+    });
     if see_region {
         crate::ui::region::request_open(ui.ctx());
     }
