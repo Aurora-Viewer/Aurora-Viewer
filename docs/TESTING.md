@@ -105,6 +105,14 @@ the motion controller and server animation signals continue normally, and
 other avatars are unchanged. Use it online to compare the reported roughly
 10 cm grounding discrepancy with/without the normal pose. The option is
 absent from an ordinary launch.
+The test floater also shows calculation status, ground source, centre-to-ground
+distance, half the reported physical height, calculated hover and the live
+neutral shoe/ground gap (positive means too high). "Recalculate and measure"
+reruns the worker and applies the result when automatic adjustment is enabled.
+Use neutral pose while comparing the gap with the view. The simulator contact
+plane includes Firestorm's 5 cm Havok correction; without a contact block the
+readout explicitly labels the size-based floor as estimated. No vertex scan
+or GPU readback runs in the UI.
 
 The frames-per-second limiter is enabled at **120 fps by default**. It can
 be disabled or adjusted in Preferences › Graphics › Smoothness; preferences
@@ -246,7 +254,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-cycle`**:
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-cycle`**:
   opens the hover-height floater at frame 600. A number sets the height;
   `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
   repeats the cycle with "Affect camera view" enabled; otherwise the camera
@@ -266,10 +274,16 @@ when unfocused") is ignored during a screenshot.
   Their avatar reports a 1.68 m physics height, matching the offline
   simulation's 0.84 m centre clearance; the generic fixture's 1.9 m size
   does not match that simulation. Grounding uses the simulator-reported
-  physical height, not the independently computed shaped skeleton height.
+  contact distance when available, otherwise the physical height, not the
+  independently computed shaped skeleton height.
   `auto-static-off` repeats it with automatic adjustment disabled for comparison;
   `auto-rigged` adds a rigged shoe mesh on the spine with an unrelated low
   triangle whose foot weights are zero (it must not lift the avatar).
+  `auto-contact` uses those shoes with a reported 1.48 m physical height and
+  a contact plane at the actual ground: the 0.84 m centre clearance includes
+  a 10 cm margin over half that size. It must give the same grounded result
+  as `auto-rigged`, not raise the shoes by those extra 10 cm. Enable
+  `AURORA_TEST_NEUTRAL_POSE=1` to inspect the gap and both clearance values.
   `auto-cycle` adds the rigid shoes at 620 and removes them at 940; capture
   580, 840 and 1100 to compare barefoot / soles on the ground / barefoot.
   Automatic adjustment is enabled by default in Hover Height. Manual edits

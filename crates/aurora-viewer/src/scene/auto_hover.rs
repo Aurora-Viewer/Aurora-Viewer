@@ -6,7 +6,7 @@ use crate::world::World;
 use aurora_assets::{MeshFace, SkinInfo};
 use aurora_render::SkinVertex;
 use crossbeam_channel::{Receiver, Sender};
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 use rayon::prelude::*;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -14,13 +14,56 @@ use std::time::{Duration, Instant};
 
 const SETTLE: Duration = Duration::from_millis(200);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HoverStatus {
+    Disabled,
+    Unavailable,
+    #[default]
+    WaitingAvatar,
+    WaitingGround,
+    WaitingAssets,
+    Calculating,
+    Failed,
+    Ready,
+}
+
+pub struct HoverDiagnostics {
+    pub status: HoverStatus,
+    pub gap: Option<f32>,
+    pub clearance: Option<f32>,
+    pub half_height: Option<f32>,
+    pub estimate: Option<f32>,
+    pub contact: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Measurement {
+    height: f32,
+    lowest: Option<f32>,
+}
+
+/// LLWorld::resolveStepHeightGlobal (indra/newview/llworld.cpp): Havok's
+/// reported plane needs the same 5 cm correction as Firestorm. Its distance
+/// gives the vertical step height used there, including on sloped surfaces.
+fn contact_clearance(position: Vec3, plane: Option<Vec4>) -> Option<f32> {
+    let plane = plane?;
+    if !plane.is_finite() || plane.z <= 0.0 || !position.is_finite() {
+        return None;
+    }
+    let distance = position.dot(plane.truncate()) - plane.w + 0.05;
+    (distance.is_finite() && distance > 0.0).then_some(distance)
+}
+
 pub(super) struct AutoHover {
     observed: Option<u64>,
     changed: Instant,
     finished: Option<u64>,
     pending: bool,
-    tx: Sender<(u64, Option<f32>)>,
-    rx: Receiver<(u64, Option<f32>)>,
+    tx: Sender<(u64, Option<Measurement>, bool)>,
+    rx: Receiver<(u64, Option<Measurement>, bool)>,
+    measurement: Option<Measurement>,
+    used_contact: bool,
+    status: HoverStatus,
     base: Option<Arc<anim::SkeletonBase>>,
     base_hash: u64,
     matrices: Vec<Mat4>,
@@ -36,6 +79,9 @@ impl Default for AutoHover {
             pending: false,
             tx,
             rx,
+            measurement: None,
+            used_contact: false,
+            status: HoverStatus::default(),
             base: None,
             base_hash: 0,
             matrices: Vec::new(),
@@ -90,12 +136,51 @@ fn bits(values: &[f32], hash: &mut impl Hasher) {
 }
 
 impl Scene {
+    pub fn remeasure_auto_hover(&mut self) {
+        self.auto_hover.observed = None;
+        self.auto_hover.finished = None;
+    }
+
+    /// Test-only readout reuses the worker's neutral mesh minimum. No vertex
+    /// scan or GPU wait in the UI; the gap includes the LIVE displayed hover.
+    pub fn auto_hover_diagnostics(&self, world: &World, now: Instant) -> HoverDiagnostics {
+        let owner = world.objects.index_of_uuid(&world.agent_id);
+        let object = owner.and_then(|i| world.objects.get(i));
+        let half_height = object.map(|o| 0.5 * o.scale.z);
+        let raw = owner.and_then(|i| Self::object_transform_unshifted(world, i, now));
+        let local = raw
+            .zip(object)
+            .and_then(|(xf, o)| world.region_offset(o.key.region).map(|off| xf.0 - off));
+        let contact = local.zip(object).and_then(|(p, o)| contact_clearance(p, o.foot_plane));
+        let clearance = contact.or(half_height);
+        let state = &self.auto_hover;
+        let measurement = (state.observed.is_some() && state.finished == state.observed)
+            .then_some(state.measurement)
+            .flatten();
+        let gap = measurement
+            .and_then(|m| m.lowest)
+            .zip(clearance)
+            .zip(self.skeletons.get(&world.agent_id))
+            .map(|((lowest, clearance), skeleton)| {
+                clearance + skeleton.shape_dz + world.appearance_hover(&world.agent_id) - self.avatar_lib.pelvis.z + lowest
+            });
+        HoverDiagnostics {
+            status: state.status,
+            gap,
+            clearance,
+            half_height,
+            estimate: measurement.map(|m| m.height),
+            contact: contact.is_some(),
+        }
+    }
+
     /// Called after the rest skeleton has been refreshed, before scene sync.
     /// Snapshots contain only Arc handles and transforms; decoding, skinning
     /// and vertex scans use the scene's low-priority pool. Old jobs are ignored
     /// after another wear/detach, a HUD update cannot trigger a recalibration.
     pub fn update_auto_hover(&mut self, world: &mut World, enabled: bool, now: Instant) {
         if !enabled {
+            self.auto_hover.status = HoverStatus::Disabled;
             self.auto_hover.observed = None;
             self.auto_hover.finished = None;
             while self.auto_hover.rx.try_recv().is_ok() {
@@ -104,14 +189,17 @@ impl Scene {
             return;
         }
         if !world.hover_height_available() || !world.hover_height.ready() {
+            self.auto_hover.status = HoverStatus::Unavailable;
             return;
         }
+        self.auto_hover.status = HoverStatus::WaitingAvatar;
         let Some(owner) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get(i)) else {
             return;
         };
         // A seated or flying pose has no useful ground contact. Re-evaluate
         // the pending outfit when back on the ground instead of moving a seat.
         if owner.parent_id != 0 || world.agent.flying {
+            self.auto_hover.status = HoverStatus::WaitingGround;
             return;
         }
         if !owner.scale.z.is_finite() || owner.scale.z <= 0.0 {
@@ -120,6 +208,13 @@ impl Scene {
         let Some(skeleton) = self.skeletons.get(&world.agent_id) else {
             return;
         };
+        let contact = contact_clearance(owner.position, owner.foot_plane);
+        // A cleared plane is an explicit airborne report. An absent block
+        // (offline demo / first full update) can still use the physical size.
+        if owner.foot_plane.is_some() && contact.is_none() {
+            self.auto_hover.status = HoverStatus::WaitingGround;
+            return;
+        }
         let rig = &self.avatar_lib.rig;
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         world.agent_id.hash(&mut hash);
@@ -223,34 +318,50 @@ impl Scene {
             state.changed = now;
             state.finished = None;
         }
-        while let Ok((stamp, result)) = state.rx.try_recv() {
+        // Upgrade an initial size-only estimate once the first contact plane
+        // arrives. Later motion/contact changes do not overwrite manual edits.
+        if state.finished == Some(signature) && !state.used_contact && contact.is_some() {
+            state.finished = None;
+        }
+        while let Ok((stamp, result, used_contact)) = state.rx.try_recv() {
             state.pending = false;
             if ready && state.observed == Some(stamp) {
                 state.finished = Some(stamp);
-                if let Some(value) = result {
+                state.measurement = result;
+                state.used_contact = used_contact;
+                if let Some(Measurement { height: value, .. }) = result {
                     log::info!("auto hover height: {value:.3} m");
                     world.hover_height.preview(value);
                     world.hover_height.commit();
                 }
             }
         }
+        state.status = if !ready {
+            HoverStatus::WaitingAssets
+        } else if state.finished == Some(signature) {
+            if state.measurement.is_some() {
+                HoverStatus::Ready
+            } else {
+                HoverStatus::Failed
+            }
+        } else {
+            HoverStatus::Calculating
+        };
         if !ready || state.pending || state.finished == Some(signature) || now.duration_since(state.changed) < SETTLE {
             return;
         }
         let estimate = Estimate {
             lib: self.avatar_lib.clone(),
             base: skeleton.base.clone(),
-            // The simulator places the object's physical centre half its
-            // reported scale above the floor (World::avatar_floor). The
-            // shaped skeleton's computed height can differ: using it here
-            // raised every type of shoe by half that difference (~10 cm).
-            ground: self.avatar_lib.pelvis.z - skeleton.shape_dz - 0.5 * owner.scale.z,
+            // Physical size alone omits the simulator's collision clearance.
+            // On platforms, use the actual contact plane when available.
+            ground: self.avatar_lib.pelvis.z - skeleton.shape_dz - contact.unwrap_or(0.5 * owner.scale.z),
             surfaces,
         };
         state.pending = true;
         let tx = state.tx.clone();
         self.jobs.execute(move || {
-            let _ = tx.send((signature, estimate.calculate()));
+            let _ = tx.send((signature, estimate.calculate(), contact.is_some()));
         });
     }
 }
@@ -360,7 +471,7 @@ fn mesh_min(faces: &[MeshFace], skin: Option<&SkinInfo>, rigid: Option<Mat4>, ri
 }
 
 impl Estimate {
-    fn calculate(self) -> Option<f32> {
+    fn calculate(self) -> Option<Measurement> {
         let rig = &self.lib.rig;
         let matrices = rig.world_with(&rig.local_rot, Vec3::ZERO, &self.base.local_pos, &self.base.scale);
         let min = self
@@ -401,7 +512,7 @@ impl Estimate {
                 },
             )
             .ok()?;
-        crate::world::hover_height::bounded(min.map_or(0.0, |z| self.ground - z))
+        crate::world::hover_height::bounded(min.map_or(0.0, |z| self.ground - z)).map(|height| Measurement { height, lowest: min })
     }
 }
 
@@ -564,7 +675,7 @@ mod tests {
                 rigid: None,
             }],
         };
-        assert!((estimate.calculate().unwrap() - 0.18).abs() < 0.001);
+        assert!((estimate.calculate().unwrap().height - 0.18).abs() < 0.001);
     }
 
     #[test]
@@ -644,6 +755,76 @@ mod tests {
     }
 
     #[test]
+    fn contact_plane_removes_collision_clearance_and_reports_manual_gap() {
+        let (mut world, mut scene, now) = fixture();
+        let lib = world.avatar_lib.clone();
+        crate::demo::auto_hover::install_mesh(&lib, &mut scene).unwrap();
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::auto_hover::rigged_object()],
+        });
+        let owner = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let floor = 40.0;
+        let avatar = world.objects.get_mut(owner).unwrap();
+        avatar.scale.z = 1.9;
+        avatar.position.z = floor + 0.95 + 0.1; // extra physics clearance omitted by a size-only estimate
+        world.agent.position.z = avatar.position.z;
+        scene.palette_base(world.agent_id);
+        scene.neutral_pose_test = Some(true);
+        scene.update_poses(&mut world, Vec3::ZERO, now);
+        settle(&mut scene, &mut world, now);
+        let previous = world.hover_height.value();
+        // Full updates may precede the first terse collision plane.
+        world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, floor + 0.05));
+        let before = scene.auto_hover_diagnostics(&world, now);
+        assert!(before.contact);
+        assert!((before.gap.unwrap() - 0.1).abs() < 1e-5);
+        assert!((before.clearance.unwrap() - before.half_height.unwrap() - 0.1).abs() < 1e-5);
+        settle(&mut scene, &mut world, now + Duration::from_secs(1));
+        let grounded = world.hover_height.value();
+        assert!((grounded - previous + 0.1).abs() < 1e-5);
+        let after = scene.auto_hover_diagnostics(&world, now);
+        assert_eq!(after.status, HoverStatus::Ready);
+        assert!(after.gap.unwrap().abs() < 1e-5);
+        let root = Scene::object_transform(&world, owner, now, 0).unwrap().0;
+        let lowest = scene.auto_hover.measurement.unwrap().lowest.unwrap();
+        assert!((root.z - lib.pelvis.z + lowest - floor).abs() < 1e-5);
+
+        world.hover_height.preview(grounded + 0.1);
+        world.hover_height.commit();
+        assert!((scene.auto_hover_diagnostics(&world, now).gap.unwrap() - 0.1).abs() < 1e-5);
+        world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::ZERO);
+        scene.update_auto_hover(&mut world, true, now + Duration::from_secs(2));
+        assert_eq!(scene.auto_hover.status, HoverStatus::WaitingGround);
+        world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, floor + 0.05));
+        scene.update_auto_hover(&mut world, true, now + Duration::from_secs(3));
+        assert!(
+            (world.hover_height.value() - grounded - 0.1).abs() < 1e-5,
+            "landing preserves a manual edit"
+        );
+        scene.remeasure_auto_hover();
+        settle(&mut scene, &mut world, now + Duration::from_secs(4));
+        assert!((world.hover_height.value() - grounded).abs() < 1e-5);
+    }
+
+    #[test]
+    fn contact_plane_uses_firestorm_havok_correction_and_rejects_clear_or_invalid_planes() {
+        let position = Vec3::new(3.0, 4.0, 20.95);
+        assert!((contact_clearance(position, Some(Vec4::new(0.0, 0.0, 1.0, 20.05))).unwrap() - 0.95).abs() < 1e-5);
+        let normal = Vec3::new(0.0, 0.6, 0.8);
+        let plane = normal.extend(position.dot(normal) - 0.95 + 0.05);
+        assert!((contact_clearance(position, Some(plane)).unwrap() - 0.95).abs() < 1e-5);
+        for plane in [
+            None,
+            Some(Vec4::ZERO),
+            Some(Vec4::splat(f32::NAN)),
+            Some(Vec4::new(0.0, 0.0, -1.0, 0.0)),
+        ] {
+            assert_eq!(contact_clearance(position, plane), None);
+        }
+    }
+
+    #[test]
     fn loading_detach_stale_results_seating_and_disable_do_not_apply_old_heights() {
         let (mut world, mut scene, now) = fixture();
         world.hover_height.preview(0.42);
@@ -657,7 +838,18 @@ mod tests {
         let old = scene.auto_hover.observed.unwrap();
         scene.update_auto_hover(&mut world, true, now + SETTLE);
         assert!(!scene.auto_hover.pending, "wait for missing mesh");
-        scene.auto_hover.tx.send((old, Some(1.7))).unwrap();
+        scene
+            .auto_hover
+            .tx
+            .send((
+                old,
+                Some(Measurement {
+                    height: 1.7,
+                    lowest: Some(0.0),
+                }),
+                false,
+            ))
+            .unwrap();
         world.apply(NetEvent::ObjectsKilled {
             handle: 1,
             local_ids: vec![crate::demo::auto_hover::LEFT],
@@ -737,6 +929,16 @@ mod tests {
         assert!(
             (world.hover_height.value() - (ground - foot + 0.22)).abs() < 1e-5,
             "linked heel must be the lowest point"
+        );
+        let previous = world.hover_height.value();
+        let owner = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let avatar = world.objects.get_mut(owner).unwrap();
+        let floor = avatar.position.z - 0.5 * physical_height - 0.1;
+        avatar.foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, floor + 0.05));
+        settle(&mut scene, &mut world, now + Duration::from_secs(2));
+        assert!(
+            (world.hover_height.value() - previous + 0.1).abs() < 1e-5,
+            "contact clearance also grounds a rigid linked heel"
         );
     }
 

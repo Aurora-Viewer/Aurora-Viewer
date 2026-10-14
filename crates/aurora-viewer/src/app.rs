@@ -8766,15 +8766,29 @@ impl App {
                 self.controls_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
+                let hover_diagnostics = self
+                    .scene
+                    .neutral_pose_test
+                    .is_some()
+                    .then(|| self.scene.auto_hover_diagnostics(&self.world, std::time::Instant::now()));
+                let hover_test = self
+                    .scene
+                    .neutral_pose_test
+                    .as_mut()
+                    .zip(hover_diagnostics)
+                    .map(|(neutral, diagnostics)| ui::hover_height::HoverHeightTest { neutral, diagnostics });
                 if self.hover_height_ui.show(
                     &ctx,
                     &p,
                     &mut self.world.hover_height,
                     hover_enabled,
                     (&mut self.settings.camera.hover_affects_camera, &mut self.settings.auto_hover_height),
-                    &mut self.scene.neutral_pose_test,
+                    hover_test,
                 ) {
                     self.settings.save();
+                }
+                if std::mem::take(&mut self.hover_height_ui.measure_requested) {
+                    self.scene.remeasure_auto_hover();
                 }
                 if self.inspect_ui.open {
                     let (rows, totals) = self.inspect_rows();
