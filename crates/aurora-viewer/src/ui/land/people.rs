@@ -161,7 +161,7 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
     rows.sort_by_key(|r| r.1.to_lowercase());
     let selected = if ban { &mut s.ban_sel } else { &mut s.access_sel };
     selected.retain(|id| list.iter().any(|e| e.id == *id));
-    let width = ui.available_width();
+    let width = widgets::scrolled_width(ui);
     egui::ScrollArea::vertical()
         .id_salt(("land_people", kind))
         .max_height(ROW_H * 5.5)

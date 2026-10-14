@@ -878,7 +878,6 @@ mod tests {
             let ctx = egui::Context::default();
             let theme = Theme::default();
             theme.apply(&ctx, 1.0);
-            ctx.global_style_mut(|style| style.spacing.scroll = egui::style::ScrollStyle::solid());
             let p = theme.palette();
             let target = aurora_net::scripts::ScriptTarget {
                 object: if object { uuid::Uuid::from_u128(9) } else { uuid::Uuid::nil() },

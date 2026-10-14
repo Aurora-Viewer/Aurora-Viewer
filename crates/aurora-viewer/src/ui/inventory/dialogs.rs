@@ -545,6 +545,8 @@ pub(super) fn preview(
                         .auto_shrink(if documents { [false, false] } else { [true, true] })
                         .show(ui, |ui| {
                             if matches!(it.asset_type, 7 | 10) {
+                                // beside the scroll bar's strip, when it shows
+                                let size = Vec2::new(ui.available_width().min(editor_size.x), editor_size.y);
                                 edited = super::embedded::editor(
                                     ui,
                                     p,
@@ -553,7 +555,7 @@ pub(super) fn preview(
                                     text,
                                     st.preview_source.as_ref(),
                                     editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))),
-                                    editor_size,
+                                    size,
                                 );
                             } else {
                                 ui.add(egui::Label::new(RichText::new(text.as_str()).monospace()).selectable(true));

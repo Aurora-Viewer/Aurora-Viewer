@@ -196,6 +196,7 @@ fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, actions: &mut
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn gallery(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -204,8 +205,11 @@ fn gallery(
     outfits: &[Uuid],
     actions: &mut Vec<Action>,
     images: &HashMap<Uuid, egui::TextureHandle>,
+    list_width: f32,
 ) {
-    let columns = if ui.available_width() >= 540.0 { 3 } else { 2 };
+    // the columns follow the list's width, not what its scroll bar leaves:
+    // the bar's strip must not drop a column
+    let columns = if list_width >= 540.0 { 3 } else { 2 };
     let width = ((ui.available_width() - 10.0 * (columns - 1) as f32) / columns as f32).max(90.0);
     for pair in outfits.chunks(columns) {
         ui.horizontal(|ui| {
@@ -785,6 +789,7 @@ pub fn show(
             .inner_margin(8)
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                let list_width = ui.available_width();
                 egui::ScrollArea::vertical()
                     .id_salt("appearance_list")
                     .max_height(height)
@@ -798,7 +803,7 @@ pub fn show(
                                 worn_list(ui, p, world, st, &mut actions, true);
                             } else {
                                 match st.tab {
-                                    0 => gallery(ui, p, world, st, &outfits, &mut actions, images),
+                                    0 => gallery(ui, p, world, st, &outfits, &mut actions, images, list_width),
                                     1 => outfit_list(ui, p, world, st, &outfits, &mut actions),
                                     _ => {
                                         ui.label(RichText::new(aurora_i18n::tr!("ui-appearance-items-to-wear")).color(p.muted));

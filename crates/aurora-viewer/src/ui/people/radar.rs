@@ -418,10 +418,12 @@ fn cells(settings: &RadarSettings, row: Rect) -> Vec<(Column, Rect)> {
         .collect()
 }
 
-fn header(ui: &mut egui::Ui, p: &Palette, settings: &mut RadarSettings, counts: (usize, usize, usize)) {
+fn header(ui: &mut egui::Ui, p: &Palette, settings: &mut RadarSettings, counts: (usize, usize, usize), list: egui::Id) {
+    // the columns over those of the rows, left of the list's scroll bar
+    let columns = widgets::header_width(ui, list);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
-    for (column, cell) in cells(settings, rect) {
+    for (column, cell) in cells(settings, rect.with_max_x(rect.left() + columns)) {
         let index = Column::ALL.iter().position(|c| *c == column).unwrap_or(0) as u8;
         let resp = ui.interact(cell, ui.id().with(("radar_header", index)), Sense::click());
         let sorted = settings.sort == index;
@@ -767,8 +769,9 @@ pub fn tab(
         list.iter().filter(|r| r.same_region).count(),
         list.iter().filter(|r| r.range.is_some_and(|d| d <= CHAT_RANGE)).count(),
     );
-    header(ui, p, data.settings, counts);
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+    let rows_id = ui.id().with("radar_list");
+    header(ui, p, data.settings, counts, rows_id);
+    let out = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 1.0;
         if list.is_empty() {
             ui.add_space(8.0);
@@ -833,6 +836,7 @@ pub fn tab(
             }
         }
     });
+    widgets::remember_scroll_bar(ui, rows_id, &out);
 }
 
 #[cfg(test)]

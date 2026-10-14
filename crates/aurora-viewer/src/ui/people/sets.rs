@@ -87,8 +87,6 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
         members.sort_by_cached_key(|id| name_of(id).to_lowercase());
     }
     st.sel.retain(|id| members.contains(id));
-    // its bar in a strip of its own, never over a row's right end
-    widgets::reserved_scroll_bar(ui);
     egui::ScrollArea::vertical()
         .id_salt("people-sets-rows")
         .auto_shrink([false, false])

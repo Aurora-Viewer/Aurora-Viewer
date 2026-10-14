@@ -260,9 +260,11 @@ impl InspectUi {
     }
 
     fn header(&mut self, ui: &mut egui::Ui, p: &Palette, columns: u32) {
+        // the columns over those of the rows, left of the list's scroll bar
+        let width = widgets::header_width(ui, ui.id().with("inspect_rows"));
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
-        for (column, cell) in cells(columns, rect) {
+        for (column, cell) in cells(columns, rect.with_max_x(rect.left() + width)) {
             let resp = ui.interact(cell, ui.id().with(("inspect_header", column.bit())), Sense::click());
             let sorted = self.sort.filter(|(c, _)| *c == column);
             let color = if sorted.is_some() || resp.hovered() { p.ink } else { p.muted };
@@ -299,7 +301,7 @@ impl InspectUi {
     fn rows(&mut self, ui: &mut egui::Ui, p: &Palette, rows: &[Row], columns: u32) {
         let list = sorted(rows, self.sort);
         let grouped = self.sort.is_none();
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        let out = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             if list.is_empty() {
                 ui.add_space(8.0);
@@ -344,6 +346,7 @@ impl InspectUi {
                 }
             }
         });
+        widgets::remember_scroll_bar(ui, ui.id().with("inspect_rows"), &out);
     }
 
     /// Draw the window. Returns the avatar whose profile a button asked for.
