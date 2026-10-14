@@ -3,8 +3,9 @@
 //! their grid snapping, snap rulers and the position readout.
 //!
 //! Sizes follow LL: handles keep a constant size on screen (50 px arrows,
-//! 100 px rotation sphere, 10 px stretch boxes). Objects follow the mouse
-//! locally; MultipleObjectUpdate goes out on release (stretching also every
+//! 100 px rotation sphere). Aurora uses thicker strokes and 12 px stretch
+//! boxes for readability. Objects follow the mouse locally;
+//! MultipleObjectUpdate goes out on release (stretching also every
 //! 0.1 s like LLManipScale::sendUpdates).
 
 use super::draw::{Painter3d, axis_color, fade};
@@ -33,9 +34,10 @@ pub(super) const PLANE_OFFSET: f32 = 0.52;
 const PLANE_HALF: f32 = 0.15;
 const PLANE_PICK_SCALE: f32 = 1.3;
 /// Arrow head: height and radius, in arrow lengths.
-const ARROW_HEAD: (f32, f32) = (0.26, 0.09);
-/// Stroke of the handles in pixels, at rest and under the cursor.
-const STROKE_PX: (f32, f32) = (2.0, 3.0);
+const ARROW_HEAD: (f32, f32) = (0.26, 0.12);
+/// Aurora: thicker than LLManipTranslate's 2 px shafts, with the same
+/// axis length and picking tolerance; shared by the rotation rings.
+const STROKE_PX: (f32, f32) = (3.0, 4.5);
 const MIN_PLANE_MANIP_DOT: f32 = 0.25;
 const SNAP_GUIDE_SCREEN_SIZE: f32 = 0.7;
 const SNAP_ARROW_SCALE: f32 = 0.7;
@@ -48,7 +50,7 @@ const RING_PX: f32 = 100.0;
 const SNAP_ANGLE: f32 = 5.625;
 /// LLManipScale: pick radius, box size, streaming interval.
 const SCALE_PICK_PX: f32 = 11.0;
-const SCALE_BOX_FACTOR: f32 = 0.2;
+const SCALE_BOX_FACTOR: f32 = 0.24;
 const SCALE_UPDATE_DELAY: f32 = 0.1;
 const SNAP_GUIDE_SCREEN_OFFSET: f32 = 0.05;
 /// Tick label spacing in pixels (LLManip::sTickLabelSpacing).
@@ -587,7 +589,7 @@ impl Manip {
             p.tri_plain(q[0], q[2], q[3], fill);
             p.flush();
             for k in 0..4 {
-                p.line(q[k], q[(k + 1) % 4], color, 1.2);
+                p.line(q[k], q[(k + 1) % 4], color, if hl { 2.5 } else { 2.0 });
             }
         }
         // arrows, farthest first; the heads point away from the pivot
@@ -622,7 +624,7 @@ impl Manip {
         if active.is_none()
             && let Some(c) = cam.project(piv)
         {
-            p.painter.circle(c, 3.5, pal.violet_light, Stroke::new(1.0, fade(pal.navy, 0.5)));
+            p.painter.circle(c, 4.5, pal.violet_light, Stroke::new(1.5, fade(pal.navy, 0.5)));
         }
     }
 
@@ -848,7 +850,7 @@ impl Manip {
                 for bit in [1u8, 2, 4] {
                     if c & bit == 0 {
                         let (from, to) = (corner(corner_signs(c)), corner(corner_signs(c | bit)));
-                        p.line(from, to, fade(pal.violet_light, 0.7), 1.2);
+                        p.line(from, to, fade(pal.violet_light, 0.7), 1.5);
                     }
                 }
             }
@@ -885,12 +887,12 @@ impl Manip {
             }
             let hl = self.hover == Some(part) || active == Some(part);
             let (fill, outline) = match part {
-                Part::Corner(_) | Part::Face(..) if hl => (pal.violet_light, Stroke::new(1.5, pal.ink)),
-                Part::Corner(_) => (fade(pal.ink, 0.9), Stroke::new(1.0, fade(pal.navy, 0.5))),
-                Part::Face(i, _) => (axis_color(&pal, i), Stroke::new(1.0, fade(pal.navy, 0.5))),
+                Part::Corner(_) | Part::Face(..) if hl => (pal.violet_light, Stroke::new(2.0, pal.ink)),
+                Part::Corner(_) => (fade(pal.ink, 0.9), Stroke::new(1.5, fade(pal.navy, 0.5))),
+                Part::Face(i, _) => (axis_color(&pal, i), Stroke::new(1.5, fade(pal.navy, 0.5))),
                 _ => continue,
             };
-            // LL's boxes: 10 px wide on screen whatever the distance
+            // Slightly larger than LL's 10 px boxes; resting corners fit the pick radius.
             let size = ARROW_PX * SCALE_BOX_FACTOR * if hl { 1.2 } else { 1.0 };
             p.square(pos, size, fill, outline);
         }
