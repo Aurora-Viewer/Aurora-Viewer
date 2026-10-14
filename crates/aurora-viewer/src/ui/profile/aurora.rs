@@ -8,12 +8,13 @@
 //!
 //! The data, requests and actions are those of the classic window (`super`,
 //! Firestorm's LLFloaterProfile), which Preferences › Aurora › Profiles
-//! brings back: only the drawing differs. The tabs other than Profile still
-//! show the classic panels inside this window.
+//! brings back: only the drawing differs. The other tabs are in `tabs`.
+
+mod tabs;
 
 use super::{
-    Edit, PictureSlot, ProfileAction, TAB_CLASSIFIEDS, TAB_FEED, TAB_NOTES, TAB_PICKS, TAB_RL, TAB_SL, TabCtx, WebContext, Window,
-    has_unsaved, loading, rich, save_all,
+    Edit, PictureSlot, ProfileAction, TAB_CLASSIFIEDS, TAB_FEED, TAB_NOTES, TAB_PICKS, TAB_RL, TAB_SL, WebContext, Window, has_unsaved,
+    loading, rich, save_all,
 };
 use crate::theme::Palette;
 use crate::ui::context::{self, CtxAction};
@@ -349,17 +350,29 @@ fn unsaved_parts(w: &Window) -> Vec<String> {
     if w.pick_edit.as_ref().is_some_and(|(e, base)| e != base) {
         parts.push(aurora_i18n::tr!("ui-profile-aurora-part-places", count = 1));
     }
+    if w.classified_edit.as_ref().is_some_and(|(e, base)| e != base) {
+        parts.push(aurora_i18n::tr!("ui-profile-aurora-part-classified").to_owned());
+    }
     parts
 }
 
-/// The edits put back as the server has them.
+/// The edits put back as the server has them; a new pick or classified is
+/// dropped.
 fn revert(w: &mut Window) {
     for e in [&mut w.about, &mut w.fl_about, &mut w.notes] {
         e.text = e.base.clone();
     }
-    if let Some((e, base)) = w.pick_edit.as_mut() {
+    if w.pick_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil()) {
+        w.pick_edit = None;
+    } else if let Some((e, base)) = w.pick_edit.as_mut() {
         *e = base.clone();
     }
+    if w.classified_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil()) {
+        w.classified_edit = None;
+    } else if let Some((e, base)) = w.classified_edit.as_mut() {
+        *e = base.clone();
+    }
+    w.publish = None;
 }
 
 fn semibold(ui: &egui::Ui, size: f32) -> FontId {
@@ -443,34 +456,33 @@ fn body(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
     child.set_clip_rect(rect.intersect(ui.clip_rect()));
-    let c = TabCtx {
-        p,
-        world,
-        images: env.images,
-        own,
-    };
-    match w.tab {
-        TAB_FEED => super::feed_tab(&mut child, &c, w, env.web),
-        TAB_PICKS => super::picks_tab(&mut child, &c, env.emoji, w, env.want_names, env.wanted_images, env.actions),
-        TAB_CLASSIFIEDS => super::classifieds_tab(&mut child, &c, env.emoji, w, env.want_names, env.wanted_images, env.actions),
-        TAB_RL => super::first_life_tab(
-            &mut child,
-            &c,
-            env.emoji,
-            w,
-            profile,
-            env.want_names,
-            env.wanted_images,
-            env.actions,
-            env.pick_picture,
-        ),
-        TAB_NOTES => super::notes_tab(&mut child, &c, w, profile, env.actions),
-        _ => {
-            egui::ScrollArea::vertical()
-                .id_salt(("profile-card-body", w.id))
-                .auto_shrink([false, false])
-                .show(&mut child, |ui| profile_tab(ui, env, w, compact));
-        }
+    if w.tab == TAB_FEED {
+        // the browser takes the room left: no scrolling around it
+        let mut inner = child.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(INSET, 0.0))));
+        tabs::web(&mut inner, env, w);
+    } else {
+        egui::ScrollArea::vertical()
+            .id_salt(("profile-card-body", w.id, w.tab))
+            .auto_shrink([false, false])
+            .show(&mut child, |ui| match w.tab {
+                TAB_PICKS | TAB_CLASSIFIEDS | TAB_RL | TAB_NOTES => {
+                    ui.horizontal_top(|ui| {
+                        ui.add_space(INSET);
+                        ui.vertical(|ui| {
+                            ui.set_width(ui.available_width() - INSET);
+                            ui.spacing_mut().item_spacing.y = GAP;
+                            match w.tab {
+                                TAB_PICKS => tabs::picks(ui, env, w, compact),
+                                TAB_CLASSIFIEDS => tabs::classifieds(ui, env, w, compact),
+                                TAB_RL => tabs::first_life(ui, env, w, compact),
+                                _ => tabs::notes(ui, env, w),
+                            }
+                        });
+                    });
+                    ui.add_space(INSET + 6.0);
+                }
+                _ => profile_tab(ui, env, w, compact),
+            });
     }
     if bar {
         let r = Rect::from_min_max(pos2(full.left(), full.bottom() - bar_h + 8.0), full.max);
@@ -790,7 +802,6 @@ fn camera_button(ui: &mut egui::Ui, env: &mut Env, photo: Rect, profile: Option<
 fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Facts, icon_only: bool, width: f32) {
     let p = env.p;
     let id = w.id;
-    let soon = aurora_i18n::tr!("ui-profile-coming-soon");
     let (icon, label, kind, enabled, tip): (&str, &str, ActionKind, bool, Option<&str>) = match act {
         Act::Conversation => (
             "message-filled",
@@ -799,14 +810,17 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             true,
             None,
         ),
-        // voice calls between two residents are not ported yet
-        Act::Call => (
-            "phone-filled",
-            aurora_i18n::tr!("ui-profile-aurora-call"),
-            ActionKind::Flat,
-            false,
-            Some(soon),
-        ),
+        // LLAvatarActions::startCall, enabled with voice (canCall)
+        Act::Call => {
+            let voice = env.world.calls.voice_enabled;
+            (
+                "phone-filled",
+                aurora_i18n::tr!("ui-profile-aurora-call"),
+                ActionKind::Flat,
+                voice,
+                (!voice).then(|| aurora_i18n::tr!("ui-call-voice-off")),
+            )
+        }
         Act::AddFriend => (
             "user-plus",
             aurora_i18n::tr!("ui-profile-aurora-add-friend"),
@@ -821,8 +835,7 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             true,
             None,
         ),
-        // paying a resident is not ported yet
-        Act::Pay => ("coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, false, Some(soon)),
+        Act::Pay => ("coin-filled", aurora_i18n::tr!("common-pay"), ActionKind::Flat, true, None),
         Act::Block => {
             let label = if f.blocked {
                 aurora_i18n::tr!("common-unblock")
@@ -878,14 +891,17 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
         Act::Conversation => env.actions.push(ProfileAction::Im(id)),
         Act::AddFriend => context::request(ui.ctx(), CtxAction::AddFriend(id)),
         Act::OfferTeleport => env.actions.push(ProfileAction::OfferTeleport(id)),
+        // LLAvatarActions::pay
+        Act::Pay => context::request(ui.ctx(), CtxAction::PayResident(id)),
         Act::Block => env.actions.push(ProfileAction::ToggleBlock(id)),
+        Act::Call => context::request(ui.ctx(), CtxAction::Call(id)),
         Act::Edit => w.editing = true,
         Act::ViewAsOthers => w.editing = false,
         Act::Done => {
             save_all(w, env.actions);
             w.editing = false;
         }
-        Act::Call | Act::Pay | Act::More => {}
+        Act::More => {}
     }
 }
 

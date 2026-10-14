@@ -22,6 +22,12 @@ with the language selector. Remove the argument to check the immediate
 change and the choice saved at the next launch. The details of the
 catalogues, dates and plurals are in [TRANSLATING.md](TRANSLATING.md).
 
+**Unit tests**: always on the whole workspace, filtered by name if needed:
+`cargo test --workspace render_thread`, never `cargo test -p <crate>`. A
+single crate resolves the features of its dependencies on its own, so Cargo
+builds a second copy of them (`cargo test -p aurora-render` alone: 67 s of
+dependencies, then again for the next `--workspace` build).
+
 **To add a variable**: one short line in the table of its topic (the name
 alone in the first column, one sentence in the second); if it takes more
 than one sentence, or if there are several modes, a "Details" paragraph
@@ -996,6 +1002,7 @@ To check with these scenarios:
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
+| `AURORA_DEMO_ENV_EDITOR=<mode>` | Sky and water editors |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 
 ### Details
@@ -1120,6 +1127,16 @@ To check with these scenarios:
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
   (2500).
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save`**: sky
+  and water editors (`app/env_editor.rs`), with the library and Settings
+  folder of `AURORA_DEMO_ENV_SELECT`. At frame 400 the editor opens on a
+  snapshot of the shown sky (`sky`, `clouds` and `sun` pick the tab) or
+  water (`water`), or on the user's "my purple sky" item once its folder
+  has loaded (`item`: the sky turns purple at once, Save is enabled).
+  `item-save` also raises its brightness and saves over the item (frame
+  900), then saves it as "my purple sky, brighter" (1100): both saves
+  are logged (`environment settings saved`) and the second item shows in
+  the Settings folder.
 
 ## Load and smoothness
 
@@ -1293,6 +1310,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
+| `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
@@ -1321,7 +1339,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
-| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact]` | An avatar's profile window |
+| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -1333,7 +1351,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -1348,6 +1366,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 
 ### Details
 
+- **`AURORA_DEMO_PAY=<mode>`**: gives a balance of L$ 1,000 and opens the
+  Pay window, Tess as the payee, in the look of Preferences › Aurora › Pay
+  window. A payment only moves the demo balance (no L$, no request sent).
+  `resident`: L$ 25 typed, Pay sends it and the window says it was sent.
+  `short`: L$ 1,500, the band with Buy L$ and Pay greyed out. `confirm`:
+  L$ 500, the confirmation asked above the threshold (Preferences ›
+  Payments). `sent`: the end of a payment, with its message. `group`: the
+  demo group as the payee, without a message field. An object's payment
+  is `AURORA_DEMO_ACTIONS=pay`.
 - **`AURORA_DEMO_BUY_CURRENCY=<mode>`**: gives a balance of L$ 479 and opens
   "Buy L$". The purchase service is simulated (made-up rate): no real L$,
   no request sent. `click` opens nothing: click the balance in the top
@@ -1479,7 +1506,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   are matched by suffix; the source files stay intact.
   The result is aggregated, without personal names or paths. Native
   animations keep their bytes and their poses are sampled.
-  Run `cargo test -p aurora-viewer local_asset_directory -- --ignored --nocapture`.
+  Run `cargo test --workspace local_asset_directory -- --ignored --nocapture`.
 
 - **Walkthrough of the window redesign**: open the inventory and select
   a folder in the tree, then an item; check search, permissions,
@@ -1989,6 +2016,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   - my profile: `self`, then `self:edit` (camera button, pencil, About
     editor, Visibility, the unsaved bar once About is changed);
   - compact: `wolf:compact` (icons in a row, the tabs in a drop-down list).
+
+  Options add up, separated by `:` (`self:edit:2`). The other tabs:
+  `friend:2` (Nova's favorite places, featured place over thumbnails),
+  `friend:3` (two classifieds, the first one unfolded), `friend:4` (first
+  life picture and text), `friend:5` (notes), `nova:2|3|4` (the empty
+  states), `self:edit:2` (our places in their form, the card that adds
+  one), `self:edit:3:form` (our classified in its form, with its clicks)
+  and `self:3:publish` (a new classified and the strip that asks its
+  price). Publishing takes the price from the demo balance; the demo keeps
+  our classifieds for the run.
 - **`AURORA_DEMO_FEED=<url>`**: the user name and `/?feed_only=true`
   are appended to the address; a `data:` URL can put them in a comment.
 - **`AURORA_DEMO_LAND=<tab>[:role][:classic]`**: the pages of Aurora's
@@ -2027,7 +2064,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -2043,6 +2080,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `group invite: 2 resident(s) invited` and says the member was left out;
   the role list follows our abilities (an officer: everyone and the
   officers' own roles; an owner: every role, the owners' asking to confirm).
+  `:notices` opens the Notices tab with the two latest notices unread
+  (the tab's count): the first one is read at once (GroupNoticeRequest,
+  answered by an IM_GROUP_NOTICE_REQUESTED instant message), its
+  attachment "Save to inventory" logs `demo group: notice attachment
+  accepted`; `:compose` opens a new notice (an officer may send notices):
+  a copyable and transferable item dragged from the inventory attaches,
+  a no-copy one or a worn attachment is refused, and "Send to 1,248
+  members" adds the notice to the list and brings it back as a group
+  notice in the notification center.
   Check the header against the mockup (banner,
   insignia, badges, tabs), the switches of "Me in this group" (the active
   group follows in the top bar, the title in the Title shown list), the
@@ -2407,6 +2453,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
+| `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
@@ -2425,6 +2472,21 @@ What the inventory must show with these scenarios:
   With the name plates (default style), the outline is green in the voice
   channel and a tight green halo follows the level; out of voice, the plate
   has neither a coloured outline nor a badge.
+- **`AURORA_DEMO_CALL`**: the demo has no voice server; `demo_calls.rs`
+  answers ChatSessionRequest (a channel for every call) and stands in for
+  the voice session: the call connects after 1.5 s and the others talk in
+  turn, two seconds each (green ring around their picture). Every call made
+  from the interface works with it, without the variable. Three seconds
+  after arriving, `p2p` calls Tess: "Calling…" until she answers 3 s later,
+  then "In call" with a timer; `hangup` is the same and Tess hangs up after
+  12 s (back to nearby voice, a notice in the conversation); `group` calls
+  the group Aurora Builders (Nova, Tess and Orion); `conference` starts a
+  voice conference with Tess and Nova; `incoming` makes Tess call us (the
+  card with Accept, Decline and Reply by text, and the same answers in her
+  conversation, which comes up flashing; unanswered, both close after 30 s)
+  and
+  `incoming-group` makes Nova start a call in Aurora Builders. Voice must be
+  enabled (Preferences › Sound and voice), as on the grid.
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),

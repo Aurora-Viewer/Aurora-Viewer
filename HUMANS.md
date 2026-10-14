@@ -205,6 +205,9 @@ see the news item in the viewer **before** merging, launch it with
    - they clone the Firestorm sources into `phoenix-firestorm\`, next to the
      repository;
    - they download the Rust toolchain and all the crates;
+   - they install sccache with winget (for your account), the compiler cache
+     shared by the repository and the agents' tasks (see
+     [Building and launching by hand](#building-and-launching-by-hand));
    - they log you in to GitHub (`gh auth login`, in the browser) if needed,
      and set your git identity in the repository: your GitHub user name and
      your "noreply" address (your e-mail stays private).
@@ -329,6 +332,23 @@ cargo run -p aurora-viewer
 - Checking everything like CI: `./scripts/check.ps1`.
 - The agents build in their own folder `..\work\<task>\target`: their open
   viewers do not block yours.
+- **Compiler cache.** With sccache installed (Repair / update), the
+  repository and every task share the dependencies they already built, kept
+  in `.sccache\` in the project folder (10 GB at most; set
+  `AURORA_BUILD_CACHE_SIZE`, for example `20G`, then run `check.ps1` or
+  `new-task.ps1` again). Cargo finds it through `.cargo\config.toml` in the
+  project folder, which the scripts write while sccache is installed and
+  delete once it is uninstalled. To stop using it, uninstall sccache
+  (`winget uninstall Mozilla.sccache`), then run `check.ps1` once (until then
+  Cargo stops with "could not execute process"). The first build of a new
+  task takes about a third less processor time (seven crates in ten come from
+  the cache; the others depend on a build script that writes into the
+  task's own folder), and a task rebuilt after its `target\` was freed about
+  half.
+- **One heavy build at a time.** `check.ps1` waits before clippy and the
+  tests while two other heavy builds already run on the PC ("Waiting for a
+  build slot…"): eight agents compiling at once each take every core and
+  all finish later. `AURORA_BUILD_SLOTS` changes the number (2 by default).
 
 ### Disk space
 

@@ -258,7 +258,7 @@ impl World {
         );
     }
 
-    fn info_mut(&mut self, session: Uuid, name: &str) -> &mut SessionInfo {
+    pub(super) fn info_mut(&mut self, session: Uuid, name: &str) -> &mut SessionInfo {
         let group = self.groups.is_member(&session);
         let group_name = self.groups.group(&session).map(|g| g.name.clone());
         let s = self.groups.sessions.entry(session).or_default();
@@ -536,6 +536,11 @@ impl World {
             return;
         }
         let in_group = self.groups.is_member(&session);
+        // VoiceCallsFriendsOnly: a conference started by a non-friend
+        // (LLIMMgr::addMessage, IM_SESSION_INVITE outside our groups)
+        if !in_group && self.friends_only_drops(&inv.from, &inv.from_name) {
+            return;
+        }
         if !self.groups.sessions.contains_key(&session) {
             if in_group && !self.mutes.is_loaded() {
                 // FS: wait for the mute list before deciding

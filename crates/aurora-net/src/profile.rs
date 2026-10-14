@@ -82,6 +82,88 @@ pub mod classified_flags {
     pub const MATURE: u8 = 1 << 1;
     pub const QUERY_INC_MATURE: u8 = 1 << 3;
     pub const AUTO_RENEW: u8 = 1 << 5;
+
+    /// The flags a classified is saved with: pack_classified_flags_request
+    /// (auto_renew, false, mature, false), as LLPanelProfileClassified::getFlags
+    /// (llmessage/llclassifiedflags.cpp, originally LGPL 2.1).
+    pub fn request(auto_renew: bool, mature: bool) -> u8 {
+        let mut flags = 0;
+        if mature {
+            flags |= QUERY_INC_MATURE;
+        }
+        if auto_renew {
+            flags |= AUTO_RENEW;
+        }
+        flags
+    }
+
+    /// is_cf_mature.
+    pub fn is_mature(flags: u8) -> bool {
+        flags & (MATURE | QUERY_INC_MATURE) != 0
+    }
+}
+
+/// The least a new classified costs on Second Life
+/// (MINIMUM_PRICE_FOR_LISTING of llpanelprofileclassifieds.cpp).
+pub const MINIMUM_PRICE_FOR_LISTING: i32 = 50;
+
+/// What the owner of a classified sees of its clicks (the SearchStatRequest
+/// capability, LLPanelProfileClassified::handleSearchStatResponse): the
+/// clicks from profiles and from the search, added up.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClassifiedStats {
+    pub teleport: i32,
+    pub map: i32,
+    pub profile: i32,
+}
+
+impl ClassifiedStats {
+    pub fn from_llsd(v: &aurora_llsd::Llsd) -> ClassifiedStats {
+        let n = |k: &str| v[k].as_i32();
+        ClassifiedStats {
+            teleport: n("teleport_clicks") + n("search_teleport_clicks"),
+            map: n("map_clicks") + n("search_map_clicks"),
+            profile: n("profile_clicks") + n("search_profile_clicks"),
+        }
+    }
+}
+
+/// A click on a classified, reported to the SearchStatTracking capability
+/// (LLPanelProfileClassified::sendClickMessage).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassifiedClick {
+    Profile,
+    Map,
+    Teleport,
+}
+
+impl ClassifiedClick {
+    pub fn name(self) -> &'static str {
+        match self {
+            ClassifiedClick::Profile => "profile",
+            ClassifiedClick::Map => "map",
+            ClassifiedClick::Teleport => "teleport",
+        }
+    }
+}
+
+/// The body of a SearchStatTracking click report.
+pub fn click_body(kind: ClassifiedClick, c: &ClassifiedInfo) -> aurora_llsd::Llsd {
+    let mut body = aurora_llsd::Llsd::new_map();
+    body.insert("type", kind.name());
+    body.insert("from_search", false);
+    body.insert("classified_id", c.id);
+    body.insert("parcel_id", c.parcel);
+    body.insert(
+        "dest_pos_global",
+        aurora_llsd::Llsd::Array(vec![
+            aurora_llsd::Llsd::Real(c.pos_global.x),
+            aurora_llsd::Llsd::Real(c.pos_global.y),
+            aurora_llsd::Llsd::Real(c.pos_global.z),
+        ]),
+    );
+    body.insert("region_name", c.sim_name.clone());
+    body
 }
 
 /// A classified ad (ClassifiedInfoReply).
@@ -328,5 +410,40 @@ mod tests {
     fn charter_member_field() {
         assert_eq!(parse_charter_member(&[3]), (3, String::new()));
         assert_eq!(parse_charter_member(b"El Jefe!\0"), (0, "El Jefe!".to_owned()));
+    }
+
+    #[test]
+    fn classified_flags_and_clicks() {
+        use classified_flags::*;
+        // pack_classified_flags_request(auto_renew, false, mature, false)
+        assert_eq!(request(false, false), 0);
+        assert_eq!(request(true, false), AUTO_RENEW);
+        assert_eq!(request(false, true), QUERY_INC_MATURE);
+        assert!(is_mature(request(true, true)) && is_mature(MATURE) && !is_mature(AUTO_RENEW));
+        // the clicks of profiles and of the search are added up
+        let reply = aurora_llsd::llsd_map! {
+            "teleport_clicks" => 3, "search_teleport_clicks" => 9,
+            "map_clicks" => 1, "search_map_clicks" => 3,
+            "profile_clicks" => 7,
+        };
+        assert_eq!(
+            ClassifiedStats::from_llsd(&reply),
+            ClassifiedStats {
+                teleport: 12,
+                map: 4,
+                profile: 7
+            }
+        );
+        let c = ClassifiedInfo {
+            id: Uuid::from_u128(1),
+            sim_name: "Aurora".into(),
+            pos_global: glam::DVec3::new(256_128.0, 256_128.0, 30.0),
+            ..Default::default()
+        };
+        let body = click_body(ClassifiedClick::Teleport, &c);
+        assert_eq!(body["type"].as_str(), "teleport");
+        assert_eq!(body["region_name"].as_str(), "Aurora");
+        assert!(!body["from_search"].as_bool());
+        assert_eq!(body["dest_pos_global"][0].as_f64(), 256_128.0);
     }
 }

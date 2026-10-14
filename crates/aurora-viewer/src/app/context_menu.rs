@@ -132,6 +132,7 @@ impl App {
             flying: w.agent.flying,
             hover_height: w.hover_height_available(),
             edit_linked: self.settings.build.edit_linked,
+            voice: self.settings.audio.voice_enabled,
             ..Facts::default()
         };
         match self.context_menu.as_ref().map(|m| &m.target) {
@@ -307,6 +308,15 @@ impl App {
                 self.world.social.focus_im = Some(id);
                 self.panels.chat = true;
             }
+            CtxAction::Call(id) => {
+                if self.settings.audio.voice_enabled {
+                    self.world.start_call(id);
+                    if let Some(c) = self.world.calls.active.as_ref() {
+                        self.chat_ui.open(c.conversation());
+                    }
+                    self.panels.chat = true;
+                }
+            }
             CtxAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
             CtxAction::ToggleBlock(id) => {
                 let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
@@ -378,6 +388,7 @@ impl App {
                     self.flush_build();
                 }
             }
+            CtxAction::PayResident(id) => self.pay_ui.open(id, false),
             CtxAction::Pay(id) | CtxAction::Buy(id) | CtxAction::Open(id) => {
                 let action = match act {
                     CtxAction::Pay(_) => Action::Pay,

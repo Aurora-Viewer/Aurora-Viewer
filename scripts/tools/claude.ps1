@@ -44,7 +44,7 @@ $ClaudeAutoModeRules = @(
     'In the Aurora-Viewer repository, posting a comment on an issue of that repository with gh issue comment is allowed: answering the issues is part of the agents'' work (AGENTS.md, section 15).'
     'In the Aurora-Viewer repository, listing and reading the issues of that repository with gh issue list or gh issue view, including formatting their JSON output in PowerShell, is allowed: these commands only read, and following the issues is part of the agents'' work (AGENTS.md, sections 8 and 15).'
     'In the Aurora-Viewer repository, reading the state of its pull requests and CI runs with gh pr view, gh pr list, gh pr checks, gh run view, gh run list or gh run watch, including formatting their JSON output in PowerShell, is allowed: these commands only read (AGENTS.md, sections 8 and 11).'
-    'In the Aurora-Viewer repository, labelling, editing, assigning to the human's own account (--add-assignee / --remove-assignee @me), closing and reopening an issue of that repository with gh issue edit, gh issue close or gh issue reopen is allowed: triaging the issues is part of the agents'' work (AGENTS.md, section 15).'
+    'In the Aurora-Viewer repository, labelling, editing, assigning to the human''s own account (--add-assignee / --remove-assignee @me), closing and reopening an issue of that repository with gh issue edit, gh issue close or gh issue reopen is allowed: triaging the issues is part of the agents'' work (AGENTS.md, section 15).'
     'In the Aurora-Viewer repository, publishing the demo captures of a pull request with scripts/pr-captures.ps1 is allowed: the script only pushes image files to the dedicated captures branch, never to main (AGENTS.md, section 12).'
 )
 

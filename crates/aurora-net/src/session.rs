@@ -1320,6 +1320,31 @@ impl Session<'_> {
                     self.send(addr, &m, true);
                 }
             }
+            NetCommand::PayResident {
+                to,
+                group,
+                amount,
+                message,
+            } => {
+                // Port of give_money (llviewermessage.cpp): TRANS_GIFT, the
+                // destination-is-a-group bit of pack_transaction_flags, and
+                // the payment message as the description.
+                if amount > 0
+                    && !to.is_nil()
+                    && let Some(addr) = self.main
+                {
+                    let mut m = MoneyTransferRequest::default();
+                    m.agent_data.agent_id = self.agent_id();
+                    m.agent_data.session_id = self.session_id();
+                    m.money_data.source_id = self.agent_id();
+                    m.money_data.dest_id = to;
+                    m.money_data.flags = if group { 2 } else { 0 };
+                    m.money_data.amount = amount;
+                    m.money_data.transaction_type = 5001;
+                    m.money_data.description = str_field(&message);
+                    self.send(addr, &m, true);
+                }
+            }
             NetCommand::RequestProfile(id) => {
                 let cap = self
                     .main
@@ -1406,6 +1431,56 @@ impl Session<'_> {
                 m.agent_data.session_id = self.session_id();
                 m.data.classified_id = id;
                 self.send_main(&m, true);
+            }
+            NetCommand::ClassifiedUpdate(c) => {
+                // LLAvatarPropertiesProcessor::sendClassifiedInfoUpdate; the
+                // simulator fills ParcelID and ParentEstate on the way
+                let mut m = ClassifiedInfoUpdate::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                let d = &mut m.data;
+                d.classified_id = c.id;
+                d.category = c.category;
+                d.name = str_field(&c.name);
+                d.desc = str_field(&c.desc);
+                d.parcel_id = c.parcel;
+                d.parent_estate = 0;
+                d.snapshot_id = c.snapshot;
+                d.pos_global = c.pos_global;
+                d.classified_flags = c.flags;
+                d.price_for_listing = c.price;
+                self.send_main(&m, true);
+            }
+            NetCommand::ClassifiedStatsRequest(id) => {
+                // LLPanelProfileClassified::onOpen: the stats of the new table
+                // when the capability exists
+                let Some(url) = self.main_cap("SearchStatRequest") else {
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    let body = aurora_llsd::llsd_map! { "classified_id" => id };
+                    match caps::post_llsd(&http, &url, &body).await {
+                        Ok(reply) => {
+                            let stats = crate::profile::ClassifiedStats::from_llsd(&reply);
+                            let _ = events.send(NetEvent::ClassifiedStats { id, stats });
+                        }
+                        Err(e) => log::warn!("SearchStatRequest {id}: {e}"),
+                    }
+                });
+            }
+            NetCommand::ClassifiedClick { kind, classified } => {
+                let Some(url) = self.main_cap("SearchStatTracking") else {
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let body = crate::profile::click_body(kind, &classified);
+                tokio::spawn(async move {
+                    if let Err(e) = caps::post_llsd(&http, &url, &body).await {
+                        log::info!("SearchStatTracking click report not sent: {e}");
+                    }
+                });
             }
             NetCommand::Land(l) => self.on_land_command(l),
             NetCommand::ParcelInfoRequest(id) => {
@@ -1837,6 +1912,14 @@ impl Session<'_> {
                 copy_name,
             } => self.save_wearable(request, *item, data, copy_name),
             NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
+            NetCommand::CreateSettingsItem {
+                request,
+                parent,
+                name,
+                subtype,
+                next_owner_mask,
+                data,
+            } => self.create_settings_item(request, parent, name, subtype, next_owner_mask, data),
             NetCommand::RestoreInventoryObject(it) => {
                 let mut m = RezRestoreToWorld::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -1873,6 +1956,7 @@ impl Session<'_> {
                     7 => "UpdateNotecardAgentInventory",
                     10 => "UpdateScriptAgent",
                     21 => "UpdateGestureAgentInventory",
+                    56 => "UpdateSettingsAgentInventory",
                     _ => "",
                 };
                 let Some((cap, fetch)) = self.main_cap(name).zip(self.main_cap("FetchInventory2")) else {
@@ -2089,7 +2173,8 @@ impl Session<'_> {
             | NetCommand::ObjectGrabUpdate { .. }
             | NetCommand::ObjectRelease { .. }
             | NetCommand::RequestTaskInventory { .. }
-            | NetCommand::ChatSession { .. } => {}
+            | NetCommand::ChatSession { .. }
+            | NetCommand::Call { .. } => {}
             // handled by on_offline_command
             NetCommand::RequestOfflineMessages
             | NetCommand::RequestOfflineMessagesLegacy
@@ -2102,6 +2187,7 @@ impl Session<'_> {
             | NetCommand::GroupTitlesRequest { .. }
             | NetCommand::GroupTitleUpdate { .. }
             | NetCommand::GroupNoticesListRequest(_)
+            | NetCommand::GroupNoticeRequest(_)
             | NetCommand::JoinGroup(_)
             | NetCommand::InviteToGroup { .. } => {}
             // handled by on_search_command
@@ -3720,6 +3806,18 @@ impl Session<'_> {
         } else if id == MoneyBalanceReply::ID {
             let m: MoneyBalanceReply = pkt.decode()?;
             self.asset_imports.balance = Some(m.money_data.money_balance);
+            if m.transaction_info.transaction_type != 0 {
+                emit(
+                    self.sh,
+                    NetEvent::MoneyTransaction {
+                        success: m.money_data.transaction_success,
+                        kind: m.transaction_info.transaction_type,
+                        dest: m.transaction_info.dest_id,
+                        amount: m.transaction_info.amount,
+                        description: field_str(&m.money_data.description),
+                    },
+                );
+            }
             emit(self.sh, NetEvent::Balance(m.money_data.money_balance));
             emit(
                 self.sh,

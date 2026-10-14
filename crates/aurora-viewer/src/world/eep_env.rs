@@ -181,6 +181,8 @@ impl Slot {
 /// Where the shown environment comes from, by priority (EnvSelection_t).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
+    /// ENV_EDIT: what an open sky or water editor shows, above everything.
+    Edit,
     /// ENV_LOCAL: the environment selector, the time-of-day presets,
     /// "Personal lighting".
     Local(u64),
@@ -292,9 +294,53 @@ pub struct EnvSelector {
     next_fade: f32,
     shown: Option<Shown>,
     fade: Option<Fade>,
+    /// ENV_EDIT (setEnvironment(ENV_EDIT, sky or water)): the edited half,
+    /// the other one frozen at what was shown when the editor opened.
+    edit: Option<(SkyFrame, WaterFrame)>,
 }
 
 impl EnvSelector {
+    /// An editor shows its sky or water (LLFloaterFixedEnvironment::
+    /// updateEditEnvironment, TRANSITION_INSTANT); the other half stays what
+    /// was shown when the editing began.
+    pub fn set_edit_sky(&mut self, sky: SkyFrame) {
+        let water = self.edit.map_or_else(|| self.current().1, |e| e.1);
+        self.edit = Some((sky, water));
+    }
+
+    pub fn set_edit_water(&mut self, water: WaterFrame) {
+        let sky = self.edit.map_or_else(|| self.current().0, |e| e.0);
+        self.edit = Some((sky, water));
+    }
+
+    /// The editor closed (clearEnvironment(ENV_EDIT)): back to what lies
+    /// beneath, with the default transition.
+    pub fn clear_edit(&mut self) {
+        self.edit = None;
+    }
+
+    #[cfg(test)]
+    pub fn editing(&self) -> bool {
+        self.edit.is_some()
+    }
+
+    /// The selected sky and water without the crossfade (ENV_CURRENT), what
+    /// a new editor starts from.
+    pub fn current(&self) -> (SkyFrame, WaterFrame) {
+        self.shown
+            .map_or((SkyFrame::default(), WaterFrame::default()), |s| (s.target_sky, s.target_water))
+    }
+
+    /// "Apply only to myself" of an editor (setEnvironment(ENV_LOCAL, sky or
+    /// water)): a fixed half of the local environment, without an asset.
+    pub fn apply_local_sky(&mut self, sky: SkyFrame) {
+        // an edited sky without an asset: "Personal lighting" edits it next
+        self.apply_sky(LocalOrigin::Personal, sky);
+    }
+
+    pub fn apply_local_water(&mut self, water: WaterFrame) {
+        self.apply_water(LocalOrigin::Inherited, water);
+    }
     fn slot(&mut self, handle: RegionHandle, day: Arc<DayCycle>, length: f64, offset: f64) -> Slot {
         self.generation += 1;
         Slot {
@@ -727,7 +773,9 @@ impl EnvSelector {
     /// Sky and water for this frame, crossfading when the source or the
     /// sky track changes.
     pub fn frame(&mut self, input: &FrameInput) -> (SkyFrame, WaterFrame) {
-        let (source, track, sky, water) = if let Some(l) = &self.local {
+        let (source, track, sky, water) = if let Some((sky, water)) = self.edit {
+            (Source::Edit, 0, sky, water)
+        } else if let Some(l) = &self.local {
             let (track, sky, water) = l.frames(&self.altitudes, input);
             (Source::Local(l.generation), track, sky, water)
         } else {
@@ -754,6 +802,12 @@ impl EnvSelector {
             // TRANSITION_DEFAULT (setSelectedEnvironment's default).
             let duration = if prev.source == source {
                 TRANSITION_ALTITUDE
+            } else if source == Source::Edit {
+                // an editor shows its settings at once (TRANSITION_INSTANT)
+                0.0
+            } else if prev.source == Source::Edit {
+                // onClose: setSelectedEnvironment(ENV_LOCAL), default transition
+                TRANSITION_DEFAULT
             } else if matches!(source, Source::Local(_)) {
                 if std::mem::take(&mut self.instant_next) {
                     0.0
@@ -1023,6 +1077,33 @@ mod tests {
         assert!((sel.frame(&high(1.0)).0.gamma - 1.0).abs() < 1e-6);
         assert!((sel.frame(&high(3.5)).0.gamma - 1.5).abs() < 1e-5);
         assert!((sel.frame(&high(6.0)).0.gamma - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_editor_shows_its_settings_at_once_and_fades_back_on_close() {
+        let mut sel = EnvSelector::default();
+        sel.frame(&input(0.0));
+        let base = sel.current();
+        let edited = SkyFrame { gamma: 3.0, ..base.0 };
+        sel.set_edit_sky(edited);
+        assert!(sel.editing());
+        assert!((gamma(&mut sel, 1.0) - 3.0).abs() < 1e-6, "instant");
+        assert_eq!(sel.shown_source(), Some(Source::Edit));
+        // a water edit keeps the edited sky
+        sel.set_edit_water(WaterFrame {
+            fog_density: 7.0,
+            ..base.1
+        });
+        let (sky, water) = sel.frame(&input(1.5));
+        assert!((sky.gamma - 3.0).abs() < 1e-6 && water.fog_density == 7.0);
+        // applying it to myself changes what lies beneath, not what is shown
+        sel.apply_local_sky(edited);
+        assert!((gamma(&mut sel, 2.0) - 3.0).abs() < 1e-6);
+        sel.clear_edit();
+        assert!(!sel.editing());
+        assert!((gamma(&mut sel, 3.0) - 3.0).abs() < 1e-6, "the local sky is the edited one");
+        assert!(matches!(sel.shown_source(), Some(Source::Local(_))));
+        assert_eq!(sel.local_view().sky, ListShown::Personal);
     }
 
     #[test]

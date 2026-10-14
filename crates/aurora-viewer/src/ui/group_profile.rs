@@ -21,6 +21,7 @@
 mod home;
 mod invite;
 mod members;
+mod notices;
 mod view;
 
 use super::place_details::Ctx;
@@ -55,6 +56,19 @@ pub enum GroupAction {
     Refresh { group: Uuid, member: bool },
     /// JoinGroupRequest, confirmed.
     Join(Uuid),
+    /// The notice list again (onClickRefreshNotices).
+    RefreshNotices(Uuid),
+    /// GroupNoticeRequest (onSelectNotice).
+    OpenNotice { group: Uuid, notice: Uuid },
+    /// The notice's attachment, accepted into the inventory.
+    SaveAttachment(Uuid),
+    /// send_group_notice: subject, message, (item, owner) attached.
+    SendNotice {
+        group: Uuid,
+        subject: String,
+        message: String,
+        item: Option<(Uuid, Uuid)>,
+    },
     /// InviteGroupRequest: (invitee, role) pairs.
     Invite { group: Uuid, invites: Vec<(Uuid, Uuid)> },
     /// "Call" (LLGroupActions::startCall), once group voice is there
@@ -80,6 +94,7 @@ pub enum Tab {
     #[default]
     Home,
     Members,
+    Notices,
 }
 
 /// The confirmation of "Join" (LLGroupActions::join's notifications).
@@ -103,6 +118,7 @@ pub struct GroupProfileUi {
     /// when the membership changes or the data was forgotten.
     loaded: Option<(Uuid, bool)>,
     pub(super) members: members::MembersState,
+    pub(super) notices: notices::NoticesState,
     confirm: Option<Confirm>,
     /// "Invite to the group".
     pub invite: invite::InviteUi,
@@ -139,6 +155,15 @@ impl GroupProfileUi {
         self.group = Some(id);
         self.open = true;
         self.raise = true;
+    }
+
+    /// Open the Notices tab (the demo's captures), on a new notice when
+    /// `compose`.
+    pub fn show_notices(&mut self, compose: bool) {
+        self.tab = Tab::Notices;
+        if compose {
+            self.notices.compose = Some(Default::default());
+        }
     }
 
     /// Open the Members tab with a member selected (the demo's captures).
@@ -222,6 +247,7 @@ impl GroupProfileUi {
         match self.tab {
             Tab::Home => home::show(self, ui, c, env, v, actions),
             Tab::Members => members::show(self, ui, c, env, v),
+            Tab::Notices => notices::show(self, ui, c, v, actions),
         }
     }
 
@@ -247,6 +273,20 @@ impl GroupProfileUi {
                 widgets::collapsing(ui, c.p, "group_profile_classic_members", title, false, |ui| {
                     members::classic_list(self, ui, c, v);
                 });
+                // Firestorm's "Notices" accordion: the same list, reading and
+                // new notice, in a part of the window's height
+                if notices::visible(v) {
+                    let title = aurora_i18n::tr!("ui-group-profile-notices");
+                    widgets::collapsing(ui, c.p, "group_profile_classic_notices", title, false, |ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 420.0), egui::Sense::hover());
+                        let mut part = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(rect)
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                        );
+                        notices::show(self, &mut part, c, v, actions);
+                    });
+                }
             });
         actions.extend(pane_actions.into_iter().map(|a| match a {
             SearchAction::RefreshGroup(group) => GroupAction::Refresh {

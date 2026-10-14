@@ -781,7 +781,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             9 => debug_page(ui, p, s),
                             TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
-                            TAB_PRIVACY => privacy::page(ui, p, &mut s.lookat),
+                            TAB_PRIVACY => privacy::page(ui, p, &mut s.lookat, &mut s.autoresponse.friends_only),
                             TAB_AURORA => {
                                 let mut reset = false;
                                 let c = aurora::page(ui, p, s, &mut reset);
@@ -1774,6 +1774,35 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     |ui| toggle(ui, p, &mut s.confirm_teleports),
                 );
             });
+            // FSConfirmPayments / FSPaymentConfirmationThreshold
+            // (panel_preferences_firestorm.xml)
+            group(ui, p, aurora_i18n::tr!("ui-options-payments"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-confirm-payments"),
+                    aurora_i18n::tr!("ui-options-confirm-payments-help"),
+                    |ui| toggle(ui, p, &mut s.confirm_payments),
+                );
+                ui.add_enabled_ui(s.confirm_payments, |ui| {
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-payment-threshold"),
+                        aurora_i18n::tr!("ui-options-payment-threshold-help"),
+                        |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut s.payment_confirm_threshold)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .range(0..=i32::MAX)
+                                    .speed(1.0)
+                                    .suffix(" L$"),
+                            )
+                            .changed()
+                        },
+                    );
+                });
+            });
             group(ui, p, aurora_i18n::tr!("common-inventory"), |ui| {
                 c |= super::inventory::preferences(ui, p, &mut s.inventory);
             });
@@ -2452,6 +2481,28 @@ fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Options
                 super::widgets::level(ui, p, "mic_level", lvl, SLIDER_W, col);
                 false
             },
+        );
+        // VoiceCallsRejectGroup / AdHoc / P2P (panel_preferences_sound.xml)
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-reject-group-calls"),
+            aurora_i18n::tr!("ui-options-reject-group-calls-hint"),
+            |ui| toggle(ui, p, &mut a.reject_group_calls),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-reject-adhoc-calls"),
+            aurora_i18n::tr!("ui-options-reject-adhoc-calls-hint"),
+            |ui| toggle(ui, p, &mut a.reject_adhoc_calls),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-reject-p2p-calls"),
+            aurora_i18n::tr!("ui-options-reject-p2p-calls-hint"),
+            |ui| toggle(ui, p, &mut a.reject_p2p_calls),
         );
     });
     group(ui, p, aurora_i18n::tr!("ui-options-push-to-talk"), |ui| {

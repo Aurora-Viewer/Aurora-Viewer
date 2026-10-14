@@ -4,6 +4,11 @@ name: CI
 # secrets) while its author reviews it. The full run (tests too) happens in
 # the merge queue, on the PR combined with the latest main: what lands on
 # main is exactly what was tested, and nobody has to update a branch.
+#
+# A push to main is the commit the queue has just tested: its jobs neither
+# lint nor test it again. They only rebuild the Rust cache when its key
+# changed (Cargo.lock, toolchain), because the caches are written from main
+# alone (see rust-cache below) and a queue run cannot share its own.
 on:
   pull_request:
   merge_group:
@@ -41,15 +46,22 @@ jobs:
       # caches are written from main only, and read by every PR and queue
       # run: PR caches would otherwise evict main's from the 10 GB quota
       - uses: Swatinem/rust-cache@v2
+        id: cache
         if: steps.changes.outputs.code == 'true'
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Windows PowerShell 5.1, the one the Aurora tools run with
+      - name: PowerShell scripts parse
+        if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
+        shell: powershell
+        run: ./scripts/check-scripts.ps1
       - name: Formatting
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: cargo fmt --all -- --check
-      # profile "ci" (Cargo.toml): unoptimized, no debug info, built fast
+      # profile "ci" (Cargo.toml): unoptimized, no debug info, built fast;
+      # on main, only when the cache has to be written again (see the top)
       - name: Clippy (warnings are errors)
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
         run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings
 
   tests:
@@ -70,12 +82,17 @@ jobs:
         if: steps.changes.outputs.code == 'true'
         run: rustup update stable
       - uses: Swatinem/rust-cache@v2
+        id: cache
         if: steps.changes.outputs.code == 'true'
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Tests
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: cargo test --profile ci --workspace --locked
+      # main: build the tests without running them, for the cache only
+      - name: Build the tests (cache)
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        run: cargo test --profile ci --workspace --locked --no-run
 
   secrets:
     name: secret scan

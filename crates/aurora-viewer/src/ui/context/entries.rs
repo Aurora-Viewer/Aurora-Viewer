@@ -340,7 +340,7 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     ui.todo("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
     ui.item("message-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
     ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
-    ui.todo("phone-filled", aurora_i18n::tr!("common-voice-call"));
+    ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
     ui.todo("users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
     ui.item(
         "send-filled",
@@ -370,7 +370,7 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         ui.todo("player-eject-filled", aurora_i18n::tr!("ui-context-eject"));
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
-    ui.todo("coin-filled", aurora_i18n::tr!("common-pay"));
+    ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
     ui.separator();
     // Firestorm "Always Display Full Detail / Never Display Full Detail / Remove From Display Exceptions"
     if let Some((c, silhouette)) = f.complexity {
@@ -422,7 +422,7 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
     ui.todo("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
     ui.item("message-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
     ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
-    ui.todo("phone-filled", aurora_i18n::tr!("common-voice-call"));
+    ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
     ui.todo("users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
     ui.todo("eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
     ui.separator();
@@ -443,7 +443,8 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         );
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
-    ui.todo("coin-filled", aurora_i18n::tr!("common-pay"));
+    // Avatar.Pay: the wearer is paid
+    ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
     ui.separator();
     ui.todo("info-circle-filled", aurora_i18n::tr!("ui-context-object-profile"));
     ui.separator();

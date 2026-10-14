@@ -578,7 +578,7 @@ pub async fn save_content(
         return Err(aurora_i18n::tr!("inventory-operations-the-script-contains-compilation-errors-check-the-code-and").into());
     }
     let asset = ack["new_asset"].as_uuid();
-    if matches!(kind, 7 | 21) && asset.is_nil() {
+    if matches!(kind, 7 | 21 | 56) && asset.is_nil() {
         return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into());
     }
     let saved_item = if ack["new_inventory_item"].as_uuid().is_nil() {
@@ -593,9 +593,11 @@ pub async fn save_content(
         .into_iter()
         .find(|it| it.id == saved_item)
         .ok_or_else(|| aurora_i18n::tr!("inventory-operations-the-saved-item-could-not-be-found").to_owned())?;
-    if matches!(kind, 7 | 21) && (saved.asset_id != asset || saved.asset_type != kind) {
+    if matches!(kind, 7 | 21 | 56) && (saved.asset_id != asset || saved.asset_type != kind) {
         return Err(if kind == 21 {
             aurora_i18n::tr!("gesture-save-unconfirmed")
+        } else if kind == 56 {
+            aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save")
         } else {
             aurora_i18n::tr!("notecard-save-unconfirmed")
         }

@@ -55,6 +55,14 @@ impl Session<'_> {
                 m.data.group_id = *group;
                 self.send_main(&m, true);
             }
+            NetCommand::GroupNoticeRequest(notice) => {
+                // LLPanelGroupNotices::onSelectNotice
+                let mut m = GroupNoticeRequest::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.data.group_notice_id = *notice;
+                self.send_main(&m, true);
+            }
             NetCommand::JoinGroup(group) => {
                 let mut m = JoinGroupRequest::default();
                 m.agent_data.agent_id = self.agent_id();
