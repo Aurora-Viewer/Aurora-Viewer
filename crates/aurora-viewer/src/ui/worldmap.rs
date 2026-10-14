@@ -15,7 +15,7 @@ use super::widgets::{self, Floater};
 use crate::settings::MapSettings;
 use crate::theme::Palette;
 use crate::world::World;
-use crate::world::worldmap::{SIM_ACCESS_ADULT, SIM_ACCESS_MATURE, Track, access_label, location_label, teleport_command};
+use crate::world::worldmap::{Track, access_label, location_label, teleport_command};
 use aurora_net::{NetCommand, map_item};
 use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2, pos2, vec2};
 use uuid::Uuid;
@@ -95,6 +95,13 @@ pub enum WorldMapAction {
 }
 
 impl WorldMapUi {
+    /// AURORA_DEMO_MAP=search:<text>: the region search, as if typed.
+    pub fn demo_search(&mut self, world: &mut World, text: &str) {
+        self.search = text.to_owned();
+        self.selected = None;
+        world.map.search_region(text);
+    }
+
     /// Center the map on a global position (centerOnTarget).
     fn center_on(&mut self, world: &World, cam: &MapCamera, x: f64, y: f64) {
         let (cx, cy) = to_global(world, cam.pos);
@@ -703,14 +710,20 @@ impl WorldMapUi {
                 .show(ui, |ui| {
                     for (key, name, access) in &results {
                         let sel = self.selected == Some(*key);
-                        let text = RichText::new(format!("{name}  ·  {}", access_label(*access)))
-                            .size(12.5)
-                            .color(match *access {
-                                SIM_ACCESS_ADULT => p.rose,
-                                SIM_ACCESS_MATURE => p.amber,
-                                _ => p.ink,
-                            });
-                        if ui.selectable_label(sel, text).clicked() {
+                        // the navigation bar's badge, else the state in text
+                        // (offline, unknown)
+                        let clicked = ui
+                            .horizontal(|ui| {
+                                let badge = super::widgets::maturity_badge_of(ui, p, *access, 14.0).is_some();
+                                let text = if badge {
+                                    name.to_string()
+                                } else {
+                                    format!("{name}  ·  {}", access_label(*access))
+                                };
+                                ui.selectable_label(sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
+                            })
+                            .inner;
+                        if clicked {
                             self.selected = Some(*key);
                             self.select_region(world, cam, *key);
                         }

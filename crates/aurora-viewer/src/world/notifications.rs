@@ -138,6 +138,9 @@ pub struct Notification {
     pub data: Data,
     /// llTextBox reply being typed.
     pub text: String,
+    /// A region's rating (SIM_ACCESS_*) the entry is about, shown as the
+    /// navigation bar's badge (0: none).
+    pub maturity: u8,
 }
 
 impl Notification {
@@ -193,6 +196,7 @@ impl Notifications {
             read: false,
             data,
             text: String::new(),
+            maturity: 0,
         });
         if self.list.len() > MAX {
             // drop the oldest that needs no answer

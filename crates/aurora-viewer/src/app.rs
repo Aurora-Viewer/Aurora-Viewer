@@ -8503,6 +8503,13 @@ impl ApplicationHandler for App {
                 self.panels.world_map = std::env::var("AURORA_DEMO_MAP").as_deref() != Ok("mini");
                 self.panels.perf = false;
                 self.world.map.track_location(256000.0 + 200.0, 256000.0 + 150.0, 25.0, false);
+                // =search:<text>: the region search with its results
+                if let Some(text) = std::env::var("AURORA_DEMO_MAP")
+                    .ok()
+                    .and_then(|v| v.strip_prefix("search:").map(str::to_owned))
+                {
+                    self.worldmap_ui.demo_search(&mut self.world, &text);
+                }
             }
             // captures: AURORA_DEMO_SIT keeps the toolbar sit button visible
             if std::env::var_os("AURORA_DEMO_SIT").is_some() {

@@ -93,6 +93,10 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                         accent,
                     );
                 }
+                // the rating of the region the entry is about
+                if n.maturity != 0 {
+                    super::widgets::maturity_badge_of(ui, p, n.maturity, 14.0);
+                }
                 // keep room for the time and the close button
                 let w = (ui.available_width() - 62.0).max(40.0);
                 ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
