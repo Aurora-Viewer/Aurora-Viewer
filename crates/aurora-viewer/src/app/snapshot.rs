@@ -24,13 +24,15 @@ use uuid::Uuid;
 const PREVIEW_SIDE: u32 = 720;
 /// The preview follows the camera once it has been still this long.
 const SETTLE: Duration = Duration::from_millis(250);
-/// Bytes of video memory a pixel of a photo takes while it is drawn: its
-/// render targets and readback. Measured on 2026-10-14 (demo, MSAA 4x):
-/// +289 MB for 3840 x 2160, +1182 MB for 7680 x 4320, about 36 bytes; with
-/// room for MSAA 8x. The photo is tiled when the free memory cannot hold it.
-const TARGET_BYTES_PER_PIXEL: u64 = 48;
-/// Pixels drawn in one pass when the driver does not report its memory.
-const DEFAULT_MAX_PIXELS: u64 = 34_000_000;
+/// Bytes of video memory a pixel of a photo takes while it is drawn (its
+/// render targets and readback), besides those per MSAA sample. Measured on
+/// 2026-10-14 (demo, full-resolution reflections): about 54 bytes with MSAA
+/// 4x, 150 with MSAA 8x; with some room. The photo is tiled when the free
+/// memory cannot hold it.
+const TARGET_BYTES_PER_PIXEL: u64 = 16;
+const TARGET_BYTES_PER_SAMPLE: u64 = 18;
+/// Bytes a photo may take when the driver does not report its memory.
+const DEFAULT_TARGET_BYTES: u64 = 1_600_000_000;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Purpose {
@@ -140,6 +142,10 @@ pub(super) struct Snapshots {
     detail_wait: Option<Instant>,
     /// The wait is over: the next "Take" goes ahead.
     detail_ready: bool,
+    /// The photo quality raised or restored the settings: applied like a
+    /// change made in Preferences (renderer, draw distance sent to the
+    /// region…).
+    pub(super) settings_changed: bool,
     /// The web profile's session cookie, for the OpenID cookie it was
     /// asked with (getOpenIDCookieCoro gives it once per login).
     web_auth: std::sync::Arc<parking_lot::Mutex<Option<(String, String)>>>,
@@ -205,6 +211,7 @@ impl Default for Snapshots {
             message_profile: false,
             detail_wait: None,
             detail_ready: false,
+            settings_changed: false,
             web_auth: Default::default(),
             demo_profile: None,
             demo: None,
@@ -467,11 +474,7 @@ impl App {
             1
         };
         let size = (size.0 * supersample, size.1 * supersample);
-        let max_pixels = renderer.video_memory.read(&renderer.device).map_or(DEFAULT_MAX_PIXELS, |m| {
-            // half of what is free, besides what the window's frame holds
-            m.budget.saturating_sub(m.usage) / 2 / TARGET_BYTES_PER_PIXEL
-        });
-        let tiles = snapshot::plan(size, self.photo_max_side(renderer), max_pixels);
+        let tiles = snapshot::plan(size, self.photo_max_side(renderer), self.photo_max_pixels(renderer));
         let interface = s.interface && snapshot::same_proportions(full, window);
         self.snapshots.job = Some(Job {
             purpose,
@@ -495,6 +498,26 @@ impl App {
             .then(|| std::env::var("AURORA_DEMO_SNAPSHOT_TILE").ok()?.parse::<u32>().ok())
             .flatten();
         forced.unwrap_or_else(|| renderer.max_texture_dimension())
+    }
+
+    /// MSAA samples the frames are drawn with (the renderer takes the most
+    /// the GPU supports up to the setting's).
+    fn msaa_samples(&self, renderer: &Renderer) -> u32 {
+        match self.settings.render_settings().aa {
+            aurora_render::AntiAliasing::Msaa(n) => renderer.msaa_supported().iter().copied().filter(|&m| m <= n).max().unwrap_or(1),
+            _ => 1,
+        }
+    }
+
+    /// The most pixels drawn in one pass: half of the free video memory,
+    /// besides what the window's frame holds.
+    fn photo_max_pixels(&self, renderer: &Renderer) -> u64 {
+        let per_pixel = TARGET_BYTES_PER_PIXEL + TARGET_BYTES_PER_SAMPLE * u64::from(self.msaa_samples(renderer));
+        let free = renderer
+            .video_memory
+            .read(&renderer.device)
+            .map_or(DEFAULT_TARGET_BYTES, |m| m.budget.saturating_sub(m.usage) / 2);
+        free / per_pixel
     }
 
     fn photo_shutter(&mut self) {
@@ -755,7 +778,7 @@ impl App {
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
     pub(super) fn photo_update(&mut self, renderer: &Renderer) {
         self.photo_demo(renderer);
-        self.photo_quality();
+        self.photo_quality(renderer);
         if let Some(t) = self.snapshots.detail_wait {
             let pending = self.scene.textures.pending_in_view();
             if pending == 0 || t.elapsed() >= snapshot::quality::DETAIL_WAIT || self.settings.photo_held.is_none() {
@@ -1030,10 +1053,7 @@ impl App {
             let inventory = (self.snapshots.ui.destination == Destination::Inventory).then(|| self.photo_inventory_view(window));
             let profile = (self.snapshots.ui.destination == Destination::Profile).then(|| self.photo_profile_view(window));
             let mut state = std::mem::take(&mut self.snapshots.ui);
-            let max_pixels = renderer.video_memory.read(&renderer.device).map_or(DEFAULT_MAX_PIXELS, |m| {
-                m.budget.saturating_sub(m.usage) / 2 / TARGET_BYTES_PER_PIXEL
-            });
-            let tiles = snapshot::plan(photo, self.photo_max_side(renderer), max_pixels).len();
+            let tiles = snapshot::plan(photo, self.photo_max_side(renderer), self.photo_max_pixels(renderer)).len();
             let s = &self.snapshots;
             let busy = if let Some(t) = s.detail_wait {
                 let wait = snapshot::quality::DETAIL_WAIT.as_secs_f32();
@@ -1131,18 +1151,21 @@ impl App {
     /// "Photo quality": raised while the window is open and the switch on,
     /// the user's values back as soon as either is off (they are also what
     /// a save in the meantime writes, `Settings::to_saved`).
-    fn photo_quality(&mut self) {
+    fn photo_quality(&mut self, renderer: &Renderer) {
         let want = self.panels.snapshot && self.settings.snapshot.quality;
         match (&self.settings.photo_held, want) {
             (None, true) => {
                 let held = snapshot::quality::boost(&mut self.settings);
+                let samples = self.msaa_samples(renderer);
                 log::info!(
-                    "photo quality: on (draw distance {} m, shadows {}, LOD {})",
+                    "photo quality: on (draw distance {} m, shadows {}, LOD {}, MSAA {samples}x{})",
                     self.settings.draw_distance,
                     self.settings.shadow_quality,
-                    self.settings.lod_factor
+                    self.settings.lod_factor,
+                    if samples < 8 { ", the most this GPU supports" } else { "" }
                 );
                 self.settings.photo_held = Some(held);
+                self.snapshots.settings_changed = true;
             }
             (Some(_), false) => {
                 if let Some(mut held) = self.settings.photo_held.take() {
@@ -1150,6 +1173,7 @@ impl App {
                     held.restore(&mut self.settings);
                 }
                 log::info!("photo quality: off, the user's settings back");
+                self.snapshots.settings_changed = true;
             }
             (Some(_), true) => {
                 // what the user changes meanwhile (Preferences) is theirs

@@ -99,13 +99,19 @@ fn photo_maxima() -> Values {
     }
 }
 
+/// `Settings::antialiasing` for MSAA 8x, the photo's anti-aliasing on top
+/// of the supersampling (asked for by the user; the renderer takes the most
+/// samples the GPU supports up to 8).
+pub const MSAA_8X: u8 = 4;
+
 /// The boosted values: each one at Aurora's most, never lower than the
-/// user's (an unlimited complexity stays unlimited). The anti-aliasing, the
-/// particles, the screen-space reflections, the sharpening and the glow stay
-/// the user's own choices.
+/// user's (an unlimited complexity stays unlimited), the anti-aliasing at
+/// MSAA 8x. The particles, the screen-space reflections, the sharpening and
+/// the glow stay the user's own choices.
 pub fn boosted(user: Values) -> Values {
     let top = photo_maxima();
     Values {
+        antialiasing: MSAA_8X,
         draw_distance: user.draw_distance.max(top.draw_distance),
         lod_factor: user.lod_factor.max(top.lod_factor),
         max_avatars: user.max_avatars.max(top.max_avatars),
@@ -166,8 +172,8 @@ mod tests {
         assert_eq!((s.draw_distance, s.lod_factor, s.max_avatars), (512.0, 4.0, 100));
         assert_eq!((s.shadow_quality, s.water_reflections, s.mirrors), (4, 4, 4));
         assert!(s.shadows);
-        // no complexity limit during the photo; the anti-aliasing stays
-        assert_eq!((s.antialiasing, s.max_complexity), (3, 0));
+        // no complexity limit during the photo, MSAA 8x
+        assert_eq!((s.antialiasing, s.max_complexity), (MSAA_8X, 0));
         held.restore(&mut s);
         assert_eq!(Values::read(&s), Values::read(&before));
         assert_eq!(s.shadows, before.shadows);
