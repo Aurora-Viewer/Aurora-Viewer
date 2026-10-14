@@ -76,6 +76,8 @@ pub enum LoginAction {
     Login,
     Quit,
     CheckUpdates,
+    /// The cogwheel: the preferences window over the login screen.
+    Preferences,
 }
 
 /// Animated aurora background (also behind the loading screens without a
@@ -712,7 +714,8 @@ pub fn show(
         }
     } else if info.can_check_updates {
         egui::Area::new(egui::Id::new("login_check_updates"))
-            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-20.0, 20.0))
+            // left of the preferences cogwheel of `chrome::footer`
+            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-63.0, 20.0))
             .show(&ctx, |ui| {
                 if super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("update-check"), Vec2::new(190.0, 30.0))
                     .on_hover_text(aurora_i18n::tr!("update-check-hint"))
@@ -938,6 +941,64 @@ mod tests {
                     "{size:?}: the block moved up"
                 );
             }
+        }
+    }
+
+    /// The cogwheel opens the preferences before login, from the top right
+    /// corner, beside the narrow window's update button without covering it.
+    #[test]
+    fn the_cogwheel_asks_for_the_preferences_from_the_top_right_corner() {
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        for size in [Vec2::new(1000.0, 700.0), Vec2::new(1600.0, 900.0)] {
+            let ctx = egui::Context::default();
+            let mut settings = Settings::default();
+            let mut form = LoginForm::default();
+            let mut frame = |events: Vec<egui::Event>| {
+                let mut action = LoginAction::None;
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| action = show(ui, &p, &icons, None, &mut settings, &mut form, &info, None),
+                );
+                test_output(output);
+                action
+            };
+            for _ in 0..3 {
+                frame(vec![]);
+            }
+            let rect = |name: &str| ctx.memory(|m| m.area_rect(egui::Id::new(name)));
+            let cog = rect("login_settings").expect("the cogwheel");
+            assert!(
+                cog.right() <= size.x - 20.0 && cog.right() >= size.x - 30.0 && cog.top() <= 25.0,
+                "{size:?}: top right corner ({cog:?})"
+            );
+            for other in ["login_check_updates", "login_news", "login_version", "login_area"] {
+                if let Some(r) = rect(other) {
+                    assert!(!r.intersects(cog), "{size:?}: {other} {r:?} under the cogwheel {cog:?}");
+                }
+            }
+            let pos = cog.center();
+            frame(vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ]);
+            let action = frame(vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }]);
+            assert!(matches!(action, LoginAction::Preferences), "{size:?}");
         }
     }
 
