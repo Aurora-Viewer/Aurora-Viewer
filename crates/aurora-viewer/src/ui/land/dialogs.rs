@@ -224,7 +224,9 @@ fn accept(c: Confirm, parcel: &ParcelInfo, world: &mut World) {
             return_type,
             owners,
         });
-        // the callbacks send the parcel again so its counts refresh
+        // the callbacks drop the highlight and send the parcel again so
+        // its counts refresh
+        world.land.unhighlight();
         world.land.update(|_| {});
     };
     match c {

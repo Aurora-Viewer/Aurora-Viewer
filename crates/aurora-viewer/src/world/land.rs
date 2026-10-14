@@ -446,6 +446,15 @@ pub struct SelectionContext {
     pub region_id: Uuid,
 }
 
+/// What "Script info" knows (LLFloaterScriptLimits / LLFloaterMyScripts):
+/// None while asked, then the answer or why it failed.
+#[derive(Debug, Clone, Default)]
+pub struct ScriptInfo {
+    pub summary: Option<Result<land::ScriptSummary, String>>,
+    pub details: Option<Result<Vec<land::ScriptParcel>, String>>,
+    pub mine: Option<Result<(land::ScriptSummary, Vec<land::ScriptAttachment>), String>>,
+}
+
 #[derive(Default)]
 pub struct Land {
     pub sel: Option<Selection>,
@@ -462,6 +471,11 @@ pub struct Land {
     /// Experience picker search: the query and its results (None while
     /// searching, Some(None) when it failed).
     pub experience_search: Option<(String, Option<Option<Vec<land::FoundExperience>>>)>,
+    /// Objects the simulator asked to highlight (ForceObjectSelect after
+    /// "Show"): LLSelectMgr's highlighted objects, by region and local ID.
+    pub highlight: HashSet<(RegionHandle, u32)>,
+    /// "Script info" of the selected parcel and of my attachments.
+    pub scripts: ScriptInfo,
     out: Vec<NetCommand>,
 }
 
@@ -560,6 +574,50 @@ impl Land {
     }
 
     /// Search residents for the avatar picker.
+    /// send_parcel_select_objects: the shown objects are dropped, the
+    /// simulator answers with the new ones (`owners` for RT_LIST).
+    pub fn show_objects(&mut self, return_type: u32, owners: Vec<Uuid>) {
+        self.highlight.clear();
+        let Some((handle, local_id)) = self.sel.as_ref().and_then(|s| Some((s.handle, s.local_id()?))) else {
+            return;
+        };
+        self.send(LandCommand::SelectObjects {
+            handle,
+            local_id,
+            return_type,
+            owners,
+        });
+    }
+
+    /// StartRequestChain once the parcel UUID is known: LandResources.
+    pub fn request_scripts(&mut self, parcel_id: Uuid) {
+        self.scripts.summary = None;
+        self.scripts.details = None;
+        self.send(LandCommand::ScriptResources { parcel_id });
+    }
+
+    /// LLFloaterMyScripts::requestAttachmentDetails.
+    pub fn request_attachment_scripts(&mut self) {
+        self.scripts.mine = None;
+        self.send(LandCommand::AttachmentScripts);
+    }
+
+    /// returnObjectsFromParcel: the objects by their IDs, one message per
+    /// parcel of the selection's region.
+    pub fn return_tasks(&mut self, local_id: i32, tasks: Vec<Uuid>) {
+        let Some(handle) = self.sel.as_ref().map(|s| s.handle) else {
+            return;
+        };
+        if !tasks.is_empty() {
+            self.send(LandCommand::ReturnTasks { handle, local_id, tasks });
+        }
+    }
+
+    /// LLSelectMgr::unhighlightAll (the floater closed, objects returned).
+    pub fn unhighlight(&mut self) {
+        self.highlight.clear();
+    }
+
     /// LLPanelExperiencePicker::find: the first page of FindExperienceByName.
     pub fn search_experiences(&mut self, query: &str) {
         let query = query.trim().to_owned();
@@ -725,6 +783,15 @@ impl Land {
             }
             LandEvent::ExperienceInfo(list) => self.experience_names.extend(list),
             LandEvent::GroupNames(list) => self.group_names.extend(list),
+            LandEvent::ScriptSummary(r) => self.scripts.summary = Some(r),
+            LandEvent::ScriptDetails(r) => self.scripts.details = Some(r),
+            LandEvent::AttachmentScripts(r) => self.scripts.mine = Some(r),
+            LandEvent::Highlight { handle, reset, local_ids } => {
+                if reset {
+                    self.highlight.clear();
+                }
+                self.highlight.extend(local_ids.into_iter().map(|id| (handle, id)));
+            }
             LandEvent::ExperienceSearch { query, results } => {
                 if let Some(list) = results.as_ref() {
                     self.experience_names.extend(list.iter().map(|e| (e.id, e.name.clone())));
@@ -930,6 +997,40 @@ impl Land {
 
 #[cfg(test)]
 mod tests {
+    /// "Show": the old highlight goes at once, the simulator's answer
+    /// (ForceObjectSelect) brings the new one; closing drops it.
+    #[test]
+    fn shown_objects_come_from_the_simulator() {
+        let mut land = Land::default();
+        let mut sel = Selection::new(7, (0.0, 0.0, 4.0, 4.0));
+        sel.parcel = Some(Arc::new(ParcelInfo {
+            local_id: 3,
+            ..Default::default()
+        }));
+        land.sel = Some(sel);
+        land.highlight.insert((7, 1));
+        land.show_objects(land::RT_OWNER, Vec::new());
+        assert!(land.highlight.is_empty());
+        assert!(land.take_commands().iter().any(|c| matches!(
+            c,
+            NetCommand::Land(LandCommand::SelectObjects { handle: 7, local_id: 3, return_type, .. }) if *return_type == land::RT_OWNER
+        )));
+        land.apply(
+            LandEvent::Highlight {
+                handle: 7,
+                reset: true,
+                local_ids: vec![10, 11],
+            },
+            &SelectionContext {
+                agent_region: Some(7),
+                region_id: Uuid::nil(),
+            },
+        );
+        assert_eq!(land.highlight.len(), 2);
+        land.unhighlight();
+        assert!(land.highlight.is_empty());
+    }
+
     /// experienceAdded: the experience leaves the other list, and only
     /// the list it joined goes out.
     #[test]

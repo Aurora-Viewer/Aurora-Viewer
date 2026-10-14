@@ -224,6 +224,9 @@ struct DemoDay {
 
 static DAY: Mutex<Option<DemoDay>> = Mutex::new(None);
 
+/// Scripted objects returned from "Script info".
+static RETURNED: Mutex<Vec<Uuid>> = Mutex::new(Vec::new());
+
 /// LLSD environment of the parcel: the region's (no day cycle) until a
 /// settings item is applied, then a day with the names of its tracks;
 /// skies at 1000 / 2000 / 3000 m.
@@ -434,6 +437,121 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
             vec![ev(LandEvent::ExperienceSearch {
                 query: query.clone(),
                 results: Some(results),
+            })]
+        }
+        // Script info: the plaza's scripted objects, then my attachments
+        LandCommand::ScriptResources { .. } => {
+            let o = |n: u128, name: &str, owner: Uuid, group: bool, kb: i64, urls: i64, at: Vec3| aurora_net::land::ScriptObject {
+                id: Uuid::from_u128(0x5C00 + n),
+                name: name.into(),
+                owner,
+                group_owned: group,
+                memory: kb * 1024,
+                urls,
+                location: Some(at),
+            };
+            let objects: Vec<_> = vec![
+                o(
+                    1,
+                    aurora_i18n::tr!("demo-fountain"),
+                    DEMO_AGENT,
+                    false,
+                    192,
+                    1,
+                    Vec3::new(135.0, 125.0, 23.6),
+                ),
+                o(
+                    2,
+                    aurora_i18n::tr!("demo-land-script-door"),
+                    DEMO_GROUP1,
+                    true,
+                    64,
+                    0,
+                    Vec3::new(150.0, 130.0, 24.0),
+                ),
+                o(
+                    3,
+                    aurora_i18n::tr!("demo-land-script-radio"),
+                    DEMO_AGENT,
+                    false,
+                    128,
+                    2,
+                    Vec3::new(140.0, 140.0, 24.0),
+                ),
+                o(
+                    4,
+                    aurora_i18n::tr!("demo-land-script-sign"),
+                    DEMO_LOUP,
+                    false,
+                    16,
+                    0,
+                    Vec3::new(130.0, 120.0, 24.0),
+                ),
+            ]
+            .into_iter()
+            .filter(|o| !RETURNED.lock().contains(&o.id))
+            .collect();
+            let used: i64 = objects.iter().map(|o| o.memory).sum();
+            let urls: i64 = objects.iter().map(|o| o.urls).sum();
+            vec![
+                ev(LandEvent::ScriptSummary(Ok(aurora_net::land::ScriptSummary {
+                    memory: Some((used, 8 * 1024 * 1024)),
+                    urls: Some((urls, 750)),
+                }))),
+                ev(LandEvent::ScriptDetails(Ok(vec![aurora_net::land::ScriptParcel {
+                    name: aurora_i18n::tr!("demo-land-aurora-plaza-offline-demo").into(),
+                    local_id: Some(1),
+                    objects,
+                }]))),
+            ]
+        }
+        LandCommand::AttachmentScripts => {
+            let o = |n: u128, name: &str, kb: i64, urls: i64| aurora_net::land::ScriptObject {
+                id: Uuid::from_u128(0x5D00 + n),
+                name: name.into(),
+                owner: DEMO_AGENT,
+                group_owned: false,
+                memory: kb * 1024,
+                urls,
+                location: None,
+            };
+            vec![ev(LandEvent::AttachmentScripts(Ok((
+                aurora_net::land::ScriptSummary {
+                    memory: Some((320 * 1024, 0)),
+                    urls: Some((1, 38)),
+                },
+                vec![
+                    aurora_net::land::ScriptAttachment {
+                        location: "Skull".into(),
+                        objects: vec![o(1, aurora_i18n::tr!("demo-land-script-hud"), 256, 1)],
+                    },
+                    aurora_net::land::ScriptAttachment {
+                        location: "Right Hand".into(),
+                        objects: vec![o(2, aurora_i18n::tr!("demo-land-script-ao"), 64, 0)],
+                    },
+                ],
+            ))))]
+        }
+        LandCommand::ReturnTasks { tasks, .. } => {
+            RETURNED.lock().extend(tasks.iter().copied());
+            Vec::new()
+        }
+        // ForceObjectSelect: the plaza's disc is the group's, its pillars and
+        // orbs the owner's (the demo scene's local IDs 100 to 116)
+        LandCommand::SelectObjects { return_type, owners, .. } => {
+            use aurora_net::land::{RT_GROUP, RT_LIST, RT_OWNER};
+            let listed = |id: &Uuid| *return_type & RT_LIST != 0 && owners.contains(id);
+            let mut ids = Vec::new();
+            if *return_type & RT_OWNER != 0 || listed(&DEMO_AGENT) {
+                ids.extend(101..=116);
+            }
+            if *return_type & RT_GROUP != 0 || listed(&DEMO_GROUP1) {
+                ids.push(100);
+            }
+            vec![ev(LandEvent::Highlight {
+                handle: super::HANDLE,
+                reset: true,
+                local_ids: ids,
             })]
         }
         // the ownership changes of the General tab, as the simulator makes them

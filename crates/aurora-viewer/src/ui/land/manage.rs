@@ -18,6 +18,7 @@ use crate::ui::{menu, widgets};
 use crate::world::World;
 use crate::world::land::{EnvState, PrimUsage, powers};
 use aurora_net::land::{AL_ALLOW_EXPERIENCE, AL_BLOCK_EXPERIENCE, LandCommand, OS_LEASED, PARCEL_MAX_EXPERIENCE_LIST};
+use aurora_net::land::{RT_GROUP, RT_OTHER, RT_OWNER};
 use aurora_net::{ParcelInfo, parcel_flags as pf, region_flags as rf};
 use egui::{FontId, Pos2, Rect, RichText, Sense, Shape, Vec2};
 use glam::Vec3;
@@ -1024,8 +1025,44 @@ fn objects(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut
         aurora_i18n::tr!("ui-land-manage-return-desc"),
         440.0,
         |ui| {
-            // the highlight of the objects (ParcelSelectObjects) is not drawn yet
-            button(ui, p, "", aurora_i18n::tr!("common-show"), false).on_disabled_hover_text(super::not_yet());
+            // onClickShow*Objects: the simulator highlights them (ForceObjectSelect)
+            let shown = [
+                (
+                    aurora_i18n::tr!("ui-land-manage-return-owner"),
+                    parcel.owner_prims,
+                    can_owned,
+                    RT_OWNER,
+                ),
+                (
+                    aurora_i18n::tr!("ui-land-manage-return-group"),
+                    parcel.group_prims,
+                    can_group,
+                    RT_GROUP,
+                ),
+                (
+                    aurora_i18n::tr!("ui-land-manage-return-others"),
+                    parcel.other_prims,
+                    can_other,
+                    RT_OTHER,
+                ),
+            ];
+            let any_shown = shown.iter().any(|(_, count, can, _)| *can && *count > 0);
+            editable(ui, any_shown, |ui| {
+                let label = format!("{} ▾", aurora_i18n::tr!("common-show"));
+                menu::button(
+                    ui,
+                    p,
+                    egui::Button::new(RichText::new(label).size(12.5)).min_size(Vec2::new(0.0, 26.0)),
+                    |ui| {
+                        for (label, count, can, kind) in shown {
+                            if menu::item_if(ui, p, "eye-filled", label, can && count > 0) {
+                                world.land.show_objects(kind, Vec::new());
+                            }
+                        }
+                    },
+                )
+                .on_hover_text(aurora_i18n::tr!("ui-land-manage-show-tip"));
+            });
             for (label, count, can, confirm) in [
                 (
                     aurora_i18n::tr!("ui-land-manage-return-others"),
@@ -2061,8 +2098,10 @@ fn sale(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut Wo
             }
             // LLFloaterBuyLand for a group and LLFloaterScriptLimits are not ported yet
             button(ui, p, "", aurora_i18n::tr!("ui-land-general-buy-for-group"), false).on_disabled_hover_text(super::not_yet());
-            if v.region.as_ref().is_some_and(|r| r.has_land_resources) {
-                button(ui, p, "", aurora_i18n::tr!("ui-land-general-script-info"), false).on_disabled_hover_text(super::not_yet());
+            if v.region.as_ref().is_some_and(|r| r.has_land_resources)
+                && button(ui, p, "code", aurora_i18n::tr!("ui-land-general-script-info"), true).clicked()
+            {
+                s.scripts.open();
             }
         },
     );

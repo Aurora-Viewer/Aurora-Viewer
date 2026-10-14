@@ -1866,7 +1866,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   listed without `AURORA_DEMO_ENV_SELECT`) and the experience picker with
   its results (a grid-wide one hidden, those already listed hidden). The
   demo simulator applies an environment, a reset, a deed, a release, a
-  reclaim and the returns, and answers with the parcel changed. Roles: `owner` makes
+  reclaim and the returns, and answers with the parcel changed;
+  `show-objects` asks the simulator to highlight the owner's objects (the
+  plaza's pillars and orbs outlined in yellow), `scripts` opens Script
+  info (four scripted objects, then two attachments in "My attachments"). Roles: `owner` makes
   the avatar the owner of the parcel (everything editable); `officer`
   leaves the parcel to the group "Aurora Builders" and gives the avatar
   its land powers except sale, deed, release and terraforming (the

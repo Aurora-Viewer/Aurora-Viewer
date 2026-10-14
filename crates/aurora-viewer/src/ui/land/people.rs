@@ -587,8 +587,10 @@ fn owners_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
         OwnerList::Rows(_) => {
             for (o, name) in &rows {
                 line(ui2, p);
-                if let Some(confirm) = owner_row(ui2, p, s, v, pics, o, name, most, any, name_w) {
-                    s.dialog = Some(Dialog::Confirm(confirm));
+                match owner_row(ui2, p, s, v, pics, o, name, most, any, name_w) {
+                    Some(OwnerAction::Return(confirm)) => s.dialog = Some(Dialog::Confirm(confirm)),
+                    Some(OwnerAction::Show(id)) => world.land.show_objects(aurora_net::land::RT_LIST, vec![id]),
+                    None => {}
                 }
             }
         }
@@ -605,7 +607,14 @@ fn line(ui: &mut egui::Ui, p: &Palette) {
     );
 }
 
-/// An owner's row; Some when its "Return" was clicked.
+/// What a button of an owner's row asks for.
+enum OwnerAction {
+    Return(Confirm),
+    /// Highlight their objects.
+    Show(Uuid),
+}
+
+/// An owner's row; Some when one of its buttons was clicked.
 #[allow(clippy::too_many_arguments)]
 fn owner_row(
     ui: &mut egui::Ui,
@@ -618,7 +627,7 @@ fn owner_row(
     most: i32,
     any: bool,
     name_w: f32,
-) -> Option<Confirm> {
+) -> Option<OwnerAction> {
     const H: f32 = 34.0;
     let mut out = None;
     ui.horizontal(|ui| {
@@ -712,19 +721,23 @@ fn owner_row(
             )
             .clicked()
             {
-                out = Some(Confirm::ReturnList(o.clone()));
+                out = Some(OwnerAction::Return(Confirm::ReturnList(o.clone())));
             }
-            // the highlight of the objects (ParcelSelectObjects) is not drawn yet
-            widgets::action_button_if(
+            // clickShowCore(RT_LIST): the simulator highlights their objects
+            if widgets::action_button_if(
                 ui,
                 p,
                 "",
                 aurora_i18n::tr!("common-show"),
                 widgets::ActionKind::Flat,
                 Vec2::new(0.0, 24.0),
-                false,
+                any,
             )
-            .on_disabled_hover_text(super::not_yet());
+            .on_hover_text(aurora_i18n::tr!("ui-land-people-show-tip"))
+            .clicked()
+            {
+                out = Some(OwnerAction::Show(o.id));
+            }
         });
     });
     out

@@ -167,6 +167,45 @@ impl Session<'_> {
                     .collect();
                 self.send(addr, &m, true);
             }
+            LandCommand::SelectObjects {
+                handle,
+                local_id,
+                return_type,
+                owners,
+            } => {
+                let Some(addr) = self.land_sim(handle) else {
+                    return;
+                };
+                let mut m = ParcelSelectObjects::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.parcel_data.local_id = local_id;
+                m.parcel_data.return_type = return_type;
+                // a null key when there is no list, so that the message is complete
+                let owners = if owners.is_empty() { vec![Uuid::nil()] } else { owners };
+                m.return_i_ds = owners
+                    .into_iter()
+                    .map(|return_id| parcel_select_objects::ReturnIDs { return_id })
+                    .collect();
+                self.send(addr, &m, true);
+            }
+            LandCommand::ReturnTasks { handle, local_id, tasks } => {
+                let Some(addr) = self.land_sim(handle) else {
+                    return;
+                };
+                // one message per batch of TaskIDs, as isSendFullFast cuts them
+                for chunk in tasks.chunks(200) {
+                    let mut m = ParcelReturnObjects::default();
+                    m.agent_data.agent_id = agent;
+                    m.agent_data.session_id = session;
+                    m.parcel_data.local_id = local_id;
+                    m.parcel_data.return_type = land::RT_LIST;
+                    m.task_i_ds = chunk.iter().map(|&task_id| parcel_return_objects::TaskIDs { task_id }).collect();
+                    self.send(addr, &m, true);
+                }
+            }
+            LandCommand::ScriptResources { parcel_id } => self.script_resources(parcel_id),
+            LandCommand::AttachmentScripts => self.attachment_scripts(),
             LandCommand::SetOtherCleanTime { handle, local_id, minutes } => {
                 let Some(addr) = self.land_sim(handle) else {
                     return;
@@ -460,6 +499,108 @@ impl Session<'_> {
 
     /// LLFloaterAvatarPicker::find: the capability searches usernames and
     /// display names; the UDP request is the legacy fallback (FIRE-15194).
+    /// getLandScriptResourcesCoro, then the summary and details coroutines.
+    fn script_resources(&mut self, parcel_id: Uuid) {
+        let events = self.sh.events.clone();
+        let Some(url) = self.main_cap("LandResources") else {
+            let e = aurora_i18n::tr!("session-land-no-land-resources").to_owned();
+            emit(self.sh, NetEvent::Land(LandEvent::ScriptSummary(Err(e))));
+            return;
+        };
+        let http = self.sh.caps_http.clone();
+        tokio::spawn(async move {
+            let mut body = Llsd::new_map();
+            body.insert("parcel_id", parcel_id);
+            let first = http
+                .post(&url)
+                .header("Content-Type", "application/llsd+xml")
+                .header("Accept", "application/llsd+xml")
+                .body(aurora_llsd::to_xml(&body))
+                .send()
+                .await;
+            let answer = match first {
+                Ok(r) if r.status().is_success() => r.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok()),
+                Ok(r) => {
+                    log::warn!("LandResources: HTTP {}", r.status().as_u16());
+                    None
+                }
+                Err(e) => {
+                    log::warn!("LandResources failed: {e}");
+                    None
+                }
+            };
+            let Some(answer) = answer else {
+                let e = aurora_i18n::tr!("session-land-script-info-failed").to_owned();
+                let _ = events.send(NetEvent::Land(LandEvent::ScriptSummary(Err(e))));
+                return;
+            };
+            let get = |url: String| {
+                let http = http.clone();
+                async move {
+                    match http.get(&url).header("Accept", "application/llsd+xml").send().await {
+                        Ok(r) if r.status().is_success() => r
+                            .bytes()
+                            .await
+                            .ok()
+                            .and_then(|b| aurora_llsd::from_xml(&b).ok())
+                            .ok_or_else(|| aurora_i18n::tr!("session-land-unreadable-response").to_owned()),
+                        Ok(r) => Err(format!("HTTP {}", r.status().as_u16())),
+                        Err(e) => Err(e.to_string()),
+                    }
+                }
+            };
+            let summary_url = answer["ScriptResourceSummary"].to_string_value();
+            let details_url = answer["ScriptResourceDetails"].to_string_value();
+            let (summary, details) = tokio::join!(
+                async {
+                    if summary_url.is_empty() {
+                        None
+                    } else {
+                        Some(get(summary_url).await)
+                    }
+                },
+                async {
+                    if details_url.is_empty() {
+                        None
+                    } else {
+                        Some(get(details_url).await)
+                    }
+                }
+            );
+            if let Some(s) = summary {
+                let _ = events.send(NetEvent::Land(LandEvent::ScriptSummary(s.map(|v| land::parse_script_summary(&v)))));
+            }
+            if let Some(d) = details {
+                let _ = events.send(NetEvent::Land(LandEvent::ScriptDetails(d.map(|v| land::parse_script_details(&v)))));
+            }
+        });
+    }
+
+    /// LLFloaterMyScripts::getAttachmentLimitsCoro.
+    fn attachment_scripts(&mut self) {
+        let events = self.sh.events.clone();
+        let Some(url) = self.main_cap("AttachmentResources") else {
+            let e = aurora_i18n::tr!("session-land-no-attachment-resources").to_owned();
+            emit(self.sh, NetEvent::Land(LandEvent::AttachmentScripts(Err(e))));
+            return;
+        };
+        let http = self.sh.caps_http.clone();
+        tokio::spawn(async move {
+            let result = match http.get(&url).header("Accept", "application/llsd+xml").send().await {
+                Ok(r) if r.status().is_success() => r
+                    .bytes()
+                    .await
+                    .ok()
+                    .and_then(|b| aurora_llsd::from_xml(&b).ok())
+                    .map(|v| (land::parse_script_summary(&v), land::parse_attachment_scripts(&v)))
+                    .ok_or_else(|| aurora_i18n::tr!("session-land-unreadable-response").to_owned()),
+                Ok(r) => Err(format!("HTTP {}", r.status().as_u16())),
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = events.send(NetEvent::Land(LandEvent::AttachmentScripts(result)));
+        });
+    }
+
     /// LLExperienceCache::findExperienceByNameCoro.
     fn experience_search(&mut self, query: String, page: i32) {
         let events = self.sh.events.clone();
@@ -606,6 +747,18 @@ impl Session<'_> {
                 NetEvent::Land(LandEvent::Dwell {
                     local_id: m.data.local_id,
                     dwell: m.data.dwell,
+                }),
+            );
+        } else if id == ForceObjectSelect::ID {
+            // LLSelectMgr::processForceObjectSelect: highlight, not select
+            let m: ForceObjectSelect = pkt.decode()?;
+            let handle = self.handle_of(from);
+            emit(
+                self.sh,
+                NetEvent::Land(LandEvent::Highlight {
+                    handle,
+                    reset: m.header.reset_list,
+                    local_ids: m.data.iter().map(|d| d.local_id).collect(),
                 }),
             );
         } else if id == ParcelObjectOwnersReply::ID {

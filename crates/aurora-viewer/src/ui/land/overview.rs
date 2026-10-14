@@ -398,12 +398,16 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut
             false,
         )
         .on_disabled_hover_text(menu::not_yet());
-        more_menu(ui, p, v, world);
+        let mut scripts = false;
+        more_menu(ui, p, v, world, &mut scripts);
+        if scripts {
+            s.scripts.open();
+        }
     });
 }
 
 /// "…": the rarer actions of Firestorm's General tab.
-fn more_menu(ui: &mut egui::Ui, p: &Palette, v: &View, world: &World) {
+fn more_menu(ui: &mut egui::Ui, p: &Palette, v: &View, world: &World, scripts: &mut bool) {
     let Some(t) = crate::ui::icons::global("dots-filled") else {
         return;
     };
@@ -422,8 +426,10 @@ fn more_menu(ui: &mut egui::Ui, p: &Palette, v: &View, world: &World) {
             ui.ctx().copy_text(id.to_string());
         }
         menu::todo(ui, p, "users-group", aurora_i18n::tr!("ui-land-general-buy-for-group"));
-        if v.region.as_ref().is_some_and(|r| r.has_land_resources) {
-            menu::todo(ui, p, "code", aurora_i18n::tr!("ui-land-general-script-info"));
+        if v.region.as_ref().is_some_and(|r| r.has_land_resources)
+            && menu::item(ui, p, "code", aurora_i18n::tr!("ui-land-general-script-info"))
+        {
+            *scripts = true;
         }
     })
     .on_hover_text(aurora_i18n::tr!("ui-land-overview-more"));

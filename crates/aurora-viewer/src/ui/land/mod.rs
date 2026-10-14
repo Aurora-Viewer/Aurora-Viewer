@@ -23,6 +23,7 @@ mod objects;
 mod options;
 mod overview;
 mod people;
+mod scripts;
 mod sound;
 
 use aurora::Page;
@@ -253,6 +254,8 @@ pub struct LandUi {
     refresh_owners_once: bool,
     /// Demo captures: scroll "People and objects" to the object owners.
     scroll_to_owners: bool,
+    /// Demo captures: "Show" the owner's objects once the parcel is known.
+    show_once: bool,
     /// The overview's covenant shown in full.
     covenant_open: bool,
     was_open: bool,
@@ -286,6 +289,10 @@ pub struct LandUi {
     pass_edit: Option<(i32, f32)>,
     /// Export / import file dialog running.
     file_job: Option<files::Job>,
+    /// Offline demo: the region answers LandResources.
+    demo: bool,
+    /// "Script info" (LLFloaterScriptLimits).
+    scripts: scripts::ScriptsUi,
     /// Images to stream (snapshot, media texture).
     pub wanted_images: HashSet<Uuid>,
     /// Residents whose profile picture the header waits for.
@@ -338,6 +345,21 @@ impl LandUi {
                 picker.search_now = true;
                 Dialog::ExperiencePicker(picker)
             });
+            return;
+        }
+        if key == "scripts" {
+            self.page = Page::Manage;
+            self.manage_section = manage::Section::Sale;
+            self.manage_jump = Some(manage::Section::Sale);
+            self.manage_open.insert(manage::Section::Sale);
+            self.scripts.open();
+            return;
+        }
+        if key == "show-objects" {
+            self.page = Page::Manage;
+            self.manage_section = manage::Section::Objects;
+            self.manage_jump = Some(manage::Section::Objects);
+            self.show_once = true;
             return;
         }
         if key == "owners" {
@@ -404,9 +426,12 @@ impl LandUi {
         let mut streams_changed = false;
         if !*open {
             if self.was_open {
-                // onVisibilityChanged: the selection is dropped with the floater
+                // onVisibilityChanged: the selection is dropped with the
+                // floater, and the objects "Show" highlighted (unhighlightAll)
                 world.land.deselect();
+                world.land.unhighlight();
                 self.dialog = None;
+                self.scripts.open = false;
                 self.picker.open = false;
                 self.texture.open = false;
                 self.was_open = false;
@@ -419,6 +444,11 @@ impl LandUi {
                 Self::select_agent_parcel(world);
             }
         }
+        if self.show_once && world.land.sel.as_ref().is_some_and(|s| s.parcel.is_some()) {
+            self.show_once = false;
+            world.land.show_objects(aurora_net::land::RT_OWNER, Vec::new());
+        }
+        self.demo = demo;
         let view = self.view(world);
         let screen = ctx.content_rect();
         // FIRE-17280: no experiences tab where the region has none
@@ -477,6 +507,7 @@ impl LandUi {
             });
         });
         dialogs::show(ctx, p, self, &view, world);
+        scripts::show(ctx, p, &mut self.scripts, &view, world);
         if let Some(ids) = self.picker.show(ctx, p, world) {
             match self.pick_for.take() {
                 Some(PickFor::Access) => access::add_allowed(world, &ids),
@@ -523,7 +554,7 @@ impl LandUi {
                 sim_access: i.sim_access,
                 flags: i.region_flags,
                 max_tasks: r.max_tasks,
-                has_land_resources: r.caps.contains_key("LandResources"),
+                has_land_resources: r.caps.contains_key("LandResources") || self.demo,
             })
         });
         View {
