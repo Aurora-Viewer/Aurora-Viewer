@@ -724,8 +724,9 @@ fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusI
         *action = BarAction::NetStats(!st.net_stats);
     }
     menu::separator(ui, p);
-    // Alt+Shift+U, the next part of the bars
-    menu::todo(ui, p, "eye-off", aurora_i18n::tr!("ui-bars-hide-interface"));
+    if super::interface_item(ui, p, st) {
+        *action = BarAction::ToggleInterface;
+    }
     if menu::item(ui, p, "layout-bottombar-filled", aurora_i18n::tr!("ui-bars-customize-bars")) {
         *action = BarAction::CustomizeBars;
     }
@@ -1008,6 +1009,8 @@ mod tests {
             net_loss: 0.0,
             graphics_preset: None,
             camera_preset: Default::default(),
+            interface_hidden: false,
+            interface_keys: String::new(),
         }
     }
 

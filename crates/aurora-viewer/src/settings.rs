@@ -455,6 +455,9 @@ pub struct Settings {
     pub favorites_row_folded: bool,
     /// What the system island shows.
     pub system_island: SystemIsland,
+    /// Firestorm's ConfirmHideUI ("Confirm before hiding UI"): with
+    /// Firestorm's bars, hiding the interface asks first.
+    pub confirm_hide_interface: bool,
     /// Firestorm's traffic indicator (ShowNetStats, off by default): a
     /// small curve of the network in the system island.
     pub show_net_stats: bool,
@@ -943,6 +946,7 @@ impl Default for Settings {
             favorites_access: FavoritesAccess::Menu,
             favorites_row_folded: false,
             system_island: SystemIsland::default(),
+            confirm_hide_interface: true,
             show_net_stats: false,
             classic_people: false,
             classic_restart_alert: false,
