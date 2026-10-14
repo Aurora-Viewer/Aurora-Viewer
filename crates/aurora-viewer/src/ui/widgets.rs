@@ -13,13 +13,15 @@ pub mod demo;
 #[cfg(test)]
 pub(crate) mod elide_tests;
 pub(crate) mod keycap;
-mod pills;
+pub(crate) mod pills;
 mod resize;
 mod workspace;
 pub use color::color_button;
 pub use pills::{dot_pill, dot_pill_width, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide, search_box};
 pub use workspace::{Modal, collapsing, collapsing_forced, glyph, navigation, navigation_wrapped, section_header, stat, surface};
-pub(crate) use workspace::{finish_bar_glass, inventory_item_label, inventory_spacing, overlay, overlay_frame, paint_world_label};
+pub(crate) use workspace::{
+    finish_bar_glass, inventory_item_label, inventory_spacing, island_shape, overlay, overlay_frame, paint_world_label,
+};
 
 /// Keep status suffixes at normal weight and slightly darker than the name.
 pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, color: Color32) -> egui::text::LayoutJob {

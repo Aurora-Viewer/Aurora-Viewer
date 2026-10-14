@@ -257,16 +257,27 @@ pub fn filter_pill_width(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
 /// The search field of a list: a magnifier then the text, on the field's
 /// face.
 pub fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    icon_field(ui, p, "search-filled", text, hint, width)
+}
+
+/// The face of a field of the redrawn windows and menus: the search box's,
+/// the SLURL of the place menu.
+pub fn field_frame(ui: &egui::Ui, p: &Palette) -> egui::Frame {
     egui::Frame::new()
         .fill(p.bar)
         .corner_radius(ui.visuals().widgets.inactive.corner_radius)
         .inner_margin(egui::Margin::symmetric(9, 4))
+}
+
+/// A text field on that face, a Tabler `icon` before the text.
+pub fn icon_field(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    field_frame(ui, p)
         .show(ui, |ui| {
             ui.set_width(width - 18.0);
             // left to right even in a row laid out from the right
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 7.0;
-                super::glyph(ui, "search-filled", p.muted, 13.0);
+                super::glyph(ui, icon, p.muted, 13.0);
                 ui.add(
                     egui::TextEdit::singleline(text)
                         .frame(egui::Frame::NONE)

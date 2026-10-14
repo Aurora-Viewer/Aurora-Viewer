@@ -1405,6 +1405,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
+| `AURORA_DEMO_BARS=<words>` | Top bar: islands, Firestorm's bars, place island stretched or not, rights named, a menu open |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
@@ -2097,6 +2098,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing
   is saved.
+- **`AURORA_DEMO_BARS=<words>`**: the states of the top bar for the
+  comparisons with the bars mockup, for this run only (nothing is saved),
+  with the mockup's long parcel name. Words, separated by commas:
+  `normal` (the islands as set), `legacy` (Firestorm's bars), `compact`
+  (the place island as wide as its content), `rights` (the parcel rights
+  named when there is room), `nobug` / `bug` (the bug report button
+  hidden / shown: the menu island holds the wolf alone, the place follows
+  8 px away); and one menu opened at frame 300: `menu`
+  (the place), `options` (right click on the place island), `favorites`,
+  `star`, `status` (the account's picture). Capture at
+  `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
+  at frame 780: at 1280 the place shows the parcel and the region, at
+  1536 the position too, with `rights` the forbidden rights are named at
+  1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
+  the bell's violet counter.
 - **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident

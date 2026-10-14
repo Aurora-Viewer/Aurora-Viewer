@@ -183,14 +183,42 @@ pub fn visible(c: &CenterUi) -> (Vec<Peek>, usize) {
 /// Bell at the right end of the navigation bar: red count (grey when paused),
 /// bounce when the count grows, a small ring; in do not disturb a grey bell
 /// with a moon. Returns whether it was clicked and its rectangle.
-pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, c: &CenterUi, unread: usize, open: bool, dnd: bool) -> (bool, Rect) {
+/// In an island of the Aurora bars (`island`): a slot of the island, the
+/// ringing bell while something waits, and the count in the violet of the
+/// Conversations button's (one counter for both, grey while paused).
+#[allow(clippy::too_many_arguments)]
+pub fn bell(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    c: &CenterUi,
+    unread: usize,
+    open: bool,
+    dnd: bool,
+    island: bool,
+) -> (bool, Rect) {
     let now = ui.input(|i| i.time);
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(26.0, 22.0), egui::Sense::click());
+    let size = if island {
+        Vec2::splat(super::bars::islands::SLOT)
+    } else {
+        Vec2::new(26.0, 22.0)
+    };
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     if resp.hovered() || open {
-        ui.painter()
-            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
+        let radius = if island {
+            ui.visuals().window_corner_radius
+        } else {
+            ui.visuals().widgets.inactive.corner_radius
+        };
+        ui.painter().rect_filled(rect, radius, p.raised);
     }
-    let icon = if dnd { "bell-z-filled" } else { "bell-filled" };
+    let icon = if dnd {
+        "bell-z-filled"
+    } else if island && unread > 0 {
+        "bell-ringing-filled"
+    } else {
+        "bell-filled"
+    };
     let col = if dnd { p.muted } else { p.ink };
     // the ring: a damped swing around the top of the bell
     let angle = c
@@ -207,15 +235,17 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, c: &CenterUi, unread:
         let r = Rect::from_center_size(rect.left_bottom() + Vec2::new(5.0, -5.0), Vec2::splat(9.0));
         egui::Image::new(t).tint(p.danger).paint_at(ui, r);
     }
-    if unread > 0 {
+    // the bounce: 1 → 1.45 → 1 over 380 ms
+    let s = c
+        .bump_at
+        .map(|t| ((now - t) / BUMP) as f32)
+        .filter(|t| *t < 1.0)
+        .map_or(1.0, |t| 1.0 + 0.45 * (t * std::f32::consts::PI).sin());
+    if unread > 0 && island {
+        super::bars::islands::count(ui, p, rect, unread, s, dnd);
+    } else if unread > 0 {
         let text = if unread > 99 { "99+".to_owned() } else { unread.to_string() };
         let (fill, ink) = if dnd { (p.raised, p.muted) } else { (p.danger, p.on_accent) };
-        // the bounce: 1 → 1.45 → 1 over 380 ms
-        let s = c
-            .bump_at
-            .map(|t| ((now - t) / BUMP) as f32)
-            .filter(|t| *t < 1.0)
-            .map_or(1.0, |t| 1.0 + 0.45 * (t * std::f32::consts::PI).sin());
         let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(9.5 * s), ink);
         let h = 14.0 * s;
         let w = (galley.size().x + 7.0 * s).max(h);
