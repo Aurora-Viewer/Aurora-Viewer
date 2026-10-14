@@ -33,6 +33,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
         NotificationsStyle::Legacy
     };
     s.world_map_style = if aurora { WorldMapStyle::Aurora } else { WorldMapStyle::Legacy };
+    s.classic_bars = !aurora;
     s.classic_people = !aurora;
     s.classic_profiles = !aurora;
     s.photo_window = if aurora {
@@ -363,6 +364,16 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             c = true;
         }
         between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-bars"),
+            aurora_i18n::tr!("ui-options-aurora-bars-help"),
+            aurora_i18n::tr!("ui-options-aurora-bars-islands"),
+            aurora_i18n::tr!("ui-options-aurora-bars-classic"),
+            &mut s.classic_bars,
+        );
+        between(ui, p);
         let mut legacy = s.world_map_style == WorldMapStyle::Legacy;
         if look_choice(
             ui,
@@ -514,6 +525,7 @@ mod tests {
         assert_eq!(s.lookat.aim, Aim::Direction);
         assert_eq!(s.notifications_style, NotificationsStyle::Legacy);
         assert_eq!(s.world_map_style, WorldMapStyle::Legacy);
+        assert!(s.classic_bars, "the full-width bars come back");
         assert!(s.classic_people, "People › Near you shows the radar table");
         assert!(s.classic_profiles);
         assert_eq!(s.photo_window, PhotoWindowStyle::Legacy);
@@ -529,6 +541,7 @@ mod tests {
         assert_eq!(s.notifications_style, NotificationsStyle::Aurora);
         assert_eq!(fresh.notifications_style, NotificationsStyle::Aurora);
         assert_eq!(s.world_map_style, fresh.world_map_style);
+        assert!(!s.classic_bars && !fresh.classic_bars, "the islands are the default");
         assert!(
             !s.classic_people && !fresh.classic_people,
             "the rows grouped by range are the default"
@@ -605,6 +618,7 @@ mod tests {
             "ui-options-aurora-name-tags",
             "ui-options-aurora-look-at",
             "ui-options-aurora-notifications",
+            "ui-options-aurora-bars",
             "ui-options-aurora-world-map",
             "ui-options-aurora-people",
             "ui-options-aurora-profiles",
@@ -635,6 +649,7 @@ mod tests {
             "ui-options-aurora-about-land-aurora",
             "ui-options-aurora-aim-point",
             "ui-options-aurora-animated-bell",
+            "ui-options-aurora-bars-islands",
         ] {
             assert!(texts.iter().any(|t| t == aurora_i18n::text(choice)), "{choice}");
         }

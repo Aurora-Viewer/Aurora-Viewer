@@ -1,6 +1,12 @@
 //! Firestorm-like chrome: menu/status bar and navigation bar at the top,
 //! chat input + feature buttons at the bottom. Flat, skinnable via
-//! `skin::Layout` and the theme palette.
+//! `skin::Layout` and the theme palette. Aurora's top bar, glass islands
+//! over the world, is in `islands.rs` and `place.rs`; these full-width bars
+//! are its Firestorm look (Preferences › Aurora).
+
+pub(crate) mod demo;
+pub mod islands;
+mod place;
 
 use super::Panels;
 use super::icons::Icons;
@@ -68,6 +74,30 @@ pub enum BarAction {
     /// World › Landmark this Place (World.CreateLandmark).
     CreateLandmark,
     LandmarkStar(StarAction),
+    /// The settings of the place island, from its right-click menu.
+    PlaceBar {
+        stretch: bool,
+        rights_text: bool,
+    },
+    /// Places › Favorites (the Favorites button of the place island).
+    OpenFavorites,
+}
+
+/// How the islands of Aurora's top bar are set (Preferences › Interface).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct IslandsLook {
+    /// The place island reaches the account island.
+    pub stretch: bool,
+    /// The parcel rights are named when there is room.
+    pub rights_text: bool,
+}
+
+/// A place of the teleport history, in the place menu.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecentPlace {
+    pub name: String,
+    pub region: String,
+    pub slurl: String,
 }
 
 pub struct StatusInfo<'a> {
@@ -107,6 +137,16 @@ pub struct StatusInfo<'a> {
     /// The landmark lying on the agent's parcel (hasParcelLandmark): the
     /// star is lit and World › Landmark this place greyed out.
     pub parcel_landmark: Option<super::landmark_create::ParcelLandmark>,
+    /// Firestorm's full-width bars (Preferences › Aurora) instead of the
+    /// islands.
+    pub classic_bars: bool,
+    pub islands: IslandsLook,
+    /// Our name and profile picture (the account island).
+    pub own_name: &'a str,
+    pub own_pic: Option<&'a egui::TextureHandle>,
+    /// The last places of the teleport history, newest first, without the
+    /// one we are in (the place menu).
+    pub recent: Vec<RecentPlace>,
 }
 
 /// The navigation bar's star (LLLocationInputCtrl's add landmark button).
@@ -301,7 +341,21 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
     if status.reject_teleports || status.reject_group_invites || status.reject_friendship || status.ignore_adhoc {
         ui.painter().circle_stroke(rect.center(), 7.5, egui::Stroke::new(1.0, p.muted));
     }
-    let mut tip = aurora_i18n::tr!("ui-bars-status", value0 = status_name(&status).to_string());
+    let resp = resp.on_hover_text(status_tip(&status));
+    // demo captures: AURORA_DEMO_STATUSMENU=1 opens it (=invisible: with
+    // that status, set by the viewer)
+    static DEMO_OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_STATUSMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300 {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
+    }
+    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        status_menu_body(ui, p, status, action);
+    });
+}
+
+/// The tooltip of the status: its name, what invisible means, the refusals.
+fn status_tip(status: &crate::world::status::StatusModes) -> String {
+    let mut tip = aurora_i18n::tr!("ui-bars-status", value0 = status_name(status).to_string());
     if status.invisible {
         tip.push_str(&format!("\n{}", aurora_i18n::tr!("ui-bars-invisible-tip")));
     }
@@ -315,14 +369,13 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
             tip.push_str(&format!("\n• {what}"));
         }
     }
-    let resp = resp.on_hover_text(tip);
-    // demo captures: AURORA_DEMO_STATUSMENU=1 opens it (=invisible: with
-    // that status, set by the viewer)
-    static DEMO_OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_STATUSMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300 {
-        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
-    }
-    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+    tip
+}
+
+/// The menu of the status light (and of the account island's picture):
+/// availability, automatic responses, refusals.
+fn status_menu_body(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::StatusModes, action: &mut BarAction) {
+    {
         ui.set_min_width(250.0);
         // availability: one of four, like a presence menu. "Invisible"
         // is Firestorm's button of the friends list that hides our online
@@ -380,7 +433,7 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
         if !matches!(sub, BarAction::None) {
             *action = sub;
         }
-    });
+    }
 }
 
 /// Viewer menus: the submenus of the wolf menu button of the navigation bar
@@ -785,17 +838,25 @@ fn landmark_star(
     paint_icon(ui, icons, "star", glyph, GLYPH, if resp.hovered() { p.ink } else { p.muted });
     let mut out = None;
     menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-        if menu::item(ui, p, "star-filled", aurora_i18n::tr!("landmark-star-add-favorites")) {
-            out = Some(StarAction::AddFavorite);
-        }
-        if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-star-add-landmarks")) {
-            out = Some(StarAction::AddLandmark);
-        }
-        if menu::item(ui, p, "dots-filled", aurora_i18n::tr!("landmark-star-more")) {
-            out = Some(StarAction::MoreOptions);
-        }
+        out = star_menu(ui, p);
     });
     resp.on_hover_text(aurora_i18n::tr!("landmark-star-add"));
+    out
+}
+
+/// The outline star's quick menu: Favorites, Landmarks, the Create Landmark
+/// window.
+fn star_menu(ui: &mut egui::Ui, p: &Palette) -> Option<StarAction> {
+    let mut out = None;
+    if menu::item(ui, p, "star-filled", aurora_i18n::tr!("landmark-star-add-favorites")) {
+        out = Some(StarAction::AddFavorite);
+    }
+    if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-star-add-landmarks")) {
+        out = Some(StarAction::AddLandmark);
+    }
+    if menu::item(ui, p, "dots-filled", aurora_i18n::tr!("landmark-star-more")) {
+        out = Some(StarAction::MoreOptions);
+    }
     out
 }
 
@@ -814,16 +875,38 @@ fn state_chip(ui: &mut egui::Ui, p: &Palette, text: &str) {
     super::widgets::paint_ink_centered(ui.painter(), galley, rect.center(), p.ink);
 }
 
-/// Voice connection light: green connected, orange connecting, red not
-/// connected, grey turned off. Returns true when clicked (voice settings).
-fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voice::VoiceLight, why: &str) -> bool {
+/// The colour and the name of the voice connection's state.
+fn voice_state(p: &Palette, light: crate::voice::VoiceLight) -> (Color32, &'static str) {
     use crate::voice::VoiceLight as L;
-    let (col, state) = match light {
+    match light {
         L::Connected => (p.success, aurora_i18n::tr!("common-voice-connected")),
         L::Connecting => (p.amber, aurora_i18n::tr!("common-connecting-to-voice")),
         L::Down => (p.danger, aurora_i18n::tr!("ui-bars-voice-not-connected")),
         L::Off => (p.muted_dim, aurora_i18n::tr!("common-voice-disabled")),
+    }
+}
+
+/// The voice light as a dot on the microphone's upper right, ringed with
+/// the bar's colour, pulsing while connecting (the mockup's `.vdot`).
+fn voice_dot(ui: &egui::Ui, p: &Palette, icon: egui::Rect, light: crate::voice::VoiceLight) {
+    let (col, _) = voice_state(p, light);
+    let center = icon.right_top() + Vec2::new(0.5, 1.5);
+    let col = if light == crate::voice::VoiceLight::Connecting {
+        let t = ui.input(|i| i.time) as f32;
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+        col.gamma_multiply(0.55 + 0.45 * (t * 5.0).sin().abs())
+    } else {
+        col
     };
+    ui.painter().circle_filled(center, 3.5, p.bar);
+    ui.painter().circle_filled(center, 2.25, col);
+}
+
+/// Voice connection light: green connected, orange connecting, red not
+/// connected, grey turned off. Returns true when clicked (voice settings).
+fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voice::VoiceLight, why: &str) -> bool {
+    use crate::voice::VoiceLight as L;
+    let (col, state) = voice_state(p, light);
     // as wide as its content, with the same margin on both sides (the label
     // changes with the language)
     const MARGIN: f32 = 6.0;
@@ -989,6 +1072,9 @@ pub fn top_bars(
     notif: &mut super::notifications::NotifUi,
     bell: BellState,
 ) -> (BarAction, super::audio::AudioAction) {
+    if !st.classic_bars {
+        return islands::top(ui, p, icons, panels, st, audio, audio_ui, media, notif, bell);
+    }
     let mut action = BarAction::None;
     let mut audio_action = super::audio::AudioAction::None;
     let mut glass = None;
@@ -1013,7 +1099,7 @@ pub fn top_bars(
                 }
                 // Firestorm's notification well: the bell next to the wolf
                 if !bell.aurora {
-                    let (clicked, rect) = super::notifications::bell(ui, p, icons, bell.unread, notif.open);
+                    let (clicked, rect) = super::notifications::bell(ui, p, icons, bell.unread, notif.open, false);
                     notif.anchor = Some(rect.left_bottom());
                     notif.bell = Some(rect);
                     if clicked {
@@ -1048,7 +1134,7 @@ pub fn top_bars(
                         // room for the count at the window's edge
                         ui.add_space(4.0);
                         let (clicked, rect) =
-                            super::notification_center::bell(ui, p, icons, &notif.center, bell.unread, notif.open, bell.dnd);
+                            super::notification_center::bell(ui, p, icons, &notif.center, bell.unread, notif.open, bell.dnd, false);
                         notif.anchor = Some(rect.left_bottom());
                         notif.bell = Some(rect);
                         if clicked {
@@ -1070,7 +1156,7 @@ pub fn top_bars(
                     if fps.clicked() {
                         panels.perf = !panels.perf;
                     }
-                    audio_action = super::audio::top_controls(ui, p, icons, audio, audio_ui, media);
+                    audio_action = super::audio::top_controls(ui, p, icons, audio, audio_ui, media, super::audio::BAR_SLOT);
                     if voice_light(ui, p, icons, st.voice.0, &st.voice.1) {
                         action = BarAction::VoicePrefs;
                     }
@@ -1358,6 +1444,9 @@ pub struct MicButton<'a> {
     pub devices_changed: bool,
     /// Output: the panel opens, its lists of devices are to be read again.
     pub list_devices: bool,
+    /// With the islands, the voice connection light moves from the top bar
+    /// to a dot on the button (green, orange while connecting, red, grey).
+    pub voice_dot: Option<(crate::voice::VoiceLight, String)>,
 }
 
 /// Width of the arrow's zone, right of the microphone.
@@ -1421,6 +1510,9 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
         p.muted_dim
     };
     paint_icon(ui, icons, icon, icon_rect, icon_size, tint);
+    if let Some((light, _)) = &mic.voice_dot {
+        voice_dot(ui, p, icon_rect, *light);
+    }
     if let Some(arrow) = &arrow {
         // the arrow points to where its panel opens
         let zone = arrow.rect.shrink2(Vec2::new(1.0, 3.0));
@@ -1438,11 +1530,19 @@ fn mic_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, width: f32, mic: &m
     } else {
         aurora_i18n::tr!("ui-bars-microphone-muted")
     };
-    let tip = if mic.hold {
+    let mut tip = if mic.hold {
         aurora_i18n::tr!("ui-bars-hold-to-talk", state = state.to_string())
     } else {
         aurora_i18n::tr!("extra-click-to-enable-mute-microphone", state = state.to_string())
     };
+    if let Some((light, why)) = &mic.voice_dot {
+        // what the top bar's voice light said
+        let (_, name) = voice_state(p, *light);
+        tip.push_str(&format!("\n{name}"));
+        if !why.is_empty() && why != name {
+            tip.push_str(&format!("\n{why}"));
+        }
+    }
     let resp = resp.on_hover_text(tip);
     let arrow = arrow.map(|r| {
         if open {

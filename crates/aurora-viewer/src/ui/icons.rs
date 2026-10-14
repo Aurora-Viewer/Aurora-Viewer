@@ -18,6 +18,7 @@ macro_rules! svg_list {
 /// Embedded Tabler outline icons, by Tabler name.
 const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "outline", "":
+    "antenna-bars-5",
     "armchair",
     "arrow-back-up",
     "arrow-bar-to-down",
@@ -25,6 +26,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "arrow-left",
     "arrow-right",
     "arrows-exchange",
+    "arrows-horizontal",
     "arrows-maximize",
     "arrows-minimize",
     "arrows-move",
@@ -156,6 +158,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "bone",
     "book",
     "bookmark",
+    "bookmarks",
     "brand-discord",
     "brand-github",
     "brand-youtube",
@@ -178,6 +181,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "circle-x",
     "click",
     "clipboard-text",
+    "clock",
     "cloud-data-connection",
     "code-circle",
     "coin",

@@ -370,6 +370,34 @@ pub(crate) fn finish_bar_glass(painter: &egui::Painter, slot: egui::layers::Shap
     }
 }
 
+/// Surface of a glass island of the Aurora bars (`ui/bars/islands.rs`):
+/// the windows' shadow, the blur they share under the `bar` colour, a
+/// hairline border, the windows' corners. The islands are a shade lighter
+/// than the full-width bars (80 % of the colour where the bars and windows
+/// have 90 %), as in the mockup the human validated. An opaque skin
+/// (panel_alpha = 255) gets a plain face.
+pub(crate) fn island_shape(ctx: &egui::Context, p: &Palette, rect: egui::Rect) -> egui::Shape {
+    let visuals = &ctx.global_style().visuals;
+    let radius = visuals.window_corner_radius;
+    let shadow = visuals.window_shadow.as_shape(rect, radius);
+    let border = Stroke::new(1.0, p.ink.gamma_multiply(0.07));
+    let face = if p.panel_alpha < 255 {
+        let alpha = (f32::from(p.panel_alpha) * ISLAND_TINT).round() as u8;
+        let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), alpha);
+        aurora_render::glass_panel(rect.shrink(1.0), f32::from(radius.nw), tint)
+    } else {
+        egui::Shape::rect_filled(rect, radius, p.bar)
+    };
+    egui::Shape::Vec(vec![
+        shadow.into(),
+        face,
+        egui::Shape::rect_stroke(rect, radius, border, egui::StrokeKind::Inside),
+    ])
+}
+
+/// The islands' tint against the bars' (0.80 / 0.90).
+const ISLAND_TINT: f32 = 0.8 / 0.9;
+
 /// Frame of a panel drawn outside a window (toasts, drop-down panels, the
 /// login cards): the windows' tint, border, corners and shadow.
 pub(crate) fn overlay_frame(ctx: &egui::Context, p: &Palette) -> egui::Frame {

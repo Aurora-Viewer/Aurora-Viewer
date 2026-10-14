@@ -39,6 +39,9 @@ pub struct ParcelIcon {
     /// Short text drawn after the icon (health when damage is on).
     pub label: Option<String>,
     pub tip: String,
+    /// The ability in a word or two, written next to the icon by the place
+    /// island of the Aurora bars when there is room for it.
+    pub name: &'static str,
 }
 
 /// What the rules need to know about where the agent stands.
@@ -66,6 +69,11 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         "microphone-filled",
         voice,
         if voice {
+            aurora_i18n::tr!("ui-parcel-icons-name-voice")
+        } else {
+            aurora_i18n::tr!("ui-parcel-icons-name-no-voice")
+        },
+        if voice {
             aurora_i18n::tr!("ui-parcel-icons-voice-allowed")
         } else if !region(rf::ALLOW_VOICE) {
             aurora_i18n::tr!("ui-parcel-icons-voice-disabled-in-this-region-you-will-not-hear")
@@ -80,6 +88,11 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         "plane-tilt-filled",
         fly,
         if fly {
+            aurora_i18n::tr!("ui-parcel-icons-name-fly")
+        } else {
+            aurora_i18n::tr!("ui-parcel-icons-name-no-fly")
+        },
+        if fly {
             aurora_i18n::tr!("ui-parcel-icons-flight-allowed")
         } else if region(rf::BLOCK_FLY) {
             aurora_i18n::tr!("ui-parcel-icons-flight-disabled-in-this-region-you-cannot-fly-here")
@@ -93,6 +106,11 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     out.push(icon(
         "hand-stop",
         push,
+        if push {
+            aurora_i18n::tr!("ui-parcel-icons-name-push")
+        } else {
+            aurora_i18n::tr!("ui-parcel-icons-name-no-push")
+        },
         if push {
             aurora_i18n::tr!("ui-parcel-icons-pushing-allowed-other-people-s-scripts-can-push-you")
         } else {
@@ -109,6 +127,11 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     out.push(icon(
         "box",
         build,
+        if build {
+            aurora_i18n::tr!("ui-parcel-icons-name-build")
+        } else {
+            aurora_i18n::tr!("ui-parcel-icons-name-no-build")
+        },
         if build && parcel(pf::CREATE_OBJECTS) {
             aurora_i18n::tr!("ui-parcel-icons-building-allowed-for-everyone-you-can-create-and-rez")
         } else if build {
@@ -126,6 +149,11 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     out.push(icon(
         "code",
         scripts,
+        if scripts {
+            aurora_i18n::tr!("ui-parcel-icons-name-scripts")
+        } else {
+            aurora_i18n::tr!("ui-parcel-icons-name-no-scripts")
+        },
         if scripts {
             aurora_i18n::tr!("ui-parcel-icons-scripts-allowed")
         } else if region(rf::ESTATE_SKIP_SCRIPTS) {
@@ -145,6 +173,11 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     let mut d = icon(
         "heart-filled",
         !damage,
+        if damage {
+            aurora_i18n::tr!("ui-parcel-icons-name-damage")
+        } else {
+            aurora_i18n::tr!("ui-parcel-icons-name-safe")
+        },
         &if damage {
             aurora_i18n::tr!(
                 "ui-parcel-icons-damage-allowed-you-can-be-hurt-here-health-if",
@@ -164,6 +197,11 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         if see { "eye-filled" } else { "eye-off" },
         see,
         if see {
+            aurora_i18n::tr!("ui-parcel-icons-name-see")
+        } else {
+            aurora_i18n::tr!("ui-parcel-icons-name-isolated")
+        },
+        if see {
             aurora_i18n::tr!("ui-parcel-icons-avatars-visible-people-on-other-parcels-can-see-and")
         } else {
             aurora_i18n::tr!("ui-parcel-icons-isolated-parcel-you-cannot-see-residents-on-other-parcels")
@@ -172,14 +210,23 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     out
 }
 
-fn icon(icon: &'static str, ok: bool, tip: &str) -> ParcelIcon {
+fn icon(icon: &'static str, ok: bool, name: &'static str, tip: &str) -> ParcelIcon {
     ParcelIcon {
         icon,
         ok,
         strike: !ok && !icon.ends_with("-off"),
         label: None,
         tip: tip.to_owned(),
+        name,
     }
+}
+
+/// The tooltip's first clause (before " : " / ": "), for a row of the place
+/// menu: "Flight disabled on this parcel" of "Flight disabled on this
+/// parcel: you cannot fly here.".
+pub fn headline(tip: &str) -> &str {
+    let cut = [" : ", ": "].iter().filter_map(|s| tip.find(s)).min().unwrap_or(tip.len());
+    tip[..cut].trim_end_matches('.')
 }
 
 const GAP: f32 = 2.0;
@@ -194,6 +241,15 @@ pub const SLOT_WIDTH: f32 = 16.0;
 /// from its left edge.
 pub fn glyph_rect(slot: egui::Rect) -> egui::Rect {
     egui::Rect::from_center_size(egui::pos2(slot.left() + SLOT_WIDTH / 2.0, slot.center().y), Vec2::splat(GLYPH))
+}
+
+/// Tabler-style slash over a glyph: a gap in the colour `under` it, then
+/// the line in `col`.
+pub fn paint_strike(painter: &egui::Painter, glyph: egui::Rect, under: Color32, col: Color32) {
+    let a = glyph.left_top() + Vec2::splat(0.5);
+    let b = glyph.right_bottom() - Vec2::splat(0.5);
+    painter.line_segment([a, b], egui::Stroke::new(3.2, under));
+    painter.line_segment([a, b], egui::Stroke::new(1.3, col));
 }
 
 fn label_font() -> egui::FontId {
@@ -233,12 +289,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, icons: &Icons, items: &[ParcelIcon],
             ui.painter().image(t.id(), ir, uv, col);
         }
         if it.strike {
-            // Tabler-style slash: a gap in the background color, then the line
-            let a = ir.left_top() + Vec2::splat(0.5);
-            let b = ir.right_bottom() - Vec2::splat(0.5);
-            let under = if resp.hovered() { p.raised } else { bg };
-            ui.painter().line_segment([a, b], egui::Stroke::new(3.2, under));
-            ui.painter().line_segment([a, b], egui::Stroke::new(1.3, col));
+            paint_strike(ui.painter(), ir, if resp.hovered() { p.raised } else { bg }, col);
         }
         if let Some(g) = label {
             let pos = egui::pos2(ir.right() + 2.0, rect.center().y - g.size().y / 2.0);

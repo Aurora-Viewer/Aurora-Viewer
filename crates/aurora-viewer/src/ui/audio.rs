@@ -98,8 +98,16 @@ fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &
     resp.on_hover_text(tip)
 }
 
+/// Slot of the speaker, radio and media buttons in Firestorm's top bar (the
+/// islands give theirs).
+pub const BAR_SLOT: Vec2 = Vec2::new(20.0, 18.0);
+
 fn icon_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, active: bool, enabled: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(20.0, 18.0), egui::Sense::click());
+    slot_button(ui, p, icons, icon, active, enabled, BAR_SLOT)
+}
+
+fn slot_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, active: bool, enabled: bool, slot: Vec2) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(slot, egui::Sense::click());
     if enabled && resp.hovered() {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
@@ -136,7 +144,8 @@ fn speaker_icon(volume: f32, muted: bool) -> &'static str {
     }
 }
 
-/// Draw the controls in a right-to-left layout; returns an action.
+/// Draw the controls in a right-to-left layout, each button in a `slot`;
+/// returns an action.
 pub fn top_controls(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -144,7 +153,11 @@ pub fn top_controls(
     audio: &mut AudioSettings,
     st: &mut AudioUi,
     media: MediaState,
+    slot: Vec2,
 ) -> AudioAction {
+    let toggle = |ui: &mut egui::Ui, icon: &str, tip: &str, active: bool, enabled: bool| {
+        slot_button(ui, p, icons, icon, active, enabled, slot).on_hover_text(tip)
+    };
     let mut action = AudioAction::None;
     // demo captures: AURORA_DEMO_VOLUME=open pins the panel open, `muted`
     // also draws the speaker muted (display only, the settings stay)
@@ -159,15 +172,13 @@ pub fn top_controls(
             // speaker: all sound on / off on click, the volume panel on
             // hover (no tooltip: the panel opens where it would show)
             let master = speaker_icon(audio.volume[0], audio.muted[0] || demo_muted);
-            let sp = icon_button(ui, p, icons, master, st.panel_open, true);
+            let sp = slot_button(ui, p, icons, master, st.panel_open, true, slot);
             if sp.clicked() {
                 toggle_master_mute(audio);
                 action = AudioAction::Changed;
             }
-            let music = icon_toggle(
+            let music = toggle(
                 ui,
-                p,
-                icons,
                 "radio",
                 if !media.music_available {
                     aurora_i18n::tr!("ui-audio-no-music-on-this-parcel")
@@ -182,10 +193,8 @@ pub fn top_controls(
             if music.clicked() && media.music_available {
                 action = AudioAction::ToggleMusic;
             }
-            let med = icon_toggle(
+            let med = toggle(
                 ui,
-                p,
-                icons,
                 "brand-youtube-filled",
                 if !media.media_available {
                     aurora_i18n::tr!("ui-audio-no-media-on-this-parcel")

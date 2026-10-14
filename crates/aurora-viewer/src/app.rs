@@ -7235,7 +7235,53 @@ impl App {
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::LandmarkStar(star) => self.landmark_star(star),
+            BarAction::PlaceBar { stretch, rights_text } => {
+                self.settings.place_bar_stretch = stretch;
+                self.settings.place_bar_rights_text = rights_text;
+                self.settings.save();
+            }
+            BarAction::OpenFavorites => {
+                // Places › Favorites, the first tab
+                self.places_ui.tab = 0;
+                ui::widgets::open_floater(&self.egui_ctx, "places", &mut self.panels.places);
+            }
         }
+    }
+
+    /// Firestorm's bars or the islands, and how the islands are set: the
+    /// settings, or what `AURORA_DEMO_BARS` asks for in demo (never saved).
+    fn bars_look(&self) -> (bool, ui::bars::IslandsLook) {
+        let s = &self.settings;
+        let demo = if self.demo { ui::bars::demo::get() } else { Default::default() };
+        let look = ui::bars::IslandsLook {
+            stretch: demo.stretch.unwrap_or(s.place_bar_stretch),
+            rights_text: demo.rights_text.unwrap_or(s.place_bar_rights_text),
+        };
+        (demo.classic.unwrap_or(s.classic_bars), look)
+    }
+
+    /// The last places of the teleport history for the place menu, newest
+    /// first, without the one we stand in (its last entry): three at most.
+    fn recent_places(&self) -> Vec<ui::bars::RecentPlace> {
+        self.world
+            .tp_storage
+            .items
+            .iter()
+            .rev()
+            .skip(1)
+            .take(3)
+            .map(|item| {
+                let (name, region) = match item.title.rsplit_once(", ") {
+                    Some((name, region)) => (name.to_owned(), region.to_owned()),
+                    None => (item.title.clone(), String::new()),
+                };
+                ui::bars::RecentPlace {
+                    name,
+                    region,
+                    slurl: item.slurl.clone(),
+                }
+            })
+            .collect()
     }
 
     /// The grid of the session for the web search: only the main grid's
@@ -7967,6 +8013,14 @@ impl App {
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 t = self.ui_parts.lap(Part::UiTags, t);
                 let parcel_landmark = self.parcel_landmark();
+                let (classic_bars, islands) = self.bars_look();
+                let own_name = self.world.own_name();
+                // AURORA_DEMO_BARS: the long parcel name of the mockup
+                let parcel_name = if self.demo && ui::bars::demo::get().on {
+                    aurora_i18n::tr!("demo-bars-parcel")
+                } else {
+                    self.world.parcel_name.as_str()
+                };
                 let icons = &self.skin.icons;
                 let layout = &self.skin.layout;
                 let maturity = self
@@ -7981,7 +8035,7 @@ impl App {
                     hud_zoom: self.world.hud_zoom,
                     ban_lines: self.settings.maps.ban_lines,
                     region: &self.world.region_name(),
-                    parcel: &self.world.parcel_name,
+                    parcel: parcel_name,
                     maturity,
                     position: self.world.agent.position,
                     fps: self.perf.fps,
@@ -8009,6 +8063,11 @@ impl App {
                         }),
                         _ => Vec::new(),
                     },
+                    classic_bars,
+                    islands,
+                    own_name: &own_name,
+                    own_pic: self.avatar_pics.get(&self.world.agent_id),
+                    recent: if classic_bars { Vec::new() } else { self.recent_places() },
                 };
                 let media = ui::audio::MediaState {
                     music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
@@ -8059,6 +8118,7 @@ impl App {
                     output_device: self.settings.audio.output_device.clone(),
                     input_devices: &self.options_ui.input_devices,
                     output_devices: &self.options_ui.output_devices,
+                    voice_dot: (!classic_bars).then(|| (self.voice.light, self.voice.status.clone())),
                     ..Default::default()
                 };
                 let (chat, bar2, bottom_top, chat_width_set) = ui::bars::bottom_bar(
@@ -8082,7 +8142,13 @@ impl App {
                 }
                 // what the bars leave: where the windows are laid out, moved
                 // and snapped this frame
-                ui::layout::set_work_area(ui.ctx(), ui.available_rect_before_wrap());
+                let left = ui.available_rect_before_wrap();
+                let area = if classic_bars {
+                    left
+                } else {
+                    ui::bars::islands::work_area(left, left.bottom())
+                };
+                ui::layout::set_work_area(ui.ctx(), area);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
@@ -8520,7 +8586,8 @@ impl App {
                     &self.skin.icons,
                     &mut self.media,
                     &mut self.media_ui,
-                    self.skin.layout.nav_bar_height,
+                    // under the top bar or the islands
+                    ui::layout::work_area(&ctx).top() - ctx.content_rect().top(),
                 );
                 if let Some(c) = self.media_cursor {
                     ctx.set_cursor_icon(c);

@@ -332,6 +332,16 @@ pub struct Settings {
     pub classic_profiles: bool,
     /// Firestorm's Pay window (floater_pay.xml) instead of `ui/pay.rs`.
     pub classic_pay_window: bool,
+    /// The full-width top and bottom bars of Firestorm instead of the glass
+    /// islands of `ui/bars/islands.rs`.
+    pub classic_bars: bool,
+    /// The place island stretches to the islands on its right (on by
+    /// default); off, it is as wide as its content.
+    pub place_bar_stretch: bool,
+    /// The parcel rights of the place island are named next to their icons
+    /// when there is room (off by default: icons alone, named in their
+    /// tooltips).
+    pub place_bar_rights_text: bool,
     /// People › Near you as Firestorm's radar table (`ui/people/radar.rs`)
     /// instead of the rows grouped by range and the sheet of
     /// `ui/people/nearby.rs`.
@@ -779,6 +789,9 @@ impl Default for Settings {
             classic_name_tags: false,
             classic_profiles: false,
             classic_pay_window: false,
+            classic_bars: false,
+            place_bar_stretch: true,
+            place_bar_rights_text: false,
             classic_people: false,
             plates_friends_only_full: false,
             plates_hover_expand: true,
