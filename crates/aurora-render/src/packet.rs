@@ -41,6 +41,8 @@ pub(crate) enum Capture {
     Scene,
     /// The whole frame.
     Full,
+    /// The whole frame, drawn offscreen at the photo's size.
+    Snapshot(crate::SnapshotSpec),
 }
 
 /// Which capture a frame carries: the scene alone wins over the whole
@@ -134,6 +136,9 @@ pub(crate) struct FrameResult {
     /// The capture asked with this frame (width, height, RGBA8); None when
     /// the frame could not be drawn (no swapchain image).
     pub captured: Option<(u32, u32, Vec<u8>)>,
+    /// The frame was a photo (`Capture::Snapshot`): `captured` is its image,
+    /// None when it could not be drawn.
+    pub snapshot: bool,
     pub spent: Spent,
 }
 

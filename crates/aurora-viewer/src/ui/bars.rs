@@ -546,6 +546,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item(ui, p, "camera-filled", aurora_i18n::tr!("ui-bars-reset-camera-esc")) {
             *action = BarAction::ResetCamera;
         }
+        if menu::item_keys(ui, p, "photo-filled", aurora_i18n::tr!("photo-title"), "Ctrl+Shift+S") {
+            super::widgets::toggle_floater(ui.ctx(), super::snapshot::WINDOW, &mut panels.snapshot);
+        }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
         for (mode, icon, label) in [
@@ -1058,6 +1061,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "places" => toggle("places", &mut panels.places),
         "search" => toggle(super::search::WINDOW, &mut panels.search),
         "performance" => toggle("perf", &mut panels.perf),
+        "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
         "preferences" => toggle("options", &mut panels.settings),
         "fly" => return BarAction::ToggleFly,
         "mouselook" => return BarAction::ToggleMouselook,
@@ -1080,6 +1084,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "places" => panels.places,
         "search" => panels.search,
         "performance" => panels.perf,
+        "snapshot" => panels.snapshot,
         "preferences" => panels.settings,
         "fly" => flying,
         "sit" => seated,
