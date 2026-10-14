@@ -943,6 +943,8 @@ pub fn top_bars(
                     // Aurora's center: the bell at the right end, after the
                     // frame rate, its cards unroll under it
                     if bell.aurora {
+                        // room for the count at the window's edge
+                        ui.add_space(4.0);
                         let (clicked, rect) =
                             super::notification_center::bell(ui, p, icons, &notif.center, bell.unread, notif.open, bell.dnd);
                         notif.anchor = Some(rect.left_bottom());

@@ -70,6 +70,8 @@ pub struct CenterUi {
     ring_at: Option<f64>,
     /// Friends' online / offline toasts shown, and since when.
     pub presence: Vec<(u64, f64)>,
+    /// The panel's height last time it was fully unrolled.
+    unrolled_height: f32,
 }
 
 /// What the frame tells the center besides its notifications.
@@ -89,7 +91,8 @@ pub struct Moment {
 /// How long `n` stays rolled out.
 pub fn show_seconds(n: &Notification, message_seconds: f64) -> f64 {
     match n.data {
-        Data::Message { .. } => message_seconds.clamp(SHOW_INFO, SHOW_ANSWER),
+        // a message is information; a shorter IM toast setting shortens it
+        Data::Message { .. } => message_seconds.clamp(1.0, SHOW_INFO),
         _ if n.interactive() => SHOW_ANSWER,
         _ => SHOW_INFO,
     }
@@ -206,7 +209,8 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, c: &CenterUi, unread:
         let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(9.5 * s), ink);
         let h = 14.0 * s;
         let w = (galley.size().x + 7.0 * s).max(h);
-        let badge = Rect::from_center_size(egui::pos2(rect.right() - 3.0, rect.top() + 4.0), Vec2::new(w, h));
+        // pinned by its top right corner: the bounce grows inside the bar
+        let badge = Rect::from_min_size(egui::pos2(rect.right() + 3.0 - w, rect.top() - 1.0), Vec2::new(w, h));
         ui.painter().rect_filled(badge, h / 2.0, fill);
         super::widgets::paint_ink_centered(ui.painter(), galley, badge.center(), ink);
     }
@@ -284,16 +288,23 @@ pub fn show(
         }
         return (answers, asks);
     }
-    let height = nui.center.panel.map_or(0.0, |r| r.height());
+    // the height it had last time it was fully out (a clip read back from the
+    // panel itself would feed its own list's height)
+    let height = Some(nui.center.unrolled_height)
+        .filter(|h| *h > 1.0)
+        .unwrap_or(screen.height() * 0.5);
     let area = egui::Area::new(egui::Id::new("notification_center"))
         .fade_in(false)
         .order(egui::Order::Foreground)
         .fixed_pos(pos)
+        .constrain(false)
         .show(ctx, |ui| {
             // unroll from the bell: the panel is revealed from its top
-            let clip = Rect::from_min_size(pos, Vec2::new(WIDTH + 2.0, (height * unroll).max(1.0)));
-            ui.set_clip_rect(clip.intersect(ui.clip_rect()));
-            ui.multiply_opacity(unroll);
+            if unroll < 1.0 {
+                let clip = Rect::from_min_size(pos, Vec2::new(WIDTH + 2.0, (height * unroll).max(1.0)));
+                ui.set_clip_rect(clip.intersect(ui.clip_rect()));
+                ui.multiply_opacity(unroll);
+            }
             super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.set_width(WIDTH - 12.0);
                 if nui.open {
@@ -304,6 +315,9 @@ pub fn show(
             });
         });
     nui.center.panel = Some(area.response.rect);
+    if unroll >= 1.0 {
+        nui.center.unrolled_height = area.response.rect.height();
+    }
     // the rolled-out cards wait while the pointer is on them: say so beside
     if hovered && !nui.open && !nui.center.peek.is_empty() {
         egui::Area::new(egui::Id::new("notification_center_paused"))
@@ -461,12 +475,28 @@ fn full_list(
                     if let Some(t) = icons.get("moon-filled") {
                         ui.add(egui::Image::new(t).tint(p.danger).fit_to_exact_size(Vec2::splat(12.0)));
                     }
-                    ui.label(
-                        RichText::new(aurora_i18n::tr!("ui-notifications-dnd-banner"))
-                            .size(11.5)
-                            .strong()
-                            .color(p.danger),
-                    );
+                    // the text wraps before "Turn off"
+                    let off_w = ui
+                        .painter()
+                        .layout_no_wrap(
+                            aurora_i18n::tr!("ui-notifications-dnd-off").to_owned(),
+                            egui::FontId::proportional(11.5),
+                            p.ink,
+                        )
+                        .size()
+                        .x;
+                    let text_w = (ui.available_width() - off_w - 12.0).max(40.0);
+                    ui.allocate_ui(Vec2::new(text_w, 0.0), |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(aurora_i18n::tr!("ui-notifications-dnd-banner"))
+                                    .size(11.5)
+                                    .strong()
+                                    .color(p.danger),
+                            )
+                            .wrap(),
+                        );
+                    });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let off = ui
                             .add(
@@ -505,7 +535,7 @@ fn full_list(
                 empty(ui, p, aurora_i18n::tr!("ui-notifications-nothing-to-do"));
                 return;
             }
-            egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(max_h).min_scrolled_height(max_h).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 for n in list.list.iter_mut().rev().filter(|n| !n.transient) {
                     if let Some(r) = center_card(ui, p, icons, ratings, env, &mut nui.wanted_pics, n) {
@@ -530,7 +560,7 @@ fn full_list(
                 return;
             }
             let today = history::now_secs();
-            egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(max_h).min_scrolled_height(max_h).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 let mut last_day = None;
                 for (index, e) in found {
@@ -620,7 +650,9 @@ fn presence_toasts(
                         ui.spacing_mut().item_spacing.x = 9.0;
                         let (pic, _) = ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::hover());
                         nui.wanted_pics.insert(who);
-                        super::widgets::avatar_disc(ui, p, pic, env.pics.get(&who), &n.title, false);
+                        // the initials of the name, not of the notice's quote
+                        let name = n.title.trim_start_matches(['\'', '"']);
+                        super::widgets::avatar_disc(ui, p, pic, env.pics.get(&who), name, false);
                         let status = if online {
                             super::presence::Status::Online
                         } else {
@@ -718,7 +750,12 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, e: &Entry) -> Opt
                 }
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        ui.add(egui::Label::new(RichText::new(&e.title).size(12.5).strong().color(p.ink)).truncate());
+                        // keep room for the time
+                        let w = (ui.available_width() - 40.0).max(40.0);
+                        ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
+                            ui.add(egui::Label::new(RichText::new(&e.title).size(12.5).strong().color(p.ink)).truncate())
+                                .on_hover_text(&e.title);
+                        });
                         ui.label(RichText::new(hhmm(e.time)).size(10.5).color(p.muted_dim));
                     });
                     if !e.body.is_empty() {

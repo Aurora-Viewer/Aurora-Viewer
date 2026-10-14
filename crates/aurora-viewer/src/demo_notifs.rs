@@ -85,6 +85,12 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
     use super::{DEMO_NOVA, DEMO_TESS};
     // the mockup's times from frame 700, at 60 frames a second
     match frame {
+        // Orion goes offline during the loading screen (no toast then), to
+        // come back online later
+        300 => vec![NetEvent::FriendsOnline {
+            ids: vec![friend()],
+            online: false,
+        }],
         700 => vec![im(
             agent,
             DEMO_NOVA,

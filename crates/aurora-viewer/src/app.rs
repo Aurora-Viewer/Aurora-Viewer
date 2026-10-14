@@ -9019,6 +9019,7 @@ impl ApplicationHandler for App {
             if crate::demo::notifs::mode().is_some() {
                 self.panels.perf = false;
                 self.panels.chat = false;
+                self.panels.inventory = false;
             }
             // AURORA_DEMO_TOASTS: the toasts arrive with the Conversations
             // window closed, or minimized for `minimized`
