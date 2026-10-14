@@ -60,6 +60,14 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &Inve
         }));
     } else if it.asset_type == 10 {
         actions.push(InvAction::Preview(original));
+    } else if it.asset_type == 56
+        && matches!(
+            crate::world::env_select::SettingsKind::from_flags(it.flags),
+            Some(crate::world::env_select::SettingsKind::Sky | crate::world::env_select::SettingsKind::Water)
+        )
+    {
+        // LLSettingsBridgeAction: a sky or water opens its editor
+        actions.push(InvAction::EditEnvironment(original));
     } else {
         st.preview = Some(original);
         st.reset_document();
