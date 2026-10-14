@@ -162,6 +162,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         own_name: "Aurora Demo",
         own_pic: None,
         recent: Vec::new(),
+        favorites: Box::leak(Box::default()),
     }
 }
 
@@ -277,6 +278,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
                 false,
                 !classic,
                 Some(&mut emoji),
+                &bars::favorites::View::default(),
             );
             // the room the bars leave, as App reports it
             let area = crate::ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic);
