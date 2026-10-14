@@ -120,6 +120,9 @@ pub struct EnvEditorUi {
     pub wanted_images: HashSet<Uuid>,
     /// Demo: an item to open once its folder has loaded.
     pub wait_item: Option<Uuid>,
+    /// The sun and moon beacons (the sunbeacon / moonbeacon settings, kept
+    /// by the app).
+    pub beacons: [bool; 2],
 }
 
 impl EnvEditorUi {
@@ -276,6 +279,16 @@ impl EnvEditorUi {
             .max_height(height - if kind == SettingsKind::Sky { 34.0 } else { 0.0 })
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                // "Show Beacon" of the sun and the moon: a view option,
+                // enabled whatever the rights (llpaneleditsky.cpp)
+                if kind == SettingsKind::Sky && self.tab == 2 {
+                    ui.horizontal(|ui| {
+                        widgets::checkbox(ui, p, &mut self.beacons[0], aurora_i18n::tr!("ui-env-editor-sun-beacon"));
+                        ui.add_space(16.0);
+                        widgets::checkbox(ui, p, &mut self.beacons[1], aurora_i18n::tr!("ui-env-editor-moon-beacon"));
+                    });
+                    ui.add_space(4.0);
+                }
                 ui.add_enabled_ui(self.rights.modify, |ui| match kind {
                     SettingsKind::Water => self.water_panel(ui, p, images, out),
                     _ => match self.tab {

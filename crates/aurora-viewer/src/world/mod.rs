@@ -280,6 +280,9 @@ pub struct World {
     env_clock: Instant,
     /// Accumulated cloud scroll (LLEnvironment::mCloudScrollDelta).
     pub cloud_scroll: glam::Vec2,
+    /// Directions of the shown sun and moon (the sky frame's), for their
+    /// beacons.
+    pub sky_directions: (glam::Vec3, glam::Vec3),
     /// Name of the parcel the agent stands on.
     pub parcel_name: String,
     /// Full description of that parcel (navigation bar icons, media, voice).
@@ -437,6 +440,7 @@ impl World {
             eep: eep_env::EnvSelector::default(),
             env_clock: Instant::now(),
             cloud_scroll: glam::Vec2::ZERO,
+            sky_directions: (glam::Vec3::Z, glam::Vec3::NEG_Z),
             parcel_name: String::new(),
             parcel: None,
             land: land::Land::default(),

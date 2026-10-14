@@ -93,6 +93,7 @@ impl App {
 
     pub(super) fn draw_env_editor(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
         self.env_apply_answers();
+        self.env_beacons_frame();
         if let Some(item) = self.env_editor.wait_item
             && self.world.inventory.items.contains_key(&item)
         {
@@ -109,7 +110,11 @@ impl App {
             return;
         }
         let access = self.env_editor_access();
+        self.env_editor.beacons = [self.settings.sun_beacon, self.settings.moon_beacon];
         let actions = self.env_editor.show(ctx, p, &self.world.inventory, &self.ui_images, access);
+        if self.env_editor.open {
+            self.set_env_beacons(self.env_editor.beacons);
+        }
         if self.env_editor.show_picker(ctx, p, &mut self.world, &self.ui_images) {
             self.show_env_edit();
         }
@@ -311,9 +316,14 @@ impl App {
                 self.open_env_editor_snapshot(SettingsKind::Sky);
                 self.env_editor.set_tab(match other {
                     "clouds" => 1,
-                    "sun" => 2,
+                    "sun" | "beacons" => 2,
                     _ => 0,
                 });
+                // beacons: both beacons shown (off again once the editor closes)
+                if other == "beacons" {
+                    self.env_beacons_frame();
+                    self.set_env_beacons([true, true]);
+                }
             }
         }
     }

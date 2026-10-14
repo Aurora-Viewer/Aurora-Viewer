@@ -161,6 +161,10 @@ pub struct Settings {
     pub show_bug_report: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
     pub show_huds: bool,
+    /// sunbeacon / moonbeacon: a line from the avatar towards the sun or
+    /// the moon ("Show Beacon" of the Sun & Moon tab).
+    pub sun_beacon: bool,
+    pub moon_beacon: bool,
     /// Debug overlays (not saved).
     #[serde(skip)]
     pub debug: DebugView,
@@ -674,6 +678,8 @@ impl Default for Settings {
             language_is_public: true,
             show_bug_report: true,
             show_huds: true,
+            sun_beacon: false,
+            moon_beacon: false,
             debug: DebugView::default(),
             build: Default::default(),
             camera: Default::default(),

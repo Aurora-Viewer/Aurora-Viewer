@@ -129,6 +129,8 @@ pub struct DayEditorUi {
     pub commit_lost: bool,
     /// Loaded settings waiting for "make the day no-transfer?".
     pub no_trans_ask: Option<NoTransLoad>,
+    /// The sun and moon beacons (kept by the app).
+    pub beacons: [bool; 2],
     /// The region's sky altitudes for the track names (parcel and region
     /// contexts with the extended environment).
     pub altitudes: Option<[f32; 4]>,
@@ -801,7 +803,10 @@ impl DayEditorUi {
             self.frame.set_tab(tab);
             self.frame_key = Some((track, index));
         }
-        if self.frame.panels(ui, p, images, height) {
+        self.frame.beacons = self.beacons;
+        let changed = self.frame.panels(ui, p, images, height);
+        self.beacons = self.frame.beacons;
+        if changed {
             if let (Some(f), Some(doc)) = (self.frame.doc.as_ref(), self.doc.as_mut()) {
                 doc.set_frame(track, index, f);
             }

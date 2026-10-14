@@ -132,7 +132,11 @@ impl App {
         }
         self.day_editor.extended = self.extended_environment();
         let access = self.env_editor_access();
+        self.day_editor.beacons = [self.settings.sun_beacon, self.settings.moon_beacon];
         let actions = self.day_editor.show(ctx, p, &self.world.inventory, &self.ui_images, access);
+        if self.day_editor.open {
+            self.set_env_beacons(self.day_editor.beacons);
+        }
         if self.day_editor.show_picker(ctx, p, &mut self.world, &self.ui_images) {
             self.show_day_edit();
         }

@@ -486,6 +486,8 @@ pub struct App {
     day_import: Option<std::sync::mpsc::Receiver<env_apply::DayImport>>,
     /// The ExtEnvironment update an editor sent and waits for.
     env_applying: Option<env_apply::Applying>,
+    /// The sun and moon beacons when the first environment editor opened.
+    env_beacons_saved: Option<[bool; 2]>,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
     gesture_state: gestures::State,
@@ -857,6 +859,7 @@ impl App {
             day_fetch: None,
             day_import: None,
             env_applying: None,
+            env_beacons_saved: None,
             demo: false,
             inventory_ui: Default::default(),
             gesture_state: Default::default(),
@@ -5476,6 +5479,7 @@ impl App {
         // with crossfades; the simulator sun only for regions without EEP
         self.world.eep.set_manual_transition(self.settings.env_manual_transition);
         let (sky_frame, water_frame) = self.world.environment_frames(&mut self.panels.time_of_day);
+        self.world.sky_directions = (sky_frame.sun_direction(), sky_frame.moon_direction());
         // cloud scroll (LLEnvironment::updateCloudScroll: rate / 100 per second)
         self.world.cloud_scroll += sky_frame.cloud_scroll_rate * dt / 100.0;
         self.world.cloud_scroll = glam::Vec2::new(
@@ -7867,6 +7871,13 @@ impl App {
                 if !self.camera.mouselook() && !held {
                     self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
                 }
+                ui::sky_beacons::draw(
+                    &ctx,
+                    &p,
+                    &self.world,
+                    projector,
+                    [self.settings.sun_beacon, self.settings.moon_beacon],
+                );
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 t = self.ui_parts.lap(Part::UiTags, t);

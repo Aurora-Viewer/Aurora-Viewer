@@ -118,6 +118,30 @@ impl App {
         }
     }
 
+    /// LLEnvironment::saveBeaconsState / revertBeaconsState: the beacons as
+    /// they were when the first editor opened; when the last one closes, a
+    /// beacon switched on in an editor goes off again (one already on stays).
+    pub(super) fn env_beacons_frame(&mut self) {
+        let current = [self.settings.sun_beacon, self.settings.moon_beacon];
+        match (self.env_editor.open || self.day_editor.open, self.env_beacons_saved) {
+            (true, None) => self.env_beacons_saved = Some(current),
+            (false, Some(saved)) => {
+                self.env_beacons_saved = None;
+                self.set_env_beacons([saved[0] && current[0], saved[1] && current[1]]);
+            }
+            _ => {}
+        }
+    }
+
+    /// The sunbeacon / moonbeacon settings, saved when changed.
+    pub(super) fn set_env_beacons(&mut self, beacons: [bool; 2]) {
+        if beacons != [self.settings.sun_beacon, self.settings.moon_beacon] {
+            self.settings.sun_beacon = beacons[0];
+            self.settings.moon_beacon = beacons[1];
+            self.settings.save();
+        }
+    }
+
     /// One of Firestorm's alertmodal notifications of the editors.
     fn env_alert(&mut self, title: &str, text: impl Into<String>) {
         self.world.notifications.push(Kind::Alert, title, text, Data::None);
