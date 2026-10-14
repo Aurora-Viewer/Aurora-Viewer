@@ -621,16 +621,7 @@ fn pick_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView) {
             env.actions.push(ProfileAction::ShowOnMap(e.pos));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if widgets::action_button(
-                ui,
-                p,
-                "trash-filled",
-                aurora_i18n::tr!("common-delete"),
-                ActionKind::FlatDanger,
-                size,
-            )
-            .clicked()
-            {
+            if widgets::action_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), ActionKind::Danger, size).clicked() {
                 w.confirm_delete = true;
             }
         });
@@ -1201,16 +1192,7 @@ fn classified_more(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, c: &Classif
                 w.confirm_delete = false;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if widgets::action_button(
-                    ui,
-                    p,
-                    "trash-filled",
-                    aurora_i18n::tr!("common-delete"),
-                    ActionKind::FlatDanger,
-                    size,
-                )
-                .clicked()
-                {
+                if widgets::action_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), ActionKind::Danger, size).clicked() {
                     w.confirm_delete = true;
                 }
             });
@@ -1499,15 +1481,8 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
                 env.actions.push(ProfileAction::ShowOnMap(e.pos));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                delete = widgets::action_button(
-                    ui,
-                    p,
-                    "trash-filled",
-                    aurora_i18n::tr!("common-delete"),
-                    ActionKind::FlatDanger,
-                    size,
-                )
-                .clicked();
+                delete =
+                    widgets::action_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), ActionKind::Danger, size).clicked();
             });
         }
     });
