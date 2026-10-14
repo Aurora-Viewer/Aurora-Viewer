@@ -200,6 +200,8 @@ pub enum CtxAction {
     StopAnimations,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
+    /// "Create landmark" where the agent is (About Land's Landmark).
+    CreateLandmark,
     /// "Report Abuse" on a resident, an object or nothing (LLFloaterReporter).
     ReportAbuse(crate::report_abuse::ReportTarget),
     /// Block / unblock an object (LLMute::OBJECT).

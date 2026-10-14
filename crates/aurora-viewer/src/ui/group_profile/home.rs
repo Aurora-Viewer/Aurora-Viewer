@@ -4,12 +4,12 @@
 //! profile) on the right.
 
 use super::members::{self, Show};
+use super::notices;
 use super::view::{self, View};
 use super::{Env, GroupAction, GroupProfileUi, Tab};
 use crate::theme::Palette;
 use crate::ui::place_details::Ctx;
 use crate::ui::widgets;
-use aurora_net::groups::NoticeSummary;
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 
 /// Notices shown on the tab, and members online at most.
@@ -33,8 +33,8 @@ pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, 
                     ui.set_width(main_w);
                     ui.spacing_mut().item_spacing.y = 10.0;
                     charter(ui, c, v);
-                    if v.member.is_some() {
-                        notices(ui, c.p, v);
+                    if super::notices::visible(v) {
+                        notices(st, ui, c, v, actions);
                     }
                 });
                 ui.allocate_ui_with_layout(Vec2::new(side_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
@@ -103,16 +103,17 @@ pub fn notice_date(timestamp: u32, now: i64) -> String {
     }
 }
 
-/// The three latest notices (GroupNoticesListReply). Reading them comes
-/// with the Notices tab.
-fn notices(ui: &mut egui::Ui, p: &Palette, v: &View) {
-    view::card(
+/// The three latest notices (GroupNoticesListReply), each opening in the
+/// Notices tab.
+fn notices(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
+    let p = c.p;
+    let (_, all) = view::card(
         ui,
         p,
         "speakerphone",
         p.muted_dim,
         aurora_i18n::tr!("ui-group-profile-latest-notices"),
-        None,
+        Some(aurora_i18n::tr!("ui-group-profile-all-notices")),
         |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             let Some(list) = v.data.and_then(|d| d.notices.as_ref()) else {
@@ -131,72 +132,19 @@ fn notices(ui: &mut egui::Ui, p: &Palette, v: &View) {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs() as i64);
             for n in list.iter().take(NOTICES) {
-                notice_row(ui, p, n, now);
+                let unread = !c.world.group_data.is_read(&v.id, &n.id);
+                if notices::row(ui, p, n, unread, false, true, now).clicked() {
+                    st.tab = Tab::Notices;
+                    st.notices.selected = Some(n.id);
+                    st.notices.compose = None;
+                    actions.push(GroupAction::OpenNotice { group: v.id, notice: n.id });
+                }
             }
         },
     );
-}
-
-fn notice_row(ui: &mut egui::Ui, p: &Palette, n: &NoticeSummary, now: i64) {
-    let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::hover());
-    if resp.hovered() {
-        ui.painter()
-            .rect_filled(row, ui.visuals().widgets.inactive.corner_radius, p.raised.gamma_multiply(0.35));
+    if all {
+        st.tab = Tab::Notices;
     }
-    // the place of the unread mark, then the icon
-    let icon = Rect::from_min_size(Pos2::new(row.left() + 8.0 + 7.0 + 10.0, row.center().y - 14.0), Vec2::splat(28.0));
-    ui.painter().rect_filled(icon, ui.visuals().window_corner_radius, p.raised);
-    if let Some(t) = crate::ui::icons::global("speakerphone") {
-        ui.painter().image(
-            t.id(),
-            Rect::from_center_size(icon.center(), Vec2::splat(15.0)),
-            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-            p.violet_light,
-        );
-    }
-    let date = ui
-        .painter()
-        .layout_no_wrap(notice_date(n.timestamp, now), FontId::proportional(11.0), p.muted_dim);
-    let date_w = date.size().x;
-    ui.painter().galley(
-        Pos2::new(row.right() - 8.0 - date_w, row.center().y - date.size().y / 2.0).round(),
-        date,
-        p.muted_dim,
-    );
-    let text_left = icon.right() + 10.0;
-    let text_w = (row.right() - 8.0 - date_w - 10.0 - text_left).max(20.0);
-    widgets::paint_elided(
-        ui,
-        &n.subject,
-        Pos2::new(text_left, row.center().y - 8.0),
-        text_w,
-        FontId::new(13.0, crate::ui::fonts::semibold(ui.ctx())),
-        p.ink,
-    );
-    // the sender (a legacy name, "First Last" or "first Resident"), and the
-    // attachment
-    let from = n.from.strip_suffix(" Resident").unwrap_or(&n.from);
-    let mut x = text_left;
-    let sub_y = row.center().y + 9.0;
-    let from_g = ui.painter().layout_no_wrap(from.to_owned(), FontId::proportional(11.5), p.muted);
-    let from_w = from_g.size().x.min(text_w);
-    widgets::paint_elided(ui, from, Pos2::new(x, sub_y), text_w, FontId::proportional(11.5), p.muted);
-    x += from_w;
-    if n.has_attachment && x + 30.0 < text_left + text_w {
-        let dot = ui.painter().layout_no_wrap(" · ".into(), FontId::proportional(11.5), p.muted);
-        let dot_w = dot.size().x;
-        ui.painter().galley(Pos2::new(x, sub_y - dot.size().y / 2.0), dot, p.muted);
-        x += dot_w;
-        if let Some(t) = crate::ui::icons::global("paperclip") {
-            ui.painter().image(
-                t.id(),
-                Rect::from_center_size(Pos2::new(x + 6.0, sub_y), Vec2::splat(12.0)),
-                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                p.muted,
-            );
-        }
-    }
-    resp.on_hover_text(&n.subject);
 }
 
 /// The members online now, owners first, then the officers, then by name.

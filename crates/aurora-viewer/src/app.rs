@@ -35,6 +35,7 @@ mod context_menu;
 mod cursor_hold;
 mod dof;
 mod double_click;
+mod env_editor;
 mod gestures;
 mod hover_height;
 mod hud_drag;
@@ -463,6 +464,10 @@ pub struct App {
     env_scan: bool,
     /// "Personal lighting" was open last frame (captures on opening).
     lighting_was_open: bool,
+    /// Sky and water editors (LLFloaterFixedEnvironment).
+    env_editor: ui::env_editor::EnvEditorUi,
+    /// A Windlight preset being read for "Import" (bytes and preset name).
+    env_import: Option<std::sync::mpsc::Receiver<Option<(Vec<u8>, String)>>>,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
     gesture_state: gestures::State,
@@ -824,6 +829,8 @@ impl App {
             env_ui: Default::default(),
             env_scan: false,
             lighting_was_open: false,
+            env_editor: Default::default(),
+            env_import: None,
             demo: false,
             inventory_ui: Default::default(),
             gesture_state: Default::default(),
@@ -1158,10 +1165,54 @@ impl App {
                         it
                     })
                     .ok_or_else(|| aurora_i18n::tr!("common-item-not-found").to_owned());
+                // a saved settings item's new asset, as the simulator would serve it
+                if let Ok(it) = &result
+                    && it.asset_type == 56
+                    && let Some(s) = crate::world::eep::Settings::from_asset(data)
+                {
+                    self.scene.settings.insert_local(it.asset_id, s);
+                }
                 self.on_app_event(NetEvent::InventoryContentSaved {
                     request: *request,
                     item: *item,
                     result,
+                });
+                return;
+            }
+            if let NetCommand::CreateSettingsItem {
+                request,
+                parent,
+                name,
+                subtype,
+                next_owner_mask,
+                data,
+            } = &cmd
+            {
+                let item = aurora_net::inventory::InvItem {
+                    id: uuid::Uuid::new_v4(),
+                    parent: *parent,
+                    name: name.clone(),
+                    asset_type: 56,
+                    inv_type: 25,
+                    asset_id: uuid::Uuid::new_v4(),
+                    flags: u32::from(*subtype),
+                    owner: self.world.agent_id,
+                    creator: self.world.agent_id,
+                    base_mask: 0x7fffffff,
+                    owner_mask: 0x7fffffff,
+                    everyone_mask: 0x8000,
+                    next_owner_mask: next_owner_mask.unwrap_or(0x86000),
+                    ..Default::default()
+                };
+                self.demo_documents.insert(item.id, data.clone());
+                if let Some(s) = crate::world::eep::Settings::from_asset(data) {
+                    self.scene.settings.insert_local(item.asset_id, s);
+                }
+                self.world.inventory.add_items(vec![item.clone()]);
+                self.on_app_event(NetEvent::InventoryContentSaved {
+                    request: *request,
+                    item: item.id,
+                    result: Ok(item),
                 });
                 return;
             }
@@ -1240,7 +1291,8 @@ impl App {
                 return;
             }
             if let NetCommand::PreviewInventoryItem(it) = &cmd {
-                let bytes = self.demo_documents.get(&it.id).cloned().unwrap_or_else(|| match it.asset_type {
+                let library = (it.asset_type == 56).then(|| crate::demo::env::asset_bytes(it.asset_id)).flatten();
+                let bytes = self.demo_documents.get(&it.id).cloned().or(library).unwrap_or_else(|| match it.asset_type {
                     56 => b"<?llsd/notation?>\n{'type':'sky'}".to_vec(),
                     57 => aurora_llsd::to_binary(
                         &aurora_llsd::llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{}]}" },
@@ -1306,6 +1358,13 @@ impl App {
                 let parent = crate::world::inventory::actions::system(&self.world.inventory, 6).unwrap_or(self.world.inventory.root);
                 self.world.inventory.add_items(vec![crate::demo::offered_item(parent, *owner)]);
                 return;
+            }
+            // a new classified is paid when it is published, as the
+            // simulator does on the grid
+            if let Some(price) = crate::demo::classifieds::price_of_new(&cmd)
+                && let Some(balance) = self.world.balance
+            {
+                self.world.apply(NetEvent::Balance(balance - price));
             }
             for mut ev in crate::demo::demo_reply(&cmd) {
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
@@ -1504,6 +1563,9 @@ impl App {
         self.env_scan = false;
         self.panels.environment = false;
         self.panels.personal_lighting = false;
+        self.env_editor.close();
+        self.env_import = None;
+        self.world.eep.clear_edit();
         self.world.save_inventory_cache();
         self.world.save_mute_cache();
         if let Some(path) = self.name_cache_path() {
@@ -1606,6 +1668,10 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if self.env_editor.saving == Some(request) {
+                self.env_editor_saved(result);
+                return;
+            }
             if self.gesture_save_pending(request, item) {
                 self.gesture_saved(request, item, result);
                 return;
@@ -4226,6 +4292,7 @@ impl App {
         wanted.extend(self.group_profile_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
+        wanted.extend(self.land_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -4284,6 +4351,7 @@ impl App {
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
+        images.extend(self.env_editor.wanted_images.drain());
         for note in self.task_notecards.values_mut() {
             images.extend(note.state.wanted_images.drain());
         }
@@ -6083,6 +6151,13 @@ impl App {
             if let Some(step) = crate::demo::env::step(self.frame_count) {
                 self.demo_env_step(step);
             }
+            if let Some(scenario) = crate::demo::env::editor() {
+                if self.frame_count == 400 {
+                    self.demo_env_editor(scenario);
+                } else if scenario == "item-save" {
+                    self.demo_env_editor_step(self.frame_count);
+                }
+            }
         }
         // last view for the loading screens (blurred in a thread, or now when quitting)
         if self.bug_report.capture_pending
@@ -7186,6 +7261,30 @@ impl App {
                     self.world.group_data.refresh(group, member);
                 }
                 GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
+                GroupAction::RefreshNotices(group) => self.world.group_data.request_notices(group),
+                GroupAction::OpenNotice { group, notice } => {
+                    log::info!("group notice asked: {notice}");
+                    self.world.group_data.open_notice(group, notice);
+                }
+                GroupAction::SaveAttachment(group) => self.world.save_notice_attachment(group),
+                GroupAction::SendNotice {
+                    group,
+                    subject,
+                    message,
+                    item,
+                } => {
+                    // send_group_notice: an instant message to the group
+                    let (text, bucket) = aurora_net::groups::notice_to_send(&subject, &message, item);
+                    self.send(NetCommand::SendImDialog {
+                        to: group,
+                        dialog: crate::world::notifications::im::GROUP_NOTICE,
+                        id: uuid::Uuid::nil(),
+                        message: text,
+                        bucket,
+                    });
+                    let me = self.world.notifications.own_name.clone();
+                    self.world.group_data.add_sent_notice(group, subject, me, item.is_some());
+                }
                 GroupAction::Invite { group, invites } => {
                     log::info!("group invite: {} resident(s) invited", invites.len());
                     self.send(NetCommand::InviteToGroup { group, invites });
@@ -8285,14 +8384,19 @@ impl App {
                     .then(|| self.world.land.sel.as_ref().map(|s| s.handle).or(self.world.main_region))
                     .flatten()
                     .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
+                // AURORA_DEMO_LAND=…:classic shows Firestorm's tabs without saving it
+                let classic_land =
+                    self.settings.classic_about_land || (self.demo && crate::demo::land::scenario().is_some_and(|s| s.classic));
                 if self.land_ui.show(
                     &ctx,
                     &p,
                     &mut self.world,
                     &self.ui_images,
+                    &self.avatar_pics,
                     land_map.as_ref(),
                     &mut self.settings.audio.saved_streams,
                     self.demo,
+                    classic_land,
                     &mut open,
                 ) {
                     self.settings.save();
@@ -8640,6 +8744,7 @@ impl App {
                         ui::environment::EnvAction::Preset(n) => self.panels.time_of_day = n,
                     }
                 }
+                self.draw_env_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
                 self.settings.show_chat = self.panels.chat;
                 self.settings.show_perf = self.panels.perf;
@@ -9250,9 +9355,9 @@ impl ApplicationHandler for App {
                 self.profile_ui.demo(&self.egui_ctx, id, option);
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_LAND=<tab>[:owner]: About Land on that tab
-            if let Some((tab, _)) = crate::demo::land::scenario() {
-                self.land_ui.set_tab(&tab);
+            // AURORA_DEMO_LAND=<tab>[:role][:classic]: About Land on that tab
+            if let Some(scenario) = crate::demo::land::scenario() {
+                self.land_ui.set_tab(&scenario.tab);
                 self.panels.about_land = true;
                 self.panels.perf = false;
             }
@@ -9263,6 +9368,10 @@ impl ApplicationHandler for App {
                 self.group_profile_ui.open(&mut self.world, crate::demo::group::shown_group());
                 if let Some(member) = crate::demo::group::members_tab() {
                     self.group_profile_ui.show_member(member);
+                }
+                if let Some((group, read, compose)) = crate::demo::group::notices_tab() {
+                    self.world.group_data.set_read(group, read);
+                    self.group_profile_ui.show_notices(compose);
                 }
                 if let Some(invitees) = crate::demo::group::invitees() {
                     self.group_profile_ui.invite.open(crate::demo::group::shown_group(), invitees);

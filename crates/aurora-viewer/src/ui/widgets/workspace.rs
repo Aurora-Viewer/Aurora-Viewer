@@ -85,6 +85,57 @@ pub fn navigation(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selec
     response.on_hover_text(label)
 }
 
+/// A `navigation` entry whose label wraps on two lines instead of being
+/// cut, with a small `count` at its right end (a share, a number of items).
+pub fn navigation_wrapped(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, count: Option<&str>, selected: bool) -> egui::Response {
+    let width = ui.available_width();
+    let count_g = count.map(|c| {
+        ui.painter()
+            .layout_no_wrap(c.to_owned(), egui::FontId::proportional(11.0), p.muted_dim)
+    });
+    let count_w = count_g.as_ref().map_or(0.0, |g| g.size().x + 8.0);
+    let ink = if selected { p.ink } else { p.muted };
+    let mut job = egui::text::LayoutJob::simple(
+        label.to_owned(),
+        egui::FontId::proportional(12.0),
+        ink,
+        (width - 42.0 - count_w).max(1.0),
+    );
+    job.wrap.max_rows = 2;
+    let galley = ui.painter().layout_job(job);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, (galley.size().y + 16.0).max(34.0)), Sense::click());
+    if selected || response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            ui.visuals().widgets.inactive.corner_radius,
+            if selected { p.violet.gamma_multiply(0.24) } else { p.raised },
+        );
+    }
+    if selected {
+        ui.painter().vline(
+            rect.left() + 1.0,
+            rect.top() + 6.0..=rect.bottom() - 6.0,
+            Stroke::new(2.0, p.violet),
+        );
+    }
+    if let Some(icon) = crate::ui::icons::global(icon) {
+        ui.painter().image(
+            icon.id(),
+            egui::Rect::from_center_size(rect.left_center() + egui::vec2(17.0, 0.0), Vec2::splat(17.0)),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            if selected { p.violet_pale } else { p.muted },
+        );
+    }
+    ui.painter()
+        .galley(rect.left_center() + egui::vec2(34.0, -galley.size().y / 2.0), galley, ink);
+    if let Some(g) = count_g {
+        let pos = rect.right_center() - egui::vec2(9.0 + g.size().x, g.size().y / 2.0);
+        ui.painter().galley(pos, g, p.muted_dim);
+    }
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
+    response
+}
+
 pub fn surface<R>(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::new()
         .fill(p.field.gamma_multiply(0.8))

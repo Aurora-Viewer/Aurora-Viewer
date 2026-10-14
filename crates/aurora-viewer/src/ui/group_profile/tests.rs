@@ -324,3 +324,46 @@ fn invite_shows_with_the_ability_and_call_waits_for_group_voice() {
         assert!(has(&texts, "ui-group-profile-call"));
     }
 }
+
+/// Feed the demo server's answers to the commands of the group data.
+fn pump(world: &mut World) {
+    for _ in 0..3 {
+        let mut cmds = world.group_data.take_commands();
+        cmds.extend(world.take_social_commands());
+        for cmd in cmds {
+            for ev in crate::demo::group::reply(&cmd).unwrap_or_default() {
+                world.apply(ev);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_notice_opens_with_its_attachment_and_is_saved_once() {
+    let mut world = world(true, MEMBER);
+    let first = world
+        .group_data
+        .get(&DEMO_GROUP1)
+        .and_then(|d| d.notices.as_ref())
+        .and_then(|l| l.first().map(|n| n.id))
+        .expect("notices");
+    world.group_data.open_notice(DEMO_GROUP1, first);
+    pump(&mut world);
+    let n = world
+        .group_data
+        .get(&DEMO_GROUP1)
+        .and_then(|d| d.notice.clone())
+        .expect("notice shown");
+    assert_eq!(n.id, first);
+    assert_eq!(n.subject, aurora_i18n::tr!("demo-group-notice-workshop"));
+    assert_eq!(n.attachment.as_ref().map(|a| a.1), Some(6));
+    assert!(world.group_data.is_read(&DEMO_GROUP1, &first));
+    world.save_notice_attachment(DEMO_GROUP1);
+    let cmds = world.group_data.take_commands();
+    assert!(
+        matches!(&cmds[..], [aurora_net::NetCommand::SendImDialog { dialog: 33, .. }]),
+        "{cmds:?}"
+    );
+    world.save_notice_attachment(DEMO_GROUP1);
+    assert!(world.group_data.take_commands().is_empty(), "saved once");
+}

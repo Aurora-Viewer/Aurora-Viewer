@@ -11,7 +11,9 @@
 //!   with an open enrollment and a fee, to join.
 //!
 //! `:members` after the scenario opens the Members tab, a builder selected;
-//! `:invite` the invitation window with three residents (one already in).
+//! `:invite` the invitation window with three residents (one already in);
+//! `:notices` the Notices tab, its two latest notices unread (`:compose`
+//! with a new notice open).
 //!
 //! The other demo groups get generated members and the three roles every
 //! group has.
@@ -323,6 +325,56 @@ fn notices() -> Vec<NoticeSummary> {
     ]
 }
 
+/// The body of a demo notice and its attachment (name, asset type).
+fn notice_body(id: u128) -> (String, Option<(&'static str, u8)>) {
+    match id {
+        1 => (
+            aurora_i18n::tr!("demo-group-notice-workshop-body").into(),
+            Some((aurora_i18n::tr!("demo-group-notice-workshop-kit"), 6)),
+        ),
+        2 => (aurora_i18n::tr!("demo-group-notice-sandbox-body").into(), None),
+        3 => (aurora_i18n::tr!("demo-group-notice-rules-body").into(), None),
+        _ => (
+            aurora_i18n::tr!("demo-group-notice-photos-body").into(),
+            Some((aurora_i18n::tr!("demo-group-notice-photos-album"), 0)),
+        ),
+    }
+}
+
+/// GroupNoticeRequest: the notice comes back as IM_GROUP_NOTICE_REQUESTED,
+/// its attachment in the binary bucket (has inventory, asset type, group,
+/// item name).
+fn notice_im(notice: &Uuid) -> Option<NetEvent> {
+    let n = notices().into_iter().find(|n| n.id == *notice)?;
+    let (body, attachment) = notice_body(notice.as_u128() & 0xFF);
+    let mut bucket = vec![u8::from(attachment.is_some()), attachment.map_or(0, |a| a.1)];
+    bucket.extend_from_slice(DEMO_GROUP1.as_bytes());
+    bucket.extend_from_slice(attachment.map_or("", |a| a.0).as_bytes());
+    bucket.push(0);
+    // from the group, the sender named in the message (the server's form:
+    // process_improved_im looks the sender up by name)
+    Some(NetEvent::InstantMessage(aurora_net::InstantMessage {
+        from_agent_id: DEMO_GROUP1,
+        from_name: n.from,
+        to_agent_id: DEMO_AGENT,
+        dialog: 37,
+        session_id: Uuid::from_u128(0x6E51_0000_0000_0000_0000_0000_0000_0000 | (notice.as_u128() & 0xFF)),
+        message: format!("{}|{body}", n.subject),
+        offline: false,
+        from_group: false,
+        binary_bucket: bucket,
+        timestamp: n.timestamp,
+    }))
+}
+
+/// `<scenario>:notices`: the Notices tab, the two latest notices unread;
+/// `:compose` on a new notice.
+pub fn notices_tab() -> Option<(Uuid, Vec<Uuid>, bool)> {
+    let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
+    let mode = v.split(':').nth(1)?;
+    matches!(mode, "notices" | "compose").then(|| (DEMO_GROUP1, notices().iter().skip(2).map(|n| n.id).collect(), mode == "compose"))
+}
+
 /// The charter of "Aurora Builders", with a place link.
 fn charter() -> String {
     format!(
@@ -391,6 +443,34 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
                 Vec::new()
             },
         }],
+        NetCommand::GroupNoticeRequest(notice) => vec![notice_im(notice)?],
+        // a notice sent to the group: every member gets it, us too
+        NetCommand::SendImDialog {
+            to,
+            dialog: 32,
+            message,
+            bucket,
+            ..
+        } if *to == DEMO_GROUP1 => {
+            log::info!("demo group: notice sent ({} bytes attached)", bucket.len().saturating_sub(1));
+            vec![NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: DEMO_GROUP1,
+                from_name: "Aurora Demo".into(),
+                to_agent_id: DEMO_AGENT,
+                dialog: 32,
+                session_id: Uuid::new_v4(),
+                message: message.clone(),
+                offline: false,
+                from_group: true,
+                binary_bucket: Vec::new(),
+                timestamp: 0,
+            })]
+        }
+        // a notice's attachment saved: the item lands in the folder
+        NetCommand::SendImDialog { dialog: 33, .. } => {
+            log::info!("demo group: notice attachment accepted");
+            Vec::new()
+        }
         NetCommand::GroupNoticesListRequest(group) => vec![NetEvent::GroupNotices {
             group: *group,
             notices: if *group == DEMO_GROUP1 { notices() } else { Vec::new() },

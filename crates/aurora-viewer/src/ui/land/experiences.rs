@@ -130,7 +130,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
 }
 
 /// experienceRemoved: EXPERIENCE_KEY_TYPE_NONE, then the list goes out.
-fn remove_experience(world: &mut World, kind: u32, id: Uuid) {
+pub(super) fn remove_experience(world: &mut World, kind: u32, id: Uuid) {
     if let Some(sel) = world.land.sel.as_mut() {
         sel.allowed_experiences.retain(|x| *x != id);
         sel.blocked_experiences.retain(|x| *x != id);

@@ -1,7 +1,7 @@
 //! "General" (LLPanelLandGeneral::refresh / onCommitAny).
 
 use super::dialogs::{Confirm, SellForm};
-use super::{Dialog, LandUi, View, button, check, dim, not_yet, row, text};
+use super::{Dialog, LandUi, View, button, check, dim, row, text};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::land::{can_agent_buy, powers};
@@ -302,8 +302,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
         });
     });
     ui.horizontal(|ui| {
-        if v.region.as_ref().is_some_and(|r| r.has_land_resources) {
-            button(ui, p, aurora_i18n::tr!("ui-land-general-script-info"), false).on_disabled_hover_text(not_yet());
+        if v.region.as_ref().is_some_and(|r| r.has_land_resources)
+            && button(ui, p, aurora_i18n::tr!("ui-land-general-script-info"), true).clicked()
+        {
+            s.scripts.open();
         }
         if button(ui, p, aurora_i18n::tr!("ui-land-general-buy-a-pass"), use_pass)
             .on_hover_text(aurora_i18n::tr!("ui-land-general-a-pass-grants-temporary-access-to-this-land"))

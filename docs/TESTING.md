@@ -22,6 +22,12 @@ with the language selector. Remove the argument to check the immediate
 change and the choice saved at the next launch. The details of the
 catalogues, dates and plurals are in [TRANSLATING.md](TRANSLATING.md).
 
+**Unit tests**: always on the whole workspace, filtered by name if needed:
+`cargo test --workspace render_thread`, never `cargo test -p <crate>`. A
+single crate resolves the features of its dependencies on its own, so Cargo
+builds a second copy of them (`cargo test -p aurora-render` alone: 67 s of
+dependencies, then again for the next `--workspace` build).
+
 **To add a variable**: one short line in the table of its topic (the name
 alone in the first column, one sentence in the second); if it takes more
 than one sentence, or if there are several modes, a "Details" paragraph
@@ -995,6 +1001,7 @@ To check with these scenarios:
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
+| `AURORA_DEMO_ENV_EDITOR=<mode>` | Sky and water editors |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 
 ### Details
@@ -1108,6 +1115,16 @@ To check with these scenarios:
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
   (2500).
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save`**: sky
+  and water editors (`app/env_editor.rs`), with the library and Settings
+  folder of `AURORA_DEMO_ENV_SELECT`. At frame 400 the editor opens on a
+  snapshot of the shown sky (`sky`, `clouds` and `sun` pick the tab) or
+  water (`water`), or on the user's "my purple sky" item once its folder
+  has loaded (`item`: the sky turns purple at once, Save is enabled).
+  `item-save` also raises its brightness and saves over the item (frame
+  900), then saves it as "my purple sky, brighter" (1100): both saves
+  are logged (`environment settings saved`) and the second item shows in
+  the Settings folder.
 
 ## Load and smoothness
 
@@ -1310,7 +1327,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
-| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact]` | An avatar's profile window |
+| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -1320,9 +1337,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
-| `AURORA_DEMO_LAND=<tab>[:owner]` | "About Land" on a tab |
+| `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -1477,7 +1494,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   are matched by suffix; the source files stay intact.
   The result is aggregated, without personal names or paths. Native
   animations keep their bytes and their poses are sampled.
-  Run `cargo test -p aurora-viewer local_asset_directory -- --ignored --nocapture`.
+  Run `cargo test --workspace local_asset_directory -- --ignored --nocapture`.
 
 - **Walkthrough of the window redesign**: open the inventory and select
   a folder in the tree, then an item; check search, permissions,
@@ -1987,13 +2004,46 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   - my profile: `self`, then `self:edit` (camera button, pencil, About
     editor, Visibility, the unsaved bar once About is changed);
   - compact: `wolf:compact` (icons in a row, the tabs in a drop-down list).
+
+  Options add up, separated by `:` (`self:edit:2`). The other tabs:
+  `friend:2` (Nova's favorite places, featured place over thumbnails),
+  `friend:3` (two classifieds, the first one unfolded), `friend:4` (first
+  life picture and text), `friend:5` (notes), `nova:2|3|4` (the empty
+  states), `self:edit:2` (our places in their form, the card that adds
+  one), `self:edit:3:form` (our classified in its form, with its clicks)
+  and `self:3:publish` (a new classified and the strip that asks its
+  price). Publishing takes the price from the demo balance; the demo keeps
+  our classifieds for the run.
 - **`AURORA_DEMO_FEED=<url>`**: the user name and `/?feed_only=true`
   are appended to the address; a `data:` URL can put them in a comment.
-- **`AURORA_DEMO_LAND=<tab>[:owner]`**: tabs `general`, `covenant`,
-  `objects`, `options`, `media`, `sound`, `access`, `experiences`,
-  `environment`, or their index; `:owner` makes the avatar the owner of the
-  parcel (controls enabled), otherwise it belongs to a group without
-  powers.
+- **`AURORA_DEMO_LAND=<tab>[:role][:classic]`**: the pages of Aurora's
+  window `overview`, `manage`, `people`, or the tabs of the classic window
+  `general`, `covenant`, `objects`, `options`, `media`, `sound`, `access`,
+  `experiences`, `environment` (or their index); Aurora's window opens a
+  tab's section of "Manage", scrolled to and unfolded (`options` on "What
+  visitors can do", `general` on "Sale and ownership", `covenant` on the
+  overview); `people` asks for the object owners as Refresh does, `owners`
+  also scrolls down to them; `environment-picker` and `experience-picker`
+  open the settings picker (the demo library's skies, waters and days, also
+  listed without `AURORA_DEMO_ENV_SELECT`) and the experience picker with
+  its results (a grid-wide one hidden, those already listed hidden). The
+  demo simulator applies an environment, a reset, a deed, a release, a
+  reclaim and the returns, and answers with the parcel changed;
+  `show-objects` asks the simulator to highlight the owner's objects (the
+  plaza's pillars and orbs outlined in yellow), `scripts` opens Script
+  info (four scripted objects, then two attachments in "My attachments"). Roles: `owner` makes
+  the avatar the owner of the parcel (everything editable); `officer`
+  leaves the parcel to the group "Aurora Builders" and gives the avatar
+  its land powers except sale, deed, release and terraforming (the
+  camera over the picture shows, "Edit the land" stays greyed with the
+  power it needs, "View as" offers Officer / Visitor); `visitor`
+  gives the parcel to another resident and to a group the avatar is not
+  in (no camera, "Buy a pass" follows the parcel); without a role the
+  parcel belongs to the group and the avatar has no powers in it.
+  `:classic` shows Firestorm's nine tabs for the session without saving
+  the choice of Preferences › Aurora. The demo parcel is residential, with
+  a fixed landing point and building and object entry for its group, like
+  the mockup; `AURORA_DEMO_LAND_PRIMS=10500` gives its objects gauge.
 - **`AURORA_DEMO_LAND_PRIMS=<used>[,<step>]`**: with `AURORA_DEMO_LAND`,
   the objects of the owner's land in the region (out of 15,000); the
   gauge of the header is violet, orange when 20% or less is left
@@ -2002,7 +2052,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -2018,6 +2068,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `group invite: 2 resident(s) invited` and says the member was left out;
   the role list follows our abilities (an officer: everyone and the
   officers' own roles; an owner: every role, the owners' asking to confirm).
+  `:notices` opens the Notices tab with the two latest notices unread
+  (the tab's count): the first one is read at once (GroupNoticeRequest,
+  answered by an IM_GROUP_NOTICE_REQUESTED instant message), its
+  attachment "Save to inventory" logs `demo group: notice attachment
+  accepted`; `:compose` opens a new notice (an officer may send notices):
+  a copyable and transferable item dragged from the inventory attaches,
+  a no-copy one or a worn attachment is refused, and "Send to 1,248
+  members" adds the notice to the list and brings it back as a group
+  notice in the notification center.
   Check the header against the mockup (banner,
   insignia, badges, tabs), the switches of "Me in this group" (the active
   group follows in the top bar, the title in the Title shown list), the
