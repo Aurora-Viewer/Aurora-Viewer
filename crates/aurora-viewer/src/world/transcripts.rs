@@ -889,4 +889,27 @@ mod tests {
         assert_eq!(file_texts(&w, "Jane Doe").len(), 2);
         clean(&w, &root);
     }
+
+    #[test]
+    fn a_teleport_offer_carries_where_we_stand_to_every_invitee() {
+        let root = temp();
+        let (jane, bob) = (Uuid::from_u128(2), Uuid::from_u128(3));
+        let mut w = world(&root, Uuid::from_u128(1));
+        w.agent.position = glam::Vec3::new(128.4, 64.6, 22.0);
+        w.on_im(im(jane, "Jane Doe", "hello"));
+        let cmd = w.offer_teleport(vec![jane, bob], "Join me");
+        // send_lures: the invitation, then the SLURL of our position
+        let aurora_net::NetCommand::OfferTeleport { to, message } = cmd else {
+            panic!("not a teleport offer: {cmd:?}");
+        };
+        assert_eq!(to, [jane, bob]);
+        let (text, slurl) = message.split_once("\r\n").unwrap();
+        assert_eq!(text, "Join me");
+        assert!(slurl.starts_with("http://maps.secondlife.com/secondlife/"), "{slurl}");
+        assert!(slurl.ends_with("/128/65/22"), "{slurl}");
+        // the notice of each invitee: in Jane's conversation, none opened for Bob
+        assert!(w.social.ims[0].lines.back().unwrap().kind == ChatKind::System);
+        assert_eq!(w.social.ims.len(), 1);
+        clean(&w, &root);
+    }
 }

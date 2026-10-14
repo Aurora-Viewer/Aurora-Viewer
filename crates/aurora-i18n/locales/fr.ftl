@@ -1384,6 +1384,12 @@ common-debug = Debug
 world-mod-requesting-teleport = Demande de téléportation…
 common-request-teleport = Demander une téléportation
 ui-contacts-ask-to-teleport-you = { "Demander à " }{ $value0 }{ " de vous téléporter ?" }
+ui-contacts-offer-teleport-to = { "Proposer à " }{ $value0 }{ " une téléportation jusqu'à vous avec le message suivant ?" }
+ui-contacts-offer-teleport-to-residents = { $count ->
+    [one] Proposer à { $count } résident une téléportation jusqu'à vous avec le message suivant ?
+   *[other] Proposer à { $count } résidents une téléportation jusqu'à vous avec le message suivant ?
+    }
+ui-contacts-no-teleport-request-while-rejecting = Vous ne pouvez pas envoyer de demande de téléportation pour le moment, car « Rejeter les offres et demandes de téléportation » est activé. Désactivez-le dans Communiquer › Statut de connexion si vous le souhaitez.
 build-shapes-half-cylinder = Demi-cylindre
 build-shapes-half-cone = Demi-cône
 build-shapes-half-sphere = Demi-sphère
@@ -2813,7 +2819,7 @@ ui-bars-reject-teleports = Rejeter les téléportations
 ui-bars-reject-all-friendship-requests = Rejeter toutes les demandes d'amitié
 ui-bars-reject-all-group-invitations = Rejeter toutes les invitations de groupe
 ui-login-join-the-community = Rejoignez la communauté
-common-join-me = Rejoins-moi !
+common-join-me-in = { "On se rejoint à " }{ $region }{ " ?" }
 inventory-operations-read-back-incomplete-reload-inventory-before-trying-again = Relecture incomplète. Rechargez l’inventaire avant de réessayer.
 build-ui-texture-bumpiness = Relief
 ui-place-details-notes = Remarques :

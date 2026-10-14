@@ -1446,7 +1446,8 @@ impl Session<'_> {
                 m.agent_data.session_id = self.session_id();
                 m.info.lure_type = 0;
                 m.info.message = str_field(&message);
-                m.target_data.push(start_lure::TargetData { target_id: to });
+                m.target_data
+                    .extend(to.into_iter().map(|target_id| start_lure::TargetData { target_id }));
                 self.send_main(&m, true);
             }
             NetCommand::MapBlockRequest {

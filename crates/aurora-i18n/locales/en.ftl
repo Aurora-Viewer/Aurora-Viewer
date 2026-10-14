@@ -1381,6 +1381,12 @@ common-debug = Debug
 world-mod-requesting-teleport = Requesting teleport…
 common-request-teleport = Request teleport
 ui-contacts-ask-to-teleport-you = { "Ask " }{ $value0 }{ " to teleport you?" }
+ui-contacts-offer-teleport-to = { "Offer " }{ $value0 }{ " a teleport to your location with the following message?" }
+ui-contacts-offer-teleport-to-residents = { $count ->
+    [one] Offer { $count } resident a teleport to your location with the following message?
+   *[other] Offer { $count } residents a teleport to your location with the following message?
+    }
+ui-contacts-no-teleport-request-while-rejecting = You cannot send a teleport request at the moment, because "Reject teleport offers and requests" is on. Turn it off in Communicate › Online status if you wish.
 build-shapes-half-cylinder = Half cylinder
 build-shapes-half-cone = Half cone
 build-shapes-half-sphere = Half sphere
@@ -2810,7 +2816,7 @@ ui-bars-reject-teleports = Reject teleports
 ui-bars-reject-all-friendship-requests = Reject all friendship requests
 ui-bars-reject-all-group-invitations = Reject all group invitations
 ui-login-join-the-community = Join the community
-common-join-me = Join me!
+common-join-me-in = { "Join me in " }{ $region }
 inventory-operations-read-back-incomplete-reload-inventory-before-trying-again = Read-back incomplete. Reload inventory before trying again.
 build-ui-texture-bumpiness = Bumpiness
 ui-place-details-notes = Notes:

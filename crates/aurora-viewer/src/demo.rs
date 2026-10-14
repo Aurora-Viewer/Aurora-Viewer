@@ -512,11 +512,29 @@ pub fn many_conversation_events(agent: Uuid) -> Vec<NetEvent> {
         .collect()
 }
 
-/// AURORA_DEMO_CONV=tp: a conversation with a resident (DEMO_NOVA, whom
-/// the demo's names call "Tess Touch"), then a teleport offer to them and
-/// one to DEMO_TESS, who has none (issue #280).
-pub fn teleport_offer_scenario() -> bool {
-    std::env::var("AURORA_DEMO_CONV").is_ok_and(|v| v == "tp")
+/// AURORA_DEMO_CONV=tp[:sent|reject]: a conversation with a resident
+/// (DEMO_NOVA, whom the demo's names call "Tess Touch"), then (issue #280)
+/// the invitation of a teleport offer to them (`tp`), the offer sent to
+/// them and to DEMO_TESS, who has no conversation (`tp:sent`), or a
+/// teleport request refused while we reject teleports (`tp:reject`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TeleportOfferScene {
+    Invitation,
+    Sent,
+    Reject,
+}
+
+pub fn teleport_offer_scene() -> Option<TeleportOfferScene> {
+    match std::env::var("AURORA_DEMO_CONV").ok()?.as_str() {
+        "tp" => Some(TeleportOfferScene::Invitation),
+        "tp:sent" => Some(TeleportOfferScene::Sent),
+        "tp:reject" => Some(TeleportOfferScene::Reject),
+        _ => None,
+    }
+}
+
+fn teleport_offer_scenario() -> bool {
+    teleport_offer_scene().is_some()
 }
 
 /// The message that opens the conversation of `teleport_offer_scenario`.

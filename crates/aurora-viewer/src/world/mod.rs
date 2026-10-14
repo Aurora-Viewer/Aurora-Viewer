@@ -2349,6 +2349,17 @@ impl World {
         self.conversation_push(to, line, false);
     }
 
+    /// Our teleport offer (send_lures, llviewermessage.cpp): the invitation
+    /// followed by the SLURL of where we stand, one StartLure for every
+    /// invitee, and the TeleportOfferSent notice of each.
+    pub fn offer_teleport(&mut self, to: Vec<Uuid>, message: &str) -> aurora_net::NetCommand {
+        let message = format!("{message}\r\n{}", crate::slurl::make(&self.region_name(), self.agent.position));
+        for id in &to {
+            self.teleport_offer_sent(*id);
+        }
+        aurora_net::NetCommand::OfferTeleport { to, message }
+    }
+
     /// A teleport offer went out (send_lures, llviewermessage.cpp): the
     /// TeleportOfferSent notice ("Teleport offer sent to <name>") goes to the
     /// conversation with that avatar without counting as unread, or only to

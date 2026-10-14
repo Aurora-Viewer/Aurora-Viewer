@@ -1502,7 +1502,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp`**: `1` opens the conversation of
+- **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp[:sent|reject]`**: `1` opens the conversation of
   the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user
   name, wide and accented letters) and a conference with a long title
@@ -1520,12 +1520,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   conversations scroll under them (wheel, or the bar that shows at the
   right edge of the list under the pointer) and the list is scrolled to the
   conversation that is open. `tp` (issue #280): a message from Tess Touch
-  opens her conversation, then the avatar menu offers a teleport to her and
-  to a resident who has no conversation. What to see: "Teleport offer sent
-  to Tess …" (a link to her name) at the end of her conversation, without
-  an unread badge; no new conversation for the other resident and nothing
-  in the nearby chat (that notice only goes to the resident's transcript,
-  when instant messages are logged).
+  opens her conversation, then the avatar menu's "Offer teleport" asks for
+  the invitation: "Join me in Aurora Demo" (or the French text) to edit,
+  Send / Cancel. `tp:sent`: that invitation is sent to her and to a resident
+  who has no conversation. What to see: "Teleport offer sent to Tess …" (a
+  link to her name) at the end of her conversation, without an unread badge;
+  no new conversation for the other resident and nothing in the nearby chat
+  (that notice only goes to the resident's transcript, when instant messages
+  are logged). `tp:reject`: "Request teleport" while teleports are rejected
+  only shows the warning, with OK and no message to type.
 - **`AURORA_DEMO_RADAR=1|tp|friends|groups|profile`**: the People window.
   `1`: residents at every range in "Near you" (with
   `AURORA_DEMO_TAGS=1`, those of the name plates, several of whom have a
