@@ -559,6 +559,21 @@ pub enum AntiAliasing {
     Smaa,
 }
 
+/// A photo drawn at its own size (snapshot window): the frame that carries
+/// it is drawn offscreen at `width` x `height` instead of the window, with
+/// the same passes, then read back (LLViewerWindow::rawSnapshot, without
+/// its tiles: one pass while the card holds the size).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapshotSpec {
+    pub width: u32,
+    pub height: u32,
+    /// The interface drawn over the scene, scaled from the window by
+    /// `height / window height` (RenderUIInSnapshot).
+    pub interface: bool,
+    /// HUD attachments drawn (RenderHUDInSnapshot).
+    pub huds: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tonemapper {
     /// Khronos PBR Neutral (Second Life's tone mapper).

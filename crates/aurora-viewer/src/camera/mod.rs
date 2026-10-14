@@ -1467,6 +1467,20 @@ impl Camera {
     pub fn proj(&self, aspect: f32) -> Mat4 {
         glam::camera::rh::proj::directx::perspective_infinite_reverse(self.fov_y, aspect.max(0.1), self.near)
     }
+
+    /// The projection of a photo of `aspect` taken from a window of
+    /// `window_aspect`: exactly the part of the window's view the photo's
+    /// proportions frame (what the full-frame view leaves clear). Narrower
+    /// than the window it keeps the vertical field; wider, the horizontal one.
+    pub fn photo_proj(&self, aspect: f32, window_aspect: f32) -> Mat4 {
+        let (aspect, window_aspect) = (aspect.max(0.1), window_aspect.max(0.1));
+        let fov = if aspect > window_aspect {
+            2.0 * ((self.fov_y * 0.5).tan() * window_aspect / aspect).atan()
+        } else {
+            self.fov_y
+        };
+        glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, aspect, self.near)
+    }
 }
 
 /// Height of the eyes above the avatar's position (mouselook, unlockView).
@@ -1554,6 +1568,23 @@ pub fn pick_focus_object(world: &World, idx: usize, now: Instant) -> Option<(Uui
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_photo_frames_exactly_the_clear_part_of_the_window() {
+        let cam = Camera::default();
+        let window = 16.0 / 9.0;
+        // (x, y) of a clip-space corner: the half-extent of the view
+        let half = |m: Mat4| (1.0 / m.x_axis.x, 1.0 / m.y_axis.y);
+        let (wx, wy) = half(cam.proj(window));
+        // narrower: the same height, the middle of the width
+        let (px, py) = half(cam.photo_proj(4.0 / 5.0, window));
+        assert!((py - wy).abs() < 1e-5 && px < wx);
+        // wider: the same width, the middle of the height
+        let (px, py) = half(cam.photo_proj(3.0, window));
+        assert!((px - wx).abs() < 1e-4 && py < wy);
+        // the window's own proportions: its projection
+        assert!(cam.photo_proj(window, window).abs_diff_eq(cam.proj(window), 1e-6));
+    }
     use crate::scene::avatar::AvatarLibrary;
 
     fn hover_world(seated: bool) -> World {

@@ -34,6 +34,7 @@ mod screen_rate;
 mod settings;
 mod shape_editor;
 mod slurl;
+mod snapshot;
 mod theme;
 mod ui;
 mod ui_sound;

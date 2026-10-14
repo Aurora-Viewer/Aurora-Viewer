@@ -128,6 +128,9 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size |
+| `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
+| `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 
 `AURORA_CAPTURE_LAYOUT`: a screenshot otherwise starts from the default
 layout, to be reproducible. With this variable it reloads that of the
@@ -135,6 +138,19 @@ previous session (without ever writing it): this is what is needed to see
 what a saved layout gives in a window of another size (the windows keep
 their edge). A layout is only written by a normal exit, for example
 `AURORA_DEMO_EXIT=quit` without `AURORA_CAPTURE`.
+
+`AURORA_DEMO_SNAPSHOT`: `open` shows the photo window at frame 600;
+`full` the full-frame view, `full-4x5` (or `full-16x9`, `full-9x16`…) with
+those proportions, to see the mask and the guide; `save:<W>x<H>[:png|jpg|bmp][:<folder>]`
+also takes a photo of that size at `AURORA_DEMO_SNAPSHOT_FRAME` and saves
+it (in the photo folder, or `<folder>`). The log gives `photo: <W> x <H>
+drawn in <n> part(s), <ms>`, `snapshot <W> x <H>: <MB> of textures … at its
+peak` (the video memory of the photo frame) and `photo saved: <file> (<KB>,
+written in <ms>)`. Open the file: its framing is the window's (cropped to
+its proportions), without the interface unless asked. With
+`AURORA_DEMO_SNAPSHOT_TILE=2048`, an 8K photo is drawn in 12 tiles: compare
+it with the same photo in one pass, the tiles must not show (the demo's
+particles and animations make a few levels of difference everywhere).
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
