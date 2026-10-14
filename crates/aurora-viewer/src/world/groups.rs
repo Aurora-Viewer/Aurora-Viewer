@@ -159,6 +159,18 @@ impl GroupChats {
         });
     }
 
+    /// LLAgent::setGroupContribution: our copy follows at once, then
+    /// SetGroupContribution (the simulator does not answer). False when we
+    /// are not in the group.
+    pub fn set_contribution(&mut self, group: Uuid, contribution: i32) -> bool {
+        let Some(g) = self.groups.iter_mut().find(|g| g.id == group) else {
+            return false;
+        };
+        g.contribution = contribution;
+        self.out.push(NetCommand::SetGroupContribution { group, contribution });
+        true
+    }
+
     fn im(&mut self, to: Uuid, dialog: u8, session: Uuid, message: String) {
         self.out.push(NetCommand::SendImDialog {
             to,

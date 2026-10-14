@@ -179,7 +179,7 @@ pub fn rows(v: &View, names: &dyn Fn(&Uuid) -> String, filter: &str, show: Show,
 }
 
 /// A filter pill of the bar.
-fn pill(ui: &mut egui::Ui, p: &Palette, label: &str, on: bool) -> egui::Response {
+pub(super) fn pill(ui: &mut egui::Ui, p: &Palette, label: &str, on: bool) -> egui::Response {
     let font = FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx()));
     let ink = if on { p.ink } else { p.muted };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);

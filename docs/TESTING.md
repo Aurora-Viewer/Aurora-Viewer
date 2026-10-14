@@ -1368,7 +1368,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:land]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -2081,7 +2081,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:land]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -2123,12 +2123,23 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   a no-copy one or a worn attachment is refused, and "Send to 1,248
   members" adds the notice to the list and brings it back as a group
   notice in the notification center.
+  `:land` opens the "Land and L$" tab (`:land-details` and `:land-sales`
+  on those pages of the accounts): 4,608 m² in use out of 5,120 given,
+  two parcels (Sandbox on Aurora Demo, Workshop on the sandbox region)
+  with Map, About Land (only for the region we are in) and Place profile
+  on a right click; our contribution of 512 m² out of the 1,024 we may
+  give (a new value applied with Enter logs `demo group: land contribution
+  set to N m²`, a value over the maximum goes back); the planning page
+  (balance, credits, debits, total, next stipend day), the details and
+  the sales of this week and of the eight weeks before (the arrows; the
+  sales arrive in two packets, both shown; nothing after six weeks).
   Check the header against the mockup (banner,
   insignia, badges, tabs), the switches of "Me in this group" (the active
   group follows in the top bar, the title in the Title shown list), the
   filter, the pills and the column sorts of Members, "Leave" (confirmed,
   then the guest's view) and, in Preferences › Aurora › Profiles, the
-  classic window with its "Members and roles" section.
+  classic window with its "Members and roles", "Notices" and "Land and
+  L$" sections.
 - **`AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown|landmark|history`**:
   "Places" on a place profile, as after a click on a place link.
   `1`: the home of Violet Wolf on Aurora Demo (the parcel of "About
