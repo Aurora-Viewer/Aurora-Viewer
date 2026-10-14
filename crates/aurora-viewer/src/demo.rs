@@ -64,6 +64,10 @@ pub mod notifs;
 pub mod people;
 #[path = "demo_place.rs"]
 pub mod place;
+/// The friends' online / offline toasts at one of their places
+/// (AURORA_DEMO_PRESENCE).
+#[path = "demo_presence.rs"]
+pub mod presence;
 /// Region / Estate answers (AURORA_DEMO_REGION).
 #[path = "demo_region.rs"]
 pub mod region;

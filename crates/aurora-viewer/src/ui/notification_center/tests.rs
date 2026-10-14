@@ -131,9 +131,87 @@ fn a_friend_online_never_enters_the_center() {
     assert!(c.peek.is_empty());
     assert_eq!(bell_count(&list, &c), 0);
     // its own small toast, gone after a few seconds
-    assert_eq!(c.presence, vec![(id, 0.0)]);
+    assert_eq!(
+        c.presence,
+        vec![presence::Toast {
+            id,
+            arrived: 0.0,
+            shown: Some(0.0)
+        }]
+    );
     update(&list, &mut c, at(PRESENCE + 1.0), 30.0);
     assert!(c.presence.is_empty());
+}
+
+/// At the top right a friend's toast waits while a card is rolled out
+/// under the bell, and shows once it has folded in, if it waited less than
+/// `PRESENCE`; the other places do not wait.
+#[test]
+fn at_the_top_right_a_friend_waits_for_the_cards_to_fold() {
+    let under_bell = |now| Moment {
+        now,
+        under_bell: true,
+        ..Moment::default()
+    };
+    let mut list = Notifications::default();
+    let mut c = CenterUi::default();
+    info(&mut list, "Lune paid you L$50");
+    update(&list, &mut c, under_bell(0.0), 30.0);
+    let late = list.push_presence(Uuid::from_u128(2), "Orion is online.", true);
+    update(&list, &mut c, under_bell(2.0), 30.0);
+    let early = list.push_presence(Uuid::from_u128(3), "Lune is online.", true);
+    update(&list, &mut c, under_bell(5.0), 30.0);
+    assert_eq!(c.presence.len(), 2);
+    assert!(c.presence.iter().all(|t| t.shown.is_none()), "{:?}", c.presence);
+    // the first one waited too long: dropped before the card folds
+    update(&list, &mut c, under_bell(2.0 + PRESENCE + 0.1), 30.0);
+    assert_eq!(c.presence.iter().map(|t| t.id).collect::<Vec<_>>(), vec![early]);
+    // the card folds in: the other one shows
+    update(&list, &mut c, under_bell(SHOW_INFO + 0.01), 30.0);
+    assert!(c.presence[0].shown.is_none(), "still folding");
+    let free = SHOW_INFO + 0.01 + FOLD + 0.01;
+    update(&list, &mut c, under_bell(free), 30.0);
+    assert!(c.peek.is_empty());
+    assert_eq!(c.presence[0].shown, Some(free));
+    assert!(!c.presence.iter().any(|t| t.id == late));
+    // never in the bell's list nor its count
+    assert_eq!(bell_count(&list, &c), 1);
+    // elsewhere it shows at once, the card out or not
+    let mut list = Notifications::default();
+    let mut c = CenterUi::default();
+    info(&mut list, "Lune paid you L$50");
+    list.push_presence(Uuid::from_u128(2), "Orion is online.", true);
+    update(&list, &mut c, at(0.0), 30.0);
+    assert_eq!(c.peek.len(), 1);
+    assert_eq!(c.presence[0].shown, Some(0.0));
+}
+
+/// At the top right a friend's toast waits while the bell's list is open,
+/// shows when it closes within `PRESENCE`, and is dropped after that; one
+/// shown when the list opens leaves.
+#[test]
+fn at_the_top_right_a_friend_waits_for_the_list_to_close() {
+    let m = |now, open| Moment {
+        now,
+        open,
+        under_bell: true,
+        ..Moment::default()
+    };
+    let mut list = Notifications::default();
+    let mut c = CenterUi::default();
+    let shown = list.push_presence(Uuid::from_u128(2), "Orion is online.", true);
+    update(&list, &mut c, m(0.0, false), 30.0);
+    assert_eq!(c.presence[0].shown, Some(0.0));
+    update(&list, &mut c, m(0.5, true), 30.0);
+    assert!(!c.presence.iter().any(|t| t.id == shown), "under the open list");
+    let id = list.push_presence(Uuid::from_u128(3), "Lune is online.", true);
+    update(&list, &mut c, m(1.0, true), 30.0);
+    update(&list, &mut c, m(2.0, false), 30.0);
+    assert_eq!(c.presence.iter().map(|t| (t.id, t.shown)).collect::<Vec<_>>(), vec![(id, Some(2.0))]);
+    let id = list.push_presence(Uuid::from_u128(4), "Tess is online.", true);
+    update(&list, &mut c, m(10.0, true), 30.0);
+    update(&list, &mut c, m(10.0 + PRESENCE + 0.1, false), 30.0);
+    assert!(!c.presence.iter().any(|t| t.id == id), "waited too long");
 }
 
 /// An answered card folds away at once and is not counted.

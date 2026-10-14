@@ -52,6 +52,11 @@ pub struct ToastEnv<'a> {
     /// The region restart counting down: its card in Aurora's center shows
     /// the live count (`ui::region_restart::bell_card`).
     pub restart: Option<super::region_restart::BellInfo>,
+    /// Where Aurora's center shows the friends' online / offline toasts
+    /// (`notification_center::presence`), and whether Firestorm's
+    /// full-width bars are shown (their room has no margin of its own).
+    pub presence_at: crate::settings::PresencePosition,
+    pub classic_bars: bool,
 }
 
 /// Show the Conversations window for a clicked card: opened if closed,

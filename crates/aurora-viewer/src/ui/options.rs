@@ -1049,6 +1049,32 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
             aurora_i18n::tr!("ui-options-toast-friends-online-hint"),
             |ui| toggle(ui, p, &mut s.toast_friends_online),
         );
+        // where they stand with Aurora's center; Firestorm's toasts keep
+        // them in their own stack (top right, like its notification channel)
+        let center = s.notifications_style == crate::settings::NotificationsStyle::Aurora;
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-toast-friends-position"),
+            if center {
+                aurora_i18n::tr!("ui-options-toast-friends-position-hint")
+            } else {
+                aurora_i18n::tr!("ui-options-toast-friends-position-legacy")
+            },
+            |ui| {
+                let mut changed = false;
+                ui.add_enabled_ui(center && s.toast_friends_online, |ui| {
+                    egui::ComboBox::from_id_salt("presence-position")
+                        .selected_text(s.presence_position.label())
+                        .show_ui(ui, |ui| {
+                            for at in crate::settings::PresencePosition::ALL {
+                                changed |= ui.selectable_value(&mut s.presence_position, at, at.label()).changed();
+                            }
+                        });
+                });
+                changed
+            },
+        );
         c |= row(
             ui,
             p,
