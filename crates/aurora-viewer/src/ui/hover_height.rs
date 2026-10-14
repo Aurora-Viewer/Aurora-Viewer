@@ -10,15 +10,23 @@ pub struct HoverHeightUi {
 }
 
 impl HoverHeightUi {
-    /// Returns whether the shared camera preference changed.
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, height: &mut HoverHeight, enabled: bool, camera: &mut bool) -> bool {
+    /// Returns whether a saved preference changed.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        height: &mut HoverHeight,
+        enabled: bool,
+        preferences: (&mut bool, &mut bool),
+    ) -> bool {
+        let (camera, automatic) = preferences;
         let enabled = enabled && height.ready();
         let mut camera_changed = false;
         Floater::new(
             "hover_height",
             aurora_i18n::tr!("ui-context-hover-height"),
             egui::pos2(480.0, 100.0),
-            egui::vec2(440.0, 150.0),
+            egui::vec2(440.0, 180.0),
         )
         .fixed()
         .show(ctx, p, &mut self.open, |ui| {
@@ -52,7 +60,8 @@ impl HoverHeightUi {
                 });
             });
             ui.add_space(4.0);
-            camera_changed = widgets::switch_labeled(ui, p, camera, aurora_i18n::tr!("hover-height-affect-camera")).changed();
+            camera_changed |= widgets::switch_labeled(ui, p, automatic, aurora_i18n::tr!("hover-height-automatic")).changed();
+            camera_changed |= widgets::switch_labeled(ui, p, camera, aurora_i18n::tr!("hover-height-affect-camera")).changed();
             if !enabled {
                 ui.label(egui::RichText::new(aurora_i18n::tr!("hover-height-unavailable")).color(p.muted));
             } else if height.failed {

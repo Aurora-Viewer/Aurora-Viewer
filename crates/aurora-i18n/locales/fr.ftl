@@ -3925,6 +3925,7 @@ ui-context-hover-height = Hauteur de survol
 hover-height-lower = Abaisser
 hover-height-raise = Relever
 hover-height-affect-camera = Ajuster aussi la caméra
+hover-height-automatic = Ajuster automatiquement quand les attachements changent
 hover-height-unavailable = Cette région ne permet pas encore d'ajuster la hauteur de survol.
 hover-height-send-failed = Le simulateur n'a pas accepté la hauteur. Réessayez pour partager l'ajustement avec les autres.
 hover-height-retry = Réessayer

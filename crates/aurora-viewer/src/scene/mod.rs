@@ -4,6 +4,7 @@
 pub mod anchors;
 pub mod anim;
 pub mod animesh;
+mod auto_hover;
 pub mod avatar;
 pub mod banlines;
 pub mod complexity;
@@ -532,6 +533,7 @@ pub struct SceneStats {
 }
 
 pub struct Scene {
+    auto_hover: auto_hover::AutoHover,
     pub jobs: Jobs,
     job_rx: crossbeam_channel::Receiver<JobResult>,
     geoms: HashMap<GeomKey, GeomEntry>,
@@ -1029,6 +1031,7 @@ impl Scene {
             skeleton_meta_gen: 0,
             motions: HashMap::new(),
             skin_binds: Default::default(),
+            auto_hover: Default::default(),
         }
     }
 

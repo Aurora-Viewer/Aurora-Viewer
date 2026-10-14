@@ -103,6 +103,9 @@ layout always wins. Legacy layouts survive pre-login saves until migration.
 Without an override the skin's live layout remains authoritative. Edits save
 only on release or an explicit action, and an empty override stays empty.
 
+`scene/auto_hover.rs` estimates ground contact after body attachments change. It snapshots the shaped rest skeleton and attachment geometry, decodes high-LOD meshes and blends only vertices selected by nonzero foot weights on the background pool. HUDs are excluded; stale estimates are discarded after further outfit changes. The Hover Height floater exposes the saved automatic option (enabled by default), using the existing per-account height persistence and AgentPreferences write queue.
+`demo_auto_hover.rs` supplies rigid foot linksets and a rigged shoe asset for the `AURORA_DEMO_HOVER_HEIGHT=auto-*` scenarios.
+
 `ui/hover_height.rs` exposes the avatar's -3..3 m hover adjustment and the
 shared camera preference. `world/hover_height.rs` owns local preview, the
 committed value, ordered background persistence in the account's

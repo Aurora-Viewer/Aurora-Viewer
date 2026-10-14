@@ -5107,6 +5107,7 @@ impl App {
             self.update_ao(now);
             // poses first: attachments follow their bone in the same frame
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, now);
+            self.scene.update_auto_hover(&mut self.world, self.settings.auto_hover_height, now);
             for anim in completed {
                 self.ao_runtime.finished(anim);
                 // LLAgent::requestStopMotion: stop the finished non-looping
@@ -8770,7 +8771,7 @@ impl App {
                     &p,
                     &mut self.world.hover_height,
                     hover_enabled,
-                    &mut self.settings.camera.hover_affects_camera,
+                    (&mut self.settings.camera.hover_affects_camera, &mut self.settings.auto_hover_height),
                 ) {
                     self.settings.save();
                 }

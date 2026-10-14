@@ -3920,6 +3920,7 @@ ui-context-hover-height = Hover Height
 hover-height-lower = Lower
 hover-height-raise = Raise
 hover-height-affect-camera = Affect camera view
+hover-height-automatic = Automatically adjust when attachments change
 hover-height-unavailable = This region does not support adjusting hover height yet.
 hover-height-send-failed = The simulator did not accept the height. Retry to share the adjustment with others.
 hover-height-retry = Retry

@@ -216,7 +216,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details) |
-| `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Avatar hover-height adjustment and camera toggle |
+| `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
@@ -235,7 +235,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure`**:
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-cycle`**:
   opens the hover-height floater at frame 600. A number sets the height;
   `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
   repeats the cycle with "Affect camera view" enabled; otherwise the camera
@@ -250,6 +250,18 @@ when unfocused") is ignored during a screenshot.
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
   switch for the manual check. On the grid, also verify other viewers see
   the committed adjustment, then teleport and reconnect to check persistence.
+  `auto-static` adds two rigid soles with a linked heel at frame 620;
+  the `auto-*` scenarios frame the feet at 600, after the login camera reset.
+  `auto-static-off` repeats it with automatic adjustment disabled for comparison;
+  `auto-rigged` adds a rigged shoe mesh on the spine with an unrelated low
+  triangle whose foot weights are zero (it must not lift the avatar).
+  `auto-cycle` adds the rigid shoes at 620 and removes them at 940; capture
+  580, 840 and 1100 to compare barefoot / soles on the ground / barefoot.
+  Automatic adjustment is enabled by default in Hover Height. Manual edits
+  last until the next body attachment change; HUD changes must leave the
+  height intact. Updates during sitting/flying wait until standing on the
+  ground. On the grid: add/remove rigged shoes/body, rigid foot linksets and
+  HUDs, including delayed mesh loading and attachments worn while seated.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
