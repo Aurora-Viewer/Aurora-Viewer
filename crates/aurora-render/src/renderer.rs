@@ -109,6 +109,8 @@ struct FrameU {
     tex_slots: [u32; 4],
     sky_ll: [f32; 4],
     sky_obj_light: [f32; 4],
+    sky_optics: [f32; 4],
+    sky_optics_tex: [u32; 4],
     anim_clock: [u32; 4],
     selection_color: [f32; 4],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
@@ -3583,6 +3585,8 @@ impl Backend {
         };
         u.sky_ll = [ll_mode, s.distance_multiplier, 0.0, 0.0];
         u.sky_obj_light = s.object_sunlight.extend(0.0).to_array();
+        u.sky_optics = [s.moisture_level, s.droplet_radius, s.ice_level, 0.0];
+        u.sky_optics_tex = [s.rainbow_texture, s.halo_texture, 0, 0];
         for (i, m) in cascades.iter().enumerate() {
             u.cascade_vp[i] = m.to_cols_array_2d();
         }

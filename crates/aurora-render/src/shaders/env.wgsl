@@ -49,10 +49,43 @@ fn body_disc(dir: vec3<f32>, body: vec3<f32>, half_size: f32, slot: u32) -> vec4
     return vec4<f32>(srgb_to_linear(t.rgb) * t.a, t.a);
 }
 
+// Rainbow and 22° halo, port of skyF.glsl's rainbow() and halo22() (Second
+// Life viewer, Copyright (C) Linden Research, Inc., LGPL 2.1). `d` is the
+// cosine between the view and the light. The textures hold Second Life's
+// coordinates, whose v runs up the image: sampled at 1 - v, with the repeat
+// wrap the GL texture had.
+fn sky_rainbow(d: f32) -> vec3<f32> {
+    let moisture = frame.sky_optics.x;
+    let slot = frame.sky_optics_tex.x;
+    if (slot == 0u || moisture <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    // the colors sit at v 0.175..0.25 (view nearly opposite the light);
+    // above 0.25 the interior is stretched over the rest of the texture
+    var v = clamp(-0.575 - d, 0.0, 1.0);
+    v = clamp(v, 0.0, 0.25) + max(0.0, v - 0.25) * 4.2857;
+    let rad = (frame.sky_optics.y - 5.0) / 1024.0;
+    let t = sample_tex_level(slot, vec2<f32>(rad + 0.5, 1.0 - v), 0.0).rgb;
+    return pow(t, vec3<f32>(1.8)) * moisture;
+}
+
+fn sky_halo(d: f32) -> vec3<f32> {
+    let ice = frame.sky_optics.z;
+    let slot = frame.sky_optics_tex.y;
+    if (slot == 0u || ice <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let c = clamp(d, 0.1, 1.0);
+    let v = sqrt(clamp(1.0 - c * c, 0.0, 1.0));
+    return sample_tex_level(slot, vec2<f32>(0.0, 1.0 - v), 0.0).rgb * ice;
+}
+
 fn sky_full(dir: vec3<f32>) -> vec3<f32> {
     let d = normalize(dir);
     let a = atmos_eval(d, false);
-    var c = clamp(a.color * 2.0, vec3<f32>(0.0), vec3<f32>(5.0));
+    // skyF.glsl: added to the haze color before its x 2, under the clouds
+    let haze = a.color + sky_rainbow(a.light_dot) + sky_halo(a.light_dot);
+    var c = clamp(haze * 2.0, vec3<f32>(0.0), vec3<f32>(5.0));
     let clouds = sky_clouds(d);
     c = mix(c, clouds.rgb, clouds.a);
     var col = srgb_to_linear(c) * frame.sky_cloud_pd2.w;
