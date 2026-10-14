@@ -75,12 +75,10 @@ pub(super) fn slot_face(ui: &egui::Ui, p: &Palette, rect: Rect, hot: bool, activ
 /// the bell.
 pub fn count(ui: &egui::Ui, p: &Palette, slot: Rect, unread: usize, scale: f32, paused: bool) {
     let anchor = slot.right_top() + Vec2::new(2.0, 0.0);
-    crate::ui::widgets::UnreadCount::new(unread, crate::ui::widgets::CountSize::Bar).scale(scale).paused(paused).paint(
-        ui.painter(),
-        p,
-        anchor,
-        egui::Align2::RIGHT_TOP,
-    );
+    crate::ui::widgets::UnreadCount::new(unread, crate::ui::widgets::CountSize::Bar)
+        .scale(scale)
+        .paused(paused)
+        .paint(ui.painter(), p, anchor, egui::Align2::RIGHT_TOP);
 }
 
 /// The ink of a slot's icon and text.

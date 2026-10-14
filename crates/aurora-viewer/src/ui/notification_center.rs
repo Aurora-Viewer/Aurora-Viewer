@@ -267,12 +267,10 @@ pub fn bell(
         // the interface's one counter, pinned by its top right corner: the
         // bounce grows inside the bar
         let anchor = rect.right_top() + Vec2::new(3.0, -1.0);
-        super::widgets::UnreadCount::new(unread, super::widgets::CountSize::Bar).scale(s).paused(dnd).paint(
-            ui.painter(),
-            p,
-            anchor,
-            egui::Align2::RIGHT_TOP,
-        );
+        super::widgets::UnreadCount::new(unread, super::widgets::CountSize::Bar)
+            .scale(s)
+            .paused(dnd)
+            .paint(ui.painter(), p, anchor, egui::Align2::RIGHT_TOP);
     }
     let tip = if dnd {
         aurora_i18n::tr!("ui-notifications-bell-paused").to_owned()

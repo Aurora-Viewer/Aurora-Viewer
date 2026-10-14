@@ -72,12 +72,29 @@ impl UnreadCount {
     /// top right corner there), on whole pixels: where it stands, before it
     /// is painted (an entry stops its name before it).
     pub fn place(&self, ctx: &egui::Context, p: &Palette, anchor: Pos2, align: Align2) -> PlacedCount {
-        let (fill, ink) = if self.paused { (p.raised, p.muted) } else { (p.danger_dim, p.on_accent) };
+        let (fill, ink) = if self.paused {
+            (p.raised, p.muted)
+        } else {
+            (p.danger_dim, p.on_accent)
+        };
         let (font, height, pad) = self.size.metrics();
         let font = FontId::new(font * self.scale, crate::ui::fonts::semibold(ctx));
         let galley = ctx.fonts_mut(|f| f.layout_no_wrap(count_text(self.n), font, ink));
-        let (rect, at) = layout(&galley, anchor, align, height * self.scale, pad * self.scale, ctx.pixels_per_point());
-        PlacedCount { rect, galley, at, fill, ink }
+        let (rect, at) = layout(
+            &galley,
+            anchor,
+            align,
+            height * self.scale,
+            pad * self.scale,
+            ctx.pixels_per_point(),
+        );
+        PlacedCount {
+            rect,
+            galley,
+            at,
+            fill,
+            ink,
+        }
     }
 
     /// Placed (see `place`) and painted; returns its rectangle.
@@ -167,7 +184,10 @@ mod tests {
                                 for edge in [c.rect.left(), c.rect.top(), c.rect.right(), c.rect.bottom()] {
                                     assert_eq!(((edge * ppp) * 1000.0).round() % 1000.0, 0.0, "{case}: the pill on whole pixels");
                                 }
-                                assert!((c.rect.width() * ppp).round() >= (c.rect.height() * ppp).round(), "{case}: never narrower than high");
+                                assert!(
+                                    (c.rect.width() * ppp).round() >= (c.rect.height() * ppp).round(),
+                                    "{case}: never narrower than high"
+                                );
                                 checked += 1;
                             }
                         }
@@ -196,7 +216,9 @@ mod tests {
             assert!(list.rect.height() > one.rect.height());
             assert!((list.rect.center().y - at.y).abs() <= 0.5);
             // do not disturb greys it
-            let paused = UnreadCount::new(3, CountSize::Bar).paused(true).place(&ctx, &p, at, Align2::RIGHT_TOP);
+            let paused = UnreadCount::new(3, CountSize::Bar)
+                .paused(true)
+                .place(&ctx, &p, at, Align2::RIGHT_TOP);
             assert_eq!((one.fill, one.ink), (p.danger_dim, p.on_accent));
             assert_eq!((paused.fill, paused.ink), (p.raised, p.muted));
         });
