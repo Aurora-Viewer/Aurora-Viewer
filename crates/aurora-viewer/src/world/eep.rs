@@ -217,21 +217,23 @@ fn sky_frame(s: &Llsd) -> Option<SkyFrame> {
     }
     let d = SkyFrame::default();
     // `legacy_haze` holds the classic atmospheric parameters in EEP skies;
-    // `ambient` may live in either map.
-    let haze = if s.has("legacy_haze") { &s["legacy_haze"] } else { s };
-    let ambient = vec3(&haze["ambient"]).or_else(|| vec3(&s["ambient"])).unwrap_or(d.ambient);
+    // each key is looked up there first, then in the sky itself (get_float /
+    // get_color of LLSettingsSky::loadValuesFromLLSD)
+    let haze = &s["legacy_haze"];
+    let haze_vec3 = |k: &str| vec3(&haze[k]).or_else(|| vec3(&s[k]));
+    let haze_real = |k: &str, dflt: f32| if haze.has(k) { real(haze, k, dflt) } else { real(s, k, dflt) };
     Some(SkyFrame {
         // missing values take LLSettingsSky::defaults() (settingValidation)
         sun_rotation: quat(&s["sun_rotation"]).unwrap_or(d.sun_rotation),
         moon_rotation: quat(&s["moon_rotation"]).unwrap_or(d.moon_rotation),
         sunlight: vec3(&s["sunlight_color"]).unwrap_or(d.sunlight),
-        ambient,
-        blue_horizon: vec3(&haze["blue_horizon"]).unwrap_or(d.blue_horizon),
-        blue_density: vec3(&haze["blue_density"]).unwrap_or(d.blue_density),
-        haze_density: real(haze, "haze_density", d.haze_density),
-        haze_horizon: real(haze, "haze_horizon", d.haze_horizon),
-        density_multiplier: real(haze, "density_multiplier", d.density_multiplier),
-        distance_multiplier: real(haze, "distance_multiplier", d.distance_multiplier),
+        ambient: haze_vec3("ambient").unwrap_or(d.ambient),
+        blue_horizon: haze_vec3("blue_horizon").unwrap_or(d.blue_horizon),
+        blue_density: haze_vec3("blue_density").unwrap_or(d.blue_density),
+        haze_density: haze_real("haze_density", d.haze_density),
+        haze_horizon: haze_real("haze_horizon", d.haze_horizon),
+        density_multiplier: haze_real("density_multiplier", d.density_multiplier),
+        distance_multiplier: haze_real("distance_multiplier", d.distance_multiplier),
         max_y: real(s, "max_y", d.max_y),
         glow: vec3(&s["glow"]).unwrap_or(d.glow),
         cloud_color: vec3(&s["cloud_color"]).unwrap_or(d.cloud_color),
@@ -449,6 +451,11 @@ impl Settings {
     /// does (LLSDSerialize::deserialize: binary, XML or notation; assets are
     /// uploaded as notation) and build it by its type (createFromLLSD).
     pub fn from_asset(data: &[u8]) -> Option<Settings> {
+        Settings::from_llsd(&Settings::decode_asset(data)?)
+    }
+
+    /// The settings map of an asset (binary, XML or notation), unparsed.
+    pub fn decode_asset(data: &[u8]) -> Option<Llsd> {
         let start = data.iter().position(|c| !c.is_ascii_whitespace())?;
         let data = &data[start..];
         let lower: Vec<u8> = data.iter().take(24).map(u8::to_ascii_lowercase).collect();
@@ -468,7 +475,7 @@ impl Settings {
         } else {
             aurora_llsd::from_notation(data).ok()?
         };
-        Settings::from_llsd(&v)
+        Some(v)
     }
 
     pub fn from_llsd(v: &Llsd) -> Option<Settings> {
@@ -574,15 +581,15 @@ impl WaterFrame {
     }
 }
 
-fn llsd_vec3(v: Vec3) -> Llsd {
+pub(crate) fn llsd_vec3(v: Vec3) -> Llsd {
     Llsd::Array(vec![v.x.into(), v.y.into(), v.z.into()])
 }
 
-fn llsd_vec2(v: Vec2) -> Llsd {
+pub(crate) fn llsd_vec2(v: Vec2) -> Llsd {
     Llsd::Array(vec![v.x.into(), v.y.into()])
 }
 
-fn llsd_quat(q: Quat) -> Llsd {
+pub(crate) fn llsd_quat(q: Quat) -> Llsd {
     Llsd::Array(vec![q.x.into(), q.y.into(), q.z.into(), q.w.into()])
 }
 

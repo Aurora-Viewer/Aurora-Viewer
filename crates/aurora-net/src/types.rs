@@ -1559,6 +1559,20 @@ pub enum NetCommand {
         asset_type: i32,
         data: Vec<u8>,
     },
+    /// A new environment settings item holding `data` (LLSettingsVOBase::
+    /// createInventoryItem): CreateInventoryItem, then the asset through
+    /// UpdateSettingsAgentInventory. Answered by `InventoryContentSaved`.
+    CreateSettingsItem {
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        /// LLSettingsType: 0 sky, 1 water, 2 day cycle.
+        subtype: u8,
+        /// The edited item's next owner permissions (Save As); None: the
+        /// defaults for new settings.
+        next_owner_mask: Option<u32>,
+        data: Vec<u8>,
+    },
     LoadGesture {
         item: Uuid,
         asset: Uuid,

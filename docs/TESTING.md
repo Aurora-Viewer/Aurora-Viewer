@@ -995,6 +995,7 @@ To check with these scenarios:
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
+| `AURORA_DEMO_ENV_EDITOR=<mode>` | Sky and water editors |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 
 ### Details
@@ -1108,6 +1109,16 @@ To check with these scenarios:
   fade). `lighting`: "Personal lighting" also opens, a sky is
   chosen (2600) then modified (2900). `list`: the list of skies unfolded
   (2500).
+- **`AURORA_DEMO_ENV_EDITOR=sky|clouds|sun|water|item|item-save`**: sky
+  and water editors (`app/env_editor.rs`), with the library and Settings
+  folder of `AURORA_DEMO_ENV_SELECT`. At frame 400 the editor opens on a
+  snapshot of the shown sky (`sky`, `clouds` and `sun` pick the tab) or
+  water (`water`), or on the user's "my purple sky" item once its folder
+  has loaded (`item`: the sky turns purple at once, Save is enabled).
+  `item-save` also raises its brightness and saves over the item (frame
+  900), then saves it as "my purple sky, brighter" (1100): both saves
+  are logged (`environment settings saved`) and the second item shows in
+  the Settings folder.
 
 ## Load and smoothness
 

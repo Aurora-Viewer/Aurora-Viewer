@@ -34,6 +34,7 @@ mod context_menu;
 mod cursor_hold;
 mod dof;
 mod double_click;
+mod env_editor;
 mod gestures;
 mod hover_height;
 mod hud_drag;
@@ -452,6 +453,10 @@ pub struct App {
     env_scan: bool,
     /// "Personal lighting" was open last frame (captures on opening).
     lighting_was_open: bool,
+    /// Sky and water editors (LLFloaterFixedEnvironment).
+    env_editor: ui::env_editor::EnvEditorUi,
+    /// A Windlight preset being read for "Import" (bytes and preset name).
+    env_import: Option<std::sync::mpsc::Receiver<Option<(Vec<u8>, String)>>>,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
     gesture_state: gestures::State,
@@ -808,6 +813,8 @@ impl App {
             env_ui: Default::default(),
             env_scan: false,
             lighting_was_open: false,
+            env_editor: Default::default(),
+            env_import: None,
             demo: false,
             inventory_ui: Default::default(),
             gesture_state: Default::default(),
@@ -1137,10 +1144,54 @@ impl App {
                         it
                     })
                     .ok_or_else(|| aurora_i18n::tr!("common-item-not-found").to_owned());
+                // a saved settings item's new asset, as the simulator would serve it
+                if let Ok(it) = &result
+                    && it.asset_type == 56
+                    && let Some(s) = crate::world::eep::Settings::from_asset(data)
+                {
+                    self.scene.settings.insert_local(it.asset_id, s);
+                }
                 self.on_app_event(NetEvent::InventoryContentSaved {
                     request: *request,
                     item: *item,
                     result,
+                });
+                return;
+            }
+            if let NetCommand::CreateSettingsItem {
+                request,
+                parent,
+                name,
+                subtype,
+                next_owner_mask,
+                data,
+            } = &cmd
+            {
+                let item = aurora_net::inventory::InvItem {
+                    id: uuid::Uuid::new_v4(),
+                    parent: *parent,
+                    name: name.clone(),
+                    asset_type: 56,
+                    inv_type: 25,
+                    asset_id: uuid::Uuid::new_v4(),
+                    flags: u32::from(*subtype),
+                    owner: self.world.agent_id,
+                    creator: self.world.agent_id,
+                    base_mask: 0x7fffffff,
+                    owner_mask: 0x7fffffff,
+                    everyone_mask: 0x8000,
+                    next_owner_mask: next_owner_mask.unwrap_or(0x86000),
+                    ..Default::default()
+                };
+                self.demo_documents.insert(item.id, data.clone());
+                if let Some(s) = crate::world::eep::Settings::from_asset(data) {
+                    self.scene.settings.insert_local(item.asset_id, s);
+                }
+                self.world.inventory.add_items(vec![item.clone()]);
+                self.on_app_event(NetEvent::InventoryContentSaved {
+                    request: *request,
+                    item: item.id,
+                    result: Ok(item),
                 });
                 return;
             }
@@ -1206,7 +1257,8 @@ impl App {
                 return;
             }
             if let NetCommand::PreviewInventoryItem(it) = &cmd {
-                let bytes = self.demo_documents.get(&it.id).cloned().unwrap_or_else(|| match it.asset_type {
+                let library = (it.asset_type == 56).then(|| crate::demo::env::asset_bytes(it.asset_id)).flatten();
+                let bytes = self.demo_documents.get(&it.id).cloned().or(library).unwrap_or_else(|| match it.asset_type {
                     56 => b"<?llsd/notation?>\n{'type':'sky'}".to_vec(),
                     57 => aurora_llsd::to_binary(
                         &aurora_llsd::llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{\"asset\":{\"version\":\"2.0\"},\"materials\":[{}]}" },
@@ -1470,6 +1522,9 @@ impl App {
         self.env_scan = false;
         self.panels.environment = false;
         self.panels.personal_lighting = false;
+        self.env_editor.close();
+        self.env_import = None;
+        self.world.eep.clear_edit();
         self.world.save_inventory_cache();
         self.world.save_mute_cache();
         if let Some(path) = self.name_cache_path() {
@@ -1553,6 +1608,10 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if self.env_editor.saving == Some(request) {
+                self.env_editor_saved(result);
+                return;
+            }
             if self.gesture_save_pending(request, item) {
                 self.gesture_saved(request, item, result);
                 return;
@@ -4208,6 +4267,7 @@ impl App {
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
+        images.extend(self.env_editor.wanted_images.drain());
         for note in self.task_notecards.values_mut() {
             images.extend(note.state.wanted_images.drain());
         }
@@ -5980,6 +6040,13 @@ impl App {
             }
             if let Some(step) = crate::demo::env::step(self.frame_count) {
                 self.demo_env_step(step);
+            }
+            if let Some(scenario) = crate::demo::env::editor() {
+                if self.frame_count == 400 {
+                    self.demo_env_editor(scenario);
+                } else if scenario == "item-save" {
+                    self.demo_env_editor_step(self.frame_count);
+                }
             }
         }
         // last view for the loading screens (blurred in a thread, or now when quitting)
@@ -8473,6 +8540,7 @@ impl App {
                         ui::environment::EnvAction::Preset(n) => self.panels.time_of_day = n,
                     }
                 }
+                self.draw_env_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
                 self.settings.show_chat = self.panels.chat;
                 self.settings.show_perf = self.panels.perf;

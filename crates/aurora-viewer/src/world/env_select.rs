@@ -142,6 +142,24 @@ impl SettingsCatalog {
         Self::from_items(items.into_iter().map(|(it, _)| it))
     }
 
+    /// Settings items of one type an editor can load (LLFloaterSettingsPicker
+    /// filtered by type): (item, name), the user's before the library's,
+    /// Trash and Marketplace listings left out.
+    pub fn items_of(inv: &Inventory, kind: SettingsKind) -> Vec<(Uuid, String)> {
+        let places = places(inv);
+        let mut items: Vec<(&InvItem, bool)> = inv
+            .items
+            .values()
+            .filter(|it| it.asset_type == AT_SETTINGS && !it.asset_id.is_nil() && SettingsKind::from_flags(it.flags) == Some(kind))
+            .filter_map(|it| {
+                let p = places.get(&it.parent).copied().unwrap_or_default();
+                (!p.excluded).then_some((it, p.library))
+            })
+            .collect();
+        items.sort_by(|(a, la), (b, lb)| la.cmp(lb).then_with(|| a.name.cmp(&b.name)).then_with(|| a.id.cmp(&b.id)));
+        items.into_iter().map(|(it, _)| (it.id, it.name.clone())).collect()
+    }
+
     /// FSSettingsCollector + the three multimaps of loadPresets: one entry
     /// per settings asset (the first item seen), items of an invalid settings
     /// type dropped, each list sorted by name. Firestorm's std::multimap
