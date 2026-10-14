@@ -2018,6 +2018,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
+| `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 
 ### Details
 
@@ -2046,18 +2047,20 @@ What the inventory must show with these scenarios:
     Compare frames 660 and 780 at 60 fps; also use `AURORA_NAME_TAGS=classic`.
     A change of animation can change its height envelope; its individual
     frames never move the tag. Use a human-run grid session to verify real deformer assets.
-  - `voice`: Nova out of the voice channel (red struck-through microphone);
+  - `voice`: Nova out of the voice channel (no microphone badge);
     Tess in the channel, silent (green microphone badge, no outline) and
     without a profile picture (the icon stays); Orion, a friend, is speaking
-    (green outline and halo that follows the level, light violet name,
-    microphone, heart and triangle badges: he is shown as too complex); Lune
+    (green outline and halo that follows the level, microphone, green heart
+    and triangle badges: he is shown as too complex;
+    his name is in ink like everyone's unless Preferences › Colors › "Color
+    the names by relation" is on); Lune
     is typing (three animated dots) and has no display name (two lines); La
     Brume is blocked (dimmed plate, name in italics, forbidden badge, no
     status dot). Farther away, Sol is speaking (green outline) and Iris is
     typing; beyond, Vega is in the channel and Atlas is not (the far pill
     has no badge).
   - `status`: Nova away (amber dot), Tess do not disturb (red dot), Orion
-    out of the channel (red microphone, heart and triangle), Lune typing
+    out of the channel (green heart and triangle), Lune typing
     while away.
   - `cycle`: switches from one to the other every six seconds.
   - `wall`: the states of `voice`, with the wall in front of Nova and Tess
@@ -2069,6 +2072,10 @@ What the inventory must show with these scenarios:
     the right are whole. `AURORA_LABEL_OCCLUSION=0` gives the image without
     the cut. To look at in `AURORA_AA=3`, `5` and `6` (with 5, the cut must
     not shimmer from one frame to the next).
+  - With `AURORA_DEMO_FRIEND_PLATES=1` (the setting Preferences › Interface ›
+    "Full plates for friends only" for this run, not saved): only Orion, the
+    friend, and our own plate are complete; Nova, Tess, Lune and La Brume are
+    compact pills however near; the far pills do not change.
   - The pictures are generated gradients (`demo_tags::picture_pixels`),
     requested as on the grid: profile, then texture, at most four per
     second, the nearest first; our avatar and La Brume have the same one.

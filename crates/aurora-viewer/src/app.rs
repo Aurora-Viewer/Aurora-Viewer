@@ -6789,6 +6789,9 @@ impl App {
                     &mut self.look_at_fades,
                 );
                 let classic_tags = self.classic_name_tags();
+                // AURORA_DEMO_FRIEND_PLATES=1: the setting for this run, without saving it
+                self.plates.friends_only_full =
+                    self.settings.plates_friends_only_full || (self.demo && std::env::var_os("AURORA_DEMO_FRIEND_PLATES").is_some());
                 self.name_tags = ui::hud::draw(
                     &ctx,
                     &p,

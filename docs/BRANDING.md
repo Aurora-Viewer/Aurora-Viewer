@@ -150,18 +150,17 @@ dragging a handle switch to `violet_light`, like any selection.
     `amber` (away), `danger` (do not disturb); none for a blocked
     resident.
   - *Badges*: `success` microphone (in the voice channel), three animated
-    dots (typing), `violet_light` heart (friend), `amber` triangle (avatar
-    too complex, shown as a silhouette), `danger` no-entry sign (blocked).
+    dots (typing), `success` heart (friend), `amber` triangle (avatar too
+    complex, shown as a silhouette), `danger` no-entry sign (blocked).
   - *Voice*: in the voice channel, the outline of the plate takes the
     `success` colour, at every level; while the person is speaking, a tight
     halo around the plate follows the level of their voice (fast rise,
     slower fall, no halo in silence).
-  - *Colours set by the theme.* Display name in `ink` (ours too),
-    `violet_light` for a friend, `rose` for Linden Lab staff, `muted_dim`
-    in italics on a plate at 62% for a blocked resident. The name tag
-    colours of the preferences (Colors page) belong to the classic name
-    tags, which are found in
-    Preferences › Interface › "Name tag style".
+  - *Name colour.* Every display name in `ink`, ours too; a blocked
+    resident's in italics on a plate at 62%. Preferences › Colors ›
+    "Color the names by relation" (off by default) colours the names of
+    the plates and of the classic name tags alike, with the colours of that
+    page (me, friends, blocked, Linden Lab, from the palette by default).
   - *Size*: the display name keeps the size of the classic name tags
     (13 points) on the full plate; everything else follows from it through
     the proportions of the mock-up.
