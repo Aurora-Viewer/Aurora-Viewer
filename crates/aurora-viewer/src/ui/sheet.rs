@@ -529,27 +529,24 @@ pub fn sections<S: Copy + PartialEq>(
         });
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
-            let out = egui::ScrollArea::vertical()
-                .id_salt(id)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width() - 6.0);
-                    let view_top = ui.clip_rect().top();
-                    let mut current = None;
-                    for sec in list {
-                        let mut c = card_begin(ui);
-                        body(&mut c.child, *sec);
-                        let rect = card_end(ui, p, c);
-                        if state.jump == Some(*sec) {
-                            ui.scroll_to_rect(rect, Some(egui::Align::TOP));
-                            state.jump = None;
-                            state.jumped_at = ui.input(|i| i.time);
-                        } else if rect.top() <= view_top + 24.0 {
-                            current = Some(*sec);
-                        }
+            let out = egui::ScrollArea::vertical().id_salt(id).auto_shrink([false, false]).show(ui, |ui| {
+                ui.set_width(ui.available_width() - 6.0);
+                let view_top = ui.clip_rect().top();
+                let mut current = None;
+                for sec in list {
+                    let mut c = card_begin(ui);
+                    body(&mut c.child, *sec);
+                    let rect = card_end(ui, p, c);
+                    if state.jump == Some(*sec) {
+                        ui.scroll_to_rect(rect, Some(egui::Align::TOP));
+                        state.jump = None;
+                        state.jumped_at = ui.input(|i| i.time);
+                    } else if rect.top() <= view_top + 24.0 {
+                        current = Some(*sec);
                     }
-                    current
-                });
+                }
+                current
+            });
             // the section in view follows the scrolling, not a jump that
             // could not bring the last sections to the top
             let offset = out.state.offset.y;
@@ -677,9 +674,11 @@ pub fn person_row(ui: &mut egui::Ui, p: &Palette, world: &World, row: &Person<'_
         presence::paint_dot(ui.painter(), p, disc, status, p.field);
     }
     // the right end, then the names in the room before it
-    let exp_g = ui
-        .painter()
-        .layout_no_wrap(row.exp.to_owned(), FontId::proportional(11.5), if row.timed { p.amber } else { p.muted });
+    let exp_g = ui.painter().layout_no_wrap(
+        row.exp.to_owned(),
+        FontId::proportional(11.5),
+        if row.timed { p.amber } else { p.muted },
+    );
     let exp_w = exp_g.size().x;
     ui.painter().galley(
         egui::pos2(rect.right() - 8.0 - exp_w, rect.center().y - exp_g.size().y / 2.0),

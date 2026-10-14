@@ -7,11 +7,11 @@
 //! window's.
 
 use super::aurora::{Pictures, cards, semibold};
-use crate::ui::sheet::{Person, ROW_H, list_title, matches, names, person_row, search_field};
 use super::dialogs::Confirm;
 use super::manage::{card_begin, card_end, missing_power};
 use super::{Dialog, LandUi, PickFor, View};
 use crate::theme::Palette;
+use crate::ui::sheet::{Person, ROW_H, list_title, matches, names, person_row, search_field};
 use crate::ui::widgets;
 use crate::world::World;
 use crate::world::land::{OwnerList, powers};
