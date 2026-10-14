@@ -140,7 +140,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "content: Firestorm's colors of the mini-map (objects, avatars, tracking) and its marks over the map",
     ),
     (
-        "ui/worldmap.rs",
+        "ui/worldmap/mod.rs",
         COLOR,
         "content: the ocean, the marks and the legend of the world map, drawn over its tiles",
     ),
