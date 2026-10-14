@@ -104,7 +104,13 @@ impl Session<'_> {
             match estate::parse_estate_update_info(&strings) {
                 Some(info) => {
                     let handle = self.handle_of(from);
-                    emit(self.sh, NetEvent::Estate(EstateEvent::EstateInfo { handle, info: Arc::new(info) }));
+                    emit(
+                        self.sh,
+                        NetEvent::Estate(EstateEvent::EstateInfo {
+                            handle,
+                            info: Arc::new(info),
+                        }),
+                    );
                 }
                 None => log::warn!("estate: estateupdateinfo with {} strings", strings.len()),
             }

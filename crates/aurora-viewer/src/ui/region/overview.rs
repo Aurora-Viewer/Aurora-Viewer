@@ -100,14 +100,20 @@ fn fraction(used: f32, max: u32) -> f32 {
 
 /// The estate's name: its own answer, else the covenant's.
 fn estate_name(world: &World, v: &View) -> Option<String> {
-    world.estate.estate.as_ref().map(|e| e.name.clone()).filter(|n| !n.is_empty()).or_else(|| {
-        world
-            .land
-            .covenant
-            .as_ref()
-            .filter(|c| c.handle == v.handle)
-            .map(|c| c.estate_name.clone())
-    })
+    world
+        .estate
+        .estate
+        .as_ref()
+        .map(|e| e.name.clone())
+        .filter(|n| !n.is_empty())
+        .or_else(|| {
+            world
+                .land
+                .covenant
+                .as_ref()
+                .filter(|c| c.handle == v.handle)
+                .map(|c| c.estate_name.clone())
+        })
 }
 
 /// The picture of the header: the region's map with the agent's place and
@@ -191,7 +197,10 @@ fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world
         let name = estate_name(world, v).unwrap_or_else(|| aurora_i18n::tr!("common-loading").to_owned());
         let r = ui.label(RichText::new(name).size(12.0).color(p.teal));
         if let Some(d) = &details {
-            r.on_hover_text(aurora_i18n::tr!("region-estate-id-tip", id = aurora_i18n::integer(i64::from(d.estate_id))));
+            r.on_hover_text(aurora_i18n::tr!(
+                "region-estate-id-tip",
+                id = aurora_i18n::integer(i64::from(d.estate_id))
+            ));
         }
         if !compact {
             let (x, y) = grid_position(v.handle);
@@ -199,7 +208,12 @@ fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world
             ui.label(
                 RichText::new(format!(
                     "· {}",
-                    aurora_i18n::tr!("region-position-server", x = x.to_string(), y = y.to_string(), version = short_version(&version))
+                    aurora_i18n::tr!(
+                        "region-position-server",
+                        x = x.to_string(),
+                        y = y.to_string(),
+                        version = short_version(&version)
+                    )
                 ))
                 .size(12.0)
                 .color(p.muted),
@@ -387,7 +401,11 @@ fn facts(ui: &mut egui::Ui, p: &Palette, list: &[Fact], gauge_w: f32, gap: f32) 
                 .size()
                 .x;
         }
-        let key = ui.painter().layout_no_wrap(f.key.to_owned(), egui::FontId::proportional(11.0), p.muted).size().x;
+        let key = ui
+            .painter()
+            .layout_no_wrap(f.key.to_owned(), egui::FontId::proportional(11.0), p.muted)
+            .size()
+            .x;
         let gauge = if f.gauge.is_some() { gauge_w } else { 0.0 };
         w.max(key).max(gauge).ceil()
     };
@@ -607,7 +625,10 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
         let about = aurora_i18n::tr!("common-about-land");
-        if action(ui, p, "map-pin-filled", label(about), Flat, true).on_hover_text(about).clicked() {
+        if action(ui, p, "map-pin-filled", label(about), Flat, true)
+            .on_hover_text(about)
+            .clicked()
+        {
             s.action = Some(RegionAction::AboutLand);
         }
         let map = aurora_i18n::tr!("region-map");
@@ -620,9 +641,16 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
             glam::Vec3::new(128.0, 128.0, 0.0)
         };
         let slurl = (!v.name.is_empty()).then(|| crate::slurl::make(&v.name, point));
-        if action(ui, p, "copy-filled", label(aurora_i18n::tr!("ui-land-overview-slurl")), Flat, slurl.is_some())
-            .on_hover_text(aurora_i18n::tr!("common-copy-slurl"))
-            .clicked()
+        if action(
+            ui,
+            p,
+            "copy-filled",
+            label(aurora_i18n::tr!("ui-land-overview-slurl")),
+            Flat,
+            slurl.is_some(),
+        )
+        .on_hover_text(aurora_i18n::tr!("common-copy-slurl"))
+        .clicked()
             && let Some(url) = slurl
         {
             ui.ctx().copy_text(url);
@@ -634,8 +662,7 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
                 ("gauge-filled", aurora_i18n::tr!("region-top-scripts"), Flat),
                 ("refresh", aurora_i18n::tr!("region-restart"), SoftDanger),
             ] {
-                action(ui, p, icon, label(text), kind, false)
-                    .on_disabled_hover_text(format!("{text}\n{later}"));
+                action(ui, p, icon, label(text), kind, false).on_disabled_hover_text(format!("{text}\n{later}"));
             }
         }
         more_menu(ui, p, world, v.handle);
@@ -673,7 +700,12 @@ fn covenant_card(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, wor
         .and_then(|c| c.text.clone())
         .unwrap_or_else(|| aurora_i18n::tr!("common-loading").to_owned());
     let width = ui.available_width();
-    let long = ui.painter().layout(body.clone(), egui::FontId::proportional(12.5), p.muted, width).size().y > COVENANT_EXCERPT + 1.0;
+    let long = ui
+        .painter()
+        .layout(body.clone(), egui::FontId::proportional(12.5), p.muted, width)
+        .size()
+        .y
+        > COVENANT_EXCERPT + 1.0;
     let link = long.then(|| {
         if s.covenant_open {
             aurora_i18n::tr!("ui-land-overview-read-less")
@@ -709,10 +741,7 @@ fn covenant_card(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, wor
             let when = if c.timestamp == 0 {
                 aurora_i18n::tr!("ui-land-overview-never-modified").to_owned()
             } else {
-                aurora_i18n::tr!(
-                    "ui-land-overview-modified-on",
-                    date = crate::ui::land::day(i64::from(c.timestamp))
-                )
+                aurora_i18n::tr!("ui-land-overview-modified-on", date = crate::ui::land::day(i64::from(c.timestamp)))
             };
             pill(ui, p, Tone::Neutral, "", &when);
         }
@@ -822,10 +851,7 @@ fn health_card(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World) {
     });
     kv(ui, p, aurora_i18n::tr!("region-server"), |ui| {
         let version = world.estate.versions.get(&v.handle).cloned().unwrap_or_else(|| "—".to_owned());
-        ui.add(
-            egui::Label::new(RichText::new(version).monospace().size(11.0).color(p.muted))
-                .truncate(),
-        );
+        ui.add(egui::Label::new(RichText::new(version).monospace().size(11.0).color(p.muted)).truncate());
     });
     kv(ui, p, aurora_i18n::tr!("ui-land-mod-experiences"), |ui| {
         let text = match &world.estate.experiences {

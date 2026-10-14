@@ -53,9 +53,6 @@ pub mod hud;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
-/// Region / Estate answers (AURORA_DEMO_REGION).
-#[path = "demo_region.rs"]
-pub mod region;
 /// The notification center's mockup scenario, in either style
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
@@ -63,6 +60,9 @@ pub mod notifs;
 /// Place details of place links (AURORA_DEMO_PLACE).
 #[path = "demo_place.rs"]
 pub mod place;
+/// Region / Estate answers (AURORA_DEMO_REGION).
+#[path = "demo_region.rs"]
+pub mod region;
 /// Directory answers of the search window (AURORA_DEMO_SEARCH).
 #[path = "demo_search.rs"]
 pub mod search;

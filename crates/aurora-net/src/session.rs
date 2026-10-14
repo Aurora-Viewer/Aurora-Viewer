@@ -3353,7 +3353,13 @@ impl Session<'_> {
                     self.request_environment(None);
                 }
                 let info = crate::estate::region_details(&m);
-                emit(self.sh, NetEvent::Estate(crate::estate::EstateEvent::RegionInfo { handle, info: Arc::new(info) }));
+                emit(
+                    self.sh,
+                    NetEvent::Estate(crate::estate::EstateEvent::RegionInfo {
+                        handle,
+                        info: Arc::new(info),
+                    }),
+                );
             }
         } else if id == SimStats::ID {
             // process_sim_stats: the region flags ride along (an estate manager
@@ -3373,7 +3379,13 @@ impl Session<'_> {
                         values: m.stat.iter().map(|s| (s.stat_id, s.stat_value)).collect(),
                         object_capacity: max_tasks,
                     };
-                    emit(self.sh, NetEvent::Estate(crate::estate::EstateEvent::Stats { handle, stats: Arc::new(stats) }));
+                    emit(
+                        self.sh,
+                        NetEvent::Estate(crate::estate::EstateEvent::Stats {
+                            handle,
+                            stats: Arc::new(stats),
+                        }),
+                    );
                 }
             }
         } else if id == HealthMessage::ID {

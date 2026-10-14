@@ -158,7 +158,11 @@ pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
                         name: aurora_i18n::tr!("common-aurora-demo").into(),
                         owner: estate_owner(),
                         id: ESTATE_ID,
-                        flags: ef::EXTERNALLY_VISIBLE | ef::ALLOW_DIRECT_TELEPORT | ef::ALLOW_VOICE | ef::ALLOW_ACCESS_OVERRIDE | ef::ALLOW_ENVIRONMENT_OVERRIDE,
+                        flags: ef::EXTERNALLY_VISIBLE
+                            | ef::ALLOW_DIRECT_TELEPORT
+                            | ef::ALLOW_VOICE
+                            | ef::ALLOW_ACCESS_OVERRIDE
+                            | ef::ALLOW_ENVIRONMENT_OVERRIDE,
                         sun_hour: 0.0,
                     }),
                 }));

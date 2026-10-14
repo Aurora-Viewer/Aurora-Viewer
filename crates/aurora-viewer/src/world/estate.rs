@@ -8,7 +8,9 @@
 //! does with refreshFromRegion.
 
 use super::land::EnvSummary;
-use aurora_net::estate::{EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RestartSchedule, SimStats};
+use aurora_net::estate::{
+    EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RestartSchedule, SimStats,
+};
 use aurora_net::{NetCommand, RegionHandle};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -154,10 +156,16 @@ mod tests {
             ]
         ));
         let info = Arc::new(RegionDetails::default());
-        assert!(e.apply(EstateEvent::RegionInfo { handle: 7, info: info.clone() }));
+        assert!(e.apply(EstateEvent::RegionInfo {
+            handle: 7,
+            info: info.clone()
+        }));
         assert!(e.region.is_some());
         // another region's answer, or one after closing, is not kept
-        assert!(!e.apply(EstateEvent::RegionInfo { handle: 8, info: info.clone() }));
+        assert!(!e.apply(EstateEvent::RegionInfo {
+            handle: 8,
+            info: info.clone()
+        }));
         e.close();
         assert!(!e.apply(EstateEvent::EstateInfo {
             handle: 7,

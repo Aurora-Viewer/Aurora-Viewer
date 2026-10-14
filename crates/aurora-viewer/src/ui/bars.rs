@@ -510,7 +510,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // menu_viewer.xml: Parcel Details (About Land), then Region Details
         // (Region / Estate, Alt+R)
         // (About Land's floater has an id per layout: the flag alone)
-        if menu::check(ui, p, "info-circle-filled", aurora_i18n::tr!("common-about-land"), panels.about_land, true) {
+        if menu::check(
+            ui,
+            p,
+            "info-circle-filled",
+            aurora_i18n::tr!("common-about-land"),
+            panels.about_land,
+            true,
+        ) {
             panels.about_land = !panels.about_land;
         }
         if menu::item_keys(ui, p, "building-castle", aurora_i18n::tr!("region-title"), "Alt+R") {

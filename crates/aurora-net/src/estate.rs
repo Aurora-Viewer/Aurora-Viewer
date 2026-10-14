@@ -90,7 +90,10 @@ pub fn region_details(m: &aurora_msg::msgs::RegionInfo) -> RegionDetails {
         name: aurora_msg::field_str(&r.sim_name),
         estate_id: r.estate_id,
         parent_estate_id: r.parent_estate_id,
-        flags: m.region_info3.first().map_or(u64::from(r.region_flags), |x| x.region_flags_extended),
+        flags: m
+            .region_info3
+            .first()
+            .map_or(u64::from(r.region_flags), |x| x.region_flags_extended),
         sim_access: r.sim_access,
         max_agents: u32::from(r.max_agents),
         hard_max_agents: if r2.hard_max_agents > 0 {
@@ -175,7 +178,10 @@ pub struct EstateAccess {
 pub fn parse_estate_access(v: &Llsd) -> EstateAccess {
     let ids = |key: &str, field: &str| -> Vec<Uuid> {
         let list = &v[key];
-        (0..list.len()).map(|i| list.at(i)[field].as_uuid()).filter(|id| !id.is_nil()).collect()
+        (0..list.len())
+            .map(|i| list.at(i)[field].as_uuid())
+            .filter(|id| !id.is_nil())
+            .collect()
     };
     // dates come as "YYYY-MM-DD HH:MM:SS"; "0000-…" is a ban without date
     let date = |s: String| (!s.is_empty() && !s.starts_with('0')).then(|| s.chars().take(16).collect());
@@ -260,7 +266,11 @@ pub struct SimStats {
 
 impl SimStats {
     pub fn get(&self, id: u32) -> Option<f32> {
-        self.values.iter().find(|(i, _)| *i == id).map(|(_, v)| *v).filter(|v| v.is_finite())
+        self.values
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map(|(_, v)| *v)
+            .filter(|v| v.is_finite())
     }
 }
 
@@ -283,12 +293,21 @@ pub enum EstateEvent {
     /// `estateupdateinfo` of the last `getinfo`.
     EstateInfo { handle: RegionHandle, info: Arc<EstateInfo> },
     /// The EstateAccess capability (None: absent or refused).
-    Access { handle: RegionHandle, access: Option<Arc<EstateAccess>> },
+    Access {
+        handle: RegionHandle,
+        access: Option<Arc<EstateAccess>>,
+    },
     /// RegionExperiences (None: absent or refused).
-    Experiences { handle: RegionHandle, experiences: Option<RegionExperiences> },
+    Experiences {
+        handle: RegionHandle,
+        experiences: Option<RegionExperiences>,
+    },
     /// RegionSchedule: Ok(None) when there is no schedule, Err when the
     /// capability is absent or refused.
-    Schedule { handle: RegionHandle, schedule: Result<Option<RestartSchedule>, ()> },
+    Schedule {
+        handle: RegionHandle,
+        schedule: Result<Option<RestartSchedule>, ()>,
+    },
     /// The region environment of ExtEnvironment (its `environment` map).
     Environment { handle: RegionHandle, environment: Option<Llsd> },
     /// SimStats of the agent's region, about once a second.
