@@ -13,9 +13,11 @@ pub mod demo;
 #[cfg(test)]
 pub(crate) mod elide_tests;
 pub(crate) mod keycap;
+mod pills;
 mod resize;
 mod workspace;
 pub use color::color_button;
+pub use pills::{filter_pill, pill_tab, search_box};
 pub use workspace::{Modal, collapsing, collapsing_forced, glyph, navigation, navigation_wrapped, section_header, stat, surface};
 pub(crate) use workspace::{finish_bar_glass, inventory_item_label, inventory_spacing, overlay, overlay_frame, paint_world_label};
 
@@ -479,7 +481,7 @@ impl<'a> Floater<'a> {
                 drag.finish(ctx, window_id, requested, response.response.rect);
             }
             if resizable {
-                resize::handles(ctx, &response.response);
+                resize::handles(ctx, p, &response.response);
             }
         }
         if close {
@@ -550,7 +552,7 @@ pub(crate) fn bare_window(
     if let (Some(drag), Some(requested)) = (drag, resized) {
         drag.finish(ctx, window_id, requested, shown.response.rect);
     }
-    resize::handles(ctx, &shown.response);
+    resize::handles(ctx, p, &shown.response);
 }
 
 const PLACE_POS: &str = "place_pos";

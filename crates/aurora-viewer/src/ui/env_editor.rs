@@ -52,12 +52,30 @@ pub enum EditorAction {
     Import,
     /// "Save" over the item being edited.
     Save,
+    /// "Save As" chosen: the name is asked once the settings are checked
+    /// ([`EnvEditorUi::ask_save_as`]).
+    SaveAsAsk,
     /// "Save As": a new item with that name.
     SaveAs(String),
     /// "Apply only to myself".
     ApplyLocal,
+    /// "Apply To Parcel" / "Apply To Region" (doApplyEnvironment).
+    ApplyParcel,
+    ApplyRegion,
     /// The window closed (changes discarded or saved).
     Closed,
+}
+
+/// What the editors' Save menu may offer (LLFloaterEditEnvironmentBase::
+/// canUseInventory, canApplyParcel, canApplyRegion).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EditorAccess {
+    /// The region keeps settings in the inventory.
+    pub inventory: bool,
+    /// The agent may change the parcel's environment.
+    pub parcel: bool,
+    /// The agent manages the estate.
+    pub region: bool,
 }
 
 /// An action waiting for "discard the changes?" (checkAndConfirmSettingsLoss).
@@ -102,6 +120,9 @@ pub struct EnvEditorUi {
     pub wanted_images: HashSet<Uuid>,
     /// Demo: an item to open once its folder has loaded.
     pub wait_item: Option<Uuid>,
+    /// The sun and moon beacons (the sunbeacon / moonbeacon settings, kept
+    /// by the app).
+    pub beacons: [bool; 2],
 }
 
 impl EnvEditorUi {
@@ -120,6 +141,11 @@ impl EnvEditorUi {
 
     pub fn tab_index(&self) -> usize {
         self.tab
+    }
+
+    /// "SaveSettingAs": the name prompt, filled with the settings' name.
+    pub fn ask_save_as(&mut self) {
+        self.save_as = Some(self.name.clone());
     }
 
     /// The tab shown (sky: Atmosphere & Lighting, Clouds, Sun & Moon).
@@ -174,7 +200,7 @@ impl EnvEditorUi {
         p: &Palette,
         inv: &Inventory,
         images: &HashMap<Uuid, egui::TextureHandle>,
-        can_inventory: bool,
+        access: EditorAccess,
     ) -> Vec<EditorAction> {
         let mut out = Vec::new();
         if !self.open {
@@ -207,7 +233,7 @@ impl EnvEditorUi {
             let body_h = (ui.available_height() - footer).max(120.0);
             self.panels_into(ui, p, images, body_h, &mut out);
             widgets::divider(ui, p);
-            self.footer(ui, p, can_inventory, &mut out);
+            self.footer(ui, p, access, &mut out);
         });
         if !open {
             self.request(Confirm::Close, &mut out);
@@ -253,6 +279,16 @@ impl EnvEditorUi {
             .max_height(height - if kind == SettingsKind::Sky { 34.0 } else { 0.0 })
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                // "Show Beacon" of the sun and the moon: a view option,
+                // enabled whatever the rights (llpaneleditsky.cpp)
+                if kind == SettingsKind::Sky && self.tab == 2 {
+                    ui.horizontal(|ui| {
+                        widgets::checkbox(ui, p, &mut self.beacons[0], aurora_i18n::tr!("ui-env-editor-sun-beacon"));
+                        ui.add_space(16.0);
+                        widgets::checkbox(ui, p, &mut self.beacons[1], aurora_i18n::tr!("ui-env-editor-moon-beacon"));
+                    });
+                    ui.add_space(4.0);
+                }
                 ui.add_enabled_ui(self.rights.modify, |ui| match kind {
                     SettingsKind::Water => self.water_panel(ui, p, images, out),
                     _ => match self.tab {
@@ -343,7 +379,8 @@ impl EnvEditorUi {
         });
     }
 
-    fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, can_inventory: bool, out: &mut Vec<EditorAction>) {
+    fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, access: EditorAccess, out: &mut Vec<EditorAction>) {
+        let can_inventory = access.inventory;
         ui.horizontal(|ui| {
             if let Some((text, error)) = &self.message {
                 let c = if *error { p.danger } else { p.muted };
@@ -373,19 +410,23 @@ impl EnvEditorUi {
                         out.push(EditorAction::Save);
                     }
                     if super::menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("common-save-as"), save_as) {
-                        self.save_as = Some(self.name.clone());
+                        out.push(EditorAction::SaveAsAsk);
                     }
                     super::menu::separator(ui, p);
                     if super::menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-apply-to-myself-only")) {
                         out.push(EditorAction::ApplyLocal);
                     }
-                    // ExtEnvironment updates come with the parcel and region
-                    // environment (the day cycle editor's last step)
-                    for label in [
+                    if super::menu::item_if(
+                        ui,
+                        p,
+                        "map-pin-filled",
                         aurora_i18n::tr!("ui-env-editor-apply-parcel"),
-                        aurora_i18n::tr!("ui-env-editor-apply-region"),
-                    ] {
-                        super::menu::item_if(ui, p, "map-pin-filled", label, false);
+                        access.parcel,
+                    ) {
+                        out.push(EditorAction::ApplyParcel);
+                    }
+                    if super::menu::item_if(ui, p, "world-filled", aurora_i18n::tr!("ui-env-editor-apply-region"), access.region) {
+                        out.push(EditorAction::ApplyRegion);
                     }
                 });
                 if widgets::action_button_if(
@@ -547,6 +588,9 @@ impl EnvEditorUi {
                     TexSlot::Normal => (Some(eep::DEFAULT_WATER_NORMAL), false),
                 };
                 self.picker.open_with_defaults(label, id, default, none);
+                // LLTextureCtrl offers local files; the settings then cannot
+                // be saved nor applied (WLLocalTextureFixedBlock)
+                self.picker.allow_local = true;
                 self.picking = Some(slot);
             }
         });

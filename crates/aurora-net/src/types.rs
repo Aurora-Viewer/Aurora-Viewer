@@ -651,6 +651,11 @@ pub enum NetEvent {
     /// GetExperienceInfo: the details of the experiences asked for (unknown
     /// ones when they could not be read).
     ExperienceInfo(Vec<crate::experience::ExperienceDetails>),
+    /// GroupExperiences: the experiences a group owns (empty on a failure).
+    GroupExperiences {
+        group: Uuid,
+        ids: Vec<Uuid>,
+    },
     /// ExperiencePreferences: the agent's permission for an experience after
     /// reading or changing it.
     ExperiencePermission {
@@ -1297,6 +1302,9 @@ pub enum NetCommand {
     },
     /// GetExperienceInfo for these experiences.
     ExperienceInfo(Vec<Uuid>),
+    /// The experiences a group owns (GroupExperiences capability), answered
+    /// by NetEvent::GroupExperiences.
+    GroupExperiences(Uuid),
     /// ExperiencePreferences: read, allow, block or forget an experience.
     ExperiencePermission {
         experience: Uuid,

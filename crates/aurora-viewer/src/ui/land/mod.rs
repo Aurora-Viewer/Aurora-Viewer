@@ -274,6 +274,9 @@ pub struct LandUi {
     blocked_exp_sel: Option<Uuid>,
     /// Day length / offset being dragged (hours), committed on release.
     env_drag: Option<(f32, f32)>,
+    /// "Custom" was chosen: the app opens the day cycle editor on the
+    /// parcel's day (taken once).
+    pub custom_day: bool,
     /// Sound tab: the music URL last sent (parcel, URL) and the selection
     /// revision then (FIRE-29157).
     last_music_url: Option<(i32, String)>,

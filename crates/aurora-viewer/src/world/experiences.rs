@@ -36,6 +36,9 @@ pub struct Experiences {
     pub errors: HashMap<Uuid, String>,
     /// The experience shown in the profile window.
     pub profile: Option<Uuid>,
+    /// The experiences each group owns (LLPanelGroupExperiences), None
+    /// while asked.
+    pub groups: HashMap<Uuid, Option<Vec<Uuid>>>,
     out: Vec<NetCommand>,
 }
 
@@ -98,6 +101,32 @@ impl Experiences {
         self.profile = Some(experience);
         self.want(experience);
         self.change(experience, ExperiencePermissionChange::Query);
+    }
+
+    /// LLPanelGroupExperiences::activate: the group's list asked again
+    /// ("Loading experiences..." meanwhile, the previous list kept until
+    /// the answer, as the panel's flat list is).
+    pub fn request_group(&mut self, group: Uuid) {
+        if group.is_nil() {
+            return;
+        }
+        self.groups.entry(group).or_insert(None);
+        self.out.push(NetCommand::GroupExperiences(group));
+    }
+
+    /// groupExperiencesResults: the list, and the details of the
+    /// experiences not known yet, asked in one batch (each row of
+    /// LLExperienceItem names its experience through the cache).
+    pub fn group_arrived(&mut self, group: Uuid, ids: Vec<Uuid>) {
+        let missing: Vec<Uuid> = ids
+            .iter()
+            .copied()
+            .filter(|id| !self.details.contains_key(id) && self.requested.insert(*id))
+            .collect();
+        if !missing.is_empty() {
+            self.out.push(NetCommand::ExperienceInfo(missing));
+        }
+        self.groups.insert(group, Some(ids));
     }
 
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
@@ -175,6 +204,28 @@ mod tests {
         // a failure keeps the last known permission and says why
         assert_eq!(xp.permissions.get(&id), Some(&ExperiencePermission::Blocked));
         assert!(xp.errors.contains_key(&id));
+    }
+
+    #[test]
+    fn a_group_list_asks_the_details_it_lacks_in_one_batch() {
+        let mut xp = Experiences::default();
+        let group = Uuid::from_u128(0x6);
+        let (known, new) = (Uuid::from_u128(0xA), Uuid::from_u128(0xB));
+        xp.arrived(vec![ExperienceDetails::unknown(known)]);
+        xp.request_group(group);
+        assert_eq!(xp.groups.get(&group), Some(&None), "loading");
+        assert!(matches!(&xp.take_commands()[..], [NetCommand::GroupExperiences(g)] if *g == group));
+        xp.group_arrived(group, vec![known, new]);
+        assert_eq!(xp.groups.get(&group), Some(&Some(vec![known, new])));
+        assert!(matches!(&xp.take_commands()[..], [NetCommand::ExperienceInfo(ids)] if ids == &vec![new]));
+        // asked again: the list stays until the answer
+        xp.request_group(group);
+        assert_eq!(xp.groups.get(&group), Some(&Some(vec![known, new])));
+        xp.group_arrived(group, vec![known, new]);
+        assert!(
+            !xp.take_commands().iter().any(|c| matches!(c, NetCommand::ExperienceInfo(_))),
+            "already asked"
+        );
     }
 
     #[test]

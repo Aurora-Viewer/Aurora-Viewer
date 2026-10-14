@@ -166,6 +166,9 @@ pub const LOCAL_ENV_FILE: &str = "local_environment_data.bin";
 struct Slot {
     handle: RegionHandle,
     day: Arc<DayCycle>,
+    /// The day's settings map as received (None for Firestorm's default
+    /// day, whose asset the settings streamer keeps).
+    settings: Option<Arc<Llsd>>,
     length: f64,
     offset: f64,
     /// Bumped on every change: a new slot crossfades even with the same source.
@@ -352,11 +355,12 @@ impl EnvSelector {
     pub fn apply_local_water(&mut self, water: WaterFrame) {
         self.apply_water(LocalOrigin::Inherited, water);
     }
-    fn slot(&mut self, handle: RegionHandle, day: Arc<DayCycle>, length: f64, offset: f64) -> Slot {
+    fn slot(&mut self, handle: RegionHandle, day: Arc<DayCycle>, settings: Option<Arc<Llsd>>, length: f64, offset: f64) -> Slot {
         self.generation += 1;
         Slot {
             handle,
             day,
+            settings,
             length,
             offset,
             generation: self.generation,
@@ -380,6 +384,7 @@ impl EnvSelector {
         // requestParcel: TRANSITION_FAST while a teleport is in progress
         self.next_fade = if ctx.teleporting { TRANSITION_FAST } else { TRANSITION_DEFAULT };
         let altitudes = answer.altitudes;
+        let settings = answer.day_settings.clone();
         let day = answer.valid_day();
         if parcel_id == eep::REGION_PARCEL_ID {
             // a valid region day leaves the parcel's in place (RegionInfo
@@ -389,7 +394,7 @@ impl EnvSelector {
                     self.altitudes = altitudes;
                     self.default_pending = None;
                     let (length, offset) = (d.length, d.offset);
-                    self.region = Some(self.slot(handle, Arc::new(d), length, offset));
+                    self.region = Some(self.slot(handle, Arc::new(d), settings, length, offset));
                     AnswerOutcome::RegionDay
                 }
                 None => {
@@ -410,7 +415,7 @@ impl EnvSelector {
             match day {
                 Some(d) => {
                     let (length, offset) = (d.length, d.offset);
-                    self.parcel = Some(self.slot(handle, Arc::new(d), length, offset));
+                    self.parcel = Some(self.slot(handle, Arc::new(d), settings, length, offset));
                     AnswerOutcome::ParcelDay
                 }
                 None => {
@@ -478,7 +483,38 @@ impl EnvSelector {
             return;
         };
         self.default_pending = None;
-        self.region = Some(self.slot(handle, day, length, offset));
+        self.region = Some(self.slot(handle, day, None, length, offset));
+    }
+
+    /// The day of the parcel slot (`parcel`, falling back to the region's,
+    /// like createDayCycleFromEnvironment) or of the region slot, as a
+    /// settings map with its length and offset (s). `Err(true)`: the region
+    /// shows Firestorm's default day, whose map the settings streamer keeps;
+    /// `Err(false)`: no day at all.
+    pub fn day_settings(&self, parcel: bool) -> Result<(Arc<Llsd>, f64, f64), bool> {
+        let slot = if parcel {
+            self.parcel.as_ref().or(self.region.as_ref())
+        } else {
+            self.region.as_ref()
+        };
+        match slot {
+            Some(s) => match &s.settings {
+                Some(m) => Ok((m.clone(), s.length, s.offset)),
+                None => Err(true),
+            },
+            None => Err(false),
+        }
+    }
+
+    /// Length and offset (s) of the region's day (LLPanelRegionEnvironment's
+    /// mCurrentEnvironment), when it has one.
+    pub fn region_timing(&self) -> Option<(f64, f64)> {
+        self.region.as_ref().map(|r| (r.length, r.offset))
+    }
+
+    /// Where sky tracks 1..=4 start (LLEnvironment::getRegionAltitudes).
+    pub fn altitudes(&self) -> [f32; 4] {
+        self.altitudes
     }
 
     /// Time-of-day preset (0 = none) as the local environment: a fixed sky

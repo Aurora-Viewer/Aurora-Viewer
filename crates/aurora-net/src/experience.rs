@@ -195,6 +195,38 @@ pub async fn fetch_info(http: &reqwest::Client, base: Option<&str>, ids: &[Uuid]
     out
 }
 
+/// LLExperienceCache::getGroupExperiencesCoro: the experiences a group
+/// owns, from the `GroupExperiences` capability with the group as the whole
+/// query (`?<group>`). A failure or a missing capability gives an empty
+/// list, as the coroutine answers `fn(LLSD())`.
+pub async fn fetch_group_experiences(http: &reqwest::Client, cap: Option<&str>, group: Uuid) -> Vec<Uuid> {
+    let Some(cap) = cap else {
+        log::warn!("No Group Experiences capability");
+        return Vec::new();
+    };
+    match llsd(http.get(group_experiences_url(cap, group))).await {
+        Ok(reply) => parse_group_experiences(&reply),
+        Err(e) => {
+            log::warn!("GroupExperiences failed: {e}");
+            Vec::new()
+        }
+    }
+}
+
+pub fn group_experiences_url(cap: &str, group: Uuid) -> String {
+    format!("{cap}?{group}")
+}
+
+/// The ids of `experience_ids`.
+pub fn parse_group_experiences(reply: &Llsd) -> Vec<Uuid> {
+    reply["experience_ids"]
+        .as_array()
+        .iter()
+        .map(Llsd::as_uuid)
+        .filter(|id| !id.is_nil())
+        .collect()
+}
+
 /// Reads or changes the permission; the answer is the permission the
 /// server now has (every reply carries the `experiences` / `blocked` lists).
 pub async fn permission(
@@ -306,5 +338,19 @@ mod tests {
         assert_eq!(parse_permission(&lists, other), ExperiencePermission::Allowed);
         assert_eq!(parse_permission(&lists, Uuid::from_u128(0x44)), ExperiencePermission::Unset);
         assert_eq!(parse_permission(&Llsd::Undef, id), ExperiencePermission::Unset);
+    }
+
+    #[test]
+    fn group_experiences_ask_the_group_as_the_query() {
+        let group = Uuid::from_u128(0x6);
+        assert_eq!(
+            group_experiences_url("https://cap.example/groupxp", group),
+            format!("https://cap.example/groupxp?{group}")
+        );
+        let reply = llsd_map! {
+            "experience_ids" => Llsd::Array(vec![Uuid::from_u128(1).into(), Uuid::nil().into(), Uuid::from_u128(2).into()]),
+        };
+        assert_eq!(parse_group_experiences(&reply), vec![Uuid::from_u128(1), Uuid::from_u128(2)]);
+        assert!(parse_group_experiences(&Llsd::Undef).is_empty());
     }
 }

@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 /// Columns of the list, in their order on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Column {
+pub(super) enum Column {
     Name,
     Voice,
     Region,
@@ -31,7 +31,7 @@ pub enum Column {
 }
 
 impl Column {
-    const ALL: [Column; 10] = [
+    pub(super) const ALL: [Column; 10] = [
         Column::Name,
         Column::Voice,
         Column::Region,
@@ -58,6 +58,11 @@ impl Column {
             Column::Range => 256,
             Column::Notes => 512,
         }
+    }
+
+    /// Its index in `ALL`, the value of `RadarSettings::sort`.
+    pub(super) fn sort_index(self) -> u8 {
+        Column::ALL.iter().position(|c| *c == self).unwrap_or(0) as u8
     }
 
     /// The name and the range cannot be hidden.
@@ -152,6 +157,9 @@ pub struct RadarSettings {
     /// direction.
     pub sort: u8,
     pub sort_descending: bool,
+    /// The Aurora rows in their compact density (one line each, for a
+    /// crowd) instead of the rich ones grouped by range.
+    pub compact: bool,
 }
 
 impl Default for RadarSettings {
@@ -177,6 +185,7 @@ impl Default for RadarSettings {
             // (Firestorm sorts by name until a header is clicked)
             sort: Column::Range as u8,
             sort_descending: false,
+            compact: false,
         }
     }
 }
@@ -224,41 +233,42 @@ pub fn radar_name(world: &World, id: &Uuid, format: u8) -> String {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Payment {
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(super) enum Payment {
     Unknown,
     None,
     OnFile,
     Used,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Age {
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Age {
     Unknown,
     Hidden,
     Days(i64),
 }
 
-struct Row {
-    id: Uuid,
-    name: String,
-    friend: bool,
-    muted: bool,
+/// An avatar of the list, as both looks show it.
+pub(super) struct Row {
+    pub id: Uuid,
+    pub name: String,
+    pub friend: bool,
+    pub muted: bool,
     /// In the voice channel: speaking or not.
-    voice: Option<bool>,
-    same_region: bool,
-    typing: bool,
-    sitting: bool,
-    payment: Payment,
-    note: String,
-    age: Age,
+    pub voice: Option<bool>,
+    pub same_region: bool,
+    pub typing: bool,
+    pub sitting: bool,
+    pub payment: Payment,
+    pub note: String,
+    pub age: Age,
     /// Seconds since the first sighting.
-    seen: f64,
-    range: Option<f32>,
-    loaded: bool,
-    position: glam::Vec3,
+    pub seen: f64,
+    pub range: Option<f32>,
+    pub loaded: bool,
+    pub position: glam::Vec3,
     /// In a region a teleport left behind: faded until it leaves the list.
-    left_behind: bool,
+    pub left_behind: bool,
 }
 
 /// Age in days of a profile, when it tells it (also for the age alert).
@@ -275,7 +285,8 @@ fn unix_now() -> f64 {
         .map_or(0.0, |d| d.as_secs_f64())
 }
 
-fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
+/// The avatars of the list, filtered and in the order chosen.
+pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
     let settings = &*data.settings;
     let today = unix_now();
     let mut rows: Vec<Row> = data
@@ -372,7 +383,7 @@ fn seen_text(seconds: f64) -> String {
     format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
 }
 
-fn icon(ui: &egui::Ui, name: &str, cell: Rect, size: f32, tint: Color32) {
+pub(super) fn icon(ui: &egui::Ui, name: &str, cell: Rect, size: f32, tint: Color32) {
     if let Some(texture) = crate::ui::icons::global(name) {
         let rect = Rect::from_center_size(cell.center(), Vec2::splat(size));
         let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
@@ -598,7 +609,7 @@ fn paint_row(ui: &egui::Ui, p: &Palette, data: &RadarData, row: &Row, rect: Rect
 /// Side of the buttons beside the filter.
 pub(super) const TOOL: f32 = 24.0;
 /// How much of a row shows while its avatar is in a region left behind.
-const LEFT_BEHIND_OPACITY: f32 = 0.35;
+pub(super) const LEFT_BEHIND_OPACITY: f32 = 0.35;
 /// Side of the profile picture of a row.
 pub(super) const PICTURE: f32 = 18.0;
 
@@ -626,7 +637,7 @@ pub(super) fn tool_menu(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, e
 
 /// Options of the list (menu_fs_radar_options.xml). `blocked` asks for the
 /// block list.
-fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut RadarSettings, blocked: &mut bool) {
+pub(super) fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut RadarSettings, blocked: &mut bool) {
     menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-minimap"), &mut s.show_minimap);
     menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-limit-range"), &mut s.limit_range);
     ui.horizontal(|ui| {

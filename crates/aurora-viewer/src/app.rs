@@ -35,6 +35,7 @@ mod context_menu;
 mod cursor_hold;
 mod dof;
 mod double_click;
+mod env_apply;
 mod env_day_editor;
 mod env_editor;
 mod gestures;
@@ -188,6 +189,8 @@ pub struct App {
     name_tags_alt_classic: bool,
     /// AURORA_DEMO_TAGS: the set of states its residents show.
     demo_tag_states: Option<bool>,
+    /// AURORA_DEMO_PEOPLE: the states of its residents were sent.
+    demo_people_states: bool,
     /// Interface parts of the frame's profile (`u_*`).
     ui_parts: Parts,
     /// The interface's shapes leave for the render thread, which
@@ -481,6 +484,12 @@ pub struct App {
     day_editor: ui::env_day_editor::DayEditorUi,
     /// A sky, water or day item the day editor waits for, and what for.
     day_fetch: Option<(uuid::Uuid, env_day_editor::DayFetch)>,
+    /// A Windlight day being read for the day editor's "Import".
+    day_import: Option<std::sync::mpsc::Receiver<env_apply::DayImport>>,
+    /// The ExtEnvironment update an editor sent and waits for.
+    env_applying: Option<env_apply::Applying>,
+    /// The sun and moon beacons when the first environment editor opened.
+    env_beacons_saved: Option<[bool; 2]>,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
     gesture_state: gestures::State,
@@ -674,6 +683,7 @@ impl App {
             sync_alt: 0,
             name_tags_alt_classic: false,
             demo_tag_states: None,
+            demo_people_states: false,
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
             last_frame: Instant::now(),
@@ -850,6 +860,9 @@ impl App {
             env_import: None,
             day_editor: Default::default(),
             day_fetch: None,
+            day_import: None,
+            env_applying: None,
+            env_beacons_saved: None,
             demo: false,
             inventory_ui: Default::default(),
             gesture_state: Default::default(),
@@ -1187,9 +1200,10 @@ impl App {
                 // a saved settings item's new asset, as the simulator would serve it
                 if let Ok(it) = &result
                     && it.asset_type == 56
-                    && let Some(s) = crate::world::eep::Settings::from_asset(data)
+                    && let Some(map) = crate::world::eep::Settings::decode_asset(data)
+                    && let Some(s) = crate::world::eep::Settings::from_llsd(&map)
                 {
-                    self.scene.settings.insert_local(it.asset_id, s);
+                    self.scene.settings.insert_local(it.asset_id, s, Some(map));
                 }
                 self.on_app_event(NetEvent::InventoryContentSaved {
                     request: *request,
@@ -1224,8 +1238,10 @@ impl App {
                     ..Default::default()
                 };
                 self.demo_documents.insert(item.id, data.clone());
-                if let Some(s) = crate::world::eep::Settings::from_asset(data) {
-                    self.scene.settings.insert_local(item.asset_id, s);
+                if let Some(map) = crate::world::eep::Settings::decode_asset(data)
+                    && let Some(s) = crate::world::eep::Settings::from_llsd(&map)
+                {
+                    self.scene.settings.insert_local(item.asset_id, s, Some(map));
                 }
                 self.world.inventory.add_items(vec![item.clone()]);
                 self.on_app_event(NetEvent::InventoryContentSaved {
@@ -1586,6 +1602,9 @@ impl App {
         self.env_import = None;
         self.day_editor.close();
         self.day_fetch = None;
+        self.day_import = None;
+        self.env_applying = None;
+        self.env_beacons_frame();
         self.world.eep.clear_edit();
         self.world.save_inventory_cache();
         self.world.save_mute_cache();
@@ -3356,6 +3375,8 @@ impl App {
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
         self.record_inventory_logout();
+        // revertBeaconsState when the editors close with the viewer
+        self.env_beacons_release();
         self.drop_clicks();
         if self.hud_drag.is_some() {
             self.on_left_release();
@@ -3506,6 +3527,12 @@ impl App {
         let mut events = self
             .radar
             .sweep(seen, self.world.agent.position, my_region, &gaps, self.settings.draw_distance, now);
+        // AURORA_DEMO_PEOPLE: its residents arrived before the session
+        if self.demo {
+            for (id, ago) in crate::demo::people::arrivals() {
+                self.radar.backdate(&id, now - ago);
+            }
+        }
         let s = self.settings.radar.clone();
         // Firestorm asks for every profile as its entry appears; here only
         // when something reads them (a column on screen, the age alert)
@@ -5464,6 +5491,7 @@ impl App {
         // with crossfades; the simulator sun only for regions without EEP
         self.world.eep.set_manual_transition(self.settings.env_manual_transition);
         let (sky_frame, water_frame) = self.world.environment_frames(&mut self.panels.time_of_day);
+        self.world.sky_directions = (sky_frame.sun_direction(), sky_frame.moon_direction());
         // cloud scroll (LLEnvironment::updateCloudScroll: rate / 100 per
         // second), held still by the photo's light (pauseCloudScroll)
         if !self.photo_clouds_paused() {
@@ -5704,6 +5732,7 @@ impl App {
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
+            raw.events.extend(ui::widgets::demo::resize_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::minimized_events(&ctx, self.frame_count));
             raw.events.extend(ui::color_picker::demo::events(
                 &self.egui_ctx,
@@ -6135,6 +6164,9 @@ impl App {
         }
         if self.demo {
             let time = self.egui_ctx.input(|i| i.time);
+            for event in crate::demo::people::state_events(time, &mut self.demo_people_states) {
+                self.world.apply(event);
+            }
             for event in crate::demo::tags::state_events(time, &mut self.demo_tag_states) {
                 self.world.apply(event);
             }
@@ -6235,6 +6267,8 @@ impl App {
             if let Some(scenario) = crate::demo::env::editor() {
                 if scenario.starts_with("day") {
                     self.demo_day_editor(scenario, self.frame_count);
+                } else if crate::demo::env::parcel_scenario() {
+                    self.demo_env_apply(scenario, self.frame_count);
                 } else if self.frame_count == 400 {
                     self.demo_env_editor(scenario);
                 } else if scenario == "item-save" {
@@ -7194,6 +7228,10 @@ impl App {
             BarAction::ResetCamera => self.reset_camera_view(),
             BarAction::BanLines(v) => self.settings.maps.ban_lines = v,
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
+            BarAction::NewEnvironment(kind) => match kind {
+                crate::world::env_select::SettingsKind::Day => self.open_new_day_editor(),
+                kind => self.open_env_editor_snapshot(kind),
+            },
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::LandmarkStar(star) => self.landmark_star(star),
@@ -7366,11 +7404,21 @@ impl App {
         for a in actions {
             match a {
                 GroupAction::Search(a) => search.push(a),
-                GroupAction::Load { group, member } => self.world.group_data.open(group, member),
+                GroupAction::Load { group, member } => {
+                    self.world.group_data.open(group, member);
+                    // LLPanelGroupExperiences::setGroupID → activate: the
+                    // tab's count is known before it is opened
+                    if member {
+                        self.world.experiences.request_group(group);
+                    }
+                }
                 GroupAction::Refresh { group, member } => {
                     self.send(NetCommand::GroupProfileRequest(group));
                     self.world.group_data.refresh(group, member);
                     self.world.group_money.refresh(group);
+                    if member {
+                        self.world.experiences.request_group(group);
+                    }
                 }
                 GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
                 GroupAction::Eject { group, members } | GroupAction::Ban { group, members } if members.is_empty() => {
@@ -7462,6 +7510,8 @@ impl App {
                     ui::land::LandUi::select_at_global(&mut self.world, x, y);
                     self.panels.about_land = true;
                 }
+                GroupAction::LoadExperiences(group) => self.world.experiences.request_group(group),
+                GroupAction::ExperienceProfile(experience) => self.world.experiences.open_profile(experience),
             }
         }
         self.apply_search_actions(ctx, search);
@@ -7840,6 +7890,7 @@ impl App {
                         VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
                     );
                     crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
+                    crate::demo::people::voice(&mut levels, ctx.input(|i| i.time));
                     levels
                 } else {
                     self.voice.levels(self.world.agent_id)
@@ -7905,6 +7956,13 @@ impl App {
                 if !self.camera.mouselook() && !held {
                     self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
                 }
+                ui::sky_beacons::draw(
+                    &ctx,
+                    &p,
+                    &self.world,
+                    projector,
+                    [self.settings.sun_beacon, self.settings.moon_beacon],
+                );
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 t = self.ui_parts.lap(Part::UiTags, t);
@@ -8262,6 +8320,7 @@ impl App {
                     &mut radar,
                     &mut self.settings.friends_list,
                     &mut people_map,
+                    !self.settings.classic_people && !(self.demo && crate::demo::people::legacy()),
                 );
                 if people_before != (self.settings.radar.clone(), self.settings.friends_list.clone()) {
                     self.settings.save();
@@ -8285,6 +8344,9 @@ impl App {
                             self.panels.chat = true;
                         }
                         ui::people::PeopleAction::GroupNotices(id, on) => self.world.groups.set_accept_notices(id, on),
+                        ui::people::PeopleAction::ModifyRights { friend, rights, grant } => {
+                            self.contacts_ui.ask_modify_rights(friend, rights, grant)
+                        }
                         ui::people::PeopleAction::PickFriend => self.contacts_ui.pick_new_friend(),
                         ui::people::PeopleAction::Unblock(id, name) => self.world.unblock(id, &name, 0),
                         ui::people::PeopleAction::BlockByName(name) => {
@@ -8586,6 +8648,9 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.about_land = open;
+                if std::mem::take(&mut self.land_ui.custom_day) {
+                    self.open_parcel_day_editor();
+                }
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
                 for cmd in self.create_landmark_ui.show(&ctx, &p, &self.world.inventory) {
                     self.send(cmd);
@@ -8916,7 +8981,11 @@ impl App {
                 if lighting && (!self.lighting_was_open || self.world.eep.personal_sky().is_none()) {
                     self.world.eep.capture_personal();
                 }
+                self.env_ui.beacons = [self.settings.sun_beacon, self.settings.moon_beacon];
                 let reset = self.env_ui.show_lighting(&ctx, &p, &mut self.world.eep, &mut lighting);
+                if lighting {
+                    self.set_env_beacons(self.env_ui.beacons);
+                }
                 self.lighting_was_open = lighting;
                 self.panels.personal_lighting = lighting;
                 for action in env_actions.into_iter().chain(reset) {
@@ -9373,8 +9442,8 @@ impl ApplicationHandler for App {
             );
             // AURORA_DEMO_ENV_SELECT: the library's settings assets, known locally
             if crate::demo::env::enabled() {
-                for (id, settings) in crate::demo::env::settings_assets() {
-                    self.scene.settings.insert_local(id, settings);
+                for (id, settings, map) in crate::demo::env::settings_assets() {
+                    self.scene.settings.insert_local(id, settings, Some(map));
                 }
             }
             // AURORA_DEMO_PERF=compact|full|network: the performance window in
@@ -9450,6 +9519,33 @@ impl ApplicationHandler for App {
                 if matches!(v.as_str(), "profile" | "profil") {
                     self.group_profile_ui.open(&mut self.world, crate::demo::DEMO_GROUP1);
                 }
+            }
+            // AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy: Near you with the
+            // residents of the People mock-up, alone on screen
+            if crate::demo::people::mode().is_some() {
+                for ev in crate::demo::people::events() {
+                    self.world.apply(ev);
+                }
+                // the density is the list's own toggle; the look is forced
+                // for the run only (`demo::people::legacy`), not saved
+                self.settings.radar.compact = crate::demo::people::compact();
+                if let Some(id) = crate::demo::people::sheet() {
+                    self.people_ui.radar_selected = vec![id];
+                    self.people_ui.open_sheet(id);
+                    // the mock-up's window with a sheet
+                    let pos = ui::people::default_pos(ui::layout::work_area(&self.egui_ctx));
+                    ui::widgets::place_floater(&self.egui_ctx, ui::people::WINDOW, pos, egui::vec2(860.0, 600.0));
+                }
+                if let Some(id) = crate::demo::people::hovered() {
+                    self.people_ui.radar_selected = vec![id];
+                    self.people_ui.demo_hover = Some(id);
+                }
+                self.panels.people = true;
+                self.panels.people_tab = 0;
+                self.panels.inventory = false;
+                self.panels.chat = false;
+                self.panels.minimap = false;
+                self.panels.perf = false;
             }
             if std::env::var_os("AURORA_DEMO_UI").is_some() {
                 self.panels.people = true;
@@ -9562,6 +9658,9 @@ impl ApplicationHandler for App {
                 }
                 if crate::demo::group::admin_tab() {
                     self.group_profile_ui.show_admin();
+                }
+                if crate::demo::group::experiences_tab() {
+                    self.group_profile_ui.show_experiences();
                 }
                 if let Some(ledger) = crate::demo::group::land_tab() {
                     // the land we hold, for the most we may give

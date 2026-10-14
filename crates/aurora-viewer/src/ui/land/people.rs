@@ -11,7 +11,7 @@ use super::dialogs::Confirm;
 use super::manage::{card_begin, card_end, missing_power};
 use super::{Dialog, LandUi, PickFor, View};
 use crate::theme::Palette;
-use crate::ui::sheet::{Person, ROW_H, list_title, matches, names, person_row, search_field};
+use crate::ui::sheet::{Person, ROW_H, list_title, matches, names, person_row};
 use crate::ui::widgets;
 use crate::world::World;
 use crate::world::land::{OwnerList, powers};
@@ -126,7 +126,7 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
         ui.spacing_mut().item_spacing.x = 6.0;
         let filter = if ban { &mut s.ban_filter } else { &mut s.access_filter };
         let width = ui.available_width() - 2.0 * 26.0 - 12.0;
-        search_field(ui, p, filter, width);
+        widgets::search_box(ui, p, filter, aurora_i18n::tr!("common-search"), width);
         if widgets::icon_button(
             ui,
             p,
