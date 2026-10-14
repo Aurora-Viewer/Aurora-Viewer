@@ -222,9 +222,11 @@ impl WorldMapUi {
                         ui.set_width(side);
                         ui.set_max_width(side);
                         ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                        self.clear_button(ui, p, world);
+                        let scroll_height = (avail.y - ui.min_rect().height() - ui.spacing().item_spacing.y).max(0.0);
                         egui::ScrollArea::vertical()
                             .id_salt("worldmap-side")
-                            .max_height(avail.y)
+                            .max_height(scroll_height)
                             .show(ui, |ui| {
                                 self.side_panel(ui, p, world, cam, opts, &mut actions);
                             });
@@ -645,6 +647,29 @@ impl WorldMapUi {
         input
     }
 
+    fn clear_button(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World) {
+        // Keep dismissal visible before the scrolling legend and search:
+        // "Clear" at the bottom was both ambiguous and easily out of view.
+        if widgets::action_button_if(
+            ui,
+            p,
+            "circle-x-filled",
+            aurora_i18n::tr!("ui-waypoint-remove"),
+            widgets::ActionKind::Flat,
+            vec2(ui.available_width(), 28.0),
+            world.map.track.is_some() || self.landmark.is_some(),
+        )
+        .on_hover_text(aurora_i18n::tr!("ui-waypoint-remove-help"))
+        .clicked()
+        {
+            world.map.stop_tracking();
+            self.landmark = None;
+            self.selected = None;
+            self.target_pan = Vec2::ZERO;
+            self.pan_tau = PAN_TAU_CENTER;
+        }
+    }
+
     fn side_panel(
         &mut self,
         ui: &mut egui::Ui,
@@ -944,19 +969,6 @@ impl WorldMapUi {
                 && let Some((x, y)) = tracked
             {
                 self.center_on(world, cam, x, y);
-            }
-            if ui
-                .add_enabled(
-                    tracked.is_some() || self.landmark.is_some(),
-                    egui::Button::new(aurora_i18n::tr!("common-clear")),
-                )
-                .clicked()
-            {
-                world.map.clear_track();
-                self.landmark = None;
-                self.selected = None;
-                self.target_pan = Vec2::ZERO;
-                self.pan_tau = PAN_TAU_CENTER;
             }
         });
 

@@ -302,6 +302,14 @@ impl WorldMap {
         self.out.push(c);
     }
 
+    /// Forget both the displayed destination and a place-link lookup that
+    /// would otherwise recreate it when its region reply arrives.
+    pub fn stop_tracking(&mut self) {
+        self.clear_track();
+        self.wanted_place = None;
+        self.focus_track = false;
+    }
+
     /// LLTracker: stop tracking once within 3 m of the spot (a friend keeps
     /// being followed).
     pub fn check_arrival(&mut self, x: f64, y: f64, z: f32) {
@@ -312,7 +320,7 @@ impl WorldMap {
             && (t.x - x).hypot(t.y - y) < 3.0
             && (t.z - z).abs() * 0.5 < 3.0
         {
-            self.track = None;
+            self.stop_tracking();
         }
     }
 
@@ -777,6 +785,30 @@ pub fn teleport_command(x: f64, y: f64, z: f32) -> NetCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clearing_a_pending_place_does_not_recreate_it_when_the_reply_arrives() {
+        let mut m = WorldMap::default();
+        m.map_destination("YIFF", glam::Vec3::new(10.0, 20.0, 30.0), aurora_net::beacon::FOCUS_MAP);
+        m.stop_tracking();
+        m.apply_blocks(vec![yiff()]);
+        assert!(m.track.is_none());
+        assert!(!m.focus_track);
+    }
+
+    #[test]
+    fn arrival_keeps_the_existing_horizontal_and_vertical_thresholds() {
+        let mut m = WorldMap::default();
+        m.apply_blocks(vec![yiff()]);
+        m.track_region("YIFF", glam::Vec3::new(10.0, 20.0, 30.0));
+        let t = m.track.as_ref().expect("tracked").clone();
+        m.check_arrival(t.x + 3.0, t.y, t.z);
+        assert!(m.track.is_some());
+        m.check_arrival(t.x, t.y, t.z + 6.0);
+        assert!(m.track.is_some());
+        m.check_arrival(t.x + 2.9, t.y, t.z + 5.9);
+        assert!(m.track.is_none());
+    }
 
     #[test]
     fn home_from_login() {
