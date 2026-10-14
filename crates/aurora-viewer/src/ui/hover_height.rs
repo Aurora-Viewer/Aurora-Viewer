@@ -22,6 +22,8 @@ pub struct HoverHeightUi {
     manual_rect: Option<egui::Rect>,
     #[cfg(test)]
     button_rects: Vec<egui::Rect>,
+    #[cfg(test)]
+    auto_button_rects: Vec<egui::Rect>,
 }
 
 impl HoverHeightUi {
@@ -51,7 +53,7 @@ impl HoverHeightUi {
             "hover_height",
             aurora_i18n::tr!("ui-context-hover-height"),
             egui::pos2(480.0, 100.0),
-            egui::vec2(440.0, if neutral_pose_test.is_some() { 280.0 } else { 244.0 }),
+            egui::vec2(440.0, if neutral_pose_test.is_some() { 332.0 } else { 296.0 }),
         )
         .fixed()
         .show(ctx, p, &mut self.open, |ui| {
@@ -97,7 +99,7 @@ impl HoverHeightUi {
                     });
                 });
             });
-            ui.add_space(4.0);
+            widgets::divider(ui, p);
             preferences_changed |= widgets::switch_labeled(ui, p, automatic, aurora_i18n::tr!("hover-height-automatic")).changed();
             ui.add_enabled_ui(*automatic, |ui| {
                 ui.spacing_mut().slider_width = 260.0;
@@ -114,7 +116,33 @@ impl HoverHeightUi {
                     }
                     self.offset_editing = true;
                 }
+                #[cfg(test)]
+                self.auto_button_rects.clear();
+                ui.horizontal(|ui| {
+                    let step = ui.input(|i| hover_height::step(i.modifiers.alt, i.modifiers.ctrl || i.modifiers.shift));
+                    for (icon, label, value) in [
+                        ("minus", aurora_i18n::tr!("hover-height-lower"), *offset - step),
+                        ("restore", aurora_i18n::tr!("common-reset"), 0.0),
+                        ("plus", aurora_i18n::tr!("hover-height-raise"), *offset + step),
+                    ] {
+                        let response = widgets::action_button(ui, p, icon, label, ActionKind::Flat, egui::vec2(0.0, 26.0));
+                        #[cfg(test)]
+                        self.auto_button_rects.push(response.rect);
+                        if response.clicked()
+                            && let Some(value) = hover_height::bounded(value)
+                        {
+                            *offset = value;
+                            self.offset_editing = false;
+                            preferences_changed = true;
+                            if enabled && let Some(base) = automatic_base {
+                                height.preview(base + *offset);
+                                height.commit();
+                            }
+                        }
+                    }
+                });
             });
+            widgets::divider(ui, p);
             preferences_changed |= widgets::switch_labeled(ui, p, camera, aurora_i18n::tr!("hover-height-affect-camera")).changed();
             if let Some(neutral) = neutral_pose_test {
                 widgets::switch_labeled(ui, p, neutral, aurora_i18n::tr!("hover-height-neutral-pose-test"))
@@ -317,6 +345,55 @@ mod tests {
             (f.height.value() - 0.076).abs() < 1e-5,
             "numeric keyboard steps remain one millimetre"
         );
+    }
+
+    #[test]
+    fn automatic_buttons_adjust_the_saved_offset_and_keep_automatic_mode_active() {
+        for (index, offset, expected) in [
+            (0, 0.05, 0.04),
+            (1, -0.8, 0.0),
+            (2, -0.05, -0.04),
+            (0, hover_height::MIN, hover_height::MIN),
+            (2, hover_height::MAX, hover_height::MAX),
+        ] {
+            let mut f = Fixture::new();
+            f.offset = offset;
+            for _ in 0..3 {
+                f.frame(Vec::new());
+            }
+            let point = f.panel.auto_button_rects[index].center();
+            assert!(!f.frame(vec![egui::Event::PointerMoved(point), button(point, true)]));
+            assert!(f.frame(vec![button(point, false)]));
+            assert!(f.automatic, "offset buttons must retain automatic mode");
+            assert!((f.offset - expected).abs() < 1e-5);
+            assert_eq!(f.height.value(), hover_height::bounded(0.2 + f.offset).unwrap());
+            assert!(!f.panel.previewing_offset());
+            if expected != 0.0 {
+                let Some(NetCommand::SetHoverHeight { value, .. }) = f.height.next_update(Some(1)) else {
+                    panic!("offset button must commit immediately");
+                };
+                assert_eq!(value, f.height.value());
+            }
+        }
+    }
+
+    #[test]
+    fn automatic_buttons_are_inactive_when_automatic_mode_is_off() {
+        let mut f = Fixture::new();
+        f.automatic = false;
+        f.offset = -0.8;
+        for _ in 0..3 {
+            f.frame(Vec::new());
+        }
+        for index in 0..3 {
+            let point = f.panel.auto_button_rects[index].center();
+            assert!(!f.frame(vec![egui::Event::PointerMoved(point), button(point, true)]));
+            assert!(!f.frame(vec![button(point, false)]));
+            assert!(!f.automatic);
+            assert_eq!(f.offset, -0.8);
+            assert_eq!(f.height.value(), 0.2);
+            assert!(f.height.next_update(Some(1)).is_none());
+        }
     }
 
     #[test]

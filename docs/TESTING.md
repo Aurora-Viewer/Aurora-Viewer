@@ -121,6 +121,17 @@ interactive. Any manual change switches auto off immediately; Reset does so
 even when the height already equals zero. The saved automatic offset stays
 available when auto is enabled again. Merely displaying a computed height
 must not round it or switch modes.
+Two shared Aurora dividers separate manual height, automatic adjustment and
+the common camera/pose switches. The automatic section also has
+Lower/Reset/Raise buttons: they change the saved offset, retain automatic
+mode and apply the cached estimate immediately. Reset restores zero offset;
+steps match the manual buttons (1 cm, Alt 10 cm, Ctrl/Shift 1 mm).
+The scene compares an attachment/skeleton signature each frame, but mesh
+decoding and vertex scans run only after changes settle for 200 ms. HUD,
+animation and ordinary movement changes do not trigger ongoing recalculation.
+Body attachment, shape, physical-size and newly available asset changes can
+invalidate the estimate; an initial size-only estimate is upgraded once a
+usable contact plane arrives. Changing the offset reuses the cached result.
 
 The frames-per-second limiter is enabled at **120 fps by default**. It can
 be disabled or adjusted in Preferences › Graphics › Smoothness; preferences
