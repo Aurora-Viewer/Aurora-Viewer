@@ -42,6 +42,7 @@ mod inventory_drag;
 mod inventory_thumbnail;
 mod object_actions;
 mod plate_click;
+mod reset_skeleton;
 mod scripts;
 mod shape_editor;
 mod task_notecards;
@@ -4192,6 +4193,7 @@ impl App {
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
         }
+        self.apply_skeleton_resets();
         self.frame_profile.lap(Lap::Events);
         self.poll_ao();
         self.sync_static_eyes();
@@ -5530,6 +5532,16 @@ impl App {
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
             for event in crate::demo::loop_animation_events(self.frame_count) {
                 self.world.apply(event);
+            }
+        }
+        if self.demo
+            && let Some(mode) = crate::demo::deform::mode()
+        {
+            for event in crate::demo::deform::events(self.frame_count, mode) {
+                self.world.apply(event);
+            }
+            if let Some((avatar, animations)) = crate::demo::deform::reset_at(self.frame_count, mode) {
+                self.on_ctx_action(ui::context::CtxAction::ResetSkeleton { avatar, animations });
             }
         }
         if self.demo {
@@ -8179,6 +8191,12 @@ impl ApplicationHandler for App {
                 crate::demo::SEAT_ANIM,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::seat_animation(), &rig)),
             );
+            if crate::demo::deform::mode().is_some() {
+                self.scene.anims.insert(
+                    crate::demo::deform::DEFORM_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::deform::animation(&rig), &rig)),
+                );
+            }
             let demo_anim = if std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
                 crate::demo::loop_animation()
             } else {

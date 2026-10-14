@@ -398,6 +398,8 @@ impl App {
                 self.settings.set_render_exception(id, mode);
                 self.settings.save();
             }
+            CtxAction::ResetSkeleton { avatar, animations } => self.reset_skeleton(avatar, animations),
+            CtxAction::StopAnimations => self.stop_current_animations(),
             CtxAction::AnswerTeleport { invite, accept } => {
                 for c in self.world.answer_teleport_invite(invite, accept) {
                     if matches!(c, NetCommand::AcceptLure { .. }) {

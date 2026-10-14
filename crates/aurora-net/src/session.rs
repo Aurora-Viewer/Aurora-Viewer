@@ -1427,6 +1427,17 @@ impl Session<'_> {
                     .push(lookat_effect(self.agent_id(), effect, target, offset, kind, duration));
                 self.send_main(&m, false);
             }
+            NetCommand::ResetSkeleton {
+                effect,
+                target,
+                animations,
+            } => {
+                let mut m = ViewerEffect::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.effect.push(reset_skeleton_effect(self.agent_id(), effect, target, animations));
+                self.send_main(&m, false);
+            }
             NetCommand::SetAlwaysRun(run) => {
                 let mut m = SetAlwaysRun::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -1989,6 +2000,9 @@ impl Session<'_> {
             | NetCommand::SetGroupFlags { .. }
             | NetCommand::TerminateFriendship(_)
             | NetCommand::AgentAnimation { .. }
+            | NetCommand::AgentAnimations { .. }
+            | NetCommand::AnimationStateReset
+            | NetCommand::RevokePermissions { .. }
             | NetCommand::ObjectGrab { .. }
             | NetCommand::ObjectGrabUpdate { .. }
             | NetCommand::ObjectRelease { .. }
@@ -3552,6 +3566,15 @@ impl Session<'_> {
                             duration: e.duration,
                         },
                     );
+                } else if let Some((target, animations)) = parse_reset_skeleton(e) {
+                    emit(
+                        self.sh,
+                        NetEvent::ResetSkeleton {
+                            source: e.agent_id,
+                            target,
+                            animations,
+                        },
+                    );
                 }
             }
         } else if id == SoundTrigger::ID {
@@ -3815,6 +3838,70 @@ fn parse_lookat(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, uuid::Uu
         *v = f64::from_le_bytes(b);
     }
     Some((source, target, offset, d[56]))
+}
+
+/// LLHUDObject::LL_HUD_EFFECT_RESET_SKELETON.
+const HUD_EFFECT_RESET_SKELETON: u8 = 19;
+/// LLHUDEffectResetSkeleton type data: target object (16), then a byte of
+/// which only bit 0 is read (reset the animations too).
+const RESET_SKELETON_PKT_SIZE: usize = 17;
+
+/// LLHUDEffectResetSkeleton::packData, with LLHUDEffect's defaults: a 1 s
+/// duration and an unused colour (LLColor4U(): opaque black).
+fn reset_skeleton_effect(agent: uuid::Uuid, effect: uuid::Uuid, target: uuid::Uuid, animations: bool) -> msgs::viewer_effect::Effect {
+    let mut d = Vec::with_capacity(RESET_SKELETON_PKT_SIZE);
+    d.extend_from_slice(target.as_bytes());
+    d.push(u8::from(animations));
+    msgs::viewer_effect::Effect {
+        id: effect,
+        agent_id: agent,
+        type_: HUD_EFFECT_RESET_SKELETON,
+        duration: 1.0,
+        color: vec![0, 0, 0, 255],
+        type_data: d,
+    }
+}
+
+/// LLHUDEffectResetSkeleton::unpackData: (target, reset the animations); a
+/// nil target is the sender itself, a packet of another size is dropped.
+fn parse_reset_skeleton(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, bool)> {
+    if e.type_ != HUD_EFFECT_RESET_SKELETON || e.type_data.len() != RESET_SKELETON_PKT_SIZE {
+        return None;
+    }
+    let target = uuid::Uuid::from_slice(&e.type_data[0..16]).ok()?;
+    let target = if target.is_nil() { e.agent_id } else { target };
+    Some((target, e.type_data[16] & 1 != 0))
+}
+
+#[cfg(test)]
+mod reset_skeleton_tests {
+    use super::*;
+
+    #[test]
+    fn reset_skeleton_effect_round_trips_like_firestorm() {
+        let (me, effect) = (uuid::Uuid::from_u128(7), uuid::Uuid::from_u128(9));
+        let e = reset_skeleton_effect(me, effect, me, true);
+        assert_eq!(e.type_, 19);
+        assert_eq!(e.type_data.len(), 17);
+        assert_eq!(&e.type_data[..16], me.as_bytes());
+        assert_eq!(e.type_data[16], 1);
+        assert_eq!(parse_reset_skeleton(&e), Some((me, true)));
+        let e = reset_skeleton_effect(me, effect, me, false);
+        assert_eq!(parse_reset_skeleton(&e), Some((me, false)));
+    }
+
+    #[test]
+    fn a_nil_target_is_the_sender_and_only_bit_0_counts() {
+        let sender = uuid::Uuid::from_u128(5);
+        let mut e = reset_skeleton_effect(sender, uuid::Uuid::from_u128(1), uuid::Uuid::nil(), false);
+        e.type_data[16] = 0b10;
+        assert_eq!(parse_reset_skeleton(&e), Some((sender, false)));
+        // wrong size or type: not a reset
+        e.type_data.push(0);
+        assert_eq!(parse_reset_skeleton(&e), None);
+        let look = lookat_effect(sender, uuid::Uuid::from_u128(1), sender, [0.0; 3], 0, 1.0);
+        assert_eq!(parse_reset_skeleton(&look), None);
+    }
 }
 
 impl Session<'_> {
