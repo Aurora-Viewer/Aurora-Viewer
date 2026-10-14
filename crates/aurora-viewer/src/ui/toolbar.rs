@@ -53,6 +53,10 @@ enum Edit {
 pub struct ToolbarUi {
     pub open: bool,
     pub voice_options: bool,
+    /// Where the favourites live (given by the app), for the Favorites
+    /// button's menu, and the choice made there (taken by the app).
+    pub favorites_access: crate::settings::FavoritesAccess,
+    pub access_choice: Option<crate::settings::FavoritesAccess>,
     pending: Option<Edit>,
     /// true restores defaults, false clears all (Firestorm's confirmations).
     confirm: Option<bool>,
@@ -91,6 +95,7 @@ pub fn label(button: &ToolButton) -> &str {
         "performance" => localized!("common-performance"),
         "sit" => localized!("extra-sit-on-ground-stand-up"),
         "home" => localized!("common-go-home"),
+        "favorites" => localized!("common-favorites"),
         "preferences" => localized!("common-preferences"),
         _ => &button.tooltip,
     }
@@ -99,7 +104,11 @@ pub fn label(button: &ToolButton) -> &str {
 fn catalogue(layout: &Layout) -> Vec<ToolButton> {
     let mut buttons = layout.toolbar.clone();
     buttons.extend(Layout::default().toolbar);
-    for (command, icon) in [("friends", "Command_People_Icon"), ("home", "home-filled")] {
+    for (command, icon) in [
+        ("friends", "Command_People_Icon"),
+        ("home", "home-filled"),
+        ("favorites", "bookmarks-filled"),
+    ] {
         buttons.push(ToolButton {
             command: command.into(),
             icon: icon.into(),
@@ -134,6 +143,12 @@ impl ToolbarUi {
                 && menu::item(ui, p, "microphone-filled", aurora_i18n::tr!("ui-bars-microphone-options"))
             {
                 self.voice_options = true;
+            }
+            // the Favorites button: where the favourites live
+            if button.is_some_and(|b| b.command == "favorites")
+                && let Some(a) = crate::ui::bars::favorites::access_choice(ui, p, self.favorites_access)
+            {
+                self.access_choice = Some(a);
             }
             if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("toolbar-locked"), locked, true) {
                 self.pending = Some(Edit::Lock);

@@ -288,6 +288,7 @@ impl Bench {
                     false,
                     self.islands,
                     None,
+                    &bars::favorites::View::default(),
                 );
                 self.state.show(ui.ctx(), &p, &layout, &self.settings);
                 if self.state.commit(&layout, &mut self.settings) {

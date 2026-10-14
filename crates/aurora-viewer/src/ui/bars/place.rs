@@ -17,9 +17,6 @@ use crate::ui::menu;
 use crate::ui::parcel_icons::{GLYPH, ParcelIcon, SLOT_HEIGHT, SLOT_WIDTH};
 use egui::{Color32, FontId, Id, Pos2, Rect, Sense, Vec2};
 
-/// The Favorites button: the icon, then its caret.
-const FAV_W: f32 = 6.0 + ICON + 6.0 + CARET + 6.0;
-const CARET: f32 = 12.0;
 /// Inside the place: room at its left and right ends, and between its parts.
 const LOC_LEFT: f32 = 6.0;
 const LOC_RIGHT: f32 = 8.0;
@@ -144,7 +141,13 @@ fn measure(ui: &egui::Ui, st: &StatusInfo) -> Widths {
     } else {
         width(format!("{region} {steady}"), FontId::proportional(12.0))
     };
-    let buttons = PAD + SLOT * 3.0 + FAV_W + SLOT + GAP * 5.0 + PAD;
+    // the Favorites button, when the favourites live in the place island
+    let favorites = if st.favorites.access == crate::settings::FavoritesAccess::Menu {
+        super::favorites::PLACE_BUTTON_W + GAP
+    } else {
+        0.0
+    };
+    let buttons = PAD + SLOT * 3.0 + favorites + SLOT + GAP * 4.0 + PAD;
     let place = LOC_LEFT + BADGE + LOC_GAP + LOC_GAP + LOC_GAP * 2.0 + LOC_RIGHT;
     let icons = rights_width(ui, &st.parcel_icons, Detail::Bare);
     let rights_gap = if st.parcel_icons.is_empty() { 0.0 } else { LOC_GAP };
@@ -228,7 +231,9 @@ pub fn island(
     {
         action = Some(BarAction::TeleportHome);
     }
-    if let Some(a) = favorites_button(ui, p, icons, next(FAV_W), st) {
+    if st.favorites.access == crate::settings::FavoritesAccess::Menu
+        && let Some(a) = super::favorites::place_button(ui, p, icons, next(super::favorites::PLACE_BUTTON_W), st.favorites)
+    {
         action = Some(a);
     }
 
@@ -278,40 +283,6 @@ fn options_body(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut Op
             rights_text: !look.rights_text,
         });
     }
-}
-
-/// The Favorites button: the icon and its caret, at every width. Its menu
-/// adds this place to the favourites or opens Places › Favorites (the list
-/// of the favourites themselves comes with the favourites menu).
-fn favorites_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, rect: Rect, st: &StatusInfo) -> Option<BarAction> {
-    let resp = ui.interact(rect, Id::new("bars_place_favorites"), Sense::click());
-    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
-    let hot = resp.hovered() || open;
-    slot_face(ui, p, rect, hot, false);
-    let ink = slot_ink(p, hot, true);
-    let icon = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
-    paint_icon(ui, icons, "bookmarks-filled", icon, ICON, ink);
-    let caret = Rect::from_center_size(Pos2::new(icon.right() + 6.0 + CARET / 2.0, rect.center().y), Vec2::splat(CARET));
-    paint_icon(ui, icons, "chevron-down", caret, CARET, ink);
-    demo_open(ui.ctx(), &resp, super::demo::Open::Favorites);
-    let mut out = None;
-    menu::dropdown_placed(
-        &resp,
-        p,
-        egui::PopupCloseBehavior::CloseOnClick,
-        Some((egui::RectAlign::BOTTOM_START, 10.0)),
-        |ui| {
-            let in_favorites = st.parcel_landmark.as_ref().is_some_and(|lm| lm.favorite);
-            if menu::item_if(ui, p, "star-filled", aurora_i18n::tr!("landmark-star-add-favorites"), !in_favorites) {
-                out = Some(BarAction::LandmarkStar(StarAction::AddFavorite));
-            }
-            if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-bars-open-favorites")) {
-                out = Some(BarAction::OpenFavorites);
-            }
-        },
-    );
-    resp.on_hover_text(aurora_i18n::tr!("common-favorites"));
-    out
 }
 
 /// The landmark star of the island (LLLocationInputCtrl's add landmark

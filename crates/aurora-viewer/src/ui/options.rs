@@ -1715,6 +1715,26 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-place-bar-rights-text-help"),
                     |ui| toggle(ui, p, &mut s.place_bar_rights_text),
                 );
+                // also in the favourites' own menus
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-favorites-access"),
+                    aurora_i18n::tr!("ui-options-favorites-access-help"),
+                    |ui| {
+                        let mut changed = false;
+                        ui.horizontal_wrapped(|ui| {
+                            for (value, label) in [
+                                (crate::settings::FavoritesAccess::Menu, aurora_i18n::tr!("favorites-access-menu")),
+                                (crate::settings::FavoritesAccess::Row, aurora_i18n::tr!("favorites-access-row")),
+                                (crate::settings::FavoritesAccess::Dock, aurora_i18n::tr!("favorites-access-dock")),
+                            ] {
+                                changed |= super::widgets::radio_value(ui, p, &mut s.favorites_access, value, label).changed();
+                            }
+                        });
+                        changed
+                    },
+                );
                 c |= row(ui, p, aurora_i18n::tr!("ui-options-interface-scale"), "", |ui| {
                     slider(ui, &mut s.ui_scale, 0.75..=2.0, "×")
                 });
