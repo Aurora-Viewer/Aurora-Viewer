@@ -1939,6 +1939,25 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(ui, p, aurora_i18n::tr!("ui-options-invert-vertical-axis"), "", |ui| {
                     toggle(ui, p, &mut s.invert_mouse)
                 });
+                // Firestorm › Move & View › Movement: "Double-click on land"
+                // (double_click_action_combo, panel_preferences_move.xml)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-double-click-ground"),
+                    aurora_i18n::tr!("ui-options-double-click-ground-help"),
+                    |ui| {
+                        let mut changed = false;
+                        egui::ComboBox::from_id_salt("double-click-ground")
+                            .selected_text(s.double_click.label())
+                            .show_ui(ui, |ui| {
+                                for action in crate::autopilot::DoubleClick::ALL {
+                                    changed |= ui.selectable_value(&mut s.double_click, action, action.label()).changed();
+                                }
+                            });
+                        changed
+                    },
+                );
             });
             group(ui, p, aurora_i18n::tr!("ui-options-keyboard"), |ui| {
                 c |= row(

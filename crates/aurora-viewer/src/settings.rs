@@ -276,6 +276,9 @@ pub struct Settings {
     pub chat_style: ChatStyle,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
+    /// What a double click on the ground does (Preferences › Controls, the
+    /// wolf menu › Me): nothing by default, as in Firestorm.
+    pub double_click: crate::autopilot::DoubleClick,
     /// Look-at: what we send of where we look, the crosshairs of where the
     /// avatars look, how our head follows the cursor (Preferences ›
     /// Privacy and Controls).
@@ -668,6 +671,7 @@ impl Default for Settings {
             chat_style: ChatStyle::Bubbles,
             invert_mouse: false,
             arrows_strafe: false,
+            double_click: crate::autopilot::DoubleClick::Nothing,
             lookat: Default::default(),
             former_look_at: None,
             former_look_at_range: None,
