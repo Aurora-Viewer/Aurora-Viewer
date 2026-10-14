@@ -38,6 +38,7 @@ pub mod parked;
 pub mod place_details;
 pub mod profiles;
 pub mod radar;
+pub mod recent;
 pub mod script_debug;
 pub mod search;
 pub mod social;
@@ -244,6 +245,8 @@ pub struct World {
     pub social: social::Social,
     /// Contact sets and aliases (LGGContactSets), per account.
     pub contact_sets: contact_sets::ContactSets,
+    /// The residents we dealt with lately (People › Recent).
+    pub recent: recent::RecentPeople,
     /// Contact sets generation whose aliases the name cache has.
     aliases_synced: u64,
     /// Block list (LLMuteList).
@@ -426,6 +429,7 @@ impl World {
             health: 100.0,
             social: social::Social::default(),
             contact_sets: Default::default(),
+            recent: Default::default(),
             aliases_synced: 0,
             mutes: mutes::MuteList::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
@@ -2260,6 +2264,9 @@ impl World {
                 if c.source_id == self.agent_id {
                     ChatKind::Own
                 } else {
+                    // LLNearbyChatHandler::processChat: the speaker joins
+                    // the recent people
+                    self.met(c.source_id);
                     // LLAgent::heardChat (half the time, ll_rand(2))
                     let coin = Uuid::new_v4().as_bytes()[0] & 1 == 0;
                     self.look_at.heard_chat(c.source_id, coin);
@@ -2309,6 +2316,8 @@ impl World {
             return;
         }
         if im.dialog == 0 && !im.from_agent_id.is_nil() {
+            // LLIMMgr::addMessage: the sender joins the recent people
+            self.met(im.from_agent_id);
             // an ordinary message: their automatic response is behind them
             self.social.auto_responded.remove(&im.from_agent_id);
             if !im.from_name.is_empty() {
@@ -2851,6 +2860,13 @@ impl World {
 
     pub fn region_name(&self) -> String {
         self.main().map(|r| r.name.clone()).unwrap_or_default()
+    }
+
+    /// `id` talked with us now (LLRecentPeople::add), here.
+    pub fn met(&mut self, id: Uuid) {
+        let region = self.region_name();
+        let group = self.groups.is_member(&id);
+        self.recent.add(self.agent_id, id, group, &region, std::time::SystemTime::now());
     }
 
     /// Fraction of the main region's terrain received.

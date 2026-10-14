@@ -1,8 +1,15 @@
-//! "People" floater (nearby / friends / groups / blocked). Near you comes in
-//! Aurora's look (`nearby.rs`, `sheet.rs`) or as Firestorm's radar table
-//! (`radar.rs`), chosen in Preferences › Aurora (`Settings::classic_people`).
+//! "People" floater. In Aurora's look (the People mock-up v2) it holds every
+//! person: Near you (`nearby.rs`), Friends, Groups, Contact sets, Recent and
+//! Blocked (`friends.rs`, `groups.rs`, `sets.rs`, `recent.rs`,
+//! `blocked.rs`: the tabs of Conversations › Contacts with all their
+//! rights and actions, `ui/contacts.rs` reused), each with the sheet of the
+//! person or group clicked (`sheet.rs`); `rows.rs` holds what their rows
+//! share. In Firestorm's look (Preferences › Aurora,
+//! `Settings::classic_people`) Near you is the radar table (`radar.rs`) and
+//! the other tabs keep their simple lists below.
 
 use super::Panels;
+use super::contacts::{ContactsSettings, ContactsUi};
 use super::context::{self, AvatarList};
 use super::menu;
 use super::widgets::{self, Floater};
@@ -16,10 +23,27 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+mod blocked;
+mod friends;
+mod groups;
 mod nearby;
 mod radar;
+mod recent;
+mod rows;
+mod sets;
 mod sheet;
 pub use radar::{RadarData, RadarSettings, age_days, radar_name};
+
+/// The tabs (`Panels::people_tab`), in Aurora's order: Near you, Friends,
+/// Groups, Contact sets, Recent, Blocked. The numbers of the first five are
+/// the ones the rest of the viewer opens People on.
+pub(crate) const TAB_NEARBY: u8 = 0;
+pub(crate) const TAB_FRIENDS: u8 = 1;
+pub(crate) const TAB_GROUPS: u8 = 2;
+pub(crate) const TAB_RECENT: u8 = 3;
+pub(crate) const TAB_BLOCKED: u8 = 4;
+pub(crate) const TAB_SETS: u8 = 5;
+const AURORA_TABS: [u8; 6] = [TAB_NEARBY, TAB_FRIENDS, TAB_GROUPS, TAB_SETS, TAB_RECENT, TAB_BLOCKED];
 
 /// Id of the window.
 pub(crate) const WINDOW: &str = "people";
@@ -58,6 +82,77 @@ pub enum PeopleAction {
         rights: i32,
         grant: bool,
     },
+    /// "Join..." of the groups tab: the group search.
+    SearchGroups,
+    /// A group's sheet opened: its titles, members and notices are asked
+    /// for (LLGroupMgr, as the group profile does).
+    GroupData(Uuid),
+    /// The title we wear in a group (sendGroupTitleUpdate).
+    GroupTitle {
+        group: Uuid,
+        role: Uuid,
+    },
+    /// "Show in my profile" of a group's sheet (SetGroupAcceptNotices).
+    GroupFlags {
+        group: Uuid,
+        notices: bool,
+        profile: bool,
+    },
+    /// "Invite" of a group's sheet (LLGroupActions::invite).
+    InviteToGroup(Uuid),
+}
+
+/// What a sheet asks of the contact list's dialogs (they are shown by the
+/// app, whichever window asked).
+pub(super) enum Ask {
+    RemoveFromSet(String, Vec<Uuid>),
+    NewSet,
+}
+
+/// What the tabs of Aurora's look use, gathered.
+pub(super) struct Ctx<'a> {
+    pub p: &'a Palette,
+    pub world: &'a World,
+    pub contacts: &'a mut ContactsUi,
+    pub contact_settings: &'a mut ContactsSettings,
+    pub friends: &'a mut FriendsSettings,
+    /// Group insignias.
+    pub images: &'a HashMap<Uuid, egui::TextureHandle>,
+    pub actions: &'a mut Vec<PeopleAction>,
+}
+
+/// A tab's list side: (ui, context, radar, state, beside a sheet).
+type ListFn = fn(&mut egui::Ui, &mut Ctx<'_>, &RadarData<'_>, &mut PeopleUi, bool);
+/// A tab's sheet of `id`; true when it was closed.
+type SheetFn = fn(&mut egui::Ui, &mut Ctx<'_>, &RadarData<'_>, &mut PeopleUi, Uuid) -> bool;
+
+/// A tab's list, and beside it the sheet of what was clicked
+/// (`nearby::areas`: the window widens for it before its frame).
+fn split(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut PeopleUi, salt: &str, list: ListFn, sheet: SheetFn) {
+    let (list_rect, sheet_rect) = nearby::areas(ui, st);
+    if let Some(rect) = list_rect {
+        let beside = sheet_rect.is_some();
+        list(&mut nearby::list_ui(ui, rect, salt, beside), c, data, st, beside);
+    }
+    if let (Some(rect), Some(id)) = (sheet_rect, st.sheet)
+        && sheet(&mut nearby::list_ui(ui, rect, "people-sheet", false), c, data, st, id)
+    {
+        nearby::close_sheet(st);
+    }
+}
+
+/// The sheet of a person, from any tab but Near you.
+fn person_sheet(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut PeopleUi, id: Uuid) -> bool {
+    sheet::show(ui, c.p, c.world, data, st, id, false, c.actions)
+}
+
+/// The row whose quick actions' menu is open keeps them shown.
+fn keep_row_menu(st: &mut PeopleUi, id: Uuid, open: bool) {
+    if open {
+        st.row_menu = Some(id);
+    } else if st.row_menu == Some(id) {
+        st.row_menu = None;
+    }
 }
 
 /// Options of the friends tab (menu_people_friends_view.xml).
@@ -75,7 +170,10 @@ pub struct FriendsSettings {
 impl Default for FriendsSettings {
     fn default() -> Self {
         FriendsSettings {
-            sort: SORT_NAME,
+            // online first, as the contact list always sorts them
+            // (FSFloaterContacts::sortFriendList) and as the mock-up's
+            // friends tab opens
+            sort: SORT_STATUS,
             pictures: true,
             permissions: true,
         }
@@ -143,12 +241,63 @@ pub struct PeopleUi {
     /// AURORA_DEMO_PEOPLE=rows: the row shown as under the pointer, its
     /// quick actions out (a capture has no pointer).
     pub demo_hover: Option<Uuid>,
+    /// The open sheet is a group's (the groups tab).
+    sheet_group: bool,
+    /// The rows chosen with Ctrl / Shift in the friends, contact sets,
+    /// recent and blocked tabs, and the row Shift selects from.
+    pub sel: Vec<Uuid>,
+    anchor: Option<Uuid>,
+    /// The contact set the friends tab shows alone.
+    friend_set: Option<String>,
+    /// The nickname being typed in the sheet, and whose.
+    nick: Option<(Uuid, String)>,
+    /// What the sheets ask of the contact list's dialogs.
+    asks: Vec<Ask>,
+    /// Group insignias a row on screen waits for (drained by the viewer).
+    pub wanted_images: HashSet<Uuid>,
+    /// The tab shown last frame: another one starts afresh.
+    shown_tab: Option<u8>,
 }
 
 impl PeopleUi {
     /// Open the sheet of `id` in Near you (Aurora's look).
     pub fn open_sheet(&mut self, id: Uuid) {
         nearby::open_sheet(self, id);
+    }
+
+    /// Open the sheet of one of our groups (the groups tab).
+    pub fn open_group_sheet(&mut self, id: Uuid) {
+        nearby::open_sheet(self, id);
+        self.sheet_group = true;
+    }
+
+    /// Choose rows of a list as with Ctrl (AURORA_DEMO_PEOPLE).
+    pub fn select(&mut self, ids: Vec<Uuid>) {
+        self.anchor = ids.last().copied();
+        self.sel = ids;
+    }
+
+    /// A tab is shown: another than last frame's starts afresh (no filter,
+    /// no selection) and a sheet of the other kind closes (a group's in the
+    /// groups tab only, none in the blocked tab).
+    fn tab_shown(&mut self, tab: u8) {
+        if self.shown_tab == Some(tab) {
+            return;
+        }
+        if self.shown_tab.is_some() {
+            self.filter.clear();
+            self.sel.clear();
+            self.anchor = None;
+        }
+        self.shown_tab = Some(tab);
+        let keep = match tab {
+            TAB_GROUPS => self.sheet_group,
+            TAB_BLOCKED => false,
+            _ => !self.sheet_group,
+        };
+        if self.sheet.is_some() && !keep {
+            nearby::close_sheet(self);
+        }
     }
 
     /// A row on screen has no picture yet: ask for it, a few new residents
@@ -183,6 +332,15 @@ pub fn nearby(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
     out
 }
 
+/// What the People window needs of the contact list (its dialogs, its
+/// settings) and the group insignias.
+pub struct ContactsParts<'a> {
+    pub ui: &'a mut ContactsUi,
+    pub settings: &'a mut ContactsSettings,
+    pub images: &'a HashMap<Uuid, egui::TextureHandle>,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn people_window(
     ctx: &egui::Context,
     p: &Palette,
@@ -191,9 +349,10 @@ pub fn people_window(
     st: &mut PeopleUi,
     radar: &mut RadarData,
     friends: &mut FriendsSettings,
+    contacts: ContactsParts,
     // the mini-map renderer (LLNetMap in the Nearby tab)
     map: &mut dyn FnMut(&mut egui::Ui, Vec2),
-    // Aurora's look of Near you (`Settings::classic_people` off)
+    // Aurora's look (`Settings::classic_people` off)
     aurora: bool,
 ) -> Vec<PeopleAction> {
     let mut actions = Vec::new();
@@ -206,6 +365,12 @@ pub fn people_window(
     if !aurora && st.sheet.is_some() {
         nearby::close_sheet(st);
     }
+    if !aurora && panels.people_tab == TAB_SETS {
+        panels.people_tab = TAB_FRIENDS;
+    }
+    if aurora {
+        st.tab_shown(panels.people_tab);
+    }
     nearby::fit_window(ctx, st);
     let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("common-people"), pos, size).help(help);
     if aurora {
@@ -213,6 +378,33 @@ pub fn people_window(
         floater = floater.compact_header();
     }
     floater.show(ctx, p, &mut open, |ui| {
+        if aurora {
+            panels.people_tab = aurora_tabs(ui, p, world, radar, panels.people_tab);
+            let mut c = Ctx {
+                p,
+                world,
+                contacts: &mut *contacts.ui,
+                contact_settings: &mut *contacts.settings,
+                friends: &mut *friends,
+                images: contacts.images,
+                actions: &mut actions,
+            };
+            match panels.people_tab {
+                TAB_NEARBY => {
+                    let mut blocked = false;
+                    nearby::tab(ui, p, world, radar, st, map, c.actions, &mut blocked);
+                    if blocked {
+                        panels.people_tab = TAB_BLOCKED;
+                    }
+                }
+                TAB_FRIENDS => friends::tab(ui, &mut c, radar, st),
+                TAB_GROUPS => groups::tab(ui, &mut c, radar, st),
+                TAB_SETS => sets::tab(ui, &mut c, radar, st),
+                TAB_RECENT => recent::tab(ui, &mut c, radar, st),
+                _ => blocked::tab(ui, &mut c, st),
+            }
+            return;
+        }
         let mut tab = panels.people_tab as usize;
         let labels = [
             (aurora_i18n::tr!("ui-people-near-you"), true),
@@ -221,42 +413,16 @@ pub fn people_window(
             (aurora_i18n::tr!("common-recent"), false),
             (aurora_i18n::tr!("common-blocked"), true),
         ];
-        if aurora {
-            // the mock-up's tabs: pills, the count of the open one in the accent
-            let count = match tab {
-                0 => radar.radar.total,
-                1 => world.social.friends.len(),
-                2 => world.groups.sorted().len(),
-                _ => world.mutes.entries().len(),
-            };
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                for (i, (label, enabled)) in labels.iter().enumerate() {
-                    let selected = tab == i;
-                    let count = (selected && *enabled).then(|| aurora_i18n::integer(count as i64));
-                    if widgets::pill_tab(ui, p, "", label, count, true, selected, *enabled).clicked() {
-                        tab = i;
-                    }
-                }
-            });
-        } else {
-            widgets::tabs(ui, p, &mut tab, &labels);
-        }
+        widgets::tabs(ui, p, &mut tab, &labels);
         panels.people_tab = tab as u8;
-        if !aurora {
-            ui.add_space(4.0);
-        }
+        ui.add_space(4.0);
         match panels.people_tab {
             0 => {
                 // the radar lays out its own filter, beside its buttons
                 let mut blocked = false;
-                if aurora {
-                    nearby::tab(ui, p, world, radar, st, map, &mut actions, &mut blocked);
-                } else {
-                    radar::tab(ui, p, world, radar, st, map, &mut actions, &mut blocked);
-                }
+                radar::tab(ui, p, world, radar, st, map, &mut actions, &mut blocked);
                 if blocked {
-                    panels.people_tab = 4;
+                    panels.people_tab = TAB_BLOCKED;
                 }
             }
             1 => friends_tab(ui, p, world, st, radar.pics, friends, &mut actions),
@@ -272,8 +438,120 @@ pub fn people_window(
             }
         }
     });
+    // what the sheets asked of the contact list's dialogs
+    for ask in std::mem::take(&mut st.asks) {
+        match ask {
+            Ask::RemoveFromSet(set, ids) => contacts.ui.ask_remove_from_set(&set, ids),
+            Ask::NewSet => contacts.ui.ask_new_set(),
+        }
+    }
     panels.people = open;
     actions
+}
+
+/// The six tabs in pills, the open one's count in the accent; a window too
+/// narrow for them all shows those around the open one, the others behind
+/// "…". Returns the tab chosen.
+fn aurora_tabs(ui: &mut egui::Ui, p: &Palette, world: &World, radar: &RadarData, mut tab: u8) -> u8 {
+    let label = |t: u8| match t {
+        TAB_NEARBY => aurora_i18n::tr!("ui-people-near-you"),
+        TAB_FRIENDS => aurora_i18n::tr!("common-friends"),
+        TAB_GROUPS => aurora_i18n::tr!("common-groups"),
+        TAB_SETS => aurora_i18n::tr!("people-tab-sets"),
+        TAB_RECENT => aurora_i18n::tr!("common-recent"),
+        _ => aurora_i18n::tr!("common-blocked"),
+    };
+    let count = |t: u8| -> Option<usize> {
+        match t {
+            TAB_NEARBY => Some(radar.radar.total),
+            TAB_FRIENDS => Some(world.social.friends.len()),
+            TAB_GROUPS => Some(world.groups.groups.len()),
+            TAB_RECENT => Some(world.recent.len()),
+            TAB_BLOCKED => Some(world.mutes.entries().len()),
+            _ => None,
+        }
+    };
+    let open = tab;
+    let counted = |t: u8| (t == open).then(|| count(t).map(|n| aurora_i18n::integer(n as i64))).flatten();
+    let widths: Vec<f32> = AURORA_TABS
+        .iter()
+        .map(|t| pill_tab_width(ui, label(*t), counted(*t).as_deref()))
+        .collect();
+    let shown = tabs_shown(
+        &widths,
+        AURORA_TABS.iter().position(|t| *t == tab).unwrap_or(0),
+        ui.available_width(),
+        pill_tab_width(ui, "…", None),
+    );
+    let hidden: Vec<u8> = AURORA_TABS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !shown.contains(i))
+        .map(|(_, t)| *t)
+        .collect();
+    let more = |ui: &mut egui::Ui, tab: &mut u8| {
+        let resp = widgets::pill_tab(ui, p, "", "…", None, false, false, true);
+        menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+            for t in &hidden {
+                if menu::item(ui, p, "", label(*t)) {
+                    *tab = *t;
+                }
+            }
+        });
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let before = shown.start > 0;
+        if before {
+            more(ui, &mut tab);
+        }
+        for i in shown.clone() {
+            let t = AURORA_TABS[i];
+            if widgets::pill_tab(ui, p, "", label(t), counted(t), true, t == open, true).clicked() {
+                tab = t;
+            }
+        }
+        if !before && shown.end < AURORA_TABS.len() {
+            more(ui, &mut tab);
+        }
+    });
+    tab
+}
+
+/// What `pill_tab` takes.
+fn pill_tab_width(ui: &egui::Ui, label: &str, count: Option<&str>) -> f32 {
+    let w = |t: &str, size: f32| {
+        ui.painter()
+            .layout_no_wrap(
+                t.to_owned(),
+                egui::FontId::new(size, super::fonts::semibold(ui.ctx())),
+                egui::Color32::PLACEHOLDER,
+            )
+            .size()
+            .x
+    };
+    12.0 + w(label, 12.5) + count.map_or(0.0, |c| 5.0 + w(c, 11.0) + 10.0) + 12.0
+}
+
+/// The tabs a row of `room` shows: all of them, or a run around the open
+/// one (`open`) beside the "…" of the others, as many as fit.
+fn tabs_shown(widths: &[f32], open: usize, room: f32, more: f32) -> std::ops::Range<usize> {
+    const GAP: f32 = 2.0;
+    let total = |r: &std::ops::Range<usize>| widths[r.clone()].iter().sum::<f32>() + GAP * r.len().saturating_sub(1) as f32;
+    if total(&(0..widths.len())) <= room {
+        return 0..widths.len();
+    }
+    let room = room - more - GAP;
+    let mut run = open..open + 1;
+    // the tabs before the open one first (the mock-up's "… Recent Blocked"),
+    // then the ones after
+    while run.start > 0 && total(&(run.start - 1..run.end)) <= room {
+        run.start -= 1;
+    }
+    while run.end < widths.len() && total(&(run.start..run.end + 1)) <= room {
+        run.end += 1;
+    }
+    run
 }
 
 /// View and sort options of the friends (menu_people_friends_view.xml,
@@ -616,6 +894,35 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
 mod tests {
     use super::*;
 
+    /// However narrow the window, the tabs shown and the "…" of the others
+    /// fit in it, the open tab is among them, and a wide window shows them
+    /// all.
+    #[test]
+    fn the_tabs_fit_beside_their_ellipsis() {
+        let widths = [99.0, 76.0, 74.0, 69.0, 66.0, 88.0];
+        let more = 30.0;
+        for room in (200..=600).step_by(5) {
+            for open in 0..widths.len() {
+                let run = tabs_shown(&widths, open, room as f32, more);
+                assert!(run.contains(&open), "{room}: the open tab is shown");
+                let used: f32 = widths[run.clone()].iter().sum::<f32>() + 2.0 * (run.len() - 1) as f32;
+                if run.len() < widths.len() {
+                    assert!(
+                        used + 2.0 + more <= room as f32 || run.len() == 1,
+                        "{room} {open}: {run:?} overflows"
+                    );
+                } else {
+                    assert!(used <= room as f32);
+                }
+            }
+        }
+        assert_eq!(tabs_shown(&widths, 5, 600.0, more), 0..6);
+        // the mock-up's narrow window: the blocked tab and the ones before it
+        let run = tabs_shown(&widths, 5, 402.0, more);
+        assert_eq!(run.end, 6);
+        assert!(run.start > 0);
+    }
+
     #[test]
     fn friends_sort_by_name_username_or_status() {
         let friend = |n: u128, online: bool| Friend {
@@ -638,9 +945,9 @@ mod tests {
         assert_eq!(order(SORT_USERNAME), vec![1, 3, 2]);
         // online first, then by name
         assert_eq!(order(SORT_STATUS), vec![2, 3, 1]);
-        // Firestorm's defaults: by name, pictures and rights shown
+        // online first (the contact list's order), pictures and rights shown
         let defaults = FriendsSettings::default();
-        assert_eq!(defaults.sort, SORT_NAME);
+        assert_eq!(defaults.sort, SORT_STATUS);
         assert!(defaults.pictures && defaults.permissions);
     }
 }

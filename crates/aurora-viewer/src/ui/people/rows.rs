@@ -1,0 +1,412 @@
+//! The pieces the lists of People share in Aurora's look (the mock-up's
+//! rows): a row's face, its round picture and status dot, its two lines of
+//! names, the right end laid out from the right edge without ever covering
+//! anything (what does not fit folds into "+2" or steps aside), the quick
+//! actions of the row under the pointer, and the Ctrl / Shift selection.
+
+use crate::theme::Palette;
+use crate::ui::context::{self, AvatarList};
+use crate::ui::{menu, presence, widgets};
+use crate::world::World;
+use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
+use uuid::Uuid;
+
+/// Height of a row, and the gap between two (Near you's).
+pub(super) use super::nearby::{RICH_GAP, RICH_H};
+/// What the names keep at least, and the gap after them.
+pub(super) const NAMES_MIN: f32 = 60.0;
+const NAMES_GAP: f32 = 6.0;
+/// Room left of a row's right edge.
+const PAD: f32 = 8.0;
+/// One quick action's button, and the room around them in their pill.
+const BUTTON: Vec2 = Vec2::new(26.0, 24.0);
+const ACTIONS_PAD: f32 = 3.0;
+/// Width of the "+2" of what does not fit.
+pub(super) const MORE_W: f32 = 24.0;
+/// Height of a toolbar (search, buttons).
+pub(super) const TOOLBAR_H: f32 = 30.0;
+
+/// A semi-bold text format (the mock-up's weight 600).
+pub(super) fn semibold(ui: &egui::Ui, size: f32, color: Color32) -> egui::TextFormat {
+    crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), size, color)
+}
+
+/// The face of a row: the accent's wash when selected, raised under the
+/// pointer, else the field.
+pub(super) fn face(ui: &egui::Ui, p: &Palette, rect: Rect, selected: bool, hot: bool) {
+    let fill = if selected {
+        p.violet.gamma_multiply(0.18)
+    } else if hot {
+        p.raised.gamma_multiply(0.45)
+    } else {
+        p.field
+    };
+    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
+}
+
+/// The round picture at the left of a row, with the status dot of a
+/// resident when it is known; returns where the names start.
+pub(super) fn picture(
+    ui: &egui::Ui,
+    p: &Palette,
+    world: &World,
+    rect: Rect,
+    pic: Option<&egui::TextureHandle>,
+    id: Uuid,
+    name: &str,
+    dim: bool,
+) -> f32 {
+    let disc = Rect::from_center_size(Pos2::new(rect.left() + 8.0 + 15.0, rect.center().y), Vec2::splat(30.0));
+    widgets::avatar_disc(ui, p, disc, pic, name, dim);
+    let status = presence::of(world, &id);
+    if status != presence::Status::Unknown {
+        presence::paint_dot(ui.painter(), p, disc, status, p.field);
+    }
+    names_left(rect)
+}
+
+/// The names of a row start there (after a 30 px picture).
+pub(super) fn names_left(rect: Rect) -> f32 {
+    rect.left() + 8.0 + 30.0 + 10.0
+}
+
+/// A square tile at the left of a row (a group's insignia, an object): a
+/// picture, or `icon` / `initials` on `fill`; returns where the names start.
+pub(super) fn tile(
+    ui: &egui::Ui,
+    p: &Palette,
+    rect: Rect,
+    pic: Option<&egui::TextureHandle>,
+    icon: &str,
+    initials: &str,
+    fill: Color32,
+) -> f32 {
+    let tile = Rect::from_center_size(Pos2::new(rect.left() + 8.0 + 15.0, rect.center().y), Vec2::splat(30.0));
+    paint_tile(ui, p, tile, pic, icon, initials, fill);
+    names_left(rect)
+}
+
+/// The tile itself, at any size.
+pub(super) fn paint_tile(
+    ui: &egui::Ui,
+    p: &Palette,
+    tile: Rect,
+    pic: Option<&egui::TextureHandle>,
+    icon: &str,
+    initials: &str,
+    fill: Color32,
+) {
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    match pic {
+        Some(t) => {
+            egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), tile.size()))
+                .tint(widgets::PICTURE_TINT)
+                .corner_radius(radius)
+                .paint_at(ui, tile);
+        }
+        None => {
+            ui.painter().rect_filled(tile, radius, fill);
+            if icon.is_empty() {
+                let g = ui.painter().layout_job(egui::text::LayoutJob::single_section(
+                    initials.to_owned(),
+                    semibold(ui, tile.height() * 0.36, p.on_accent),
+                ));
+                ui.painter().galley(tile.center() - g.size() / 2.0, g, p.on_accent);
+            } else {
+                super::radar::icon(ui, icon, tile, tile.height() * 0.45, p.muted);
+            }
+        }
+    }
+}
+
+/// The initials of a group's name: its first letter, then that of the next
+/// word in capitals ("Loups du Nord": LN), else of the second word.
+pub(super) fn initials(name: &str) -> String {
+    let letters: Vec<char> = name
+        .split_whitespace()
+        .filter_map(|w| w.chars().find(|c| c.is_alphanumeric()))
+        .collect();
+    let Some(first) = letters.first() else {
+        return String::new();
+    };
+    let second = letters[1..].iter().find(|c| c.is_uppercase()).or(letters.get(1));
+    std::iter::once(first).chain(second).flat_map(|c| c.to_uppercase()).collect()
+}
+
+/// The two lines of a row between `left` and `right`: the first in
+/// semi-bold, with a dot of `dot` (a contact set's color) and a tag after
+/// it when they fit, the second muted. Returns whether the first was cut.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn names(
+    ui: &egui::Ui,
+    p: &Palette,
+    rect: Rect,
+    left: f32,
+    right: f32,
+    first: &str,
+    color: Color32,
+    second: &str,
+    dot: Option<Color32>,
+    tag: Option<(&str, Color32, Color32)>,
+) -> bool {
+    let width = (right - left).max(0.0);
+    let mut job = egui::text::LayoutJob::single_section(first.to_owned(), semibold(ui, 13.0, color));
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    let name_g = ui.painter().layout_job(job);
+    let cut = name_g.elided;
+    let mut job = egui::text::LayoutJob::single_section(second.to_owned(), egui::TextFormat::simple(FontId::proportional(11.5), p.muted));
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    let second_g = ui.painter().layout_job(job);
+    let lines = if second.is_empty() { 0.0 } else { second_g.size().y - 2.0 };
+    let top = rect.center().y - (name_g.size().y + lines) / 2.0;
+    let (name_w, name_h) = (name_g.size().x, name_g.size().y);
+    ui.painter().galley(Pos2::new(left, top), name_g, color);
+    if !second.is_empty() {
+        ui.painter().galley(Pos2::new(left, top + name_h - 2.0), second_g, p.muted);
+    }
+    // what follows the name, only where it fits
+    let mut x = left + name_w + 6.0;
+    let y = top + name_h / 2.0;
+    if let Some(c) = dot.filter(|_| !cut && x + 9.0 <= right) {
+        ui.painter().circle_filled(Pos2::new(x + 4.5, y), 4.5, c);
+        x += 9.0 + 6.0;
+    }
+    if let Some((text, ink, fill)) = tag.filter(|_| !cut) {
+        let g = ui
+            .painter()
+            .layout_no_wrap(text.to_owned(), FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())), ink);
+        let r = Rect::from_min_size(Pos2::new(x, y - 8.0), Vec2::new(g.size().x + 12.0, 16.0));
+        if r.right() <= right {
+            ui.painter().rect_filled(r, ui.visuals().window_corner_radius, fill);
+            ui.painter().galley(r.center() - g.size() / 2.0, g, ink);
+        }
+    }
+    cut
+}
+
+/// Where the parts of a row's right end go, laid from the right edge: the
+/// first of `widths` is the rightmost. What would leave the names less
+/// than `NAMES_MIN` does not show: it folds into a "+2" when `fold`, else
+/// it steps aside (the parts the sheet and the menu also hold).
+#[derive(Debug)]
+pub(super) struct End {
+    /// One place per part shown, in the order of `widths`.
+    pub items: Vec<Rect>,
+    /// The "+2" of the others, and how many it stands for.
+    pub more: Option<(Rect, usize)>,
+    /// Where the names stop.
+    pub names_right: f32,
+}
+
+pub(super) fn end(row: Rect, names_left: f32, widths: &[f32], gap: f32, fold: bool) -> End {
+    let right = row.right() - PAD;
+    let room = right - (names_left + NAMES_MIN + NAMES_GAP);
+    let total = |k: usize| -> f32 { widths[..k].iter().sum::<f32>() + gap * k.saturating_sub(1) as f32 };
+    let n = widths.len();
+    let (shown, more) = if total(n) <= room {
+        (n, false)
+    } else if fold {
+        let k = (0..n).rev().find(|k| total(*k) + if *k > 0 { gap } else { 0.0 } + MORE_W <= room);
+        match k {
+            Some(k) => (k, true),
+            None => (0, false),
+        }
+    } else {
+        ((0..n).rev().find(|k| total(*k) <= room).unwrap_or(0), false)
+    };
+    let mut x = right;
+    let items: Vec<Rect> = widths[..shown]
+        .iter()
+        .map(|w| {
+            let r = Rect::from_min_max(Pos2::new(x - w, row.top()), Pos2::new(x, row.bottom()));
+            x = r.left() - gap;
+            r
+        })
+        .collect();
+    let more = more.then(|| {
+        let r = Rect::from_min_max(Pos2::new(x - MORE_W, row.top()), Pos2::new(x, row.bottom()));
+        x = r.left() - gap;
+        (r, n - shown)
+    });
+    let leftmost = more.map(|(r, _)| r.left()).or(items.last().map(|r| r.left())).unwrap_or(right);
+    End {
+        items,
+        more,
+        names_right: leftmost - NAMES_GAP,
+    }
+}
+
+/// Paint the "+2" of what folded.
+pub(super) fn paint_more(ui: &egui::Ui, p: &Palette, cell: Rect, hidden: usize) {
+    let g = ui.painter().layout_job(egui::text::LayoutJob::single_section(
+        format!("+{hidden}"),
+        semibold(ui, 12.0, p.muted),
+    ));
+    ui.painter().galley(cell.center() - g.size() / 2.0, g, p.muted);
+}
+
+/// Width of the pill of `n` quick actions.
+pub(super) fn actions_width(n: usize) -> f32 {
+    n as f32 * (BUTTON.x + ACTIONS_PAD) + ACTIONS_PAD
+}
+
+/// The quick actions of the row under the pointer, in their pill at the
+/// middle of `slot`: one response per button (`buttons`: icon, tip).
+pub(super) fn actions(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    slot: Rect,
+    buttons: &[(&str, &str)],
+    salt: impl std::hash::Hash + std::fmt::Debug,
+) -> Vec<egui::Response> {
+    let y = slot.center().y;
+    let pill = Rect::from_min_max(
+        Pos2::new(slot.right() - actions_width(buttons.len()), y - BUTTON.y / 2.0 - ACTIONS_PAD),
+        Pos2::new(slot.right(), y + BUTTON.y / 2.0 + ACTIONS_PAD),
+    );
+    ui.painter()
+        .rect_filled(pill, ui.visuals().widgets.inactive.corner_radius, p.raised);
+    let id = ui.id().with(salt);
+    buttons
+        .iter()
+        .enumerate()
+        .map(|(i, (icon, tip))| {
+            let r = Rect::from_min_size(
+                Pos2::new(
+                    pill.left() + ACTIONS_PAD + i as f32 * (BUTTON.x + ACTIONS_PAD),
+                    pill.top() + ACTIONS_PAD,
+                ),
+                BUTTON,
+            );
+            let resp = ui.interact(r, id.with(i), Sense::click());
+            if resp.hovered() {
+                ui.painter().rect_filled(r, widgets::inner_radius(ui.visuals()), p.bar);
+            }
+            super::radar::icon(ui, icon, r, 14.0, p.ink);
+            resp.on_hover_text(*tip).on_hover_cursor(egui::CursorIcon::PointingHand)
+        })
+        .collect()
+}
+
+/// A click on a row of a list that selects several (LLScrollListCtrl: Ctrl
+/// toggles, Shift extends from the last row clicked); true for a plain
+/// click, which opens the row's sheet. A right click on a row outside the
+/// selection selects it alone.
+pub(super) fn select(
+    ui: &egui::Ui,
+    resp: &egui::Response,
+    sel: &mut Vec<Uuid>,
+    anchor: &mut Option<Uuid>,
+    order: &[Uuid],
+    id: Uuid,
+) -> bool {
+    if resp.secondary_clicked() && !sel.contains(&id) {
+        *sel = vec![id];
+        *anchor = Some(id);
+    }
+    if !resp.clicked() {
+        return false;
+    }
+    let mods = ui.input(|i| i.modifiers);
+    crate::ui::contacts::click_select(sel, anchor, order, id, mods);
+    !mods.command && !mods.shift
+}
+
+/// The right-click menu of a resident's row: the menu of several when the
+/// row is part of a selection of several (menu_fs_radar_multiselect.xml),
+/// else the resident's own.
+pub(super) fn person_menu(resp: &egui::Response, p: &Palette, world: &World, sel: &[Uuid], id: Uuid) {
+    let several = sel.len() > 1 && sel.contains(&id);
+    let kind = if world.social.is_friend(&id) {
+        AvatarList::Friend
+    } else {
+        AvatarList::Nearby
+    };
+    menu::context_menu(resp, p, |ui| {
+        if several {
+            context::avatars_menu(ui, p, world, sel);
+        } else {
+            context::avatar_list_menu(ui, p, world, id, kind);
+        }
+    });
+}
+
+/// The gear of a list's options, as tall as its toolbar.
+pub(super) fn gear(ui: &mut egui::Ui, p: &Palette, tip: &str) -> egui::Response {
+    let gear = match crate::ui::icons::global("settings-filled") {
+        Some(t) => egui::Button::image(egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), Vec2::splat(14.0))).tint(p.ink)),
+        None => egui::Button::new(""),
+    };
+    ui.add(gear.min_size(Vec2::splat(TOOLBAR_H - 2.0))).on_hover_text(tip)
+}
+
+/// A line of muted text where a list is empty.
+pub(super) fn empty(ui: &mut egui::Ui, p: &Palette, text: &str) {
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new(text).size(12.0).color(p.muted));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// From the narrowest list (a floater is 220 points wide at least) to a
+    /// wide one, with up to five parts of any width, folded or not: nothing
+    /// of the right end overlaps, it stays in the row, the names keep their
+    /// least width whenever a part shows, and every part is shown or counted.
+    #[test]
+    fn the_right_end_never_covers_anything() {
+        let overlap = |a: &Rect, b: &Rect| a.left() < b.right() - 0.01 && b.left() < a.right() - 0.01;
+        let sets: [&[f32]; 5] = [
+            &[],
+            &[13.0],
+            &[40.0, 60.0],
+            &[44.0, 52.0, 52.0, 70.0],
+            &[88.0, 13.0, 13.0, 13.0, 116.0],
+        ];
+        for widths in sets {
+            for fold in [false, true] {
+                for width in (160..=640).step_by(4) {
+                    let row = Rect::from_min_size(Pos2::ZERO, Vec2::new(width as f32, RICH_H));
+                    let left = names_left(row);
+                    let e = end(row, left, widths, 5.0, fold);
+                    let mut parts = e.items.clone();
+                    parts.extend(e.more.map(|(r, _)| r));
+                    for (i, a) in parts.iter().enumerate() {
+                        assert!(a.left() >= row.left() && a.right() <= row.right(), "{width}: {a:?} leaves the row");
+                        for b in &parts[i + 1..] {
+                            assert!(!overlap(a, b), "{width} {widths:?}: {a:?} over {b:?}");
+                        }
+                    }
+                    for (r, w) in e.items.iter().zip(widths) {
+                        assert!((r.width() - w).abs() < 0.01, "each part keeps its width");
+                    }
+                    if !parts.is_empty() {
+                        assert!(e.names_right - left >= NAMES_MIN - 0.01, "{width}: the names keep their room");
+                        assert!(parts.iter().all(|r| r.left() >= e.names_right), "the names stop before the parts");
+                    }
+                    let counted = e.items.len() + e.more.map_or(0, |(_, n)| n);
+                    if fold && e.more.is_some() {
+                        assert_eq!(counted, widths.len());
+                    }
+                    if !fold {
+                        assert!(e.more.is_none());
+                    }
+                }
+                // a usual list shows everything
+                let row = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, RICH_H));
+                assert_eq!(end(row, names_left(row), widths, 5.0, fold).items.len(), widths.len());
+            }
+        }
+    }
+
+    #[test]
+    fn group_initials() {
+        assert_eq!(initials("Aurora Builders"), "AB");
+        assert_eq!(initials("Loups du Nord"), "LN");
+        assert_eq!(initials("Marché de la Place"), "MP");
+        assert_eq!(initials("club des lucioles"), "CD");
+        assert_eq!(initials("  marché"), "M");
+        assert_eq!(initials(""), "");
+    }
+}

@@ -10,6 +10,7 @@ use super::nearby::{Band, distance_text, seen_text};
 use super::radar::{Age, Payment, RadarData, Row};
 use super::{PeopleAction, PeopleUi};
 use crate::theme::Palette;
+use crate::ui::contacts::SetEdit;
 use crate::ui::context::{self, AvatarList, CtxAction};
 use crate::ui::widgets::{self, ActionKind};
 use crate::ui::{menu, presence};
@@ -20,7 +21,7 @@ use uuid::Uuid;
 
 /// Height of the buttons, of the bar of buttons at the bottom, and of a line
 /// of a section.
-const BUTTON_H: f32 = 28.0;
+pub(super) const BUTTON_H: f32 = 28.0;
 const LINE_H: f32 = 25.0;
 /// Room around the content.
 const PAD_X: f32 = 12.0;
@@ -51,8 +52,26 @@ fn semibold(ui: &egui::Ui, size: f32, color: Color32) -> egui::TextFormat {
     crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), size, color)
 }
 
-/// The sheet of `id` over the whole of `ui`; `row` is what the radar shows
-/// of them, when they are around. Returns true when its cross was clicked.
+/// The face of a sheet over the whole of `ui` (a quieter face than the
+/// list's, out to the window's right and bottom edges: over the frame's
+/// margins, inside its outline); returns its content and its bottom bar.
+pub(super) fn frame(ui: &egui::Ui, p: &Palette) -> (Rect, Rect) {
+    let rect = ui.max_rect();
+    let face = Rect::from_min_max(rect.min, rect.max + Vec2::splat(SHEET_BLEED));
+    let painter = ui.painter().with_clip_rect(face);
+    painter.rect_filled(face, 0.0, p.bar.gamma_multiply(0.5));
+    painter.vline(rect.left(), face.y_range(), widgets::divider_stroke(p));
+    let inner = rect.shrink2(Vec2::new(PAD_X, PAD_Y));
+    let top = inner.bottom() - BUTTON_H;
+    (
+        Rect::from_min_max(inner.min, Pos2::new(inner.right(), top - 8.0)),
+        Rect::from_min_max(Pos2::new(inner.left(), top), inner.max),
+    )
+}
+
+/// The sheet of `id` over the whole of `ui`, with what the radar knows of
+/// them when they are around (in Near you, it says when they left). Returns
+/// true when its cross was clicked.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
     ui: &mut egui::Ui,
@@ -61,25 +80,13 @@ pub(super) fn show(
     data: &RadarData,
     st: &mut PeopleUi,
     id: Uuid,
-    row: Option<&Row>,
+    nearby_tab: bool,
     actions: &mut Vec<PeopleAction>,
 ) -> bool {
-    let rect = ui.max_rect();
-    // a quieter face than the list's, out to the window's right and bottom
-    // edges (over the frame's margins, inside its outline)
-    let face = Rect::from_min_max(rect.min, rect.max + Vec2::splat(SHEET_BLEED));
-    let painter = ui.painter().with_clip_rect(face);
-    painter.rect_filled(face, 0.0, p.bar.gamma_multiply(0.5));
-    painter.vline(rect.left(), face.y_range(), widgets::divider_stroke(p));
-    let inner = rect.shrink2(Vec2::new(PAD_X, PAD_Y));
+    let found = super::radar::rows(world, data, "").into_iter().find(|r| r.id == id);
+    let row = found.as_ref();
     let friend = world.social.friends.iter().find(|f| f.id == id).cloned();
-    let (bottom, content) = {
-        let top = inner.bottom() - BUTTON_H;
-        (
-            Rect::from_min_max(Pos2::new(inner.left(), top), inner.max),
-            Rect::from_min_max(inner.min, Pos2::new(inner.right(), top - 8.0)),
-        )
-    };
+    let (content, bottom) = frame(ui, p);
     let mut closed = false;
     let mut body = ui.new_child(
         egui::UiBuilder::new()
@@ -105,12 +112,20 @@ pub(super) fn show(
                 ui.add_space(10.0);
                 received(ui, p, f, &name);
             }
-            ui.add_space(10.0);
+            if id != world.agent_id {
+                ui.add_space(10.0);
+                nickname_and_sets(ui, p, world, st, id);
+            }
             match row {
-                Some(row) => nearby(ui, p, data, row),
-                None => {
+                Some(row) => {
+                    ui.add_space(10.0);
+                    nearby(ui, p, data, row);
+                }
+                None if nearby_tab => {
+                    ui.add_space(10.0);
                     ui.label(egui::RichText::new(aurora_i18n::tr!("people-sheet-gone")).size(12.0).color(p.muted));
                 }
+                None => {}
             }
         });
     let mut foot = ui.new_child(
@@ -226,8 +241,22 @@ fn buttons(
         }
         let more = widgets::action_button(ui, p, "dots-filled", "", ActionKind::Flat, Vec2::new(BUTTON_H + 4.0, BUTTON_H))
             .on_hover_text(aurora_i18n::tr!("ui-chat-more"));
+        let kind = if friend.is_some() { AvatarList::Friend } else { AvatarList::Nearby };
         let open = menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-            context::avatar_list_menu(ui, p, world, id, AvatarList::Nearby);
+            context::avatar_list_menu(ui, p, world, id, kind);
+            if !own {
+                // the contact sets' last button (FSPanelContactSets)
+                menu::separator(ui, p);
+                if menu::item_if(
+                    ui,
+                    p,
+                    "id-off",
+                    aurora_i18n::tr!("ui-contacts-remove-display-name"),
+                    !world.contact_sets.has_display_name_removed(&id),
+                ) {
+                    context::request(ui.ctx(), CtxAction::ContactSet(SetEdit::RemoveDisplayName(vec![id])));
+                }
+            }
         });
         // the sheet's own menu is not a row's
         if open {
@@ -237,7 +266,7 @@ fn buttons(
 }
 
 /// The title of a part of the sheet, in small capitals.
-fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
+pub(super) fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
     ui.label(
         egui::RichText::new(title.to_uppercase())
             .font(FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
@@ -248,7 +277,7 @@ fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
 
 /// One line of a part: its icon and its label at the left, `control` (its
 /// width) at the right edge.
-fn line(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, control_w: f32, control: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn line(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, control_w: f32, control: impl FnOnce(&mut egui::Ui)) {
     let width = ui.available_width();
     let text_w = (width - 26.0 - control_w - 8.0).max(40.0);
     let galley = ui.painter().layout(label.to_owned(), FontId::proportional(12.5), p.ink, text_w);
@@ -319,6 +348,99 @@ fn received(ui: &mut egui::Ui, p: &Palette, f: &Friend, name: &str) {
             ui.label(galley);
         });
     }
+}
+
+/// "Nickname and contact sets": the nickname in a field (Enter or leaving
+/// it sets it, empty or the cross takes it away: setPseudonym /
+/// clearPseudonym), then the sets they are in as chips (the cross takes
+/// them out, confirmed as in the contact sets' list) and "+ Set" to add
+/// them to another (LLAvatarActions::addToContactSet).
+fn nickname_and_sets(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi, id: Uuid) {
+    use crate::world::contact_sets::DN_REMOVED;
+    section(ui, p, aurora_i18n::tr!("people-sheet-nickname-sets"));
+    let current = world
+        .contact_sets
+        .pseudonym(&id)
+        .filter(|a| *a != DN_REMOVED)
+        .unwrap_or_default()
+        .to_owned();
+    if st.nick.as_ref().is_none_or(|(who, _)| *who != id) {
+        st.nick = Some((id, current.clone()));
+    }
+    let Some((_, text)) = st.nick.as_mut() else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let cross_w = BUTTON_H + 2.0;
+        let field_w = ui.available_width() - cross_w - 6.0;
+        let field = egui::Frame::new()
+            .fill(p.field)
+            .corner_radius(ui.visuals().widgets.inactive.corner_radius)
+            .inner_margin(egui::Margin::symmetric(8, 5))
+            .show(ui, |ui| {
+                ui.set_width(field_w - 16.0);
+                ui.add(
+                    egui::TextEdit::singleline(text)
+                        .frame(egui::Frame::NONE)
+                        .hint_text(aurora_i18n::tr!("people-sheet-nickname-hint"))
+                        .desired_width(f32::INFINITY),
+                )
+            })
+            .inner;
+        if field.lost_focus() && text.trim() != current {
+            context::request(
+                ui.ctx(),
+                CtxAction::ContactSet(SetEdit::Nickname {
+                    ids: vec![id],
+                    alias: text.trim().to_owned(),
+                }),
+            );
+        }
+        let clear = widgets::action_button_if(ui, p, "x", "", ActionKind::Flat, Vec2::new(cross_w, BUTTON_H), !current.is_empty())
+            .on_hover_text(aurora_i18n::tr!("ui-contacts-remove-nickname"));
+        if clear.clicked() {
+            text.clear();
+            context::request(ui.ctx(), CtxAction::ContactSet(SetEdit::ClearNickname(vec![id])));
+        }
+    });
+    ui.add_space(6.0);
+    let mine = world.contact_sets.friend_sets(&id);
+    let others: Vec<String> = world.contact_sets.set_names().into_iter().filter(|s| !mine.contains(s)).collect();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(5.0, 5.0);
+        for set in &mine {
+            let color = world
+                .contact_sets
+                .set(set)
+                .map_or(p.muted, |s| crate::ui::contacts::color32(s.color));
+            let (_, closed) = widgets::dot_pill(ui, p, color, set, None, false, true);
+            if closed {
+                st.asks.push(super::Ask::RemoveFromSet(set.clone(), vec![id]));
+            }
+        }
+        let add = widgets::filter_pill(ui, p, "plus", aurora_i18n::tr!("people-sheet-add-set"), false);
+        menu::dropdown(&add, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+            if others.is_empty() {
+                menu::item_if(ui, p, "users-group", aurora_i18n::tr!("ui-contacts-no-other-contact-sets"), false);
+            }
+            for set in &others {
+                if menu::item(ui, p, "users-group", set) {
+                    context::request(
+                        ui.ctx(),
+                        CtxAction::ContactSet(SetEdit::Add {
+                            set: set.clone(),
+                            ids: vec![id],
+                        }),
+                    );
+                }
+            }
+            menu::separator(ui, p);
+            if menu::item(ui, p, "plus", aurora_i18n::tr!("ui-contacts-add-a-new-contact-set")) {
+                st.asks.push(super::Ask::NewSet);
+            }
+        });
+    });
 }
 
 /// What the radar knows of them: range, time here, voice, age, payment

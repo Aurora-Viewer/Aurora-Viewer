@@ -42,6 +42,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "chevron-down",
     "chevron-left",
     "chevron-right",
+    "circle-minus",
     "code",
     "code-asterisk",
     "color-picker",
@@ -70,6 +71,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "hand-stop",
     "heart-handshake",
     "history",
+    "id-off",
     "indent-decrease",
     "indent-increase",
     "link",
@@ -132,6 +134,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "walk",
     "wand",
     "wave-sine",
+    "world-search",
     "x",
 );
 

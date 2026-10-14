@@ -19,9 +19,9 @@ use uuid::Uuid;
 
 /// Height of a rich row (a 30 px picture and its margins), of a compact
 /// one, and the gap between two rich rows.
-const RICH_H: f32 = 42.0;
+pub(super) const RICH_H: f32 = 42.0;
 const COMPACT_H: f32 = 24.0;
-const RICH_GAP: f32 = 3.0;
+pub(super) const RICH_GAP: f32 = 3.0;
 /// Height of the header of a range.
 const BAND_H: f32 = 24.0;
 /// Width of the range and of the time since the arrival.
@@ -168,6 +168,7 @@ pub(super) fn open_sheet(st: &mut PeopleUi, id: Uuid) {
         st.sheet_grow = true;
     }
     st.sheet = Some(id);
+    st.sheet_group = false;
 }
 
 /// Close the sheet; the window gives back the width it took for it before
@@ -239,44 +240,49 @@ pub fn tab(
     blocked: &mut bool,
 ) {
     st.radar_selected.retain(|id| data.radar.get(id).is_some());
+    let (list, sheet) = areas(ui, st);
+    if let Some(rect) = list {
+        let mut child = list_ui(ui, rect, "people-nearby-list", sheet.is_some());
+        list_part(&mut child, p, world, data, st, map, actions, blocked, sheet.is_some());
+    }
+    if let (Some(rect), Some(id)) = (sheet, st.sheet) {
+        if super::sheet::show(&mut list_ui(ui, rect, "people-sheet", false), p, world, data, st, id, true, actions) {
+            close_sheet(st);
+        }
+    }
+}
+
+/// The room left in `ui` taken whole, then shared between the list and the
+/// sheet: the list alone, both side by side, or the sheet alone when the
+/// window is too narrow for both (and the list alone on the frame the
+/// window waits to grow for a sheet).
+pub(super) fn areas(ui: &mut egui::Ui, st: &PeopleUi) -> (Option<Rect>, Option<Rect>) {
     let body = Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
     ui.allocate_rect(body, Sense::hover());
-    // the frame the window waits to grow for the sheet shows the list alone
     let split = body.width() >= LIST_MIN + SHEET_W;
-    let growing = st.sheet_grow;
-    let (list, sheet) = match st.sheet {
-        Some(_) if growing => (Some(body), None),
+    match st.sheet {
+        Some(_) if st.sheet_grow => (Some(body), None),
         Some(_) if split => {
             let (l, s) = body.split_left_right_at_x(body.right() - SHEET_W);
             (Some(l), Some(s))
         }
         Some(_) => (None, Some(body)),
         None => (Some(body), None),
-    };
-    if let Some(rect) = list {
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt("people-nearby-list")
-                .max_rect(rect)
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-        );
-        if sheet.is_some() {
-            child.set_clip_rect(rect.intersect(ui.clip_rect()));
-        }
-        list_part(&mut child, p, world, data, st, map, actions, blocked, sheet.is_some());
     }
-    if let (Some(rect), Some(id)) = (sheet, st.sheet) {
-        let row = radar::rows(world, data, "").into_iter().find(|r| r.id == id);
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt("people-sheet")
-                .max_rect(rect)
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-        );
-        if super::sheet::show(&mut child, p, world, data, st, id, row.as_ref(), actions) {
-            close_sheet(st);
-        }
+}
+
+/// A child of `ui` over `rect`, top-down; clipped to it beside a sheet.
+pub(super) fn list_ui(ui: &mut egui::Ui, rect: Rect, salt: &str, clip: bool) -> egui::Ui {
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(salt)
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    if clip {
+        child.set_clip_rect(rect.intersect(ui.clip_rect()));
     }
+    child
 }
 
 /// The list side: toolbar, sort pills, counts, then the rows.
@@ -410,13 +416,7 @@ fn toolbar(ui: &mut egui::Ui, p: &Palette, data: &mut RadarData, st: &mut People
     let line = Vec2::new(ui.available_width(), TOOLBAR_H);
     ui.allocate_ui_with_layout(line, egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        let gear = match crate::ui::icons::global("settings-filled") {
-            Some(t) => egui::Button::image(egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), Vec2::splat(14.0))).tint(p.ink)),
-            None => egui::Button::new(""),
-        };
-        let resp = ui
-            .add(gear.min_size(Vec2::splat(TOOLBAR_H - 2.0)))
-            .on_hover_text(aurora_i18n::tr!("people-alerts-options"));
+        let resp = super::rows::gear(ui, p, aurora_i18n::tr!("people-alerts-options"));
         menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
             radar::options_menu(ui, p, data.settings, blocked);
         });
@@ -505,9 +505,14 @@ fn summary(ui: &mut egui::Ui, p: &Palette, total: usize, chat: usize, friends: u
 
 /// The header of a range: its name in small capitals, then a faint line.
 fn band_header(ui: &mut egui::Ui, p: &Palette, band: Band) {
+    section_header(ui, p, &band.title());
+}
+
+/// The header of a part of a list ("Whisper · 10 m", "Online · 2").
+pub(super) fn section_header(ui: &mut egui::Ui, p: &Palette, title: &str) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), BAND_H), Sense::hover());
     let galley = ui.painter().layout_no_wrap(
-        band.title().to_uppercase(),
+        title.to_uppercase(),
         FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())),
         p.muted_dim,
     );
