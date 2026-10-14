@@ -227,6 +227,8 @@ struct Bench {
     settings: ToolbarSettings,
     panels: Panels,
     saves: usize,
+    /// The dock of the islands instead of Firestorm's bar.
+    islands: bool,
 }
 
 impl Default for Bench {
@@ -242,6 +244,7 @@ impl Default for Bench {
             settings: Default::default(),
             panels: Panels::from_settings(&settings),
             saves: 0,
+            islands: false,
         }
     }
 }
@@ -274,6 +277,8 @@ impl Bench {
                     &mut 0.0,
                     &mut bars::MicButton::default(),
                     false,
+                    self.islands,
+                    None,
                 );
                 self.state.show(ui.ctx(), &p, &layout, &self.settings);
                 if self.state.commit(&layout, &mut self.settings) {

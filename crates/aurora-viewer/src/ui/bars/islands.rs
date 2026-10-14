@@ -261,7 +261,7 @@ fn menu_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mu
 
 /// One island in an area of its own at `rect`, its surface under what
 /// `body` draws there (in screen coordinates).
-fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect: Rect, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(super) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect: Rect, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Area::new(Id::new(("bars_island", name)))
         .order(egui::Order::Middle)
         .fixed_pos(rect.min)

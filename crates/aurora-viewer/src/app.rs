@@ -8207,12 +8207,16 @@ impl App {
                 );
                 a.bar = bar;
                 a.audio = Some(audio_action);
+                // AURORA_DEMO_BARS: the mockup's voice (connected; talking
+                // with `voice`) and chat island width, for this run only
+                let demo_bars = if self.demo { ui::bars::demo::get() } else { Default::default() };
+                let mut demo_chat_width = demo_bars.chat_width;
                 let mut mic = ui::bars::MicButton {
                     on: self.mic_on,
                     hold: self.settings.audio.mic_hold,
-                    talking: self.talking(),
-                    level: self.voice_level,
-                    connected: self.voice_connected,
+                    talking: self.talking() || demo_bars.voice,
+                    level: if demo_bars.voice { 0.62 } else { self.voice_level },
+                    connected: self.voice_connected || demo_bars.on,
                     key: self
                         .settings
                         .keybinds
@@ -8224,7 +8228,13 @@ impl App {
                     output_device: self.settings.audio.output_device.clone(),
                     input_devices: &self.options_ui.input_devices,
                     output_devices: &self.options_ui.output_devices,
-                    voice_dot: (!classic_bars).then(|| (self.voice.light, self.voice.status.clone())),
+                    voice_dot: (!classic_bars).then(|| {
+                        if demo_bars.on {
+                            (crate::voice::VoiceLight::Connected, String::new())
+                        } else {
+                            (self.voice.light, self.voice.status.clone())
+                        }
+                    }),
                     ..Default::default()
                 };
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
@@ -8243,17 +8253,23 @@ impl App {
                     self.world.agent.flying,
                     self.world.agent.is_sitting(),
                     self.camera.mouselook(),
-                    &mut self.settings.chat_bar_width,
+                    match demo_chat_width.as_mut() {
+                        Some(width) => width,
+                        None if classic_bars => &mut self.settings.chat_bar_width,
+                        None => &mut self.settings.chat_island_width,
+                    },
                     &mut mic,
                     self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused,
+                    !classic_bars,
+                    Some(&mut self.emoji),
                 );
                 // what the bars leave: where the windows are laid out, moved
-                // and snapped this frame
+                // and snapped this frame (above the dock with the islands)
                 let left = ui.available_rect_before_wrap();
                 let area = if classic_bars {
                     left
                 } else {
-                    ui::bars::islands::work_area(left, left.bottom())
+                    ui::bars::islands::work_area(left, bottom_top)
                 };
                 ui::layout::set_work_area(ui.ctx(), area);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
@@ -8346,6 +8362,7 @@ impl App {
                         bottom_top,
                         self.settings.chat_toast_seconds,
                         self.settings.chat_timestamps,
+                        !classic_bars,
                     );
                 }
                 t = self.ui_parts.lap(Part::UiOverlays, t);

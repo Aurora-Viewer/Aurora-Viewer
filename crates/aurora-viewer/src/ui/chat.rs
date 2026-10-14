@@ -43,6 +43,8 @@ pub struct ChatUi {
     /// Laid-out rows of each conversation.
     views: HashMap<Option<uuid::Uuid>, view::View>,
     pub emoji_open: bool,
+    /// The emoji picker of the chat island's field is open.
+    pub bar_emoji_open: bool,
     /// The lines' style of the settings, given every frame by the app.
     pub style: crate::settings::ChatStyle,
     /// A demo scenario's style, which the settings do not keep.
@@ -334,6 +336,7 @@ fn line_job(
     width: f32,
     size: f32,
     times: bool,
+    pill: Option<&egui::FontFamily>,
 ) -> BubbleJob {
     let col = color_for(line.kind, p);
     let mut job = egui::text::LayoutJob::default();
@@ -346,15 +349,22 @@ fn line_job(
         job.append(&format!("[{}] ", hhmm(line.time)), 0.0, small);
     }
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
-    let name_fmt = egui::TextFormat {
-        color: col,
-        font_id: egui::FontId::proportional(size),
-        ..Default::default()
+    // the pills of the islands (the bars mockup's `.toasts`): a resident's
+    // name in semi-bold light violet, no colon, a system line in italics;
+    // every other colour stays the kind's
+    let resident = matches!(line.kind, ChatKind::Local(_) | ChatKind::Own);
+    let name_fmt = match pill {
+        Some(family) => super::fonts::semibold_format(family, size, if resident { p.violet_light } else { col }),
+        None => egui::TextFormat {
+            color: col,
+            font_id: egui::FontId::proportional(size),
+            ..Default::default()
+        },
     };
     let text_fmt = egui::TextFormat {
         color: col,
         font_id: egui::FontId::proportional(size),
-        italics: emote,
+        italics: emote || (pill.is_some() && line.kind.is_notice()),
         ..Default::default()
     };
     // (before the name, after it, body)
@@ -364,8 +374,11 @@ fn line_job(
         ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
         ChatKind::Local(ChatType::Shout) => ("", aurora_i18n::tr!("status-shouts"), &line.text[..]),
         ChatKind::Local(ChatType::Whisper) => ("", aurora_i18n::tr!("status-whispers"), &line.text[..]),
+        _ if pill.is_some() => ("", "", &line.text[..]),
         _ => ("", ": ", &line.text[..]),
     };
+    // in a pill the body follows the name 4 px away instead of a colon
+    let name_gap = if pill.is_some() && after.is_empty() && !line.kind.is_notice() { 4.0 } else { 0.0 };
     let mut sender = None;
     if !line.kind.is_notice() {
         job.append(before, 0.0, name_fmt.clone());
@@ -374,7 +387,9 @@ fn line_job(
             _ if !line.source.is_nil() => Some(Sender::Avatar(line.source)),
             _ => None,
         };
-        // room for the picture, painted over it once laid out
+        // room for the picture, painted over it once laid out (none in a
+        // pill)
+        let who = who.filter(|_| pill.is_none());
         let lead = if who.is_some() { pic_side(size) + 4.0 } else { 0.0 };
         sender = who.map(|w| (job.text.chars().count(), w));
         job.append(&line.from, lead, name_fmt.clone());
@@ -395,6 +410,7 @@ fn line_job(
         font_id: egui::FontId::proportional(size * 1.15),
         ..Default::default()
     };
+    let mut lead = name_gap;
     for (piece, link) in pieces(body, name_of) {
         let badge = match &link {
             Some(Link::Url(u)) => Some(LinkBadge::Web(u.clone())),
@@ -402,7 +418,7 @@ fn line_job(
             _ => None,
         };
         if let Some(badge) = badge {
-            job.append("M", 0.0, badge_fmt.clone());
+            job.append("M", std::mem::take(&mut lead), badge_fmt.clone());
             badges.push((at, badge));
             at += 1;
         }
@@ -420,7 +436,7 @@ fn line_job(
                 ..text_fmt.clone()
             },
         };
-        job.append(&piece, 0.0, fmt);
+        job.append(&piece, std::mem::take(&mut lead), fmt);
         if let Some(link) = link {
             links.push((at..at + n, link));
         }
@@ -1659,6 +1675,7 @@ pub fn toasts(
     bottom: f32,
     seconds: f32,
     times: bool,
+    pills: bool,
 ) {
     let now = std::time::SystemTime::now();
     let recent: Vec<_> = world
@@ -1681,6 +1698,17 @@ pub fn toasts(
         .order(egui::Order::Background)
         .show(ctx, |ui| {
             ui.set_max_width(560.0);
+            // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
+            // 4 px between two lines
+            let (size, margin, gap) = if pills {
+                (12.0, egui::Margin::symmetric(9, 4), 4.0)
+            } else {
+                (13.0, egui::Margin::symmetric(6, 2), 2.0)
+            };
+            let family = pills.then(|| super::fonts::semibold(ui.ctx()));
+            if pills {
+                ui.spacing_mut().item_spacing.y = 0.0;
+            }
             for line in recent.into_iter().rev() {
                 let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
                 let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
@@ -1691,16 +1719,15 @@ pub fn toasts(
                 let bubble = egui::Frame::new()
                     .fill(if glass { Color32::TRANSPARENT } else { tint })
                     .corner_radius(radius)
-                    .inner_margin(egui::Margin::symmetric(6, 2))
+                    .inner_margin(margin)
                     .show(ui, |ui| {
                         slot = Some(ui.painter().add(egui::Shape::Noop));
-                        let size = 13.0;
                         let BubbleJob {
                             mut job,
                             links: line_links,
                             badges,
                             sender,
-                        } = line_job(line, p, world, want_names, 540.0, size, times);
+                        } = line_job(line, p, world, want_names, 540.0, size, times, family.as_ref());
                         for s in job.sections.iter_mut() {
                             s.format.color = s.format.color.gamma_multiply(alpha);
                         }
@@ -1752,7 +1779,7 @@ pub fn toasts(
                     ui.painter()
                         .set(slot, aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, alpha));
                 }
-                ui.add_space(2.0);
+                ui.add_space(gap);
             }
         });
     for (k, (rect, link, col)) in links.iter().enumerate() {
@@ -1836,14 +1863,35 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
 
 /// The "Nearby chat" input bar; returns a message to send.
 pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, gestures: &crate::gestures::Manager, width: f32) -> Option<OutgoingChat> {
-    let mut out = None;
     ui.label(RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.0).color(p.muted));
+    bar_input(ui, st, gestures, None, |edit| edit.desired_width(width))
+}
+
+/// `build`, then the chat field's id (the app gives it the keyboard).
+fn identified(build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>) -> impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_> {
+    move |edit| build(edit.id(egui::Id::new("nearby_chat_input")))
+}
+
+/// The local chat's field, Firestorm's chat bar (LLFloaterIMNearbyChat):
+/// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, `/channel` and the
+/// gestures' completion; Enter on an empty field returns to movement. Shared
+/// by the full-width bar and the chat island (`bars/dock.rs`), which draws
+/// its own frame (`build` dresses the field) and shows emoji pictures.
+pub(crate) fn bar_input(
+    ui: &mut egui::Ui,
+    st: &mut ChatUi,
+    gestures: &crate::gestures::Manager,
+    emoji: Option<&mut super::emoji::Emoji>,
+    build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>,
+) -> Option<OutgoingChat> {
+    let mut out = None;
     // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
     // written in the empty field they crowded the bar (the human's request)
-    let mut output = egui::TextEdit::singleline(&mut st.input)
-        .id(egui::Id::new("nearby_chat_input"))
-        .desired_width(width)
-        .show(ui);
+    let build = identified(build);
+    let mut output = match emoji {
+        Some(emoji) => emoji.text_field(ui, &mut st.input, build),
+        None => build(egui::TextEdit::singleline(&mut st.input)).show(ui),
+    };
     completion::complete(ui, &mut output, &mut st.input, gestures);
     let resp = output
         .response
