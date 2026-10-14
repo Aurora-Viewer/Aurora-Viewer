@@ -70,7 +70,7 @@ mod tests {
             world.agent_id,
             vec![glam::Mat4::from_translation(Vec3::Z * 2.0); world.avatar_lib.rig.len()],
         );
-        world.avatar_root_dz.insert(world.agent_id, 0.25);
+        world.avatar_shape_dz.insert(world.agent_id, 0.25);
         let posed = view(&world, &scene, 1, 1.05).expect("posed head");
         assert!((posed.1.z - head.1.z - 2.25).abs() < 1e-5, "use rendered pose and root height");
     }
