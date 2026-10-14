@@ -1792,10 +1792,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `beacon-click` presses the pin at frame 700 through the normal mouse
   input path; the log must say `cleared=true`, `mouse_mode=None`,
   `pending_pick=false`. Capture frames 650 and 780 for before / after.
-  With `1`, "Remove beacon" is in the position actions, at the former
+  With `legacy`, "Remove beacon" is in the position actions, at the former
   "Clear" button's location. Its tooltip explains removal from all three
-  views. `coordinates` opens the map without a beacon: X / Y / Z show our
-  current position and remain editable. Commit a new value with Enter or
+  views. The full-frame card's removal tooltip uses the same name and
+  explanation. `coordinates,legacy` opens the side panel without a beacon:
+  X / Y / Z show our current position and remain editable. Commit a new
+  value with Enter or
   by leaving the field: a destination appears without teleporting. Remove
   it: the coordinates return to our position and can be edited again.
 - **`AURORA_DEMO_SLURLS=1|offer`**: Tess Touch's conversation, the chat

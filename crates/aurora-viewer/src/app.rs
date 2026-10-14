@@ -8308,7 +8308,7 @@ impl App {
                     match ma {
                         ui::minimap::MiniMapAction::Teleport { x, y, z } => self.world.map.track_location(x, y, z, true),
                         ui::minimap::MiniMapAction::Track { x, y, z } => self.world.map.track_location(x, y, z, false),
-                        ui::minimap::MiniMapAction::StopTracking => self.world.map.stop_tracking(),
+                        ui::minimap::MiniMapAction::StopTracking => self.world.map.clear_track(),
                         ui::minimap::MiniMapAction::OpenWorldMap => self.panels.world_map = true,
                         ui::minimap::MiniMapAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::minimap::MiniMapAction::AboutLand(gx, gy) => {

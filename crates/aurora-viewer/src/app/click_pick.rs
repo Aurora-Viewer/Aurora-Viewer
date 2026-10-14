@@ -211,7 +211,7 @@ impl App {
             MouseButton::Left if pressed => {
                 if !over_ui && self.in_world() && !self.camera.mouselook() {
                     if self.beacon_hover() {
-                        self.world.map.stop_tracking();
+                        self.world.map.clear_track();
                         self.beacon_hit = None;
                         self.double_click.reset();
                         self.double_press = false;

@@ -659,7 +659,7 @@ impl WorldMapUi {
             )
             .on_hover_text(aurora_i18n::tr!("ui-waypoint-remove-help"));
         if response.clicked() {
-            world.map.stop_tracking();
+            world.map.clear_track();
             // Cancel the old search too: clearing its selection alone lets
             // the exact-match result create the beacon again next frame.
             world.map.search = None;
