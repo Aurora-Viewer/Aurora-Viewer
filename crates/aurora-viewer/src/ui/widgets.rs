@@ -1245,7 +1245,12 @@ pub fn action_button_if(
             .size()
             .x
     };
-    let lead = if icon.is_empty() { 0.0 } else { ICON + GAP };
+    // an icon alone (empty label) sits in the middle, without the gap
+    let lead = match (icon.is_empty(), label.is_empty()) {
+        (true, _) => 0.0,
+        (false, true) => ICON,
+        (false, false) => ICON + GAP,
+    };
     let content = lead + width(ui);
     let desired = Vec2::new(if size.x > 0.0 { size.x } else { content + 24.0 }, size.y);
     let (rect, resp) = ui.allocate_exact_size(desired, if enabled { Sense::click() } else { Sense::hover() });

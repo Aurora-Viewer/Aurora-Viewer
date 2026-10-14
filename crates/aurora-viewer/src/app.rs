@@ -6288,6 +6288,7 @@ impl App {
             LoginAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             LoginAction::ReportBug => self.bug_report.requested = true,
             LoginAction::Quit => self.request_exit(),
+            LoginAction::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
             LoginAction::None | LoginAction::Login => {}
         }
         if let Some(c) = a.chat {
@@ -6685,6 +6686,66 @@ impl App {
         self.login_form.mfa_for = Some(key.clone());
     }
 
+    /// The preferences window, in the world and over the login screen. Every
+    /// setting is the viewer's own (settings.rs), so all of them can change
+    /// before login; only the transcripts folder belongs to an account, and
+    /// its group says so until one is logged in (`chat_log_dir` stays empty).
+    fn draw_options(&mut self, ctx: &egui::Context, p: &Palette, a: &mut UiActions) {
+        let mut open = self.panels.settings;
+        self.options_ui.cache_usage = self.disk_cache.usage();
+        self.options_ui.cache_clearing = self.disk_cache.is_clearing();
+        self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
+        if let Some(done) = self.world.chat_log.take_erased() {
+            self.options_ui.chat_log_status = match done {
+                Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
+                Err(e) => {
+                    log::warn!("conversation transcripts: erasing failed ({e})");
+                    aurora_i18n::tr!("ui-options-chat-logs-erase-failed").to_owned()
+                }
+            };
+        }
+        let res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        if !open {
+            self.options_ui.capture = None;
+        }
+        if res.clear_cache {
+            self.disk_cache.clear();
+            self.net.send(NetCommand::ClearObjectCache);
+        }
+        if res.open_chat_logs
+            && let Some(dir) = self.world.chat_log.dir()
+        {
+            // the folder may not exist before the first line
+            let _ = std::fs::create_dir_all(dir);
+            if let Err(e) = crate::bug_report::files::open_directory(dir) {
+                log::warn!("cannot open the transcripts folder: {e}");
+            }
+        }
+        if res.erase_chat_logs {
+            self.options_ui.chat_log_status.clear();
+            self.world.chat_log.erase();
+        }
+        a.settings_changed = res.changed;
+        a.font_changed = res.font_changed;
+        if res.refresh_devices {
+            self.devices_listed = false;
+        }
+        if res.reset_camera {
+            self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+        }
+        if res.reset {
+            // the panels must not write the old time of day back
+            self.panels.time_of_day = self.settings.time_of_day;
+            self.settings.save();
+            self.world.system_message(aurora_i18n::tr!("app-all-settings-have-been-reset"));
+            ui::layout::forget(ctx);
+        }
+        if self.panels.settings && !open {
+            self.settings.save();
+        }
+        self.panels.settings = open;
+    }
+
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
         let mut a = UiActions::default();
         let p = self.palette;
@@ -6728,6 +6789,13 @@ impl App {
                     progress,
                 );
                 self.sync_remembered_password();
+                // the cogwheel of the login screen (settings before login);
+                // the screen's cards are areas of the same order, and a click
+                // on one would raise it over the window
+                self.draw_options(&ctx, &p, &mut a);
+                if self.panels.settings {
+                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("options")));
+                }
                 // Keep disconnected script drafts accessible for copying.
                 for action in self
                     .script_editors
@@ -7378,6 +7446,22 @@ impl App {
                 if let Some(action) = ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);
                 }
+                // a teleport invitation whose card is in sight needs no toast
+                // (LLOfferHandler: a toast only when the IM floater is closed)
+                if self.panels.chat
+                    && let Some(open) = self.chat_ui.selected
+                {
+                    let seen: Vec<u64> = self
+                        .world
+                        .teleport_invites
+                        .pending_notifications()
+                        .filter(|(_, from)| *from == open)
+                        .map(|(n, _)| n)
+                        .collect();
+                    for n in self.world.notifications.list.iter_mut().filter(|n| seen.contains(&n.id)) {
+                        n.read = true;
+                    }
+                }
                 for (id, r) in ui::notifications::show(&ctx, &p, &self.skin.icons, &mut self.world.notifications, &mut self.notif_ui) {
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
@@ -7706,59 +7790,7 @@ impl App {
                         ui::environment::EnvAction::Preset(n) => self.panels.time_of_day = n,
                     }
                 }
-                let mut open = self.panels.settings;
-                self.options_ui.cache_usage = self.disk_cache.usage();
-                self.options_ui.cache_clearing = self.disk_cache.is_clearing();
-                self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
-                if let Some(done) = self.world.chat_log.take_erased() {
-                    self.options_ui.chat_log_status = match done {
-                        Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
-                        Err(e) => {
-                            log::warn!("conversation transcripts: erasing failed ({e})");
-                            aurora_i18n::tr!("ui-options-chat-logs-erase-failed").to_owned()
-                        }
-                    };
-                }
-                let res = ui::options::show(&ctx, &p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
-                if !open {
-                    self.options_ui.capture = None;
-                }
-                if res.clear_cache {
-                    self.disk_cache.clear();
-                    self.net.send(NetCommand::ClearObjectCache);
-                }
-                if res.open_chat_logs
-                    && let Some(dir) = self.world.chat_log.dir()
-                {
-                    // the folder may not exist before the first line
-                    let _ = std::fs::create_dir_all(dir);
-                    if let Err(e) = crate::bug_report::files::open_directory(dir) {
-                        log::warn!("cannot open the transcripts folder: {e}");
-                    }
-                }
-                if res.erase_chat_logs {
-                    self.options_ui.chat_log_status.clear();
-                    self.world.chat_log.erase();
-                }
-                a.settings_changed = res.changed;
-                a.font_changed = res.font_changed;
-                if res.refresh_devices {
-                    self.devices_listed = false;
-                }
-                if res.reset_camera {
-                    self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
-                }
-                if res.reset {
-                    // the panels must not write the old time of day back
-                    self.panels.time_of_day = self.settings.time_of_day;
-                    self.settings.save();
-                    self.world.system_message(aurora_i18n::tr!("app-all-settings-have-been-reset"));
-                    ui::layout::forget(&ctx);
-                }
-                if self.panels.settings && !open {
-                    self.settings.save();
-                }
-                self.panels.settings = open;
+                self.draw_options(&ctx, &p, &mut a);
                 self.settings.show_chat = self.panels.chat;
                 self.settings.show_perf = self.panels.perf;
                 self.settings.show_minimap = self.panels.minimap;
@@ -8023,6 +8055,18 @@ impl ApplicationHandler for App {
                 // The update preview stays offline on a synthetic login screen.
                 return;
             }
+            // before the login scenarios: with AURORA_DEMO_LOGIN the
+            // preferences open over the login screen (its cogwheel)
+            if std::env::var_os("AURORA_DEMO_OPTIONS").is_some() {
+                self.panels.settings = true;
+                self.panels.perf = false;
+                let value = std::env::var("AURORA_DEMO_OPTIONS").unwrap_or_default();
+                let (tab, filter) = value.split_once(':').unwrap_or((&value, ""));
+                self.options_ui.tab = tab.parse().unwrap_or(0);
+                if self.options_ui.tab == 8 {
+                    self.options_ui.shortcut_filter = filter.to_owned();
+                }
+            }
             if let Ok(mode) = std::env::var("AURORA_DEMO_LOGIN") {
                 if matches!(
                     mode.as_str(),
@@ -8148,16 +8192,6 @@ impl ApplicationHandler for App {
             if crate::demo::env::enabled() {
                 for (id, settings) in crate::demo::env::settings_assets() {
                     self.scene.settings.insert_local(id, settings);
-                }
-            }
-            if std::env::var_os("AURORA_DEMO_OPTIONS").is_some() {
-                self.panels.settings = true;
-                self.panels.perf = false;
-                let value = std::env::var("AURORA_DEMO_OPTIONS").unwrap_or_default();
-                let (tab, filter) = value.split_once(':').unwrap_or((&value, ""));
-                self.options_ui.tab = tab.parse().unwrap_or(0);
-                if self.options_ui.tab == 8 {
-                    self.options_ui.shortcut_filter = filter.to_owned();
                 }
             }
             // AURORA_DEMO_PERF=compact|full|network: the performance window in
@@ -8404,10 +8438,17 @@ impl ApplicationHandler for App {
                 if scene == LureScene::Reject {
                     self.world.status.cfg.reject_teleports = true;
                 }
-                if scene == LureScene::Answers {
+                if scene == LureScene::Answers || scene.shows_card() {
                     self.panels.chat = true;
                     self.chat_ui.open(crate::demo::DEMO_NOVA);
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
+                }
+                // the card alone: the list stays closed where no answer is shown
+                if matches!(scene, LureScene::OfferCard | LureScene::RequestCard | LureScene::Legacy) {
+                    self.notif_ui.open = false;
+                }
+                if scene == LureScene::Legacy {
+                    self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
                 }
             }
             // AURORA_DEMO_TALK=1: microphone on (voice dot of our avatar)
@@ -8424,6 +8465,23 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            // AURORA_DEMO_LURE=card-answered / notification-answered: the
+            // offer answered by its card's button, or by its entry's
+            if let Some(scene) = crate::demo::lure_scene()
+                && let Some(v) = self.world.teleport_invites.list.first().map(|v| (v.id, v.notification))
+            {
+                use crate::demo::LureScene;
+                match scene {
+                    LureScene::CardAnswered => self.on_ctx_action(ui::context::CtxAction::AnswerTeleport { invite: v.0, accept: true }),
+                    LureScene::NotificationAnswered => {
+                        let (cmds, _) = self.world.respond_notification(v.1, crate::world::notifications::Response::Decline);
+                        for c in cmds {
+                            self.send(c);
+                        }
+                    }
+                    _ => {}
                 }
             }
             if let Some(view) = crate::demo::bubbles_scenario() {
