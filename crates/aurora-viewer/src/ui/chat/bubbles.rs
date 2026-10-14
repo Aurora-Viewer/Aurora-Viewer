@@ -186,7 +186,14 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
 
     if (names || object) && look.header && !own {
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
+        // a top-aligned row as tall as the name, like the time's: `horizontal`
+        // would make it as tall as a button (`interact_size.y`) and leave the
+        // name floating a third of a line above its bubble. Under it, half
+        // the room between two bubbles: the line already ends with the
+        // font's descent (2 to 3 px of air under the ink at scale 1)
+        let spacing = ui.spacing().item_spacing.y;
+        ui.spacing_mut().item_spacing.y = spacing * 0.5;
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
             ui.add_space(lead + 2.0);
             let col = tone.unwrap_or_else(|| super::super::colors::sender_color(line));
             let r = ui.add(
@@ -203,6 +210,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                 }
             }
         });
+        ui.spacing_mut().item_spacing.y = spacing;
     } else if look.header {
         ui.add_space(4.0);
     }
@@ -389,5 +397,102 @@ mod tests {
         // and "Today" above today's
         let second = looks[2].marker.expect("a day between the two days");
         assert_eq!(day_label(second, &today, &yesterday), DayLabel::Today);
+    }
+
+    /// The empty pixels between the lowest ink of a sender's name (the
+    /// descender of its "p") and the top of the bubble under it, at scale 1
+    /// in `font`.
+    fn name_gap(font: &str, kind: ChatKind) -> f32 {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        crate::ui::fonts::apply(&ctx, font);
+        let p = crate::theme::Theme::default().palette();
+        let world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let icons = crate::ui::icons::Icons::default();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let pics = std::collections::HashMap::new();
+        let (mut names, mut wanted) = (std::collections::HashSet::new(), std::collections::HashSet::new());
+        let line = crate::world::ChatLine {
+            time: std::time::SystemTime::now(),
+            from: "Orion Exemple".into(),
+            text: "Bienvenue sur la place".into(),
+            kind,
+            source: uuid::Uuid::from_u128(7),
+            origin: Origin::Live,
+        };
+        let look = view::Look {
+            marker: None,
+            header: true,
+            tail: true,
+        };
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let mut env = LineEnv {
+                    p: &p,
+                    icons: &icons,
+                    emoji: &mut emoji,
+                    pics: &pics,
+                    world: &world,
+                    want_names: &mut names,
+                    wanted: &mut wanted,
+                    own_name: "Aurora Demo",
+                    plain_history: false,
+                    bubbles: Some(true),
+                };
+                draw(ui, &mut env, &line, look, None, true);
+            },
+        );
+        output.textures_delta.clear();
+        let shapes: Vec<&egui::Shape> = output.shapes.iter().map(|c| &c.shape).collect();
+        // the name's ink, glyph by glyph as the tessellator places them
+        let ink_bottom = shapes
+            .iter()
+            .find_map(|s| match s {
+                egui::Shape::Text(t) if t.galley.text() == line.from => Some(t),
+                _ => None,
+            })
+            .map(|t| {
+                t.galley
+                    .rows
+                    .iter()
+                    .flat_map(|row| row.row.glyphs.iter().map(move |g| (row.pos.y, g)))
+                    .filter(|(_, g)| !g.uv_rect.is_nothing())
+                    .map(|(row_y, g)| t.pos.y + row_y + (g.pos.y + g.uv_rect.offset.y).round() + g.uv_rect.size.y)
+                    .fold(f32::MIN, f32::max)
+            })
+            .expect("the sender's name is drawn");
+        let bubble_top = shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::Shape::Rect(r) if r.fill == p.raised && r.rect.top() > 0.0 => Some(r.rect.top()),
+                _ => None,
+            })
+            .fold(f32::MAX, f32::min);
+        assert!(bubble_top < f32::MAX, "the bubble is drawn");
+        bubble_top - ink_bottom
+    }
+
+    /// The sender's name sits just above its bubble, close enough to read as
+    /// its title, without touching it (human request of 2026-10-15: it used
+    /// to float 9 px above it), in the built-in fonts, for a resident as for
+    /// an object.
+    #[test]
+    fn the_sender_name_sits_just_above_its_bubble() {
+        use crate::ui::fonts::{INTER, NOTO, ROBOTO};
+        let object = ChatKind::Object(aurora_net::ChatType::Normal);
+        let gaps: Vec<(&str, ChatKind, f32)> = [NOTO, INTER, ROBOTO]
+            .into_iter()
+            .flat_map(|font| [ChatKind::Local(ChatType::Normal), object].map(|kind| (font, kind, name_gap(font, kind))))
+            .collect();
+        for (font, kind, gap) in gaps {
+            assert!(
+                (2.0..=3.0).contains(&gap),
+                "{font} {kind:?}: {gap} px between the name and its bubble"
+            );
+        }
     }
 }
