@@ -208,4 +208,44 @@ mod tests {
             .expect("completed gesture sent in one frame");
         assert_eq!(sent.message, "/eject");
     }
+
+    #[test]
+    fn color_emoji_input_keeps_inline_completion_and_selection() {
+        let mut f = Fixture::new();
+        f.gestures.entries.get_mut(&Uuid::from_u128(1)).expect("gesture").definition.trigger = "/😀 wave".into();
+        let id = egui::Id::new("color_gesture_input");
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut text = "/😀".to_owned();
+        f.ctx.memory_mut(|m| m.request_focus(id));
+        for frame in 0..4 {
+            let events = if frame == 3 {
+                vec![egui::Event::Text(" w".into())]
+            } else {
+                Vec::new()
+            };
+            let output = f.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let mut edit = emoji.text_field(ui, &mut text, |edit| edit.id(id).desired_width(400.0));
+                    complete(ui, &mut edit, &mut text, &f.gestures);
+                },
+            );
+            assert!(
+                output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::epaint::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default())
+                }),
+                "the input must still paint the color emoji image"
+            );
+        }
+        assert_eq!(text, "/😀 wave");
+        let range = egui::text_edit::TextEditState::load(&f.ctx, id)
+            .and_then(|s| s.cursor.char_range())
+            .expect("completion selection")
+            .as_sorted_char_range();
+        assert_eq!(range.start.0..range.end.0, 4..7);
+    }
 }
