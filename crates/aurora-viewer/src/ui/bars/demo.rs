@@ -3,9 +3,13 @@
 //! separated by commas: `legacy` (Firestorm's bars), `compact` (the place
 //! island as wide as its content), `rights` (the rights named), and one
 //! menu opened at frame 300: `menu` (the place), `options` (the place
-//! island's right click), `favorites`, `star`, `status`; `nobug` / `bug`:
-//! the bug report button hidden / shown. `normal` or nothing else: the
-//! islands as set.
+//! island's right click), `favorites`, `star`, `status`, `emoji` (the chat
+//! island's emoji picker); `nobug` / `bug`: the bug report button hidden /
+//! shown; `voice`: talking on the Speak button, its level at 62 %;
+//! `chatwide`: the chat island 560 px wide; `read`: no unread conversation
+//! counted. `normal` or nothing else: the
+//! islands as set. With any word the voice light is the mockup's
+//! (connected).
 
 use std::sync::OnceLock;
 
@@ -17,6 +21,7 @@ pub enum Open {
     Favorites,
     Star,
     Status,
+    Emoji,
 }
 
 /// What `AURORA_DEMO_BARS` asks for (nothing without it).
@@ -28,6 +33,12 @@ pub struct DemoBars {
     pub rights_text: Option<bool>,
     pub bug: Option<bool>,
     pub open: Option<Open>,
+    /// Talking, the level at 62 % (the mockup's voice state).
+    pub voice: bool,
+    /// The chat island's width for this run.
+    pub chat_width: Option<f32>,
+    /// No unread conversation shown (the demo's IMs count otherwise).
+    pub read: bool,
 }
 
 pub fn parse(value: &str) -> DemoBars {
@@ -50,11 +61,16 @@ pub fn parse(value: &str) -> DemoBars {
             "favorites" => d.open = Some(Open::Favorites),
             "star" => d.open = Some(Open::Star),
             "status" => d.open = Some(Open::Status),
+            "emoji" => d.open = Some(Open::Emoji),
+            "voice" => d.voice = true,
+            "chatwide" => d.chat_width = Some(560.0),
+            "read" => d.read = true,
             _ => {}
         }
     }
     // a menu or a look of the islands: the islands, whatever is saved
-    if d.classic.is_none() && (d.open.is_some() || d.stretch.is_some() || d.rights_text.is_some() || d.bug.is_some()) {
+    let islands_only = d.open.is_some() || d.stretch.is_some() || d.rights_text.is_some() || d.bug.is_some() || d.voice || d.read;
+    if d.classic.is_none() && (islands_only || d.chat_width.is_some()) {
         d.classic = Some(false);
     }
     d

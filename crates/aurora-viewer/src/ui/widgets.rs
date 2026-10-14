@@ -1841,10 +1841,9 @@ pub fn maturity_badges_up_to(ui: &mut egui::Ui, p: &Palette, preferred: u8, size
     }
 }
 
-/// Paint a galley so that its visible ink (not egui's text row, which
-/// includes ascender / descender room) is centered on `center`: digits in
-/// round badges then sit exactly in the middle.
-pub fn paint_ink_centered(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, center: egui::Pos2, color: Color32) {
+/// The rectangle the glyphs of `galley` cover, relative to its origin (its
+/// layout rectangle when nothing is drawn).
+pub fn ink_rect(galley: &egui::Galley) -> egui::Rect {
     let mut ink = egui::Rect::NOTHING;
     for row in &galley.rows {
         for g in &row.row.glyphs {
@@ -1855,7 +1854,14 @@ pub fn paint_ink_centered(painter: &egui::Painter, galley: std::sync::Arc<egui::
             ink = ink.union(egui::Rect::from_min_size(min, g.uv_rect.size));
         }
     }
-    let ink_center = if ink.is_positive() { ink.center() } else { galley.rect.center() };
+    if ink.is_positive() { ink } else { galley.rect }
+}
+
+/// Paint a galley so that its visible ink (not egui's text row, which
+/// includes ascender / descender room) is centered on `center`: digits in
+/// round badges then sit exactly in the middle.
+pub fn paint_ink_centered(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, center: egui::Pos2, color: Color32) {
+    let ink_center = ink_rect(&galley).center();
     // whole pixels keep the glyphs crisp
     let pos = (center - ink_center.to_vec2()).round();
     painter.galley(pos, galley, color);

@@ -378,7 +378,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
 fn quick_actions(f: &Friend) -> Vec<(&'static str, &'static str)> {
     let mut b = vec![
         ("user-filled", aurora_i18n::tr!("common-view-profile")),
-        ("message-filled", aurora_i18n::tr!("ui-context-send-im")),
+        ("message-circle-filled", aurora_i18n::tr!("ui-context-send-im")),
     ];
     if f.online {
         b.push(("send-filled", aurora_i18n::tr!("common-offer-teleport")));
@@ -395,7 +395,7 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, f: &Friend, 
     {
         match *icon {
             "user-filled" if resp.clicked() => c.actions.push(super::PeopleAction::Profile(f.id)),
-            "message-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OpenIm(f.id)),
+            "message-circle-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OpenIm(f.id)),
             "send-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OfferTeleport(f.id)),
             "dots-filled" => {
                 let (p, world) = (c.p, c.world);

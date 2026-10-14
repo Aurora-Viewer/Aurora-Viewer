@@ -542,6 +542,9 @@ pub struct Settings {
     pub bandwidth_kbps: u32,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
+    /// Width of the chat island of the bottom islands (px, 0 = the default
+    /// of the screen's width, `ui::bars::dock::default_chat_width`).
+    pub chat_island_width: f32,
     /// Shared toolbar, like the window layout and graphics preferences.
     /// None delays migration until the first account enters the world.
     #[serde(rename = "toolbar_common", default)]
@@ -947,6 +950,7 @@ impl Default for Settings {
             cache_size_mb: 20480,
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             chat_bar_width: 0.0,
+            chat_island_width: 0.0,
             toolbar: Default::default(),
             legacy_toolbars: Default::default(),
             audio: AudioSettings::default(),
@@ -1301,6 +1305,9 @@ impl Settings {
         self.bandwidth_kbps = self.bandwidth_kbps.clamp(50, aurora_net::throttle::DEFAULT_KBPS as u32);
         if !self.chat_bar_width.is_finite() || self.chat_bar_width < 0.0 {
             self.chat_bar_width = 0.0;
+        }
+        if !self.chat_island_width.is_finite() || self.chat_island_width < 0.0 {
+            self.chat_island_width = 0.0;
         }
         self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
         self.chat_commands.sanitize();

@@ -201,4 +201,13 @@ impl Social {
     pub fn total_unread(&self) -> usize {
         self.ims.iter().map(|s| s.unread).sum()
     }
+
+    /// The conversation with unread lines whose last line is the newest.
+    pub fn latest_unread(&self) -> Option<Uuid> {
+        self.ims
+            .iter()
+            .filter(|s| s.unread > 0)
+            .max_by_key(|s| s.lines.back().map(|l| l.time))
+            .map(|s| s.other)
+    }
 }

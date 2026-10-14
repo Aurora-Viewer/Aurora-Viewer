@@ -219,7 +219,7 @@ pub(super) fn ringing(
                         && action_button(
                             ui,
                             p,
-                            "message-filled",
+                            "message-circle-filled",
                             aurora_i18n::tr!("ui-notifications-call-start-im"),
                             ActionKind::Flat,
                             size,

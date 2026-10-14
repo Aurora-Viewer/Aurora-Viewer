@@ -1469,7 +1469,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
-| `AURORA_DEMO_BARS=<words>` | Top bar: islands, Firestorm's bars, place island stretched or not, rights named, a menu open |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, a menu open |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
@@ -2203,16 +2203,23 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing
   is saved.
-- **`AURORA_DEMO_BARS=<words>`**: the states of the top bar for the
-  comparisons with the bars mockup, for this run only (nothing is saved),
-  with the mockup's long parcel name. Words, separated by commas:
+- **`AURORA_DEMO_BARS=<words>`**: the states of the top and bottom bars
+  for the comparisons with the bars mockup, for this run only (nothing is
+  saved), with the mockup's long parcel name and, with the islands, its
+  voice light (connected). Words, separated by commas:
   `normal` (the islands as set), `legacy` (Firestorm's bars), `compact`
   (the place island as wide as its content), `rights` (the parcel rights
   named when there is room), `nobug` / `bug` (the bug report button
-  hidden / shown: the menu island holds the wolf alone, the place follows
-  8 px away); and one menu opened at frame 300: `menu`
+  hidden / shown: the bug's own island, after the wolf's, goes away and
+  the place follows the wolf 8 px away), `voice` (talking on the dock's Speak button, its level at
+  62 %), `chatwide` (the chat island 560 px wide: the dock moves right, its
+  buttons narrow at 1280), `read` (no unread conversation counted); and one menu opened at frame 300: `menu`
   (the place), `options` (right click on the place island), `favorites`,
-  `star`, `status` (the account's picture). Capture at
+  `star`, `status` (the account's picture), `emoji` (the chat island's
+  emoji picker). The bottom: the chat island on the left, the dock centred
+  (buttons 34 px, 32 at 1280), the local chat lines in pills above the
+  chat island, all 8 px from the edges; the chat island's button carries the unread counter of the conversations (the dock has no Conversations button by default). With `AURORA_DEMO_TOOLBAR=drag`,
+  frame 654: a toolbar button dragged along the dock. Capture at
   `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
   at frame 780: at 1280 the place shows the parcel and the region, at
   1536 the position too, with `rights` the forbidden rights are named at

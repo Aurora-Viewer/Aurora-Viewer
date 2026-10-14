@@ -1,6 +1,7 @@
 //! Aurora's top bar: glass islands laid over the world instead of a
 //! full-width band (variant A of the bars mockup the human validated). From
-//! the left: the Aurora menu, the place (stretched to the account island,
+//! the left: the Aurora menu, the bug report (when shown), the place
+//! (stretched to the account island,
 //! `place.rs`), the account (picture with the online status, balance), the
 //! system (SLT clock, latency, frame rate, media and volume) and the bell.
 //! The islands keep the windows' blur, sampled within their rectangles
@@ -134,11 +135,24 @@ fn readout(
     );
     paint_icon(ui, icons, icon, icon_rect, SYSTEM_ICON, slot_ink(p, hot, true));
     let x = icon_rect.right() + SLOT_PAD;
-    crate::ui::widgets::paint_ink_left(ui.painter(), galley, Pos2::new(x, rect.center().y), color);
+    paint_readout_text(ui, galley, Pos2::new(x, rect.center().y), color);
     if clickable && resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     resp
+}
+
+/// A readout's text, its left at `left_center.x` and its digits' ink
+/// centred on `left_center.y`, so that every readout of the island shares
+/// one baseline: centring each text's own ink lifted the frame rate, whose
+/// comma hangs below the line ("120,0" stood 2 px above "0 ms").
+fn paint_readout_text(ui: &egui::Ui, galley: std::sync::Arc<egui::Galley>, left_center: Pos2, color: Color32) {
+    let font = galley.job.sections.first().map(|s| s.format.font_id.clone()).unwrap_or_default();
+    let digit = ui.painter().layout_no_wrap("0".to_owned(), font, color);
+    let digits = crate::ui::widgets::ink_rect(&digit);
+    let ink = crate::ui::widgets::ink_rect(&galley);
+    let pos = Pos2::new(left_center.x - ink.left(), left_center.y - digits.center().y);
+    ui.painter().galley(pos.round(), galley, color);
 }
 
 /// The width of a readout whose text is `text_w` wide.
@@ -181,9 +195,14 @@ pub fn top(
     let acc_rect = row(screen, right - account_width(ui, p, st), right);
     right = acc_rect.left() - MARGIN;
     let left = screen.left() + MARGIN;
-    let n = if st.show_bug_report { 2.0 } else { 1.0 };
-    let menu_rect = row(screen, left, left + PAD * 2.0 + SLOT * n + GAP * (n - 1.0));
-    let span = row(screen, menu_rect.right() + MARGIN, right);
+    let menu_rect = row(screen, left, left + PAD * 2.0 + SLOT);
+    // the bug report in an island of its own after the wolf's (the human's
+    // request: in one island the two read as one button); hidden, the place
+    // follows the wolf 8 px away
+    let bug_rect = st
+        .show_bug_report
+        .then(|| row(screen, menu_rect.right() + MARGIN, menu_rect.right() + MARGIN + PAD * 2.0 + SLOT));
+    let span = row(screen, bug_rect.unwrap_or(menu_rect).right() + MARGIN, right);
     let (place_rect, detail) = super::place::layout(ui, st, span);
 
     // each island is an area of its own: the pointer over it is over the
@@ -229,17 +248,20 @@ pub fn top(
             },
         );
         resp.on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
-        // the bug report: a button of its own next to the wolf, when shown
-        // (the island is then one slot wider, never a hole without it)
-        if st.show_bug_report {
-            let bug = wolf.translate(Vec2::new(SLOT + GAP, 0.0));
+    });
+    if let Some(bug_rect) = bug_rect {
+        area(&ctx, p, "bug", bug_rect, |ui| {
+            // its right click hides it, as the wolf's does
+            let back = ui.interact(bug_rect, Id::new("bars_island_bug_back"), Sense::click());
+            menu_options(&back, p, st, &mut action);
+            let bug = Rect::from_center_size(bug_rect.center(), Vec2::splat(SLOT));
             let resp = icon_slot(ui, p, icons, bug, Id::new("bars_island_bug"), "bug-filled", true);
             menu_options(&resp, p, st, &mut action);
             if resp.on_hover_text(aurora_i18n::tr!("bug-title")).clicked() {
                 action = BarAction::ReportBug;
             }
-        }
-    });
+        });
+    }
     area(&ctx, p, "place", place_rect, |ui| {
         if let Some(a) = super::place::island(ui, p, icons, panels, st, place_rect, detail) {
             action = a;
@@ -248,7 +270,7 @@ pub fn top(
     (action, audio_action)
 }
 
-/// Right-click menu of the menu island: the bug report button, also in
+/// Right-click menu of the menu and bug islands: the bug report button, also in
 /// Preferences › Interface ("Report a bug in the top bar", on by default
 /// during the alpha).
 fn menu_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
@@ -261,7 +283,7 @@ fn menu_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mu
 
 /// One island in an area of its own at `rect`, its surface under what
 /// `body` draws there (in screen coordinates).
-fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect: Rect, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(super) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect: Rect, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Area::new(Id::new(("bars_island", name)))
         .order(egui::Order::Middle)
         .fixed_pos(rect.min)
@@ -495,8 +517,14 @@ mod tests {
     }
 
     /// Two frames of the islands in a screen `width` wide (16:9), the
-    /// pointer at `pointer`; the areas' rectangles by name.
-    fn frames(width: f32, stretch: bool, bug: bool, pointer: Pos2) -> (egui::Context, impl Fn(&str) -> Rect) {
+    /// pointer at `pointer`; the areas' rectangles by name, and what the
+    /// last frame painted.
+    fn frames(
+        width: f32,
+        stretch: bool,
+        bug: bool,
+        pointer: Pos2,
+    ) -> (egui::Context, impl Fn(&str) -> Rect, Vec<egui::epaint::ClippedShape>) {
         let ctx = egui::Context::default();
         let p = crate::theme::Theme::default().palette();
         let icons = Icons::default();
@@ -506,6 +534,7 @@ mod tests {
         let mut audio_ui = crate::ui::audio::AudioUi::default();
         let mut notif = crate::ui::notifications::NotifUi::default();
         let st = status(stretch, bug);
+        let mut shapes = Vec::new();
         for _ in 0..2 {
             let input = egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, width * 9.0 / 16.0))),
@@ -527,13 +556,14 @@ mod tests {
                 );
             });
             out.textures_delta.clear();
+            shapes = out.shapes;
         }
         let c = ctx.clone();
         let rect = move |name: &str| {
             c.memory(|m| m.area_rect(Id::new(("bars_island", name))))
                 .unwrap_or_else(|| panic!("no {name} island"))
         };
-        (ctx, rect)
+        (ctx, rect, shapes)
     }
 
     /// The islands stand 8 px from the edges and from each other, with or
@@ -545,14 +575,23 @@ mod tests {
         for width in [1280.0, 1536.0, 1920.0] {
             for bug in [true, false] {
                 for stretch in [true, false] {
-                    let (_, rect) = frames(width, stretch, bug, Pos2::new(700.0, 400.0));
+                    let (_, rect, _) = frames(width, stretch, bug, Pos2::new(700.0, 400.0));
                     let (menu, place, account, system, bell) = (rect("menu"), rect("place"), rect("account"), rect("system"), rect("bell"));
                     let case = format!("{width} bug {bug} stretch {stretch}");
                     assert_eq!((menu.left(), menu.top(), menu.height()), (MARGIN, MARGIN, HEIGHT), "{case}");
-                    let slots = if bug { 2.0 } else { 1.0 };
-                    assert_eq!(menu.width(), PAD * 2.0 + SLOT * slots + GAP * (slots - 1.0), "{case}");
+                    assert_eq!(menu.width(), PAD * 2.0 + SLOT, "{case}");
                     assert_eq!(bell.right(), width - MARGIN, "{case}");
-                    assert_eq!(place.left() - menu.right(), MARGIN, "{case}");
+                    // the bug's island between the wolf's and the place, or
+                    // the place right after the wolf
+                    let before_place = if bug {
+                        let b = rect("bug");
+                        assert_eq!((b.top(), b.height(), b.width()), (MARGIN, HEIGHT, PAD * 2.0 + SLOT), "{case}");
+                        assert_eq!(b.left() - menu.right(), MARGIN, "{case}");
+                        b
+                    } else {
+                        menu
+                    };
+                    assert_eq!(place.left() - before_place.right(), MARGIN, "{case}");
                     let pairs = [(account, system), (system, bell)];
                     for (a, b) in pairs {
                         assert_eq!(b.left() - a.right(), MARGIN, "{case}: {a:?} {b:?}");
@@ -575,11 +614,54 @@ mod tests {
     /// islands (the place not stretched), over the world.
     #[test]
     fn an_island_takes_the_pointer_the_gap_between_them_does_not() {
-        let (ctx, rect) = frames(1536.0, true, true, Pos2::new(20.0, 20.0));
+        let (ctx, rect, _) = frames(1536.0, true, true, Pos2::new(20.0, 20.0));
         assert!(ctx.is_pointer_over_egui(), "the menu island");
         let account = rect("account");
-        let (ctx, rect) = frames(1536.0, false, true, Pos2::new(account.left() - 30.0, 20.0));
+        let (ctx, rect, _) = frames(1536.0, false, true, Pos2::new(account.left() - 30.0, 20.0));
         assert!(rect("place").right() < account.left() - 30.0);
         assert!(!ctx.is_pointer_over_egui(), "between the place and the account");
+    }
+    /// The texts of the system island (clock, latency, frame rate) share
+    /// one baseline: their digits' ink is centred on the island's middle,
+    /// within half a pixel, at the three widths, whatever hangs below the
+    /// line (the frame rate's comma).
+    #[test]
+    fn the_system_readouts_share_one_baseline() {
+        fn texts(shape: &egui::Shape, out: &mut Vec<(String, Pos2)>) {
+            match shape {
+                egui::Shape::Text(t) => {
+                    let mut ink = Rect::NOTHING;
+                    for row in &t.galley.rows {
+                        for g in row.row.glyphs.iter().filter(|g| g.chr.is_ascii_digit()) {
+                            let min = t.pos + row.pos.to_vec2() + g.pos.to_vec2() + g.uv_rect.offset;
+                            ink = ink.union(Rect::from_min_size(min, g.uv_rect.size));
+                        }
+                    }
+                    if ink.is_positive() {
+                        out.push((t.galley.text().to_owned(), ink.center()));
+                    }
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        for width in [1280.0, 1536.0, 1920.0] {
+            let (_, rect, shapes) = frames(width, true, true, Pos2::new(700.0, 400.0));
+            let system = rect("system");
+            let mut found = Vec::new();
+            for clipped in &shapes {
+                texts(&clipped.shape, &mut found);
+            }
+            let found: Vec<_> = found.into_iter().filter(|(_, at)| system.contains(*at)).collect();
+            assert!(found.len() >= 3, "{width}: {found:?}");
+            for (text, at) in &found {
+                assert!(
+                    (at.y - system.center().y).abs() <= 0.5,
+                    "{width}: {text:?} at {}, island centre {}",
+                    at.y,
+                    system.center().y
+                );
+            }
+        }
     }
 }

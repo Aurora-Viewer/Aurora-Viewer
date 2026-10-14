@@ -62,7 +62,7 @@ pub fn avatars_menu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &[Uuid])
     }
     menu::separator(ui, p);
     // PeopleContextMenu::startConference, LLAvatarActions::startAdhocCall
-    if menu::item(ui, p, "message-filled", aurora_i18n::tr!("ui-context-multi-im")) {
+    if menu::item(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-context-multi-im")) {
         act(CtxAction::Conference(ids.to_vec()));
     }
     if menu::item_if(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"), f.call) {

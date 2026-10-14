@@ -140,7 +140,7 @@ pub(super) fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
         Kind::Permissions => ("key-filled", p.amber),
         Kind::Url => ("world-filled", p.teal),
         Kind::Presence => ("user-filled", p.success),
-        Kind::Message => ("message-filled", p.violet_light),
+        Kind::Message => ("message-circle-filled", p.violet_light),
         Kind::Call => ("phone-filled", p.success),
     }
 }

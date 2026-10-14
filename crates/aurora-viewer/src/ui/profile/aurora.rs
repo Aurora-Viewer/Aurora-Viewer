@@ -804,7 +804,7 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
     let id = w.id;
     let (icon, label, kind, enabled, tip): (&str, &str, ActionKind, bool, Option<&str>) = match act {
         Act::Conversation => (
-            "message-filled",
+            "message-circle-filled",
             aurora_i18n::tr!("ui-profile-aurora-conversation"),
             ActionKind::Primary,
             true,
