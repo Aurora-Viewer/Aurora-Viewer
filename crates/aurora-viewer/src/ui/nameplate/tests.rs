@@ -772,3 +772,49 @@ fn a_picture_fills_its_disc_without_being_stretched() {
     // a broken size does not divide by zero
     assert!(paint::cover([0, 0]).is_finite());
 }
+
+#[test]
+fn the_plate_under_the_pointer_shows_full_while_the_option_is_on() {
+    for level in [Level::Full, Level::Compact, Level::Far] {
+        assert_eq!(hover_level(level, true, true), Level::Full);
+        // off, or another plate: the level the plate had
+        assert_eq!(hover_level(level, true, false), level);
+        assert_eq!(hover_level(level, false, true), level);
+    }
+    // the pointer just gone: the plate stays full a moment
+    assert!(hover_holds(10.0, 10.0));
+    assert!(hover_holds(10.0, 10.0 + HOVER_LINGER * 0.99));
+    assert!(!hover_holds(10.0, 10.0 + HOVER_LINGER + 0.01));
+}
+
+#[test]
+fn a_hovered_pill_grows_even_with_full_plates_for_friends_only() {
+    let ctx = egui::Context::default();
+    let mut plates = Plates {
+        friends_only_full: true,
+        expand_on_hover: true,
+        ..Plates::default()
+    };
+    // a stranger close up (capped by friends only) and one far away
+    let tags = [tag(1, 30.0, content()), tag(2, 4.0, content())];
+    let level = |plates: &Plates, id: u128| plates.entries.get(&Uuid::from_u128(id)).map(|e| e.level);
+    frame(&ctx, &mut plates, &tags, 1.0);
+    assert_eq!(level(&plates, 1), Some(Level::Compact));
+    assert_eq!(level(&plates, 2), Some(Level::Compact));
+    for id in [1, 2] {
+        plates.hovered = Some(Uuid::from_u128(id));
+        frame(&ctx, &mut plates, &tags, 2.0);
+        assert_eq!(level(&plates, id), Some(Level::Full));
+        // gone: still full within the linger, back after it
+        plates.hovered = None;
+        frame(&ctx, &mut plates, &tags, 2.0 + HOVER_LINGER * 0.5);
+        assert_eq!(level(&plates, id), Some(Level::Full));
+        frame(&ctx, &mut plates, &tags, 3.0);
+        assert_eq!(level(&plates, id), Some(Level::Compact));
+    }
+    // the option off: hovering changes nothing
+    plates.expand_on_hover = false;
+    plates.hovered = Some(Uuid::from_u128(1));
+    frame(&ctx, &mut plates, &tags, 4.0);
+    assert_eq!(level(&plates, 1), Some(Level::Compact));
+}

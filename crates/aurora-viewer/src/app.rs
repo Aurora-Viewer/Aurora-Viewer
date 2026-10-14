@@ -41,6 +41,7 @@ mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
 mod object_actions;
+mod plate_click;
 mod scripts;
 mod shape_editor;
 mod task_notecards;
@@ -363,6 +364,8 @@ pub struct App {
     /// Avatar name tags on screen last frame, far first: a click on one
     /// counts as one on its avatar.
     name_tags: Vec<ui::hud::NameTag>,
+    /// The avatar whose plate is under the pointer (app/plate_click.rs).
+    plate_hover: Option<uuid::Uuid>,
     /// Block list version applied to object sounds, and the objects whose
     /// sounds it silenced.
     sound_blocks: (u64, std::collections::HashSet<uuid::Uuid>),
@@ -716,6 +719,7 @@ impl App {
             voice_tags: Default::default(),
             plates: Default::default(),
             name_tags: Vec::new(),
+            plate_hover: None,
             sound_blocks: Default::default(),
             sound_changes: Vec::new(),
             devices_listed: false,
@@ -2276,6 +2280,10 @@ impl App {
         let hit = self
             .scene
             .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
+        // another avatar's plate with a click action takes the click
+        if self.plate_press(hit, ray) {
+            return;
+        }
         // a rigged mesh or a worn mesh shown there: the GPU alone poses it
         let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit);
         let hit = shown.map_or(hit, |d| Some(d.hit.point));
@@ -5289,6 +5297,10 @@ impl App {
                 }
             }
         }
+        if self.plate_cursor() {
+            full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
+            full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
+        }
         if let Some(h) = &self.interactions.held {
             if h.physical {
                 full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Grab, false);
@@ -5342,11 +5354,15 @@ impl App {
             // Windows substitutes arrows for the system Grabbing cursor.
             full.platform_output.cursor_image = self.cursors.hud_drag();
         }
-        if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+        if self.demo
+            && self.frame_count == 650
+            && (std::env::var_os("AURORA_DEMO_ACTIONS").is_some() || std::env::var_os("AURORA_DEMO_PLATE_HOVER").is_some())
+        {
             log::info!(
-                "demo cursor output: icon={:?}, bitmap={}",
+                "demo cursor output: icon={:?}, bitmap={}, plate={:?}",
                 full.platform_output.cursor_icon,
                 full.platform_output.cursor_image.is_some(),
+                self.plate_hover,
             );
         }
         gfx.egui_state
@@ -6792,6 +6808,7 @@ impl App {
                 // AURORA_DEMO_FRIEND_PLATES=1: the setting for this run, without saving it
                 self.plates.friends_only_full =
                     self.settings.plates_friends_only_full || (self.demo && std::env::var_os("AURORA_DEMO_FRIEND_PLATES").is_some());
+                self.update_plate_hover(&ctx);
                 self.name_tags = ui::hud::draw(
                     &ctx,
                     &p,
