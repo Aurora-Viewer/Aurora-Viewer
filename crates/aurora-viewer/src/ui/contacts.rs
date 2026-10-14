@@ -726,7 +726,10 @@ fn friend_table(
             aurora_i18n::tr!("ui-contacts-this-person-can-modify-delete-or-take-your-objects"),
         ),
         ("map-pin-filled", aurora_i18n::tr!("ui-contacts-you-can-locate-this-person")),
-        ("pencil-filled", aurora_i18n::tr!("ui-contacts-you-can-edit-delete-or-take-this-person-s")),
+        (
+            "pencil-filled",
+            aurora_i18n::tr!("ui-contacts-you-can-edit-delete-or-take-this-person-s"),
+        ),
     ];
     let status_w = 20.0;
     let right_w = 18.0;
