@@ -75,6 +75,9 @@ pub struct GroupChats {
     /// Pinned groups, listed first (FSFavoriteGroups).
     pub favorites: HashSet<Uuid>,
     favorites_path: Option<PathBuf>,
+    /// The name of the group whose CreateGroupRequest waits for its reply:
+    /// the new group is listed under it until the list comes back.
+    pub creating: Option<String>,
     pub out: Vec<NetCommand>,
 }
 

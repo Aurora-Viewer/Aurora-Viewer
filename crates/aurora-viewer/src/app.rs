@@ -1412,6 +1412,19 @@ impl App {
                 self.world.inventory.add_items(vec![crate::demo::offered_item(parent, *owner)]);
                 return;
             }
+            // the demo's dataserver creates the group and takes its fee from
+            // the balance, or refuses it (name taken, L$ or group limit)
+            if let NetCommand::CreateGroup { name, info } = &cmd {
+                let fee = ui::group_profile::create::fee(&self.world);
+                let can_join = ui::group_profile::create::can_join_groups(&self.world);
+                let balance = self.world.balance.unwrap_or(250);
+                for ev in crate::demo::group::create(name, info, balance, fee, can_join) {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                }
+                return;
+            }
             // a new classified is paid when it is published, as the
             // simulator does on the grid
             if let Some(price) = crate::demo::classifieds::price_of_new(&cmd)
@@ -1674,6 +1687,10 @@ impl App {
         }
         if let NetEvent::Balance(balance) = ev {
             self.pay_ui.on_balance(balance);
+        }
+        if let NetEvent::GroupCreated { group, success, message } = &ev {
+            self.group_profile_ui.on_created(&mut self.world, *group, *success, message);
+            return;
         }
         if let NetEvent::ScriptTeleportRequest { .. } = ev {
             // llMapDestination asked for the map (BEACON_SHOW_MAP)
@@ -7511,6 +7528,10 @@ impl App {
                     // the profile again, to show what the server kept
                     self.send(NetCommand::GroupProfileRequest(group));
                 }
+                GroupAction::Create { name, info } => {
+                    self.world.groups.creating = Some(name.clone());
+                    self.send(NetCommand::CreateGroup { name, info });
+                }
                 GroupAction::RequestBans(group) => self.world.group_data.request_bans(group),
                 GroupAction::Unban { group, ids } => self.world.group_data.unban(group, ids),
                 GroupAction::BanResidents { group, ids } => {
@@ -8981,6 +9002,9 @@ impl App {
                 if let Some(id) = ui::group_profile::take_open_request(&ctx) {
                     self.group_profile_ui.open(&mut self.world, id);
                 }
+                if ui::group_profile::take_create_request(&ctx) {
+                    self.group_profile_ui.create.open(&self.world);
+                }
                 t = self.ui_parts.lap(Part::UiPlaces, t);
                 let mut open = self.panels.minimap;
                 mini.extend(self.minimap_ui.window(
@@ -9787,6 +9811,29 @@ impl ApplicationHandler for App {
                 if let Some(invitees) = crate::demo::group::invitees() {
                     self.group_profile_ui.invite.open(crate::demo::group::shown_group(), invitees);
                 }
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_GROUP_CREATE=form|cost|refused|limit|created: "Create
+            // a group", as from People › Groups, once the group list is in
+            if let Some(scenario) = crate::demo::group::create_scenario() {
+                use crate::demo::group::CreateScenario;
+                use ui::group_profile::create::{DemoStart, DemoThen, Draft};
+                let draft = Draft {
+                    name: crate::demo::group::create_name(scenario).into(),
+                    info: aurora_net::groups::GroupInfo {
+                        charter: aurora_i18n::tr!("demo-group-create-charter").into(),
+                        show_in_list: true,
+                        open_enrollment: true,
+                        ..Default::default()
+                    },
+                    rating: Some(false),
+                };
+                let (draft, then) = match scenario {
+                    CreateScenario::Form | CreateScenario::Limit => (None, DemoThen::Wait),
+                    CreateScenario::Cost => (Some(draft), DemoThen::Press),
+                    CreateScenario::Refused | CreateScenario::Created => (Some(draft), DemoThen::Send),
+                };
+                self.group_profile_ui.create.demo(DemoStart { draft, then });
                 self.panels.perf = false;
             }
             // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add: the

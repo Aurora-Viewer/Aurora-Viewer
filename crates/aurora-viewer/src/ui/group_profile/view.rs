@@ -19,13 +19,13 @@ use uuid::Uuid;
 
 /// Height of the banner, the insignia's side and where it starts below the
 /// banner's top; the identity starts this far from the left edge.
-const BANNER_H: f32 = 132.0;
-const INSIGNIA: f32 = 116.0;
-const INSIGNIA_TOP: f32 = 66.0;
-const INSIGNIA_LEFT: f32 = 12.0;
+pub(super) const BANNER_H: f32 = 132.0;
+pub(super) const INSIGNIA: f32 = 116.0;
+pub(super) const INSIGNIA_TOP: f32 = 66.0;
+pub(super) const INSIGNIA_LEFT: f32 = 12.0;
 const BORDER: f32 = 4.0;
-const IDENTITY_LEFT: f32 = 150.0;
-const BUTTON_H: f32 = 28.0;
+pub(super) const IDENTITY_LEFT: f32 = 150.0;
+pub(super) const BUTTON_H: f32 = 28.0;
 
 pub struct View<'a> {
     pub id: Uuid,
@@ -142,7 +142,7 @@ fn vertical(r: Rect, top: Color32, bottom: Color32) -> Shape {
 /// copies, each drawn over the previous ones at 1/k so that the k copies
 /// average), or the aurora's glows while there is none, then darkening
 /// toward the identity below.
-fn banner(ui: &egui::Ui, p: &Palette, rect: Rect, insignia: Option<&egui::TextureHandle>) {
+pub(super) fn banner(ui: &egui::Ui, p: &Palette, rect: Rect, insignia: Option<&egui::TextureHandle>) {
     let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter_at(rect);
     match insignia {
@@ -189,7 +189,7 @@ fn banner(ui: &egui::Ui, p: &Palette, rect: Rect, insignia: Option<&egui::Textur
 
 /// The insignia over the banner's edge, framed in the window's color, or
 /// the group's initials on the accent while it has none.
-fn insignia(ui: &egui::Ui, p: &Palette, rect: Rect, picture: Option<&egui::TextureHandle>, name: &str) {
+pub(super) fn insignia(ui: &egui::Ui, p: &Palette, rect: Rect, picture: Option<&egui::TextureHandle>, name: &str) {
     let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
     painter.rect_filled(rect, radius, p.panel.lerp_to_gamma(p.raised, 0.12));
@@ -233,7 +233,7 @@ pub fn badge(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &str, ink: Color3
     })
 }
 
-fn badge_with(
+pub(super) fn badge_with(
     ui: &mut egui::Ui,
     p: &Palette,
     text: &str,

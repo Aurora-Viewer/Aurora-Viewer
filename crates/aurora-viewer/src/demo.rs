@@ -511,6 +511,10 @@ fn demo_raw() -> Llsd {
     {
         env::library_login(m);
     }
+    // AURORA_DEMO_GROUP_CREATE: the membership's fee and group limit
+    for (key, value) in group::login_benefits().unwrap_or_default() {
+        raw.insert(key, value);
+    }
     raw
 }
 

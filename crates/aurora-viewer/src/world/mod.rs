@@ -2111,6 +2111,30 @@ impl World {
                 }
                 None
             }
+            // processCreateGroupReply: the list asked again, the new group
+            // ours at once with every ability until it arrives (Firestorm's
+            // "fake it"), its profile and our balance asked
+            // (LLPanelGroupCreate::refreshCreatedGroup); the window follows
+            NetEvent::GroupCreated { group, success, .. } => {
+                let name = self.groups.creating.take().unwrap_or_default();
+                if success && !group.is_nil() {
+                    self.groups.out.push(aurora_net::NetCommand::RequestGroups);
+                    self.groups.out.push(aurora_net::NetCommand::RequestBalance);
+                    if !self.groups.is_member(&group) {
+                        self.groups.groups.push(aurora_net::GroupMembership {
+                            id: group,
+                            name,
+                            insignia: Uuid::nil(),
+                            powers: u64::MAX,
+                            accept_notices: true,
+                            list_in_profile: true,
+                            contribution: 0,
+                        });
+                    }
+                    self.search.request_group(group);
+                }
+                Some(ev)
+            }
             NetEvent::GroupProfile(g) => {
                 self.search.groups.insert(g.id, *g);
                 None
