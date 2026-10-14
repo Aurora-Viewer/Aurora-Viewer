@@ -233,7 +233,10 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
         && let Some(first) = list.first()
     {
         st.notices.selected = Some(first.id);
-        actions.push(GroupAction::OpenNotice { group: v.id, notice: first.id });
+        actions.push(GroupAction::OpenNotice {
+            group: v.id,
+            notice: first.id,
+        });
     }
     let search = st.notices.search.trim().to_lowercase();
     let shown: Vec<&NoticeSummary> = list

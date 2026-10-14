@@ -576,6 +576,7 @@ fn tab_button(
     icon: &str,
     label: &str,
     count: Option<String>,
+    accent: bool,
     selected: bool,
     enabled: bool,
 ) -> egui::Response {
@@ -588,11 +589,14 @@ fn tab_button(
         p.muted
     };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
+    // an unread count is a pill in the accent (`accent`)
+    let count_ink = if accent { p.on_accent } else { p.muted_dim };
     let count = count.map(|t| {
         ui.painter()
-            .layout_no_wrap(t, FontId::new(11.0, crate::ui::fonts::semibold(ui.ctx())), p.muted_dim)
+            .layout_no_wrap(t, FontId::new(11.0, crate::ui::fonts::semibold(ui.ctx())), count_ink)
     });
-    let count_w = count.as_ref().map_or(0.0, |g| 5.0 + g.size().x);
+    let pad = if accent { 5.0 } else { 0.0 };
+    let count_w = count.as_ref().map_or(0.0, |g| 5.0 + g.size().x + pad * 2.0);
     let size = Vec2::new(12.0 + 15.0 + 5.0 + galley.size().x + count_w + 12.0, 28.0);
     let (rect, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
     let radius = ui.visuals().widgets.inactive.corner_radius;
@@ -612,8 +616,15 @@ fn tab_button(
     ui.painter()
         .galley(Pos2::new(x, rect.center().y - galley.size().y / 2.0).round(), galley, ink);
     if let Some(g) = count {
-        let pos = Pos2::new(x + w + 5.0, rect.center().y - g.size().y / 2.0);
-        ui.painter().galley(pos.round(), g, p.muted_dim);
+        let pos = Pos2::new(x + w + 5.0 + pad, rect.center().y - g.size().y / 2.0);
+        if accent {
+            let pill = Rect::from_min_size(
+                Pos2::new(x + w + 5.0, rect.center().y - 8.0),
+                Vec2::new(g.size().x + pad * 2.0, 16.0),
+            );
+            ui.painter().rect_filled(pill, ui.visuals().window_corner_radius, p.violet);
+        }
+        ui.painter().galley(pos.round(), g, count_ink);
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label));
     if enabled {
@@ -636,6 +647,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             "home-filled",
             aurora_i18n::tr!("ui-group-profile-home"),
             None,
+            false,
             *tab == Tab::Home,
             true,
         )
@@ -650,6 +662,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             "users",
             aurora_i18n::tr!("ui-group-profile-members-tab"),
             count,
+            false,
             *tab == Tab::Members,
             true,
         )
@@ -665,6 +678,7 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
             "speakerphone",
             aurora_i18n::tr!("ui-group-profile-notices"),
             unread,
+            true,
             *tab == Tab::Notices,
             super::notices::visible(v),
         )
@@ -672,13 +686,14 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize) 
         {
             *tab = Tab::Notices;
         }
-        tab_button(ui, p, "map-2", aurora_i18n::tr!("ui-group-profile-land"), None, false, false);
+        tab_button(ui, p, "map-2", aurora_i18n::tr!("ui-group-profile-land"), None, false, false, false);
         tab_button(
             ui,
             p,
             "flask-filled",
             aurora_i18n::tr!("ui-group-profile-experiences"),
             None,
+            false,
             false,
             false,
         );

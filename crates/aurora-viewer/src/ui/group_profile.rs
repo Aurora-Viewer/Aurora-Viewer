@@ -157,9 +157,13 @@ impl GroupProfileUi {
         self.raise = true;
     }
 
-    /// Open the Notices tab (the demo's captures).
-    pub fn show_notices(&mut self) {
+    /// Open the Notices tab (the demo's captures), on a new notice when
+    /// `compose`.
+    pub fn show_notices(&mut self, compose: bool) {
         self.tab = Tab::Notices;
+        if compose {
+            self.notices.compose = Some(Default::default());
+        }
     }
 
     /// Open the Members tab with a member selected (the demo's captures).
@@ -269,6 +273,20 @@ impl GroupProfileUi {
                 widgets::collapsing(ui, c.p, "group_profile_classic_members", title, false, |ui| {
                     members::classic_list(self, ui, c, v);
                 });
+                // Firestorm's "Notices" accordion: the same list, reading and
+                // new notice, in a part of the window's height
+                if notices::visible(v) {
+                    let title = aurora_i18n::tr!("ui-group-profile-notices");
+                    widgets::collapsing(ui, c.p, "group_profile_classic_notices", title, false, |ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 420.0), egui::Sense::hover());
+                        let mut part = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(rect)
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                        );
+                        notices::show(self, &mut part, c, v, actions);
+                    });
+                }
             });
         actions.extend(pane_actions.into_iter().map(|a| match a {
             SearchAction::RefreshGroup(group) => GroupAction::Refresh {

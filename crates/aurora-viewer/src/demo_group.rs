@@ -12,7 +12,8 @@
 //!
 //! `:members` after the scenario opens the Members tab, a builder selected;
 //! `:invite` the invitation window with three residents (one already in);
-//! `:notices` the Notices tab, its two latest notices unread.
+//! `:notices` the Notices tab, its two latest notices unread (`:compose`
+//! with a new notice open).
 //!
 //! The other demo groups get generated members and the three roles every
 //! group has.
@@ -350,8 +351,10 @@ fn notice_im(notice: &Uuid) -> Option<NetEvent> {
     bucket.extend_from_slice(DEMO_GROUP1.as_bytes());
     bucket.extend_from_slice(attachment.map_or("", |a| a.0).as_bytes());
     bucket.push(0);
+    // from the group, the sender named in the message (the server's form:
+    // process_improved_im looks the sender up by name)
     Some(NetEvent::InstantMessage(aurora_net::InstantMessage {
-        from_agent_id: DEMO_LOUP,
+        from_agent_id: DEMO_GROUP1,
         from_name: n.from,
         to_agent_id: DEMO_AGENT,
         dialog: 37,
@@ -364,10 +367,12 @@ fn notice_im(notice: &Uuid) -> Option<NetEvent> {
     }))
 }
 
-/// `<scenario>:notices`: the Notices tab, the two latest notices unread.
-pub fn notices_tab() -> Option<(Uuid, Vec<Uuid>)> {
+/// `<scenario>:notices`: the Notices tab, the two latest notices unread;
+/// `:compose` on a new notice.
+pub fn notices_tab() -> Option<(Uuid, Vec<Uuid>, bool)> {
     let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
-    (v.split(':').nth(1) == Some("notices")).then(|| (DEMO_GROUP1, notices().iter().skip(2).map(|n| n.id).collect()))
+    let mode = v.split(':').nth(1)?;
+    matches!(mode, "notices" | "compose").then(|| (DEMO_GROUP1, notices().iter().skip(2).map(|n| n.id).collect(), mode == "compose"))
 }
 
 /// The charter of "Aurora Builders", with a place link.

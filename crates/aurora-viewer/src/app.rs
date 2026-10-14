@@ -7167,7 +7167,10 @@ impl App {
                 }
                 GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
                 GroupAction::RefreshNotices(group) => self.world.group_data.request_notices(group),
-                GroupAction::OpenNotice { group, notice } => self.world.group_data.open_notice(group, notice),
+                GroupAction::OpenNotice { group, notice } => {
+                    log::info!("group notice asked: {notice}");
+                    self.world.group_data.open_notice(group, notice);
+                }
                 GroupAction::SaveAttachment(group) => self.world.save_notice_attachment(group),
                 GroupAction::SendNotice {
                     group,
@@ -9265,9 +9268,9 @@ impl ApplicationHandler for App {
                 if let Some(member) = crate::demo::group::members_tab() {
                     self.group_profile_ui.show_member(member);
                 }
-                if let Some((group, read)) = crate::demo::group::notices_tab() {
+                if let Some((group, read, compose)) = crate::demo::group::notices_tab() {
                     self.world.group_data.set_read(group, read);
-                    self.group_profile_ui.show_notices();
+                    self.group_profile_ui.show_notices(compose);
                 }
                 if let Some(invitees) = crate::demo::group::invitees() {
                     self.group_profile_ui.invite.open(crate::demo::group::shown_group(), invitees);

@@ -269,6 +269,8 @@ impl GroupMgr {
     /// The account's notices read: an LLSD map of group ids to arrays of
     /// notice ids.
     pub fn load_read(&mut self, path: PathBuf) {
+        // what this session already set (the demo's) stays over the file
+        let set = std::mem::take(&mut self.read);
         self.read = std::fs::read(&path)
             .ok()
             .and_then(|b| aurora_llsd::from_xml(&b).ok())
@@ -283,6 +285,7 @@ impl GroupMgr {
                 })
             })
             .unwrap_or_default();
+        self.read.extend(set);
         self.read_path = Some(path);
     }
 
@@ -318,6 +321,7 @@ impl GroupMgr {
             return true;
         };
         let (subject, message) = aurora_net::groups::notice_text(&im.message);
+        log::info!("group notice shown: {subject} (attachment: {})", bucket.has_inventory);
         let id = g.asked_notice.unwrap_or_default();
         if let Some(prev) = g.notice.take()
             && let (Some((from, tx)), false) = (prev.offer, prev.saved)
