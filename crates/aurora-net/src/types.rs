@@ -47,6 +47,9 @@ pub struct RegionInfo {
     pub is_estate_manager: bool,
     /// RegionInfo3 ProductName ("Mainland / Full Region"...).
     pub product_name: String,
+    /// RegionHandshake BillableFactor: land here is charged as its area
+    /// times this (LLViewerRegion::getBillableFactor).
+    pub billable_factor: f32,
 }
 
 /// Parcel description from ParcelProperties (About Land).
@@ -86,6 +89,12 @@ pub struct ParcelInfo {
     pub selected_prims: i32,
     pub sim_max_prims: i32,
     pub sim_total_prims: i32,
+    /// Parcel grid units of the requested rectangle owned by the agent, by
+    /// others, and public (SelfCount / OtherCount / PublicCount:
+    /// LLParcelSelection's mSelected*Count).
+    pub self_count: i32,
+    pub other_count: i32,
+    pub public_count: i32,
     /// Auto-return of other residents' objects, minutes (0 = off).
     pub other_clean_time: i32,
     /// `PF_*` flags (llparcelflags.h).
@@ -558,6 +567,22 @@ pub enum NetEvent {
         online: bool,
     },
     Balance(i32),
+    /// MoneyBalanceReply's land: m² the account may hold (tier) and m² it
+    /// holds (LLStatusBar::setLandCredit / setLandCommitted).
+    LandHoldings {
+        credit: i32,
+        committed: i32,
+    },
+    /// Answer of the land helper to `LandToolPreflight`, for the billable
+    /// area and the L$ asked (so a stale answer can be told apart).
+    LandToolPreflight {
+        billable_area: i32,
+        currency_buy: i32,
+        result: Result<crate::land_tool::LandToolInfo, crate::currency::CurrencyError>,
+    },
+    /// Outcome of `LandToolBuy`: the website side of a land purchase is done
+    /// (membership, land use, L$); the ParcelBuy is sent next.
+    LandToolPrepared(Result<(), crate::currency::CurrencyError>),
     /// Answer of the currency helper to `CurrencyQuote`; `amount` is the one
     /// asked, so an estimate for a figure typed over can be dropped.
     CurrencyQuote {
@@ -1537,6 +1562,18 @@ pub enum NetCommand {
         helper: String,
         quote: crate::currency::CurrencyQuote,
         password: crate::currency::Password,
+    },
+    /// What buying land needs on the website side (XML-RPC
+    /// preflightBuyLandPrep on `<helper>landtool.php`).
+    LandToolPreflight {
+        helper: String,
+        billable_area: i32,
+        currency_buy: i32,
+    },
+    /// Do that website side (XML-RPC buyLandPrep), before the ParcelBuy.
+    LandToolBuy {
+        helper: String,
+        request: crate::land_tool::LandToolBuy,
     },
     RequestInventoryMerchant,
     /// GET /merchant for the "Marketplace listings" window

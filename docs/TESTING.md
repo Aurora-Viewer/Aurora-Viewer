@@ -1280,6 +1280,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
+| `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
@@ -1348,6 +1349,21 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `grid`: grid with no known purchase service. After Buy then OK: the
   window closes, the balance goes up and the bell receives the
   notification.
+- **`AURORA_DEMO_BUY_LAND=<mode>[:confirm]`**: the plaza parcel (16384 m²) is for sale
+  by a demo resident for L$ 4,500, with its objects, and "Buy Land" opens on it.
+  The land service is simulated: nothing is sent, the purchase only moves
+  the demo balance and gives the parcel to the avatar (About Land then shows
+  it as yours). The demo estate has a covenant: Purchase stays greyed out
+  until "I agree" is ticked. `rich`: L$ 12,000, enough to buy, a "click"
+  confirmation. `short`: L$ 1,200; the third step proposes the L$ 3,300
+  missing with their estimated cost, an amount typed again is estimated
+  2 s after the last keystroke. `upgrade`: the account must change plan
+  (list of plans) and the land use fee goes up, confirmation with a password
+  (OK greyed out while it is empty). `other`: the parcel is set to sell to
+  Nova only, "Not for sale" with the reason. `error`: the land service
+  refuses, with its "Go to website" link. `:confirm` after a mode (`rich:confirm`,
+  `upgrade:confirm`) ticks the covenant and opens the confirmation by itself,
+  for captures.
 - **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,

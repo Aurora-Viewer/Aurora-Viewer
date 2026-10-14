@@ -27,6 +27,7 @@ use winit::window::{Window, WindowId};
 mod ao;
 mod bug_report;
 mod buy_currency;
+mod buy_land;
 mod chat_commands;
 mod click_pick;
 mod color_picker;
@@ -351,6 +352,9 @@ pub struct App {
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
+    /// Buy Land (LLFloaterBuyLand), and the selection it follows.
+    buy_land_ui: ui::buy_land::BuyLandUi,
+    buy_land_source: buy_land::BuyLandSource,
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
     /// Me › Marketplace listings (LLFloaterMarketplaceListings).
@@ -747,6 +751,8 @@ impl App {
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
+            buy_land_ui: Default::default(),
+            buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
             listings_ui: Default::default(),
             demo_slm: None,
@@ -1040,7 +1046,11 @@ impl App {
                 }
                 return;
             }
-            if self.demo_script_command(&cmd) || self.demo_currency_command(&cmd) || self.demo_marketplace_command(&cmd) {
+            if self.demo_script_command(&cmd)
+                || self.demo_currency_command(&cmd)
+                || self.demo_buy_land_command(&cmd)
+                || self.demo_marketplace_command(&cmd)
+            {
                 return;
             }
             if matches!(cmd, NetCommand::RequestInventoryMerchant) {
@@ -2023,7 +2033,18 @@ impl App {
             NetEvent::LoggedOut => {
                 self.back_to_login(None);
             }
-            NetEvent::CurrencyQuote { amount, result } => self.buy_currency_ui.quote_reply(amount, result),
+            // both windows estimate L$: the one that asked takes the answer
+            NetEvent::CurrencyQuote { amount, result } => {
+                if !self.buy_land_ui.quote_reply(amount, &result) {
+                    self.buy_currency_ui.quote_reply(amount, result);
+                }
+            }
+            NetEvent::LandToolPreflight {
+                billable_area,
+                currency_buy,
+                result,
+            } => self.buy_land_ui.preflight_reply(billable_area, currency_buy, result),
+            NetEvent::LandToolPrepared(result) => self.land_tool_prepared(result),
             NetEvent::CurrencyBought(result) => self.currency_bought(result),
             // LLSetDisplayNameReply + LLFloaterDisplayName::onCacheSetName
             NetEvent::SetDisplayNameReply { status, reason, content } => {
@@ -3498,9 +3519,8 @@ impl App {
             Request::TransferTask(request) => self.apply_inventory_action(ui::inventory::InvAction::TakeTask(request)),
             Request::ZoomFraction(f) => self.camera.set_zoom_fraction(f),
             Request::AboutLand => self.panels.about_land = true,
-            Request::BuyLand => self
-                .world
-                .system_message(aurora_i18n::tr!("app-land-purchase-is-not-available-in-aurora-yet")),
+            // LLPanelLandInfo::onClickBuy: the land tool's selection
+            Request::BuyLand => self.open_buy_land(buy_land::BuyLandSource::LandTool, false),
             Request::Profile(id) => self.profile_ui.open(&mut self.world, id),
             Request::GroupProfile(id) => self.group_profile_ui.open(&mut self.world, id),
             Request::PasteVector(which) => {
@@ -4239,6 +4259,7 @@ impl App {
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
         images.extend(self.place_images.drain());
         images.extend(self.land_ui.wanted_images.drain());
+        images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
@@ -6379,6 +6400,7 @@ impl App {
                 self.display_name_ui.open();
             }
             self.demo_buy_currency();
+            self.demo_buy_land();
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
         // the window, moving), Violet Wolf looks at a point north of him;
@@ -8291,6 +8313,7 @@ impl App {
                     }
                 }
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
+                a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)
                 if let Some(id) = ui::profile::take_open_request(&ctx) {
                     self.profile_ui.open(&mut self.world, id);

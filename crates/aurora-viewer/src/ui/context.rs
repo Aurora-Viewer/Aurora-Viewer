@@ -170,6 +170,8 @@ pub enum CtxAction {
     Zoom(Vec3),
     /// About Land on the parcel at the clicked point (LLToolPie selects it).
     AboutLand(Vec3),
+    /// Buy Land on the parcel at the clicked point (Land.Buy).
+    BuyLand(Vec3),
     StandUp,
     SitGround,
     ToggleFly,
