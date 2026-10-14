@@ -1871,7 +1871,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
-| `AURORA_DEMO_SOUND=1` | World and interface sounds audible |
+| `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 
@@ -1960,7 +1960,8 @@ What the inventory must show with these scenarios:
   music waits for the radio button.
 - **`AURORA_DEMO_SOUND=1`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
-  tick per sound).
+  tick per sound). Without it the media play muted too: the viewer sends
+  them a volume of 0, so a video in the demo is silent unless this is set.
 
 ## Forced settings and diagnostics
 
