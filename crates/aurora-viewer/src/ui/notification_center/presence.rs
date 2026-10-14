@@ -9,8 +9,8 @@
 //! and stack upwards, at the top from its top and stack downwards; in the
 //! middle they are centred. What else stands across their column (the
 //! nearby chat lines over the chat bar) shortens the room from below: the
-//! toasts stack above those lines. A toast that does not fit (a very low
-//! window) waits out of sight, the newest ones first in.
+//! toasts stack above those lines. In a window too low for all of them,
+//! only the newest that fit show.
 //!
 //! At the top right they stand where the bell's cards unroll: while a card
 //! is out or the list is open, a new toast waits; it shows when the place
@@ -80,7 +80,10 @@ pub fn stack(room: Rect, at: PresencePosition, sizes: &[Vec2], avoid: &[Rect]) -
     // chat lines, anchored on the bottom bar) or from above
     let whole = room;
     let mut room = room;
-    for r in avoid.iter().filter(|r| r.left() < right && r.right() > left && r.top() < whole.bottom() && r.bottom() > whole.top()) {
+    for r in avoid
+        .iter()
+        .filter(|r| r.left() < right && r.right() > left && r.top() < whole.bottom() && r.bottom() > whole.top())
+    {
         if r.center().y >= whole.center().y {
             room.max.y = room.max.y.min(r.top() - GAP);
         } else {

@@ -207,7 +207,10 @@ fn at_the_top_right_a_friend_waits_for_the_list_to_close() {
     let id = list.push_presence(Uuid::from_u128(3), "Lune is online.", true);
     update(&list, &mut c, m(1.0, true), 30.0);
     update(&list, &mut c, m(2.0, false), 30.0);
-    assert_eq!(c.presence.iter().map(|t| (t.id, t.shown)).collect::<Vec<_>>(), vec![(id, Some(2.0))]);
+    assert_eq!(
+        c.presence.iter().map(|t| (t.id, t.shown)).collect::<Vec<_>>(),
+        vec![(id, Some(2.0))]
+    );
     let id = list.push_presence(Uuid::from_u128(4), "Tess is online.", true);
     update(&list, &mut c, m(10.0, true), 30.0);
     update(&list, &mut c, m(10.0 + PRESENCE + 0.1, false), 30.0);

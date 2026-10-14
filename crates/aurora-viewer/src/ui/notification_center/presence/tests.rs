@@ -67,7 +67,11 @@ fn a_low_room_keeps_the_newest_that_fit() {
     let low = Rect::from_min_max(Pos2::new(8.0, 56.0), Pos2::new(1272.0, 160.0));
     for at in PresencePosition::ALL {
         let rects = stack(low, at, &sizes(4), &[]);
-        assert_eq!(rects.iter().map(Option::is_some).collect::<Vec<_>>(), [false, false, true, true], "{at:?}");
+        assert_eq!(
+            rects.iter().map(Option::is_some).collect::<Vec<_>>(),
+            [false, false, true, true],
+            "{at:?}"
+        );
         assert!(rects.iter().flatten().all(|r| low.contains_rect(*r)), "{at:?}");
     }
     let tiny = Rect::from_min_max(Pos2::new(8.0, 56.0), Pos2::new(1272.0, 90.0));
@@ -102,6 +106,26 @@ fn a_toast_waits_for_the_place_then_shows_or_is_dropped() {
     advance(&mut t, 20.0, false);
     advance(&mut t, 21.0, true);
     assert!(t.is_empty());
+}
+
+/// The place is saved; a settings file from before it was added, or one
+/// that never changed it, gets the top right.
+#[test]
+fn the_place_is_saved_and_defaults_to_the_top_right() {
+    use crate::settings::Settings;
+    assert_eq!(Settings::default().presence_position, PresencePosition::TopRight);
+    let old: Settings = serde_json::from_str("{}").expect("empty settings");
+    assert_eq!(old.presence_position, PresencePosition::TopRight);
+    let s = Settings {
+        presence_position: PresencePosition::BottomLeft,
+        ..Settings::default()
+    };
+    let back: Settings = serde_json::from_str(&serde_json::to_string(&s).expect("serialize")).expect("read back");
+    assert_eq!(back.presence_position, PresencePosition::BottomLeft);
+    // Preferences › Chat › "Reset this section" puts it back
+    let mut s = back;
+    crate::ui::options::sections::reset(crate::ui::options::TAB_CHAT, &mut s);
+    assert_eq!(s.presence_position, PresencePosition::TopRight);
 }
 
 /// The top bar's state the geometry test draws the bars with.
@@ -230,7 +254,18 @@ fn frames(size: Vec2, classic: bool, at: PresencePosition) -> Frame {
             let area = crate::ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic);
             crate::ui::layout::set_work_area(ui.ctx(), area);
             let (mut names, mut wanted) = Default::default();
-            crate::ui::chat::toasts(ui.ctx(), &p, &world, &pics, &mut names, &mut wanted, bottom_top, 20.0, true, !classic);
+            crate::ui::chat::toasts(
+                ui.ctx(),
+                &p,
+                &world,
+                &pics,
+                &mut names,
+                &mut wanted,
+                bottom_top,
+                20.0,
+                true,
+                !classic,
+            );
             let mut env = ToastEnv {
                 pics: &pics,
                 emoji: &mut emoji,
@@ -270,6 +305,8 @@ fn the_toasts_never_cross_a_bar_nor_the_chat_lines() {
         Vec2::new(1280.0, 720.0),
         Vec2::new(1536.0, 864.0),
         Vec2::new(1920.0, 1080.0),
+        // the lowest window the viewer opens, and lower still
+        Vec2::new(1280.0, 560.0),
         Vec2::new(1280.0, 300.0),
     ];
     for size in windows {
@@ -287,7 +324,7 @@ fn the_toasts_never_cross_a_bar_nor_the_chat_lines() {
                     continue;
                 };
                 // three toasts of ~44 px and their gaps
-                assert!(low || toasts.height() > 3.0 * 40.0, "{case}: {toasts:?}");
+                assert!(size.y < 700.0 || toasts.height() > 3.0 * 40.0, "{case}: {toasts:?}");
                 assert!(Rect::from_min_size(Pos2::ZERO, size).contains_rect(toasts), "{case}: {toasts:?}");
                 for bar in &f.bars {
                     assert!(!overlaps(toasts, *bar), "{case}: {toasts:?} over the bar {bar:?}");
@@ -296,4 +333,128 @@ fn the_toasts_never_cross_a_bar_nor_the_chat_lines() {
             }
         }
     }
+}
+
+/// Frames of Aurora's center alone over a 1280 × 720 room, to click on the
+/// friends' toasts.
+struct Clicks {
+    ctx: egui::Context,
+    list: Notifications,
+    notif: NotifUi,
+    history: crate::world::notification_history::History,
+    emoji: crate::ui::emoji::Emoji,
+    time: f64,
+}
+
+impl Clicks {
+    fn new() -> Self {
+        Self {
+            ctx: egui::Context::default(),
+            list: Notifications::default(),
+            notif: NotifUi::default(),
+            history: Default::default(),
+            emoji: crate::ui::emoji::Emoji::load(),
+            time: 0.0,
+        }
+    }
+
+    /// One frame with `events`; the answers of the center.
+    fn frame(&mut self, at: PresencePosition, events: Vec<egui::Event>) -> Vec<(u64, crate::world::notifications::Response)> {
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let ratings = crate::world::worldmap::RegionRatings::default();
+        let pics = std::collections::HashMap::new();
+        self.time += 0.1;
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 720.0))),
+            time: Some(self.time),
+            events,
+            ..Default::default()
+        };
+        let mut answers = Vec::new();
+        let mut out = self.ctx.run_ui(input, |ui| {
+            crate::ui::layout::set_work_area(ui.ctx(), Rect::from_min_max(Pos2::new(8.0, 52.0), Pos2::new(1272.0, 664.0)));
+            // the bell island at the top right, as the bars report it
+            self.notif.bell = Some(Rect::from_min_size(Pos2::new(1236.0, 8.0), Vec2::splat(36.0)));
+            let mut env = ToastEnv {
+                pics: &pics,
+                emoji: &mut self.emoji,
+                hidden: false,
+                message_seconds: 30.0,
+                restart: None,
+                presence_at: at,
+                classic_bars: false,
+            };
+            answers = crate::ui::notification_center::show(
+                ui.ctx(),
+                &p,
+                &icons,
+                &ratings,
+                &mut self.list,
+                &mut self.history,
+                &mut self.notif,
+                &mut env,
+                false,
+            )
+            .0;
+        });
+        out.textures_delta.clear();
+        answers
+    }
+
+    /// The friends' toasts' area, after a few frames to lay them out.
+    fn toasts(&mut self, at: PresencePosition) -> Option<Rect> {
+        for _ in 0..3 {
+            self.frame(at, Vec::new());
+        }
+        let layer = LayerId::new(egui::Order::Foreground, Id::new("notification_presence"));
+        self.ctx
+            .memory(|m| m.areas().visible_last_frame(&layer).then(|| m.area_rect(layer.id)).flatten())
+    }
+
+    /// A click at `pos`: what the center answered.
+    fn click(&mut self, at: PresencePosition, pos: Pos2) -> Vec<(u64, crate::world::notifications::Response)> {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let mut answers = self.frame(at, vec![egui::Event::PointerMoved(pos), button(true)]);
+        answers.extend(self.frame(at, vec![button(false)]));
+        answers
+    }
+}
+
+/// The center answered only `Response::Open` for `id`: the IM opens.
+fn opens_im(answers: &[(u64, crate::world::notifications::Response)], id: u64) -> bool {
+    matches!(answers, [(i, crate::world::notifications::Response::Open)] if *i == id)
+}
+
+/// At each of the six places a click on a friend's "online" toast opens an
+/// IM with them (`Response::Open`, as on main); an "offline" toast is not
+/// clickable. At the top right, a toast that waited under the open list
+/// keeps that click once it shows.
+#[test]
+fn a_click_on_an_online_toast_opens_an_im() {
+    for at in PresencePosition::ALL {
+        let mut c = Clicks::new();
+        let id = c.list.push_presence(Uuid::from_u128(2), "Orion is online.", true);
+        let rect = c.toasts(at).unwrap_or_else(|| panic!("{at:?}: no toast"));
+        assert!(opens_im(&c.click(at, rect.center()), id), "{at:?}");
+
+        let mut c = Clicks::new();
+        c.list.push_presence(Uuid::from_u128(3), "Lune is offline.", false);
+        let rect = c.toasts(at).unwrap_or_else(|| panic!("{at:?}: no toast"));
+        assert!(c.click(at, rect.center()).is_empty(), "{at:?}: an offline toast is not clickable");
+    }
+    // waiting under the bell's open list, then shown when it closes
+    let at = PresencePosition::TopRight;
+    let mut c = Clicks::new();
+    c.notif.open = true;
+    let id = c.list.push_presence(Uuid::from_u128(2), "Orion is online.", true);
+    assert!(c.toasts(at).is_none(), "waits while the list is open");
+    c.notif.open = false;
+    let rect = c.toasts(at).expect("shown once the list is closed");
+    assert!(opens_im(&c.click(at, rect.center()), id));
 }

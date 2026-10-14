@@ -10,12 +10,12 @@
 
 use super::icons::Icons;
 use super::notifications::{self as cards, NotifUi, ToastEnv};
+use crate::settings::PresencePosition;
 use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
 use crate::world::notification_history::{self as history, Entry, Follow, History, Outcome};
 use crate::world::notifications::{Data, Notification, Notifications, Response};
 use crate::world::worldmap::RegionRatings;
-use crate::settings::PresencePosition;
 use egui::{Rect, RichText, Vec2};
 
 /// Width of the panel under the bell (the mockup's 360 px).
