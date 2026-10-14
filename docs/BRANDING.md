@@ -252,16 +252,20 @@ dragging a handle switch to `violet_light`, like any selection.
   `aurora_i18n::tr!` (see [TRANSLATING.md](TRANSLATING.md)); English is the
   fallback. A tooltip explains every option whose effect is not obvious.
 - **Snapping windows.** A window moved near another one, a bar or an edge
-  follows the pointer without a jump; what will happen on release is shown
+  follows the pointer without a jump. Moving without Alt creates no snap
+  or attachment. With Alt held, what will happen on release is shown
   by a guide: a 2 px line in `violet_light` along the edges that are going
   to touch (over the length they share) or to align, and the very light
   outline of the place where the window will land, with the window radius.
   No guide, no snapping. Snapped windows touch, edge to edge, with each
   other as with the bars and the edges, with no gap, like those of the
   first-launch layout (`layout::GAP`, at 0). During the gesture, a small
-  pill on the window glass recalls the key that releases: the Alt key as a
-  keycap (`widgets::keycap`) followed by "do not snap" or "detach this
-  window", in `muted` text, placed near the window, away from the guide and
+  pill on the window glass recalls Alt's role: the keycap (`widgets::keycap`)
+  followed by "snap and attach" for a free move, "detach this window" for
+  a grouped move, or "do not snap" for a snapped resize. Alt detaches a
+  moved window from its group and enables attachment to a new target;
+  resizing keeps automatic snapping, disabled by Alt. The pill uses `muted`
+  text, placed near the window, away from the guide and
   the pointer, after a short delay. No button and no permanent decoration
   for snapped windows.
 

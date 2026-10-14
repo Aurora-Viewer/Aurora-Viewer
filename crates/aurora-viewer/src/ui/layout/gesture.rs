@@ -1,6 +1,7 @@
 //! The gestures on the windows: a window dragged by its title or resized by
 //! an edge is offered a snap (`snap::find`), the windows snapped side by
-//! side are glued and move as one block.
+//! side are glued and move as one block. Moving only offers a snap while
+//! Alt is held; Alt also takes the dragged window out of its group.
 //!
 //! egui moves the dragged window itself (`egui::Area`: where it stood when
 //! the drag began plus the travel of the pointer, kept inside the work area).
@@ -21,7 +22,7 @@ pub(super) struct Pointer {
     pub stopped: Option<Id>,
     /// How far the pointer went since it was pressed.
     pub total: Vec2,
-    /// Alt held: the window moves alone, free of its neighbors and of snaps.
+    /// Alt held: the window leaves its group and can snap to a new target.
     pub alt: bool,
     pub time: f64,
 }
@@ -155,11 +156,7 @@ impl Windows {
         if released {
             // egui leaves the windows where the last frame had them, and the
             // snap shown then is the one applied
-            let snap = if snap_enabled && !pointer.alt {
-                moved.snap
-            } else {
-                Snap::default()
-            };
+            let snap = if snap_enabled && pointer.alt { moved.snap } else { Snap::default() };
             if snap.is_none() {
                 return None;
             }
@@ -207,7 +204,9 @@ impl Windows {
             min_size: Vec2::ZERO,
             max_size: Vec2::INFINITY,
         };
-        moved.snap = if snap_enabled && !pointer.alt {
+        // Deliberate difference from Firestorm's LLDragHandle::handleHover:
+        // only an Alt drag can attach a window, avoiding accidental groups.
+        moved.snap = if snap_enabled && pointer.alt {
             snap::find(&scene, moved.snap)
         } else {
             Snap::default()
@@ -216,8 +215,8 @@ impl Windows {
             None
         } else if movers.len() > 1 {
             Some(overlay::Hint::Detach)
-        } else if !moved.snap.is_none() {
-            Some(overlay::Hint::NoSnap)
+        } else if snap_enabled {
+            Some(overlay::Hint::Snap)
         } else {
             None
         };
@@ -443,7 +442,9 @@ mod tests {
         fn glue(&mut self) {
             self.idle(3);
             let a = self.rect(A);
+            self.alt = true;
             self.drop_at(B, Pos2::new(a.right() + GAP + 6.0, a.top() + 5.0));
+            self.alt = false;
             assert!(self.linked(A, B));
         }
     }
@@ -451,11 +452,12 @@ mod tests {
     /// The window follows the pointer freely; the snap is applied when the
     /// mouse is released, and the two windows are glued.
     #[test]
-    fn a_window_dropped_near_another_snaps_to_it() {
+    fn a_window_dropped_near_another_with_alt_snaps_to_it() {
         let mut s = Session::new();
         s.idle(3);
         let a = s.rect(A);
         let near = Pos2::new(a.right() + GAP + 6.0, a.top() + 5.0);
+        s.alt = true;
         let at = s.hold_at(B, near);
         assert_eq!(s.rect(B).min, near, "no jump under the pointer");
         assert!(!s.linked(A, B));
@@ -481,30 +483,67 @@ mod tests {
         let mut s = Session::new();
         s.idle(3);
         let work = default_work_area(Rect::from_min_size(Pos2::ZERO, s.screen));
+        s.alt = true;
         s.drop_at(A, Pos2::new(work.left() + GAP + 5.0, work.top() + GAP + 6.0));
         assert_eq!(s.rect(A).min, work.left_top() + Vec2::splat(GAP));
         assert!(windows(&s.ctx, |w| w.links.is_empty()));
     }
 
     #[test]
-    fn snapping_can_be_turned_off_or_skipped_with_alt() {
+    fn a_window_dropped_without_alt_neither_snaps_nor_attaches() {
+        let mut s = Session::new();
+        s.idle(3);
+        let a = s.rect(A);
+        // Near a target and exactly touching it must both leave B independent.
+        for offset in [Vec2::new(6.0, 5.0), Vec2::ZERO] {
+            let near = Pos2::new(a.right() + GAP, a.top()) + offset;
+            s.drop_at(B, near);
+            assert_eq!(s.rect(B).min, near);
+            assert!(!s.linked(A, B));
+        }
+        let b = s.rect(B);
+        s.drop_at(A, a.min + Vec2::new(70.0, 50.0));
+        assert_eq!(s.rect(B), b, "merely touching windows do not move together");
+    }
+
+    #[test]
+    fn the_snap_setting_still_disables_an_alt_drag() {
         let mut s = Session::new();
         s.idle(3);
         let a = s.rect(A);
         let near = Pos2::new(a.right() + GAP + 6.0, a.top() + 5.0);
         s.snap = false;
-        s.drop_at(B, near);
-        assert_eq!(s.rect(B).min, near);
-        assert!(!s.linked(A, B));
-        // the setting back on, Alt held for this drag
-        s.snap = true;
-        s.drop_at(B, Pos2::new(900.0, 500.0));
         s.alt = true;
         s.drop_at(B, near);
-        s.alt = false;
-        s.idle(2);
         assert_eq!(s.rect(B).min, near);
         assert!(!s.linked(A, B));
+    }
+
+    #[test]
+    fn releasing_alt_before_the_mouse_cancels_the_offered_snap() {
+        let mut s = Session::new();
+        s.idle(3);
+        let a = s.rect(A);
+        let near = Pos2::new(a.right() + GAP + 6.0, a.top() + 5.0);
+        s.alt = true;
+        let at = s.hold_at(B, near);
+        s.alt = false;
+        s.release(at);
+        assert_eq!(s.rect(B).min, near);
+        assert!(!s.linked(A, B));
+    }
+
+    #[test]
+    fn pressing_alt_during_a_drag_enables_attachment() {
+        let mut s = Session::new();
+        s.idle(3);
+        let a = s.rect(A);
+        let at = s.hold_at(B, Pos2::new(a.right() + GAP + 6.0, a.top() + 5.0));
+        s.alt = true;
+        s.idle(2);
+        s.release(at);
+        assert_eq!(s.rect(B).min, Pos2::new(a.right() + GAP, a.top()));
+        assert!(s.linked(A, B));
     }
 
     #[test]
@@ -575,6 +614,24 @@ mod tests {
     }
 
     #[test]
+    fn an_alt_drag_detaches_a_window_and_attaches_it_to_another() {
+        let mut s = Session::new();
+        s.glue();
+        let a = s.rect(A);
+        let map = s.rect(MAP);
+        s.alt = true;
+        s.drop_at(B, Pos2::new(map.left() - s.rect(B).width() - GAP - 6.0, map.top() + 5.0));
+        assert_eq!(s.rect(A), a);
+        assert!(!s.linked(A, B));
+        assert!(s.linked(B, MAP));
+        s.alt = false;
+        let b = s.rect(B);
+        s.drop_at(B, b.min + Vec2::new(-60.0, 100.0));
+        assert_eq!(s.rect(MAP), map.translate(Vec2::new(-60.0, 100.0)));
+        assert_eq!(s.rect(A), a);
+    }
+
+    #[test]
     fn closing_or_minimizing_a_window_frees_it() {
         let mut s = Session::new();
         s.glue();
@@ -606,7 +663,9 @@ mod tests {
         // A against the left half, B on its right, past the middle
         s.drop_at(A, Pos2::new(330.0, 200.0));
         let a = s.rect(A);
+        s.alt = true;
         s.drop_at(B, Pos2::new(a.right() + GAP + 4.0, a.top()));
+        s.alt = false;
         assert!(s.linked(A, B));
         let (a, b) = (s.rect(A), s.rect(B));
         let screen = Rect::from_min_size(Pos2::ZERO, s.screen);
@@ -707,9 +766,11 @@ mod tests {
         // dragged by its middle, dropped under A
         let from = map.center();
         let to = from + (Pos2::new(a.left() + 3.0, a.bottom() + GAP - 5.0) - map.min);
+        s.alt = true;
         s.press_and_hold(from, to);
         assert_eq!(s.rect(MAP).min, Pos2::new(a.left() + 3.0, a.bottom() + GAP - 5.0));
         s.release(to);
+        s.alt = false;
         let map = s.rect(MAP);
         assert_eq!(map.min, Pos2::new(a.left(), a.bottom() + GAP));
         assert_eq!(map.size(), Vec2::splat(200.0));
