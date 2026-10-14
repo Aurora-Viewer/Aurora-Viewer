@@ -45,6 +45,7 @@ mod inventory_thumbnail;
 mod marketplace_listings;
 mod object_actions;
 mod plate_click;
+mod report_abuse;
 mod reset_skeleton;
 mod scripts;
 mod shape_editor;
@@ -338,6 +339,8 @@ pub struct App {
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// Report Abuse (LLFloaterReporter).
+    report_abuse: ui::report_abuse::ReportAbuseUi,
     /// The depth of field's focus distance and its transition.
     dof_focus: crate::dof::Focus,
     /// Photos: the window, the frames drawn at their size, the saves.
@@ -733,6 +736,7 @@ impl App {
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
             hover_height_ui: Default::default(),
+            report_abuse: Default::default(),
             dof_focus: Default::default(),
             snapshots: Default::default(),
             inspect_ui: Default::default(),
@@ -1725,11 +1729,14 @@ impl App {
         }
         match ev {
             NetEvent::ObjectProperties(props) => {
+                self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
                 self.interactions.on_properties(&props);
                 self.build.on_properties(props);
             }
             NetEvent::PayPrice { object, default, buttons } => self.interactions.on_prices(object, default, buttons),
+            NetEvent::AbuseCategories(list) => self.report_abuse.set_categories(list),
+            NetEvent::AbuseReportSent(result) => self.report_abuse_sent(result),
             NetEvent::TaskInventory { object, serial, result } => {
                 self.interactions.on_purchase_inventory(object, &result);
                 let items = result
@@ -3610,6 +3617,12 @@ impl App {
     /// Run by `click`; false also when it stopped to ask for the depth under
     /// the cursor (`ClickWait::waiting`), to run again when it has come.
     fn build_mouse_down(&mut self) -> bool {
+        // Report Abuse's object picker takes the click (LLToolObjPicker)
+        if self.report_abuse.picking {
+            self.left_down = true;
+            self.report_abuse_pick();
+            return true;
+        }
         if self.color_pipette() {
             self.left_down = true;
             self.sample_build_color();
@@ -5528,6 +5541,7 @@ impl App {
                 gfx.renderer.capture_scene = true;
             }
         }
+        self.report_abuse_capture(&mut gfx.renderer);
         self.sound_cues.before(&ctx, &raw);
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
         let mut inventory_drop = None;
@@ -5684,7 +5698,7 @@ impl App {
             full.platform_output.cursor_icon = cursor;
             full.platform_output.cursor_image = self.cursors.inventory_drag(cursor);
         }
-        if self.color_pipette() && !ctx.is_pointer_over_egui() {
+        if (self.color_pipette() || self.report_abuse.picking) && !ctx.is_pointer_over_egui() {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
             full.platform_output.cursor_image = self.cursors.pipette();
         }
@@ -5757,6 +5771,7 @@ impl App {
                 || self.inventory_images.capturing.is_some()
                 || self.inventory_images.auto_capture_pending
                 || self.bug_report.capture_pending
+                || self.report_abuse.capture_pending
             {
                 self.inventory_images.capture = Some(request);
             } else {
@@ -5769,6 +5784,7 @@ impl App {
             && self.inventory_images.capturing.is_none()
             && !self.inventory_images.auto_capture_pending
             && !self.bug_report.capture_pending
+            && !self.report_abuse.capture_pending
         {
             self.want_scene_capture = false;
             self.scene_capture_place = None;
@@ -5972,6 +5988,7 @@ impl App {
         {
             self.bug_report.captured(w, h, pixels);
         }
+        self.report_abuse_captured(&mut gfx.renderer);
         if self.inventory_images.capturing.is_some()
             && let Some((w, h, pixels)) = gfx.renderer.captured.take()
             && let Some(request) = self.inventory_images.capturing.take()
@@ -6819,6 +6836,7 @@ impl App {
         match a.bar {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.bug_report.requested = true,
+            BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
             BarAction::Import { choice, pick_files } => {
                 if pick_files {
                     self.imports.open_file_picker(choice);
@@ -8129,6 +8147,7 @@ impl App {
                     self.world.experiences.change(experience, change);
                 }
                 self.photo_ui(&ctx, &p, renderer);
+                self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
                 if self.hover_height_ui.show(
                     &ctx,

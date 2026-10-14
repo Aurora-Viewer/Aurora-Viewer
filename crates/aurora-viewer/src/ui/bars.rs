@@ -13,6 +13,8 @@ use egui::{Color32, RichText, Vec2};
 pub enum BarAction {
     CheckUpdates,
     ReportBug,
+    /// Help › Report Abuse (LLFloaterReporter::showFromMenu).
+    ReportAbuse,
     Import {
         choice: crate::imports::Choice,
         pick_files: bool,
@@ -605,6 +607,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         if menu::item(ui, p, "bug-filled", aurora_i18n::tr!("bug-title")) {
             *action = BarAction::ReportBug;
+        }
+        if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("report-abuse-title")) {
+            *action = BarAction::ReportAbuse;
         }
         menu::separator(ui, p);
         let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
