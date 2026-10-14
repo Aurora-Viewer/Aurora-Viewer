@@ -4641,6 +4641,10 @@ ui-options-aurora-look-at = Look-at targets
 ui-options-aurora-look-at-help = A glowing dot with a name pill, or a wire crosshair. Shown when "Show look-at targets" is on (Privacy).
 ui-options-aurora-halo = Halo
 ui-options-aurora-crosshair = Crosshair (Firestorm)
+ui-options-aurora-about-land = About Land
+ui-options-aurora-about-land-help = An overview and settings grouped by what you want to do, or Firestorm's 9 tabs.
+ui-options-aurora-about-land-aurora = Aurora
+ui-options-aurora-about-land-classic = Classic window (Firestorm)
 ui-options-aurora-gaze = Gaze
 ui-options-aurora-aim = Where your gaze goes
 ui-options-aurora-aim-help = Your avatar looks at the exact point under the cursor, or turns its head toward the cursor's side like Firestorm.
@@ -4935,6 +4939,82 @@ ui-land-mod-objects-over-capacity = { $count ->
     [one] { $count } object over the capacity, which will be returned
    *[other] { $count } objects over the capacity, which will be returned
     }
+ui-land-overview-tab = Overview
+ui-land-overview-manage-tab = Manage
+ui-land-overview-people-tab = People and objects
+ui-land-overview-change-picture = Change the picture
+ui-land-overview-public-land = Public land
+ui-land-overview-group-owner = Owned by the group
+ui-land-overview-group-word = group
+ui-land-overview-objects-free = { $n ->
+    [one] { $count } free
+   *[other] { $count } free
+    }
+ui-land-overview-access = Access
+ui-land-overview-arrival = Arrival
+ui-land-overview-open-to-all = Open to all
+ui-land-overview-group-and-list = Group and list
+ui-land-overview-list-only = List only
+ui-land-overview-arrival-blocked = Blocked
+ui-land-overview-arrival-fixed = Landing point
+ui-land-overview-arrival-fixed-at = Landing point ({ $position })
+ui-land-overview-arrival-anywhere = Anywhere
+ui-land-overview-build = Build
+ui-land-overview-build-group = Build: group
+ui-land-overview-no-build = No building
+ui-land-overview-scripts = Scripts
+ui-land-overview-scripts-group = Scripts: group
+ui-land-overview-no-scripts = No scripts
+ui-land-overview-fly = Fly
+ui-land-overview-no-fly = No flying
+ui-land-overview-push = Pushing
+ui-land-overview-no-push = No pushing
+ui-land-overview-safe = No damage
+ui-land-overview-damage = Damage
+ui-land-overview-damage-tip = Damage allowed: you can be hurt here
+ui-land-overview-voice = Voice
+ui-land-overview-no-voice = No voice
+ui-land-overview-object-entry = Object entry
+ui-land-overview-object-entry-group = Object entry: group
+ui-land-overview-no-object-entry = No object entry
+ui-land-overview-no-object-entry-tip = Objects from other parcels cannot enter this one
+ui-land-overview-go-to-landing-point = Go to the landing point
+ui-land-overview-go-to-parcel = Go to the parcel
+ui-land-overview-slurl = SLURL
+ui-land-overview-buy = Buy…
+ui-land-overview-report = Report
+ui-land-overview-more = More actions
+ui-land-overview-copy-land-id = Copy the land ID
+ui-land-overview-description = Description
+ui-land-overview-no-description = No description.
+ui-land-overview-covenant = Estate covenant
+ui-land-overview-read-all = Read all ›
+ui-land-overview-read-less = Show less ‹
+ui-land-overview-resell = { $allowed ->
+    [yes] Resale: yes
+   *[no] Resale: no
+    }
+ui-land-overview-join-subdivide = { $allowed ->
+    [yes] Join / subdivide: yes
+   *[no] Join / subdivide: no
+    }
+ui-land-overview-modified-on = Modified on { $date }
+ui-land-overview-never-modified = Never modified
+ui-land-overview-date = { $month } { $day }, { $year }
+ui-land-overview-info = Info
+ui-land-overview-estate = Estate
+ui-land-overview-region = Region
+ui-land-overview-in-search = In search
+ui-land-overview-traffic = Traffic
+ui-land-overview-acquired = Acquired on
+ui-land-overview-sale = Sale
+ui-land-overview-for-sale-price = For sale: L$ { $price }
+ui-land-overview-land-id = Land ID
+ui-land-overview-click-to-copy = Click to copy
+ui-land-overview-media-and-sound = Media and sound
+ui-land-overview-media = Media
+ui-land-overview-none = None
+ui-land-overview-no-page = no page
 ui-group-profile-title = Group Profile
 ui-group-profile-view = View the group's profile
 

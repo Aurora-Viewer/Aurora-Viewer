@@ -34,6 +34,11 @@ fn categories() -> [(i32, &'static str); 13] {
     ]
 }
 
+/// The name of a category, none for "any category" (C_NONE).
+pub(super) fn category_name(category: i32) -> Option<&'static str> {
+    categories().into_iter().find(|c| c.0 == category && c.0 != 0).map(|c| c.1)
+}
+
 /// Teleport routing (LLParcel::ELandingType).
 fn landing_types() -> [&'static str; 3] {
     [

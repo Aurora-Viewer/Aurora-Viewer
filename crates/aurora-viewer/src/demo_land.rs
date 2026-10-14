@@ -1,12 +1,17 @@
-//! About Land in the offline demo (`AURORA_DEMO_LAND=<tab>[:owner]`):
+//! About Land in the offline demo (`AURORA_DEMO_LAND=<tab>[:role][:classic]`):
 //! the simulator's answers to the floater's requests, for the plaza
-//! parcel (north-east quarter of the demo region). Without `:owner` the
-//! parcel belongs to a group the avatar has no powers in (everything
-//! greyed, like a visitor); with it, the avatar owns it and can change it.
+//! parcel (north-east quarter of the demo region). The role says who the
+//! avatar is to the parcel: without one it belongs to a group the avatar
+//! has no powers in (everything greyed); `owner` makes the avatar its owner,
+//! `officer` gives the avatar the land powers of the owning group but those
+//! of sale, deed and terraforming, `visitor` gives the parcel to another
+//! resident and a group the avatar is not in. `classic` shows Firestorm's
+//! nine tabs for the session, whatever Preferences › Aurora says.
 //! `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` sets the objects on the owner's
 //! land and makes them grow at each answer (the floater's refresh).
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS, TEX_GRADIENT};
+use crate::world::land::powers;
 use aurora_llsd::Llsd;
 use aurora_net::land::{AL_ACCESS, AL_ALLOW_EXPERIENCE, AL_BAN, AccessEntry, FoundAvatar, LandCommand, LandEvent, ObjectOwner};
 use aurora_net::{NetEvent, ParcelInfo, ParcelMedia, parcel_flags as pf};
@@ -27,11 +32,76 @@ pub const MUSIC_URL: &str = "http://flux.exemple.org:8000/";
 /// The demo parcel as the "simulator" keeps it (updates are applied).
 static PARCEL: Mutex<Option<ParcelInfo>> = Mutex::new(None);
 
-/// AURORA_DEMO_LAND: (tab name, the avatar owns the parcel).
-pub fn scenario() -> Option<(String, bool)> {
-    let v = std::env::var("AURORA_DEMO_LAND").ok()?;
-    let (tab, owner) = v.split_once(':').map_or((v.as_str(), false), |(t, o)| (t, o == "owner"));
-    Some((tab.to_owned(), owner))
+/// The group of the visitor's parcel, which the avatar is not in.
+const VISITOR_GROUP: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0009);
+
+/// Who the avatar is to the demo parcel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// A member of the owning group, without powers.
+    Member,
+    Owner,
+    /// A member of the owning group with its land powers.
+    Officer,
+    /// Someone else's parcel, a group the avatar is not in.
+    Visitor,
+}
+
+/// What AURORA_DEMO_LAND asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scenario {
+    pub tab: String,
+    pub role: Role,
+    /// Firestorm's nine tabs for the session.
+    pub classic: bool,
+}
+
+/// `<tab>[:role][:classic]`, the role and `classic` in any order.
+fn parse(v: &str) -> Scenario {
+    let mut parts = v.split(':');
+    let tab = parts.next().unwrap_or_default().to_owned();
+    let mut s = Scenario {
+        tab,
+        role: Role::Member,
+        classic: false,
+    };
+    for part in parts {
+        match part.trim() {
+            "owner" => s.role = Role::Owner,
+            "officer" => s.role = Role::Officer,
+            "visitor" => s.role = Role::Visitor,
+            "classic" => s.classic = true,
+            _ => {}
+        }
+    }
+    s
+}
+
+pub fn scenario() -> Option<Scenario> {
+    std::env::var("AURORA_DEMO_LAND").ok().map(|v| parse(&v))
+}
+
+/// The powers an officer has in the owning group: everything of the land
+/// but sale, deed, release and terraforming, so that some settings stay
+/// read only.
+pub const OFFICER_POWERS: u64 = powers::LAND_FIND_PLACES
+    | powers::LAND_CHANGE_IDENTITY
+    | powers::LAND_SET_LANDING_POINT
+    | powers::LAND_CHANGE_MEDIA
+    | powers::LAND_OPTIONS
+    | powers::LAND_MANAGE_ALLOWED
+    | powers::LAND_MANAGE_BANNED
+    | powers::LAND_RETURN_GROUP_SET
+    | powers::LAND_RETURN_NON_GROUP
+    | powers::LAND_ALLOW_ENVIRONMENT
+    | powers::LAND_RETURN_GROUP_OWNED;
+
+/// The powers the avatar has in `group` beyond the demo's own.
+pub fn group_powers(group: Uuid) -> u64 {
+    match scenario() {
+        Some(s) if s.role == Role::Officer && group == DEMO_GROUP1 => OFFICER_POWERS,
+        _ => 0,
+    }
 }
 
 fn now() -> i32 {
@@ -41,15 +111,20 @@ fn now() -> i32 {
         .unwrap_or(0)
 }
 
-fn initial(owner: bool) -> ParcelInfo {
+fn initial(role: Role) -> ParcelInfo {
+    let (owner_id, group_id) = match role {
+        Role::Owner => (DEMO_AGENT, DEMO_GROUP1),
+        Role::Member | Role::Officer => (DEMO_GROUP1, DEMO_GROUP1),
+        Role::Visitor => (DEMO_NOVA, VISITOR_GROUP),
+    };
     ParcelInfo {
         local_id: 1,
         sequence_id: aurora_net::land::SELECTED_PARCEL_SEQ_ID,
         name: aurora_i18n::tr!("demo-land-aurora-plaza-offline-demo").into(),
         desc: aurora_i18n::tr!("demo-land-aurora-viewer-s-offline-demo-parcel-visit-the-fountain").into(),
-        owner_id: if owner { DEMO_AGENT } else { DEMO_GROUP1 },
-        group_id: DEMO_GROUP1,
-        is_group_owned: !owner,
+        owner_id,
+        group_id,
+        is_group_owned: owner_id == group_id,
         status: aurora_net::land::OS_LEASED,
         area: 16384,
         claim_date: 1_655_576_350,
@@ -66,7 +141,6 @@ fn initial(owner: bool) -> ParcelInfo {
         sim_total_prims: 5387,
         other_clean_time: 0,
         flags: pf::ALLOW_FLY
-            | pf::CREATE_OBJECTS
             | pf::CREATE_GROUP_OBJECTS
             | pf::ALLOW_OTHER_SCRIPTS
             | pf::ALLOW_GROUP_SCRIPTS
@@ -77,14 +151,15 @@ fn initial(owner: bool) -> ParcelInfo {
             | pf::RESTRICT_PUSHOBJECT
             | pf::USE_BAN_LIST
             | pf::MATURE_PUBLISH,
-        category: 9,
+        // residential, with a fixed landing point (the overview's mockup)
+        category: 10,
         pass_price: 88,
         pass_hours: 1.0,
         music_url: MUSIC_URL.into(),
         snapshot_id: TEX_GRADIENT,
         user_location: Vec3::new(140.0, 130.0, 25.0),
         user_look_at: Vec3::new(1.0, 0.0, 0.0),
-        landing_type: 2,
+        landing_type: 1,
         see_avatars: true,
         any_av_sounds: true,
         group_av_sounds: true,
@@ -105,7 +180,8 @@ fn initial(owner: bool) -> ParcelInfo {
 
 pub(super) fn parcel() -> ParcelInfo {
     let mut g = PARCEL.lock();
-    g.get_or_insert_with(|| initial(scenario().is_some_and(|s| s.1))).clone()
+    g.get_or_insert_with(|| initial(scenario().map_or(Role::Member, |s| s.role)))
+        .clone()
 }
 
 /// AURORA_DEMO_LAND_PRIMS=<used>[,<step>]: objects on the owner's land in
@@ -278,5 +354,56 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
             mime: "text/html".into(),
         })],
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::land::{AgentRights, modifiable_by_agent};
+    use aurora_net::GroupMembership;
+
+    #[test]
+    fn roles_and_the_classic_window() {
+        assert_eq!(
+            parse("options"),
+            Scenario {
+                tab: "options".into(),
+                role: Role::Member,
+                classic: false
+            }
+        );
+        assert_eq!(parse("general:owner").role, Role::Owner);
+        let s = parse("overview:classic:visitor");
+        assert_eq!((s.tab.as_str(), s.role, s.classic), ("overview", Role::Visitor, true));
+        assert_eq!(parse("access:officer").role, Role::Officer);
+    }
+
+    /// Each role has the rights it is named after.
+    #[test]
+    fn each_role_gets_its_rights() {
+        let member = |powers: u64| GroupMembership {
+            id: DEMO_GROUP1,
+            name: "Aurora Builders".into(),
+            insignia: Uuid::nil(),
+            powers: (1 << 16) | powers,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        };
+        let can = |role: Role, groups: &[GroupMembership], power: u64| {
+            let rights = AgentRights { id: DEMO_AGENT, groups };
+            modifiable_by_agent(&initial(role), &rights, power)
+        };
+        let officer = [member(OFFICER_POWERS)];
+        let plain = [member(0)];
+        assert!(can(Role::Owner, &plain, powers::LAND_OPTIONS));
+        assert!(can(Role::Officer, &officer, powers::LAND_OPTIONS));
+        assert!(!can(Role::Officer, &officer, powers::LAND_EDIT), "terraforming stays read only");
+        assert!(!can(Role::Officer, &officer, powers::LAND_SET_SALE_INFO));
+        assert!(!can(Role::Member, &plain, powers::LAND_OPTIONS));
+        assert!(!can(Role::Visitor, &plain, powers::LAND_OPTIONS));
+        let visitor = initial(Role::Visitor);
+        assert!(!visitor.is_group_owned && visitor.group_id != DEMO_GROUP1);
     }
 }

@@ -54,7 +54,9 @@ pub(super) fn widget_type(mime: &str) -> &'static str {
     }
 }
 
-fn widget(mime: &str) -> Option<(&'static str, &'static str, &'static str, bool, bool)> {
+/// The widget set of a MIME type: (key, label, default type, allow_resize,
+/// allow_looping).
+pub(super) fn widget(mime: &str) -> Option<(&'static str, &'static str, &'static str, bool, bool)> {
     let w = widget_type(mime);
     widgets().into_iter().find(|x| x.0 == w)
 }

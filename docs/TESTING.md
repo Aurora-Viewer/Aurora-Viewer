@@ -1296,7 +1296,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
-| `AURORA_DEMO_LAND=<tab>[:owner]` | "About Land" on a tab |
+| `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_GROUP_PROFILE=1` | Profile window of the demo parcel's group |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
@@ -1854,11 +1854,23 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (tab 0 Second Life, 1 Feed, 2 Favorites, 3 Classifieds, 4 Real life, 5 Notes).
 - **`AURORA_DEMO_FEED=<url>`**: the user name and `/?feed_only=true`
   are appended to the address; a `data:` URL can put them in a comment.
-- **`AURORA_DEMO_LAND=<tab>[:owner]`**: tabs `general`, `covenant`,
-  `objects`, `options`, `media`, `sound`, `access`, `experiences`,
-  `environment`, or their index; `:owner` makes the avatar the owner of the
-  parcel (controls enabled), otherwise it belongs to a group without
-  powers.
+- **`AURORA_DEMO_LAND=<tab>[:role][:classic]`**: the pages of Aurora's
+  window `overview`, `manage`, `people`, or the tabs of the classic window
+  `general`, `covenant`, `objects`, `options`, `media`, `sound`, `access`,
+  `experiences`, `environment` (or their index); Aurora's window opens a
+  tab on the page that holds it (`options` on "Manage", `access` on
+  "People and objects", `covenant` on the overview). Roles: `owner` makes
+  the avatar the owner of the parcel (everything editable); `officer`
+  leaves the parcel to the group "Aurora Builders" and gives the avatar
+  its land powers except sale, deed, release and terraforming (the
+  camera over the picture shows, "Edit land" stays greyed); `visitor`
+  gives the parcel to another resident and to a group the avatar is not
+  in (no camera, "Buy a pass" follows the parcel); without a role the
+  parcel belongs to the group and the avatar has no powers in it.
+  `:classic` shows Firestorm's nine tabs for the session without saving
+  the choice of Preferences › Aurora. The demo parcel is residential, with
+  a fixed landing point and building and object entry for its group, like
+  the mockup; `AURORA_DEMO_LAND_PRIMS=10500` gives its objects gauge.
 - **`AURORA_DEMO_LAND_PRIMS=<used>[,<step>]`**: with `AURORA_DEMO_LAND`,
   the objects of the owner's land in the region (out of 15,000); the
   gauge of the header is violet, orange when 20% or less is left

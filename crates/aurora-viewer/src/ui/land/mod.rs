@@ -5,9 +5,12 @@
 //! world/land.rs), each control enabled by the same rights as Firestorm
 //! (isParcelModifiableByAgent with the matching group power). Changes are
 //! sent at once like the panels' onCommitAny (sendParcelPropertiesUpdate,
-//! access list updates...).
+//! access list updates...). By default the same panes are laid out by
+//! Aurora (`aurora.rs`): an overview first, then the settings and the lists;
+//! the nine tabs stay in Preferences › Aurora.
 
 mod access;
+mod aurora;
 mod covenant;
 mod dialogs;
 mod environment;
@@ -17,7 +20,10 @@ mod general;
 mod media;
 mod objects;
 mod options;
+mod overview;
 mod sound;
+
+use aurora::Page;
 
 use super::avatar_picker::AvatarPicker;
 use super::texture_picker::TexturePicker;
@@ -46,6 +52,32 @@ enum Tab {
 }
 
 impl Tab {
+    const ALL: [Tab; 9] = [
+        Tab::General,
+        Tab::Covenant,
+        Tab::Objects,
+        Tab::Options,
+        Tab::Media,
+        Tab::Sound,
+        Tab::Access,
+        Tab::Experiences,
+        Tab::Environment,
+    ];
+
+    fn icon(self) -> &'static str {
+        match self {
+            Tab::General => "home-filled",
+            Tab::Covenant => "file-description-filled",
+            Tab::Objects => "box",
+            Tab::Options => "settings-filled",
+            Tab::Media => "device-tv-filled",
+            Tab::Sound => "device-speaker-filled",
+            Tab::Access => "key-filled",
+            Tab::Experiences => "flask-filled",
+            Tab::Environment => "leaf-filled",
+        }
+    }
+
     /// Name of the tab for AURORA_DEMO_LAND, whatever the interface language.
     fn key(self) -> &'static str {
         match self {
@@ -186,7 +218,15 @@ enum PickFor {
 
 #[derive(Default)]
 pub struct LandUi {
+    /// The classic window's tab.
     tab: Tab,
+    /// The Aurora window's page, and the pane of the classic window each
+    /// page shows for now.
+    page: Page,
+    manage_tab: Tab,
+    people_tab: Tab,
+    /// The overview's covenant shown in full.
+    covenant_open: bool,
     was_open: bool,
     name: Draft,
     desc: Draft,
@@ -220,6 +260,8 @@ pub struct LandUi {
     file_job: Option<files::Job>,
     /// Images to stream (snapshot, media texture).
     pub wanted_images: HashSet<Uuid>,
+    /// Residents whose profile picture the header waits for.
+    pub wanted_pics: HashSet<Uuid>,
 }
 
 impl LandUi {
@@ -241,30 +283,30 @@ impl LandUi {
     }
 
     /// Show a tab by its key (`Tab::key`), its label in the interface language
-    /// or its index (demo captures).
+    /// or its index (demo captures). The Aurora window opens the page that
+    /// holds it, or a page by its key (`Page::key`).
     pub fn set_tab(&mut self, name: &str) {
-        let all = [
-            Tab::General,
-            Tab::Covenant,
-            Tab::Objects,
-            Tab::Options,
-            Tab::Media,
-            Tab::Sound,
-            Tab::Access,
-            Tab::Experiences,
-            Tab::Environment,
-        ];
         let key = name.trim().to_lowercase();
+        if let Some(page) = Page::ALL.into_iter().find(|p| p.key() == key) {
+            self.page = page;
+            return;
+        }
         let by_name = |t: &&Tab| {
             let l = t.label().to_lowercase();
             t.key() == key || l == key || l.replace(['é', 'è'], "e") == key
         };
-        if let Some(t) = all
+        if let Some(t) = Tab::ALL
             .iter()
             .find(by_name)
-            .or_else(|| key.parse::<usize>().ok().and_then(|i| all.get(i)))
+            .or_else(|| key.parse::<usize>().ok().and_then(|i| Tab::ALL.get(i)))
         {
             self.tab = *t;
+            self.page = Page::of(*t);
+            match self.page {
+                Page::Manage => self.manage_tab = *t,
+                Page::People => self.people_tab = *t,
+                Page::Overview => {}
+            }
         }
     }
 
@@ -280,8 +322,10 @@ impl LandUi {
     }
 
     /// Show the floater; `open` is the panel flag (the top bar ⓘ, menus),
-    /// `region_map` the mini-map's image of the selection's region,
-    /// `streams` the saved music streams. True when they changed.
+    /// `region_map` the mini-map's image of the selection's region (the
+    /// classic header), `avatars` the profile pictures, `streams` the saved
+    /// music streams. `classic`: Firestorm's nine tabs rather than Aurora's
+    /// pages. True when the streams changed.
     #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
@@ -289,9 +333,11 @@ impl LandUi {
         p: &Palette,
         world: &mut World,
         images: &HashMap<Uuid, egui::TextureHandle>,
+        avatars: &HashMap<Uuid, egui::TextureHandle>,
         region_map: Option<&egui::TextureHandle>,
         streams: &mut Vec<String>,
         demo: bool,
+        classic: bool,
         open: &mut bool,
     ) -> bool {
         let mut streams_changed = false;
@@ -314,36 +360,33 @@ impl LandUi {
         }
         let view = self.view(world);
         let screen = ctx.content_rect();
-        let size = Vec2::new(790.0, 620.0);
+        // FIRE-17280: no experiences tab where the region has none
+        let has_xp = demo
+            || world
+                .regions
+                .get(&view.handle)
+                .is_some_and(|r| r.caps.contains_key("RegionExperiences"));
+        // each layout keeps its own size
+        let (id, size, min_size) = if classic {
+            ("about_land", Vec2::new(790.0, 620.0), Vec2::new(740.0, 470.0))
+        } else {
+            ("about_land_aurora", aurora::SIZE, aurora::MIN_SIZE)
+        };
         let mut floater = Floater::new(
-            "about_land",
+            id,
             aurora_i18n::tr!("common-about-land"),
             egui::pos2(screen.center().x - size.x / 2.0, 80.0),
             size,
         )
         .help(aurora_i18n::tr!("ui-land-mod-information-and-settings-for-the-selected-parcel"));
-        floater.min_size = Vec2::new(740.0, 470.0);
+        floater.min_size = min_size;
         floater.show(ctx, p, open, |ui| {
-            // FIRE-17280: no experiences tab where the region has none
-            let has_xp = demo
-                || world
-                    .regions
-                    .get(&view.handle)
-                    .is_some_and(|r| r.caps.contains_key("RegionExperiences"));
-            let tabs: Vec<Tab> = [
-                Tab::General,
-                Tab::Covenant,
-                Tab::Objects,
-                Tab::Options,
-                Tab::Media,
-                Tab::Sound,
-                Tab::Access,
-                Tab::Experiences,
-                Tab::Environment,
-            ]
-            .into_iter()
-            .filter(|t| *t != Tab::Experiences || has_xp)
-            .collect();
+            if !classic {
+                let pics = aurora::Pictures { images, avatars };
+                streams_changed = aurora::show(ui, p, self, &view, world, &pics, streams, has_xp);
+                return;
+            }
+            let tabs: Vec<Tab> = Tab::ALL.into_iter().filter(|t| *t != Tab::Experiences || has_xp).collect();
             if !tabs.contains(&self.tab) {
                 self.tab = Tab::General;
             }
@@ -353,18 +396,7 @@ impl LandUi {
                     ui.set_width(140.0);
                     egui::ScrollArea::vertical().id_salt("land_navigation").show(ui, |ui| {
                         for tab in tabs {
-                            let icon = match tab {
-                                Tab::General => "home-filled",
-                                Tab::Covenant => "file-description-filled",
-                                Tab::Objects => "box",
-                                Tab::Options => "settings-filled",
-                                Tab::Media => "device-tv-filled",
-                                Tab::Sound => "device-speaker-filled",
-                                Tab::Access => "key-filled",
-                                Tab::Experiences => "flask-filled",
-                                Tab::Environment => "leaf-filled",
-                            };
-                            if widgets::navigation(ui, p, icon, tab.label(), self.tab == tab).clicked() {
+                            if widgets::navigation(ui, p, tab.icon(), tab.label(), self.tab == tab).clicked() {
                                 self.tab = tab;
                             }
                         }
@@ -378,38 +410,8 @@ impl LandUi {
                     }
                     ui.add_space(6.0);
                     widgets::section_header(ui, p, "adjustments-filled", self.tab.label());
-                    let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
-                    ui.allocate_rect(body, egui::Sense::hover());
-                    let mut child = ui.new_child(
-                        egui::UiBuilder::new()
-                            .max_rect(body)
-                            .layout(egui::Layout::top_down(egui::Align::Min)),
-                    );
-                    child.set_clip_rect(body.intersect(ui.clip_rect()));
-                    let ui = &mut child;
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    // the tabs made of rows scroll when the window is small; the
-                    // others size their lists to the height left
-                    let scroll = |ui: &mut egui::Ui, body: &mut dyn FnMut(&mut egui::Ui)| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("about_land_body")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width() - 6.0);
-                                body(ui)
-                            });
-                    };
-                    match self.tab {
-                        Tab::General => scroll(ui, &mut |ui| general::show(ui, p, self, &view, world)),
-                        Tab::Covenant => covenant::show(ui, p, &view, world),
-                        Tab::Objects => objects::show(ui, p, self, &view, world),
-                        Tab::Options => scroll(ui, &mut |ui| options::show(ui, p, self, &view, world, images)),
-                        Tab::Media => scroll(ui, &mut |ui| media::show(ui, p, self, &view, world, images)),
-                        Tab::Sound => streams_changed = sound::show(ui, p, self, &view, world, streams),
-                        Tab::Access => access::show(ui, p, self, &view, world),
-                        Tab::Experiences => experiences::show(ui, p, self, &view, world),
-                        Tab::Environment => environment::show(ui, p, self, &view, world),
-                    }
+                    let tab = self.tab;
+                    streams_changed = pane(ui, p, self, &view, world, images, streams, tab);
                 });
             });
         });
@@ -472,6 +474,55 @@ impl LandUi {
             now: now_secs(),
         }
     }
+}
+
+/// One of the nine panes, over the room left below the cursor. True when
+/// the saved music streams changed.
+#[allow(clippy::too_many_arguments)]
+fn pane(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut LandUi,
+    view: &View,
+    world: &mut World,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    streams: &mut Vec<String>,
+    tab: Tab,
+) -> bool {
+    let mut streams_changed = false;
+    let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
+    ui.allocate_rect(body, egui::Sense::hover());
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(body)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    child.set_clip_rect(body.intersect(ui.clip_rect()));
+    let ui = &mut child;
+    ui.spacing_mut().item_spacing.y = 4.0;
+    // the tabs made of rows scroll when the window is small; the
+    // others size their lists to the height left
+    let scroll = |ui: &mut egui::Ui, body: &mut dyn FnMut(&mut egui::Ui)| {
+        egui::ScrollArea::vertical()
+            .id_salt("about_land_body")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width() - 6.0);
+                body(ui)
+            });
+    };
+    match tab {
+        Tab::General => scroll(ui, &mut |ui| general::show(ui, p, s, view, world)),
+        Tab::Covenant => covenant::show(ui, p, view, world),
+        Tab::Objects => objects::show(ui, p, s, view, world),
+        Tab::Options => scroll(ui, &mut |ui| options::show(ui, p, s, view, world, images)),
+        Tab::Media => scroll(ui, &mut |ui| media::show(ui, p, s, view, world, images)),
+        Tab::Sound => streams_changed = sound::show(ui, p, s, view, world, streams),
+        Tab::Access => access::show(ui, p, s, view, world),
+        Tab::Experiences => experiences::show(ui, p, s, view, world),
+        Tab::Environment => environment::show(ui, p, s, view, world),
+    }
+    streams_changed
 }
 
 fn now_secs() -> i64 {

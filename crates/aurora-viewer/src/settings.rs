@@ -284,6 +284,9 @@ pub struct Settings {
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
+    /// About Land as Firestorm's nine tabs (`ui/land`) instead of the
+    /// overview and the settings grouped by intent (`ui/land/aurora`).
+    pub classic_about_land: bool,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// What a double click on the ground does (Preferences › Controls, the
@@ -698,6 +701,7 @@ impl Default for Settings {
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,
             chat_style: ChatStyle::Bubbles,
+            classic_about_land: false,
             invert_mouse: false,
             arrows_strafe: false,
             double_click: crate::autopilot::DoubleClick::Nothing,

@@ -4056,6 +4056,7 @@ impl App {
         wanted.extend(self.search_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
+        wanted.extend(self.land_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -7885,14 +7886,19 @@ impl App {
                     .then(|| self.world.land.sel.as_ref().map(|s| s.handle).or(self.world.main_region))
                     .flatten()
                     .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
+                // AURORA_DEMO_LAND=…:classic shows Firestorm's tabs without saving it
+                let classic_land =
+                    self.settings.classic_about_land || (self.demo && crate::demo::land::scenario().is_some_and(|s| s.classic));
                 if self.land_ui.show(
                     &ctx,
                     &p,
                     &mut self.world,
                     &self.ui_images,
+                    &self.avatar_pics,
                     land_map.as_ref(),
                     &mut self.settings.audio.saved_streams,
                     self.demo,
+                    classic_land,
                     &mut open,
                 ) {
                     self.settings.save();
@@ -8818,9 +8824,9 @@ impl ApplicationHandler for App {
                 self.profile_ui.set_tab(id, tab.parse().unwrap_or(0));
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_LAND=<tab>[:owner]: About Land on that tab
-            if let Some((tab, _)) = crate::demo::land::scenario() {
-                self.land_ui.set_tab(&tab);
+            // AURORA_DEMO_LAND=<tab>[:role][:classic]: About Land on that tab
+            if let Some(scenario) = crate::demo::land::scenario() {
+                self.land_ui.set_tab(&scenario.tab);
                 self.panels.about_land = true;
                 self.panels.perf = false;
             }

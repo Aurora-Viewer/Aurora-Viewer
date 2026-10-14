@@ -4641,6 +4641,10 @@ ui-options-aurora-look-at = Points de mire
 ui-options-aurora-look-at-help = Point lumineux avec pilule de nom, ou croix filaire. S'affichent si « Afficher qui regarde qui » est activé (Confidentialité).
 ui-options-aurora-halo = Halo
 ui-options-aurora-crosshair = Croix (Firestorm)
+ui-options-aurora-about-land = À propos du terrain
+ui-options-aurora-about-land-help = Aperçu et gestion par intention, ou les 9 onglets de Firestorm.
+ui-options-aurora-about-land-aurora = Aurora
+ui-options-aurora-about-land-classic = Fenêtre classique (Firestorm)
 ui-options-aurora-gaze = Regard
 ui-options-aurora-aim = Où va votre regard
 ui-options-aurora-aim-help = Votre avatar regarde le point exact sous le curseur, ou tourne la tête vers le côté du curseur comme Firestorm.
@@ -4935,6 +4939,82 @@ ui-land-mod-objects-over-capacity = { $count ->
     [one] Capacité dépassée de { $count } objet, qui sera renvoyé
    *[other] Capacité dépassée de { $count } objets, qui seront renvoyés
     }
+ui-land-overview-tab = Aperçu
+ui-land-overview-manage-tab = Gérer
+ui-land-overview-people-tab = Personnes et objets
+ui-land-overview-change-picture = Changer la photo
+ui-land-overview-public-land = Terrain public
+ui-land-overview-group-owner = Propriété du groupe
+ui-land-overview-group-word = groupe
+ui-land-overview-objects-free = { $n ->
+    [one] { $count } libre
+   *[other] { $count } libres
+    }
+ui-land-overview-access = Accès
+ui-land-overview-arrival = Arrivée
+ui-land-overview-open-to-all = Ouvert à tous
+ui-land-overview-group-and-list = Groupe et liste
+ui-land-overview-list-only = Liste seulement
+ui-land-overview-arrival-blocked = Bloquée
+ui-land-overview-arrival-fixed = Point fixe
+ui-land-overview-arrival-fixed-at = Point fixe ({ $position })
+ui-land-overview-arrival-anywhere = Partout
+ui-land-overview-build = Construire
+ui-land-overview-build-group = Construire : groupe
+ui-land-overview-no-build = Pas de construction
+ui-land-overview-scripts = Scripts
+ui-land-overview-scripts-group = Scripts : groupe
+ui-land-overview-no-scripts = Pas de scripts
+ui-land-overview-fly = Voler
+ui-land-overview-no-fly = Pas de vol
+ui-land-overview-push = Bousculade
+ui-land-overview-no-push = Pas de bousculade
+ui-land-overview-safe = Sans dégâts
+ui-land-overview-damage = Dégâts
+ui-land-overview-damage-tip = Dégâts autorisés : vous pouvez être blessé ici
+ui-land-overview-voice = Voix
+ui-land-overview-no-voice = Pas de voix
+ui-land-overview-object-entry = Objets entrants
+ui-land-overview-object-entry-group = Objets entrants : groupe
+ui-land-overview-no-object-entry = Pas d'objets entrants
+ui-land-overview-no-object-entry-tip = Les objets des autres parcelles ne peuvent pas entrer sur celle-ci
+ui-land-overview-go-to-landing-point = Aller au point d'arrivée
+ui-land-overview-go-to-parcel = Aller sur la parcelle
+ui-land-overview-slurl = SLURL
+ui-land-overview-buy = Acheter…
+ui-land-overview-report = Signaler
+ui-land-overview-more = Plus d'actions
+ui-land-overview-copy-land-id = Copier l'ID du terrain
+ui-land-overview-description = Description
+ui-land-overview-no-description = Pas de description.
+ui-land-overview-covenant = Règlement du domaine
+ui-land-overview-read-all = Lire tout ›
+ui-land-overview-read-less = Réduire ‹
+ui-land-overview-resell = { $allowed ->
+    [yes] Revente : oui
+   *[no] Revente : non
+    }
+ui-land-overview-join-subdivide = { $allowed ->
+    [yes] Fusion / division : oui
+   *[no] Fusion / division : non
+    }
+ui-land-overview-modified-on = Modifié le { $date }
+ui-land-overview-never-modified = Jamais modifié
+ui-land-overview-date = { $day } { $month } { $year }
+ui-land-overview-info = Infos
+ui-land-overview-estate = Domaine
+ui-land-overview-region = Région
+ui-land-overview-in-search = Dans la recherche
+ui-land-overview-traffic = Trafic
+ui-land-overview-acquired = Acquis le
+ui-land-overview-sale = Vente
+ui-land-overview-for-sale-price = À vendre : { $price } L$
+ui-land-overview-land-id = ID terrain
+ui-land-overview-click-to-copy = Cliquer pour copier
+ui-land-overview-media-and-sound = Médias et son
+ui-land-overview-media = Média
+ui-land-overview-none = Aucune
+ui-land-overview-no-page = aucune page
 ui-group-profile-title = Profil du groupe
 ui-group-profile-view = Voir le profil du groupe
 
