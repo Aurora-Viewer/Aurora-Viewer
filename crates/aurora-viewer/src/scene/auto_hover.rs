@@ -42,15 +42,17 @@ struct Measurement {
     lowest: Option<f32>,
 }
 
-/// LLWorld::resolveStepHeightGlobal (indra/newview/llworld.cpp): Havok's
-/// reported plane needs the same 5 cm correction as Firestorm. Its distance
-/// gives the vertical step height used there, including on sloped surfaces.
+/// LLWorld::resolveStepHeightGlobal reads this region-space contact plane.
+/// Auto hover deliberately omits its legacy 5 cm Havok compensation: that
+/// lowers the inferred floor and our shoes by 5 cm in the online comparison.
+/// Intersect the reported plane vertically, including on sloped surfaces;
+/// normal distance alone is not a vertical height when the normal is tilted.
 fn contact_clearance(position: Vec3, plane: Option<Vec4>) -> Option<f32> {
     let plane = plane?;
-    if !plane.is_finite() || plane.z <= 0.0 || !position.is_finite() {
+    if !plane.is_finite() || plane.z <= 1e-4 || !position.is_finite() {
         return None;
     }
-    let distance = position.dot(plane.truncate()) - plane.w + 0.05;
+    let distance = (position.dot(plane.truncate()) - plane.w) / plane.z;
     (distance.is_finite() && distance > 0.0).then_some(distance)
 }
 
@@ -775,7 +777,7 @@ mod tests {
         settle(&mut scene, &mut world, now);
         let previous = world.hover_height.value();
         // Full updates may precede the first terse collision plane.
-        world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, floor + 0.05));
+        world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, floor));
         let before = scene.auto_hover_diagnostics(&world, now);
         assert!(before.contact);
         assert!((before.gap.unwrap() - 0.1).abs() < 1e-5);
@@ -796,7 +798,7 @@ mod tests {
         world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::ZERO);
         scene.update_auto_hover(&mut world, true, now + Duration::from_secs(2));
         assert_eq!(scene.auto_hover.status, HoverStatus::WaitingGround);
-        world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, floor + 0.05));
+        world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, floor));
         scene.update_auto_hover(&mut world, true, now + Duration::from_secs(3));
         assert!(
             (world.hover_height.value() - grounded - 0.1).abs() < 1e-5,
@@ -808,12 +810,18 @@ mod tests {
     }
 
     #[test]
-    fn contact_plane_uses_firestorm_havok_correction_and_rejects_clear_or_invalid_planes() {
+    fn contact_plane_uses_the_reported_surface_without_a_legacy_margin() {
         let position = Vec3::new(3.0, 4.0, 20.95);
-        assert!((contact_clearance(position, Some(Vec4::new(0.0, 0.0, 1.0, 20.05))).unwrap() - 0.95).abs() < 1e-5);
+        let clearance = contact_clearance(position, Some(Vec4::new(0.0, 0.0, 1.0, 20.0))).unwrap();
+        let floor = position.z - clearance;
+        assert!(
+            (floor - 20.0).abs() < 1e-5,
+            "reported floor at 20 m must stay there, got {floor:.6} m"
+        );
         let normal = Vec3::new(0.0, 0.6, 0.8);
-        let plane = normal.extend(position.dot(normal) - 0.95 + 0.05);
+        let plane = normal.extend(position.dot(normal) - 0.95 * normal.z);
         assert!((contact_clearance(position, Some(plane)).unwrap() - 0.95).abs() < 1e-5);
+        assert!((contact_clearance(position, Some(plane * 2.0)).unwrap() - 0.95).abs() < 1e-5);
         for plane in [
             None,
             Some(Vec4::ZERO),
@@ -934,7 +942,7 @@ mod tests {
         let owner = world.objects.index_of_uuid(&world.agent_id).unwrap();
         let avatar = world.objects.get_mut(owner).unwrap();
         let floor = avatar.position.z - 0.5 * physical_height - 0.1;
-        avatar.foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, floor + 0.05));
+        avatar.foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, floor));
         settle(&mut scene, &mut world, now + Duration::from_secs(2));
         assert!(
             (world.hover_height.value() - previous + 0.1).abs() < 1e-5,

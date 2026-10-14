@@ -150,7 +150,7 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
         // The demo stands on its plaza platform, above the terrain below.
         // Use the same floor as its local movement simulator.
         let position = world.agent.position;
-        let plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, super::floor_at(position.x, position.y) + 0.05));
+        let plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, super::floor_at(position.x, position.y)));
         if let Some(avatar) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get_mut(i)) {
             avatar.foot_plane = plane;
             avatar.position = world.agent.position;

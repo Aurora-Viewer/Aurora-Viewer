@@ -110,8 +110,9 @@ distance, half the reported physical height, calculated hover and the live
 neutral shoe/ground gap (positive means too high). "Recalculate and measure"
 reruns the worker and applies the result when automatic adjustment is enabled.
 Use neutral pose while comparing the gap with the view. The simulator contact
-plane includes Firestorm's 5 cm Havok correction; without a contact block the
-readout explicitly labels the size-based floor as estimated. No vertex scan
+plane is intersected vertically without Firestorm's historical 5 cm Havok
+compensation (that lowered the shoes by 5 cm in the online test). Without a
+contact block the readout explicitly labels the size-based floor as estimated. No vertex scan
 or GPU readback runs in the UI.
 
 The frames-per-second limiter is enabled at **120 fps by default**. It can
