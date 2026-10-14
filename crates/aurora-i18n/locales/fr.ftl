@@ -4392,6 +4392,7 @@ ui-day-editor-choose-track = Choisir la piste à charger
 ui-day-editor-track-mismatch = Une piste d'eau ne peut pas aller dans une piste de ciel, ni l'inverse.
 ui-day-editor-track-empty = Cette piste n'a aucune image clé.
 ui-day-editor-frame-full = Cette piste a déjà 20 images clés.
+ui-day-editor-make-no-trans = Vous êtes sur le point d'importer des réglages non transférables dans ce cycle du jour. Si vous continuez, les réglages que vous modifiez deviendront aussi non transférables. Ce changement est définitif. Voulez-vous vraiment continuer ?
 ui-options-emitter = Émetteur
 build-ui-texture-emissive = Émissive
 ui-appearance-items-right-shoulder-2 = Épaule droite

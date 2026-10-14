@@ -4392,6 +4392,7 @@ ui-day-editor-choose-track = Choose the track to load
 ui-day-editor-track-mismatch = A water track cannot be loaded into a sky track, nor the reverse.
 ui-day-editor-track-empty = That track has no key frame.
 ui-day-editor-frame-full = This track already has 20 key frames.
+ui-day-editor-make-no-trans = You are about to import non-transferable settings into this day cycle. Continuing will cause the settings you are editing to become non-transferable also. This change can not be undone. Are you sure you want to continue?
 ui-options-emitter = Emitter
 build-ui-texture-emissive = Emissive
 ui-appearance-items-right-shoulder-2 = Right shoulder

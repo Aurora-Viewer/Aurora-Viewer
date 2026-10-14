@@ -66,6 +66,18 @@ pub fn day_item() -> Uuid {
     u(0x503 + 0x1000)
 }
 
+/// The library's no-transfer "Annan Adored Pink Sky" item.
+pub fn no_transfer_sky_item() -> Uuid {
+    u(0x206 + 0x1000)
+}
+
+/// The folder a demo settings item is in.
+pub fn folder_of(item: Uuid) -> Uuid {
+    let a = (item.as_u128() & 0xFFFF) - 0x1000;
+    let f = items().iter().find(|(.., asset)| *asset == a).map_or(USER_SETTINGS, |(f, ..)| *f);
+    u(f)
+}
+
 /// The library's "Dynamic Day".
 pub fn library_day_asset() -> Uuid {
     u(0x402)
@@ -216,7 +228,9 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
             next_owner_mask: 0,
             thumbnail: Uuid::nil(),
             base_mask: 0x7fffffff,
-            owner_mask: 0x7fffffff,
+            // "Annan Adored Pink Sky" cannot be transferred: loaded into a
+            // day, it asks to make the day no-transfer (SettingsMakeNoTrans)
+            owner_mask: if *a == 0x206 { 0x7fffffff & !0x2000 } else { 0x7fffffff },
             last_owner: uuid::Uuid::nil(),
             group_id: uuid::Uuid::nil(),
             group_owned: false,

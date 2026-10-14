@@ -4,8 +4,9 @@
 //! and LLFloaterEditEnvironmentBase, originally LGPL 2.1).
 
 use super::App;
-use crate::ui::env_day_editor::{DayAction, DayContext};
+use crate::ui::env_day_editor::{DayAction, DayContext, NoTransLoad};
 use crate::world::env_day_edit::DayDoc;
+use crate::world::env_edit::FLAG_NOTRANS;
 use crate::world::env_edit::{Rights, SettingsDoc};
 use aurora_net::NetCommand;
 use uuid::Uuid;
@@ -74,12 +75,27 @@ impl App {
         }
         self.day_fetch = None;
         let mut out = Vec::new();
+        // onAssetLoadedForInsertion: settings that cannot be transferred or
+        // copied make the edited day no-transfer, after SettingsMakeNoTrans
+        let restricted = self
+            .world
+            .inventory
+            .items
+            .get(&item)
+            .is_some_and(|it| it.owner_mask & 0x2000 == 0 || it.owner_mask & 0x8000 == 0);
+        let edited_no_trans = match self.day_editor.item.and_then(|id| self.world.inventory.items.get(&id)) {
+            Some(it) => it.owner_mask & 0x2000 == 0,
+            None => self.day_editor.doc.as_ref().is_some_and(|d| d.flags() & FLAG_NOTRANS != 0),
+        };
+        let ask = restricted && !edited_no_trans;
         match (purpose, result) {
             (DayFetch::Frame, Ok(data)) => match SettingsDoc::from_asset(data) {
+                Some(frame) if ask => self.day_editor.no_trans_ask = Some(NoTransLoad::Frame(frame)),
                 Some(frame) => self.day_editor.put_loaded_frame(&frame, &mut out),
                 None => self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-load-failed", name = ""), true)),
             },
             (DayFetch::Track, Ok(data)) => match DayDoc::from_asset(data) {
+                Some(day) if ask => self.day_editor.no_trans_ask = Some(NoTransLoad::Track(day)),
                 Some(day) => self.day_editor.track_source = Some(day),
                 None => self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-load-failed", name = ""), true)),
             },
@@ -253,6 +269,20 @@ impl App {
                 let folder = Uuid::from_u128(item.as_u128() & !0xFFFF | crate::demo::env::USER_SETTINGS);
                 self.world.inventory.request(folder);
                 self.day_editor.wait_item = Some(item);
+            }
+            // day-notrans: the library's no-transfer sky loaded at 60 %
+            // (SettingsMakeNoTrans asks first)
+            450 if scenario == "day-notrans" => {
+                let sky = crate::demo::env::no_transfer_sky_item();
+                self.world.inventory.request(crate::demo::env::folder_of(sky));
+            }
+            900 if scenario == "day-notrans" => {
+                self.day_editor.set_pos(0.6);
+                let sky = crate::demo::env::no_transfer_sky_item();
+                if let Some(it) = self.world.inventory.items.get(&sky).cloned() {
+                    self.day_fetch = Some((sky, DayFetch::Frame));
+                    self.send(NetCommand::PreviewInventoryItem(it));
+                }
             }
             900 if scenario == "day-play" => self.day_editor.start_play(),
             900 if scenario == "day-edit" => {

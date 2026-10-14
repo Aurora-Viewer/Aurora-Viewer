@@ -61,6 +61,16 @@ pub enum DayContext {
     Region,
 }
 
+/// Settings loaded into the day that cannot be transferred or copied,
+/// waiting for SettingsMakeNoTrans (onAssetLoadedForInsertion).
+#[derive(Debug, Clone)]
+pub enum NoTransLoad {
+    /// A sky or water for the frame at the time cursor.
+    Frame(SettingsDoc),
+    /// A day whose track is to be chosen ("Load Track From").
+    Track(DayDoc),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Confirm {
     Close,
@@ -117,6 +127,8 @@ pub struct DayEditorUi {
     /// The parcel can no longer take the edited day: the commit is off
     /// (mCommitSignal disconnected), the changes kept.
     pub commit_lost: bool,
+    /// Loaded settings waiting for "make the day no-transfer?".
+    pub no_trans_ask: Option<NoTransLoad>,
     /// The region's sky altitudes for the track names (parcel and region
     /// contexts with the extended environment).
     pub altitudes: Option<[f32; 4]>,
@@ -966,6 +978,48 @@ impl DayEditorUi {
                 });
             });
             self.save_as = if close || modal.should_close() { None } else { Some(name) };
+        }
+        // SettingsMakeNoTrans: the loaded settings make the day no-transfer
+        if self.no_trans_ask.is_some() {
+            let mut answer = None;
+            let modal = widgets::Modal::new(egui::Id::new("env_day_editor_no_trans")).show(ctx, |ui| {
+                ui.set_width(400.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(aurora_i18n::tr!("ui-day-editor-make-no-trans"))
+                            .size(13.0)
+                            .color(p.ink),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let size = Vec2::new(0.0, 26.0);
+                    if widgets::action_button(ui, p, "check", aurora_i18n::tr!("common-yes"), ActionKind::Primary, size).clicked() {
+                        answer = Some(true);
+                    }
+                    if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-no"), ActionKind::Flat, size).clicked() {
+                        answer = Some(false);
+                    }
+                });
+            });
+            if modal.should_close() && answer.is_none() {
+                answer = Some(false);
+            }
+            if let Some(yes) = answer
+                && let Some(load) = self.no_trans_ask.take()
+                && yes
+            {
+                self.rights.transfer = false;
+                if let Some(doc) = &mut self.doc {
+                    doc.set_flags(doc.flags() | env_edit::FLAG_NOTRANS);
+                }
+                self.dirty = true;
+                match load {
+                    NoTransLoad::Frame(frame) => self.put_loaded_frame(&frame, out),
+                    NoTransLoad::Track(day) => self.track_source = Some(day),
+                }
+            }
         }
         // LLFloaterTrackPicker after "Load Track From": which track to copy
         if let Some(src) = self.track_source.clone() {
