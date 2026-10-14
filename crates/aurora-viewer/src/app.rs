@@ -7037,6 +7037,12 @@ impl App {
                     self.world.group_data.refresh(group, member);
                 }
                 GroupAction::Join(group) => self.send(NetCommand::JoinGroup(group)),
+                GroupAction::Invite { group, invites } => {
+                    log::info!("group invite: {} resident(s) invited", invites.len());
+                    self.send(NetCommand::InviteToGroup { group, invites });
+                }
+                // group voice: connected by the voice calls
+                GroupAction::Call(group) => log::info!("group call {group}: group voice is not connected yet"),
                 GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
                 GroupAction::SetTitle { group, role } => self.world.group_data.set_title(group, role),
                 GroupAction::SetFlags {
@@ -8349,11 +8355,13 @@ impl App {
                     avatar_pics: &self.avatar_pics,
                     classic: self.settings.classic_profiles,
                     now: ctx.input(|i| i.time),
+                    group_calls: false,
                 };
                 let group_acts = self.group_profile_ui.show(&ctx, &mut c, &group_env);
                 self.panels.search = open;
                 self.apply_search_actions(&ctx, search_acts);
                 self.apply_group_actions(&ctx, group_acts);
+                self.group_profile_ui.dialogs(&ctx, &p, &mut self.world);
                 if let Some(id) = ui::group_profile::take_open_request(&ctx) {
                     self.group_profile_ui.open(&mut self.world, id);
                 }
@@ -9092,6 +9100,9 @@ impl ApplicationHandler for App {
                 self.group_profile_ui.open(&mut self.world, crate::demo::group::shown_group());
                 if let Some(member) = crate::demo::group::members_tab() {
                     self.group_profile_ui.show_member(member);
+                }
+                if let Some(invitees) = crate::demo::group::invitees() {
+                    self.group_profile_ui.invite.open(crate::demo::group::shown_group(), invitees);
                 }
                 self.panels.perf = false;
             }

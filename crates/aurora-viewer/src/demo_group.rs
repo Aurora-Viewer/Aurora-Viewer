@@ -10,7 +10,8 @@
 //! - `guest`: not a member: the profile opens on "Boreal Photographers",
 //!   with an open enrollment and a fee, to join.
 //!
-//! `:members` after the scenario opens the Members tab, a builder selected.
+//! `:members` after the scenario opens the Members tab, a builder selected;
+//! `:invite` the invitation window with three residents (one already in).
 //!
 //! The other demo groups get generated members and the three roles every
 //! group has.
@@ -45,6 +46,13 @@ pub fn scenario() -> Scenario {
 pub fn members_tab() -> Option<Uuid> {
     let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
     (v.split(':').nth(1) == Some("members")).then_some(DEMO_NOVA)
+}
+
+/// `<scenario>:invite`: the invitation window, with two residents who are
+/// not in the group and one who is ("already in the group" once sent).
+pub fn invitees() -> Option<Vec<Uuid>> {
+    let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
+    (v.split(':').nth(1) == Some("invite")).then(|| vec![super::DEMO_FRIEND, Uuid::from_u128(MEMBER | 5000), DEMO_NOVA])
 }
 
 /// The group the profile opens on in this scenario.

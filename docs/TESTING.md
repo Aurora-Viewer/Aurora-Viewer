@@ -1320,7 +1320,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:owner]` | "About Land" on a tab |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
@@ -1975,7 +1975,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -1986,7 +1986,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   with an open enrollment and a L$ 250 fee: "Join · L$ 250" asks to
   confirm (or says the balance is short), then the group joins our list
   and the window becomes a member's. `:members` opens the Members tab with
-  a builder selected. Check the header against the mockup (banner,
+  a builder selected; `:invite` opens "Invite to Aurora Builders" with
+  three residents, one of them already a member: Send Invitations logs
+  `group invite: 2 resident(s) invited` and says the member was left out;
+  the role list follows our abilities (an officer: everyone and the
+  officers' own roles; an owner: every role, the owners' asking to confirm).
+  Check the header against the mockup (banner,
   insignia, badges, tabs), the switches of "Me in this group" (the active
   group follows in the top bar, the title in the Title shown list), the
   filter, the pills and the column sorts of Members, "Leave" (confirmed,

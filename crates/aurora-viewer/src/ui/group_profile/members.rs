@@ -229,6 +229,7 @@ pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, 
 /// The bar, the table, the selection's buttons.
 fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &View, manage: bool) {
     let p = c.p;
+    let mut invite = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         let w = (ui.available_width() - 260.0).max(120.0);
@@ -254,6 +255,20 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
             _ => aurora_i18n::tr!("ui-group-profile-by-role").to_owned(),
         } + " ▾";
         let by_role = pill(ui, p, &role_label, matches!(st.members.show, Show::Role(_)));
+        // "Invite" with the ability, as in the head
+        if v.can(powers::MEMBER_INVITE)
+            && widgets::action_button(
+                ui,
+                p,
+                "user-plus",
+                aurora_i18n::tr!("ui-group-profile-invite"),
+                ActionKind::Flat,
+                Vec2::new(0.0, 26.0),
+            )
+            .clicked()
+        {
+            invite = true;
+        }
         crate::ui::menu::dropdown(&by_role, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
             let mut roles: Vec<_> = v.data.map(|d| d.roles.values().collect()).unwrap_or_default();
             roles.sort_by_cached_key(|r| (!r.id.is_nil(), role_name(&r.name).to_lowercase()));
@@ -267,6 +282,9 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
             }
         });
     });
+    if invite {
+        st.open_invite(v.id);
+    }
     ui.add_space(8.0);
 
     // the rows again when what they come from changed, and once a second

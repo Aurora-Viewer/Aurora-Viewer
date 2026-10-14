@@ -57,6 +57,7 @@ fn texts(st: &mut GroupProfileUi, world: &World, classic: bool) -> (Vec<String>,
         avatar_pics: &pics,
         classic,
         now: 0.0,
+        group_calls: false,
     };
     let mut actions = Vec::new();
     let mut shapes = Vec::new();
@@ -277,4 +278,49 @@ fn status_reads_online_recent_days_and_dates() {
         members::status_text(&LastSeen::Date(2026, 9, 12), today),
         aurora_i18n::tr!("profile-date", month = "09", day = "12", year = "2026")
     );
+}
+
+#[test]
+fn invitations_skip_members_and_ask_before_making_owners() {
+    let officer = MEMBER | powers::MEMBER_INVITE | powers::ROLE_ASSIGN_MEMBER_LIMITED;
+    let mut world = world(true, officer);
+    // the demo group's owners' role
+    let owners = world
+        .group_data
+        .get(&DEMO_GROUP1)
+        .and_then(|d| d.roles.values().find(|r| r.name == "Owners").map(|r| r.id));
+    if let (Some(g), Some(o)) = (world.search.groups.get_mut(&DEMO_GROUP1), owners) {
+        g.owner_role = o;
+    }
+    let v = view::View::of(&world, DEMO_GROUP1);
+    let outsider = Uuid::from_u128(0xD0D0_0000_0000_0000_0000_0000_0000_0064);
+    let mut st = invite::InviteUi::default();
+    st.open(DEMO_GROUP1, vec![outsider, crate::demo::DEMO_LOUP]);
+    // everyone's role: the member is left out and said so
+    let pairs = st.submit(&v).expect("sent");
+    assert_eq!(pairs, vec![(outsider, Uuid::nil())]);
+    assert_eq!(st.notice, Some(invite::Notice::AlreadyInGroup));
+
+    // the owners' role waits for a yes
+    st.open(DEMO_GROUP1, vec![outsider]);
+    st.role = owners.expect("owners");
+    assert!(st.submit(&v).is_none(), "asks first");
+    assert_eq!(st.submit(&v).expect("confirmed"), vec![(outsider, st.role)]);
+
+    // more than 100 at once: nothing goes
+    st.open(DEMO_GROUP1, (0..101u128).map(|i| Uuid::from_u128(0xABC0_0000 + i)).collect());
+    st.role = Uuid::nil();
+    assert_eq!(st.submit(&v), Some(Vec::new()));
+    assert_eq!(st.notice, Some(invite::Notice::TooMany));
+}
+
+#[test]
+fn invite_shows_with_the_ability_and_call_waits_for_group_voice() {
+    for (abilities, invites) in [(MEMBER, false), (MEMBER | powers::MEMBER_INVITE, true)] {
+        let mut world = world(true, abilities);
+        let mut st = opened(&mut world);
+        let (texts, _) = texts(&mut st, &world, false);
+        assert_eq!(has(&texts, "ui-group-profile-invite"), invites);
+        assert!(has(&texts, "ui-group-profile-call"));
+    }
 }
