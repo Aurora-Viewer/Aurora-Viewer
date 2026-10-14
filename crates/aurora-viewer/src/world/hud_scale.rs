@@ -114,10 +114,16 @@ impl HudScales {
     }
     pub fn load(path: PathBuf) -> Self {
         let profiles: Vec<Profile> = match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice(&bytes) {
-                Ok(profiles) => profiles,
-                Err(e) => {
-                    log::warn!("cannot read HUD scales: {e}");
+            Ok(bytes) => match crate::tolerant::from_slice::<Vec<Profile>>(&bytes, "hud_scales.json") {
+                Some(read) => {
+                    if read.repaired() {
+                        // rewritten without the sizes this build cannot read
+                        crate::tolerant::backup(&path);
+                    }
+                    read.value
+                }
+                None => {
+                    crate::tolerant::backup(&path);
                     Vec::new()
                 }
             },
@@ -947,6 +953,25 @@ mod tests {
         scales.refresh(&[]);
         scales.refresh(&[(Uuid::from_u128(2), None, Some(profile))]);
         assert_eq!(scales.scale(Uuid::from_u128(2)), 1.0);
+    }
+
+    #[test]
+    fn a_size_from_a_newer_build_costs_only_that_size() {
+        let folder = std::env::temp_dir().join(format!("aurora-hud-scales-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join(FILE);
+        let kept = Uuid::from_u128(7);
+        let file = serde_json::json!([
+            { "item": kept.to_string(), "scale": 1.5, "a_newer_field": [1, 2] },
+            { "item": Uuid::from_u128(8).to_string(), "scale": "a newer kind of size" },
+        ]);
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        let mut scales = HudScales::load(path.clone());
+        scales.refresh(&[(kept, Some(kept), None)]);
+        assert_eq!(scales.scale(kept), 1.5);
+        assert!(crate::tolerant::backup_path(&path).exists(), "the newer file is kept aside");
+        drop(scales);
+        std::fs::remove_dir_all(folder).unwrap();
     }
 
     #[test]

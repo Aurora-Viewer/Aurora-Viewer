@@ -35,6 +35,7 @@ mod settings;
 mod shape_editor;
 mod slurl;
 mod theme;
+mod tolerant;
 mod ui;
 mod ui_sound;
 mod updater;

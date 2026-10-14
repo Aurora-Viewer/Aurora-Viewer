@@ -125,9 +125,11 @@ fn stamp(dir: &Path) -> Option<SystemTime> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     match std::fs::read(path) {
-        Ok(b) => serde_json::from_slice(&b).unwrap_or_else(|e| {
-            log::warn!("{}: {e} (using defaults)", path.display());
+        // a value this build does not read costs that value only
+        Ok(b) => crate::tolerant::from_slice(&b, &name).map(|read| read.value).unwrap_or_else(|| {
+            log::warn!("{}: unreadable (using defaults)", path.display());
             T::default()
         }),
         Err(_) => T::default(),
@@ -189,5 +191,23 @@ impl Skin {
             return true;
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_theme_value_this_build_cannot_read_costs_only_that_value() {
+        let dir = std::env::temp_dir().join(format!("aurora-skin-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("theme.json");
+        let file = serde_json::json!({ "violet": "#123456", "panel_alpha": "a newer kind of value", "a_newer_key": 1 });
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        let theme: Theme = read_json(&path);
+        assert_eq!(theme.violet, "#123456");
+        assert_eq!(theme.panel_alpha, Theme::default().panel_alpha);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
