@@ -157,6 +157,11 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                     buttons.push((aurora_i18n::tr!("common-teleport-3").into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
                 }
+                // TeleportRequest: Yes offers a teleport, No sends nothing
+                Data::TeleportRequest { .. } => {
+                    buttons.push((aurora_i18n::tr!("common-yes").into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("common-no").into(), Response::Decline, false));
+                }
                 Data::Friend { .. } | Data::Group { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-accept").into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));

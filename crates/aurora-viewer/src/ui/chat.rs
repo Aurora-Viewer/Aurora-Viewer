@@ -1,5 +1,6 @@
 //! Local chat window (nearby chat + instant messages).
 
+mod completion;
 mod find;
 pub mod history;
 mod view;
@@ -1034,6 +1035,7 @@ pub fn show(
     pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
     images: &HashMap<uuid::Uuid, egui::TextureHandle>,
     world: &mut World,
+    gestures: &crate::gestures::Manager,
     st: &mut ChatUi,
     contacts: &mut super::contacts::ContactsUi,
     contacts_settings: &mut super::contacts::ContactsSettings,
@@ -1447,15 +1449,18 @@ pub fn show(
                         // leave exactly the emoji button + spacing (else the row overflows
                         // and the resizable window grows every frame)
                         let field_w = (ui.available_width() - EMOJI_BTN_W - ui.spacing().item_spacing.x - 2.0).max(40.0);
-                        let r = emoji.text_field(ui, &mut st.conv_input, |edit| {
+                        let mut output = emoji.text_field(ui, &mut st.conv_input, |edit| {
                             edit.id(conv_input).hint_text(hint).desired_width(field_w)
                         });
+                        if st.selected.is_none() {
+                            completion::complete(ui, &mut output, &mut st.conv_input, gestures);
+                        }
                         let b = tool_resp(ui, p, icons, "mood-smile-filled", st.emoji_open);
                         emoji_btn = Some(b.rect);
                         if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
                             st.emoji_open = !st.emoji_open;
                         }
-                        r
+                        output.response
                     })
                     .inner;
                 if st.emoji_open {
@@ -1480,7 +1485,7 @@ pub fn show(
                         ui.ctx().memory_mut(|m| m.request_focus(egui::Id::new("conv_input")));
                     }
                 }
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt) {
                     let text = st.conv_input.trim().to_owned();
                     if !text.is_empty() {
                         match st.selected {
@@ -1744,20 +1749,30 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
 }
 
 /// The "Nearby chat" input bar; returns a message to send.
-pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, width: f32) -> Option<OutgoingChat> {
+pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, gestures: &crate::gestures::Manager, width: f32) -> Option<OutgoingChat> {
     let mut out = None;
     ui.label(RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.0).color(p.muted));
     // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
     // written in the empty field they crowded the bar (the human's request)
-    let resp = ui
-        .add(egui::TextEdit::singleline(&mut st.input).desired_width(width))
+    let mut output = egui::TextEdit::singleline(&mut st.input)
+        .id(egui::Id::new("nearby_chat_input"))
+        .desired_width(width)
+        .show(ui);
+    completion::complete(ui, &mut output, &mut st.input, gestures);
+    let resp = output
+        .response
+        .response
         .on_hover_text(aurora_i18n::tr!("ui-chat-enter-to-talk-ctrl-enter-to-shout-shift-enter"));
     if st.focus_request {
         resp.request_focus();
         st.focus_request = false;
     }
     st.has_focus = resp.has_focus();
-    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    // Modified Enter does not surrender egui's single-line field focus.
+    let enter = (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
+    if enter {
+        resp.surrender_focus();
+    }
     if enter && !st.input.trim().is_empty() {
         let (shout, whisper) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
         let (channel, message) = parse_channel(st.input.trim());

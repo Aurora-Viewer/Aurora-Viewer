@@ -6,6 +6,7 @@
 mod asset_imports;
 mod build_cmds;
 mod currency;
+mod gestures;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
@@ -1153,12 +1154,13 @@ impl Session<'_> {
                 b.binary_bucket = if bucket.is_empty() { vec![0] } else { bucket };
                 self.send_main(&m, true);
             }
-            NetCommand::AcceptLure { lure_id } => {
+            NetCommand::AcceptLure { lure_id, godlike } => {
                 let mut m = TeleportLureRequest::default();
                 m.info.agent_id = self.agent_id();
                 m.info.session_id = self.session_id();
                 m.info.lure_id = lure_id;
-                m.info.teleport_flags = 1 << 2; // TELEPORT_FLAGS_VIA_LURE
+                // TELEPORT_FLAGS_VIA_GODLIKE_LURE | DISABLE_CANCEL, else VIA_LURE
+                m.info.teleport_flags = if godlike { (1 << 8) | (1 << 11) } else { 1 << 2 };
                 self.send_main(&m, true);
             }
             NetCommand::AcceptFriendship { transaction, folder } => {
@@ -1708,6 +1710,9 @@ impl Session<'_> {
                     });
                 });
             }
+            NetCommand::LoadGesture { item, asset } => self.load_gesture(item, asset),
+            NetCommand::SetGestureActive { item, asset, active } => self.set_gesture_active(item, asset, active),
+            NetCommand::GestureSound { asset, position } => self.gesture_sound(asset, position),
             NetCommand::PreviewTaskNotecard { handle, object, item } => self.preview_task_notecard(handle, object, *item),
             NetCommand::SaveTaskNotecard {
                 request,
@@ -1767,6 +1772,7 @@ impl Session<'_> {
                 let name = match asset_type {
                     7 => "UpdateNotecardAgentInventory",
                     10 => "UpdateScriptAgent",
+                    21 => "UpdateGestureAgentInventory",
                     _ => "",
                 };
                 let Some((cap, fetch)) = self.main_cap(name).zip(self.main_cap("FetchInventory2")) else {

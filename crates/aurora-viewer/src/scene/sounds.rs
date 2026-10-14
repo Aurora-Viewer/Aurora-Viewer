@@ -209,6 +209,10 @@ impl SoundManager {
         }
     }
 
+    pub fn asset_settled(&self, id: &Uuid) -> bool {
+        self.clips.get(id).is_some_and(|entry| entry.state >= 3)
+    }
+
     fn ready(&self, id: &Uuid) -> Option<Arc<SoundClip>> {
         self.clips.get(id).and_then(|c| c.clip.clone())
     }

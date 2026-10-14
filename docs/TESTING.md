@@ -1179,6 +1179,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
+| `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
@@ -1187,6 +1188,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
+| `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -1567,6 +1569,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (that notice only goes to the resident's transcript, when instant messages
   are logged). `tp:reject`: "Request teleport" while teleports are rejected
   only shows the warning, with OK and no message to type.
+- **`AURORA_DEMO_LURE=offer|request|god|answers|reject`**: teleports received
+  from Tess Touch, with the notification list open (issue #280, part B1).
+  `offer`: "Tess Touch offers you a teleport", the place ("Location: Aurora
+  Demo (128, 130, 25)") above her invitation, Teleport / Decline; nothing in
+  the nearby chat and no conversation opened. `request`: "Tess Touch is
+  requesting to be teleported to your location", her message, "Offer a
+  teleport?", Yes / No; Yes writes "Teleport offer sent to Tess …" (in her
+  transcript, she has no conversation). `god`: no notification, the
+  teleport starts at once and fails offline (two lines in the nearby chat).
+  `answers`: her conversation is open with "Tess … declined your teleport
+  offer" as a system line, without a notification; Nova's acceptance goes to
+  her transcript only. `reject`: "Reject teleport offers and requests" is on
+  for the session: an offer and a request arrive, nothing is shown (each
+  sender gets the automatic answer). The demo writes transcripts only with
+  `AURORA_DEMO_CHATLOG`.
 - **`AURORA_DEMO_RADAR=1|tp|friends|groups|profile`**: the People window.
   `1`: residents at every range in "Near you" (with
   `AURORA_DEMO_TAGS=1`, those of the name plates, several of whom have a
@@ -1704,6 +1721,38 @@ disappears from the inventory, that Ctrl adds to the contents without a new cube
 and that Esc creates nothing. Online, validate real objects, forbidden land,
 the Trash / Library, neighbouring regions, the group of the land and
 objects already worn; the human logs in and carries out these tests.
+
+**`AURORA_DEMO_GESTURES=manager|editor|play|completion|completion-send|communicate|communicate-open`** — three synthetic gestures:
+chat with a replacement and F8 shortcut, an animated pose on F9, and an
+inactive chime on F10. `manager` opens the list; `editor` also opens the
+chat gesture's editor; `play` starts the chat and animation at frame 650.
+Capture at frame 620 for the list/editor, 680 during playback and 800
+after the explicit pause. Sounds stay muted unless `AURORA_DEMO_SOUND=1`.
+`completion` gives the chat gesture the `/eject` trigger, focuses nearby
+chat at frame 540 and types `/ej` at frame 550: capture frame 620 to see
+`/eject` with the added `ect` selected. `completion-send` also presses
+Enter at frame 650: capture frame 800 to see the gesture's chat steps and
+the cleared input. Typing replaces the selected suffix; Backspace removes
+it without immediately completing it again. Only active, enabled gestures
+participate; ambiguous prefixes extend only to their common suffix. The
+same completion is available in the conversations window's local chat,
+with instant messages and numeric channel prefixes keeping their input.
+`communicate` starts with the gesture manager closed, clicks the wolf menu
+at frame 540 and hovers Communicate at frame 560: capture frame 620 to see
+the Gestures entry below Conversations, with Ctrl+G in the shortcut column.
+`communicate-open` also
+clicks that entry at frame 650: capture frame 800 to check that the manager
+opens through the actual menu control.
+Check Ctrl+G, filtering and active-only/enabled switches, sorting and
+multiple selection, inventory Open/Play/Activate/Deactivate, all four step
+types, stock/inventory animation choices, Shift/Ctrl and key choices,
+preview/stop, reordering, saving and discard confirmation. Chat steps keep
+their channel prefixes (`/28574 T4`); the demo never connects to a grid.
+Online validation is performed by the human: activate and play existing
+gestures, chat/key triggers on the real keyboard, save/reopen modified
+gestures, permissions, outfit switching, teleport and restoration after
+relogging. A rejected save must keep the draft, and deactivation must stop
+only the gesture's requested motions.
 
 **`AURORA_DEMO_INVENTORY`** — opens a synthetic inventory: personal
 folder, subfolder, outfits, objects, documents, texture, sound, gesture,
@@ -1892,6 +1941,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
+| `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
@@ -1917,7 +1967,9 @@ What the inventory must show with these scenarios:
   the dark scene. The People window is closed.
   - `height`: Nova and Lune have a torso translation deformer (+0.8 m),
     animated head pitch and pelvis bobbing. Their tags stay above the taller
-    bodies, centred on their roots at a constant height through the cycle.
+    bodies, horizontally centred on their projected roots at a constant
+    height through the cycle. With a pitched camera, check avatars on both
+    sides of the view: raising a tag must not shift it sideways.
     Compare frames 660 and 780 at 60 fps; also use `AURORA_NAME_TAGS=classic`.
     A change of animation can change its height envelope; its individual
     frames never move the tag. Use a human-run grid session to verify real deformer assets.
@@ -1989,6 +2041,12 @@ What the inventory must show with these scenarios:
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.
+- **`AURORA_DEMO_VOLUME`**: `open` keeps the volume panel of the speaker
+  open as if the pointer were on it (the panel normally opens on hover and
+  closes 0.35 s after the pointer leaves it); `muted` also draws the speaker
+  struck through, as after a click on it. Display only: the volumes and the
+  mutes of the settings do not change. Look at the panel: only Music,
+  Multimedia and Voice have an enable box.
 
 ## Forced settings and diagnostics
 
