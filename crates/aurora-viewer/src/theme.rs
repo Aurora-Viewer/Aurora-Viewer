@@ -100,7 +100,6 @@ pub struct Palette {
     pub danger: Color32,
     pub success: Color32,
     pub warn: Color32,
-    #[allow(dead_code)] // part of the skin palette, not used by a widget yet
     pub danger_dim: Color32,
     pub indigo_light: Color32,
     /// Text and icons on a face filled with the accent (primary button,
