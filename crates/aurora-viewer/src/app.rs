@@ -6364,6 +6364,19 @@ impl App {
                 }
             }
         }
+        if self.demo && crate::demo::presence::position().is_some() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::presence::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+            for (open, close) in crate::demo::presence::LIST {
+                if self.frame_count == open || self.frame_count == close {
+                    self.notif_ui.open = self.frame_count == open;
+                }
+            }
+        }
         if self.demo
             && let Some(mode) = crate::demo::toasts::mode()
         {
@@ -8523,16 +8536,11 @@ impl App {
                 );
                 // what the bars leave: where the windows are laid out, moved
                 // and snapped this frame (above the dock with the islands)
-                let left = ui.available_rect_before_wrap();
-                let area = if classic_bars {
-                    left
-                } else {
-                    let mut area = ui::bars::islands::work_area(left, bottom_top);
-                    if let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
-                        area.min.y = area.min.y.max(row + ui::bars::islands::MARGIN);
-                    }
-                    area
-                };
+                let mut area = ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic_bars);
+                // the favourites' row under the islands keeps the windows under it
+                if !classic_bars && let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
+                    area.min.y = area.min.y.max(row + ui::bars::islands::MARGIN);
+                }
                 ui::layout::set_work_area(ui.ctx(), area);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
@@ -9047,12 +9055,19 @@ impl App {
                 let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || (dnd && !aurora);
                 self.world.notifications.aurora = aurora;
                 let restart = self.restart_bell_info(&p);
+                // AURORA_DEMO_PRESENCE: a place for this run only
+                let presence_at = crate::demo::presence::position()
+                    .filter(|_| self.demo)
+                    .unwrap_or(self.settings.presence_position);
+                let classic_bars = self.bars_look().0;
                 let mut toast_env = ui::notifications::ToastEnv {
                     pics: &self.avatar_pics,
                     emoji: &mut self.emoji,
                     hidden: toasts_hidden,
                     message_seconds: f64::from(self.settings.im_toast_seconds),
                     restart,
+                    presence_at,
+                    classic_bars,
                 };
                 let (answers, asks) = if aurora {
                     ui::notification_center::show(
@@ -10361,11 +10376,15 @@ impl ApplicationHandler for App {
             if std::env::var_os("AURORA_DEMO_NOTIF").is_some() {
                 self.notif_ui.open = true;
             }
-            // AURORA_DEMO_NOTIFS: nothing else open over the corners
-            if crate::demo::notifs::mode().is_some() {
+            // AURORA_DEMO_NOTIFS, AURORA_DEMO_PRESENCE: nothing else open
+            // over the corners (and the nearby chat lines over the chat bar)
+            if crate::demo::notifs::mode().is_some() || crate::demo::presence::position().is_some() {
                 self.panels.perf = false;
                 self.panels.chat = false;
                 self.panels.inventory = false;
+            }
+            if crate::demo::presence::position().is_some() {
+                self.panels.people = false;
             }
             // AURORA_DEMO_TOASTS: the toasts arrive with the Conversations
             // window closed, or minimized for `minimized`

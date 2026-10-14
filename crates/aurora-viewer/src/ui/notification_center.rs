@@ -10,6 +10,7 @@
 
 use super::icons::Icons;
 use super::notifications::{self as cards, NotifUi, ToastEnv};
+use crate::settings::PresencePosition;
 use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
 use crate::world::notification_history::{self as history, Entry, Follow, History, Outcome};
@@ -17,8 +18,12 @@ use crate::world::notifications::{Data, Notification, Notifications, Response};
 use crate::world::worldmap::RegionRatings;
 use egui::{Rect, RichText, Vec2};
 
-/// Width of the panel under the bell (the mockup's 360 px).
+/// Width of the panel under the bell (the mockup's 360 px), with
+/// Firestorm's bars; the islands give it theirs (`NotifUi::column`).
 pub const WIDTH: f32 = 360.0;
+/// What the panel's overlay adds around its content: 6 px of margin and the
+/// 1 px border on each side.
+const PANEL_FRAME: f32 = 14.0;
 /// Seconds a card stays rolled out: information / waiting for an answer.
 pub const SHOW_INFO: f64 = 6.0;
 pub const SHOW_ANSWER: f64 = 12.0;
@@ -31,7 +36,8 @@ pub const MAX_PEEK: usize = 3;
 const BUMP: f64 = 0.38;
 const RING: f64 = 0.52;
 /// A friend online / offline: a small toast apart from the center, then a
-/// fade (the mockup's 3.5 s and 300 ms).
+/// fade (the mockup's 3.5 s and 300 ms); at the top right it waits that
+/// long at most for the bell's cards to fold (`presence`).
 pub const PRESENCE: f64 = 3.5;
 const PRESENCE_FADE: f64 = 0.3;
 
@@ -71,10 +77,14 @@ pub struct CenterUi {
     shown_count: usize,
     bump_at: Option<f64>,
     ring_at: Option<f64>,
-    /// Friends' online / offline toasts shown, and since when.
-    pub presence: Vec<(u64, f64)>,
+    /// Friends' online / offline toasts, shown or waiting (`presence`).
+    pub presence: Vec<presence::Toast>,
+    /// The size each of them was drawn with last frame.
+    presence_sizes: std::collections::HashMap<u64, Vec2>,
     /// The panel's height last time it was fully unrolled.
     unrolled_height: f32,
+    /// The width of the panel's content this frame.
+    inner_width: f32,
 }
 
 /// What the frame tells the center besides its notifications.
@@ -89,6 +99,9 @@ pub struct Moment {
     pub hidden: bool,
     /// The full list is open.
     pub open: bool,
+    /// The friends' toasts stand at the top right, where the cards unroll:
+    /// they wait while the cards or the list are out.
+    pub under_bell: bool,
 }
 
 /// How long `n` stays rolled out.
@@ -117,11 +130,13 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
     // a friend online: its own small toast, never a card nor a count
     for n in list.list.iter().filter(|n| n.id > c.last_seen && n.transient) {
         if !m.hidden {
-            c.presence.push((n.id, m.now));
+            c.presence.push(presence::Toast {
+                id: n.id,
+                arrived: m.now,
+                shown: None,
+            });
         }
     }
-    c.presence
-        .retain(|(id, t)| m.now - t < PRESENCE + PRESENCE_FADE && list.list.iter().any(|n| n.id == *id));
     for n in list.listed().filter(|n| n.id > c.last_seen) {
         if !n.read && !n.quiet && !m.dnd && !m.hidden && !m.open {
             let total = show_seconds(n, message_seconds);
@@ -155,6 +170,11 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
     let before = c.peek.len();
     c.peek.retain(|p| p.folding.is_none_or(|t| m.now - t < FOLD));
     let folded = before != c.peek.len();
+    // the friends' toasts, once the cards of this frame are known
+    presence::advance(&mut c.presence, m.now, m.under_bell && (m.open || !c.peek.is_empty()));
+    c.presence.retain(|t| list.list.iter().any(|n| n.id == t.id));
+    let kept: Vec<u64> = c.presence.iter().map(|t| t.id).collect();
+    c.presence_sizes.retain(|id, _| kept.contains(id));
     let count = bell_count(list, c);
     if count > c.shown_count || (folded && count > 0) {
         c.bump_at = Some(m.now);
@@ -288,6 +308,8 @@ pub fn show(
     let mut answers = Vec::new();
     let mut asks = Vec::new();
     let now = ctx.input(|i| i.time);
+    // published by the islands this frame (Firestorm's bars have none)
+    let column = nui.column.take();
     let hovered = nui
         .center
         .panel
@@ -302,19 +324,30 @@ pub fn show(
             dnd,
             hidden: env.hidden,
             open: nui.open,
+            under_bell: env.presence_at == PresencePosition::TopRight,
         },
         env.message_seconds,
     );
     // a friend's notice leaves the list with its toast
     let presence = &nui.center.presence;
-    list.list.retain(|n| !n.transient || presence.iter().any(|(id, _)| *id == n.id));
+    list.list.retain(|n| !n.transient || presence.iter().any(|t| t.id == n.id));
     let Some(bell) = nui.bell else {
         return (answers, asks);
     };
-    presence_toasts(ctx, p, list, nui, env, egui::pos2(12.0, bell.bottom() + 6.0), now, &mut answers);
+    presence_toasts(ctx, p, list, nui, env, column, now, &mut answers);
     let screen = ctx.content_rect();
-    let x = (bell.right() + 4.0).min(screen.right() - 6.0) - WIDTH;
-    let pos = egui::pos2(x.max(screen.left() + 6.0), bell.bottom() + 6.0);
+    // with the islands, exactly under the system and bell islands, the
+    // overlay's margins and border within that width; with Firestorm's bars
+    // its own width, ending under the bell
+    let (x, inner) = match column {
+        Some(c) => (c.left(), c.width() - PANEL_FRAME),
+        None => (
+            ((bell.right() + 4.0).min(screen.right() - 6.0) - WIDTH).max(screen.left() + 6.0),
+            WIDTH - 12.0,
+        ),
+    };
+    nui.center.inner_width = inner;
+    let pos = egui::pos2(x, bell.bottom() + 6.0);
     let unroll = ctx.animate_bool_with_time_and_easing(
         egui::Id::new("notification_center_unroll"),
         nui.open || !nui.center.peek.is_empty(),
@@ -341,12 +374,12 @@ pub fn show(
         .show(ctx, |ui| {
             // unroll from the bell: the panel is revealed from its top
             if unroll < 1.0 {
-                let clip = Rect::from_min_size(pos, Vec2::new(WIDTH + 2.0, (height * unroll).max(1.0)));
+                let clip = Rect::from_min_size(pos, Vec2::new(inner + PANEL_FRAME, (height * unroll).max(1.0)));
                 ui.set_clip_rect(clip.intersect(ui.clip_rect()));
                 ui.multiply_opacity(unroll);
             }
             super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
-                ui.set_width(WIDTH - 12.0);
+                ui.set_width(inner);
                 if nui.open {
                     full_list(ui, p, icons, ratings, list, hist, nui, env, dnd, &mut answers, &mut asks);
                 } else {
@@ -416,9 +449,10 @@ fn rolled_out(
         let full_h = nui.center.heights.get(&peek.id).copied().unwrap_or(0.0);
         let keep = 1.0 - fold;
         let top = ui.cursor().min;
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(top, Vec2::new(WIDTH - 12.0, 4000.0))));
+        let width = nui.center.inner_width;
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(top, Vec2::new(width, 4000.0))));
         if fold > 0.0 {
-            child.set_clip_rect(Rect::from_min_size(top, Vec2::new(WIDTH, full_h * keep)).intersect(ui.clip_rect()));
+            child.set_clip_rect(Rect::from_min_size(top, Vec2::new(width + 12.0, full_h * keep)).intersect(ui.clip_rect()));
             child.multiply_opacity(keep);
         }
         let r = center_card(&mut child, p, icons, ratings, env, &mut nui.wanted_pics, n);
@@ -680,8 +714,17 @@ fn center_card(
     inner.inner
 }
 
-/// A friend online / offline: a small toast at the top left of the view,
-/// apart from the center (never a card nor a count); clicking it opens an IM.
+/// The nearby chat lines over the chat bar (`ui::chat::toasts`), when
+/// they show: the friends' toasts stack above them.
+fn chat_lines(ctx: &egui::Context) -> Option<Rect> {
+    let layer = egui::LayerId::new(egui::Order::Background, egui::Id::new("chat_toasts"));
+    ctx.memory(|m| m.areas().is_visible(&layer).then(|| m.area_rect(layer.id)).flatten())
+}
+
+/// The friends' online / offline toasts at their place in the room the
+/// bars leave (`presence`); clicking one opens an IM. At the top right with
+/// the islands they take the center's width under the system and bell
+/// islands (`column`), their text cut short if it does not fit.
 #[allow(clippy::too_many_arguments)]
 fn presence_toasts(
     ctx: &egui::Context,
@@ -689,49 +732,82 @@ fn presence_toasts(
     list: &Notifications,
     nui: &mut NotifUi,
     env: &mut ToastEnv<'_>,
-    pos: egui::Pos2,
+    column: Option<Rect>,
     now: f64,
     answers: &mut Vec<(u64, Response)>,
 ) {
-    if nui.center.presence.is_empty() || env.hidden {
+    let shown: Vec<(u64, f64)> = nui.center.presence.iter().filter_map(|t| Some((t.id, t.shown?))).collect();
+    if shown.is_empty() || env.hidden {
         return;
     }
+    let mut room = presence::room(super::layout::work_area(ctx), env.classic_bars);
+    let fixed = column.filter(|_| env.presence_at == PresencePosition::TopRight);
+    if let Some(c) = fixed {
+        room.max.x = c.right();
+    }
+    let sizes: Vec<(Vec2, bool)> = shown
+        .iter()
+        .map(|(id, _)| {
+            let (size, measured) = presence::size_of(&nui.center.presence_sizes, *id);
+            (fixed.map_or(size, |c| Vec2::new(c.width(), size.y)), measured)
+        })
+        .collect();
+    let avoid: Vec<Rect> = chat_lines(ctx).into_iter().collect();
+    let only: Vec<Vec2> = sizes.iter().map(|(s, _)| *s).collect();
+    let rects = presence::stack(room, env.presence_at, &only, &avoid);
+    let Some(min) = rects.iter().flatten().map(|r| r.min).reduce(|a, b| a.min(b)) else {
+        return;
+    };
     egui::Area::new(egui::Id::new("notification_presence"))
         .fade_in(false)
         .order(egui::Order::Foreground)
-        .fixed_pos(pos)
+        .fixed_pos(min)
+        .constrain(false)
         .show(ctx, |ui| {
-            ui.spacing_mut().item_spacing.y = 6.0;
-            for (id, since) in nui.center.presence.clone() {
-                let Some(n) = list.list.iter().find(|n| n.id == id) else {
+            for (((id, since), rect), (_, measured)) in shown.into_iter().zip(rects).zip(sizes) {
+                let (Some(rect), Some(n)) = (rect, list.list.iter().find(|n| n.id == id)) else {
                     continue;
                 };
                 let Data::Presence { who, online } = n.data else {
                     continue;
                 };
                 let fade = ((now - since - PRESENCE) / PRESENCE_FADE).clamp(0.0, 1.0) as f32;
-                let mut child = ui.new_child(egui::UiBuilder::new());
-                child.multiply_opacity(1.0 - fade);
-                let frame = super::widgets::overlay(&mut child, p, egui::Margin::symmetric(12, 8), |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 9.0;
-                        let (pic, _) = ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::hover());
-                        nui.wanted_pics.insert(who);
-                        // the initials of the name, not of the notice's quote
-                        let name = n.title.trim_start_matches(['\'', '"']);
-                        super::widgets::avatar_disc(ui, p, pic, env.pics.get(&who), name, false);
-                        let status = if online {
-                            super::presence::Status::Online
-                        } else {
-                            super::presence::Status::Offline
-                        };
-                        super::presence::paint_dot(ui.painter(), p, pic, status, p.panel);
-                        ui.label(RichText::new(&n.title).size(12.5).color(p.ink));
-                    });
-                })
-                .response;
-                ui.advance_cursor_after_rect(frame.rect);
-                let click = ui.interact(frame.rect, egui::Id::new(("notification_presence", id)), egui::Sense::click());
+                let frame = ui
+                    .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                        // laid out with a guess on its first frame: unseen, measured
+                        if !measured {
+                            ui.set_invisible();
+                        }
+                        ui.multiply_opacity(1.0 - fade);
+                        super::widgets::overlay(ui, p, egui::Margin::symmetric(12, 8), |ui| {
+                            if fixed.is_some() {
+                                ui.set_width(ui.available_width());
+                            }
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 9.0;
+                                let (pic, _) = ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::hover());
+                                nui.wanted_pics.insert(who);
+                                // the initials of the name, not of the notice's quote
+                                let name = n.title.trim_start_matches(['\'', '"']);
+                                super::widgets::avatar_disc(ui, p, pic, env.pics.get(&who), name, false);
+                                let status = if online {
+                                    super::presence::Status::Online
+                                } else {
+                                    super::presence::Status::Offline
+                                };
+                                super::presence::paint_dot(ui.painter(), p, pic, status, p.panel);
+                                ui.add(egui::Label::new(RichText::new(&n.title).size(12.5).color(p.ink)).truncate());
+                            });
+                        })
+                        .response
+                        .rect
+                    })
+                    .inner;
+                nui.center.presence_sizes.insert(id, frame.size());
+                if !measured {
+                    continue;
+                }
+                let click = ui.interact(frame, egui::Id::new(("notification_presence", id)), egui::Sense::click());
                 if n.opens() {
                     let click = click
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -857,6 +933,8 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, e: &Entry) -> Opt
 fn hhmm(secs: u64) -> String {
     super::chat::hhmm(at(secs))
 }
+
+pub mod presence;
 
 #[cfg(test)]
 mod tests;

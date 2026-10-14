@@ -214,6 +214,7 @@ pub fn top(
 
     // each island is an area of its own: the pointer over it is over the
     // interface (`Context::is_pointer_over_egui`), between them over the world
+    notif.column = Some(Rect::from_min_max(sys_rect.min, bell_rect.max));
     let bell_slot = Rect::from_center_size(bell_rect.center(), Vec2::splat(SLOT));
     area(&ctx, p, "bell", bell_rect, |ui| {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(bell_slot));

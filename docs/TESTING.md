@@ -1472,6 +1472,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
+| `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
@@ -1758,7 +1759,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   unrolls from the bell at the right end of the top bar (violet bar of the
   time left, 6 s for information, 12 s for what waits for an answer), folds
   back into it around frame 1180 and the red count bounces; Orion comes
-  online at 1190 (small toast at the top left, never in the center), a
+  online at 1190 (small toast at the top right by default, once the card
+  has folded in; never in the center), a
   teleport offer at 1270 and an inventory offer at 1325 stack under the
   bell; a burst of five arrives from 2110, 0.45 s apart: three cards and
   "+ 2 more — see all". `dnd` turns do not disturb on at frame 640: grey
@@ -1773,6 +1775,25 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `history`. A script menu (`AURORA_DEMO_DIALOG=12`) stays rolled out
   until answered. Hover the cards to see them pause. The history is kept in
   memory in demo; on the grid it is saved per account.
+- **`AURORA_DEMO_PRESENCE=<place>`**: the friends' online / offline toasts
+  of Aurora's notification center at `top-left`, `top-center`,
+  `top-right`, `bottom-left`, `bottom-center` or `bottom-right`, for this
+  run only (Preferences › Chat › Toasts is not changed), at 60 frames a
+  second, with People and Conversations closed. Three nearby chat lines at
+  frame 640, then three friends at 700, 730 and 760: the toasts start
+  from their edge of the room the bars leave (below the top islands or
+  bar, above the dock or the bottom bar) and stack away from it, never
+  over a bar; at the bottom left they stack above the chat lines. An IM
+  card unrolls under the bell at 1000 and folds in around 1380; at the
+  top right the friend of 1060 waits, then is dropped (3.5 s without the
+  place), the one of 1200 waits and shows once the card has folded. The
+  bell's list opens at 1500 and closes at 1600: the friend of 1540 shows
+  at the close; it opens again at 1700 until 1990: the friend of 1720 is
+  dropped. The other places show every toast at once. Combine with
+  `AURORA_DEMO_BARS=islands` or `legacy` for either look and
+  `AURORA_WINDOW_SIZE`; capture with `AURORA_FPS_LIMIT=60` at
+  `790,1100,1390,1560,1610,2000`. A very low window (`1280,360`) shows only
+  the newest toasts that fit.
 - **`AURORA_DEMO_RESTART=<seconds>[:options]`**: at frame 600 the demo
   region announces that it restarts in `<seconds>` (AlertInfo
   RegionRestartSeconds): the alert card drops in at the top third of the

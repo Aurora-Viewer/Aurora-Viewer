@@ -37,6 +37,64 @@ pub enum NotificationsStyle {
     Legacy,
 }
 
+/// Where the friends' online / offline toasts of Aurora's notification
+/// center stand (Preferences › Chat › Toasts), in the room the bars leave
+/// (`ui/notification_center/presence.rs`). Top right by default, under the
+/// bell, waiting while its cards or its list are out; Firestorm's toasts
+/// keep them in their own stack.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PresencePosition {
+    TopLeft,
+    TopCenter,
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+impl PresencePosition {
+    pub const ALL: [PresencePosition; 6] = [
+        PresencePosition::TopLeft,
+        PresencePosition::TopCenter,
+        PresencePosition::TopRight,
+        PresencePosition::BottomLeft,
+        PresencePosition::BottomCenter,
+        PresencePosition::BottomRight,
+    ];
+
+    /// The toasts start from the top of the room and stack downwards, or
+    /// from its bottom and stack upwards.
+    pub fn top(self) -> bool {
+        matches!(self, Self::TopLeft | Self::TopCenter | Self::TopRight)
+    }
+
+    /// The name of the place in the preferences.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TopLeft => aurora_i18n::tr!("ui-options-position-top-left"),
+            Self::TopCenter => aurora_i18n::tr!("ui-options-position-top-center"),
+            Self::TopRight => aurora_i18n::tr!("ui-options-position-top-right"),
+            Self::BottomLeft => aurora_i18n::tr!("ui-options-position-bottom-left"),
+            Self::BottomCenter => aurora_i18n::tr!("ui-options-position-bottom-center"),
+            Self::BottomRight => aurora_i18n::tr!("ui-options-position-bottom-right"),
+        }
+    }
+
+    /// The word of `AURORA_DEMO_PRESENCE` (`top-left` … `bottom-right`).
+    pub fn from_word(word: &str) -> Option<Self> {
+        Some(match word {
+            "top-left" => Self::TopLeft,
+            "top-center" => Self::TopCenter,
+            "top-right" => Self::TopRight,
+            "bottom-left" => Self::BottomLeft,
+            "bottom-center" => Self::BottomCenter,
+            "bottom-right" => Self::BottomRight,
+            _ => return None,
+        })
+    }
+}
+
 /// How the world map lays out its controls: over a map filling the window
 /// (the default), or in Firestorm's side panel next to the map (the legacy
 /// style, Preferences › Aurora).
@@ -308,6 +366,8 @@ pub struct Settings {
     pub chat_toast_seconds: f32,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
+    /// Where those toasts stand with Aurora's notification center.
+    pub presence_position: PresencePosition,
     /// Toast of an IM or conference message out of sight (EnableIMChatPopups, on).
     pub toast_im: bool,
     /// Toast of a group chat message (EnableGroupChatPopups, off).
@@ -830,6 +890,7 @@ impl Default for Settings {
             chat_timestamps: true,
             chat_toast_seconds: 20.0,
             toast_friends_online: true,
+            presence_position: PresencePosition::TopRight,
             toast_im: true,
             toast_group_im: false,
             im_toast_seconds: 30.0,
