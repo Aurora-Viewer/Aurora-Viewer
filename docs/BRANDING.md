@@ -309,7 +309,7 @@ well. The outline version is used in three cases:
 - **linear glyphs**, which have no surface to fill: cross, plus, minus,
   tick, arrows, undo / redo, refresh, rotate, `</>`;
 - **struck-through icons** (`eye-off`, `microphone-off`, `volume-off`,
-  `message-off`): Tabler only draws them as outlines;
+  `message-off`, `ban` for blocking): Tabler only draws them as outlines;
 - **functions with no suitable filled icon**: object (`box`), people in the
   plural (`users`, `users-group`, `user-plus`), loudspeaker (`volume`), map
   (`map`), hands (`hand-grab`, `hand-stop`), sitting (`armchair`), walking /
@@ -318,7 +318,8 @@ well. The outline version is used in three cases:
 Do not force a filled icon that does not express the function. Two icons
 that go as a pair (link / unlink, plus / minus) stay in the same style.
 A function keeps the same icon everywhere (script = `code`, object = `box`,
-outfit = `hanger-2-filled`, profile = `user-filled`…): look for the icon
+outfit = `hanger-2-filled`, profile = `user-filled`, block = `ban`, a
+friend's right to modify our objects = `pencil-filled`…): look for the icon
 already in use before adding one.
 
 **Adding an icon:**
