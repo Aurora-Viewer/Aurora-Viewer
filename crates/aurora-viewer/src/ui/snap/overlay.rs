@@ -1,5 +1,5 @@
 //! What is drawn over the windows while one is moved or resized: the guide
-//! of the snap offered, and the reminder that Alt frees the window.
+//! of the snap offered, and the reminder of Alt's role in the gesture.
 
 use super::Guide;
 use crate::keybinds::{Binding, Input};
@@ -11,6 +11,8 @@ use winit::keyboard::KeyCode;
 /// What Alt does in the gesture under way; shown after its keycap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Hint {
+    /// A window moves freely: Alt enables snapping and attachment.
+    Snap,
     /// A snap is offered: Alt leaves the window where it is dropped.
     NoSnap,
     /// The window moves with the ones glued to it: Alt takes it out.
@@ -88,6 +90,7 @@ pub(crate) fn paint(ctx: &egui::Context, p: &Palette, overlay: &Overlay) {
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(keycap::row_width(&caps), keycap::HEIGHT), egui::Sense::hover());
                     keycap::paint_row(ui, p, &caps, rect.left_center(), p.panel);
                     let text = match hint {
+                        Hint::Snap => aurora_i18n::tr!("ui-snap-alt-snap"),
                         Hint::NoSnap => aurora_i18n::tr!("ui-snap-alt-no-snap"),
                         Hint::Detach => aurora_i18n::tr!("ui-snap-alt-detach"),
                     };

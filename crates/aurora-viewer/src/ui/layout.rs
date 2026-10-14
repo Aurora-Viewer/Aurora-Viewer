@@ -12,7 +12,7 @@
 //! stood and in which screen, with the layout.
 //!
 //! The slots also make the windows of the frame known to the gestures
-//! (`gesture`): a window moved or resized snaps to the others and to the
+//! (`gesture`): a window moved with Alt or resized snaps to the others and to the
 //! work area (`snap`), and windows snapped side by side are glued: they
 //! move as one block, saved with the layout too.
 
@@ -321,9 +321,9 @@ impl Slot {
 /// The gestures of the frame on the windows: call it once per frame, after
 /// the bars (`set_work_area`) and before the windows are shown. A window
 /// dragged by its title takes the windows glued to it along, is offered a
-/// snap to the others and to the work area (`snap`; `snap_enabled` is the
-/// user's setting), shown by a guide and applied when the mouse is
-/// released; Alt moves it alone and free.
+/// snap to the others and to the work area only while Alt is held (`snap`;
+/// `snap_enabled` is the user's setting), shown by a guide and applied when
+/// the mouse is released; Alt also takes it out of its current group.
 pub(crate) fn frame(ctx: &egui::Context, p: &Palette, snap_enabled: bool) {
     let screen = ctx.content_rect();
     if !usable(screen) {

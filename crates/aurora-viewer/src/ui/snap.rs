@@ -1,5 +1,5 @@
-//! Windows snap to each other and to the work area while they are moved or
-//! resized, and stay together once they stand side by side.
+//! Windows snap to each other and to the work area while moved with Alt or
+//! resized, and stay together once attached side by side.
 //!
 //! Firestorm snaps a dragged floater to the edges of its siblings and of the
 //! floater view (LLFloater's drag handle, LLView::findSnapRect and
@@ -13,7 +13,9 @@
 //! floater far above attracts in Firestorm), the snap of a moved window is
 //! shown by a guide and applied when the mouse is released rather than under
 //! the pointer, and any two windows snapped side by side move as one block
-//! (Firestorm keeps that for declared dependents).
+//! (Firestorm keeps that for declared dependents). At the user's request,
+//! moving and dropping without Alt never snaps or creates a group; Alt
+//! detaches the dragged window and enables attachment to a new target.
 //!
 //! This module is the geometry: which snap a set of moving edges is offered
 //! (`find`), what to draw for it (`guide`), which windows are side by side
