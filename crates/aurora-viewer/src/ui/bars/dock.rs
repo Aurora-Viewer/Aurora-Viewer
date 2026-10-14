@@ -130,7 +130,11 @@ pub fn bottom(
         let target = ui.interact(geo.dock, Id::new("toolbar_background"), Sense::click());
         toolbar.context(&target, p, None, row.locked);
         let inner = geo.dock.shrink2(Vec2::new(PAD, (DOCK_H - BUTTON_H) / 2.0));
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(inner)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
         child.spacing_mut().item_spacing.x = GAP;
         let look = |b: &crate::ui::skin::ToolButton| ButtonLook {
             size: Vec2::new(if b.command == "speak" { DOCK_MIC_W } else { geo.button }, BUTTON_H),
@@ -141,7 +145,11 @@ pub fn bottom(
         // a button dropped a little past either end still lands in the dock;
         // the marker spans the buttons' row less 2 px at each end, the
         // mockup's 28 px `.dropguide`
-        let drop = ui.interact(inner.expand2(Vec2::new(geo.button + PAD, 0.0)), Id::new("dock_drop"), Sense::hover());
+        let drop = ui.interact(
+            inner.expand2(Vec2::new(geo.button + PAD, 0.0)),
+            Id::new("dock_drop"),
+            Sense::hover(),
+        );
         toolbar.drop_bar(&drop, &rects, p, row.locked);
     });
     (out, action, screen.bottom() - RESERVED, committed)
@@ -190,7 +198,11 @@ fn chat_island(
         Pos2::new(smile.left() - 6.0, field.bottom()),
     );
     let hint = RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.5);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(text)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
     // egui paints a placeholder in the weak text colour, whatever its own
     child.visuals_mut().weak_text_color = Some(p.muted_dim);
     let out = crate::ui::chat::bar_input(&mut child, chat, gestures, emoji.as_deref_mut(), |edit| {
@@ -211,7 +223,14 @@ fn chat_island(
     let open = panels.chat && chat.selected.is_none() && !chat.contacts;
     let resp = ui.interact(button, Id::new("chat_island_open"), Sense::click());
     slot_face(ui, p, button, resp.hovered(), open);
-    paint_icon(ui, icons, "message-circle-filled", button, super::islands::ICON, slot_ink(p, resp.hovered() || open, true));
+    paint_icon(
+        ui,
+        icons,
+        "message-circle-filled",
+        button,
+        super::islands::ICON,
+        slot_ink(p, resp.hovered() || open, true),
+    );
     if resp.on_hover_text(aurora_i18n::tr!("common-nearby-chat")).clicked() {
         if open {
             crate::ui::widgets::toggle_floater(ui.ctx(), "conversations", &mut panels.chat);

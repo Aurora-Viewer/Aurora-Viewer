@@ -1437,7 +1437,10 @@ fn tool_button(
     if unread > 0 && look.dock {
         // the one counter of the islands, as on the bell: 3 px in from the
         // button's right edge, 1 px above its top (the mockup's `.upill`)
-        let slot = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() - 1.0), egui::pos2(rect.right() - 5.0, rect.bottom()));
+        let slot = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.top() - 1.0),
+            egui::pos2(rect.right() - 5.0, rect.bottom()),
+        );
         islands::count(ui, p, slot, unread, 1.0, false);
     } else if unread > 0 {
         paint_unread_pill(ui, p, rect, icon_size, unread);
@@ -1532,7 +1535,11 @@ fn mic_button(
     // opens the panel. In the dock the pair is centred instead.
     let arrow_w = if look.dock { DOCK_MIC_ARROW } else { MIC_ARROW };
     let with_arrow = look.dock || width >= icon_size + 2.0 * (MIC_ARROW + 1.0);
-    let icon_x = if look.dock { rect.center().x - arrow_w / 2.0 } else { rect.center().x };
+    let icon_x = if look.dock {
+        rect.center().x - arrow_w / 2.0
+    } else {
+        rect.center().x
+    };
     let icon_rect = egui::Rect::from_center_size(egui::pos2(icon_x, rect.center().y), Vec2::splat(icon_size));
     let resp = ui.interact(rect, ui.id().with("mic_main"), egui::Sense::click_and_drag());
     let arrow = with_arrow.then(|| {
@@ -2009,7 +2016,18 @@ pub fn bottom_bar(
                                 ao_active,
                                 locked: toolbar_settings.locked,
                             };
-                            rects = toolbar_row(ui, p, icons, buttons, |_| ButtonLook::bar(btn_w), toolbar, panels, mic, &row, &mut action);
+                            rects = toolbar_row(
+                                ui,
+                                p,
+                                icons,
+                                buttons,
+                                |_| ButtonLook::bar(btn_w),
+                                toolbar,
+                                panels,
+                                mic,
+                                &row,
+                                &mut action,
+                            );
                         });
                     });
                 toolbar.drop_bar(&target, &rects, p, toolbar_settings.locked);

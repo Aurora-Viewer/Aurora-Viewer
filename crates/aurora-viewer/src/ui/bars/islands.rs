@@ -510,7 +510,12 @@ mod tests {
     /// Two frames of the islands in a screen `width` wide (16:9), the
     /// pointer at `pointer`; the areas' rectangles by name, and what the
     /// last frame painted.
-    fn frames(width: f32, stretch: bool, bug: bool, pointer: Pos2) -> (egui::Context, impl Fn(&str) -> Rect, Vec<egui::epaint::ClippedShape>) {
+    fn frames(
+        width: f32,
+        stretch: bool,
+        bug: bool,
+        pointer: Pos2,
+    ) -> (egui::Context, impl Fn(&str) -> Rect, Vec<egui::epaint::ClippedShape>) {
         let ctx = egui::Context::default();
         let p = crate::theme::Theme::default().palette();
         let icons = Icons::default();
@@ -629,13 +634,15 @@ mod tests {
             for clipped in &shapes {
                 texts(&clipped.shape, &mut found);
             }
-            let found: Vec<_> = found
-                .into_iter()
-                .filter(|(_, at)| system.contains(*at))
-                .collect();
+            let found: Vec<_> = found.into_iter().filter(|(_, at)| system.contains(*at)).collect();
             assert!(found.len() >= 3, "{width}: {found:?}");
             for (text, at) in &found {
-                assert!((at.y - system.center().y).abs() <= 0.5, "{width}: {text:?} at {}, island centre {}", at.y, system.center().y);
+                assert!(
+                    (at.y - system.center().y).abs() <= 0.5,
+                    "{width}: {text:?} at {}, island centre {}",
+                    at.y,
+                    system.center().y
+                );
             }
         }
     }
