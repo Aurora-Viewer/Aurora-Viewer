@@ -466,6 +466,44 @@ fn bandwidth_kbps(settings: &Settings) -> f32 {
         .unwrap_or(settings.bandwidth_kbps as f32)
 }
 
+/// Test overrides of the settings (used by automated captures): the
+/// graphics level first, so that the single settings after it still change
+/// it. Applied at start, and again after a new profile's level is chosen.
+fn apply_test_overrides(settings: &mut Settings) {
+    if let Some(level) = std::env::var("AURORA_GRAPHICS_PRESET")
+        .ok()
+        .and_then(|v| crate::graphics_presets::Preset::from_name(&v))
+    {
+        level.apply(settings);
+    }
+    if let Some(v) = std::env::var("AURORA_FPS_LIMIT")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|&v| v > 0)
+    {
+        settings.fps_cap = true;
+        settings.fps_limit = v.clamp(10, 500);
+    }
+    if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
+        settings.antialiasing = v;
+    }
+    if let Some(v) = std::env::var("AURORA_MAX_COMPLEXITY").ok().and_then(|v| v.parse().ok()) {
+        settings.max_complexity = v;
+    }
+    if let Some(v) = std::env::var("AURORA_MAX_AVATARS").ok().and_then(|v| v.parse().ok()) {
+        settings.max_avatars = v;
+    }
+    if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
+        settings.shadow_quality = v;
+    }
+    if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
+        settings.projector_shadows = v != "0";
+    }
+    if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
+        settings.occlusion_culling = v != "0";
+    }
+}
+
 impl App {
     pub fn new() -> anyhow::Result<App> {
         // found on a background thread while the rest starts
@@ -476,40 +514,7 @@ impl App {
             // Exercise a first launch without changing the user's bindings.
             settings.keybinds = Default::default();
         }
-        // test overrides (used by automated captures); the graphics level
-        // first, so that the single settings below can still change it
-        if let Some(level) = std::env::var("AURORA_GRAPHICS_PRESET")
-            .ok()
-            .and_then(|v| crate::graphics_presets::Preset::from_name(&v))
-        {
-            level.apply(&mut settings);
-        }
-        if let Some(v) = std::env::var("AURORA_FPS_LIMIT")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .filter(|&v| v > 0)
-        {
-            settings.fps_cap = true;
-            settings.fps_limit = v.clamp(10, 500);
-        }
-        if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
-            settings.antialiasing = v;
-        }
-        if let Some(v) = std::env::var("AURORA_MAX_COMPLEXITY").ok().and_then(|v| v.parse().ok()) {
-            settings.max_complexity = v;
-        }
-        if let Some(v) = std::env::var("AURORA_MAX_AVATARS").ok().and_then(|v| v.parse().ok()) {
-            settings.max_avatars = v;
-        }
-        if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
-            settings.shadow_quality = v;
-        }
-        if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
-            settings.projector_shadows = v != "0";
-        }
-        if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
-            settings.occlusion_culling = v != "0";
-        }
+        apply_test_overrides(&mut settings);
         let net = NetClient::new()?;
         net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
         let voice_http = net.caps_http();
@@ -8116,6 +8121,25 @@ impl ApplicationHandler for App {
             renderer.info.timestamps
         );
         let mut renderer = renderer;
+        if std::mem::take(&mut self.settings.new_profile) {
+            // a first launch: the graphics level from the card, like
+            // Firestorm's recommended settings; the test overrides still win
+            let system_mb = {
+                use sysinfo::{MemoryRefreshKind, RefreshKind, System};
+                let system = System::new_with_specifics(RefreshKind::nothing().with_memory(MemoryRefreshKind::nothing().with_ram()));
+                Some(system.total_memory() / 1024 / 1024).filter(|&mb| mb > 0)
+            };
+            let level = crate::graphics_presets::Preset::for_machine(renderer.info.integrated, renderer.info.vram_mb, system_mb);
+            log::info!(
+                "new profile: graphics level {level:?} (integrated {}, video memory {:?} MB, system memory {:?} MB)",
+                renderer.info.integrated,
+                renderer.info.vram_mb,
+                system_mb
+            );
+            level.apply(&mut self.settings);
+            apply_test_overrides(&mut self.settings);
+            self.settings.save();
+        }
         renderer.apply_settings(self.settings.render_settings());
         self.screen_rate.poll(&window, Instant::now());
         let max_tex = renderer.device.limits().max_texture_dimension_2d as usize;
