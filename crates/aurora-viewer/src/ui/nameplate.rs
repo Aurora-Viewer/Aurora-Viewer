@@ -10,6 +10,7 @@
 //! disturb, typing, muted, friend, too complex. The presentation is
 //! Aurora's own: Firestorm writes them in a status line above the name.
 
+use crate::settings::ColorSettings;
 use crate::theme::Palette;
 use egui::{Color32, Pos2, Rect, Vec2};
 use std::collections::{HashMap, HashSet};
@@ -85,6 +86,17 @@ pub fn level_for(distance: f32, previous: Option<Level>) -> Level {
     }
 }
 
+/// "Full plates for friends only" (off by default, the human's choice of
+/// 2026-10-14): a resident who is not a friend stops at the compact pill;
+/// ours stays complete. The far pill still follows the distance.
+pub fn friends_level(level: Level, c: &Content, friends_only: bool) -> Level {
+    if friends_only && level == Level::Full && !c.friend && c.role != Role::Own {
+        Level::Compact
+    } else {
+        level
+    }
+}
+
 /// Level of a plate among the others: `level` is what its distance gives,
 /// `rank` its place among the plates near enough to be complete (0 for the
 /// nearest), `was_full` whether it was complete in the last frame.
@@ -144,14 +156,20 @@ impl Role {
         }
     }
 
-    /// Color of the display name. Fixed by the theme: the tag colors of the
-    /// preferences belong to the classic tags (the human's choice).
-    pub fn name_color(self, p: &Palette) -> Color32 {
+    /// Color of the display name: the theme's ink for everyone, unless the
+    /// names are colored by relation (Preferences › Colors, off by default,
+    /// shared with the classic tags; the human's choice of 2026-10-14).
+    pub fn name_color(self, p: &Palette, k: &ColorSettings) -> Color32 {
+        use crate::ui::colors::c;
+        if !k.relation_names {
+            return p.ink;
+        }
         match self {
-            Role::Resident | Role::Own => p.ink,
-            Role::Friend => p.violet_light,
-            Role::Linden => p.rose,
-            Role::Blocked => p.muted_dim,
+            Role::Resident => p.ink,
+            Role::Own => c(k.tag_me),
+            Role::Friend => c(k.tag_friend),
+            Role::Linden => c(k.tag_linden),
+            Role::Blocked => c(k.tag_muted),
         }
     }
 }
@@ -160,9 +178,8 @@ impl Role {
 pub enum Badge {
     /// In the voice channel.
     Voice,
-    /// Not in it, or we are not in voice ourselves: every plate says so.
-    NoVoice,
     Typing,
+    /// A green heart (the human's choice of 2026-10-14; it was light violet).
     Friend,
     /// Drawn as a silhouette: over the complexity or surface limit.
     TooComplex,
@@ -243,15 +260,16 @@ pub fn sub_lines(level: Level, c: &Content) -> [Option<SubLine<'_>>; 2] {
     }
 }
 
-/// The badges of a plate: none on the far pill; a microphone, green in the
-/// voice channel and struck through in red outside it, always first.
+/// The badges of a plate: none on the far pill; a green microphone in the
+/// voice channel, always first, and nothing outside it (the human's choice
+/// of 2026-10-14, replacing the red struck-through microphone).
 pub fn badges(level: Level, c: &Content) -> Badges {
     let mut b = Badges::default();
     if level == Level::Far {
         return b;
     }
     for (on, badge) in [
-        (true, if c.in_voice { Badge::Voice } else { Badge::NoVoice }),
+        (c.in_voice, Badge::Voice),
         (c.typing, Badge::Typing),
         (c.friend, Badge::Friend),
         (c.too_complex, Badge::TooComplex),
@@ -576,6 +594,8 @@ pub struct Plates {
     levels: Vec<Level>,
     glass: Vec<bool>,
     waiting: Vec<Uuid>,
+    /// Preferences › Interface › "Full plates for friends only".
+    pub friends_only_full: bool,
 }
 
 impl Plates {
@@ -603,7 +623,7 @@ impl Plates {
         let mut rank = 0;
         for (i, tag) in tags.iter().enumerate().rev() {
             let previous = self.entries.get(&tag.id).map(|e| e.level);
-            let mut level = level_for(tag.distance, previous);
+            let mut level = friends_level(level_for(tag.distance, previous), &tag.content, self.friends_only_full);
             if level == Level::Full {
                 level = crowd_level(level, rank, previous == Some(Level::Full));
                 rank += 1;

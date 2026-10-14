@@ -234,9 +234,9 @@ fn the_lines_under_the_name_follow_the_options() {
 
 #[test]
 fn badges_and_status_dot_by_state_and_level() {
-    // out of the voice channel: the struck-through microphone, alone
+    // out of the voice channel: no microphone at all (the human's choice)
     let plain = content();
-    assert_eq!(badges(Level::Full, &plain).iter().collect::<Vec<_>>(), [Badge::NoVoice]);
+    assert_eq!(badges(Level::Full, &plain).len(), 0);
     assert_eq!(badges(Level::Far, &plain).len(), 0);
     assert_eq!(status_dot(Level::Full, &plain), Some(Presence::Online));
     let busy = Content {
@@ -262,35 +262,93 @@ fn badges_and_status_dot_by_state_and_level() {
     assert_eq!(badges(Level::Far, &everything).len(), 0);
     // a blocked resident's status is hidden
     assert_eq!(status_dot(Level::Full, &everything), None);
-    // the green microphone takes the red one's place, never both
+    // a friend's heart, after the microphone, at the levels that have badges
     let friend = Content { friend: true, ..content() };
-    assert_eq!(
-        badges(Level::Full, &friend).iter().collect::<Vec<_>>(),
-        [Badge::NoVoice, Badge::Friend]
-    );
-    let in_voice = Content { in_voice: true, ..friend };
+    assert_eq!(badges(Level::Full, &friend).iter().collect::<Vec<_>>(), [Badge::Friend]);
+    let in_voice = Content {
+        in_voice: true,
+        ..friend.clone()
+    };
     assert_eq!(
         badges(Level::Compact, &in_voice).iter().collect::<Vec<_>>(),
         [Badge::Voice, Badge::Friend]
     );
+    assert_eq!(badges(Level::Far, &in_voice).len(), 0);
+    // the status dot stays the status, friend or not
+    let away = Content {
+        presence: Presence::Away,
+        ..friend
+    };
+    assert_eq!(status_dot(Level::Full, &away), Some(Presence::Away));
 }
 
 #[test]
-fn roles_and_their_fixed_colors() {
+fn full_plates_for_friends_only_cap_the_others_at_the_compact_pill() {
+    let stranger = content();
+    let friend = Content { friend: true, ..content() };
+    let own = Content {
+        role: Role::Own,
+        ..content()
+    };
+    // off (the default): the distance alone decides
+    for c in [&stranger, &friend, &own] {
+        for level in [Level::Full, Level::Compact, Level::Far] {
+            assert_eq!(friends_level(level, c, false), level);
+        }
+    }
+    // on: a stranger stops at the compact pill, a friend and we stay complete
+    assert_eq!(friends_level(Level::Full, &stranger, true), Level::Compact);
+    assert_eq!(friends_level(Level::Full, &friend, true), Level::Full);
+    assert_eq!(friends_level(Level::Full, &own, true), Level::Full);
+    // the far pill still follows the distance
+    assert_eq!(friends_level(Level::Far, &stranger, true), Level::Far);
+    assert_eq!(friends_level(Level::Compact, &stranger, true), Level::Compact);
+}
+
+#[test]
+fn a_stranger_s_plate_stays_compact_close_up_with_friends_only() {
+    let ctx = egui::Context::default();
+    let mut plates = Plates {
+        friends_only_full: true,
+        ..Plates::default()
+    };
+    let friend = Content { friend: true, ..content() };
+    let tags = [tag(1, 3.0, content()), tag(2, 4.0, friend)];
+    frame(&ctx, &mut plates, &tags, 1.0);
+    let level = |id: u128| plates.entries.get(&Uuid::from_u128(id)).map(|e| e.level);
+    assert_eq!(level(1), Some(Level::Compact));
+    assert_eq!(level(2), Some(Level::Full));
+}
+
+#[test]
+fn roles_and_their_name_colors() {
     assert_eq!(Role::of(true, true, true, true), Role::Own);
     assert_eq!(Role::of(false, true, true, true), Role::Blocked);
     assert_eq!(Role::of(false, false, true, true), Role::Linden);
     assert_eq!(Role::of(false, false, false, true), Role::Friend);
     assert_eq!(Role::of(false, false, false, false), Role::Resident);
     let p = Theme::default().palette();
-    assert_eq!(Role::Resident.name_color(&p), p.ink);
-    assert_eq!(Role::Own.name_color(&p), p.ink);
-    assert_eq!(Role::Friend.name_color(&p), p.violet_light);
-    assert_eq!(Role::Linden.name_color(&p), p.rose);
-    assert_eq!(Role::Blocked.name_color(&p), p.muted_dim);
+    let roles = [Role::Resident, Role::Own, Role::Friend, Role::Linden, Role::Blocked];
+    // by default every name is in the theme's ink
+    let off = crate::settings::ColorSettings::default();
+    assert!(!off.relation_names);
+    for role in roles {
+        assert_eq!(role.name_color(&p, &off), p.ink);
+    }
+    // switched on: the colors of the preferences, shared with the classic tags
+    let on = crate::settings::ColorSettings {
+        relation_names: true,
+        ..off
+    };
+    let c = crate::ui::colors::c;
+    assert_eq!(Role::Resident.name_color(&p, &on), p.ink);
+    assert_eq!(Role::Own.name_color(&p, &on), c(on.tag_me));
+    assert_eq!(Role::Friend.name_color(&p, &on), c(on.tag_friend));
+    assert_eq!(Role::Linden.name_color(&p, &on), c(on.tag_linden));
+    assert_eq!(Role::Blocked.name_color(&p, &on), c(on.tag_muted));
     // a Linden and a friend are told apart, and both from a resident
-    assert_ne!(Role::Linden.name_color(&p), Role::Friend.name_color(&p));
-    assert_ne!(Role::Friend.name_color(&p), Role::Resident.name_color(&p));
+    assert_ne!(Role::Linden.name_color(&p, &on), Role::Friend.name_color(&p, &on));
+    assert_ne!(Role::Friend.name_color(&p, &on), Role::Resident.name_color(&p, &on));
 }
 
 #[test]
@@ -626,7 +684,7 @@ fn only_the_nearest_plates_blur_the_world() {
 }
 
 #[test]
-fn the_plate_colors_ignore_the_tag_color_settings() {
+fn the_plate_names_follow_the_relation_switch() {
     let ctx = egui::Context::default();
     let p = Theme::default().palette();
     let friend = "Orion le Grand";
@@ -668,11 +726,9 @@ fn the_plate_colors_ignore_the_tag_color_settings() {
             },
         ),
     ];
-    let before = colors(&frame(&ctx, &mut Plates::default(), &tags, 1.0).1);
-    // the settings of the classic tags, all changed
     let saved = crate::ui::colors::get();
     let odd = [255, 0, 255, 255];
-    crate::ui::colors::set(&crate::settings::ColorSettings {
+    let changed = crate::settings::ColorSettings {
         tag_me: odd,
         tag_friend: odd,
         tag_muted: odd,
@@ -680,15 +736,29 @@ fn the_plate_colors_ignore_the_tag_color_settings() {
         tag_match: odd,
         tag_mismatch: odd,
         ..saved
+    };
+    // the colors by relation off (the default): every name in ink, whatever
+    // the colors of the preferences
+    crate::ui::colors::set(&crate::settings::ColorSettings {
+        relation_names: false,
+        ..changed
     });
-    let (_, shapes) = frame(&ctx, &mut Plates::default(), &tags, 1.0);
+    let (_, off) = frame(&ctx, &mut Plates::default(), &tags, 1.0);
+    // switched on: the colors of the preferences
+    crate::ui::colors::set(&crate::settings::ColorSettings {
+        relation_names: true,
+        ..changed
+    });
+    let (_, on) = frame(&ctx, &mut Plates::default(), &tags, 1.0);
     crate::ui::colors::set(&saved);
-    assert_eq!(colors(&shapes), before);
-    assert!(!before.contains(&Color32::from_rgb(255, 0, 255)));
-    // and they are the theme's
-    assert_eq!(text_color(&shapes, friend), Some(p.violet_light));
-    assert_eq!(text_color(&shapes, "Nova Exemple"), Some(p.muted));
-    assert_eq!(text_color(&shapes, "Loups du Nord"), Some(p.teal));
+    assert!(!colors(&off).contains(&Color32::from_rgb(255, 0, 255)));
+    assert_eq!(text_color(&off, friend), Some(p.ink));
+    assert_eq!(text_color(&on, friend), Some(Color32::from_rgb(255, 0, 255)));
+    // the other lines keep the theme's colors either way
+    for shapes in [&off, &on] {
+        assert_eq!(text_color(shapes, "Nova Exemple"), Some(p.muted));
+        assert_eq!(text_color(shapes, "Loups du Nord"), Some(p.teal));
+    }
 }
 
 #[test]

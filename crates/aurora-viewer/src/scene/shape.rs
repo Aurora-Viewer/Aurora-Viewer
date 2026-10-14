@@ -105,17 +105,16 @@ impl ShapeParams {
         };
         let mut stack = vec![&root];
         while let Some(el) = stack.pop() {
-            for c in el.elements() {
-                if c.name == "param" {
-                    if let Some(id) = c.attr("id").and_then(|v| v.trim().parse::<i32>().ok())
-                        && let Some(p) = Self::parse_param(c, sk, rig)
-                    {
-                        out.params.entry(id).or_insert(p);
-                    }
-                } else {
-                    stack.push(c);
-                }
+            // Shared parameters keep their first template, as LLCharacter's
+            // addSharedVisualParam. The head's Eye Pop precedes the eyelash
+            // copy, which has a wider internal range and must not redefine it.
+            if el.name == "param"
+                && let Some(id) = el.attr("id").and_then(|v| v.trim().parse::<i32>().ok())
+                && let Some(param) = Self::parse_param(el, sk, rig)
+            {
+                out.params.entry(id).or_insert(param);
             }
+            stack.extend(el.elements().collect::<Vec<_>>().into_iter().rev());
         }
         out.transmitted = out
             .params
@@ -311,6 +310,35 @@ impl ShapeParams {
             .collect()
     }
 
+    /// Edit the shape only, retaining the other wearables' transmitted values.
+    /// F32_to_U8 uses truncation, as llquantize.h / LLAgent::sendAgentSetAppearance.
+    pub fn edit_values(&self, base: &[u8], changed: &BTreeMap<i32, f32>) -> Vec<u8> {
+        self.transmitted
+            .iter()
+            .enumerate()
+            .map(|(i, id)| {
+                let Some(p) = self.params.get(id) else {
+                    return 0;
+                };
+                if let Some(w) = changed.get(id).filter(|w| w.is_finite()) {
+                    if p.max > p.min {
+                        ((w.clamp(p.min, p.max) - p.min) / (p.max - p.min) * 255.0) as u8
+                    } else {
+                        0
+                    }
+                } else {
+                    base.get(i).copied().unwrap_or_else(|| {
+                        if p.max > p.min {
+                            ((p.default - p.min) / (p.max - p.min) * 255.0) as u8
+                        } else {
+                            0
+                        }
+                    })
+                }
+            })
+            .collect()
+    }
+
     #[cfg(test)]
     pub fn effective_weights_for_sex(&self, male: bool) -> HashMap<i32, f32> {
         let mut weights = self.weights(&[]);
@@ -339,7 +367,16 @@ impl ShapeParams {
         self.set_weight(&mut weights, PARAM_MALE, f32::from(male), 0);
         self.shape_weights(weights, rig)
     }
-    fn shape_weights(&self, weights: HashMap<i32, f32>, rig: &Rig) -> Shape {
+    pub fn weights_with(&self, values: &[u8], changed: &BTreeMap<i32, f32>) -> HashMap<i32, f32> {
+        let mut weights = self.weights(values);
+        for (id, weight) in changed {
+            if weight.is_finite() {
+                self.set_weight(&mut weights, *id, *weight, 0);
+            }
+        }
+        self.effective(weights)
+    }
+    pub fn shape_weights(&self, weights: HashMap<i32, f32>, rig: &Rig) -> Shape {
         let male = weights.get(&PARAM_MALE).copied().unwrap_or(0.0) > 0.5;
         let sex = if male { SEX_MALE } else { SEX_FEMALE };
         let mut local_pos = rig.local_pos.clone();
@@ -444,5 +481,20 @@ mod tests {
                 .values()
                 .any(|q| matches!(&q.kind, Kind::Skeleton(d) if d.iter().any(|b| b.joint == belly)))
         );
+    }
+
+    #[test]
+    fn shared_eye_pop_uses_the_head_range_and_editing_retains_other_wearables() {
+        let (_, _, params) = load();
+        assert_eq!((params.params[&664].min, params.params[&664].max), (-1.3, 1.3));
+        let base = params.values_with(&[(664, 0.25), (80, 1.0)]);
+        let edited = params.edit_values(&base, &BTreeMap::from([(664, 1.3)]));
+        let eye = params.transmitted.iter().position(|id| *id == 664).expect("eye pop");
+        assert_eq!(edited[eye], 255);
+        for (index, id) in params.transmitted.iter().enumerate() {
+            if *id != 664 {
+                assert_eq!(edited[index], base[index]);
+            }
+        }
     }
 }

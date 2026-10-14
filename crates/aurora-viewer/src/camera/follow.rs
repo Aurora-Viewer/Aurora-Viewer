@@ -162,6 +162,7 @@ impl Sources {
 
 /// The simulated points are kept in world space; the output is smoothed in
 /// the avatar's frame, so a moving or turning vehicle remains steady.
+#[derive(Clone)]
 pub(super) struct Simulation {
     position: Vec3,
     focus: Vec3,
