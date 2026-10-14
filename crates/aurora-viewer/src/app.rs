@@ -41,6 +41,7 @@ mod inspect;
 mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
+mod marketplace_listings;
 mod object_actions;
 mod plate_click;
 mod reset_skeleton;
@@ -342,6 +343,10 @@ pub struct App {
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
+    /// Me › Marketplace listings (LLFloaterMarketplaceListings).
+    listings_ui: ui::marketplace_listings::ListingsUi,
+    /// The demo's SLM server (AURORA_DEMO_MARKETPLACE_LISTINGS).
+    demo_slm: Option<crate::world::marketplace::demo::DemoSlm>,
     people_map_ui: ui::minimap::MiniMap,
     worldmap_ui: ui::worldmap::WorldMapUi,
     map_tiles: ui::map_tiles::MapTiles,
@@ -727,6 +732,8 @@ impl App {
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
             marketplace_ui: Default::default(),
+            listings_ui: Default::default(),
+            demo_slm: None,
             people_map_ui: Default::default(),
             worldmap_ui: Default::default(),
             map_tiles: ui::map_tiles::MapTiles::new(),
@@ -1016,7 +1023,7 @@ impl App {
                 }
                 return;
             }
-            if self.demo_script_command(&cmd) || self.demo_currency_command(&cmd) {
+            if self.demo_script_command(&cmd) || self.demo_currency_command(&cmd) || self.demo_marketplace_command(&cmd) {
                 return;
             }
             if matches!(cmd, NetCommand::RequestInventoryMerchant) {
@@ -1434,6 +1441,9 @@ impl App {
         self.buy_currency_ui = Default::default();
         // the next session signs in with its own cookie (the browser stops)
         self.marketplace_ui = Default::default();
+        // the listings belong to the account (LLMarketplaceData)
+        self.listings_ui = Default::default();
+        self.demo_slm = None;
         self.task_notecards.clear();
         self.script_editors.disconnected();
         self.demo_script_sources.clear();
@@ -1519,6 +1529,9 @@ impl App {
                 self.gesture_state.new_editor = false;
                 self.gesture_action(ui::gestures::Action::Open(id));
             }
+            return;
+        }
+        if self.marketplace_listings_event(&ev) {
             return;
         }
         if let NetEvent::InventoryMerchant(result) = ev {
@@ -4487,6 +4500,7 @@ impl App {
                 self.send(cmd);
             }
             // refused offers: to the Trash, whatever the inventory window does
+            self.update_marketplace_listings();
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
                 self.world_edits.insert(request);
@@ -6810,6 +6824,7 @@ impl App {
             }
             BarAction::BuyCurrency => self.open_buy_currency(),
             BarAction::Marketplace => self.marketplace_ui.open(None),
+            BarAction::MarketplaceListings => self.open_marketplace_listings(),
             BarAction::ChatPrefs => {
                 self.panels.settings = true;
                 self.options_ui.tab = ui::options::TAB_CHAT;
@@ -7393,7 +7408,8 @@ impl App {
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
                     double_click: self.double_click_action(),
-                    marketplace: self.marketplace_home().is_some(),
+                    marketplace: self.marketplace_home().is_some()
+                        || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -8051,14 +8067,15 @@ impl App {
                 let profile_base = match self.settings.grid {
                     // AURORA_DEMO_FEED=<page>: the feed browser on a local page
                     _ if self.demo => std::env::var("AURORA_DEMO_FEED").ok(),
-                    crate::settings::GridChoice::SecondLife => Some("https://my.secondlife.com/".to_owned()),
-                    crate::settings::GridChoice::SecondLifeBeta => Some("https://my.secondlife-beta.com/".to_owned()),
-                    crate::settings::GridChoice::Custom => self
-                        .world
-                        .login
-                        .as_ref()
-                        .map(|l| l.raw["web_profile_url"].to_string_value())
-                        .filter(|u| !u.trim().is_empty()),
+                    ref grid => crate::snapshot::profile::grid_web_profile(
+                        grid,
+                        &self
+                            .world
+                            .login
+                            .as_ref()
+                            .map(|l| l.raw["web_profile_url"].to_string_value())
+                            .unwrap_or_default(),
+                    ),
                 };
                 // World › SL Marketplace: the same plugins, browser settings
                 // and OpenID cookie (LLFloaterMarketplace::postBuild)
@@ -8073,6 +8090,7 @@ impl App {
                         home: marketplace_home.as_deref(),
                     },
                 );
+                self.show_marketplace_listings(&ctx, &p);
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
                     browser: &browser,
@@ -8871,6 +8889,12 @@ impl ApplicationHandler for App {
             // page, open at start
             if self.marketplace_home().is_some() {
                 self.marketplace_ui.open(None);
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit:
+            // Me › Marketplace listings open on the demo SLM server
+            if crate::world::marketplace::demo::Mode::from_env().is_some() {
+                self.demo_marketplace_listings();
                 self.panels.perf = false;
             }
             // AURORA_DEMO_TP_CONFIRM=link|landmark: a teleport confirmation on

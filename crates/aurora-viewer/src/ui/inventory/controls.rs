@@ -142,61 +142,22 @@ pub fn search(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut 
     ui.horizontal(|ui| {
         let selector_width = 112.0_f32.min(ui.available_width() * 0.4);
         let field_width = (ui.available_width() - selector_width - ui.spacing().item_spacing.x).max(40.0);
-        // LLSearchEditor (indra/llui/llsearcheditor.cpp): keep the clear action
-        // inside the field and reserve its text padding even before typing.
-        let field = ui.add_sized(
-            [field_width, ui.spacing().interact_size.y],
-            egui::TextEdit::singleline(&mut st.search)
-                .hint_text(hint)
-                .vertical_align(egui::Align::Center)
-                .margin(egui::Margin {
-                    left: 5,
-                    right: 28,
-                    top: 0,
-                    bottom: 0,
-                }),
-        );
-        if !st.search.is_empty() || st.filters.active() || st.links_filter.is_some() {
-            let tip = if st.links_filter.is_some() {
-                aurora_i18n::tr!("ui-inventory-controls-exit-linked-mode")
-            } else {
-                aurora_i18n::tr!("common-clear")
-            };
-            let rect = egui::Rect::from_center_size(field.rect.right_center() - Vec2::new(14.0, 0.0), Vec2::splat(20.0));
-            let clear = ui
-                .interact(rect, ui.id().with("inventory_clear"), egui::Sense::click())
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(tip);
-            clear.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tip));
-            let color = if clear.hovered() { p.ink } else { p.muted };
-            if let Some(icon) = crate::ui::icons::global("x") {
-                ui.painter().image(
-                    icon.id(),
-                    egui::Rect::from_center_size(rect.center(), Vec2::splat(12.0)),
-                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                    color,
-                );
-            } else {
-                ui.painter().line_segment(
-                    [rect.center() - Vec2::splat(3.0), rect.center() + Vec2::splat(3.0)],
-                    egui::Stroke::new(1.0, color),
-                );
-                ui.painter().line_segment(
-                    [rect.center() + Vec2::new(-3.0, 3.0), rect.center() + Vec2::new(3.0, -3.0)],
-                    egui::Stroke::new(1.0, color),
-                );
-            }
-            if clear.clicked() {
-                if st.links_filter.take().is_some() {
-                    if let Some(filters) = st.saved_filters.take() {
-                        st.filters = filters;
-                    }
-                } else {
-                    st.search.clear();
-                    st.filters = Filters::default();
-                    st.saved_filters = None;
+        let clear_shown = !st.search.is_empty() || st.filters.active() || st.links_filter.is_some();
+        let tip = if st.links_filter.is_some() {
+            aurora_i18n::tr!("ui-inventory-controls-exit-linked-mode")
+        } else {
+            aurora_i18n::tr!("common-clear")
+        };
+        let (_, cleared) = super::tree::search_field(ui, p, &mut st.search, hint, field_width, clear_shown, tip);
+        if cleared {
+            if st.links_filter.take().is_some() {
+                if let Some(filters) = st.saved_filters.take() {
+                    st.filters = filters;
                 }
-                field.request_focus();
+            } else {
+                st.search.clear();
+                st.filters = Filters::default();
+                st.saved_filters = None;
             }
         }
         egui::ComboBox::from_id_salt("inventory_search_field")

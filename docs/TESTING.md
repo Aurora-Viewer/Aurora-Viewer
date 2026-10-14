@@ -135,7 +135,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
-| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size or sent to the inventory |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 
@@ -166,6 +166,12 @@ loses L$ 10 (the log gives `photo: texture <W> x <H> encoded in <ms>` and
 `photo: saved to the inventory`). `inventory-ask` leaves the price's
 confirmation on screen; `inventory-poor` sets the balance to L$ 5 and shows
 the "cannot afford" message instead.
+`profile` opens the window on the Profile destination with a caption and
+posts the photo at `AURORA_DEMO_SNAPSHOT_FRAME` to a local web profile that
+answers like my.secondlife.com and its storage (session cookie, upload
+configuration, form, 303): the log gives `demo profile: photo posted (<KB>
+PNG, caption "…", location true)` and the window "Posted to your profile".
+`profile-fail` has the configuration refused: the window shows the failure.
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
@@ -1301,6 +1307,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab, search done |
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
+| `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
 | `AURORA_DEMO_BAN=1` | Ban lines |
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
 
@@ -1916,6 +1923,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   at start on it, the menu entry shows, and a link to an address under it
   opens in the window instead of the system browser. Without it the demo
   has no Marketplace (the entry is hidden, as on a grid without one).
+- **`AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit`**:
+  Me › Marketplace listings open at start, answered by an SLM server
+  simulated in the viewer (nothing is sent). `merchant` (any other
+  value too) adds sample listings to the inventory: a listed hoodie with
+  two versions, an unlisted poster sold from a stock folder of three
+  no-copy items, a lantern folder never associated (loose items, which
+  the audit reports), an unfinished listing the server refuses to list
+  (the 422 alert), and a "Products to sell" folder to drag in.
+  Listing a listing without stock leaves it unlisted (the "could not
+  be updated" alert). `not-merchant`: Firestorm's explanation and the
+  link to open a store. `error`: the connection error with its reason.
+  `audit`: `merchant`, with the audit window of every listing open.
 - **`AURORA_DEMO_PLACE_WINDOW=1`**: with `AURORA_DEMO_PLACE`, the separate
   place windows instead of "Places" ("Landmarks and place
   profiles" option, not saved).

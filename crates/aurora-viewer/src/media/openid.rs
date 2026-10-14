@@ -3,7 +3,8 @@
 //! (`newview/llviewermedia.cpp`, originally LGPL 2.1): the login answer
 //! carries `openid_url` and `openid_token`; the token is posted to the URL
 //! and the `Set-Cookie` of the answer is given to the browsers that show
-//! my.secondlife.com, which then know who we are.
+//! my.secondlife.com, which then know who we are; the raw value is what
+//! the photo posts send to the web profile (mOpenIDCookie).
 //!
 //! The token and the cookie are session secrets: never logged.
 
@@ -14,19 +15,21 @@ use std::sync::Arc;
 #[derive(Default, Clone)]
 pub struct OpenId {
     cookie: Arc<Mutex<Option<Cookie>>>,
+    /// The `Set-Cookie` value as received.
+    raw: Arc<Mutex<Option<String>>>,
 }
 
 impl OpenId {
     /// Post the login token (once per session).
     pub fn start(&self, runtime: &tokio::runtime::Handle, http: reqwest::Client, url: String, token: String) {
-        *self.cookie.lock() = None;
+        self.clear();
         let Some((scheme, authority)) = url
             .split_once("://")
             .map(|(s, rest)| (s.to_owned(), rest.split('/').next().unwrap_or("").to_owned()))
         else {
             return;
         };
-        let slot = self.cookie.clone();
+        let (slot, raw_slot) = (self.cookie.clone(), self.raw.clone());
         runtime.spawn(async move {
             let resp = http
                 .post(&url)
@@ -58,6 +61,7 @@ impl OpenId {
                 Some(c) => {
                     log::info!("OpenID: cookie received for {}", c.domain);
                     *slot.lock() = Some(c);
+                    *raw_slot.lock() = Some(raw);
                 }
                 None => log::warn!("OpenID: unreadable cookie"),
             }
@@ -68,8 +72,14 @@ impl OpenId {
         self.cookie.lock().clone()
     }
 
+    /// The raw cookie (LLViewerMedia::getHeaders' Cookie header).
+    pub fn raw(&self) -> Option<String> {
+        self.raw.lock().clone()
+    }
+
     pub fn clear(&self) {
         *self.cookie.lock() = None;
+        *self.raw.lock() = None;
     }
 }
 

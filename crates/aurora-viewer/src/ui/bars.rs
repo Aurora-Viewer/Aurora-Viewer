@@ -58,6 +58,8 @@ pub enum BarAction {
     SetDoubleClick(crate::autopilot::DoubleClick),
     /// World › SL Marketplace (FSLoadSLMarketplace).
     Marketplace,
+    /// Me › Marketplace listings (menu_viewer.xml "MarketplaceListings").
+    MarketplaceListings,
 }
 
 pub struct StatusInfo<'a> {
@@ -374,6 +376,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         );
         if menu::item(ui, p, "user-filled", aurora_i18n::tr!("ui-bars-profile")) {
             *action = BarAction::MyProfile;
+        }
+        // menu_viewer.xml: Marketplace listings, before Buy L$
+        if st.marketplace && menu::item(ui, p, "tag-filled", aurora_i18n::tr!("marketplace-listings-menu")) {
+            *action = BarAction::MarketplaceListings;
         }
         if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("currency-menu")) {
             *action = BarAction::BuyCurrency;

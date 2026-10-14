@@ -94,9 +94,7 @@ pub fn target(
         return;
     }
     if allowed {
-        let radius = ui.visuals().window_corner_radius;
-        ui.painter()
-            .rect_stroke(r.rect, radius, egui::Stroke::new(1.0, p.violet_light), egui::StrokeKind::Inside);
+        super::tree::drop_outline(ui, p, r.rect, true);
         if let Some(cargo) = r.dnd_release_payload::<TaskDrag>() {
             let mut request = cargo.request.clone();
             request.folder = folder;
