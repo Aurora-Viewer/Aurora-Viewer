@@ -26,6 +26,9 @@ pub(super) const PARCEL_UUID: Uuid = Uuid::from_u128(0x1214_B5B2_7C42_D6C4_8741_
 const XP_AURORA: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0001);
 const XP_SITTER: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0002);
 const XP_INTERACT: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0003);
+const XP_BEACH: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0004);
+const XP_CLUB: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0005);
+const XP_GRID: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0006);
 /// Placeholder parcel music (also `AURORA_DEMO_MUSIC=1`).
 pub const MUSIC_URL: &str = "http://flux.exemple.org:8000/";
 
@@ -210,25 +213,101 @@ fn selected() -> NetEvent {
     })
 }
 
-/// LLSD environment of the parcel: a 4 h day 16 h ahead (shown as -8 h),
-/// skies at 1000 / 2000 / 3000 m, no names (the region's environment).
-fn environment(day_length: i32, day_offset: i32) -> Llsd {
+/// The parcel's own day cycle once one is applied: the names of its
+/// tracks (0 water, 1 ground, 2–4 skies), its length and offset.
+#[derive(Clone)]
+struct DemoDay {
+    names: [String; 5],
+    length: i32,
+    offset: i32,
+}
+
+static DAY: Mutex<Option<DemoDay>> = Mutex::new(None);
+
+/// LLSD environment of the parcel: the region's (no day cycle) until a
+/// settings item is applied, then a day with the names of its tracks;
+/// skies at 1000 / 2000 / 3000 m.
+fn environment() -> Llsd {
     let mut env = Llsd::new_map();
     env.insert("parcel_id", 1);
-    env.insert("day_length", day_length);
-    env.insert("day_offset", day_offset);
     env.insert(
         "track_altitudes",
         Llsd::Array(vec![Llsd::Real(1000.0), Llsd::Real(2000.0), Llsd::Real(3000.0)]),
     );
-    let mut day = Llsd::new_map();
-    let frame = || Llsd::Array(vec![Llsd::new_map()]);
-    day.insert(
-        "tracks",
-        Llsd::Array(vec![frame(), frame(), Llsd::new_array(), Llsd::new_array(), Llsd::new_array()]),
-    );
-    env.insert("day_cycle", day);
+    if let Some(d) = DAY.lock().clone() {
+        env.insert("day_length", d.length);
+        env.insert("day_offset", d.offset);
+        let mut day = Llsd::new_map();
+        let track = |name: &str| {
+            if name.is_empty() {
+                Llsd::new_array()
+            } else {
+                Llsd::Array(vec![Llsd::new_map()])
+            }
+        };
+        day.insert("tracks", Llsd::Array(d.names.iter().map(|n| track(n)).collect()));
+        env.insert("day_cycle", day);
+        env.insert("day_names", Llsd::Array(d.names.iter().map(|n| Llsd::String(n.clone())).collect()));
+    }
     env
+}
+
+/// ExtEnvironment PUT of a settings asset: the whole day or one track.
+fn apply_environment(track: Option<i32>, asset: Uuid, name: &str) {
+    let mut g = DAY.lock();
+    let mut day = g.clone().unwrap_or(DemoDay {
+        names: Default::default(),
+        length: 4 * 3600,
+        offset: 16 * 3600,
+    });
+    match (track, super::env::kind_of(asset)) {
+        (Some(t), _) if (0..5).contains(&t) => day.names[t as usize] = name.to_owned(),
+        // a day takes every track; a sky the ground's, a water the water's
+        (_, Some(crate::world::env_select::SettingsKind::Water)) => day.names[0] = name.to_owned(),
+        (_, Some(crate::world::env_select::SettingsKind::Sky)) => day.names[1] = name.to_owned(),
+        _ => day.names = std::array::from_fn(|_| name.to_owned()),
+    }
+    *g = Some(day);
+}
+
+/// Experiences the picker finds: (id, name, rating, properties).
+fn found_experiences() -> Vec<aurora_net::land::FoundExperience> {
+    let e = |id: Uuid, name: &str, maturity: u8, properties: i32| aurora_net::land::FoundExperience {
+        id,
+        name: name.into(),
+        owner: DEMO_LOUP,
+        maturity,
+        properties,
+    };
+    vec![
+        e(XP_AURORA, aurora_i18n::tr!("demo-land-aurora-experience"), 13, 0),
+        e(XP_SITTER, "AVSitter", 13, 0),
+        e(XP_INTERACT, aurora_i18n::tr!("demo-land-interactions-general"), 21, 0),
+        e(XP_BEACH, aurora_i18n::tr!("demo-land-beach-games"), 13, 0),
+        e(XP_CLUB, aurora_i18n::tr!("demo-land-night-club"), 42, 0),
+        // grid-wide and privileged: in no parcel list
+        e(
+            XP_GRID,
+            "Linden Realms",
+            13,
+            aurora_net::land::XP_PROPERTY_GRID | aurora_net::land::XP_PROPERTY_PRIVILEGED,
+        ),
+    ]
+}
+
+/// A new owner and group for the parcel (deed, release, reclaim), off sale.
+fn change_owner(owner: Uuid, group: Uuid, group_owned: bool) -> Vec<NetEvent> {
+    let mut g = PARCEL.lock();
+    if let Some(p) = g.as_mut() {
+        p.owner_id = owner;
+        p.group_id = group;
+        p.is_group_owned = group_owned;
+        p.flags &= !(pf::FOR_SALE | pf::ALLOW_DEED_TO_GROUP | pf::CONTRIBUTE_WITH_DEED);
+        p.sale_price = 0;
+        p.auth_buyer = Uuid::nil();
+    }
+    drop(g);
+    vec![selected()]
 }
 
 /// The demo simulator's answer to an About Land request.
@@ -304,18 +383,82 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
             local_id: *local_id,
             id: Some(PARCEL_UUID),
         })],
-        LandCommand::EnvironmentRequest { local_id } | LandCommand::EnvironmentReset { local_id } => vec![ev(LandEvent::Environment {
+        LandCommand::EnvironmentRequest { local_id } => vec![ev(LandEvent::Environment {
             local_id: *local_id,
-            result: Ok(environment(4 * 3600, 16 * 3600)),
+            result: Ok(environment()),
         })],
+        LandCommand::EnvironmentReset { local_id } => {
+            *DAY.lock() = None;
+            vec![ev(LandEvent::Environment {
+                local_id: *local_id,
+                result: Ok(environment()),
+            })]
+        }
         LandCommand::EnvironmentUpdate {
             local_id,
             day_length,
             day_offset,
-        } => vec![ev(LandEvent::Environment {
-            local_id: *local_id,
-            result: Ok(environment(*day_length, *day_offset)),
-        })],
+        } => {
+            if let Some(d) = DAY.lock().as_mut() {
+                if *day_length > 0 {
+                    d.length = *day_length;
+                }
+                if *day_offset > 0 {
+                    d.offset = *day_offset;
+                }
+            }
+            vec![ev(LandEvent::Environment {
+                local_id: *local_id,
+                result: Ok(environment()),
+            })]
+        }
+        LandCommand::EnvironmentApply {
+            local_id,
+            track,
+            asset,
+            name,
+            ..
+        } => {
+            apply_environment(*track, *asset, name);
+            vec![ev(LandEvent::Environment {
+                local_id: *local_id,
+                result: Ok(environment()),
+            })]
+        }
+        LandCommand::ExperienceSearch { query, .. } => {
+            let q = query.to_lowercase();
+            let results = found_experiences()
+                .into_iter()
+                .filter(|e| q.is_empty() || e.name.to_lowercase().contains(&q))
+                .collect();
+            vec![ev(LandEvent::ExperienceSearch {
+                query: query.clone(),
+                results: Some(results),
+            })]
+        }
+        // the ownership changes of the General tab, as the simulator makes them
+        LandCommand::Release { .. } => change_owner(Uuid::nil(), Uuid::nil(), false),
+        LandCommand::Reclaim { .. } => change_owner(DEMO_LOUP, Uuid::nil(), false),
+        LandCommand::DeedToGroup { group, .. } => change_owner(*group, *group, true),
+        LandCommand::ReturnObjects { return_type, owners, .. } => {
+            let mut g = PARCEL.lock();
+            if let Some(p) = g.as_mut() {
+                use aurora_net::land::{RT_GROUP, RT_LIST, RT_OTHER, RT_OWNER};
+                let listed = |id: &Uuid| *return_type & RT_LIST != 0 && owners.contains(id);
+                if *return_type & RT_OWNER != 0 || listed(&p.owner_id) || listed(&DEMO_AGENT) && p.owner_id == DEMO_AGENT {
+                    p.owner_prims = 0;
+                }
+                if *return_type & RT_GROUP != 0 || listed(&p.group_id) {
+                    p.group_prims = 0;
+                }
+                if *return_type & RT_OTHER != 0 || listed(&DEMO_LOUP) {
+                    p.other_prims = 0;
+                }
+                p.total_prims = p.owner_prims + p.group_prims + p.other_prims;
+            }
+            drop(g);
+            vec![selected()]
+        }
         LandCommand::ExperienceInfo(ids) => vec![ev(LandEvent::ExperienceInfo(
             ids.iter()
                 .map(|id| {
@@ -323,6 +466,9 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                         XP_AURORA => aurora_i18n::tr!("demo-land-aurora-experience"),
                         XP_SITTER => "AVSitter",
                         XP_INTERACT => aurora_i18n::tr!("demo-land-interactions-general"),
+                        XP_BEACH => aurora_i18n::tr!("demo-land-beach-games"),
+                        XP_CLUB => aurora_i18n::tr!("demo-land-night-club"),
+                        XP_GRID => "Linden Realms",
                         _ => aurora_i18n::tr!("demo-land-unknown-experience"),
                     };
                     (*id, name.to_owned())

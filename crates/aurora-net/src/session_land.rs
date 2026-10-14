@@ -234,13 +234,26 @@ impl Session<'_> {
                 region_id,
                 position,
             } => self.request_parcel_id(handle, local_id, region_id, position),
-            LandCommand::EnvironmentRequest { local_id } => self.parcel_environment(local_id, EnvVerb::Get),
+            LandCommand::EnvironmentRequest { local_id } => self.parcel_environment(local_id, None, EnvVerb::Get),
             LandCommand::EnvironmentUpdate {
                 local_id,
                 day_length,
                 day_offset,
-            } => self.parcel_environment(local_id, EnvVerb::Put(land::environment_update_body(day_length, day_offset))),
-            LandCommand::EnvironmentReset { local_id } => self.parcel_environment(local_id, EnvVerb::Delete),
+            } => self.parcel_environment(local_id, None, EnvVerb::Put(land::environment_update_body(day_length, day_offset))),
+            LandCommand::EnvironmentReset { local_id } => self.parcel_environment(local_id, None, EnvVerb::Delete),
+            LandCommand::EnvironmentApply {
+                local_id,
+                track,
+                asset,
+                name,
+                flags,
+                day_length,
+                day_offset,
+            } => {
+                let body = land::environment_apply_body(track.is_none(), asset, &name, flags, day_length, day_offset);
+                self.parcel_environment(local_id, track, EnvVerb::Put(body));
+            }
+            LandCommand::ExperienceSearch { query, page } => self.experience_search(query, page),
             LandCommand::ExperienceInfo(ids) => self.request_experience_info(ids),
             LandCommand::AvatarSearch { query } => self.avatar_search(query),
             LandCommand::MediaType { url } => {
@@ -378,13 +391,16 @@ impl Session<'_> {
 
     /// LLEnvironment::requestParcel / coroUpdateEnvironment /
     /// coroResetEnvironment on `ExtEnvironment?parcelid=N` of the agent region.
-    fn parcel_environment(&mut self, local_id: i32, verb: EnvVerb) {
+    fn parcel_environment(&mut self, local_id: i32, track: Option<i32>, verb: EnvVerb) {
         let Some(url) = self.main_cap("ExtEnvironment") else {
             let result = Err(aurora_i18n::tr!("session-land-the-region-does-not-provide-the-extenvironment-capability").to_owned());
             emit(self.sh, NetEvent::Land(LandEvent::Environment { local_id, result }));
             return;
         };
-        let url = format!("{url}?parcelid={local_id}");
+        let url = match track {
+            Some(t) => format!("{url}?parcelid={local_id}&trackno={t}"),
+            None => format!("{url}?parcelid={local_id}"),
+        };
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
@@ -444,6 +460,39 @@ impl Session<'_> {
 
     /// LLFloaterAvatarPicker::find: the capability searches usernames and
     /// display names; the UDP request is the legacy fallback (FIRE-15194).
+    /// LLExperienceCache::findExperienceByNameCoro.
+    fn experience_search(&mut self, query: String, page: i32) {
+        let events = self.sh.events.clone();
+        let Some(base) = self.main_cap("FindExperienceByName") else {
+            log::warn!("FindExperienceByName not available");
+            emit(self.sh, NetEvent::Land(LandEvent::ExperienceSearch { query, results: None }));
+            return;
+        };
+        let url = land::experience_search_url(&base, &query, page);
+        let http = self.sh.caps_http.clone();
+        tokio::spawn(async move {
+            let results = match http.get(&url).header("Accept", "application/llsd+xml").send().await {
+                Ok(r) if r.status().is_success() => r.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok()).map(|v| {
+                    v["experience_keys"]
+                        .as_array()
+                        .iter()
+                        .map(land::FoundExperience::from_llsd)
+                        .filter(|e| !e.id.is_nil())
+                        .collect()
+                }),
+                Ok(r) => {
+                    log::warn!("FindExperienceByName: HTTP {}", r.status().as_u16());
+                    None
+                }
+                Err(e) => {
+                    log::warn!("FindExperienceByName failed: {e}");
+                    None
+                }
+            };
+            let _ = events.send(NetEvent::Land(LandEvent::ExperienceSearch { query, results }));
+        });
+    }
+
     fn avatar_search(&mut self, query: String) {
         let Some(mut url) = self.main_cap("AvatarPickerSearch") else {
             let query_id = Uuid::new_v4();

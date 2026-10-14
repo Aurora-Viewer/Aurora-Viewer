@@ -1861,7 +1861,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   tab's section of "Manage", scrolled to and unfolded (`options` on "What
   visitors can do", `general` on "Sale and ownership", `covenant` on the
   overview); `people` asks for the object owners as Refresh does, `owners`
-  also scrolls down to them. Roles: `owner` makes
+  also scrolls down to them; `environment-picker` and `experience-picker`
+  open the settings picker (the demo library's skies, waters and days, also
+  listed without `AURORA_DEMO_ENV_SELECT`) and the experience picker with
+  its results (a grid-wide one hidden, those already listed hidden). The
+  demo simulator applies an environment, a reset, a deed, a release, a
+  reclaim and the returns, and answers with the parcel changed. Roles: `owner` makes
   the avatar the owner of the parcel (everything editable); `officer`
   leaves the parcel to the group "Aurora Builders" and gives the avatar
   its land powers except sale, deed, release and terraforming (the

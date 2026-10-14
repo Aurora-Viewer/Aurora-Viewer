@@ -254,6 +254,21 @@ pub enum LandCommand {
     EnvironmentUpdate { local_id: i32, day_length: i32, day_offset: i32 },
     /// resetParcel: back to the region environment.
     EnvironmentReset { local_id: i32 },
+    /// LLPanelEnvironmentInfo::onPickerCommitted: updateParcel with the
+    /// settings asset of an inventory item, for the whole day (`track`
+    /// None, with the day length / offset) or one track (`trackno`).
+    EnvironmentApply {
+        local_id: i32,
+        track: Option<i32>,
+        asset: Uuid,
+        name: String,
+        /// LLSettingsBase FLAG_NOMOD / FLAG_NOTRANS of the item.
+        flags: u32,
+        day_length: i32,
+        day_offset: i32,
+    },
+    /// LLExperienceCache::findExperienceByName (the experience picker).
+    ExperienceSearch { query: String, page: i32 },
     /// Names of experiences (GetExperienceInfo capability).
     ExperienceInfo(Vec<Uuid>),
     /// Group names (UUIDGroupNameRequest, LLCacheName::getGroupName).
@@ -307,6 +322,81 @@ pub enum LandEvent {
     AvatarSearch { query: String, results: Option<Vec<FoundAvatar>> },
     /// MIME type of a media URL ("none/none" when it could not be found).
     MediaType { url: String, mime: String },
+    /// FindExperienceByName results for `query`, None when the search failed.
+    ExperienceSearch {
+        query: String,
+        results: Option<Vec<FoundExperience>>,
+    },
+}
+
+/// One experience found by the experience picker (an `experience_keys`
+/// entry).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoundExperience {
+    pub id: Uuid,
+    pub name: String,
+    pub owner: Uuid,
+    /// SIM_ACCESS_* rating.
+    pub maturity: u8,
+    /// LLExperienceCache PROPERTY_* bits.
+    pub properties: i32,
+}
+
+/// LLExperienceCache::PROPERTY_PRIVILEGED / PROPERTY_GRID.
+pub const XP_PROPERTY_PRIVILEGED: i32 = 1 << 3;
+pub const XP_PROPERTY_GRID: i32 = 1 << 4;
+
+impl FoundExperience {
+    pub fn from_llsd(e: &Llsd) -> FoundExperience {
+        FoundExperience {
+            id: e["public_id"].as_uuid(),
+            name: e["name"].to_string_value(),
+            owner: e["agent_id"].as_uuid(),
+            maturity: e["maturity"].as_i32().clamp(0, 255) as u8,
+            properties: e["properties"].as_i32(),
+        }
+    }
+}
+
+/// LLURI::escape: everything but the unreserved characters percent-encoded.
+pub fn uri_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// findExperienceByNameCoro's URL (SEARCH_PAGE_SIZE 30).
+pub fn experience_search_url(base: &str, query: &str, page: i32) -> String {
+    format!("{base}?page={page}&page_size=30&query={}", uri_escape(query))
+}
+
+/// Body of the ExtEnvironment PUT applying a settings asset
+/// (coroUpdateEnvironment with an UpdateInfo of an asset): the day length
+/// and offset only for the whole day, then day_asset, day_name and flags.
+pub fn environment_apply_body(whole_day: bool, asset: Uuid, name: &str, flags: u32, day_length: i32, day_offset: i32) -> Llsd {
+    let mut env = Llsd::new_map();
+    if whole_day {
+        if day_length > 0 {
+            env.insert("day_length", day_length);
+        }
+        if day_offset > 0 {
+            env.insert("day_offset", day_offset);
+        }
+    }
+    env.insert("day_asset", asset);
+    if !name.is_empty() {
+        env.insert("day_name", name);
+    }
+    env.insert("flags", flags as i32);
+    let mut body = Llsd::new_map();
+    body.insert("environment", env);
+    body
 }
 
 /// One resident found by the avatar picker.
@@ -581,6 +671,42 @@ pub fn parse_remote_parcel_reply(v: &Llsd) -> Result<Uuid, RemoteParcelError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn environment_apply_like_coro_update_environment() {
+        let asset = Uuid::from_u128(7);
+        let whole = environment_apply_body(true, asset, "Dusk", 2, 14400, 57600);
+        let env = &whole["environment"];
+        assert_eq!(env["day_length"].as_i32(), 14400);
+        assert_eq!(env["day_offset"].as_i32(), 57600);
+        assert_eq!(env["day_asset"].as_uuid(), asset);
+        assert_eq!(env["day_name"].to_string_value(), "Dusk");
+        assert_eq!(env["flags"].as_i32(), 2);
+        // one track: no day length nor offset; unknown values are not sent
+        let track = environment_apply_body(false, asset, "", 0, 14400, -1);
+        assert!(!track["environment"].has("day_length") && !track["environment"].has("day_name"));
+        let none = environment_apply_body(true, asset, "x", 0, -1, -1);
+        assert!(!none["environment"].has("day_length") && !none["environment"].has("day_offset"));
+    }
+
+    #[test]
+    fn experience_search_url_escapes_the_query() {
+        assert_eq!(uri_escape("Beach games/é"), "Beach%20games%2F%C3%A9");
+        assert_eq!(
+            experience_search_url("https://sim/cap", "a b", 1),
+            "https://sim/cap?page=1&page_size=30&query=a%20b"
+        );
+        let mut e = Llsd::new_map();
+        e.insert("public_id", Uuid::from_u128(5));
+        e.insert("name", "Club");
+        e.insert("maturity", 42);
+        e.insert("properties", XP_PROPERTY_GRID);
+        let found = FoundExperience::from_llsd(&e);
+        assert_eq!(
+            (found.id, found.maturity, found.properties),
+            (Uuid::from_u128(5), 42, XP_PROPERTY_GRID)
+        );
+    }
+
     use super::*;
 
     fn props() -> Llsd {

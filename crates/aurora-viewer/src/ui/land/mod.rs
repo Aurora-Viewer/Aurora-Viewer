@@ -212,6 +212,11 @@ enum Dialog {
     Message(String),
     /// LLFloaterURLEntry for the media home page.
     MediaUrl(String),
+    /// LLFloaterExperiencePicker for a list of the parcel
+    /// (AL_ALLOW_EXPERIENCE / AL_BLOCK_EXPERIENCE).
+    ExperiencePicker(dialogs::ExperiencePicker),
+    /// LLFloaterSettingsPicker for the parcel's environment.
+    EnvironmentPicker(dialogs::EnvironmentPicker),
 }
 
 /// Who the avatar picker is choosing for.
@@ -232,6 +237,10 @@ pub struct LandUi {
     manage_section: manage::Section,
     manage_jump: Option<manage::Section>,
     manage_open: HashSet<manage::Section>,
+    /// Where "Manage" was scrolled, to follow the section in view.
+    manage_scroll: f32,
+    /// When a navigation click scrolled it (its animation is not the user's).
+    manage_jumped_at: f64,
     /// The owner (or an officer) looks at the parcel as a visitor would.
     view_as_visitor: bool,
     /// "People and objects": the search fields of the two lists and the
@@ -306,6 +315,31 @@ impl LandUi {
     /// holds it, or a page by its key (`Page::key`).
     pub fn set_tab(&mut self, name: &str) {
         let key = name.trim().to_lowercase();
+        // the pickers of the environment and of the experiences, open
+        if key == "environment-picker" || key == "experience-picker" {
+            let env = key == "environment-picker";
+            let section = if env {
+                manage::Section::Environment
+            } else {
+                manage::Section::Experiences
+            };
+            self.page = Page::Manage;
+            self.manage_section = section;
+            self.manage_jump = Some(section);
+            self.manage_open.insert(section);
+            self.dialog = Some(if env {
+                Dialog::EnvironmentPicker(dialogs::EnvironmentPicker {
+                    track: None,
+                    filter: String::new(),
+                    selected: None,
+                })
+            } else {
+                let mut picker = dialogs::ExperiencePicker::new(aurora_net::land::AL_ALLOW_EXPERIENCE, 42);
+                picker.search_now = true;
+                Dialog::ExperiencePicker(picker)
+            });
+            return;
+        }
         if key == "owners" {
             self.page = Page::People;
             self.refresh_owners_once = true;

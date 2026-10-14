@@ -395,7 +395,7 @@ pub(super) fn show(
         });
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
-            egui::ScrollArea::vertical()
+            let out = egui::ScrollArea::vertical()
                 .id_salt("about_land_manage")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -420,16 +420,26 @@ pub(super) fn show(
                         if s.manage_jump == Some(*sec) {
                             ui.scroll_to_rect(rect, Some(egui::Align::TOP));
                             s.manage_jump = None;
+                            s.manage_jumped_at = ui.input(|i| i.time);
                         } else if rect.top() <= view_top + 24.0 {
                             current = Some(*sec);
                         }
                     }
-                    if s.manage_jump.is_none()
-                        && let Some(sec) = current
-                    {
-                        s.manage_section = sec;
-                    }
+                    current
                 });
+            // the section in view follows the scrolling, not a jump that
+            // could not bring the last sections to the top
+            let offset = out.state.offset.y;
+            let settling = ui.input(|i| i.time) - s.manage_jumped_at < 0.8;
+            if (offset - s.manage_scroll).abs() > 0.5 {
+                s.manage_scroll = offset;
+                if s.manage_jump.is_none()
+                    && !settling
+                    && let Some(sec) = out.inner
+                {
+                    s.manage_section = sec;
+                }
+            }
         });
     });
     streams_changed
@@ -1595,11 +1605,11 @@ fn parcel_media(
 }
 
 /// The environment choice of the title: the region's when the parcel has
-/// no day cycle of its own, else its own (the inventory one and a custom one
-/// are told apart only by the editor, not ported yet).
+/// no day cycle of its own, else the one applied from the inventory (a
+/// custom day is made by the editor, not ported yet).
 pub(super) fn environment_choice(env: &EnvState) -> usize {
     match env {
-        EnvState::Ready(e) if e.has_day => 2,
+        EnvState::Ready(e) if e.has_day => 1,
         _ => 0,
     }
 }
@@ -1614,26 +1624,39 @@ fn environment(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
     // canEdit: LLEnvironment::canAgentUpdateParcelEnvironment and the estate's permission
     let can_edit = unavailable.is_none() && v.owns(powers::LAND_ALLOW_ENVIRONMENT) && parcel.region_allow_env_override;
     let can_enable = can_edit && summary.as_ref().is_some_and(|e| e.has_day);
+    let loading = matches!(env, EnvState::Loading);
     let options = [
         (aurora_i18n::tr!("ui-land-manage-env-region"), true),
         (aurora_i18n::tr!("ui-land-manage-env-inventory"), true),
         (aurora_i18n::tr!("ui-land-manage-env-custom"), true),
     ];
     title(ui, p, Section::Environment, |ui| {
-        editable(ui, can_edit, |ui| {
+        editable(ui, can_edit && !loading, |ui| {
             let current = environment_choice(&env);
             let mut choice = current;
             let r = ui.scope(|ui| widgets::segmented(ui, p, &mut choice, &options)).response;
-            if choice == 0 && current != 0 && can_enable {
-                // "Use region settings" = resetParcel
-                s.dialog = Some(Dialog::Confirm(Confirm::ResetEnvironment));
+            // a click on the lit "From inventory" opens the picker again
+            let clicked = r.hovered() && ui.input(|i| i.pointer.primary_clicked());
+            match choice {
+                // onBtnDefault: "Use region settings" = resetParcel, confirmed
+                0 if current != 0 && can_enable => s.dialog = Some(Dialog::Confirm(Confirm::ResetEnvironment)),
+                // onBtnSelect: the settings picker for the whole day
+                1 if current != 1 || clicked => {
+                    s.dialog = Some(Dialog::EnvironmentPicker(super::dialogs::EnvironmentPicker {
+                        track: None,
+                        filter: String::new(),
+                        selected: None,
+                    }));
+                }
+                _ => {}
             }
-            // the environment picker and editor are not ported yet
-            r.on_hover_text(super::not_yet());
+            // the day cycle editor (LLFloaterEditExtDayCycle) is not ported yet
+            r.on_hover_text(aurora_i18n::tr!("ui-land-manage-env-custom-tip"));
         });
     });
     match unavailable {
         Some(reason) => why(ui, p, reason),
+        None if loading => why(ui, p, aurora_i18n::tr!("common-loading")),
         None => why(ui, p, aurora_i18n::tr!("ui-land-manage-environment-why")),
     }
     if unavailable.is_some() {
@@ -1696,47 +1719,55 @@ fn environment(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
         },
         ..e.clone()
     });
-    if let Some((h, m, pct)) = shown.as_ref().and_then(|e| e.apparent_time(v.now)) {
+    // udpateApparentTimeOfDay: hidden without a day cycle of the parcel's own
+    if let Some((h, m, pct)) = shown.as_ref().filter(|e| e.has_day).and_then(|e| e.apparent_time(v.now)) {
         line(ui, p);
         srow(ui, p, aurora_i18n::tr!("ui-land-manage-apparent-time"), "", 120.0, |ui| {
             ui.label(semibold(ui, &format!("{h}:{m:02} ({pct}%)"), 12.5, p.ink));
         });
     }
-    // the skies' altitudes, read only for a parcel
-    line(ui, p);
+    // the tracks: skies 4 to 2 at their altitude (read only for a parcel),
+    // the ground's sky and the water; each takes a settings item like the
+    // drop targets of the altitudes (onPickerCommitted with its track)
     let name = |i: i32| {
         summary
             .as_ref()
             .map_or_else(|| aurora_i18n::tr!("status-empty").to_owned(), |e| e.track_name(i))
     };
-    let mut skies = String::new();
-    for sky in (2..=4).rev() {
-        let alt = summary
-            .as_ref()
-            .map_or(1000.0 * (sky - 1) as f32, |e| e.altitudes[(sky - 1) as usize]);
-        if !skies.is_empty() {
-            skies.push_str(" · ");
-        }
-        skies.push_str(&aurora_i18n::tr!(
-            "ui-land-environment-sky-m",
-            sky = sky.to_string(),
-            alt = aurora_i18n::number_text(&format!("{alt:.0}"))
-        ));
-        skies.push_str(&format!(" {}", name(sky)));
+    let mut tracks: Vec<(String, i32)> = (2..=4)
+        .rev()
+        .map(|sky| {
+            let alt = summary
+                .as_ref()
+                .map_or(1000.0 * (sky - 1) as f32, |e| e.altitudes[(sky - 1) as usize]);
+            (
+                aurora_i18n::tr!(
+                    "ui-land-environment-sky-m",
+                    sky = sky.to_string(),
+                    alt = aurora_i18n::number_text(&format!("{alt:.0}"))
+                ),
+                sky,
+            )
+        })
+        .collect();
+    tracks.push((aurora_i18n::tr!("ui-land-environment-ground").to_owned(), 1));
+    tracks.push((aurora_i18n::tr!("common-water").to_owned(), 0));
+    for (label, track) in tracks {
+        line(ui, p);
+        srow(ui, p, &label, &name(track), 120.0, |ui| {
+            if button(ui, p, "", aurora_i18n::tr!("ui-land-manage-choose"), can_edit && !loading).clicked() {
+                s.dialog = Some(Dialog::EnvironmentPicker(super::dialogs::EnvironmentPicker {
+                    track: Some(track),
+                    filter: String::new(),
+                    selected: None,
+                }));
+            }
+        });
     }
-    srow(ui, p, aurora_i18n::tr!("ui-land-environment-sky-altitudes"), &skies, 0.0, |_| {});
-    line(ui, p);
-    let ground = format!(
-        "{} {} · {} {}",
-        aurora_i18n::tr!("ui-land-environment-ground"),
-        name(1),
-        aurora_i18n::tr!("common-water"),
-        name(0)
-    );
-    srow(ui, p, aurora_i18n::tr!("ui-land-manage-ground-water"), &ground, 0.0, |_| {});
 }
 
 fn experiences(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut World, lock: bool) {
+    // LLPanelLandExperiences::refreshPanel: read only without GP_LAND_OPTIONS
     let can = v.can(powers::LAND_OPTIONS);
     let (allowed, blocked) = world.land.sel.as_ref().map_or((Vec::new(), Vec::new()), |s| {
         (s.allowed_experiences.clone(), s.blocked_experiences.clone())
@@ -1756,6 +1787,7 @@ fn experiences(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
     if !lock && let Some(m) = missing_power(v, powers::LAND_OPTIONS) {
         lock_line(ui, p, &m);
     }
+    let maturity = world.maturity.preferred.unwrap_or(42);
     for (kind, list, name, help) in [
         (
             AL_ALLOW_EXPERIENCE,
@@ -1779,8 +1811,19 @@ fn experiences(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
             )
         );
         srow(ui, p, &head, help, 120.0, |ui| {
-            // the experience picker is not ported yet
-            button(ui, p, "plus", aurora_i18n::tr!("common-add-2"), false).on_disabled_hover_text(super::not_yet());
+            if button(
+                ui,
+                p,
+                "plus",
+                aurora_i18n::tr!("common-add-2"),
+                can && list.len() < PARCEL_MAX_EXPERIENCE_LIST,
+            )
+            .clicked()
+            {
+                // LLPanelExperienceListEditor::onAdd: the experience picker
+                world.land.experience_search = None;
+                s.dialog = Some(Dialog::ExperiencePicker(super::dialogs::ExperiencePicker::new(kind, maturity)));
+            }
         });
         let mut remove = None;
         for id in list {
@@ -1792,7 +1835,15 @@ fn experiences(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
                 ui.set_min_height(26.0);
                 ui.add_space(12.0);
                 widgets::glyph(ui, "flask-filled", p.muted, 13.0);
-                ui.label(RichText::new(label).size(12.5).color(p.ink));
+                // the list's "Profile" button: the experience profile
+                if ui
+                    .add(egui::Label::new(RichText::new(label).size(12.5).color(p.ink)).sense(Sense::click()))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(aurora_i18n::tr!("common-profile-2"))
+                    .clicked()
+                {
+                    world.experiences.open_profile(*id);
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-delete"), can) {
                         remove = Some(*id);
@@ -2156,5 +2207,10 @@ mod tests {
             assert!(!power_name(sec.power()).is_empty(), "{sec:?}");
         }
         assert_eq!(environment_choice(&EnvState::None), 0);
+        let custom = crate::world::land::EnvSummary {
+            has_day: true,
+            ..Default::default()
+        };
+        assert_eq!(environment_choice(&EnvState::Ready(custom)), 1);
     }
 }

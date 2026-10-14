@@ -459,6 +459,9 @@ pub struct Land {
     pub avatar_search: Option<(String, Option<Vec<FoundAvatar>>)>,
     /// MIME type found for a media URL being set (url, type).
     pub media_type: Option<(String, Option<String>)>,
+    /// Experience picker search: the query and its results (None while
+    /// searching, Some(None) when it failed).
+    pub experience_search: Option<(String, Option<Option<Vec<land::FoundExperience>>>)>,
     out: Vec<NetCommand>,
 }
 
@@ -557,6 +560,34 @@ impl Land {
     }
 
     /// Search residents for the avatar picker.
+    /// LLPanelExperiencePicker::find: the first page of FindExperienceByName.
+    pub fn search_experiences(&mut self, query: &str) {
+        let query = query.trim().to_owned();
+        self.experience_search = Some((query.clone(), None));
+        self.send(LandCommand::ExperienceSearch { query, page: 1 });
+    }
+
+    /// LLPanelLandExperiences::experienceAdded: the experience takes `kind`
+    /// (EXPERIENCE_KEY_TYPE_*: it leaves the other list) and the list of that
+    /// kind goes out, as sendParcelAccessListUpdate(access_type).
+    pub fn add_experience(&mut self, kind: u32, id: Uuid) {
+        let Some(sel) = self.sel.as_mut() else {
+            return;
+        };
+        let (into, other) = if kind == land::AL_BLOCK_EXPERIENCE {
+            (&mut sel.blocked_experiences, &mut sel.allowed_experiences)
+        } else {
+            (&mut sel.allowed_experiences, &mut sel.blocked_experiences)
+        };
+        other.retain(|x| *x != id);
+        if into.contains(&id) || into.len() >= land::PARCEL_MAX_EXPERIENCE_LIST {
+            return;
+        }
+        into.push(id);
+        sel.revision += 1;
+        self.send_lists(kind);
+    }
+
     pub fn search_avatars(&mut self, query: &str) {
         let query = query.trim().to_owned();
         if query.is_empty() {
@@ -694,6 +725,16 @@ impl Land {
             }
             LandEvent::ExperienceInfo(list) => self.experience_names.extend(list),
             LandEvent::GroupNames(list) => self.group_names.extend(list),
+            LandEvent::ExperienceSearch { query, results } => {
+                if let Some(list) = results.as_ref() {
+                    self.experience_names.extend(list.iter().map(|e| (e.id, e.name.clone())));
+                }
+                if let Some((q, r)) = self.experience_search.as_mut()
+                    && *q == query
+                {
+                    *r = Some(results);
+                }
+            }
             LandEvent::MediaType { url, mime } => {
                 if let Some((u, m)) = self.media_type.as_mut()
                     && *u == url
@@ -889,6 +930,34 @@ impl Land {
 
 #[cfg(test)]
 mod tests {
+    /// experienceAdded: the experience leaves the other list, and only
+    /// the list it joined goes out.
+    #[test]
+    fn an_added_experience_changes_lists() {
+        let mut land = Land::default();
+        let mut sel = Selection::new(1, (0.0, 0.0, 4.0, 4.0));
+        sel.parcel = Some(Arc::new(ParcelInfo {
+            local_id: 3,
+            ..Default::default()
+        }));
+        let xp = Uuid::from_u128(9);
+        sel.blocked_experiences.push(xp);
+        land.sel = Some(sel);
+        land.add_experience(land::AL_ALLOW_EXPERIENCE, xp);
+        let sel = land.sel.as_ref().expect("selection");
+        assert_eq!(sel.allowed_experiences, vec![xp]);
+        assert!(sel.blocked_experiences.is_empty());
+        let sent: Vec<u32> = land
+            .take_commands()
+            .into_iter()
+            .filter_map(|c| match c {
+                NetCommand::Land(LandCommand::AccessListUpdate { flags, .. }) => Some(flags),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent, vec![land::AL_ALLOW_EXPERIENCE]);
+    }
+
     use super::*;
 
     fn me() -> Uuid {

@@ -299,6 +299,11 @@ pub(super) fn as_visitor(v: &View) -> View {
     View {
         agent: Uuid::max(),
         groups: Vec::new(),
+        // nor the estate's rights (sale, release of the estate's land)
+        region: v.region.clone().map(|r| super::RegionView {
+            estate_manager: false,
+            ..r
+        }),
         ..v.clone()
     }
 }

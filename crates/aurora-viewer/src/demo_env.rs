@@ -23,8 +23,15 @@ fn scenario() -> &'static str {
     S.get_or_init(|| std::env::var("AURORA_DEMO_ENV_SELECT").unwrap_or_default().trim().to_owned())
 }
 
+/// The settings items are there for the selector's scenario, and for About
+/// Land's (its environment picker).
 pub fn enabled() -> bool {
-    !scenario().is_empty() && scenario() != "0"
+    (!scenario().is_empty() && scenario() != "0") || std::env::var_os("AURORA_DEMO_LAND").is_some()
+}
+
+/// The kind of a demo settings asset.
+pub fn kind_of(asset: Uuid) -> Option<SettingsKind> {
+    items().iter().find(|(.., a)| u(*a) == asset).map(|(_, _, k, _)| *k)
 }
 
 fn u(n: u128) -> Uuid {
@@ -343,7 +350,8 @@ pub enum Step {
 }
 
 pub fn step(frame: u64) -> Option<Step> {
-    if !enabled() {
+    // the selector's own scenario only (About Land just needs the items)
+    if scenario().is_empty() || scenario() == "0" {
         return None;
     }
     let lighting = scenario() == "lighting";

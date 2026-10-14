@@ -7,8 +7,12 @@
 use super::{Dialog, LandUi, PickFor, View, dim};
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::env_select::{self, SettingsCatalog, SettingsKind};
 use crate::world::notifications::{Data, Kind};
-use aurora_net::land::{LandCommand, ObjectOwner, RT_GROUP, RT_LIST, RT_OTHER, RT_OWNER};
+use aurora_net::land::{
+    AL_BLOCK_EXPERIENCE, FoundExperience, LandCommand, ObjectOwner, RT_GROUP, RT_LIST, RT_OTHER, RT_OWNER, XP_PROPERTY_GRID,
+    XP_PROPERTY_PRIVILEGED,
+};
 use aurora_net::{ParcelInfo, parcel_flags as pf};
 use egui::{RichText, Vec2};
 use uuid::Uuid;
@@ -25,6 +29,77 @@ pub(super) enum Confirm {
     /// their IDs (RT_LIST takes a list).
     ReturnOwners(Vec<ObjectOwner>),
     ResetEnvironment,
+}
+
+/// LLFloaterExperiencePicker being filled: the list it adds to, the search
+/// and the rating filter (FilterOverRating).
+pub(super) struct ExperiencePicker {
+    pub(super) kind: u32,
+    pub(super) query: String,
+    pub(super) maturity: u8,
+    pub(super) selected: Option<Uuid>,
+    /// Search at once (demo captures).
+    pub(super) search_now: bool,
+}
+
+impl ExperiencePicker {
+    pub(super) fn new(kind: u32, maturity: u8) -> ExperiencePicker {
+        ExperiencePicker {
+            kind,
+            query: String::new(),
+            maturity,
+            selected: None,
+            search_now: false,
+        }
+    }
+}
+
+/// The filters of the parcel's experience lists (LLPanelLandExperiences::
+/// postBuild): no grid-wide experience in the allowed list, none both
+/// privileged and grid-wide in the blocked one; then the rating chosen
+/// (FilterOverRating) and those already in the list (FilterMatching).
+pub(super) fn experience_hidden(e: &FoundExperience, kind: u32, maturity: u8, list: &[Uuid]) -> bool {
+    let by_kind = if kind == AL_BLOCK_EXPERIENCE {
+        let both = XP_PROPERTY_PRIVILEGED | XP_PROPERTY_GRID;
+        e.properties & both == both
+    } else {
+        e.properties & XP_PROPERTY_GRID != 0
+    };
+    by_kind || e.maturity > maturity || list.contains(&e.id)
+}
+
+/// LLFloaterSettingsPicker for the parcel environment: the whole day
+/// (`track` None) or one track (0 water, 1 ground sky, 2–4 skies).
+pub(super) struct EnvironmentPicker {
+    pub(super) track: Option<i32>,
+    pub(super) filter: String,
+    pub(super) selected: Option<Uuid>,
+}
+
+/// The settings kinds a target takes: any for the whole day, water for
+/// track 0, a sky for the others (the drop targets of the altitudes).
+pub(super) fn settings_kinds(track: Option<i32>) -> &'static [SettingsKind] {
+    match track {
+        None => &[SettingsKind::Day, SettingsKind::Sky, SettingsKind::Water],
+        Some(0) => &[SettingsKind::Water],
+        Some(_) => &[SettingsKind::Sky],
+    }
+}
+
+/// onPickerCommitted: FLAG_NOMOD / FLAG_NOTRANS from the item's permissions.
+pub(super) fn settings_flags(owner_mask: u32) -> u32 {
+    const PERM_TRANSFER: u32 = 1 << 13;
+    const PERM_MODIFY: u32 = 1 << 14;
+    const FLAG_NOMOD: u32 = 1 << 1;
+    const FLAG_NOTRANS: u32 = 1 << 2;
+    let mut flags = 0;
+    if owner_mask & PERM_MODIFY == 0 {
+        flags |= FLAG_NOMOD;
+    }
+    if owner_mask & PERM_TRANSFER == 0 {
+        flags |= FLAG_NOTRANS;
+    }
+    flags
 }
 
 /// LLFloaterSellLand being filled.
@@ -369,6 +444,20 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                 }),
             }
         }
+        Dialog::ExperiencePicker(mut picker) => {
+            let mut close = false;
+            let open = window(ctx, p, aurora_i18n::tr!("ui-land-picker-experience-title"), 420.0, |ui| {
+                experience_picker(ui, p, world, &mut picker, &mut close)
+            });
+            (open && !close).then_some(Dialog::ExperiencePicker(picker))
+        }
+        Dialog::EnvironmentPicker(mut picker) => {
+            let mut close = false;
+            let open = window(ctx, p, aurora_i18n::tr!("ui-land-picker-environment-title"), 420.0, |ui| {
+                environment_picker(ui, p, world, &mut picker, &mut close)
+            });
+            (open && !close).then_some(Dialog::EnvironmentPicker(picker))
+        }
         Dialog::Sell(mut form) => {
             let Some(parcel) = parcel else {
                 return;
@@ -564,5 +653,261 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
         }
         Some(false) => *close = true,
         None => {}
+    }
+}
+
+/// A selectable row of a picker's list.
+fn pick_row(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::click());
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    if selected {
+        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
+    } else if r.hovered() {
+        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.5));
+    }
+    if let Some(t) = super::super::icons::global(icon) {
+        ui.painter().image(
+            t.id(),
+            egui::Rect::from_center_size(rect.left_center() + Vec2::new(14.0, 0.0), Vec2::splat(14.0)),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            p.muted,
+        );
+    }
+    ui.painter().text(
+        rect.left_center() + Vec2::new(28.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(12.5),
+        p.ink,
+    );
+    r
+}
+
+/// LLPanelExperiencePicker: search by name, filter, choose.
+fn experience_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut ExperiencePicker, close: &mut bool) {
+    let list: Vec<Uuid> = world.land.sel.as_ref().map_or(Vec::new(), |sel| {
+        if f.kind == AL_BLOCK_EXPERIENCE {
+            sel.blocked_experiences.clone()
+        } else {
+            sel.allowed_experiences.clone()
+        }
+    });
+    if std::mem::take(&mut f.search_now) {
+        world.land.search_experiences(&f.query);
+    }
+    ui.horizontal(|ui| {
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut f.query)
+                .hint_text(aurora_i18n::tr!("ui-land-picker-experience-hint"))
+                .desired_width(ui.available_width() - 100.0),
+        );
+        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if super::super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-search")).clicked() || enter {
+            world.land.search_experiences(&f.query);
+            f.selected = None;
+        }
+    });
+    ui.horizontal(|ui| {
+        dim(ui, p, aurora_i18n::tr!("ui-land-picker-experience-rating"));
+        // SIM_ACCESS_PG / MATURE / ADULT
+        let ratings = [13u8, 21, 42];
+        let mut choice = ratings.iter().position(|r| *r >= f.maturity).unwrap_or(2);
+        let labels = [
+            (aurora_i18n::tr!("common-general"), true),
+            (aurora_i18n::tr!("common-moderate"), true),
+            (aurora_i18n::tr!("common-adult"), true),
+        ];
+        if super::super::widgets::segmented(ui, p, &mut choice, &labels) {
+            f.maturity = ratings[choice];
+        }
+    });
+    ui.add_space(4.0);
+    let results = world.land.experience_search.clone();
+    egui::ScrollArea::vertical()
+        .id_salt("land_xp_picker")
+        .max_height(220.0)
+        .min_scrolled_height(220.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| match results {
+            None => {
+                dim(ui, p, aurora_i18n::tr!("ui-land-picker-experience-start"));
+            }
+            Some((_, None)) => {
+                dim(ui, p, aurora_i18n::tr!("common-search"));
+            }
+            Some((_, Some(None))) => {
+                dim(ui, p, aurora_i18n::tr!("ui-land-picker-experience-failed"));
+            }
+            Some((_, Some(Some(found)))) => {
+                let shown: Vec<&FoundExperience> = found.iter().filter(|e| !experience_hidden(e, f.kind, f.maturity, &list)).collect();
+                if shown.is_empty() {
+                    dim(ui, p, aurora_i18n::tr!("common-no-results"));
+                }
+                for e in shown {
+                    let label = if e.name.is_empty() {
+                        aurora_i18n::tr!("ui-land-picker-experience-untitled").to_owned()
+                    } else {
+                        e.name.clone()
+                    };
+                    let r = pick_row(ui, p, "flask-filled", &label, f.selected == Some(e.id));
+                    if r.clicked() {
+                        f.selected = Some(e.id);
+                    }
+                    if r.double_clicked() {
+                        world.land.add_experience(f.kind, e.id);
+                        *close = true;
+                    }
+                }
+            }
+        });
+    if let Some(answer) = buttons(
+        ui,
+        p,
+        aurora_i18n::tr!("common-choose"),
+        aurora_i18n::tr!("common-cancel"),
+        f.selected.is_some(),
+    ) {
+        if answer && let Some(id) = f.selected {
+            world.land.add_experience(f.kind, id);
+        }
+        *close = true;
+    }
+}
+
+/// LLFloaterSettingsPicker: the settings of the inventory and the library
+/// the target takes; OK applies it (onPickerCommitted).
+fn environment_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut EnvironmentPicker, close: &mut bool) {
+    // the settings folders load as the environment selector's do
+    let loading = env_select::scan_step(&mut world.inventory) > 0;
+    let catalog = SettingsCatalog::build(&world.inventory);
+    ui.add(
+        egui::TextEdit::singleline(&mut f.filter)
+            .hint_text(aurora_i18n::tr!("common-search"))
+            .desired_width(f32::INFINITY),
+    );
+    ui.add_space(4.0);
+    let needle = f.filter.trim().to_lowercase();
+    let mut chosen = None;
+    egui::ScrollArea::vertical()
+        .id_salt("land_env_picker")
+        .max_height(240.0)
+        .min_scrolled_height(240.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let mut any = false;
+            for kind in settings_kinds(f.track) {
+                let icon = match kind {
+                    SettingsKind::Day => "sunrise-filled",
+                    SettingsKind::Sky => "sun-filled",
+                    SettingsKind::Water => "droplet-filled",
+                };
+                for c in catalog.list(*kind) {
+                    if !needle.is_empty() && !c.name.to_lowercase().contains(&needle) {
+                        continue;
+                    }
+                    any = true;
+                    let r = pick_row(ui, p, icon, &c.name, f.selected == Some(c.asset));
+                    if r.clicked() {
+                        f.selected = Some(c.asset);
+                    }
+                    if r.double_clicked() {
+                        chosen = Some((c.asset, c.name.clone()));
+                    }
+                }
+            }
+            if !any {
+                dim(
+                    ui,
+                    p,
+                    if loading {
+                        aurora_i18n::tr!("common-loading")
+                    } else {
+                        aurora_i18n::tr!("ui-land-picker-environment-none")
+                    },
+                );
+            }
+        });
+    if let Some(answer) = buttons(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-land-picker-environment-apply"),
+        aurora_i18n::tr!("common-cancel"),
+        f.selected.is_some(),
+    ) {
+        if answer && let Some(asset) = f.selected {
+            let name = settings_kinds(f.track)
+                .iter()
+                .find_map(|k| catalog.name_of(*k, asset))
+                .unwrap_or_default()
+                .to_owned();
+            chosen = Some((asset, name));
+        }
+        if !answer {
+            *close = true;
+        }
+    }
+    if let Some((asset, name)) = chosen {
+        let owner_mask = world
+            .inventory
+            .items
+            .values()
+            .find(|i| i.asset_id == asset)
+            .map_or(u32::MAX, |i| i.owner_mask);
+        let (day_length, day_offset) = match world.land.sel.as_ref().map(|s| &s.env) {
+            Some(crate::world::land::EnvState::Ready(e)) => (e.day_length as i32, e.day_offset as i32),
+            _ => (-1, -1),
+        };
+        let (track, flags) = (f.track, settings_flags(owner_mask));
+        world.land.environment(|local_id| LandCommand::EnvironmentApply {
+            local_id,
+            track,
+            asset,
+            name,
+            flags,
+            day_length,
+            day_offset,
+        });
+        *close = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_net::land::AL_ALLOW_EXPERIENCE;
+
+    fn xp(n: u128, maturity: u8, properties: i32) -> FoundExperience {
+        FoundExperience {
+            id: Uuid::from_u128(n),
+            name: String::new(),
+            owner: Uuid::nil(),
+            maturity,
+            properties,
+        }
+    }
+
+    /// LLPanelLandExperiences' filters, the rating and the list's own.
+    #[test]
+    fn the_experience_picker_hides_what_a_list_cannot_take() {
+        let grid = xp(1, 13, XP_PROPERTY_GRID);
+        let privileged_grid = xp(2, 13, XP_PROPERTY_GRID | XP_PROPERTY_PRIVILEGED);
+        let plain = xp(3, 13, 0);
+        let adult = xp(4, 42, 0);
+        assert!(experience_hidden(&grid, AL_ALLOW_EXPERIENCE, 42, &[]));
+        assert!(!experience_hidden(&grid, AL_BLOCK_EXPERIENCE, 42, &[]), "a grid one may be blocked");
+        assert!(experience_hidden(&privileged_grid, AL_BLOCK_EXPERIENCE, 42, &[]));
+        assert!(!experience_hidden(&plain, AL_ALLOW_EXPERIENCE, 42, &[]));
+        assert!(experience_hidden(&plain, AL_ALLOW_EXPERIENCE, 42, &[plain.id]), "already listed");
+        assert!(experience_hidden(&adult, AL_ALLOW_EXPERIENCE, 21, &[]), "over the rating");
+    }
+
+    #[test]
+    fn settings_for_each_target_and_their_flags() {
+        assert_eq!(settings_kinds(None).len(), 3);
+        assert_eq!(settings_kinds(Some(0)), &[SettingsKind::Water]);
+        assert_eq!(settings_kinds(Some(3)), &[SettingsKind::Sky]);
+        assert_eq!(settings_flags(u32::MAX), 0);
+        assert_eq!(settings_flags(0), (1 << 1) | (1 << 2));
+        assert_eq!(settings_flags(1 << 14), 1 << 2, "modifiable, not transferable");
     }
 }
