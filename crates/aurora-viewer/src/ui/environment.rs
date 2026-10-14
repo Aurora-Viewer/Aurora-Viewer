@@ -52,6 +52,8 @@ pub struct EnvironmentUi {
     /// "Reset" of "Personal lighting" waits for a confirmation
     /// (PersonalSettingsConfirmReset).
     confirm_reset: bool,
+    /// The sun and moon beacons of "Personal lighting" (kept by the app).
+    pub beacons: [bool; 2],
     /// Open this list's drop-down on the next frame (demo captures).
     pub open_list: Option<SettingsKind>,
 }
@@ -381,6 +383,8 @@ impl EnvironmentUi {
                 ));
             }
             section(ui, p, aurora_i18n::tr!("ui-environment-sun"));
+            // floater_adjust_environment's sunbeacon / moonbeacon
+            widgets::checkbox(ui, p, &mut self.beacons[0], aurora_i18n::tr!("ui-env-editor-sun-beacon"));
             let (mut az, mut el) = azimuth_elevation(s.sun_rotation);
             let a = slider(ui, p, aurora_i18n::tr!("ui-environment-azimuth"), &mut az, 0.0..=359.99).changed();
             let e = slider(ui, p, aurora_i18n::tr!("ui-environment-elevation"), &mut el, -90.0..=90.0).changed();
@@ -404,6 +408,7 @@ impl EnvironmentUi {
                 0.0..=500.0,
             );
             section(ui, p, aurora_i18n::tr!("ui-environment-moon"));
+            widgets::checkbox(ui, p, &mut self.beacons[1], aurora_i18n::tr!("ui-env-editor-moon-beacon"));
             let (mut az, mut el) = azimuth_elevation(s.moon_rotation);
             let a = slider(ui, p, aurora_i18n::tr!("ui-environment-azimuth"), &mut az, 0.0..=359.99).changed();
             let e = slider(ui, p, aurora_i18n::tr!("ui-environment-elevation"), &mut el, -90.0..=90.0).changed();

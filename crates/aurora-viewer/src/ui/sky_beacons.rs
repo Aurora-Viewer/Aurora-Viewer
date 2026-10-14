@@ -43,4 +43,28 @@ pub fn draw(ctx: &egui::Context, p: &Palette, world: &World, proj: &Projector, b
             }
         }
     }
+    texts(ctx, p, beacons);
+}
+
+/// LLViewerWindow's debug text of the beacons ("BeaconSun", "BeaconMoon"):
+/// one line per beacon shown, upwards from 64 points above the bottom, 20
+/// points apart. Firestorm writes it 400 points from the right edge, where
+/// Aurora's conversations usually sit: here on the left.
+fn texts(ctx: &egui::Context, p: &Palette, beacons: [bool; 2]) {
+    let painter = super::hud::world_painter(ctx);
+    let screen = ctx.content_rect();
+    let x = screen.left() + 24.0;
+    let mut y = screen.bottom() - 64.0;
+    let lines = [
+        (beacons[0], aurora_i18n::tr!("ui-env-beacon-sun-text"), p.amber),
+        (beacons[1], aurora_i18n::tr!("ui-env-beacon-moon-text"), p.violet_light),
+    ];
+    for (_, text, color) in lines.into_iter().filter(|(on, ..)| *on) {
+        let galley = painter.layout_no_wrap(text.to_owned(), egui::FontId::proportional(12.5), p.ink);
+        let rect = egui::Rect::from_min_size(egui::pos2(x, y - galley.size().y - 6.0), galley.size() + egui::vec2(16.0, 6.0));
+        super::widgets::paint_world_label(&painter, p, rect);
+        painter.circle_filled(egui::pos2(rect.left() - 6.0, rect.center().y), 3.5, color);
+        painter.galley(rect.min + egui::vec2(8.0, 3.0), galley, p.ink);
+        y -= 20.0 + 4.0;
+    }
 }

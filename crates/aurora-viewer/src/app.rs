@@ -3373,9 +3373,7 @@ impl App {
         self.imports.flush_local_registry();
         self.record_inventory_logout();
         // revertBeaconsState when the editors close with the viewer
-        self.env_editor.open = false;
-        self.day_editor.open = false;
-        self.env_beacons_frame();
+        self.env_beacons_release();
         self.drop_clicks();
         if self.hud_drag.is_some() {
             self.on_left_release();
@@ -8896,7 +8894,11 @@ impl App {
                 if lighting && (!self.lighting_was_open || self.world.eep.personal_sky().is_none()) {
                     self.world.eep.capture_personal();
                 }
+                self.env_ui.beacons = [self.settings.sun_beacon, self.settings.moon_beacon];
                 let reset = self.env_ui.show_lighting(&ctx, &p, &mut self.world.eep, &mut lighting);
+                if lighting {
+                    self.set_env_beacons(self.env_ui.beacons);
+                }
                 self.lighting_was_open = lighting;
                 self.panels.personal_lighting = lighting;
                 for action in env_actions.into_iter().chain(reset) {

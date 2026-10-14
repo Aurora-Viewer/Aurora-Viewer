@@ -123,13 +123,21 @@ impl App {
     /// beacon switched on in an editor goes off again (one already on stays).
     pub(super) fn env_beacons_frame(&mut self) {
         let current = [self.settings.sun_beacon, self.settings.moon_beacon];
-        match (self.env_editor.open || self.day_editor.open, self.env_beacons_saved) {
+        // the sky, water and day editors and "Personal lighting"
+        // (LLFloaterEnvironmentAdjust counts as an editor too)
+        let editing = self.env_editor.open || self.day_editor.open || self.panels.personal_lighting;
+        match (editing, self.env_beacons_saved) {
             (true, None) => self.env_beacons_saved = Some(current),
-            (false, Some(saved)) => {
-                self.env_beacons_saved = None;
-                self.set_env_beacons([saved[0] && current[0], saved[1] && current[1]]);
-            }
+            (false, Some(_)) => self.env_beacons_release(),
             _ => {}
+        }
+    }
+
+    /// revertBeaconsState: the editors have closed (or the viewer quits).
+    pub(super) fn env_beacons_release(&mut self) {
+        if let Some(saved) = self.env_beacons_saved.take() {
+            let current = [self.settings.sun_beacon, self.settings.moon_beacon];
+            self.set_env_beacons([saved[0] && current[0], saved[1] && current[1]]);
         }
     }
 
