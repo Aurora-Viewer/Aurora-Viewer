@@ -1214,6 +1214,9 @@ pub enum ActionKind {
     Caution,
     /// Flat until hovered, then the danger color.
     FlatDanger,
+    /// A wash of the danger color with its text in it, full when hovered:
+    /// a destructive action that stays in view among flat ones (Leave).
+    SoftDanger,
 }
 
 /// Filled button with a Tabler icon before its label: every kind is a plain
@@ -1260,6 +1263,8 @@ pub fn action_button_if(
         ActionKind::Danger => (if hot { p.danger } else { p.danger.gamma_multiply(0.88) }, p.navy),
         ActionKind::Caution => (if hot { p.amber } else { p.amber.gamma_multiply(0.88) }, p.navy),
         ActionKind::FlatDanger if hot => (p.danger.gamma_multiply(0.88), p.navy),
+        ActionKind::SoftDanger if hot => (p.danger.gamma_multiply(0.88), p.navy),
+        ActionKind::SoftDanger => (p.danger.gamma_multiply(0.14), p.danger),
         ActionKind::Flat | ActionKind::FlatDanger => (if hot { p.raised.lerp_to_gamma(p.ink, 0.16) } else { p.raised }, p.ink),
     };
     let fade = if enabled { 1.0 } else { 0.45 };

@@ -176,6 +176,9 @@ PNG, caption "…", location true)` and the window "Posted to your profile".
 at 3.3 m, the own avatar), `full-dof` the full-frame view with the aperture
 in its strip: the view, the preview and the photos are blurred, while
 Preferences › Graphics › Depth of field stays off.
+`classic` shows Firestorm's floater instead of the panel for this run
+(Preferences › Aurora › Photo window, not saved): a floating window in the
+middle, Refresh and the controls on the left, the preview on the right.
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
@@ -1277,6 +1280,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
+| `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
@@ -1289,6 +1293,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent |
+| `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
@@ -1316,9 +1321,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:owner]` | "About Land" on a tab |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_GROUP_PROFILE=1` | Profile window of the demo parcel's group |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
+| `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab, search done |
@@ -1343,6 +1349,21 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `grid`: grid with no known purchase service. After Buy then OK: the
   window closes, the balance goes up and the bell receives the
   notification.
+- **`AURORA_DEMO_BUY_LAND=<mode>[:confirm]`**: the plaza parcel (16384 m²) is for sale
+  by a demo resident for L$ 4,500, with its objects, and "Buy Land" opens on it.
+  The land service is simulated: nothing is sent, the purchase only moves
+  the demo balance and gives the parcel to the avatar (About Land then shows
+  it as yours). The demo estate has a covenant: Purchase stays greyed out
+  until "I agree" is ticked. `rich`: L$ 12,000, enough to buy, a "click"
+  confirmation. `short`: L$ 1,200; the third step proposes the L$ 3,300
+  missing with their estimated cost, an amount typed again is estimated
+  2 s after the last keystroke. `upgrade`: the account must change plan
+  (list of plans) and the land use fee goes up, confirmation with a password
+  (OK greyed out while it is empty). `other`: the parcel is set to sell to
+  Nova only, "Not for sale" with the reason. `error`: the land service
+  refuses, with its "Go to website" link. `:confirm` after a mode (`rich:confirm`,
+  `upgrade:confirm`) ticks the covenant and opens the confirmation by itself,
+  for captures.
 - **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
@@ -1928,6 +1949,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   ("Isolated real installation" above: exe copied into
   `<root>\install`, `AURORA_UPDATE_TEST_ROOT=<root>`): the histories
   are then under `<root>\profile\accounts\`.
+- **`AURORA_DEMO_REPORT_ABUSE=menu|avatar|object|chat|pick|send|missing|copyright`**:
+  the Report Abuse window opens at frame 600, from Help › Report Abuse
+  (`menu`), on Nova (`avatar`), on the nearest object (`object`, its name
+  and owner come from the demo server), on a chat line of Nova (`chat`),
+  or with the object picker armed (`pick`: the next click in the world
+  designates). `send` fills the form and presses "Report Abuse" at frame
+  700: the thank-you notice, and a `demo abuse report:` line in the log
+  with what would have left; `missing` presses it on a blank form (the
+  category notice), `copyright` with "copyright" in the details (the
+  intellectual property notice). Capture with `AURORA_FPS_LIMIT=60` and
+  `AURORA_CAPTURE_FRAMES=780` so that the screenshot is in. Nothing ever
+  leaves the demo; a real report is only made on the grid.
 - **`AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab|edit|compact]`**: a
   profile window (tab 0 Second Life / Profile, 1 Feed / Web, 2 Favorites,
   3 Classifieds, 4 Real life / First life, 5 Notes). The window is the
@@ -1959,9 +1992,28 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_GROUP_PROFILE=1`**: the profile of the group "Aurora
-  Builders", as after a click on the group or the owner in
-  "About Land".
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite]`**:
+  the group profile, as after a click on the group or the owner in "About
+  Land". A simulated group server (`demo_group.rs`) answers the members
+  (1,248, five of them online), roles, role pairs, titles and notices of
+  "Aurora Builders". `1` or `member`: we are one of its builders (Chat,
+  Leave, "Me in this group"); `officer`: an officer, who sees Invite and
+  the Roles and Donation columns; `owner`: an owner, every ability;
+  `guest`: the profile of "Boreal Photographers", a group we are not in,
+  with an open enrollment and a L$ 250 fee: "Join · L$ 250" asks to
+  confirm (or says the balance is short), then the group joins our list
+  and the window becomes a member's. `:members` opens the Members tab with
+  a builder selected; `:invite` opens "Invite to Aurora Builders" with
+  three residents, one of them already a member: Send Invitations logs
+  `group invite: 2 resident(s) invited` and says the member was left out;
+  the role list follows our abilities (an officer: everyone and the
+  officers' own roles; an owner: every role, the owners' asking to confirm).
+  Check the header against the mockup (banner,
+  insignia, badges, tabs), the switches of "Me in this group" (the active
+  group follows in the top bar, the title in the Title shown list), the
+  filter, the pills and the column sorts of Members, "Leave" (confirmed,
+  then the guest's view) and, in Preferences › Aurora › Profiles, the
+  classic window with its "Members and roles" section.
 - **`AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown|landmark|history`**:
   "Places" on a place profile, as after a click on a place link.
   `1`: the home of Violet Wolf on Aurora Demo (the parcel of "About
@@ -1974,6 +2026,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_PLACES=favorites|landmarks|history`**: the Favorites
   and Landmarks folders of the demo (with a subfolder) and a teleport
   history over several months.
+- **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
+  stands on its parcel, `create` opens World › Landmark this place: the
+  landmark is created at once, named after the parcel; OK renames it,
+  gives it its notes and moves it to the chosen folder, Cancel deletes it.
+  `favorite` / `landmark` make a landmark of the plaza in Favorites /
+  Landmarks, as the star's menu does: the star at the right end of the
+  location field turns amber (its tooltip names the folder and the
+  landmark), a click on it edits that landmark, and World › Landmark this
+  place is greyed out. Without the variable the star is an outline and
+  opens its menu. The demo parcel is the 128 m square around the plaza
+  (x and y 64..192): a landmark made there lights the star, wherever in it
+  the avatar stands. With `AURORA_DEMO_PLACES` the folder list shows the
+  demo's subfolder.
 - **`AURORA_DEMO_SEARCH=web|people|groups|places|land|events|classifieds[:text]`**:
   the "Search" window on this tab, the search for the text already
   run (`aurora` by default): the list is filled by the directory of the

@@ -13,6 +13,8 @@ use egui::{Color32, RichText, Vec2};
 pub enum BarAction {
     CheckUpdates,
     ReportBug,
+    /// Help › Report Abuse (LLFloaterReporter::showFromMenu).
+    ReportAbuse,
     Import {
         choice: crate::imports::Choice,
         pick_files: bool,
@@ -60,6 +62,9 @@ pub enum BarAction {
     Marketplace,
     /// Me › Marketplace listings (menu_viewer.xml "MarketplaceListings").
     MarketplaceListings,
+    /// World › Landmark this Place (World.CreateLandmark).
+    CreateLandmark,
+    LandmarkStar(StarAction),
 }
 
 pub struct StatusInfo<'a> {
@@ -96,6 +101,20 @@ pub struct StatusInfo<'a> {
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
+    /// The landmark lying on the agent's parcel (hasParcelLandmark): the
+    /// star is lit and World › Landmark this place greyed out.
+    pub parcel_landmark: Option<super::landmark_create::ParcelLandmark>,
+}
+
+/// The navigation bar's star (LLLocationInputCtrl's add landmark button).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StarAction {
+    AddFavorite,
+    AddLandmark,
+    /// The Create Landmark window.
+    MoreOptions,
+    /// The lit star: edit the parcel's landmark.
+    Edit(uuid::Uuid),
 }
 
 pub fn maturity_name(sim_access: u8) -> &'static str {
@@ -512,6 +531,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "worldmap",
             &mut panels.world_map,
         );
+        // menu_viewer.xml: Landmark this Place, after the maps
+        if menu::item_if(
+            ui,
+            p,
+            "map-pin-filled",
+            aurora_i18n::tr!("landmark-create-here"),
+            st.parcel_landmark.is_none(),
+        ) {
+            *action = BarAction::CreateLandmark;
+        }
         menu::submenu(ui, p, "barrier-block-filled", aurora_i18n::tr!("ui-bars-ban-lines"), true, |ui| {
             for (v, icon, label) in [
                 (0u8, "eye-off", aurora_i18n::tr!("ui-bars-hidden")),
@@ -605,6 +634,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         if menu::item(ui, p, "bug-filled", aurora_i18n::tr!("bug-title")) {
             *action = BarAction::ReportBug;
+        }
+        if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("report-abuse-title")) {
+            *action = BarAction::ReportAbuse;
         }
         menu::separator(ui, p);
         let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
@@ -701,6 +733,55 @@ fn info_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons) -> bool {
     let col = if resp.hovered() { p.ink } else { p.muted };
     paint_icon(ui, icons, "info-circle-filled", rect, 16.0, col);
     resp.on_hover_text(aurora_i18n::tr!("common-about-land")).clicked()
+}
+
+/// Width kept for the landmark star at the right end of the location field.
+const STAR_W: f32 = 22.0;
+
+/// LLLocationInputCtrl's add landmark button: an outline star opening the
+/// quick menu (Favorites, Landmarks, the Create Landmark window), lit in
+/// amber when a landmark of the Favorites or Landmarks folders lies on the
+/// agent's parcel; a click then edits it.
+fn landmark_star(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    found: Option<&super::landmark_create::ParcelLandmark>,
+) -> Option<StarAction> {
+    use super::parcel_icons::{GLYPH, SLOT_HEIGHT, SLOT_WIDTH, glyph_rect};
+    // the slot and the glyph of the parcel icons on its left: same size,
+    // same centering, same hover face
+    let (slot, resp) = ui.allocate_exact_size(Vec2::new(SLOT_WIDTH, SLOT_HEIGHT), egui::Sense::click());
+    if resp.hovered() {
+        ui.painter()
+            .rect_filled(slot.expand(1.0), ui.visuals().window_corner_radius, p.raised);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let glyph = glyph_rect(slot);
+    if let Some(lm) = found {
+        paint_icon(ui, icons, "star-filled", glyph, GLYPH, p.amber);
+        let tip = if lm.favorite {
+            aurora_i18n::tr!("landmark-star-in-favorites", name = lm.name.clone())
+        } else {
+            aurora_i18n::tr!("landmark-star-in-landmarks", name = lm.name.clone())
+        };
+        return resp.on_hover_text(tip).clicked().then_some(StarAction::Edit(lm.item));
+    }
+    paint_icon(ui, icons, "star", glyph, GLYPH, if resp.hovered() { p.ink } else { p.muted });
+    let mut out = None;
+    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        if menu::item(ui, p, "star-filled", aurora_i18n::tr!("landmark-star-add-favorites")) {
+            out = Some(StarAction::AddFavorite);
+        }
+        if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-star-add-landmarks")) {
+            out = Some(StarAction::AddLandmark);
+        }
+        if menu::item(ui, p, "dots-filled", aurora_i18n::tr!("landmark-star-more")) {
+            out = Some(StarAction::MoreOptions);
+        }
+    });
+    resp.on_hover_text(aurora_i18n::tr!("landmark-star-add"));
+    out
 }
 
 /// Height of the chips of the top bar (voice light, flying, sitting).
@@ -1048,26 +1129,32 @@ pub fn top_bars(
                                 } else {
                                     super::parcel_icons::width(ui, &st.parcel_icons) + 8.0
                                 };
-                                let icons_w = if ui.available_width() - 24.0 - icons_w >= 80.0 {
+                                let icons_w = if ui.available_width() - 24.0 - STAR_W - icons_w >= 80.0 {
                                     icons_w
                                 } else {
                                     0.0
                                 };
-                                let w = (ui.available_width() - 24.0 - icons_w).max(40.0);
+                                let w = (ui.available_width() - 24.0 - STAR_W - icons_w).max(40.0);
                                 ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
                                     if let Some(a) = location_field(ui, p, panels, &loc, &st.slurl, w) {
                                         action = a;
                                     }
                                 });
                                 super::widgets::maturity_badge(ui, p, st.maturity, 14.0);
-                                // parcel abilities, anchored to the right edge of the field
+                                // parcel abilities then the landmark star, anchored to
+                                // the right edge of the field
                                 if icons_w > 0.0 {
-                                    ui.add_space((ui.available_width() - icons_w + 8.0).max(0.0));
+                                    ui.add_space((ui.available_width() - icons_w + 8.0 - STAR_W).max(0.0));
                                     ui.scope(|ui| {
                                         if super::parcel_icons::show(ui, p, icons, &st.parcel_icons, p.field) {
                                             panels.about_land = !panels.about_land;
                                         }
                                     });
+                                } else {
+                                    ui.add_space((ui.available_width() - STAR_W).max(0.0));
+                                }
+                                if let Some(star) = landmark_star(ui, p, icons, st.parcel_landmark.as_ref()) {
+                                    action = BarAction::LandmarkStar(star);
                                 }
                             });
                         });
@@ -1734,6 +1821,96 @@ mod tests {
         fn arrow() -> egui::Pos2 {
             BUTTON + egui::vec2(WIDTH / 2.0 + 8.0 + MIC_ARROW / 2.0, 11.0)
         }
+    }
+
+    /// The landmark star alone at `STAR`: a frame with `events`, its
+    /// action and its painted texts.
+    fn star_frame(
+        ctx: &egui::Context,
+        found: Option<&crate::ui::landmark_create::ParcelLandmark>,
+        events: Vec<egui::Event>,
+    ) -> (Option<StarAction>, Vec<(String, egui::Pos2)>) {
+        const STAR: egui::Pos2 = egui::pos2(300.0, 20.0);
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let mut action = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(900.0, 600.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let slot = egui::Rect::from_min_size(STAR, Vec2::new(40.0, 22.0));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                    action = landmark_star(ui, &p, &icons, found);
+                });
+            },
+        );
+        output.textures_delta.clear();
+        fn texts(shape: &egui::Shape, out: &mut Vec<(String, egui::Pos2)>) {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.pos + egui::vec2(3.0, 5.0))),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut found_texts = Vec::new();
+        for s in &output.shapes {
+            texts(&s.shape, &mut found_texts);
+        }
+        (action, found_texts)
+    }
+
+    fn click_events(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            },
+        ]
+    }
+
+    #[test]
+    fn the_outline_star_opens_its_menu_and_the_lit_one_edits_its_landmark() {
+        // the glyph's centre: the slot's left plus half a slot, its middle
+        use crate::ui::parcel_icons::{SLOT_HEIGHT, SLOT_WIDTH};
+        let star = egui::pos2(300.0 + SLOT_WIDTH / 2.0, 20.0 + SLOT_HEIGHT / 2.0);
+        let ctx = egui::Context::default();
+        let favorites = aurora_i18n::tr!("landmark-star-add-favorites");
+        let (_, painted) = star_frame(&ctx, None, vec![]);
+        assert!(painted.iter().all(|(t, _)| t != favorites), "menu closed at first");
+        let mut acted = Vec::new();
+        for pressed in [true, false] {
+            acted.push(star_frame(&ctx, None, click_events(star, pressed)).0);
+        }
+        // a new popup is laid out over two frames
+        star_frame(&ctx, None, vec![]);
+        let (_, painted) = star_frame(&ctx, None, vec![]);
+        let item = painted.iter().find(|(t, _)| t == favorites).map(|(_, pos)| *pos);
+        let item = item.expect("the click opens the menu");
+        assert!(acted.iter().all(Option::is_none), "opening the menu is no action");
+        let mut chosen = None;
+        for pressed in [true, false] {
+            chosen = chosen.or(star_frame(&ctx, None, click_events(item, pressed)).0);
+        }
+        assert_eq!(chosen, Some(StarAction::AddFavorite));
+
+        let lit = crate::ui::landmark_create::ParcelLandmark {
+            item: uuid::Uuid::from_u128(7),
+            name: "Plage".into(),
+            favorite: true,
+        };
+        let ctx = egui::Context::default();
+        star_frame(&ctx, Some(&lit), vec![]);
+        let mut edit = None;
+        for pressed in [true, false] {
+            edit = edit.or(star_frame(&ctx, Some(&lit), click_events(star, pressed)).0);
+        }
+        assert_eq!(edit, Some(StarAction::Edit(lit.item)));
     }
 
     #[test]

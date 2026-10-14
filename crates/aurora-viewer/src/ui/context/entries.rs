@@ -1,6 +1,7 @@
 //! Shared world menu entries and permissions, following Firestorm menu_*.xml.
 
 use super::{CtxAction, Facts, Target};
+use crate::report_abuse::ReportTarget;
 use crate::world::objects::ObjKey;
 use glam::Vec3;
 use uuid::Uuid;
@@ -198,7 +199,12 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         ui.todo("paperclip", aurora_i18n::tr!("common-attach-to-hud"));
     });
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
-        ui.todo("flag-filled", aurora_i18n::tr!("common-report"));
+        // Object.ReportAbuse: showFromObject on the object
+        ui.item(
+            "flag-filled",
+            aurora_i18n::tr!("common-report"),
+            CtxAction::ReportAbuse(ReportTarget::Object(id)),
+        );
         let (icon, label) = if o.blocked {
             ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
         } else {
@@ -354,7 +360,12 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
             ("ban", aurora_i18n::tr!("common-ignore"))
         };
         ui.item(icon, label, CtxAction::ToggleBlock(id));
-        ui.todo("flag-filled", aurora_i18n::tr!("common-report"));
+        // Avatar.ReportAbuse: showFromObject on the avatar
+        ui.item(
+            "flag-filled",
+            aurora_i18n::tr!("common-report"),
+            CtxAction::ReportAbuse(ReportTarget::Object(id)),
+        );
         ui.todo("snowflake", aurora_i18n::tr!("ui-context-freeze"));
         ui.todo("player-eject-filled", aurora_i18n::tr!("ui-context-eject"));
     });
@@ -425,7 +436,11 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
             ("ban", aurora_i18n::tr!("common-ignore"))
         };
         ui.item(icon, label, CtxAction::ToggleBlock(id));
-        ui.todo("flag-filled", aurora_i18n::tr!("common-report"));
+        ui.item(
+            "flag-filled",
+            aurora_i18n::tr!("common-report"),
+            CtxAction::ReportAbuse(ReportTarget::Object(id)),
+        );
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
     ui.todo("coin-filled", aurora_i18n::tr!("common-pay"));
@@ -602,7 +617,14 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
     }
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
     ui.separator();
-    ui.todo("shopping-cart-filled", aurora_i18n::tr!("ui-context-buy-this-land"));
+    // Firestorm greys it out when the parcel is not for sale to us; the
+    // menu does not know the parcel before it is selected, so the window
+    // says why instead
+    ui.item(
+        "shopping-cart-filled",
+        aurora_i18n::tr!("ui-context-buy-this-land"),
+        CtxAction::BuyLand(point),
+    );
     ui.todo("ticket-filled", aurora_i18n::tr!("ui-context-buy-access"));
     ui.separator();
     ui.item("box", aurora_i18n::tr!("common-build"), CtxAction::Build);

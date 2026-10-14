@@ -1146,7 +1146,12 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
             ui.ctx().copy_text(id.to_string());
         }
         menu::separator(ui, p);
-        menu::item_tip(ui, p, "flag-filled", aurora_i18n::tr!("common-report"), false, soon);
+        if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("common-report")) {
+            super::context::request(
+                ui.ctx(),
+                super::context::CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Avatar(id)),
+            );
+        }
     });
 }
 

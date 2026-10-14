@@ -941,7 +941,10 @@ fn more_menu(resp: &Response, env: &mut Env, w: &Window, f: &Facts, compact: boo
             ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
         }
         menu::separator(ui, p);
-        menu::item_tip(ui, p, "flag-filled", aurora_i18n::tr!("common-report"), false, soon);
+        // LLFloaterReporter::showFromAvatar (llpanelprofile.cpp)
+        if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("common-report")) {
+            act(CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Avatar(id)));
+        }
         if menu::item_if(
             ui,
             p,

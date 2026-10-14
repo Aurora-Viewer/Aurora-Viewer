@@ -42,6 +42,9 @@ pub mod geometry;
 /// Names and chat in the characters residents use (AURORA_DEMO_GLYPHS).
 #[path = "demo_glyphs.rs"]
 pub mod glyphs;
+/// The demo group server (AURORA_DEMO_GROUP_PROFILE).
+#[path = "demo_group.rs"]
+pub mod group;
 #[path = "demo_hud.rs"]
 pub mod hud;
 /// About Land answers (AURORA_DEMO_LAND).
@@ -1242,6 +1245,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = hud::reply(cmd) {
         return events;
     }
+    if let Some(events) = group::reply(cmd) {
+        return events;
+    }
     if let Some(events) = search::reply(cmd) {
         return events;
     }
@@ -1272,6 +1278,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             vec![NetEvent::Names(
                 ids.iter()
                     .map(|id| {
+                        if let Some((first, last, _)) = group::member_name(id) {
+                            return (*id, first.to_owned(), last.to_owned());
+                        }
                         let n = (id.as_u128() & 0xFF) as usize % names.len();
                         let mut it = names[n].split(' ');
                         (*id, it.next().unwrap_or("").to_owned(), it.next().unwrap_or("").to_owned())
@@ -1298,6 +1307,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                             long
                         } else if let Some(resident) = tags::name(id) {
                             resident
+                        } else if let Some(member) = group::member_name(id) {
+                            member
                         } else if let Some((first, sample)) = &glyphs {
                             (first.as_str(), "Resident", sample.display_name)
                         } else {
@@ -1459,15 +1470,24 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 list_in_profile: true,
                 contribution: 0,
             };
+            // our abilities in the first one follow the group profile's
+            // scenario; the groups joined or left since are in the list
+            let mut groups = vec![
+                aurora_net::GroupMembership {
+                    powers: group::my_powers(),
+                    ..g(DEMO_GROUP1, "Aurora Builders", true)
+                },
+                g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),
+                aurora_net::GroupMembership {
+                    list_in_profile: false,
+                    ..g(DEMO_GROUP3, aurora_i18n::tr!("common-plaza-market"), true)
+                },
+            ];
+            if !group::adjust_groups(&mut groups) {
+                return vec![NetEvent::Groups(groups)];
+            }
             vec![
-                NetEvent::Groups(vec![
-                    g(DEMO_GROUP1, "Aurora Builders", true),
-                    g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),
-                    aurora_net::GroupMembership {
-                        list_in_profile: false,
-                        ..g(DEMO_GROUP3, aurora_i18n::tr!("common-plaza-market"), true)
-                    },
-                ]),
+                NetEvent::Groups(groups),
                 NetEvent::ActiveGroup {
                     id: DEMO_GROUP1,
                     name: "Aurora Builders".into(),
@@ -1793,6 +1813,20 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 ..Default::default()
             }])]
         }
+        // Report Abuse: the region's categories, the reported object (owned
+        // by Nova) and a report the demo keeps to itself
+        aurora_net::NetCommand::RequestAbuseCategories { .. } => {
+            vec![NetEvent::AbuseCategories(crate::report_abuse::default_categories())]
+        }
+        aurora_net::NetCommand::RequestReportObjectProperties { object, .. } => {
+            vec![NetEvent::ObjectProperties(vec![aurora_net::build::ObjectProps {
+                object_id: *object,
+                owner_id: DEMO_NOVA,
+                name: aurora_i18n::tr!("common-demo-object").into(),
+                ..Default::default()
+            }])]
+        }
+        aurora_net::NetCommand::SendAbuseReport(_) => vec![NetEvent::AbuseReportSent(Ok(()))],
         aurora_net::NetCommand::RequestPayPrice { object, .. } if *object == action_id(972) => {
             let (default, buttons) = match std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default().as_str() {
                 "pay-layout" => (1956, vec![1956, 3913, 5870, 7826]),
@@ -2373,6 +2407,7 @@ pub fn events() -> Vec<NetEvent> {
             owner: DEMO_LOUP,
             is_estate_manager: false,
             product_name: "Estate / Full Region".into(),
+            billable_factor: 1.0,
         })),
     ];
     // parcel overlay (mini-map property lines): four parcels split at
@@ -3339,12 +3374,22 @@ pub fn events() -> Vec<NetEvent> {
             "1" => land::MUSIC_URL.into(),
             url => url.to_owned(),
         };
+        // the parcel's cells: the 128 m square around the plaza (x and y
+        // 64..192), one bit per 4 m cell (ParcelProperties Bitmap)
+        let mut bitmap = vec![0u8; 512];
+        for y in 16..48 {
+            for x in 16..48 {
+                let i = y * 64 + x;
+                bitmap[i / 8] |= 1 << (i % 8);
+            }
+        }
         ev.push(NetEvent::AgentParcel(Arc::new(aurora_net::ParcelInfo {
             local_id: 1,
             name: aurora_i18n::tr!("common-aurora-plaza").into(),
             desc: aurora_i18n::tr!("demo-aurora-viewer-s-offline-demo-parcel").into(),
             owner_id: u(100),
             area: 16384,
+            bitmap,
             max_prims: 3750,
             owner_prims: 47,
             other_prims: 2,
