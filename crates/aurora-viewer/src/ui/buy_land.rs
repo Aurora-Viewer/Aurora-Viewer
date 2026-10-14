@@ -18,7 +18,7 @@
 //!   under "Purchase in progress" (Firestorm puts the same text under "Not
 //!   for sale:").
 
-use super::widgets::{self, Floater, Modal, flat_button_sized, primary_button_sized};
+use super::widgets::{self, Floater, Modal, flat_button_sized};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::land_buy::{self, AreaNote, Buyer, Funds, Offer, Region};
@@ -35,7 +35,7 @@ use uuid::Uuid;
 
 /// Pause in typing before an estimate is asked (CURRENCY_ESTIMATE_FREQUENCY).
 const ESTIMATE_PAUSE: Duration = Duration::from_secs(2);
-const SIZE: Vec2 = Vec2::new(780.0, 560.0);
+const SIZE: Vec2 = Vec2::new(800.0, 640.0);
 const LEFT_W: f32 = 430.0;
 const BUTTON: Vec2 = Vec2::new(120.0, 28.0);
 const CONFIRM_WIDTH: f32 = 420.0;
@@ -151,11 +151,10 @@ pub struct BuyLandUi {
     pending: Option<LandCommand>,
     /// The purchase is sent: the window closes (mBought).
     bought: bool,
+    /// AURORA_DEMO_BUY_LAND=…:confirm: agree and open the confirmation once
+    /// the website has answered.
+    demo_confirm: bool,
     pub wanted_images: HashSet<Uuid>,
-}
-
-fn lindens(v: i64) -> String {
-    format!("L$ {}", aurora_i18n::integer(v))
 }
 
 fn wrapped(ui: &mut egui::Ui, text: RichText) {
@@ -178,6 +177,11 @@ impl BuyLandUi {
             wanted_images: std::mem::take(&mut self.wanted_images),
             ..Default::default()
         };
+    }
+
+    /// AURORA_DEMO_BUY_LAND=…:confirm (see docs/TESTING.md).
+    pub fn demo_confirm(&mut self) {
+        self.demo_confirm = true;
     }
 
     fn close(&mut self) {
@@ -631,6 +635,11 @@ impl BuyLandUi {
         if !self.open {
             return out;
         }
+        if self.demo_confirm && self.site.is_some() && self.idle() {
+            self.demo_confirm = false;
+            self.agreed = true;
+            out.extend(self.buy(world));
+        }
         let seller = self.seller(world);
         let center = ctx.content_rect().center();
         let mut open = true;
@@ -642,59 +651,69 @@ impl BuyLandUi {
             SIZE,
         )
         .help(aurora_i18n::tr!("buy-land-help"));
-        floater.min_size = Vec2::new(720.0, 500.0);
+        floater.min_size = Vec2::new(740.0, 560.0);
         floater.show(ctx, p, &mut open, |ui| {
-            let footer = BUTTON.y + 14.0;
-            let body_h = (ui.available_height() - footer).max(200.0);
-            ui.horizontal_top(|ui| {
-                ui.allocate_ui_with_layout(Vec2::new(LEFT_W, body_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(LEFT_W);
-                    egui::ScrollArea::vertical()
-                        .id_salt("buy_land_left")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            self.parcel_card(ui, p, images);
-                            ui.add_space(12.0);
-                            self.steps(ui, p, world, &seller, &mut close);
-                        });
-                });
-                widgets::divider(ui, p);
+            // the buttons first, along the bottom; the body takes the rest
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), BUTTON.y),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        let cancel = ui
+                            .add_enabled_ui(self.site_txn.is_none(), |ui| {
+                                flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), BUTTON)
+                            })
+                            .inner;
+                        if cancel.clicked() {
+                            close = true;
+                        }
+                        // greyed out until everything is in place (refreshUI)
+                        let buy = widgets::action_button_if(
+                            ui,
+                            p,
+                            "shopping-cart-filled",
+                            aurora_i18n::tr!("buy-land-purchase"),
+                            widgets::ActionKind::Primary,
+                            BUTTON,
+                            self.buy_enabled(world),
+                        );
+                        if buy.clicked() {
+                            out.extend(self.buy(world));
+                        }
+                        if self.processing || self.site_txn.is_some() {
+                            ui.add(egui::Spinner::new().size(14.0).color(p.violet));
+                        }
+                    },
+                );
+                ui.add_space(8.0);
+                let body_h = ui.available_height();
                 ui.allocate_ui_with_layout(
                     Vec2::new(ui.available_width(), body_h),
-                    egui::Layout::top_down(egui::Align::Min),
+                    egui::Layout::left_to_right(egui::Align::Min),
                     |ui| {
-                        ui.set_width(ui.available_width());
-                        self.estate(ui, p, world);
+                        ui.allocate_ui_with_layout(Vec2::new(LEFT_W, body_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.set_width(LEFT_W);
+                            egui::ScrollArea::vertical()
+                                .id_salt("buy_land_left")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    self.parcel_card(ui, p, images);
+                                    ui.add_space(12.0);
+                                    self.steps(ui, p, world, &seller, &mut close);
+                                });
+                        });
+                        widgets::divider(ui, p);
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(ui.available_width(), body_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.set_width(ui.available_width());
+                                self.estate(ui, p, world);
+                            },
+                        );
                     },
                 );
             });
-            ui.add_space(8.0);
-            ui.allocate_ui_with_layout(
-                Vec2::new(ui.available_width(), BUTTON.y),
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    let cancel = ui
-                        .add_enabled_ui(self.site_txn.is_none(), |ui| {
-                            flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), BUTTON)
-                        })
-                        .inner;
-                    if cancel.clicked() {
-                        close = true;
-                    }
-                    let enabled = self.buy_enabled(world);
-                    let buy = ui
-                        .add_enabled_ui(enabled, |ui| {
-                            primary_button_sized(ui, p, aurora_i18n::tr!("buy-land-purchase"), BUTTON)
-                        })
-                        .inner;
-                    if buy.clicked() {
-                        out.extend(self.buy(world));
-                    }
-                    if self.processing || self.site_txn.is_some() {
-                        ui.add(egui::Spinner::new().size(14.0).color(p.violet));
-                    }
-                },
-            );
         });
         out.extend(self.confirm_dialog(ctx, p, world, &seller));
         if self.bought {
@@ -757,7 +776,15 @@ impl BuyLandUi {
                     if self.offer.for_sale {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(lindens(i64::from(self.offer.price))).size(18.0).strong().color(p.ink));
+                            ui.label(
+                                RichText::new(aurora_i18n::tr!(
+                                    "buy-land-price",
+                                    amount = aurora_i18n::integer(i64::from(self.offer.price))
+                                ))
+                                .size(18.0)
+                                .strong()
+                                .color(p.ink),
+                            );
                             ui.label(
                                 RichText::new(aurora_i18n::tr!(
                                     "buy-land-price-per-m2",
@@ -1011,10 +1038,10 @@ impl BuyLandUi {
         ui.add_space(4.0);
         let row = |ui: &mut egui::Ui, label: &str, value: &mut dyn FnMut(&mut egui::Ui)| {
             ui.horizontal(|ui| {
-                ui.add_sized(
-                    Vec2::new(110.0, 16.0),
-                    egui::Label::new(RichText::new(label).size(12.0).color(p.muted)).truncate(),
-                );
+                ui.allocate_ui_with_layout(Vec2::new(150.0, 16.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.set_width(150.0);
+                    ui.add(egui::Label::new(RichText::new(label).size(12.0).color(p.muted)).truncate());
+                });
                 value(ui);
             });
         };
@@ -1093,34 +1120,41 @@ impl BuyLandUi {
             .as_ref()
             .and_then(|c| c.text.clone())
             .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
-        let box_h = (ui.available_height() - 34.0).max(80.0);
-        egui::Frame::new()
-            .fill(p.field)
-            .stroke(egui::Stroke::new(1.0, p.raised))
-            .corner_radius(ui.visuals().window_corner_radius)
-            .inner_margin(egui::Margin::same(6))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                egui::ScrollArea::vertical()
-                    .id_salt("buy_land_covenant")
-                    .max_height(box_h)
-                    .min_scrolled_height(box_h)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(body).size(12.0).color(p.ink))
-                                .wrap()
-                                .selectable(true),
-                        );
-                    });
-            });
-        ui.add_space(4.0);
-        // agree_covenant: ticked and locked without a covenant
+        // the checkbox along the bottom, the covenant text above it
         let mut agreed = self.agrees(world);
-        ui.add_enabled_ui(!no_covenant && self.site_txn != Some(SiteTxn::Buy), |ui| {
-            if widgets::checkbox(ui, p, &mut agreed, aurora_i18n::tr!("buy-land-agree-covenant")).changed() {
-                self.agreed = agreed;
-            }
+        let lock = no_covenant || self.site_txn == Some(SiteTxn::Buy);
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            // agree_covenant: ticked and locked without a covenant
+            ui.add_enabled_ui(!lock, |ui| {
+                if widgets::checkbox(ui, p, &mut agreed, aurora_i18n::tr!("buy-land-agree-covenant")).changed() {
+                    self.agreed = agreed;
+                }
+            });
+            ui.add_space(4.0);
+            let box_h = (ui.available_height() - 16.0).max(60.0);
+            egui::Frame::new()
+                .fill(p.field)
+                .stroke(egui::Stroke::new(1.0, p.raised))
+                .corner_radius(ui.visuals().window_corner_radius)
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    // the text reads from its top, whatever the column's layout
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("buy_land_covenant")
+                            .max_height(box_h)
+                            .min_scrolled_height(box_h)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::Label::new(RichText::new(body).size(12.0).color(p.ink))
+                                        .wrap()
+                                        .selectable(true),
+                                );
+                            });
+                    });
+                });
         });
     }
 
@@ -1157,11 +1191,15 @@ impl BuyLandUi {
             }
             let size = Vec2::new((ui.available_width() - ui.spacing().item_spacing.x) / 2.0, BUTTON.y);
             ui.horizontal(|ui| {
-                let ok = ui
-                    .add_enabled_ui(!needs_password || !password.is_empty(), |ui| {
-                        primary_button_sized(ui, p, aurora_i18n::tr!("common-ok"), size)
-                    })
-                    .inner;
+                let ok = widgets::action_button_if(
+                    ui,
+                    p,
+                    "",
+                    aurora_i18n::tr!("common-ok"),
+                    widgets::ActionKind::Primary,
+                    size,
+                    !needs_password || !password.is_empty(),
+                );
                 if ok.clicked() {
                     answer = Some(true);
                 }

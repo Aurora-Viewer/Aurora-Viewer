@@ -139,6 +139,9 @@ impl App {
             committed: 1024,
         });
         self.buy_land_here();
+        if crate::demo::land::buy_confirms() {
+            self.buy_land_ui.demo_confirm();
+        }
     }
 
     /// The demo's land helper: invented fees and estimates, a purchase that

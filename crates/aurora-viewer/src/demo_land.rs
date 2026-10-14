@@ -5,6 +5,8 @@
 //! greyed, like a visitor); with it, the avatar owns it and can change it.
 //! `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` sets the objects on the owner's
 //! land and makes them grow at each answer (the floater's refresh).
+//! `AURORA_DEMO_BUY_LAND` puts the parcel up for sale, and a ParcelBuy
+//! hands it to the avatar.
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS, TEX_GRADIENT};
 use aurora_llsd::Llsd;
@@ -34,10 +36,16 @@ pub fn scenario() -> Option<(String, bool)> {
     Some((tab.to_owned(), owner))
 }
 
-/// AURORA_DEMO_BUY_LAND=<mode>: the plaza parcel for sale by Violet Wolf
-/// (rich, short, upgrade, other, error; see docs/TESTING.md).
+/// AURORA_DEMO_BUY_LAND=<mode>[:confirm]: the plaza parcel for sale by
+/// a demo resident (rich, short, upgrade, other, error; see docs/TESTING.md).
 pub fn buy_scenario() -> Option<String> {
-    std::env::var("AURORA_DEMO_BUY_LAND").ok().map(|m| m.trim().to_lowercase())
+    let v = std::env::var("AURORA_DEMO_BUY_LAND").ok()?.trim().to_lowercase();
+    Some(v.split(':').next().unwrap_or_default().to_owned())
+}
+
+/// AURORA_DEMO_BUY_LAND=<mode>:confirm: the confirmation opens by itself.
+pub fn buy_confirms() -> bool {
+    std::env::var("AURORA_DEMO_BUY_LAND").is_ok_and(|v| v.trim().to_lowercase().ends_with(":confirm"))
 }
 
 /// Price of the plaza parcel in AURORA_DEMO_BUY_LAND.
