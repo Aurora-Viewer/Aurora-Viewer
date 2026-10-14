@@ -43,6 +43,9 @@ pub struct Peek {
     pub left: f64,
     /// When it started to fold back into the bell.
     pub folding: Option<f64>,
+    /// A script menu: it stays out until answered, like Firestorm's script
+    /// toasts (no time left, no fold).
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -127,6 +130,7 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
                 total,
                 left: total,
                 folding: None,
+                pinned: matches!(n.data, Data::Dialog { .. }),
             });
         }
     }
@@ -140,10 +144,10 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
     for p in c.peek.iter_mut() {
         let gone = !list.listed().any(|n| n.id == p.id && !n.read);
         if p.folding.is_none() {
-            if !m.hovered {
+            if !m.hovered && !p.pinned {
                 p.left -= dt;
             }
-            if p.left <= 0.0 || gone {
+            if (p.left <= 0.0 && !p.pinned) || gone {
                 p.folding = Some(m.now);
             }
         }
@@ -164,10 +168,16 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
 }
 
 /// The cards shown rolled out (the newest three) and how many wait behind.
-pub fn visible(c: &CenterUi) -> (&[Peek], usize) {
-    let live = c.peek.len();
-    let start = live.saturating_sub(MAX_PEEK);
-    (&c.peek[start..], start)
+pub fn visible(c: &CenterUi) -> (Vec<Peek>, usize) {
+    // the script menus waiting for an answer first (the newest three), the
+    // newest other cards in the room left; the rest waits behind "+ N more"
+    let mut keep: Vec<usize> = (0..c.peek.len()).rev().filter(|i| c.peek[*i].pinned).take(MAX_PEEK).collect();
+    let room = MAX_PEEK - keep.len();
+    keep.extend((0..c.peek.len()).rev().filter(|i| !c.peek[*i].pinned).take(room));
+    keep.sort_unstable();
+    let shown: Vec<Peek> = keep.iter().map(|i| c.peek[*i].clone()).collect();
+    let behind = c.peek.len() - shown.len();
+    (shown, behind)
 }
 
 /// Bell at the right end of the navigation bar: red count (grey when paused),
@@ -366,10 +376,7 @@ fn rolled_out(
     answers: &mut Vec<(u64, Response)>,
 ) {
     ui.spacing_mut().item_spacing.y = 6.0;
-    let (shown, behind) = {
-        let (s, b) = visible(&nui.center);
-        (s.to_vec(), b)
-    };
+    let (shown, behind) = visible(&nui.center);
     // newest on top
     for peek in shown.iter().rev() {
         let Some(n) = list.list.iter_mut().find(|n| n.id == peek.id) else {
@@ -388,7 +395,7 @@ fn rolled_out(
         let card = child.min_rect();
         nui.center.heights.insert(peek.id, card.height());
         // the time left, a fine violet bar along the card's bottom
-        if peek.folding.is_none() {
+        if peek.folding.is_none() && !peek.pinned {
             let frac = (peek.left / peek.total).clamp(0.0, 1.0) as f32;
             let bar = Rect::from_min_size(egui::pos2(card.left(), card.bottom() - 2.0), Vec2::new(card.width() * frac, 2.0));
             child.painter().rect_filled(bar, 0.0, p.violet_light.gamma_multiply(0.55));
@@ -517,16 +524,7 @@ fn full_list(
             });
     }
     ui.add_space(4.0);
-    let mut tab = nui.center.tab == Tab::History;
-    let options = [
-        (aurora_i18n::tr!("ui-notifications-to-do"), false),
-        (aurora_i18n::tr!("ui-notifications-history"), false),
-    ];
-    let mut i = usize::from(tab);
-    if super::widgets::segmented(ui, p, &mut i, &options) {
-        tab = i == 1;
-        nui.center.tab = if tab { Tab::History } else { Tab::ToDo };
-    }
+    tabs(ui, p, &mut nui.center.tab);
     ui.add_space(4.0);
     let max_h = ui.ctx().content_rect().height() * 0.65;
     match nui.center.tab {
@@ -547,47 +545,71 @@ fn full_list(
                     }
                 });
         }
-        Tab::History => {
-            ui.add(
-                egui::TextEdit::singleline(&mut nui.center.query)
-                    .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
-                    .desired_width(f32::INFINITY),
-            );
-            ui.add_space(4.0);
-            let found: Vec<(usize, Entry)> = history::search(hist, &nui.center.query)
-                .into_iter()
-                .map(|(i, e)| (i, e.clone()))
-                .collect();
-            if found.is_empty() {
-                empty(ui, p, aurora_i18n::tr!("ui-notifications-history-empty"));
-                return;
-            }
-            let today = history::now_secs();
-            egui::ScrollArea::vertical()
-                .max_height(max_h)
-                .min_scrolled_height(max_h)
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 6.0;
-                    let mut last_day = None;
-                    for (index, e) in found {
-                        let day = day_label(e.time, today);
-                        if last_day.as_ref() != Some(&day) {
-                            ui.label(RichText::new(day.to_uppercase()).size(10.5).strong().color(p.muted_dim));
-                            last_day = Some(day);
-                        }
-                        if let Some(follow) = history_card(ui, p, icons, &e) {
-                            if follow == Follow::Restore {
-                                if let Some(e) = hist.take(index) {
-                                    asks.push(Ask::Follow(e));
-                                }
-                            } else {
-                                asks.push(Ask::Follow(e));
-                            }
-                        }
-                    }
-                });
-        }
+        Tab::History => history_list(ui, p, icons, hist, &mut nui.center.query, max_h, asks),
     }
+}
+
+/// The "To do" / "History" tabs of a list (Aurora's center and Firestorm's
+/// well); returns whether the history is shown.
+pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, tab: &mut Tab) -> bool {
+    let options = [
+        (aurora_i18n::tr!("ui-notifications-to-do"), false),
+        (aurora_i18n::tr!("ui-notifications-history"), false),
+    ];
+    let mut i = usize::from(*tab == Tab::History);
+    if super::widgets::segmented(ui, p, &mut i, &options) {
+        *tab = if i == 1 { Tab::History } else { Tab::ToDo };
+    }
+    *tab == Tab::History
+}
+
+/// The history with its search, by day, and the action left on each entry
+/// (shared by both styles).
+pub(super) fn history_list(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    hist: &mut History,
+    query: &mut String,
+    max_h: f32,
+    asks: &mut Vec<Ask>,
+) {
+    ui.add(
+        egui::TextEdit::singleline(query)
+            .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
+            .desired_width(f32::INFINITY),
+    );
+    ui.add_space(4.0);
+    let found: Vec<(usize, Entry)> = history::search(hist, query).into_iter().map(|(i, e)| (i, e.clone())).collect();
+    if found.is_empty() {
+        empty(ui, p, aurora_i18n::tr!("ui-notifications-history-empty"));
+        return;
+    }
+    let today = history::now_secs();
+    egui::ScrollArea::vertical()
+        .id_salt("notification_history")
+        .max_height(max_h)
+        .min_scrolled_height(max_h)
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            let mut last_day = None;
+            for (index, e) in found {
+                let day = day_label(e.time, today);
+                if last_day.as_ref() != Some(&day) {
+                    ui.label(RichText::new(day.to_uppercase()).size(10.5).strong().color(p.muted_dim));
+                    last_day = Some(day);
+                }
+                if let Some(follow) = history_card(ui, p, icons, &e) {
+                    if follow == Follow::Restore {
+                        if let Some(e) = hist.take(index) {
+                            asks.push(Ask::Follow(e));
+                        }
+                    } else {
+                        asks.push(Ask::Follow(e));
+                    }
+                }
+            }
+        });
 }
 
 /// A card of the center; unread, it has the violet edge.

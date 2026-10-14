@@ -1269,7 +1269,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MAP=1`, `mini` or `search:<text>` | World map and mini-map, the region search |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
-| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
+| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
@@ -1470,7 +1470,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the inventory opens on the received object and the offer is still to be
   answered; `offer-reject` rejects it at frame 700, then shows the object in
   the Trash. Take the screenshot after frame 900.
-- **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy`**: the notification
+- **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
   center's mockup, at 60 frames a second. An IM from Nova at frame 700
   unrolls from the bell at the right end of the top bar (violet bar of the
   time left, 6 s for information, 12 s for what waits for an answer), folds
@@ -1486,7 +1486,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   History tab (day headings, states, "Show the place", "Show in
   inventory", "Put back in To do"). `legacy` plays the same with
   Firestorm's toasts (Preferences › Aurora › Notifications), for this
-  session only. Hover the cards to see them pause. The history is kept in
+  session only; `legacy-history` opens its list on the History tab like
+  `history`. A script menu (`AURORA_DEMO_DIALOG=12`) stays rolled out
+  until answered. Hover the cards to see them pause. The history is kept in
   memory in demo; on the grid it is saved per account.
 - **`AURORA_DEMO_TOASTS=1|click|minimized`**: a friend goes offline at
   frame 700 and comes back at 760 (two presence toasts, round picture with

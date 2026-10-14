@@ -143,3 +143,37 @@ fn days_are_named_today_and_yesterday() {
     assert_eq!(day_label(now - 86_400, now), aurora_i18n::tr!("ui-chat-yesterday"));
     assert!(day_label(now - 5 * 86_400, now).chars().any(|c| c.is_ascii_digit()));
 }
+
+/// A script menu stays rolled out until answered, without time running;
+/// it keeps its place among the three shown, the other cards go behind
+/// "+ N more" first.
+#[test]
+fn a_script_menu_stays_out_until_answered() {
+    let mut list = Notifications::default();
+    let mut c = CenterUi::default();
+    let menu = list.push(
+        Kind::Script,
+        "Fountain",
+        "Pick a colour",
+        Data::Dialog {
+            object: Uuid::from_u128(9),
+            object_name: "Fountain".into(),
+            own_object: false,
+            channel: -5,
+            buttons: vec!["Violet".into()],
+        },
+    );
+    let others: Vec<u64> = (0..4).map(|i| info(&mut list, &format!("n{i}"))).collect();
+    update(&list, &mut c, at(0.0), 30.0);
+    let (shown, behind) = visible(&c);
+    assert_eq!(shown.iter().map(|p| p.id).collect::<Vec<_>>(), vec![menu, others[2], others[3]]);
+    assert_eq!(behind, 2);
+    // long after the others folded in, the menu is still out
+    update(&list, &mut c, at(SHOW_ANSWER * 3.0), 30.0);
+    update(&list, &mut c, at(SHOW_ANSWER * 3.0 + FOLD + 0.1), 30.0);
+    assert_eq!(c.peek.iter().map(|p| (p.id, p.folding)).collect::<Vec<_>>(), vec![(menu, None)]);
+    // answered: it folds away
+    list.list.retain(|n| n.id != menu);
+    update(&list, &mut c, at(SHOW_ANSWER * 4.0), 30.0);
+    assert!(c.peek[0].folding.is_some());
+}

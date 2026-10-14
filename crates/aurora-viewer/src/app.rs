@@ -2902,7 +2902,7 @@ impl App {
     /// or Firestorm's toasts; AURORA_DEMO_NOTIFS=legacy shows the latter for
     /// the session without saving it.
     fn notifications_aurora(&self) -> bool {
-        if self.demo && crate::demo::notifs::mode().as_deref() == Some("legacy") {
+        if self.demo && crate::demo::notifs::mode().is_some_and(|m| m.starts_with("legacy")) {
             return false;
         }
         self.settings.notifications_style == crate::settings::NotificationsStyle::Aurora
@@ -5836,7 +5836,7 @@ impl App {
                     self.on_app_event(e);
                 }
             }
-            if self.frame_count == crate::demo::notifs::ANSWER_AT && mode == "history" {
+            if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
                 // a few cards answered or closed: they go to the history
                 let ids: Vec<(u64, bool)> = self.world.notifications.listed().map(|n| (n.id, n.interactive())).collect();
                 for (id, interactive) in ids.into_iter().take(4) {
@@ -5860,9 +5860,9 @@ impl App {
                     }
                 }
             }
-            if self.frame_count == crate::demo::notifs::LIST_AT && matches!(mode.as_str(), "list" | "history" | "dnd") {
+            if self.frame_count == crate::demo::notifs::LIST_AT && matches!(mode.as_str(), "list" | "history" | "dnd" | "legacy-history") {
                 self.notif_ui.open = true;
-                if mode == "history" {
+                if mode.ends_with("history") {
                     self.notif_ui.center.tab = ui::notification_center::Tab::History;
                 }
             }
@@ -7946,16 +7946,16 @@ impl App {
                         dnd,
                     )
                 } else {
-                    let answers = ui::notifications::show(
+                    ui::notifications::show(
                         &ctx,
                         &p,
                         &self.skin.icons,
                         &self.world.map.ratings,
                         &mut self.world.notifications,
+                        &mut self.world.notification_history,
                         &mut self.notif_ui,
                         &mut toast_env,
-                    );
-                    (answers, Vec::new())
+                    )
                 };
                 for ask in asks {
                     self.on_notification_ask(&ctx, ask);

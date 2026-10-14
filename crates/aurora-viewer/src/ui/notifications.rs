@@ -531,10 +531,12 @@ pub fn show(
     icons: &Icons,
     ratings: &RegionRatings,
     list: &mut Notifications,
+    hist: &mut crate::world::notification_history::History,
     nui: &mut NotifUi,
     env: &mut ToastEnv<'_>,
-) -> Vec<(u64, Response)> {
+) -> (Vec<(u64, Response)>, Vec<super::notification_center::Ask>) {
     let mut answers = Vec::new();
+    let mut asks = Vec::new();
     let now = ctx.input(|i| i.time);
     update_toasts(list, nui, now, env.message_seconds, env.hidden);
 
@@ -579,6 +581,21 @@ pub fn show(
                                 }
                             });
                         });
+                        ui.add_space(4.0);
+                        // the history, as in Aurora's center
+                        if super::notification_center::tabs(ui, p, &mut nui.center.tab) {
+                            ui.add_space(4.0);
+                            super::notification_center::history_list(
+                                ui,
+                                p,
+                                icons,
+                                hist,
+                                &mut nui.center.query,
+                                ctx.content_rect().height() * 0.7,
+                                &mut asks,
+                            );
+                            return;
+                        }
                         ui.add_space(4.0);
                         if list.listed().next().is_none() {
                             ui.add_space(14.0);
@@ -649,7 +666,7 @@ pub fn show(
         // keep toasts expiring without input
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
-    answers
+    (answers, asks)
 }
 
 fn script_rows(count: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
