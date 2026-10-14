@@ -461,14 +461,18 @@ impl World {
             return;
         };
         c.wait_session = false;
-        if success && !session.is_nil() {
+        let moved = success && !session.is_nil() && c.session != session;
+        if moved {
             c.session = session;
         }
-        let session = c.session;
+        let (session, name) = (c.session, c.name.clone());
+        if moved {
+            // the conversation shown follows the conference to its new id
+            self.social.focus_im = Some(session);
+        }
         if success {
             self.call_request(CallMethod::Call, session);
         } else {
-            let name = c.name.clone();
             self.call_failed(aurora_i18n::tr!("world-calls-generic-error", name = name.as_str()));
         }
     }
