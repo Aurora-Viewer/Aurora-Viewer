@@ -381,6 +381,21 @@ pub enum NetEvent {
         session: Uuid,
         result: Option<aurora_llsd::Llsd>,
     },
+    /// Someone calls us (ChatterBoxInvitation with "voice").
+    VoiceInvite(crate::social::VoiceInvite),
+    /// Answer of a voice call request: the body, or the HTTP status of the
+    /// failure (0 = no capability / no reply).
+    CallReply {
+        method: crate::social::CallMethod,
+        session: Uuid,
+        result: Result<aurora_llsd::Llsd, u16>,
+    },
+    /// New voice channel of a session (ChatterBoxSessionUpdate with
+    /// "voice_channel_info"): a call in progress moves to it.
+    SessionVoiceChannel {
+        session: Uuid,
+        info: aurora_llsd::Llsd,
+    },
     LoginProgress {
         message: String,
         fraction: f32,
@@ -567,6 +582,16 @@ pub enum NetEvent {
         online: bool,
     },
     Balance(i32),
+    /// The outcome of a transaction, from a MoneyBalanceReply whose
+    /// TransactionInfo names one (TransactionType 0 is a plain balance
+    /// update). Sent before the new balance.
+    MoneyTransaction {
+        success: bool,
+        kind: i32,
+        dest: Uuid,
+        amount: i32,
+        description: String,
+    },
     /// MoneyBalanceReply's land: m² the account may hold (tier) and m² it
     /// holds (LLStatusBar::setLandCredit / setLandCommitted).
     LandHoldings {
@@ -1170,6 +1195,13 @@ pub enum NetCommand {
         method: crate::social::SessionMethod,
         session: Uuid,
     },
+    /// Voice call request on ChatSessionRequest (credentials, P2P start /
+    /// decline); `server_type` is the region's VoiceServerType.
+    Call {
+        method: crate::social::CallMethod,
+        session: Uuid,
+        server_type: String,
+    },
     Login(Box<LoginRequest>),
     Logout,
     Chat {
@@ -1326,6 +1358,14 @@ pub enum NetCommand {
         object: Uuid,
         amount: i32,
         description: String,
+    },
+    /// L$ given to a resident or a group (give_money with TRANS_GIFT):
+    /// `message` is the optional payment message, empty for none.
+    PayResident {
+        to: Uuid,
+        group: bool,
+        amount: i32,
+        message: String,
     },
     /// Profile of an avatar (picture, about text): AgentProfile cap or AvatarPropertiesRequest.
     RequestProfile(Uuid),

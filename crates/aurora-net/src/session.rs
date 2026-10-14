@@ -1320,6 +1320,31 @@ impl Session<'_> {
                     self.send(addr, &m, true);
                 }
             }
+            NetCommand::PayResident {
+                to,
+                group,
+                amount,
+                message,
+            } => {
+                // Port of give_money (llviewermessage.cpp): TRANS_GIFT, the
+                // destination-is-a-group bit of pack_transaction_flags, and
+                // the payment message as the description.
+                if amount > 0
+                    && !to.is_nil()
+                    && let Some(addr) = self.main
+                {
+                    let mut m = MoneyTransferRequest::default();
+                    m.agent_data.agent_id = self.agent_id();
+                    m.agent_data.session_id = self.session_id();
+                    m.money_data.source_id = self.agent_id();
+                    m.money_data.dest_id = to;
+                    m.money_data.flags = if group { 2 } else { 0 };
+                    m.money_data.amount = amount;
+                    m.money_data.transaction_type = 5001;
+                    m.money_data.description = str_field(&message);
+                    self.send(addr, &m, true);
+                }
+            }
             NetCommand::RequestProfile(id) => {
                 let cap = self
                     .main
@@ -2148,7 +2173,8 @@ impl Session<'_> {
             | NetCommand::ObjectGrabUpdate { .. }
             | NetCommand::ObjectRelease { .. }
             | NetCommand::RequestTaskInventory { .. }
-            | NetCommand::ChatSession { .. } => {}
+            | NetCommand::ChatSession { .. }
+            | NetCommand::Call { .. } => {}
             // handled by on_offline_command
             NetCommand::RequestOfflineMessages
             | NetCommand::RequestOfflineMessagesLegacy
@@ -3780,6 +3806,18 @@ impl Session<'_> {
         } else if id == MoneyBalanceReply::ID {
             let m: MoneyBalanceReply = pkt.decode()?;
             self.asset_imports.balance = Some(m.money_data.money_balance);
+            if m.transaction_info.transaction_type != 0 {
+                emit(
+                    self.sh,
+                    NetEvent::MoneyTransaction {
+                        success: m.money_data.transaction_success,
+                        kind: m.transaction_info.transaction_type,
+                        dest: m.transaction_info.dest_id,
+                        amount: m.transaction_info.amount,
+                        description: field_str(&m.money_data.description),
+                    },
+                );
+            }
             emit(self.sh, NetEvent::Balance(m.money_data.money_balance));
             emit(
                 self.sh,

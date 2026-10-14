@@ -1174,8 +1174,9 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
                 egui::Button::new(aurora_i18n::tr!("ui-profile-show-on-map-2")).min_size(size),
             )
             .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
-            ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size))
-                .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
+            if ui.add(egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size)).clicked() {
+                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
+            }
         });
         ui.vertical(|ui| {
             if ui
@@ -1225,13 +1226,20 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
 fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocked: bool, actions: &mut Vec<ProfileAction>) {
     widgets::icon_menu(ui, p, "menu-2-filled", aurora_i18n::tr!("ui-profile-more"), |ui| {
         let soon = aurora_i18n::tr!("ui-profile-coming-soon");
-        for (icon, label) in [
-            ("map", aurora_i18n::tr!("common-map")),
-            ("coin-filled", aurora_i18n::tr!("common-pay")),
-            ("share", aurora_i18n::tr!("common-share")),
-            ("phone-filled", aurora_i18n::tr!("ui-profile-call")),
-        ] {
-            menu::item_tip(ui, p, icon, label, false, soon);
+        menu::item_tip(ui, p, "map", aurora_i18n::tr!("common-map"), false, soon);
+        if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+            crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
+        }
+        menu::item_tip(ui, p, "share", aurora_i18n::tr!("common-share"), false, soon);
+        // LLAvatarActions::startCall (canCall: voice enabled)
+        if menu::item_if(
+            ui,
+            p,
+            "phone-filled",
+            aurora_i18n::tr!("ui-profile-call"),
+            world.calls.voice_enabled,
+        ) {
+            crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::Call(id));
         }
         let block = if blocked {
             aurora_i18n::tr!("common-unblock")

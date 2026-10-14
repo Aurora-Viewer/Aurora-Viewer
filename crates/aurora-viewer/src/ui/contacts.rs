@@ -88,6 +88,9 @@ impl Default for ContactsSettings {
 
 pub enum ContactsAction {
     Im(Uuid),
+    /// Call the friends chosen: one directly, several in a conference
+    /// (LLAvatarActions::startCall / startAdhocCall).
+    Call(Vec<Uuid>),
     Profile(Uuid),
     OfferTeleport(Uuid),
     /// The OfferTeleport prompt was confirmed: send the invitation.
@@ -917,7 +920,9 @@ fn friend_menu(
     if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport")) {
         st.ask_teleport_request(id, world.status.cfg.reject_teleports);
     }
-    menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"));
+    if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+        context::request(ui.ctx(), CtxAction::PayResident(id));
+    }
     menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("common-follow"));
     if menu::item(ui, p, "user-minus", aurora_i18n::tr!("common-remove-this-friend")) {
         st.dialog = Some(Dialog::RemoveFriends(ids.clone()));
@@ -1057,6 +1062,23 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
     if side_button(ui, p, aurora_i18n::tr!("status-im-call"), im_tip, n == 1) {
         actions.push(ContactsAction::Im(sel[0]));
     }
+    // a voice call with one friend, a voice conference with several
+    let call_tip = if !world.calls.voice_enabled {
+        aurora_i18n::tr!("ui-call-voice-off")
+    } else if n > 1 {
+        aurora_i18n::tr!("ui-contacts-call-conference")
+    } else {
+        aurora_i18n::tr!("ui-contacts-call-friend")
+    };
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("common-voice-call"),
+        call_tip,
+        n >= 1 && world.calls.voice_enabled,
+    ) {
+        actions.push(ContactsAction::Call(sel.clone()));
+    }
     if side_button(
         ui,
         p,
@@ -1078,7 +1100,15 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
         }
     }
     side_button(ui, p, aurora_i18n::tr!("ui-contacts-map"), soon, false);
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-pay"), soon, false);
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-contacts-pay"),
+        aurora_i18n::tr!("ui-contacts-pay-help"),
+        n == 1,
+    ) {
+        crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(sel[0]));
+    }
     if side_button(
         ui,
         p,
@@ -1286,7 +1316,15 @@ fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
     if menu::item_if(ui, p, "message-filled", aurora_i18n::tr!("common-chat"), real) {
         actions.push(ContactsAction::GroupChat(id));
     }
-    menu::todo(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"));
+    if menu::item_if(
+        ui,
+        p,
+        "phone-filled",
+        aurora_i18n::tr!("common-voice-call"),
+        real && world.calls.voice_enabled,
+    ) {
+        super::context::request(ui.ctx(), super::context::CtxAction::Call(id));
+    }
     if real {
         let label = if world.groups.favorites.contains(&id) {
             aurora_i18n::tr!("common-unpin-group")

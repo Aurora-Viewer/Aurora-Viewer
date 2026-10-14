@@ -148,6 +148,8 @@ pub struct Facts {
     pub friend: bool,
     /// EditLinkedParts.
     pub edit_linked: bool,
+    /// Voice is enabled: "Call" works (LLAvatarActions::canCall).
+    pub voice: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -177,6 +179,9 @@ pub enum CtxAction {
     ToggleFly,
     ResetCamera,
     Im(Uuid),
+    /// Call a resident or a group (LLAvatarActions::startCall,
+    /// LLGroupActions::startCall).
+    Call(Uuid),
     /// The History window on the transcript of the nearby chat (None), of
     /// a conversation, a resident or a group.
     ShowHistory(Option<Uuid>),
@@ -229,6 +234,8 @@ pub enum CtxAction {
     DeleteConfirmed(Uuid),
     /// Pay / buy / open the object (the click-action dialogs).
     Pay(Uuid),
+    /// Pay a resident (Avatar.Pay, LLAvatarActions::pay).
+    PayResident(Uuid),
     Buy(Uuid),
     Open(Uuid),
     /// Unlink the linkset (Tools.Unlink).
@@ -470,7 +477,15 @@ fn avatar_menu_reporting(
             offer_tp(ui);
             request_tp(ui);
             tp_to(ui);
-            menu::todo(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"));
+            if menu::item_if(
+                ui,
+                p,
+                "phone-filled",
+                aurora_i18n::tr!("common-voice-call"),
+                world.calls.voice_enabled,
+            ) {
+                act(CtxAction::Call(id));
+            }
             menu::separator(ui, p);
             history(ui);
             menu::separator(ui, p);
@@ -484,7 +499,9 @@ fn avatar_menu_reporting(
                 act(CtxAction::ShowOnMap(id));
             }
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
-            menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"));
+            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+                act(CtxAction::PayResident(id));
+            }
             block(ui);
         }
         AvatarList::Friend => {
@@ -496,7 +513,9 @@ fn avatar_menu_reporting(
             tp_to(ui);
             offer_tp(ui);
             request_tp(ui);
-            menu::todo(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"));
+            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+                act(CtxAction::PayResident(id));
+            }
             menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("common-follow"));
             remove_friend(ui);
             menu::separator(ui, p);
@@ -568,7 +587,16 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     if menu::item(ui, p, "message-filled", aurora_i18n::tr!("common-chat")) {
         act(CtxAction::GroupChat(id));
     }
-    menu::todo(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"));
+    // LLGroupActions::startCall (enabled with voice, isVoiceCallEnabled)
+    if menu::item_if(
+        ui,
+        p,
+        "phone-filled",
+        aurora_i18n::tr!("common-voice-call"),
+        world.calls.voice_enabled,
+    ) {
+        act(CtxAction::Call(id));
+    }
     let pin = if world.groups.favorites.contains(&id) {
         aurora_i18n::tr!("common-unpin-group")
     } else {

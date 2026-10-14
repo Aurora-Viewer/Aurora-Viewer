@@ -47,6 +47,7 @@ mod inventory_drag;
 mod inventory_thumbnail;
 mod marketplace_listings;
 mod object_actions;
+mod pay;
 mod plate_click;
 mod report_abuse;
 mod reset_skeleton;
@@ -234,6 +235,12 @@ pub struct App {
     autopilot_flags: u32,
     /// Microphone switched on (toggle mode).
     mic_on: bool,
+    /// AURORA_DEMO_CALL: the simulated voice server of the calls.
+    call_demo: crate::demo::calls::CallDemo,
+    /// The call whose conversation was last brought up.
+    call_shown: Option<uuid::Uuid>,
+    /// When the voice volumes changed by the call strip are saved.
+    volumes_save_at: Option<Instant>,
     /// Microphone button of the bottom bar held (hold-to-talk mode).
     mic_button_held: bool,
     /// Voice: connected in this region, own speaking level (0..1).
@@ -354,6 +361,8 @@ pub struct App {
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
+    /// The Pay window of a resident or a group (`ui/pay.rs`).
+    pay_ui: ui::pay::PayUi,
     /// Buy Land (LLFloaterBuyLand), and the selection it follows.
     buy_land_ui: ui::buy_land::BuyLandUi,
     buy_land_source: buy_land::BuyLandSource,
@@ -691,6 +700,9 @@ impl App {
             autopilot: None,
             autopilot_flags: 0,
             mic_on: false,
+            call_demo: Default::default(),
+            call_shown: None,
+            volumes_save_at: None,
             mic_button_held: false,
             voice_connected: false,
             voice_level: 0.0,
@@ -761,6 +773,7 @@ impl App {
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
+            pay_ui: Default::default(),
             buy_land_ui: Default::default(),
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
@@ -1014,13 +1027,14 @@ impl App {
             }
             let expense = match &cmd {
                 NetCommand::BuyObject { price, .. } => Some((*price, "achat")),
-                NetCommand::PayObject { amount, .. } => Some((*amount, "paiement")),
+                NetCommand::PayObject { amount, .. } | NetCommand::PayResident { amount, .. } => Some((*amount, "paiement")),
                 _ => None,
             };
             if let Some((amount, kind)) = expense {
                 log::info!("demo action: {kind} L$ {amount}");
                 let balance = self.world.balance.unwrap_or(250).saturating_sub(amount);
                 self.world.apply(NetEvent::Balance(balance));
+                self.pay_ui.on_balance(balance);
                 self.world.system_message(aurora_i18n::tr!(
                     "app-demo-of-l-simulated",
                     kind = kind.to_string(),
@@ -1602,6 +1616,20 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if let NetEvent::MoneyTransaction {
+            success,
+            kind,
+            dest,
+            ref description,
+            ..
+        } = ev
+        {
+            self.pay_ui.on_transaction(success, kind, dest, description);
+            return;
+        }
+        if let NetEvent::Balance(balance) = ev {
+            self.pay_ui.on_balance(balance);
+        }
         if let NetEvent::ScriptTeleportRequest { .. } = ev {
             // llMapDestination asked for the map (BEACON_SHOW_MAP)
             self.panels.world_map = true;
@@ -3567,8 +3595,50 @@ impl App {
             transmit,
             avatar: (global(self.world.agent.position), self.world.agent.body_rotation()),
             listener: (global(self.camera.position), cam_rot),
+            call: self.world.calls.active.as_ref().and_then(|c| c.channel.as_ref()),
         };
         self.voice.update(inputs);
+        // the call's channel: its state and participants (the demo has no
+        // voice server and simulates them)
+        let server_type = main.map(|r| r.voice_server.clone()).unwrap_or_default();
+        self.world.calls.voice_enabled = self.settings.audio.voice_enabled;
+        self.world.calls.server_type = server_type;
+        self.world.calls.reject_group = self.settings.audio.reject_group_calls;
+        self.world.calls.reject_adhoc = self.settings.audio.reject_adhoc_calls;
+        self.world.calls.reject_p2p = self.settings.audio.reject_p2p_calls;
+        self.world.expire_call_invites();
+        if self.volumes_save_at.is_some_and(|t| Instant::now() >= t) {
+            self.volumes_save_at = None;
+            self.world.calls.save_volumes();
+        }
+        // each resident's voice volume (LLSpeakerVolumeStorage)
+        self.voice.apply_volumes(&self.world.calls.volumes);
+        let report = if self.demo {
+            let in_world = self.in_world();
+            for ev in self.call_demo.scenario(&mut self.world, in_world) {
+                if let Some(e) = self.world.apply(ev) {
+                    self.on_app_event(e);
+                }
+            }
+            self.call_demo.report(&self.world, transmit)
+        } else {
+            self.voice.call_report()
+        };
+        if let Some((status, members)) = report {
+            self.world.call_voice_update(status, members);
+        }
+        // a new call shows its conversation (started, accepted, answered by text)
+        let call = self.world.calls.active.as_ref().map(|c| c.session);
+        if call.is_some() && call != self.call_shown {
+            ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
+        }
+        self.call_shown = call;
+        // the microphone a call wants when it connects or ends (toggle mode)
+        if let Some(on) = self.world.calls.mic.take()
+            && !self.settings.audio.mic_hold
+        {
+            self.mic_on = on;
+        }
         let world = &self.world;
         self.voice.apply_blocks(|id| world.voice_blocked(id));
         self.voice_connected = self.voice.connected;
@@ -4222,6 +4292,11 @@ impl App {
     fn on_contacts_action(&mut self, c: ui::contacts::ContactsAction, a: &mut UiActions) {
         use ui::contacts::ContactsAction;
         match c {
+            ContactsAction::Call(ids) => match ids.as_slice() {
+                [one] => self.on_ctx_action(ui::context::CtxAction::Call(*one)),
+                _ if self.settings.audio.voice_enabled => self.world.start_conference(ids),
+                _ => {}
+            },
             ContactsAction::Im(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.social.session_mut(id);
@@ -6492,6 +6567,7 @@ impl App {
             }
             self.demo_buy_currency();
             self.demo_buy_land();
+            self.demo_pay();
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
         // the window, moving), Violet Wolf looks at a point north of him;
@@ -7285,8 +7361,8 @@ impl App {
                     log::info!("group invite: {} resident(s) invited", invites.len());
                     self.send(NetCommand::InviteToGroup { group, invites });
                 }
-                // group voice: connected by the voice calls
-                GroupAction::Call(group) => log::info!("group call {group}: group voice is not connected yet"),
+                // LLGroupActions::startCall
+                GroupAction::Call(group) => self.on_ctx_action(ui::context::CtxAction::Call(group)),
                 GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
                 GroupAction::SetTitle { group, role } => self.world.group_data.set_title(group, role),
                 GroupAction::SetFlags {
@@ -7965,6 +8041,11 @@ impl App {
                 let mut open = self.panels.chat;
                 let mut contact_actions = Vec::new();
                 self.chat_ui.style = self.settings.chat_style;
+                self.chat_ui.voice_on = self.settings.audio.voice_enabled;
+                self.chat_ui.mic = (!self.settings.audio.mic_hold).then_some(self.mic_on);
+                if self.world.calls.active.is_some() {
+                    self.chat_ui.volumes.clone_from(&self.world.calls.volumes);
+                }
                 for c in ui::chat::show(
                     &ctx,
                     &p,
@@ -7985,6 +8066,7 @@ impl App {
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::chat::ConvAction::Close(id) => {
+                            self.world.conversation_closed(&id);
                             self.world.leave_session(id);
                             self.chat_ui.forget(id);
                             // closed from the list, another conversation may be shown
@@ -7993,7 +8075,17 @@ impl App {
                                 self.chat_ui.show_profile = false;
                             }
                         }
+                        ui::chat::ConvAction::Call(id) => a.ctx_action = Some(ui::context::CtxAction::Call(id)),
+                        ui::chat::ConvAction::HangUp => self.world.end_call(),
+                        ui::chat::ConvAction::ToggleMic => self.mic_on = !self.mic_on,
+                        ui::chat::ConvAction::AnswerCall { session, answer } => self.world.answer_call_invite(session, answer),
+                        ui::chat::ConvAction::SetVolume(id, v) => {
+                            self.world.calls.set_volume(id, v);
+                            // saved once the slider rests
+                            self.volumes_save_at = Some(Instant::now() + std::time::Duration::from_millis(500));
+                        }
                         ui::chat::ConvAction::BlockGroupChat(id) => {
+                            self.world.conversation_closed(&id);
                             self.world.set_group_chat_blocked(id, true);
                             self.chat_ui.forget(id);
                             self.chat_ui.selected = None;
@@ -8275,7 +8367,7 @@ impl App {
                 if let Some(c) = self.media_cursor {
                     ctx.set_cursor_icon(c);
                 }
-                a.object_confirm = ui::object_actions::show(&ctx, &p, &mut self.interactions, &self.world);
+                self.show_pay(&ctx, &p, &mut a);
                 for document in ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world) {
                     match document {
                         ui::object_actions::ContentsOpen::Script(object, item) => {
@@ -8614,7 +8706,7 @@ impl App {
                     avatar_pics: &self.avatar_pics,
                     classic: self.settings.classic_profiles,
                     now: ctx.input(|i| i.time),
-                    group_calls: false,
+                    group_calls: self.settings.audio.voice_enabled,
                 };
                 let group_acts = self.group_profile_ui.show(&ctx, &mut c, &group_env);
                 self.panels.search = open;
