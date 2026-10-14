@@ -14,6 +14,16 @@ pub enum ChatStyle {
     Legacy,
 }
 
+/// How the world map lays out its controls: over a map filling the window
+/// (the default), or in Firestorm's side panel next to the map (the legacy
+/// style, Preferences › Aurora).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum WorldMapStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
 /// What a left click on another avatar's name plate does (Preferences ›
 /// Interface; the human's request of 2026-10-14). Each one is an entry of
 /// the avatar's menu; nothing, the default, leaves the click to the world.
@@ -284,6 +294,8 @@ pub struct Settings {
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
+    /// The world map's layout (`ui/worldmap/overlay.rs` or the side panel).
+    pub world_map_style: WorldMapStyle,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// What a double click on the ground does (Preferences › Controls, the
@@ -698,6 +710,7 @@ impl Default for Settings {
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,
             chat_style: ChatStyle::Bubbles,
+            world_map_style: WorldMapStyle::Aurora,
             invert_mouse: false,
             arrows_strafe: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
@@ -1279,6 +1292,9 @@ pub struct MapSettings {
     pub world_events: bool,
     pub world_mature_events: bool,
     pub world_adult_events: bool,
+    /// The inventory's landmarks as pins (the full-frame map's layer; not
+    /// in Firestorm).
+    pub world_landmarks: bool,
     /// MapShowGridCoords.
     pub world_grid_coords: bool,
     /// FSWorldMapDoubleclickTeleport.
@@ -1310,6 +1326,7 @@ impl Default for MapSettings {
             world_events: true,
             world_mature_events: true,
             world_adult_events: false,
+            world_landmarks: true,
             world_grid_coords: false,
             world_double_click_tp: true,
             ban_lines: 1,

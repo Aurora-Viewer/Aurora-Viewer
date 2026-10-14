@@ -1977,6 +1977,7 @@ impl World {
                 None
             }
             NetEvent::RemoteParcel { handle, position, result } => {
+                self.map.apply_remote_parcel(handle, position, result.as_ref().ok().copied());
                 self.place_details.apply_remote_parcel(handle, position, result);
                 None
             }
@@ -2062,6 +2063,10 @@ impl World {
             }
             NetEvent::MapItems { item_type, items } => {
                 self.map.apply_items(item_type, items);
+                None
+            }
+            NetEvent::AgentFound { prey, x, y } => {
+                self.map.agent_found(prey, x, y, self.agent.position.z);
                 None
             }
             NetEvent::ParcelCollision {

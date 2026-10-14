@@ -88,8 +88,8 @@ sections! {
         lookat.private_local, lookat.limit_distance, lookat.max_distance,
     ],
     TAB_AURORA => [
-        chat_style, classic_name_tags, lookat.style, lookat.aim, plates_hover_expand, plates_friends_only_full,
-        plate_click,
+        chat_style, classic_name_tags, lookat.style, world_map_style, lookat.aim, plates_hover_expand,
+        plates_friends_only_full, plate_click,
     ],
 }
 

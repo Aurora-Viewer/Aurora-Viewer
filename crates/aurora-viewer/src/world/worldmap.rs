@@ -1,10 +1,11 @@
 //! World map data (LLWorldMap / LLWorldMapMessage): regions known by grid
 //! position, map items (hubs, people, land for sale, events), the tracked
-//! location (LLTracker) and the parcel overlays used for the mini-map's
-//! property lines (LLViewerParcelOverlay).
+//! location (LLTracker), the friend the map follows (LLAvatarTracker) and
+//! the parcel overlays used for the mini-map's property lines
+//! (LLViewerParcelOverlay).
 //!
-//! Ported from Firestorm's llworldmap.cpp / llworldmapmessage.cpp (originally LGPL 2.1,
-//! Linden Research, Inc.).
+//! Ported from Firestorm's llworldmap.cpp / llworldmapmessage.cpp /
+//! llcallingcard.cpp (originally LGPL 2.1, Linden Research, Inc.).
 
 use aurora_net::{MapBlock, MapItem, NetCommand, RegionHandle, map_item};
 use std::collections::{HashMap, HashSet};
@@ -22,6 +23,9 @@ const AGENTS_UPDATE: Duration = Duration::from_secs(60);
 /// Grid-wide items (hubs, land for sale, events) are reloaded after this long
 /// (REQUEST_ITEMS_TIMER).
 const ITEMS_UPDATE: Duration = Duration::from_secs(600);
+/// A followed friend is asked again this often (FIND_FREQUENCY: each
+/// FindAgent is a database query of the grid).
+pub const FIND_AGENT_EVERY: Duration = Duration::from_millis(29_700);
 
 pub const SIM_ACCESS_PG: u8 = 13;
 pub const SIM_ACCESS_MATURE: u8 = 21;
@@ -97,6 +101,31 @@ pub struct Track {
     pub invalid: bool,
 }
 
+/// The parcel of the tracked spot (LLFloaterWorldMap::requestParcelInfo):
+/// RemoteParcelRequest for the point, then ParcelInfoRequest for its id,
+/// once per spot as Firestorm (mRequestedGlobalPos).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackParcel {
+    pub x: f64,
+    pub y: f64,
+    handle: RegionHandle,
+    position: glam::Vec3,
+    /// The parcel's id once RemoteParcelRequest answered.
+    pub id: Option<Uuid>,
+}
+
+/// The friend the map follows (LLAvatarTracker's LLTrackingData,
+/// TRACKING_AVATAR): asked with FindAgent, the tracked location follows
+/// their answers.
+#[derive(Debug, Clone)]
+pub struct AvatarTrack {
+    pub id: Uuid,
+    pub name: String,
+    /// Answered at least once: `WorldMap::track` points at them.
+    pub found: bool,
+    asked: Instant,
+}
+
 /// Parcel the agent may not enter, near it (LLViewerParcelMgr collision
 /// parcel): drawn as ban lines in the world and on the mini-map.
 #[derive(Debug, Clone)]
@@ -139,6 +168,10 @@ pub struct WorldMap {
     pub agents: HashMap<(u32, u32), Vec<(u32, u32, i32)>>,
     agents_asked: HashMap<(u32, u32), Instant>,
     pub track: Option<Track>,
+    /// The friend `track` follows, if any.
+    pub avatar: Option<AvatarTrack>,
+    /// The parcel asked for the tracked spot.
+    pub track_parcel: Option<TrackParcel>,
     /// Centre the open map on `track` once its region is known
     /// (llMapDestination's BEACON_FOCUS_MAP, LLFloaterWorldMap autofocus).
     pub focus_track: bool,
@@ -269,9 +302,11 @@ impl WorldMap {
         self.out.push(c);
     }
 
-    /// LLTracker: stop tracking once within 3 m of the spot.
+    /// LLTracker: stop tracking once within 3 m of the spot (a friend keeps
+    /// being followed).
     pub fn check_arrival(&mut self, x: f64, y: f64, z: f32) {
         if let Some(t) = &self.track
+            && self.avatar.is_none()
             && !t.pending
             && !t.invalid
             && (t.x - x).hypot(t.y - y) < 3.0
@@ -282,8 +317,16 @@ impl WorldMap {
     }
 
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
-        while let Some(c) = self.ratings.next_request(Instant::now()) {
+        let now = Instant::now();
+        while let Some(c) = self.ratings.next_request(now) {
             self.out.push(c);
+        }
+        // LLTrackingData::haveTrackingInfo: the followed friend asked again
+        if let Some(a) = self.avatar.as_mut()
+            && now.duration_since(a.asked) >= FIND_AGENT_EVERY
+        {
+            a.asked = now;
+            self.out.push(NetCommand::FindAgent(a.id));
         }
         std::mem::take(&mut self.out)
     }
@@ -481,9 +524,116 @@ impl WorldMap {
         });
     }
 
+    /// LLFloaterWorldMap::trackAvatar: follow a friend who lets us see them
+    /// on the map; the track points at them once the grid answers, and the
+    /// open map centres on it.
+    pub fn track_avatar(&mut self, id: Uuid, name: &str) {
+        if self.avatar.as_ref().is_some_and(|a| a.id == id) {
+            return;
+        }
+        self.avatar = Some(AvatarTrack {
+            id,
+            name: name.to_owned(),
+            found: false,
+            asked: Instant::now(),
+        });
+        self.track = None;
+        self.focus_track = true;
+        // LLAvatarTracker::track: TrackAgent, then findAgent
+        self.out.push(NetCommand::TrackAgent(id));
+        self.out.push(NetCommand::FindAgent(id));
+    }
+
+    /// LLAvatarTracker::untrack.
+    fn stop_avatar(&mut self) {
+        if self.avatar.take().is_some() {
+            self.out.push(NetCommand::TrackAgent(Uuid::nil()));
+        }
+    }
+
+    /// LLAvatarTracker::agentFound: the followed friend is there (`z`: the
+    /// grid gives no height, the one of the place card is kept).
+    pub fn agent_found(&mut self, prey: Uuid, x: f64, y: f64, z: f32) {
+        let Some(a) = self.avatar.as_mut().filter(|a| a.id == prey) else {
+            return;
+        };
+        a.found = true;
+        let name = a.name.clone();
+        let z = self.track.as_ref().map_or(z, |t| t.z);
+        self.place_track(x, y, z, false);
+        if let Some(t) = self.track.as_mut() {
+            t.label = name;
+        }
+    }
+
+    /// LLFloaterWorldMap::trackLocation → requestParcelInfo: ask the parcel
+    /// of the tracked spot, once per spot (the open map calls it each frame
+    /// for a spot, not for a landmark nor a friend).
+    pub fn want_track_parcel(&mut self) {
+        let Some(t) = self.track.as_ref().filter(|t| !t.pending && !t.invalid) else {
+            return;
+        };
+        if self.track_parcel.as_ref().is_some_and(|p| p.x == t.x && p.y == t.y) {
+            return;
+        }
+        let slot = |g: f64| ((g.max(0.0) / 256.0).floor() as u32) * 256;
+        let handle = aurora_net::origin_to_handle(slot(t.x), slot(t.y));
+        let position = glam::Vec3::new(t.x.rem_euclid(256.0) as f32, t.y.rem_euclid(256.0) as f32, t.z);
+        self.track_parcel = Some(TrackParcel {
+            x: t.x,
+            y: t.y,
+            handle,
+            position,
+            id: None,
+        });
+        self.out.push(NetCommand::RemoteParcelRequest {
+            handle,
+            position,
+            region_id: Uuid::nil(),
+        });
+    }
+
+    /// RemoteParcelRequest answered: the tracked spot's parcel is asked
+    /// (LLWorldMapParcelInfoObserver::setParcelID → sendParcelInfoRequest).
+    pub fn apply_remote_parcel(&mut self, handle: RegionHandle, position: glam::Vec3, id: Option<Uuid>) {
+        if let Some(p) = self
+            .track_parcel
+            .as_mut()
+            .filter(|p| p.handle == handle && p.position == position && p.id.is_none())
+            && let Some(id) = id
+        {
+            p.id = Some(id);
+            self.out.push(NetCommand::ParcelInfoRequest(id));
+        }
+    }
+
+    /// The parcel id of the tracked spot, once known.
+    pub fn track_parcel_id(&self) -> Option<Uuid> {
+        let t = self.track.as_ref()?;
+        self.track_parcel.as_ref().filter(|p| p.x == t.x && p.y == t.y)?.id
+    }
+
+    /// Forget the tracked location, and the friend it follows.
+    pub fn clear_track(&mut self) {
+        self.stop_avatar();
+        self.track = None;
+    }
+
+    /// Track a spot set by hand (a region of the search): no friend is
+    /// followed any more.
+    pub fn set_track(&mut self, t: Track) {
+        self.stop_avatar();
+        self.track = Some(t);
+    }
+
     /// LLFloaterWorldMap::trackLocation: point at a global position; an
     /// unknown region is asked first (MAP_SIM_RETURN_NULL_SIMS).
     pub fn track_location(&mut self, x: f64, y: f64, z: f32, teleport: bool) {
+        self.stop_avatar();
+        self.place_track(x, y, z, teleport);
+    }
+
+    fn place_track(&mut self, x: f64, y: f64, z: f32, teleport: bool) {
         let (gx, gy) = ((x.max(0.0) / 256.0) as u32, (y.max(0.0) / 256.0) as u32);
         let mut t = Track {
             x,
@@ -662,6 +812,76 @@ mod tests {
         m.track_region("ahern", glam::Vec3::new(1.0, 2.0, 3.0));
         assert!(m.take_commands().iter().all(|c| !matches!(c, NetCommand::MapNameRequest { .. })));
         assert!(m.track.is_some());
+    }
+
+    #[test]
+    fn a_followed_friend_is_asked_again_and_dropped_by_a_new_track() {
+        let friend = Uuid::from_u128(7);
+        let mut m = WorldMap::default();
+        m.apply_blocks(vec![yiff()]);
+        m.track_avatar(friend, "Nova");
+        assert!(matches!(
+            &m.take_commands()[..],
+            [NetCommand::TrackAgent(a), NetCommand::FindAgent(b)] if *a == friend && *b == friend
+        ));
+        // asked once: the same friend again sends nothing
+        m.track_avatar(friend, "Nova");
+        assert!(m.take_commands().is_empty());
+        assert!(m.track.is_none() && m.focus_track);
+        // somebody else's answer is not ours
+        m.agent_found(Uuid::from_u128(8), 256_010.0, 256_266.0, 25.0);
+        assert!(m.track.is_none());
+        m.agent_found(friend, 256_010.0, 256_266.0, 25.0);
+        let t = m.track.as_ref().expect("following");
+        assert_eq!((t.x, t.y, t.z, t.label.as_str()), (256_010.0, 256_266.0, 25.0, "Nova"));
+        assert!(m.avatar.as_ref().is_some_and(|a| a.found));
+        // a friend is not dropped on arrival, the height of the card stays
+        m.check_arrival(256_010.0, 256_266.0, 25.0);
+        assert!(m.track.is_some());
+        m.track.as_mut().expect("following").z = 40.0;
+        m.agent_found(friend, 256_020.0, 256_270.0, 25.0);
+        assert_eq!(m.track.as_ref().map(|t| (t.x, t.z)), Some((256_020.0, 40.0)));
+        // FIND_FREQUENCY: asked again later
+        m.avatar.as_mut().expect("following").asked -= FIND_AGENT_EVERY;
+        assert!(matches!(&m.take_commands()[..], [NetCommand::FindAgent(a)] if *a == friend));
+        assert!(m.take_commands().is_empty());
+        // a spot clicked on the map ends the following
+        m.track_location(256_100.0, 256_300.0, 20.0, false);
+        assert!(m.avatar.is_none());
+        assert!(matches!(&m.take_commands()[..], [NetCommand::TrackAgent(a)] if a.is_nil()));
+        m.track_avatar(friend, "Nova");
+        m.take_commands();
+        m.clear_track();
+        assert!(m.track.is_none() && m.avatar.is_none());
+        assert!(matches!(&m.take_commands()[..], [NetCommand::TrackAgent(a)] if a.is_nil()));
+    }
+
+    #[test]
+    fn the_parcel_of_a_spot_is_asked_once_like_firestorm() {
+        let mut m = WorldMap::default();
+        m.apply_blocks(vec![yiff()]);
+        m.track_location(256_010.0, 256_266.0, 25.0, false);
+        m.take_commands();
+        m.want_track_parcel();
+        m.want_track_parcel();
+        let asked = m.take_commands();
+        let [NetCommand::RemoteParcelRequest { handle, position, .. }] = &asked[..] else {
+            panic!("one RemoteParcelRequest: {asked:?}");
+        };
+        assert_eq!(*handle, aurora_net::origin_to_handle(256_000, 256_256));
+        assert_eq!(*position, glam::Vec3::new(10.0, 10.0, 25.0));
+        let parcel = Uuid::from_u128(9);
+        // another point's answer is not ours
+        m.apply_remote_parcel(*handle, glam::Vec3::ZERO, Some(parcel));
+        assert_eq!(m.track_parcel_id(), None);
+        m.apply_remote_parcel(*handle, *position, Some(parcel));
+        assert!(matches!(&m.take_commands()[..], [NetCommand::ParcelInfoRequest(p)] if *p == parcel));
+        assert_eq!(m.track_parcel_id(), Some(parcel));
+        // another spot: asked again, the former parcel is not its
+        m.track_location(256_100.0, 256_300.0, 25.0, false);
+        assert_eq!(m.track_parcel_id(), None);
+        m.want_track_parcel();
+        assert!(matches!(&m.take_commands()[..], [NetCommand::RemoteParcelRequest { .. }]));
     }
 
     fn yiff() -> MapBlock {
