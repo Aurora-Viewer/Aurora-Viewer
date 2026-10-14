@@ -743,10 +743,18 @@ fn landmark_star(
     icons: &Icons,
     found: Option<&super::landmark_create::ParcelLandmark>,
 ) -> Option<StarAction> {
+    use super::parcel_icons::{GLYPH, SLOT_HEIGHT, SLOT_WIDTH, glyph_rect};
+    // the slot and the glyph of the parcel icons on its left: same size,
+    // same centering, same hover face
+    let (slot, resp) = ui.allocate_exact_size(Vec2::new(SLOT_WIDTH, SLOT_HEIGHT), egui::Sense::click());
+    if resp.hovered() {
+        ui.painter()
+            .rect_filled(slot.expand(1.0), ui.visuals().window_corner_radius, p.raised);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let glyph = glyph_rect(slot);
     if let Some(lm) = found {
-        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::click());
-        let tint = if resp.hovered() { p.amber } else { p.amber.gamma_multiply(0.9) };
-        paint_icon(ui, icons, "star-filled", rect, 16.0, tint);
+        paint_icon(ui, icons, "star-filled", glyph, GLYPH, p.amber);
         let tip = if lm.favorite {
             aurora_i18n::tr!("landmark-star-in-favorites", name = lm.name.clone())
         } else {
@@ -754,10 +762,9 @@ fn landmark_star(
         };
         return resp.on_hover_text(tip).clicked().then_some(StarAction::Edit(lm.item));
     }
-    let texture = super::icons::global("star")?;
-    let img = egui::Image::from_texture(egui::load::SizedTexture::new(texture.id(), Vec2::splat(16.0))).tint(p.muted);
+    paint_icon(ui, icons, "star", glyph, GLYPH, if resp.hovered() { p.ink } else { p.muted });
     let mut out = None;
-    menu::button(ui, p, egui::Button::image(img).frame(false), |ui| {
+    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         if menu::item(ui, p, "star-filled", aurora_i18n::tr!("landmark-star-add-favorites")) {
             out = Some(StarAction::AddFavorite);
         }
@@ -767,8 +774,8 @@ fn landmark_star(
         if menu::item(ui, p, "dots-filled", aurora_i18n::tr!("landmark-star-more")) {
             out = Some(StarAction::MoreOptions);
         }
-    })
-    .on_hover_text(aurora_i18n::tr!("landmark-star-add"));
+    });
+    resp.on_hover_text(aurora_i18n::tr!("landmark-star-add"));
     out
 }
 
