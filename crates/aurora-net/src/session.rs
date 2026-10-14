@@ -2191,6 +2191,8 @@ impl Session<'_> {
             | NetCommand::EjectGroupMembers { .. }
             | NetCommand::GroupRoleChanges { .. }
             | NetCommand::GroupBans { .. }
+            | NetCommand::GroupRoleUpdate { .. }
+            | NetCommand::UpdateGroupInfo { .. }
             | NetCommand::JoinGroup(_)
             | NetCommand::InviteToGroup { .. } => {}
             // handled by on_search_command

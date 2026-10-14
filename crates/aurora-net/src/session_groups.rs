@@ -65,7 +65,16 @@ impl Session<'_> {
                     self.send_main(&m, true);
                 }
             }
-            NetCommand::GroupBans { group, action, ids } => self.group_bans(*group, *action, ids.clone()),
+            NetCommand::GroupBans { group, action, ids, refresh } => self.group_bans(*group, *action, ids.clone(), *refresh),
+            NetCommand::GroupRoleUpdate { group, updates } => {
+                for m in groups::role_update_messages(self.agent_id(), self.session_id(), *group, updates) {
+                    self.send_main(&m, true);
+                }
+            }
+            NetCommand::UpdateGroupInfo { group, info } => {
+                let m = groups::group_info_message(self.agent_id(), self.session_id(), *group, info);
+                self.send_main(&m, true);
+            }
             NetCommand::GroupNoticeRequest(notice) => {
                 // LLPanelGroupNotices::onSelectNotice
                 let mut m = GroupNoticeRequest::default();
@@ -125,7 +134,7 @@ impl Session<'_> {
 
     /// LLGroupMgr::sendGroupBanRequest: the GroupAPIv1 capability, with the
     /// group in the query; a POST answers the list when it changed it.
-    fn group_bans(&mut self, group: uuid::Uuid, action: Option<i32>, ids: Vec<uuid::Uuid>) {
+    fn group_bans(&mut self, group: uuid::Uuid, action: Option<i32>, ids: Vec<uuid::Uuid>, refresh: bool) {
         let Some(cap) = self.main_cap("GroupAPIv1") else {
             log::info!("group bans: no GroupAPIv1 capability");
             return;
@@ -134,10 +143,14 @@ impl Session<'_> {
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            let reply = match action {
+            let mut reply = match action {
                 Some(action) => crate::caps::post_llsd(&http, &url, &groups::ban_body(action, &ids)).await,
                 None => crate::caps::get_llsd(&http, &url).await,
             };
+            // postGroupBanRequestCoro: with BAN_UPDATE, the list again
+            if refresh && reply.is_ok() {
+                reply = crate::caps::get_llsd(&http, &url).await;
+            }
             match reply {
                 Ok(v) => {
                     if let Some((g, bans)) = groups::ban_list(&v) {

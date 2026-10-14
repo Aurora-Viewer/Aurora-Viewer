@@ -1458,6 +1458,18 @@ pub enum NetCommand {
         group: Uuid,
         action: Option<i32>,
         ids: Vec<Uuid>,
+        /// BAN_UPDATE: the list asked again after the action.
+        refresh: bool,
+    },
+    /// GroupRoleUpdate (LLGroupMgrGroupData::sendRoleChanges).
+    GroupRoleUpdate {
+        group: Uuid,
+        updates: Vec<crate::groups::RoleUpdate>,
+    },
+    /// UpdateGroupInfo (LLGroupMgr::sendUpdateGroupInfo).
+    UpdateGroupInfo {
+        group: Uuid,
+        info: crate::groups::GroupInfo,
     },
     /// GroupNoticeRequest: one notice, answered by an IM_GROUP_NOTICE_REQUESTED
     /// instant message.

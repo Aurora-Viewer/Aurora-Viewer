@@ -20,6 +20,18 @@ const MAX_CACHED_GROUPS: usize = 20;
 /// arrived after its list was first seen and were never opened.
 pub const NOTICES_READ_FILE: &str = "group_notices_read.xml";
 
+/// GB_MAX_BANNED_AGENTS: the bans a group holds at most.
+pub const MAX_BANNED: usize = 500;
+
+/// What a ban by name did (LLPanelGroupBulkBan::submit's reasons).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct BulkBan {
+    pub banned: Vec<Uuid>,
+    pub already: Vec<Uuid>,
+    pub over_limit: Vec<Uuid>,
+    pub myself: bool,
+}
+
 /// IM_GROUP_NOTICE_INVENTORY_ACCEPTED / _DECLINED (llinstantmessage.h).
 const NOTICE_INVENTORY_ACCEPTED: u8 = 33;
 const NOTICE_INVENTORY_DECLINED: u8 = 34;
@@ -287,8 +299,144 @@ impl GroupMgr {
             group,
             action: Some(aurora_net::groups::ban::CREATE),
             ids: members.clone(),
+            refresh: false,
         });
         self.eject(group, members, me);
+    }
+
+    /// The ban list (getGroupBanRequestCoro).
+    pub fn request_bans(&mut self, group: Uuid) {
+        self.out.push(NetCommand::GroupBans {
+            group,
+            action: None,
+            ids: Vec::new(),
+            refresh: false,
+        });
+    }
+
+    /// Lift bans (BAN_DELETE | BAN_UPDATE): gone from our copy at once, the
+    /// list asked again.
+    pub fn unban(&mut self, group: Uuid, ids: Vec<Uuid>) {
+        if ids.is_empty() {
+            return;
+        }
+        if let Some(bans) = self.groups.get_mut(&group).and_then(|g| g.bans.as_mut()) {
+            bans.retain(|(id, _)| !ids.contains(id));
+        }
+        self.out.push(NetCommand::GroupBans {
+            group,
+            action: Some(aurora_net::groups::ban::DELETE),
+            ids,
+            refresh: true,
+        });
+    }
+
+    /// LLPanelGroupBulkBan::submit: residents banned by name (not ourselves,
+    /// not those already banned, up to GB_MAX_BANNED_AGENTS in all), then
+    /// ejected; what was left out is returned to be told.
+    pub fn ban_residents(&mut self, group: Uuid, ids: Vec<Uuid>, me: Uuid) -> BulkBan {
+        let banned: Vec<Uuid> = self
+            .groups
+            .get(&group)
+            .and_then(|g| g.bans.as_ref())
+            .map(|b| b.iter().map(|(id, _)| *id).collect())
+            .unwrap_or_default();
+        let mut out = BulkBan {
+            myself: ids.contains(&me),
+            ..Default::default()
+        };
+        let mut list: Vec<Uuid> = Vec::new();
+        for id in ids.into_iter().filter(|id| *id != me) {
+            if banned.contains(&id) {
+                out.already.push(id);
+            } else if !list.contains(&id) {
+                list.push(id);
+            }
+        }
+        let room = MAX_BANNED.saturating_sub(banned.len());
+        if list.len() > room {
+            out.over_limit = list.split_off(room);
+        }
+        if list.is_empty() {
+            return out;
+        }
+        if let Some(bans) = self.groups.get_mut(&group).and_then(|g| g.bans.as_mut()) {
+            bans.extend(list.iter().map(|id| (*id, 0.0)));
+        }
+        self.out.push(NetCommand::GroupBans {
+            group,
+            action: Some(aurora_net::groups::ban::CREATE),
+            ids: list.clone(),
+            refresh: true,
+        });
+        out.banned = list.clone();
+        self.eject(group, list, me);
+        out
+    }
+
+    /// LLGroupMgrGroupData::sendRoleChanges: our copy first, then
+    /// GroupRoleUpdate; a new role brings the role data again, a deleted one
+    /// the role / member pairs.
+    pub fn update_roles(&mut self, group: Uuid, updates: Vec<aurora_net::groups::RoleUpdate>) {
+        use aurora_net::groups::role_change;
+        if updates.is_empty() {
+            return;
+        }
+        let mut created = false;
+        let mut deleted = false;
+        if let Some(g) = self.groups.get_mut(&group) {
+            for u in &updates {
+                match u.kind {
+                    role_change::CREATE => {
+                        created = true;
+                        g.roles.insert(
+                            u.role,
+                            GroupRole {
+                                id: u.role,
+                                name: u.name.clone(),
+                                title: u.title.clone(),
+                                description: u.description.clone(),
+                                powers: u.powers,
+                                members: 0,
+                            },
+                        );
+                    }
+                    role_change::DELETE => {
+                        deleted = true;
+                        g.roles.remove(&u.role);
+                        for roles in g.member_roles.values_mut() {
+                            roles.retain(|r| *r != u.role);
+                        }
+                    }
+                    _ => {
+                        if let Some(r) = g.roles.get_mut(&u.role) {
+                            r.name.clone_from(&u.name);
+                            r.title.clone_from(&u.title);
+                            r.description.clone_from(&u.description);
+                            r.powers = u.powers;
+                        }
+                    }
+                }
+            }
+        }
+        self.out.push(NetCommand::GroupRoleUpdate { group, updates });
+        if created {
+            if let Some(g) = self.groups.get_mut(&group) {
+                g.role_request = None;
+            }
+            self.request_roles(group);
+        }
+        if deleted {
+            if let Some(g) = self.groups.get_mut(&group) {
+                g.role_members_request = None;
+            }
+            self.request_role_members(group);
+        }
+    }
+
+    /// LLGroupMgr::sendUpdateGroupInfo.
+    pub fn update_info(&mut self, group: Uuid, info: aurora_net::groups::GroupInfo) {
+        self.out.push(NetCommand::UpdateGroupInfo { group, info });
     }
 
     /// applyMemberChanges: the role changes sent (GroupRoleChanges), and our

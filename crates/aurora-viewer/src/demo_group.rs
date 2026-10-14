@@ -452,7 +452,7 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
                 success: true,
             }]
         }
-        NetCommand::GroupBans { group, action, ids } => {
+        NetCommand::GroupBans { group, action, ids, .. } => {
             log::info!("demo group: ban action {action:?} for {} resident(s)", ids.len());
             vec![NetEvent::GroupBanList {
                 group: *group,
