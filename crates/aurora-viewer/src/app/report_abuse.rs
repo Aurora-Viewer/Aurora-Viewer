@@ -45,6 +45,7 @@ impl App {
                 self.report_abuse.form.details = rules::chat_details(&time, &text);
                 rules::clamp_chars(&mut self.report_abuse.form.details, rules::DETAILS_MAX_CHARS);
             }
+            ReportTarget::Experience(id) => self.report_experience(id),
         }
         // showFromChat fills the details after postBuild kept them blank
         self.report_abuse.default_details = String::new();
@@ -54,6 +55,17 @@ impl App {
         self.world.social.want_name(id);
         let name = self.world.social.name_of(&id);
         self.report_abuse.set_avatar(id, if name == "…" { "" } else { &name });
+    }
+
+    /// getExperienceInfo: the experience's owner (its agent_id in the
+    /// experience cache) is the abuser, the details name the experience;
+    /// details not read yet leave the abuser to choose.
+    fn report_experience(&mut self, id: Uuid) {
+        let owner = self.world.experiences.details.get(&id).filter(|d| !d.invalid()).map(|d| d.owner);
+        if let Some(owner) = owner.filter(|o| !o.is_nil()) {
+            self.report_avatar(owner);
+        }
+        self.report_abuse.form.details = rules::experience_details(id, owner.is_some());
     }
 
     /// getObjectInfo: an attachment stands for its root, the region and the
@@ -267,12 +279,25 @@ impl App {
     /// AURORA_DEMO_REPORT_ABUSE: the window opened from the Help menu
     /// (`menu`), on Nova (`avatar`), on an object (`object`), on a chat line
     /// (`chat`), with the object picker armed (`pick`); `send`, `missing`
-    /// and `copyright` fill the form and press "Report Abuse" at frame 700.
+    /// and `copyright` fill the form and press "Report Abuse" at frame 700;
+    /// `experience` opens the profile of the demo group's experience (its
+    /// "Report" button), `experience-report` the window opened from it.
     fn report_abuse_demo(&mut self, grid: &str) -> Vec<ReportAction> {
         let Ok(mode) = std::env::var("AURORA_DEMO_REPORT_ABUSE") else {
             return Vec::new();
         };
+        let experience = crate::demo::group::GROUP_EXPERIENCE;
         match self.frame_count {
+            // the experience's profile (its "Report" opens the window), or
+            // the window opened from it once the details are in
+            600 if matches!(mode.as_str(), "experience" | "experience-report") => {
+                self.world.experiences.open_profile(experience);
+                Vec::new()
+            }
+            640 if mode == "experience-report" => {
+                self.open_report_abuse(ReportTarget::Experience(experience));
+                Vec::new()
+            }
             600 => {
                 let nova = crate::demo::DEMO_NOVA;
                 let target = match mode.as_str() {

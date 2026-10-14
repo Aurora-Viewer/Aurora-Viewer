@@ -2080,7 +2080,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   ("Isolated real installation" above: exe copied into
   `<root>\install`, `AURORA_UPDATE_TEST_ROOT=<root>`): the histories
   are then under `<root>\profile\accounts\`.
-- **`AURORA_DEMO_REPORT_ABUSE=menu|avatar|object|chat|pick|send|missing|copyright`**:
+- **`AURORA_DEMO_REPORT_ABUSE=menu|avatar|object|chat|pick|send|missing|copyright|experience|experience-report`**:
   the Report Abuse window opens at frame 600, from Help › Report Abuse
   (`menu`), on Nova (`avatar`), on the nearest object (`object`, its name
   and owner come from the demo server), on a chat line of Nova (`chat`),
@@ -2089,7 +2089,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   700: the thank-you notice, and a `demo abuse report:` line in the log
   with what would have left; `missing` presses it on a blank form (the
   category notice), `copyright` with "copyright" in the details (the
-  intellectual property notice). Capture with `AURORA_FPS_LIMIT=60` and
+  intellectual property notice). `experience` opens instead the profile
+  of the demo group's experience "Sandbox doors": its "Report Abuse"
+  button opens the window on its owner (Orion Example as the abuser) with
+  "Experience id: …" in the details; `experience-report` opens that
+  window directly at frame 640. Capture with `AURORA_FPS_LIMIT=60` and
   `AURORA_CAPTURE_FRAMES=780` so that the screenshot is in. Nothing ever
   leaves the demo; a real report is only made on the grid.
 - **`AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab|edit|compact]`**: a
