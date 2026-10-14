@@ -116,16 +116,16 @@ pub(super) fn show(
                 ui.add_space(10.0);
                 nickname_and_sets(ui, p, world, st, id);
             }
-            match row {
-                Some(row) => {
-                    ui.add_space(10.0);
-                    nearby(ui, p, data, row);
+            // what the radar knows, in Near you (the other tabs' sheets
+            // keep to the person, as the mock-up's)
+            if nearby_tab {
+                ui.add_space(10.0);
+                match row {
+                    Some(row) => nearby(ui, p, data, row),
+                    None => {
+                        ui.label(egui::RichText::new(aurora_i18n::tr!("people-sheet-gone")).size(12.0).color(p.muted));
+                    }
                 }
-                None if nearby_tab => {
-                    ui.add_space(10.0);
-                    ui.label(egui::RichText::new(aurora_i18n::tr!("people-sheet-gone")).size(12.0).color(p.muted));
-                }
-                None => {}
             }
         });
     let mut foot = ui.new_child(

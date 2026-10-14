@@ -420,52 +420,58 @@ fn head(ui: &mut egui::Ui, c: &Ctx, st: &mut PeopleUi, g: &GroupMembership) -> b
     resp.on_hover_text(aurora_i18n::tr!("common-close")).clicked()
 }
 
+/// The size of a sheet's button a little tighter than the theme's (icon,
+/// gap, label and 9 points each side), so that the mock-up's four fit on
+/// a line.
+fn tight(ui: &egui::Ui, label: &str) -> Vec2 {
+    let w = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), FontId::proportional(12.5), egui::Color32::PLACEHOLDER)
+        .size()
+        .x;
+    Vec2::new(15.0 + 7.0 + w + 18.0, BUTTON_H)
+}
+
 /// Chat, call, the profile, an invitation, and the group's whole menu.
 fn buttons(ui: &mut egui::Ui, c: &mut Ctx, g: &GroupMembership) {
     let p = c.p;
     let world = c.world;
-    let size = Vec2::new(0.0, BUTTON_H);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(5.0, 5.0);
+        let chat = aurora_i18n::tr!("common-chat");
         if widgets::action_button_if(
             ui,
             p,
             "messages-filled",
-            aurora_i18n::tr!("common-chat"),
+            chat,
             ActionKind::Primary,
-            size,
+            tight(ui, chat),
             g.powers & GP_SESSION_JOIN != 0,
         )
         .clicked()
         {
             c.actions.push(PeopleAction::GroupChat(g.id));
         }
+        let call = aurora_i18n::tr!("ui-profile-aurora-call");
         if widgets::action_button_if(
             ui,
             p,
             "phone-filled",
-            aurora_i18n::tr!("ui-profile-aurora-call"),
+            call,
             ActionKind::Flat,
-            size,
+            tight(ui, call),
             world.calls.voice_enabled,
         )
         .clicked()
         {
             context::request(ui.ctx(), CtxAction::Call(g.id));
         }
-        if widgets::action_button(
-            ui,
-            p,
-            "info-circle-filled",
-            aurora_i18n::tr!("people-groups-info"),
-            ActionKind::Flat,
-            size,
-        )
-        .clicked()
-        {
+        let info = aurora_i18n::tr!("people-groups-info");
+        if widgets::action_button(ui, p, "info-circle-filled", info, ActionKind::Flat, tight(ui, info)).clicked() {
             crate::ui::group_profile::request_open(ui.ctx(), g.id);
         }
-        if widgets::action_button(ui, p, "user-plus", aurora_i18n::tr!("people-groups-invite"), ActionKind::Flat, size).clicked() {
+        let invite = aurora_i18n::tr!("people-groups-invite");
+        if widgets::action_button(ui, p, "user-plus", invite, ActionKind::Flat, tight(ui, invite)).clicked() {
             c.actions.push(PeopleAction::InviteToGroup(g.id));
         }
         let more = widgets::action_button(ui, p, "dots-filled", "", ActionKind::Flat, Vec2::new(BUTTON_H + 4.0, BUTTON_H))

@@ -26,6 +26,16 @@ pub(super) const MORE_W: f32 = 24.0;
 /// Height of a toolbar (search, buttons).
 pub(super) const TOOLBAR_H: f32 = 30.0;
 
+/// The name a row shows: the display name as the name preferences make it
+/// (a contact set nickname included), as Near you's rows do.
+pub(super) fn display_name(world: &World, id: &Uuid) -> String {
+    let names = &world.social.avatar_names;
+    names
+        .get(id)
+        .map(|n| n.display(&names.options))
+        .unwrap_or_else(|| world.social.name_of(id))
+}
+
 /// A semi-bold text format (the mock-up's weight 600).
 pub(super) fn semibold(ui: &egui::Ui, size: f32, color: Color32) -> egui::TextFormat {
     crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), size, color)

@@ -245,10 +245,10 @@ pub fn tab(
         let mut child = list_ui(ui, rect, "people-nearby-list", sheet.is_some());
         list_part(&mut child, p, world, data, st, map, actions, blocked, sheet.is_some());
     }
-    if let (Some(rect), Some(id)) = (sheet, st.sheet) {
-        if super::sheet::show(&mut list_ui(ui, rect, "people-sheet", false), p, world, data, st, id, true, actions) {
-            close_sheet(st);
-        }
+    if let (Some(rect), Some(id)) = (sheet, st.sheet)
+        && super::sheet::show(&mut list_ui(ui, rect, "people-sheet", false), p, world, data, st, id, true, actions)
+    {
+        close_sheet(st);
     }
 }
 

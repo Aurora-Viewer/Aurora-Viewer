@@ -173,15 +173,17 @@ pub fn seed(world: &mut crate::world::World) {
         (
             aurora_i18n::tr!("demo-shop"),
             [0.988, 0.827, 0.302, 1.0],
-            vec![id(3), id(11), id(12), id(13), buddy(101)],
+            vec![id(3), id(11), id(12), id(13), id(14)],
         ),
     ] {
         sets.add_set(name);
         sets.set_color(name, color);
         sets.add_to_set(&members, name, is_friend);
     }
-    // the wolf's display name is his nickname here
-    sets.set_pseudonym(&[DEMO_LOUP], aurora_i18n::tr!("demo-orion-the-great"), is_friend);
+    // the contact sets tab: the wolf's display name is his nickname
+    if mode() == Some(Mode::Sets) {
+        sets.set_pseudonym(&[DEMO_LOUP], aurora_i18n::tr!("demo-orion-the-great"), is_friend);
+    }
     world.contact_sets = sets;
     world.groups.favorites.insert(super::DEMO_GROUP1);
     // "2 notices" on the first group

@@ -96,7 +96,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
                 rows::empty(ui, p, aurora_i18n::tr!("ui-contacts-this-contact-set-is-empty"));
             }
             for id in &members {
-                row(ui, c, data, st, &set, *id, &name_of(id), &members);
+                row(ui, c, data, st, &set, *id, &rows::display_name(world, id), &members);
             }
         });
 }

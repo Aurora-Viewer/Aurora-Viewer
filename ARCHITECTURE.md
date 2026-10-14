@@ -453,8 +453,13 @@ its table (Firestorm's look), its rows, its settings and its options menu; `ui/p
 the same list in Aurora's look (rows grouped by chat range, compact density, sort pills, quick
 actions over the row under the pointer), `ui/people/sheet.rs` the sheet of the person clicked,
 at the right (rights of a friendship, what the radar knows, the avatar menu under "…"; the window
-widens for it before its frame and gives the width back), `demo_people.rs` their offline
-scenario; `ui/people.rs` the Friends, Groups and Blocked tabs.
+widens for it before its frame and gives the width back, "Nickname and contact sets"),
+`ui/people/friends.rs`, `groups.rs` (with a group's sheet), `sets.rs`, `recent.rs` and
+`blocked.rs` the other tabs of Aurora's look (the Contacts tab's rights, actions and dialogs,
+reused from `ui/contacts.rs`), `ui/people/rows.rs` what their rows share (faces, names, a right
+end that never covers anything, quick actions, Ctrl / Shift selection), `world/recent.rs` the
+residents met lately (LLRecentPeople), `demo_people.rs` their offline scenario; `ui/people.rs`
+the window, its tabs, and the simple Friends, Groups and Blocked lists of Firestorm's look.
 `ui/widgets/pills.rs` shares the tabs in pills, the filter pills and the search box of the
 redrawn windows (group profile, About Land, People).
 The "Invisible" status (right to see us online withdrawn from each friend, then given back to those who had it)

@@ -9557,6 +9557,8 @@ impl ApplicationHandler for App {
                 // the density is the list's own toggle; the look is forced
                 // for the run only (`demo::people::legacy`), not saved
                 self.settings.radar.compact = crate::demo::people::compact();
+                // the friends tab opens sorted as the mock-up's (online first)
+                self.settings.friends_list.sort = ui::people::FriendsSettings::default().sort;
                 if let Some(id) = crate::demo::people::sheet() {
                     self.people_ui.radar_selected = vec![id];
                     self.people_ui.open_sheet(id);
@@ -9572,8 +9574,12 @@ impl ApplicationHandler for App {
                 }
                 if let Some(id) = crate::demo::people::hovered() {
                     self.people_ui.radar_selected = vec![id];
-                    self.people_ui.select(vec![id]);
                     self.people_ui.demo_hover = Some(id);
+                }
+                // the contact sets tab: the family, Nova chosen
+                if crate::demo::people::mode() == Some(crate::demo::people::Mode::Sets) {
+                    self.contacts_ui.set_choice = Some(aurora_i18n::tr!("demo-family").to_owned());
+                    self.people_ui.select(vec![crate::demo::people::NOVA]);
                 }
                 self.panels.people = true;
                 self.panels.people_tab = crate::demo::people::tab();

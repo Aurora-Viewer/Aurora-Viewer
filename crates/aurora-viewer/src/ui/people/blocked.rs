@@ -109,12 +109,14 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
     });
     ui.add_space(7.0);
     let filter = st.filter.trim().to_lowercase();
-    let entries: Vec<Mute> = world
+    let mut entries: Vec<Mute> = world
         .mutes
         .entries()
         .into_iter()
         .filter(|m| filter.is_empty() || m.name.to_lowercase().contains(&filter))
         .collect();
+    // by name, BlockPeopleSortOrder's default (LLBlockList::sortByName)
+    entries.sort_by_cached_key(|m| m.name.to_lowercase());
     let order: Vec<Uuid> = entries.iter().map(row_id).collect();
     st.sel.retain(|id| order.contains(id));
     egui::ScrollArea::vertical()

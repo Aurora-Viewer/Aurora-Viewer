@@ -50,7 +50,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
         .recent
         .list()
         .iter()
-        .map(|m| (m.clone(), world.social.name_of(&m.id)))
+        .map(|m| (m.clone(), rows::display_name(world, &m.id)))
         .filter(|(_, name)| filter.is_empty() || name.to_lowercase().contains(&filter))
         .collect();
     let order: Vec<Uuid> = people.iter().map(|(m, _)| m.id).collect();

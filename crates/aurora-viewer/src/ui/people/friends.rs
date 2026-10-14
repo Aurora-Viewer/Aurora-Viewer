@@ -241,7 +241,15 @@ fn toolbar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
 /// (the others in "+2"): a lit set shows its members only.
 fn pills(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
     let p = c.p;
-    let sets = c.world.contact_sets.set_names();
+    // the sets with the most friends first: the ones this list filters best
+    let mut sets = c.world.contact_sets.set_names();
+    let friends_in = |s: &String| {
+        c.world
+            .contact_sets
+            .set(s)
+            .map_or(0, |set| set.friends.iter().filter(|id| c.world.social.is_friend(id)).count())
+    };
+    sets.sort_by_key(|s| std::cmp::Reverse(friends_in(s)));
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         label(ui, p, aurora_i18n::tr!("people-sort"));
