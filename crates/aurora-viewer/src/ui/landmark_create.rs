@@ -90,7 +90,10 @@ pub fn folders(inv: &Inventory) -> Vec<(Uuid, String)> {
         out.push((id, aurora_i18n::tr!("landmark-create-favorites-bar").to_owned()));
     }
     let mut below = Vec::new();
-    let mut stack: Vec<Uuid> = landmarks.and_then(|id| inv.folders.get(&id)).map(|f| f.children.clone()).unwrap_or_default();
+    let mut stack: Vec<Uuid> = landmarks
+        .and_then(|id| inv.folders.get(&id))
+        .map(|f| f.children.clone())
+        .unwrap_or_default();
     let mut seen = HashSet::new();
     while let Some(id) = stack.pop() {
         if let Some(f) = inv.folders.get(&id).filter(|_| seen.insert(id)) {
@@ -123,7 +126,11 @@ pub fn save_change(inv: &Inventory, item: Uuid, title: &str, notes: &str, folder
         return None;
     }
     Some(Mutation {
-        operations: vec![Operation::Patch { id: item, folder: false, body }],
+        operations: vec![Operation::Patch {
+            id: item,
+            folder: false,
+            body,
+        }],
         refresh: if moved { vec![it.parent, folder] } else { vec![it.parent] },
         ..Default::default()
     })
@@ -259,7 +266,11 @@ impl CreateLandmarkUi {
             );
             ui.add_space(8.0);
             label(ui, aurora_i18n::tr!("landmark-create-name"));
-            ui.add(egui::TextEdit::singleline(&mut self.title).char_limit(63).desired_width(f32::INFINITY));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.title)
+                    .char_limit(63)
+                    .desired_width(f32::INFINITY),
+            );
             ui.add_space(6.0);
             label(ui, aurora_i18n::tr!("landmark-create-folder"));
             let selected = list.iter().find(|(id, _)| *id == self.folder).map_or("", |(_, n)| n.as_str());
@@ -272,8 +283,12 @@ impl CreateLandmarkUi {
                     }
                 });
             let link = ui.add(
-                egui::Label::new(RichText::new(aurora_i18n::tr!("landmark-create-new-folder")).size(12.0).color(p.violet))
-                    .sense(egui::Sense::click()),
+                egui::Label::new(
+                    RichText::new(aurora_i18n::tr!("landmark-create-new-folder"))
+                        .size(12.0)
+                        .color(p.violet),
+                )
+                .sense(egui::Sense::click()),
             );
             if link.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -283,7 +298,11 @@ impl CreateLandmarkUi {
             }
             ui.add_space(6.0);
             label(ui, aurora_i18n::tr!("landmark-create-notes"));
-            ui.add(egui::TextEdit::multiline(&mut self.notes).desired_rows(4).desired_width(f32::INFINITY));
+            ui.add(
+                egui::TextEdit::multiline(&mut self.notes)
+                    .desired_rows(4)
+                    .desired_width(f32::INFINITY),
+            );
             ui.add_space(10.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 cancel = flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked();
@@ -418,7 +437,10 @@ mod tests {
     #[test]
     fn title_is_the_parcel_or_the_region_and_position() {
         assert_eq!(default_title("Lagune", "Aurora", glam::Vec3::new(1.0, 2.0, 3.0)), "Lagune");
-        assert_eq!(default_title("", "Aurora", glam::Vec3::new(128.4, 64.6, 22.0)), "Aurora (128, 65, 22)");
+        assert_eq!(
+            default_title("", "Aurora", glam::Vec3::new(128.4, 64.6, 22.0)),
+            "Aurora (128, 65, 22)"
+        );
     }
 
     #[test]

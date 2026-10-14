@@ -1190,7 +1190,10 @@ impl App {
                     (aurora_net::inventory::operations::NewItem::Landmark, Some(info)) => {
                         let id = uuid::Uuid::new_v4();
                         let p = self.world.agent.position;
-                        let text = format!("Landmark version 2\nregion_id {}\nlocal_pos {} {} {}\n", info.region_id, p.x, p.y, p.z);
+                        let text = format!(
+                            "Landmark version 2\nregion_id {}\nlocal_pos {} {} {}\n",
+                            info.region_id, p.x, p.y, p.z
+                        );
                         self.world.landmarks.on_data(id, Some(text.as_bytes()));
                         id
                     }

@@ -419,7 +419,13 @@ impl PlacesUi {
                 widgets::icon_menu(ui, p, "plus", aurora_i18n::tr!("ui-places-add-a-new-landmark-or-folder"), |ui| {
                     super::menu::todo(ui, p, "folder-filled", aurora_i18n::tr!("ui-places-add-folder"));
                     // "add_landmark_root": the Landmarks folder
-                    if super::menu::item_if(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-places-add-landmark"), !self.landmark_here) {
+                    if super::menu::item_if(
+                        ui,
+                        p,
+                        "map-pin-filled",
+                        aurora_i18n::tr!("ui-places-add-landmark"),
+                        !self.landmark_here,
+                    ) {
                         actions.push(PlacesAction::CreateLandmark(None));
                     }
                 });
@@ -698,7 +704,13 @@ impl PlacesUi {
         }
         super::menu::separator(ui, p);
         // "add_landmark" on a landmark: no destination folder
-        if super::menu::item_if(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-places-create-landmark"), !self.landmark_here) {
+        if super::menu::item_if(
+            ui,
+            p,
+            "map-pin-filled",
+            aurora_i18n::tr!("ui-places-create-landmark"),
+            !self.landmark_here,
+        ) {
             actions.push(PlacesAction::CreateLandmark(None));
         }
         super::menu::todo(ui, p, "folder-filled", aurora_i18n::tr!("ui-places-create-folder"));
