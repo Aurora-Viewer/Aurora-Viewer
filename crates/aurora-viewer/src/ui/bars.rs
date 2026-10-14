@@ -447,7 +447,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             (1, "users", aurora_i18n::tr!("common-friends")),
             (0, "radar-filled", aurora_i18n::tr!("common-nearby-people")),
             (2, "users-group", aurora_i18n::tr!("common-groups")),
-            (4, "forbid-filled", aurora_i18n::tr!("ui-bars-block-list")),
+            (4, "ban", aurora_i18n::tr!("ui-bars-block-list")),
         ] {
             if menu::item(ui, p, icon, label) {
                 super::widgets::open_floater(ui.ctx(), "people", &mut panels.people);

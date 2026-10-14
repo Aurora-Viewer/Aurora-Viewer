@@ -297,9 +297,6 @@ pub struct Settings {
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
     /// lines of text on a flat tag, in the tag colors of the preferences.
     pub classic_name_tags: bool,
-    /// Avatar and group profiles in the classic windows (Firestorm's tabs)
-    /// rather than Aurora's header and cards.
-    pub classic_profiles: bool,
     /// Complete name plates for friends only: the others stop at the
     /// compact pill (off by default).
     pub plates_friends_only_full: bool,
@@ -307,6 +304,10 @@ pub struct Settings {
     /// by default).
     pub plates_hover_expand: bool,
     pub plate_click: PlateClick,
+    /// Profiles in Firestorm's tabbed window (Second Life, Feed, Favorites…)
+    /// instead of the header and cards of `ui/profile/aurora.rs`; group
+    /// profiles in the classic window too (`ui/group_profile.rs`).
+    pub classic_profiles: bool,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,

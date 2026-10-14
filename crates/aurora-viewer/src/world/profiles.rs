@@ -156,6 +156,18 @@ fn split(secs: f64) -> (i64, u32, u32) {
 /// LLDateUtil::ageFromDate with Firestorm's total days ("TotalDaysOld"):
 /// "17 years 4 months; 6350 days", "3 weeks; 23 days", "5 days".
 fn age_from_date(language: &str, born: f64, now: f64) -> String {
+    let (age, with_total) = age_short(language, born, now);
+    if !with_total {
+        return age;
+    }
+    let total = ((now - born) / 86_400.0) as i64;
+    let total = aurora_i18n::tr_in!(language, "profile-age-days", count = total);
+    aurora_i18n::tr_in!(language, "profile-age-total", age = age, days = total)
+}
+
+/// The age of LLDateUtil::ageFromDate ("17 years 4 months", "3 weeks",
+/// "5 days"), and whether Firestorm follows it with the total days.
+fn age_short(language: &str, born: f64, now: f64) -> (String, bool) {
     let (by, bm, bd) = split(born);
     let (mut ny, mut nm, nd) = split(now);
     // grade-school subtraction, borrowing from the left
@@ -175,8 +187,6 @@ fn age_from_date(language: &str, born: f64, now: f64) -> String {
         months += 12;
     }
     let years = ny - by;
-    let total = ((now - born) / 86_400.0) as i64;
-    let total = aurora_i18n::tr_in!(language, "profile-age-days", count = total);
     if months > 0 || years > 0 {
         let y = aurora_i18n::tr_in!(language, "profile-age-years", count = years);
         let m = aurora_i18n::tr_in!(language, "profile-age-months", count = months);
@@ -185,17 +195,44 @@ fn age_from_date(language: &str, born: f64, now: f64) -> String {
             (true, false) => y,
             _ => m,
         };
-        return aurora_i18n::tr_in!(language, "profile-age-total", age = age, days = total);
+        return (age, true);
     }
     let weeks = days / 7;
     if weeks > 0 {
-        let age = aurora_i18n::tr_in!(language, "profile-age-weeks", count = weeks);
-        return aurora_i18n::tr_in!(language, "profile-age-total", age = age, days = total);
+        return (aurora_i18n::tr_in!(language, "profile-age-weeks", count = weeks), true);
     }
     if days % 7 > 0 {
-        return aurora_i18n::tr_in!(language, "profile-age-days", count = days % 7);
+        return (aurora_i18n::tr_in!(language, "profile-age-days", count = days % 7), false);
     }
-    aurora_i18n::tr_in!(language, "world-profiles-joined-today").to_owned()
+    (aurora_i18n::tr_in!(language, "world-profiles-joined-today").to_owned(), false)
+}
+
+/// The birth line of the Aurora profile's header: the date, and the age
+/// without its total days (those are in the tooltip, `birth_text`). Only
+/// the day and the month, without an age, when someone hides their age.
+pub fn birth_line(p: &AvatarProfile, own: bool, now: f64) -> Option<String> {
+    birth_line_in(aurora_i18n::language(), p, own, now)
+}
+
+fn birth_line_in(language: &str, p: &AvatarProfile, own: bool, now: f64) -> Option<String> {
+    let born = p.born?;
+    let (y, m, d) = split(born);
+    if !own && p.hide_age == Some(true) {
+        return Some(aurora_i18n::tr_in!(
+            language,
+            "profile-date-hidden",
+            day = format!("{d:02}"),
+            month = format!("{m:02}")
+        ));
+    }
+    let date = aurora_i18n::tr_in!(
+        language,
+        "profile-date",
+        day = format!("{d:02}"),
+        month = format!("{m:02}"),
+        year = y.to_string()
+    );
+    Some(format!("{date} · {}", age_short(language, born, now).0))
 }
 
 /// fillAgeData: localized birth date and age; omit year when someone hides age.
@@ -280,6 +317,37 @@ pub fn badge(p: &AvatarProfile) -> Option<&'static str> {
     }
 }
 
+/// What the AgentProfile reply says of a paid membership ("Premium",
+/// "Premium_Plus"); the lifetime ones are Firestorm's badges.
+fn premium(p: &AvatarProfile) -> Option<&'static str> {
+    match p.customer_type.to_lowercase().as_str() {
+        "premium" => Some(aurora_i18n::tr!("world-profiles-premium")),
+        "premium_plus" => Some(aurora_i18n::tr!("world-profiles-premium-plus")),
+        _ => None,
+    }
+}
+
+/// The account badge of the Aurora profile's header: a Linden first, then
+/// a membership the server names, then Firestorm's other badges. `true`
+/// for a Linden (its own color).
+pub fn header_badge(p: &AvatarProfile) -> Option<(&'static str, bool)> {
+    if p.caption_index == 3 {
+        return badge(p).map(|b| (b, true));
+    }
+    premium(p).or_else(|| badge(p)).map(|b| (b, false))
+}
+
+/// "Account" on one line (the Aurora profile's Infos card): a membership the
+/// server names stands for the plain resident.
+pub fn account_line(p: &AvatarProfile) -> String {
+    let text = account_text(p);
+    let text = match premium(p) {
+        Some(kind) if p.caption_text.is_empty() && p.caption_index == 0 => text.replacen(aurora_i18n::tr!("common-resident"), kind, 1),
+        _ => text,
+    };
+    text.replace('\n', " · ")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Online {
     Yes,
@@ -360,6 +428,63 @@ mod tests {
         assert!(birth_text_in("fr", &p, true, now).is_some_and(|t| t.starts_with("12/05/2007")));
         assert_eq!(birth_text_in("en", &p, false, now).as_deref(), Some("05/12"));
         assert!(birth_text_in("en", &p, true, now).is_some_and(|t| t.starts_with("05/12/2007\n(17 years 4 months")));
+    }
+
+    #[test]
+    fn the_header_birth_line_leaves_the_days_to_the_tooltip() {
+        let mut p = AvatarProfile {
+            born: Some(date(2019, 4, 2)),
+            ..Default::default()
+        };
+        let now = date(2026, 10, 14);
+        assert_eq!(birth_line_in("fr", &p, false, now).as_deref(), Some("02/04/2019 · 7 ans 6 mois"));
+        assert_eq!(
+            birth_line_in("en", &p, false, now).as_deref(),
+            Some("04/02/2019 · 7 years 6 months")
+        );
+        p.born = Some(date(2026, 9, 20));
+        assert_eq!(birth_line_in("fr", &p, false, now).as_deref(), Some("20/09/2026 · 3 semaines"));
+        p.born = Some(date(2026, 10, 14));
+        assert_eq!(
+            birth_line_in("fr", &p, false, now).as_deref(),
+            Some("14/10/2026 · Inscrit aujourd'hui")
+        );
+        // a hidden age: the day and the month alone, except on our profile
+        p.hide_age = Some(true);
+        assert_eq!(birth_line_in("fr", &p, false, now).as_deref(), Some("14/10"));
+        assert!(birth_line_in("fr", &p, true, now).is_some_and(|t| t.starts_with("14/10/2026 · ")));
+        assert_eq!(birth_line_in("fr", &AvatarProfile::default(), false, now), None);
+    }
+
+    #[test]
+    fn premium_only_when_the_server_says_so() {
+        let mut p = AvatarProfile {
+            flags: flags::IDENTIFIED,
+            ..Default::default()
+        };
+        assert_eq!(header_badge(&p), None);
+        assert_eq!(
+            account_line(&p),
+            format!(
+                "{} · {}",
+                aurora_i18n::tr!("common-resident"),
+                aurora_i18n::tr!("world-profiles-payment-info-on-file")
+            )
+        );
+        p.customer_type = "Premium".into();
+        assert_eq!(header_badge(&p), Some((aurora_i18n::tr!("world-profiles-premium"), false)));
+        assert!(account_line(&p).starts_with(aurora_i18n::tr!("world-profiles-premium")));
+        p.customer_type = "Premium_Plus".into();
+        assert_eq!(header_badge(&p), Some((aurora_i18n::tr!("world-profiles-premium-plus"), false)));
+        // a lifetime membership keeps Firestorm's badge
+        p.customer_type = "secondlifetime_premium".into();
+        assert_eq!(header_badge(&p), Some((aurora_i18n::tr!("world-profiles-lifetime-premium"), false)));
+        // a Linden first, in its own color
+        p.caption_index = 3;
+        assert_eq!(
+            header_badge(&p),
+            Some((aurora_i18n::tr!("world-profiles-linden-lab-employee"), true))
+        );
     }
 
     #[test]

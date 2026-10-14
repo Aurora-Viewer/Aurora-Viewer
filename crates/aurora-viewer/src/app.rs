@@ -4133,6 +4133,12 @@ impl App {
             {
                 let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
                 let t = self.egui_ctx.load_texture(format!("pic-{agent}"), ci, egui::TextureOptions::LINEAR);
+                // the Aurora profile's banner: a few pixels the filter blurs
+                let banner = ui::profile::banner_image(w as usize, h as usize, &rgba);
+                let banner = self
+                    .egui_ctx
+                    .load_texture(format!("banner-{image}"), banner, egui::TextureOptions::LINEAR);
+                self.profile_ui.banners.insert(image, banner);
                 self.avatar_pic_images.insert(image, t.clone());
                 self.avatar_pics.insert(agent, t);
                 if agent == self.world.agent_id && !self.demo {
@@ -8153,6 +8159,7 @@ impl App {
                     &mut self.world,
                     &mut self.chat_ui.wanted_names,
                     &web,
+                    self.settings.classic_profiles,
                 );
                 for pa in acts {
                     match pa {
@@ -8160,6 +8167,9 @@ impl App {
                         ui::profile::ProfileAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::profile::ProfileAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::profile::ProfileAction::DisplayName => self.display_name_ui.open(),
+                        ui::profile::ProfileAction::ModifyRights { friend, rights, grant } => {
+                            self.contacts_ui.ask_modify_rights(friend, rights, grant)
+                        }
                         ui::profile::ProfileAction::GroupChat(id) => {
                             self.world.start_group_chat(id);
                             self.panels.chat = true;
@@ -8991,9 +9001,10 @@ impl ApplicationHandler for App {
             if std::env::var_os("AURORA_DEMO_PLACE_WINDOW").is_some() {
                 self.settings.standalone_place_details = true;
             }
-            // AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab]: a profile window
+            // AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab|edit|compact]:
+            // a profile window
             if let Ok(v) = std::env::var("AURORA_DEMO_PROFILE") {
-                let (who, tab) = v.split_once(':').unwrap_or((v.as_str(), "0"));
+                let (who, option) = v.split_once(':').unwrap_or((v.as_str(), "0"));
                 let id = match who {
                     "self" => crate::demo::DEMO_AGENT,
                     "nova" => crate::demo::DEMO_NOVA,
@@ -9001,7 +9012,7 @@ impl ApplicationHandler for App {
                     _ => crate::demo::DEMO_LOUP,
                 };
                 self.profile_ui.open(&mut self.world, id);
-                self.profile_ui.set_tab(id, tab.parse().unwrap_or(0));
+                self.profile_ui.demo(&self.egui_ctx, id, option);
                 self.panels.perf = false;
             }
             // AURORA_DEMO_LAND=<tab>[:owner]: About Land on that tab
