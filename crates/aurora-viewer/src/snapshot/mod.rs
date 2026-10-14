@@ -4,9 +4,11 @@
 //! sizes and proportions a photo can have, how it is split when the card
 //! cannot draw it in one pass, its file name, and the settings kept between
 //! sessions. Saving runs on a worker (`save`), the recent photos are listed
-//! by `gallery`; the window is `ui::snapshot`, the frames `app::snapshot`.
+//! by `gallery`, a photo for the inventory is prepared by `inventory`; the
+//! window is `ui::snapshot`, the frames `app::snapshot`.
 
 pub mod gallery;
+pub mod inventory;
 pub mod save;
 
 use glam::{Mat4, Vec4};
@@ -221,6 +223,8 @@ pub struct Settings {
     pub guide: Guide,
     /// The shutter sound (PlayModeUISndSnapshot).
     pub sound: bool,
+    /// Size of a photo for the inventory (LastSnapshotToInventoryResolution).
+    pub inventory_size: inventory::TextureSize,
 }
 
 impl Default for Settings {
@@ -241,6 +245,7 @@ impl Default for Settings {
             base_name: "Snapshot".into(),
             guide: Guide::Thirds,
             sound: true,
+            inventory_size: inventory::TextureSize::S512,
         }
     }
 }
@@ -262,15 +267,6 @@ impl Settings {
     /// The size of the photo for a window of `window` pixels.
     pub fn size(&self, window: (u32, u32)) -> (u32, u32) {
         photo_size(self.aspect, self.resolution, self.custom, window)
-    }
-
-    /// The interface can be drawn on the photo only with the window's
-    /// proportions: it is laid out for the window and scaled, not moved.
-    pub fn interface_possible(&self, window: (u32, u32)) -> bool {
-        let (w, h) = self.size(window);
-        let photo = w as f32 / h.max(1) as f32;
-        let win = window.0 as f32 / window.1.max(1) as f32;
-        (photo - win).abs() <= 0.01 * win
     }
 
     /// The typed size after one side changed, the other following when the
@@ -295,6 +291,14 @@ impl Settings {
     pub fn folder(&self) -> PathBuf {
         self.folder.clone().unwrap_or_else(default_folder)
     }
+}
+
+/// A photo of `size` has the window's proportions (to 1 %): the interface
+/// can be drawn on it (it is laid out for the window and scaled, not moved).
+pub fn same_proportions(size: (u32, u32), window: (u32, u32)) -> bool {
+    let photo = size.0 as f32 / size.1.max(1) as f32;
+    let win = window.0 as f32 / window.1.max(1) as f32;
+    (photo - win).abs() <= 0.01 * win
 }
 
 fn clamp_side(v: u32) -> u32 {

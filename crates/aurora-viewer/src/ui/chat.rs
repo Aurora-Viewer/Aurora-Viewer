@@ -203,6 +203,87 @@ fn link_badge(ui: &mut egui::Ui, p: &Palette, url: &str, size: f32) {
     resp.on_hover_text(link_badge_look(p, url).2);
 }
 
+/// A place link of a text: its region's rating badge (as in the navigation
+/// bar, once known), then its label, which teleports or opens the place's
+/// details.
+fn place_link(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    ratings: &crate::world::worldmap::RegionRatings,
+    u: &str,
+    place: crate::slurl::PlaceLink,
+    size: f32,
+) {
+    if super::widgets::region_badge(ui, p, ratings, &place.location.region, size).is_some() {
+        ui.add_space(3.0);
+    }
+    let k = super::colors::get();
+    let r = ui.add(egui::Link::new(
+        RichText::new(&place.label).size(size).color(super::colors::c(k.chat_slurl)),
+    ));
+    place_menu(&r, p, u, &place);
+    // TooltipTeleportUrl / TooltipSLURL; a place opens its
+    // details (LLURLDispatcherImpl::regionHandleCallback,
+    // SLURLTeleportDirectly off: FSFloaterPlaceDetails)
+    let tip = if place.teleport {
+        aurora_i18n::tr!("ui-chat-click-to-teleport-to-this-place")
+    } else {
+        aurora_i18n::tr!("ui-chat-click-to-learn-more-about-this-place")
+    };
+    if r.on_hover_text(format!("{tip}\n{u}")).clicked() {
+        let l = place.location;
+        super::context::request(
+            ui.ctx(),
+            if place.teleport {
+                CtxAction::TeleportToPlace(l.region, l.pos)
+            } else {
+                CtxAction::ShowPlaceInfo(l.region, l.pos)
+            },
+        );
+    }
+}
+
+/// A notification's or a script dialog's text: plain and selectable, its
+/// place links clickable with their region's badge (Firestorm's toasts
+/// parse their links too, LLToastNotifyPanel's text editor).
+pub(crate) fn text_with_places(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    ratings: &crate::world::worldmap::RegionRatings,
+    text: &str,
+    size: f32,
+    color: Color32,
+) {
+    let places: Vec<_> = segments(text)
+        .into_iter()
+        .filter_map(|s| match s {
+            Seg::Place(u, place) => Some((u, place)),
+            _ => None,
+        })
+        .collect();
+    let plain = |ui: &mut egui::Ui, t: &str| {
+        if !t.is_empty() {
+            ui.add(egui::Label::new(RichText::new(t).size(size).color(color)).wrap().selectable(true));
+        }
+    };
+    if places.is_empty() {
+        plain(ui, text);
+        return;
+    }
+    super::emoji::text_rows(ui, size, |ui| {
+        let mut at = 0;
+        for (u, place) in places {
+            let Some(i) = text[at..].find(u) else {
+                continue;
+            };
+            plain(ui, &text[at..at + i]);
+            place_link(ui, p, ratings, u, place, size);
+            at += i + u.len();
+        }
+        plain(ui, &text[at..]);
+    });
+}
+
 /// Open a web link of a text: trusted ones open at once, unknown ones after
 /// a warning (unless turned off), dangerous ones always after a warning
 /// (`CtxAction::OpenUrl`).
@@ -217,13 +298,19 @@ enum Sender {
 }
 
 /// A chat bubble laid out: the text, the char range of each link, the char
-/// of each web link's badge, and the char where the sender's name starts
-/// (room for its picture before it).
+/// of each link's badge, and the char where the sender's name starts (room
+/// for its picture before it).
 struct BubbleJob {
     job: egui::text::LayoutJob,
     links: Vec<(std::ops::Range<usize>, Link)>,
-    badges: Vec<(usize, String)>,
+    badges: Vec<(usize, LinkBadge)>,
     sender: Option<(usize, Sender)>,
+}
+
+/// The badge before a link: a web link's trust, a place's region rating.
+enum LinkBadge {
+    Web(String),
+    Rating(u8),
 }
 
 /// Side of the sender's picture, for a text size.
@@ -301,9 +388,14 @@ fn line_job(
         ..Default::default()
     };
     for (piece, link) in pieces(body, name_of) {
-        if let Some(Link::Url(u)) = &link {
+        let badge = match &link {
+            Some(Link::Url(u)) => Some(LinkBadge::Web(u.clone())),
+            Some(Link::Place(_, place)) => world.map.ratings.get(&place.location.region).map(LinkBadge::Rating),
+            _ => None,
+        };
+        if let Some(badge) = badge {
             job.append("M", 0.0, badge_fmt.clone());
-            badges.push((at, u.clone()));
+            badges.push((at, badge));
             at += 1;
         }
         let n = piece.chars().count();
@@ -586,31 +678,7 @@ pub(crate) fn chat_text_marked(
                     ui.add(egui::Label::new(RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).selectable(true))
                         .on_hover_text(u);
                 }
-                Seg::Place(u, place) => {
-                    let r = ui.add(egui::Link::new(
-                        RichText::new(&place.label).size(size).color(super::colors::c(k.chat_slurl)),
-                    ));
-                    place_menu(&r, p, u, &place);
-                    // TooltipTeleportUrl / TooltipSLURL; a place opens its
-                    // details (LLURLDispatcherImpl::regionHandleCallback,
-                    // SLURLTeleportDirectly off: FSFloaterPlaceDetails)
-                    let tip = if place.teleport {
-                        aurora_i18n::tr!("ui-chat-click-to-teleport-to-this-place")
-                    } else {
-                        aurora_i18n::tr!("ui-chat-click-to-learn-more-about-this-place")
-                    };
-                    if r.on_hover_text(format!("{tip}\n{u}")).clicked() {
-                        let l = place.location;
-                        super::context::request(
-                            ui.ctx(),
-                            if place.teleport {
-                                CtxAction::TeleportToPlace(l.region, l.pos)
-                            } else {
-                                CtxAction::ShowPlaceInfo(l.region, l.pos)
-                            },
-                        );
-                    }
-                }
+                Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size),
                 Seg::Mention(id) => {
                     want_names.insert(id);
                     let me = id == world.agent_id;
@@ -1586,11 +1654,27 @@ pub fn toasts(
                                 egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
                             bubble_sender(painter, p, pics, wanted_pics, r, &who, line, alpha);
                         }
-                        // web link badges over their invisible glyph
-                        for (at, url) in badges {
-                            if let Some(g) = range_rects(&galley, rect.min, at..at + 1).first() {
-                                let b = egui::Rect::from_center_size(g.center(), egui::vec2(size, size));
-                                paint_link_badge(painter, p, b, &url, alpha);
+                        // link badges over their invisible glyph
+                        for (at, badge) in badges {
+                            let Some(g) = range_rects(&galley, rect.min, at..at + 1).first().copied() else {
+                                continue;
+                            };
+                            let b = egui::Rect::from_center_size(g.center(), egui::vec2(size, size));
+                            match badge {
+                                LinkBadge::Web(url) => paint_link_badge(painter, p, b, &url, alpha),
+                                LinkBadge::Rating(access) => {
+                                    let mut faded = painter.clone();
+                                    faded.multiply_opacity(alpha);
+                                    let name = super::bars::maturity_name(access);
+                                    let radius = super::widgets::inner_radius(ui.visuals());
+                                    super::widgets::paint_maturity_badge(&faded, p, name, b.shrink(1.0), radius);
+                                }
+                            }
+                        }
+                        // the regions of the places shown, asked if unknown
+                        for (_, link) in &line_links {
+                            if let Link::Place(_, place) = link {
+                                super::widgets::region_rating(ui.ctx(), &world.map.ratings, &place.location.region);
                             }
                         }
                         let col = color_for(line.kind, p).gamma_multiply(alpha);
@@ -1735,6 +1819,30 @@ pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, gestures: &crate::ge
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One frame of a notification text with place links: the regions
+    /// whose rating is not known are the ones asked, each once.
+    #[test]
+    fn place_links_ask_only_unknown_regions() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let mut ratings = crate::world::worldmap::RegionRatings::default();
+        ratings.learn("Aurora Démo", aurora_net::search::SIM_ACCESS_PG);
+        let text = "Ici http://maps.secondlife.com/secondlife/Aurora%20D%C3%A9mo/1/2/3, là secondlife:///app/region/Pin%C3%A8de/4/5/6 \
+                    et secondlife://Pinède/7/8/9";
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
+                ..Default::default()
+            },
+            |ui| text_with_places(ui, &p, &ratings, text, 12.0, p.ink),
+        );
+        output.textures_delta.clear();
+        assert_eq!(super::super::widgets::take_wanted_regions(&ctx), vec!["Pinède".to_owned()]);
+        // taken: nothing left until the next frame draws them again
+        assert!(super::super::widgets::take_wanted_regions(&ctx).is_empty());
+    }
 
     #[test]
     fn agent_links() {

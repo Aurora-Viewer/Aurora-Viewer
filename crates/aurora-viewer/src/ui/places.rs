@@ -505,7 +505,24 @@ impl PlacesUi {
                 Some(false) => "folder-filled",
                 None => "map-pin-filled",
             };
-            let r = list_row(ui, p, row.depth, row.folder, icon, &row.name, self.selected == Some(sel), false);
+            // a landmark's region, once its asset is read and the region known
+            let rating = world.inventory.items.get(&row.id).filter(|_| row.folder.is_none()).and_then(|it| {
+                match world.landmarks.peek(it.asset_id) {
+                    Resolved::Ready { global, .. } => world.map.sim_at_global(global.x, global.y).map(|(_, s)| s.access),
+                    _ => None,
+                }
+            });
+            let r = list_row(
+                ui,
+                p,
+                row.depth,
+                row.folder,
+                icon,
+                rating,
+                &row.name,
+                self.selected == Some(sel),
+                false,
+            );
             if r.response.clicked() || r.response.secondary_clicked() {
                 self.selected = Some(sel);
                 if let Some(it) = world.inventory.items.get(&row.id) {
@@ -755,12 +772,23 @@ impl PlacesUi {
             }
             for i in indices {
                 let it = &items[i];
+                // the region where the entry led, by its position, else by
+                // the name at the end of its title (asked once if unknown)
+                let rating = world
+                    .map
+                    .sim_at_global(it.global.x, it.global.y)
+                    .map(|(_, s)| s.access)
+                    .or_else(|| {
+                        let region = it.title.rsplit(", ").next().unwrap_or_default();
+                        widgets::region_rating(ui.ctx(), &world.map.ratings, region)
+                    });
                 let r = list_row(
                     ui,
                     p,
                     0,
                     None,
                     "map-pin-filled",
+                    rating,
                     &it.title,
                     self.selected == Some(Sel::History(i)),
                     true,
@@ -1029,8 +1057,9 @@ struct RowResponse {
     info: bool,
 }
 
-/// One line of a list: indentation, caret for a folder, icon, name; the
-/// history lines show an "i" button while hovered.
+/// One line of a list: indentation, caret for a folder, icon, the rating
+/// badge of the place's region when known, name; the history lines show an
+/// "i" button while hovered.
 #[allow(clippy::too_many_arguments)]
 fn list_row(
     ui: &mut egui::Ui,
@@ -1038,6 +1067,7 @@ fn list_row(
     depth: usize,
     folder: Option<bool>,
     icon: &str,
+    rating: Option<u8>,
     name: &str,
     selected: bool,
     info_button: bool,
@@ -1071,6 +1101,19 @@ fn list_row(
         );
     }
     x += 21.0;
+    if let Some(access) = rating {
+        let side = 13.0;
+        let badge = egui::Rect::from_min_size(egui::pos2(x, rect.center().y - side * 0.5), Vec2::splat(side));
+        if widgets::paint_maturity_badge(
+            painter,
+            p,
+            super::bars::maturity_name(access),
+            badge,
+            widgets::inner_radius(ui.visuals()),
+        ) {
+            x += side + 5.0;
+        }
+    }
     let mut right = rect.right() - 4.0;
     let mut info = false;
     if info_button && (response.hovered() || selected) {

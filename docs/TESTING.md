@@ -135,7 +135,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
-| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size or sent to the inventory |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 
@@ -158,6 +158,14 @@ its proportions), without the interface unless asked. With
 `AURORA_DEMO_SNAPSHOT_TILE=2048`, an 8K photo is drawn in 12 tiles: compare
 it with the same photo in one pass, the tiles must not show (the demo's
 particles and animations make a few levels of difference everywhere).
+`inventory[:<side>|window]` opens the window on the Inventory destination
+(512 by default), asks the price at `AURORA_DEMO_SNAPSHOT_FRAME` and
+confirms it 60 frames later: the texture is encoded, the demo answers the
+upload, the inventory opens on the photo in the Photo Album and the balance
+loses L$ 10 (the log gives `photo: texture <W> x <H> encoded in <ms>` and
+`photo: saved to the inventory`). `inventory-ask` leaves the price's
+confirmation on screen; `inventory-poor` sets the balance to L$ 5 and shows
+the "cannot afford" message instead.
 
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
@@ -1247,6 +1255,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or full with its Network section open |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
+| `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
 | `AURORA_DEMO_CRASH=<mode>` | Offline crash and recovery window |
 | `AURORA_DEMO_CRASH_DIR=<folder>` | Isolates the crash reports of offline tests |
@@ -1257,13 +1266,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent |
-| `AURORA_DEMO_MAP=1` or `mini` | World map and mini-map |
+| `AURORA_DEMO_MAP=1`, `mini` or `search:<text>` | World map and mini-map, the region search |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
 | `AURORA_DEMO_MATURITY=agree\|disagree\|fail` | Content rating changed, the server's answer |
+| `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
@@ -1564,6 +1574,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 - **`AURORA_DEMO_LOGIN=cards|cards2|cards8|derez|mfa`**: synthetic account carousel with three, two or eight accounts and generated landscape thumbnails; `derez` starts the shortened fragment transition and holds synthetic connection progress inside the selected card, while `mfa` opens the two-factor challenge. No grid connection, saved-scene reads or credential-store access. Other card-mode clicks report that demo mode cannot connect. Cards keep their own grid/start selectors without password controls or a choice heading/count. Add account remains outside the carousel; arrows appear only above three accounts; smaller catalogues remain in a fixed row even in narrow windows. Check 800 × 733 and 1280 × 720 layouts, vertical scrolling at 800 × 560, and the 30-day checkbox in the MFA dialog.
 
 - **`AURORA_DEMO_LOGIN=connecting|first-connecting|add-connecting`**: synthetic waiting state in the selected card, inline first-account form, or Add form. Capture early and late frames (`AURORA_CAPTURE_FRAMES=20|40|90`) to check the brief animation, status/bar placement and persistent Aurora background. No black progress screen and no grid request. Confirm that inputs remain read-only while pending; a real error/MFA/terms challenge must restore the form, and successful authentication must switch to region loading.
+- **`AURORA_DEMO_LOGIN=cards1|derez1`**: a single saved account; `derez1` starts its validation. Capture `AURORA_CAPTURE_FRAMES=30|36|42` and compare with `derez` (three cards).
+- **`AURORA_DEMO_LOGIN=add-mfa`**: one saved account and the Add form open with a second synthetic identity typed in; Log in sends it to the offline server, which asks for the second factor 1.2 s later. The challenge must stay in the Add form with the new identity (never the saved card's), and the log line `demo login: request for a new account` names which identity was sent, without the name. `AURORA_DEMO_LOGIN_SUBMIT=<frame>` presses Log in at that frame for captures (`AURORA_DEMO_LOGIN_SUBMIT=40`, `AURORA_CAPTURE_FRAMES=170`). The demo never touches the system credential store.
 
 - **`AURORA_DEMO_LOGIN=drag|drag2|drag-card|drag-card2`**: eight/two synthetic profiles with a left-button side-grip or portrait gesture injected into egui at frames 20–44. Capture frame 40 while held and frame 75 after release. With eight profiles, check continuous card motion, clipped neighbours, circular wrapping, final alignment and central selection without connecting. With two profiles, the same gesture must keep the cards fixed, without arrows or connecting. Input injection never moves the OS pointer. Manually drag in both directions from portraits, place images, names, card padding and Connect buttons; release over a card/outside the window and resize during motion. A simple click still connects, while grid/start menus and text-field drag selection remain usable. Also check Enter, dialogs and short-window vertical scrolling outside the browse row.
 
@@ -1688,6 +1700,20 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (that notice only goes to the resident's transcript, when instant messages
   are logged). `tp:reject`: "Request teleport" while teleports are rejected
   only shows the warning, with OK and no message to type.
+- **`AURORA_DEMO_MAP=search:<text>`**: the world map with the region
+  search already typed (`search:o` lists several demo regions). What to see:
+  each result has the navigation bar's rating badge (G / M / A) before its
+  name; a region offline or unknown keeps its state in text.
+- **`AURORA_DEMO_SLURLS=1|offer`**: Tess Touch's conversation, the chat
+  console and the notification list show the same place links, one per
+  SLURL form: the plaza (General), the lagoon (Moderate), Nordheim (Adult),
+  the pine grove and Atlantide. What to see: G, M and A badges before the
+  first three at once; the pine grove gets its G badge about 3 seconds
+  later, when the demo server answers its lookup; Atlantide does not exist
+  and stays without a badge. `offer`: the "Offer teleport" dialog for Tess
+  shows our region with its badge. `AURORA_DEMO_PLACES=history` shows the
+  badges on the teleport history (Ahern, unknown to the demo, has none);
+  `AURORA_DEMO_MAP=1` shows one next to the tracked place's label.
 - **`AURORA_DEMO_MATURITY=agree|disagree|fail`**: the Preferences open on
   Interface › Content and the demo account (adult, every rating) asks for
   "General". `agree`: the server accepts, the list shows "General".

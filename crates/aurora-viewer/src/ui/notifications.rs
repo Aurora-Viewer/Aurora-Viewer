@@ -7,6 +7,7 @@
 use super::icons::Icons;
 use crate::theme::Palette;
 use crate::world::notifications::{Data, Kind, Notification, Notifications, Response};
+use crate::world::worldmap::RegionRatings;
 use egui::{Color32, RichText, Vec2};
 
 /// Seconds a toast stays: information / waiting for an answer.
@@ -67,7 +68,7 @@ fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
 }
 
 /// One notification card; returns the user's answer.
-fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toast: bool) -> Option<Response> {
+fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, ratings: &RegionRatings, n: &mut Notification, toast: bool) -> Option<Response> {
     let mut out = None;
     let (icon, accent) = kind_style(p, n.kind);
     // in the list, an unread card is lighter than a read one
@@ -92,6 +93,10 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                         accent,
                     );
+                }
+                // the rating of the region the entry is about
+                if n.maturity != 0 {
+                    super::widgets::maturity_badge_of(ui, p, n.maturity, 14.0);
                 }
                 // keep room for the time and the close button
                 let w = (ui.available_width() - 62.0).max(40.0);
@@ -133,20 +138,12 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                 // LLTextEditor (lltoastnotifypanel.cpp, "text_editor_box")
                 if script {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(&n.body).size(12.0).color(p.ink))
-                                .wrap()
-                                .selectable(true),
-                        );
+                        super::chat::text_with_places(ui, p, ratings, &n.body, 12.0, p.ink);
                     });
                 } else {
                     ui.horizontal(|ui| {
                         ui.add_space(22.0);
-                        ui.add(
-                            egui::Label::new(RichText::new(&n.body).size(12.0).color(p.muted))
-                                .wrap()
-                                .selectable(true),
-                        );
+                        super::chat::text_with_places(ui, p, ratings, &n.body, 12.0, p.muted);
                     });
                 }
             }
@@ -307,7 +304,14 @@ fn button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool, size
 }
 
 /// List under the bell and toasts; returns the answers to apply.
-pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, list: &mut Notifications, nui: &mut NotifUi) -> Vec<(u64, Response)> {
+pub fn show(
+    ctx: &egui::Context,
+    p: &Palette,
+    icons: &Icons,
+    ratings: &RegionRatings,
+    list: &mut Notifications,
+    nui: &mut NotifUi,
+) -> Vec<(u64, Response)> {
     let mut answers = Vec::new();
     let now = ctx.input(|i| i.time);
 
@@ -393,7 +397,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, list: &mut Notifica
                                 ui.spacing_mut().item_spacing.y = 4.0;
                                 // newest first
                                 for n in list.list.iter_mut().rev() {
-                                    if let Some(r) = card(ui, p, icons, n, false) {
+                                    if let Some(r) = card(ui, p, icons, ratings, n, false) {
                                         answers.push((n.id, r));
                                     }
                                 }
@@ -421,7 +425,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, list: &mut Notifica
                 let ids: Vec<u64> = nui.toasts.iter().map(|(id, _)| *id).collect();
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
-                        match card(ui, p, icons, n, true) {
+                        match card(ui, p, icons, ratings, n, true) {
                             // closing a toast only hides it: the offer waits in the list
                             Some(Response::Dismiss) if !matches!(n.data, Data::Dialog { .. }) => nui.toasts.retain(|(t, _)| *t != id),
                             Some(r) => answers.push((id, r)),

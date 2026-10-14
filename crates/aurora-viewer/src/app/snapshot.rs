@@ -2,16 +2,21 @@
 //! LLViewerWindow::rawSnapshot / saveImageLocal, indra/newview, originally
 //! LGPL 2.1): a photo is a job of one or more frames drawn offscreen at its
 //! size (`Renderer::snapshot_request`), stitched when it is drawn in tiles,
-//! then a preview, a held freeze frame, or a file written on a worker.
+//! then a preview, a held freeze frame, a file written on a worker, or a
+//! texture encoded on a worker and uploaded to the Photo Album
+//! (LLPanelSnapshotInventory::onSend, LLSnapshotLivePreview::saveTexture).
 
 use super::App;
-use crate::snapshot::{self, Tile, gallery, save};
-use crate::ui::snapshot::Action;
+use crate::snapshot::{self, Tile, gallery, inventory, save};
+use crate::ui::snapshot::{Action, Destination, InventoryView};
 use crate::ui_sound::UiSound;
+use aurora_net::NetCommand;
+use aurora_net::inventory::upload::{self as upload, Kind, Prices, Receipt};
 use aurora_render::{Renderer, SnapshotSpec};
 use glam::Mat4;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 /// Long side of the preview image.
 const PREVIEW_SIDE: u32 = 720;
@@ -32,6 +37,19 @@ enum Purpose {
     Save(Option<PathBuf>),
     /// Freeze frame: kept, shown, saved by "Take the photo".
     Hold,
+    /// To the inventory, at the confirmed price.
+    Inventory(i32),
+}
+
+/// A photo on its way to the inventory.
+enum Upload {
+    /// Scaled and encoded on a worker.
+    Encoding {
+        rx: crossbeam_channel::Receiver<Result<Vec<u8>, String>>,
+        cost: i32,
+    },
+    /// Sent (`NetCommand::UploadAsset`), its answer awaited.
+    Sent(Uuid),
 }
 
 struct Job {
@@ -90,6 +108,13 @@ pub(super) struct Snapshots {
     dialog: Option<crossbeam_channel::Receiver<(bool, Option<PathBuf>)>>,
     /// The window was closed when the photo was asked (Ctrl+`).
     quiet: bool,
+    /// The price to confirm before the upload.
+    confirm: Option<i32>,
+    /// The price the balance cannot pay.
+    short: Option<i32>,
+    upload: Option<Upload>,
+    /// The message tells of this item, saved to the inventory.
+    message_item: Option<Uuid>,
     demo: Option<DemoPhoto>,
 }
 
@@ -99,6 +124,16 @@ struct DemoPhoto {
     save: Option<((u32, u32), snapshot::FileFormat, Option<PathBuf>)>,
     full_frame: bool,
     aspect: Option<snapshot::Aspect>,
+    inventory: Option<DemoInventory>,
+}
+
+/// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
+struct DemoInventory {
+    size: inventory::TextureSize,
+    /// The price is confirmed 60 frames after it is asked.
+    confirm: bool,
+    /// A balance below the price.
+    poor: bool,
 }
 
 impl Default for Snapshots {
@@ -122,6 +157,10 @@ impl Default for Snapshots {
             held_view: None,
             dialog: None,
             quiet: false,
+            confirm: None,
+            short: None,
+            upload: None,
+            message_item: None,
             demo: None,
         }
     }
@@ -237,29 +276,41 @@ impl App {
                 self.photo_shutter();
             }
             Purpose::Save(path) => self.photo_save(job.size, job.pixels, path),
+            Purpose::Inventory(cost) => self.photo_encode(job.size, job.pixels, cost),
         }
     }
 
-    /// Start a photo of the settings' size.
+    /// The size of the photo for the chosen destination: the disk's
+    /// settings, or the inventory's size before it becomes a texture.
+    fn photo_size(&self, window: (u32, u32)) -> (u32, u32) {
+        let s = &self.settings.snapshot;
+        match self.snapshots.ui.destination {
+            Destination::Disk => s.size(window),
+            Destination::Inventory => inventory::capture_size(s.aspect, s.inventory_size, window),
+        }
+    }
+
+    /// Start a photo of the destination's size.
     fn photo_job(&mut self, purpose: Purpose, renderer: &Renderer) {
         let window = renderer.size();
+        let full = self.photo_size(window);
         let s = &self.settings.snapshot;
         let size = if purpose == Purpose::Preview {
-            let (w, h) = s.size(window);
+            let (w, h) = full;
             let scale = (PREVIEW_SIDE as f32 / w.max(h) as f32).min(1.0);
             (
                 ((w as f32 * scale).round() as u32).max(16),
                 ((h as f32 * scale).round() as u32).max(16),
             )
         } else {
-            s.size(window)
+            full
         };
         let max_pixels = renderer.video_memory.read(&renderer.device).map_or(DEFAULT_MAX_PIXELS, |m| {
             // half of what is free, besides what the window's frame holds
             m.budget.saturating_sub(m.usage) / 2 / TARGET_BYTES_PER_PIXEL
         });
         let tiles = snapshot::plan(size, self.photo_max_side(renderer), max_pixels);
-        let interface = s.interface && s.interface_possible(window);
+        let interface = s.interface && snapshot::same_proportions(full, window);
         self.snapshots.job = Some(Job {
             purpose,
             size,
@@ -298,6 +349,7 @@ impl App {
                 (s.format, snapshot::free_path(&s.folder(), &s.base_name, stamp.as_deref(), s.format))
             }
         };
+        self.snapshots.message_item = None;
         self.snapshots.saving = Some(save::Saving::start(save::Job {
             width: size.0,
             height: size.1,
@@ -309,9 +361,172 @@ impl App {
         self.photo_shutter();
     }
 
-    /// "Take the photo": the held one, or a new one.
+    /// A photo is being taken, saved or uploaded.
+    fn photo_busy(&self) -> bool {
+        let s = &self.snapshots;
+        s.saving.is_some() || s.upload.is_some() || s.job.as_ref().is_some_and(|j| j.purpose != Purpose::Preview)
+    }
+
+    /// Upload prices: the account's benefits (texture_upload_cost, by area
+    /// for the large ones), the demo's, or the economy's single price.
+    fn photo_prices(&self) -> Prices {
+        let prices = if self.demo {
+            Prices {
+                texture: Some(10),
+                large_texture: Some(40),
+                sound: Some(10),
+                animation: Some(10),
+            }
+        } else {
+            self.world.login.as_ref().map(|l| Prices::from_login(&l.raw)).unwrap_or_default()
+        };
+        prices.with_fallback(self.world.upload_cost)
+    }
+
+    /// What the window shows of a photo for the inventory.
+    fn photo_inventory_view(&self, window: (u32, u32)) -> InventoryView {
+        let texture = inventory::texture_size(self.photo_size(window));
+        InventoryView {
+            texture,
+            cost: self.photo_prices().cost(Kind::Snapshot, texture),
+            connected: self.demo || self.world.login.is_some(),
+        }
+    }
+
+    /// "Save to inventory" (LLPanelSnapshotInventory::onSend): the price
+    /// confirmed first, refused when the balance cannot pay it
+    /// (can_afford_transaction, ErrorPhotoCannotAfford).
+    fn photo_to_inventory(&mut self, renderer: &Renderer) {
+        if self.photo_busy() {
+            return;
+        }
+        let view = self.photo_inventory_view(renderer.size());
+        let Some(cost) = view.cost.filter(|_| view.connected) else {
+            return;
+        };
+        if self.world.balance.is_some_and(|b| b < cost) {
+            self.snapshots.short = Some(cost);
+        } else if cost > 0 {
+            self.snapshots.confirm = Some(cost);
+        } else {
+            self.photo_inventory_start(cost, renderer);
+        }
+    }
+
+    /// The price confirmed: the held photo, or a new one.
+    fn photo_inventory_start(&mut self, cost: i32, renderer: &Renderer) {
+        if self.photo_busy() {
+            return;
+        }
+        if let Some(held) = &self.snapshots.held {
+            let (size, rgba) = ((held.width, held.height), held.rgba.clone());
+            self.photo_encode(size, rgba, cost);
+            return;
+        }
+        self.photo_job(Purpose::Inventory(cost), renderer);
+    }
+
+    /// Scale and encode the texture on a worker; the shutter sounds as the
+    /// upload starts, like saveTexture's playSnapshotAnimAndSound.
+    fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32) {
+        let texture = inventory::texture_size(size);
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            let t0 = Instant::now();
+            let encoded = inventory::encode(size.0, size.1, &rgba, texture);
+            if let Ok(data) = &encoded {
+                log::info!(
+                    "photo: texture {} x {} encoded in {} ms ({} KB)",
+                    texture.0,
+                    texture.1,
+                    t0.elapsed().as_millis(),
+                    data.len() >> 10
+                );
+            }
+            let _ = tx.send(encoded);
+        });
+        self.snapshots.upload = Some(Upload::Encoding { rx, cost });
+        self.photo_shutter();
+    }
+
+    /// The encoded texture: its upload to the Photo Album, named after the
+    /// place (LLSnapshotLivePreview::saveTexture).
+    fn photo_upload(&mut self, data: Vec<u8>, cost: i32) {
+        let w = &self.world;
+        let maturity = w
+            .main()
+            .and_then(|r| r.info.as_ref())
+            .map(|i| crate::ui::bars::maturity_name(i.sim_access))
+            .unwrap_or("");
+        let place = inventory::location(&w.parcel_name, &w.region_name(), w.agent.position, maturity);
+        // LLAgentUI::buildFullname: the legacy name
+        let who = w
+            .login
+            .as_ref()
+            .map(|l| format!("{} {}", l.first_name, l.last_name).trim().to_owned())
+            .unwrap_or_else(|| w.own_name());
+        let folder = crate::world::inventory::actions::system(&w.inventory, inventory::PHOTO_ALBUM).unwrap_or(w.inventory.root);
+        let uploads = self.settings.imports.permissions();
+        let request = Uuid::new_v4();
+        let upload = upload::Request {
+            kind: Kind::Snapshot,
+            folder,
+            name: inventory::item_name(&place),
+            description: inventory::item_description(&who, &place),
+            // PERM_ALL for the next owner; the group and everyone masks of
+            // the uploads (LLFloaterPerms::getGroupPerms("Uploads"))
+            permissions: upload::Permissions {
+                next_owner: 0x7fff_ffff,
+                ..uploads
+            },
+            expected_cost: cost,
+            data,
+        };
+        log::info!("photo: upload of {} bytes to the Photo Album for L$ {cost}", upload.data.len());
+        self.snapshots.upload = Some(Upload::Sent(request));
+        self.send(NetCommand::UploadAsset { request, upload });
+    }
+
+    /// The upload this request belongs to is a photo's.
+    pub(super) fn photo_owns_upload(&self, request: Uuid) -> bool {
+        matches!(self.snapshots.upload, Some(Upload::Sent(r)) if r == request)
+    }
+
+    /// The server's answer to a photo's upload.
+    pub(super) fn photo_uploaded(&mut self, result: Result<Receipt, upload::Error>) {
+        self.snapshots.upload = None;
+        match result {
+            Ok(receipt) => {
+                let item = receipt.item;
+                log::info!("photo: saved to the inventory for L$ {}", receipt.cost);
+                let id = item.id;
+                self.world.inventory.add_items(vec![item]);
+                // the inventory shows the new photo (upload_done_callback,
+                // openInventoryPanelAndSetSelection)
+                self.panels.inventory = true;
+                self.inventory_ui.show_original(&self.world.inventory, id);
+                self.snapshots.message = Some((aurora_i18n::tr!("photo-uploaded").to_owned(), false));
+                self.snapshots.message_item = Some(id);
+            }
+            Err(e) => {
+                log::warn!("photo: upload failed: {e}");
+                let text = match e {
+                    upload::Error::PriceChanged(Some(cost)) => aurora_i18n::tr!("photo-upload-price-changed", cost = cost).to_owned(),
+                    upload::Error::Unknown | upload::Error::Uncertain(_) | upload::Error::Verification => {
+                        aurora_i18n::tr!("photo-upload-unknown").to_owned()
+                    }
+                    upload::Error::Rejected | upload::Error::Refused(_) => aurora_i18n::tr!("photo-upload-refused").to_owned(),
+                    other => aurora_i18n::tr!("photo-upload-failed", error = other.to_string()).to_owned(),
+                };
+                self.snapshots.message = Some((text, true));
+                self.snapshots.message_item = None;
+            }
+        }
+    }
+
+    /// "Take the photo" to disk: the held one, or a new one.
     fn photo_take(&mut self, renderer: &Renderer, chosen: Option<PathBuf>) {
-        if self.snapshots.saving.is_some() || self.snapshots.job.as_ref().is_some_and(|j| j.purpose != Purpose::Preview) {
+        if self.photo_busy() {
             return;
         }
         if let Some(held) = &self.snapshots.held {
@@ -336,6 +551,20 @@ impl App {
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
     pub(super) fn photo_update(&mut self, renderer: &Renderer) {
         self.photo_demo(renderer);
+        // the texture encoded on its worker: its upload
+        if let Some(Upload::Encoding { rx, cost }) = &self.snapshots.upload
+            && let Ok(encoded) = rx.try_recv()
+        {
+            let cost = *cost;
+            match encoded {
+                Ok(data) => self.photo_upload(data, cost),
+                Err(e) => {
+                    log::warn!("photo: texture not encoded: {e}");
+                    self.snapshots.upload = None;
+                    self.snapshots.message = Some((aurora_i18n::tr!("photo-upload-failed", error = e.as_str()).to_owned(), true));
+                }
+            }
+        }
         let s = &mut self.snapshots;
         // the save on its worker
         if let Some(r) = s.saving.as_ref().and_then(|saving| saving.poll()) {
@@ -435,10 +664,11 @@ impl App {
         }
         let window = renderer.size();
         let key = (
-            self.settings.snapshot.size(window),
+            self.photo_size(window),
             self.settings.snapshot.interface,
             self.settings.snapshot.huds,
         );
+        let s = &mut self.snapshots;
         if s.preview_for != Some(key) {
             s.preview_wanted = true;
         }
@@ -472,7 +702,24 @@ impl App {
             Action::Refresh => self.snapshots.preview_wanted = true,
             Action::Take => {
                 self.snapshots.quiet = false;
-                self.photo_take(renderer, None);
+                match self.snapshots.ui.destination {
+                    Destination::Disk => self.photo_take(renderer, None),
+                    Destination::Inventory => self.photo_to_inventory(renderer),
+                }
+            }
+            Action::Confirm(yes) => {
+                if let Some(cost) = self.snapshots.confirm.take()
+                    && yes
+                {
+                    self.photo_inventory_start(cost, renderer);
+                }
+            }
+            Action::CloseAfford => self.snapshots.short = None,
+            Action::ShowItem => {
+                if let Some(id) = self.snapshots.message_item {
+                    self.panels.inventory = true;
+                    self.inventory_ui.show_original(&self.world.inventory, id);
+                }
             }
             Action::SaveAs | Action::ChooseFolder => {
                 if self.snapshots.dialog.is_some() {
@@ -530,18 +777,19 @@ impl App {
             return;
         }
         let window = renderer.size();
-        let photo = self.settings.snapshot.size(window);
-        let mut actions = Vec::new();
+        let photo = self.photo_size(window);
+        let mut actions = self.snapshots.ui.dialogs(ctx, p, self.snapshots.confirm, self.snapshots.short);
         if self.snapshots.ui.full_frame && self.panels.snapshot {
-            actions = self.snapshots.ui.full_frame(
+            actions.extend(self.snapshots.ui.full_frame(
                 ctx,
                 p,
                 &mut self.settings.snapshot,
                 &mut self.settings.camera.fov,
                 crate::camera::DEFAULT_FOV,
                 photo,
-            );
+            ));
         } else if self.panels.snapshot {
+            let inventory = (self.snapshots.ui.destination == Destination::Inventory).then(|| self.photo_inventory_view(window));
             let mut state = std::mem::take(&mut self.snapshots.ui);
             let max_pixels = renderer.video_memory.read(&renderer.device).map_or(DEFAULT_MAX_PIXELS, |m| {
                 m.budget.saturating_sub(m.usage) / 2 / TARGET_BYTES_PER_PIXEL
@@ -550,6 +798,11 @@ impl App {
             let s = &self.snapshots;
             let busy = if let Some(saving) = &s.saving {
                 Some((0.5 + 0.5 * saving.fraction(), aurora_i18n::tr!("photo-saving").to_owned()))
+            } else if let Some(upload) = &s.upload {
+                Some(match upload {
+                    Upload::Encoding { .. } => (0.6, aurora_i18n::tr!("photo-encoding").to_owned()),
+                    Upload::Sent(_) => (0.85, aurora_i18n::tr!("photo-uploading").to_owned()),
+                })
             } else {
                 s.job.as_ref().filter(|j| j.purpose != Purpose::Preview).map(|j| {
                     let f = 0.5 * j.next as f32 / j.tiles.len().max(1) as f32;
@@ -572,9 +825,11 @@ impl App {
                 last_saved: s.last_saved.as_deref(),
                 gallery: &gallery,
                 folder: self.settings.snapshot.folder(),
+                inventory,
+                item_saved: s.message_item.is_some(),
             };
             let mut open = self.panels.snapshot;
-            actions = state.show(
+            actions.extend(state.show(
                 ctx,
                 p,
                 &mut open,
@@ -582,7 +837,7 @@ impl App {
                 &mut self.settings.camera.fov,
                 crate::camera::DEFAULT_FOV,
                 &view,
-            );
+            ));
             self.snapshots.ui = state;
             self.panels.snapshot = open;
         }
@@ -662,11 +917,27 @@ impl App {
                     .into_iter()
                     .find(|x| x.short().is_some_and(|s| s.replace(':', "x") == a))
             });
+            // inventory[:<side>|window], inventory-ask (the price left on
+            // screen), inventory-poor (a balance below it)
+            let inventory = kind.starts_with("inventory").then(|| {
+                let side = std::env::var("AURORA_DEMO_SNAPSHOT").ok().and_then(|m| {
+                    let v = m.split(':').nth(1)?.to_owned();
+                    inventory::TextureSize::ALL
+                        .into_iter()
+                        .find(|t| t.side().map_or(v == "window", |s| s.to_string() == v))
+                });
+                DemoInventory {
+                    size: side.unwrap_or(inventory::TextureSize::S512),
+                    confirm: kind == "inventory",
+                    poor: kind == "inventory-poor",
+                }
+            });
             self.snapshots.demo = Some(DemoPhoto {
                 frame,
                 save,
                 full_frame: kind.starts_with("full"),
                 aspect,
+                inventory,
             });
         }
         let Some(demo) = self.snapshots.demo.as_ref() else {
@@ -681,6 +952,24 @@ impl App {
             if let Some(a) = demo.aspect {
                 self.settings.snapshot.aspect = a;
             }
+            if let Some(inv) = &demo.inventory {
+                self.snapshots.ui.destination = Destination::Inventory;
+                self.settings.snapshot.inventory_size = inv.size;
+                if inv.poor {
+                    self.world.balance = Some(5);
+                }
+            }
+        }
+        if let Some(inv) = &demo.inventory {
+            let (frame, confirm) = (demo.frame, inv.confirm);
+            if self.frame_count == frame {
+                self.snapshots.quiet = false;
+                self.photo_to_inventory(renderer);
+            }
+            if confirm && self.frame_count == frame + 60 {
+                self.photo_action(Action::Confirm(true), renderer);
+            }
+            return;
         }
         if self.frame_count == demo.frame
             && let Some((size, format, folder)) = demo.save.clone()

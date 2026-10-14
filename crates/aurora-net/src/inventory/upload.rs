@@ -13,11 +13,14 @@ pub enum Kind {
     Animation,
     Material,
     Mesh,
+    /// A photo of the world: a texture asset in the inventory type
+    /// IT_SNAPSHOT (LLSnapshotLivePreview::saveTexture).
+    Snapshot,
 }
 impl Kind {
     pub fn asset_type(self) -> i32 {
         match self {
-            Self::Texture => 0,
+            Self::Texture | Self::Snapshot => 0,
             Self::Sound => 1,
             Self::Animation => 20,
             Self::Material => 57,
@@ -31,11 +34,14 @@ impl Kind {
             Self::Animation => ("animatn", "animation"),
             Self::Material => ("material", "material"),
             Self::Mesh => ("mesh", "object"),
+            Self::Snapshot => ("texture", "snapshot"),
         }
     }
+    /// The upload folder chosen per type; a photo goes to the Photo Album
+    /// instead (FT_SNAPSHOT_CATEGORY), its slot is the textures' one.
     pub fn folder_slot(self) -> usize {
         match self {
-            Self::Texture => 0,
+            Self::Texture | Self::Snapshot => 0,
             Self::Sound => 1,
             Self::Animation => 2,
             Self::Material => 4,
@@ -86,8 +92,8 @@ impl Prices {
     }
     pub fn cost(&self, kind: Kind, dimensions: (u32, u32)) -> Option<i32> {
         match kind {
-            Kind::Texture if u64::from(dimensions.0) * u64::from(dimensions.1) > 1024 * 1024 => self.large_texture,
-            Kind::Texture => self.texture,
+            Kind::Texture | Kind::Snapshot if u64::from(dimensions.0) * u64::from(dimensions.1) > 1024 * 1024 => self.large_texture,
+            Kind::Texture | Kind::Snapshot => self.texture,
             Kind::Sound => self.sound,
             Kind::Animation => self.animation,
             Kind::Material => Some(0),
@@ -356,6 +362,9 @@ mod tests {
         assert_eq!(prices.cost(Kind::Sound, (0, 0)), Some(0));
         assert_eq!(prices.cost(Kind::Animation, (0, 0)), None);
         assert_eq!(Prices::default().cost(Kind::Texture, (1024, 1024)), None);
+        // a photo costs what a texture of its size does
+        assert_eq!(prices.cost(Kind::Snapshot, (1024, 1024)), Some(10));
+        assert_eq!(prices.cost(Kind::Snapshot, (2048, 1024)), Some(40));
     }
 }
 

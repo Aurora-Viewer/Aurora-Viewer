@@ -163,6 +163,9 @@ pub struct App {
     login_form: LoginForm,
     bug_report: ui::bug_report::BugReportUi,
     login_progress: Option<(String, f32)>,
+    /// `AURORA_DEMO_LOGIN=add-mfa`: when the offline login server asks for
+    /// the second factor, after the request has been pending a moment.
+    demo_mfa_challenge: Option<std::time::Instant>,
     panels: Panels,
     chat_ui: ChatUi,
     /// The History window (a conversation's whole transcript).
@@ -350,6 +353,8 @@ pub struct App {
     options_ui: ui::options::OptionsUi,
     audio_ui: ui::audio::AudioUi,
     notif_ui: ui::notifications::NotifUi,
+    /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
+    demo_lookups: Vec<(Instant, NetCommand)>,
     /// Parcel music stream on (radio toggle).
     music_playing: bool,
     /// Parcel media and media on a prim (web / video plugins).
@@ -622,6 +627,7 @@ impl App {
             login_form: LoginForm::default(),
             bug_report: Default::default(),
             login_progress: None,
+            demo_mfa_challenge: None,
             panels,
             chat_ui: ChatUi::default(),
             history_ui: Default::default(),
@@ -734,6 +740,7 @@ impl App {
             options_ui: Default::default(),
             audio_ui: Default::default(),
             notif_ui: Default::default(),
+            demo_lookups: Vec::new(),
             music_playing: false,
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
                 Ok(e) => {
@@ -876,6 +883,11 @@ impl App {
             return;
         }
         if self.demo && self.gesture_demo_command(&cmd) {
+            return;
+        }
+        // AURORA_DEMO_SLURLS: a region lookup answered a little later
+        if self.demo && crate::demo::slurls_scene() && matches!(cmd, NetCommand::MapNameRequest { .. }) {
+            self.demo_lookups.push((Instant::now() + crate::demo::SLURLS_LOOKUP_DELAY, cmd));
             return;
         }
         if self.demo
@@ -1329,9 +1341,27 @@ impl App {
 
     fn start_login(&mut self) {
         if self.demo {
-            if std::env::var("AURORA_DEMO_LOGIN").is_ok_and(|mode| matches!(mode.as_str(), "derez" | "connecting")) {
+            let mode = std::env::var("AURORA_DEMO_LOGIN").unwrap_or_default();
+            // Which identity the offline server received: the account being
+            // added, or a saved card (never the name itself).
+            let saved = self
+                .login_form
+                .accounts
+                .iter()
+                .any(|account| account.key() == (self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
+            log::info!(
+                "demo login: request for {} (adding {}, code {})",
+                if saved { "a saved account" } else { "a new account" },
+                self.login_form.adding,
+                !self.login_form.mfa_token.trim().is_empty()
+            );
+            if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
+            } else if mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty() {
+                self.login_form.busy = true;
+                self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
+                self.demo_mfa_challenge = Some(std::time::Instant::now() + std::time::Duration::from_millis(1200));
             } else {
                 self.login_form.transition = None;
                 self.login_form.error = Some(aurora_i18n::tr!("app-demo-mode-no-grid-connection").into());
@@ -1477,6 +1507,10 @@ impl App {
         if let NetEvent::AssetUploaded { request, result } = ev {
             if !self.demo {
                 self.send(NetCommand::RequestBalance);
+            }
+            if self.photo_owns_upload(request) {
+                self.photo_uploaded(result);
+                return;
             }
             if let Some(item) = self.imports.uploaded(request, result) {
                 let id = item.id;
@@ -1754,7 +1788,9 @@ impl App {
                     // A server challenge invalidates this account's authorization only.
                     self.login_form.mfa_authorization = None;
                     self.login_form.mfa_token.clear();
-                    crate::credentials::forget_mfa(&self.settings.login_uri(), &self.settings.username);
+                    if !self.demo {
+                        crate::credentials::forget_mfa(&self.settings.login_uri(), &self.settings.username);
+                    }
                     self.login_form.show_mfa = true;
                     self.login_form.error = Some(aurora_i18n::tr!("app-enter-the-code-from-your-authenticator-app").into());
                 } else if tos_required {
@@ -4193,7 +4229,24 @@ impl App {
                         size_x: r.heightmap.size_x.max(256),
                         size_y: r.heightmap.size_y.max(256),
                     });
+                self.world.map.ratings.learn(&i.name, i.sim_access);
             }
+        }
+        // the regions of the place links drawn last frame whose rating is
+        // not known yet: asked once, a few a second (RegionRatings)
+        for name in ui::widgets::take_wanted_regions(&self.egui_ctx) {
+            self.world.map.ratings.want(&name);
+        }
+        let now = Instant::now();
+        let (due, later) = std::mem::take(&mut self.demo_lookups).into_iter().partition(|(at, _)| *at <= now);
+        self.demo_lookups = later;
+        for (_, cmd) in due {
+            for ev in crate::demo::demo_reply(&cmd) {
+                self.world.apply(ev);
+            }
+        }
+        if !self.demo_lookups.is_empty() {
+            self.egui_ctx.request_repaint_after(crate::demo::SLURLS_LOOKUP_DELAY / 4);
         }
         let me = ui::minimap::to_global(&self.world, self.world.agent.position);
         if self.world.movement_complete && !self.world.teleporting {
@@ -7007,6 +7060,29 @@ impl App {
                     a.exit = self.exit_prompt.show(&ctx, &p, false);
                     return a;
                 }
+                // `AURORA_DEMO_LOGIN_SUBMIT=<frame>`: press the open form's
+                // Log in at that frame, as its button does (the editor
+                // closes, an Add stays an Add while the request runs).
+                if self.demo
+                    && std::env::var("AURORA_DEMO_LOGIN_SUBMIT")
+                        .ok()
+                        .and_then(|frame| frame.parse::<u64>().ok())
+                        .is_some_and(|frame| frame == self.frame_count)
+                {
+                    self.login_form.editing = false;
+                    self.start_login();
+                }
+                if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
+                    self.demo_mfa_challenge = None;
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: String::new(),
+                        mfa_required: true,
+                        tos_required: false,
+                        bad_credentials: false,
+                    });
+                } else if self.demo_mfa_challenge.is_some() {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                }
                 self.sync_remembered_password();
                 let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 self.login_info.poll();
@@ -7716,7 +7792,14 @@ impl App {
                         n.read = true;
                     }
                 }
-                for (id, r) in ui::notifications::show(&ctx, &p, &self.skin.icons, &mut self.world.notifications, &mut self.notif_ui) {
+                for (id, r) in ui::notifications::show(
+                    &ctx,
+                    &p,
+                    &self.skin.icons,
+                    &self.world.map.ratings,
+                    &mut self.world.notifications,
+                    &mut self.notif_ui,
+                ) {
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
                         self.begin_teleport(String::new(), false);
@@ -8368,8 +8451,11 @@ impl ApplicationHandler for App {
                 if matches!(
                     mode.as_str(),
                     "cards"
+                        | "cards1"
                         | "cards2"
                         | "cards8"
+                        | "derez1"
+                        | "add-mfa"
                         | "drag"
                         | "drag2"
                         | "drag-card"
@@ -8396,6 +8482,7 @@ impl ApplicationHandler for App {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
                         "first" | "first-mfa" | "first-connecting" => 0,
+                        "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
                     })
@@ -8420,12 +8507,19 @@ impl ApplicationHandler for App {
                         .first()
                         .map_or_else(String::new, |account| account.username.clone());
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
-                    if matches!(mode.as_str(), "first" | "first-mfa" | "add" | "password") {
+                    if matches!(mode.as_str(), "first" | "first-mfa" | "add" | "add-mfa" | "password") {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
-                        self.login_form.adding = mode == "add";
-                        if mode == "add" {
+                        self.login_form.adding = matches!(mode.as_str(), "add" | "add-mfa");
+                        if self.login_form.adding {
+                            // what the Add button records to come back to
+                            self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
+                        }
+                        if mode == "add-mfa" {
+                            // a second identity, ready to submit (no real credential)
+                            self.settings.username = "Example new account".into();
+                            self.login_form.password = "demo-placeholder".into();
                         }
                         if mode == "first-mfa" {
                             self.settings.username = "Example new account".into();
@@ -8443,7 +8537,7 @@ impl ApplicationHandler for App {
                         self.login_form.editing = true;
                         self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
                     }
-                    if matches!(mode.as_str(), "derez" | "connecting") {
+                    if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                         self.login_form.pending_connect = Some(0);
                     } else if mode == "mfa" {
                         self.login_form.editing = true;
@@ -8735,6 +8829,13 @@ impl ApplicationHandler for App {
                 self.panels.world_map = std::env::var("AURORA_DEMO_MAP").as_deref() != Ok("mini");
                 self.panels.perf = false;
                 self.world.map.track_location(256000.0 + 200.0, 256000.0 + 150.0, 25.0, false);
+                // =search:<text>: the region search with its results
+                if let Some(text) = std::env::var("AURORA_DEMO_MAP")
+                    .ok()
+                    .and_then(|v| v.strip_prefix("search:").map(str::to_owned))
+                {
+                    self.worldmap_ui.demo_search(&mut self.world, &text);
+                }
             }
             // captures: AURORA_DEMO_SIT keeps the toolbar sit button visible
             if std::env::var_os("AURORA_DEMO_SIT").is_some() {
@@ -8791,6 +8892,59 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            // AURORA_DEMO_SLURLS: place links of every rating, and one unknown
+            if crate::demo::slurls_scene() {
+                for ev in crate::demo::slurls_events() {
+                    self.world.apply(ev);
+                }
+                let text = crate::demo::slurls_text();
+                let agent = self.world.agent_id;
+                self.world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {
+                    from_agent_id: crate::demo::DEMO_NOVA,
+                    from_name: "Tess Touch".into(),
+                    to_agent_id: agent,
+                    dialog: 0,
+                    session_id: uuid::Uuid::nil(),
+                    message: text.clone(),
+                    offline: false,
+                    from_group: false,
+                    binary_bucket: Vec::new(),
+                    timestamp: 0,
+                }));
+                // and said by an object, in the chat console
+                self.world.apply(NetEvent::Chat(aurora_net::ChatMessage {
+                    from_name: aurora_i18n::tr!("demo-places-sign").into(),
+                    source_id: uuid::Uuid::from_u128(0x5106),
+                    owner_id: uuid::Uuid::nil(),
+                    source_type: aurora_net::ChatSourceType::Object,
+                    chat_type: aurora_net::ChatType::Normal,
+                    position: glam::Vec3::ZERO,
+                    message: text.clone(),
+                }));
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    "Tess Touch",
+                    text,
+                    crate::world::notifications::Data::None,
+                );
+                self.notif_ui.open = true;
+                self.panels.perf = false;
+                self.panels.places = false;
+                self.panels.people = false;
+                self.panels.chat = true;
+                self.chat_ui.open(crate::demo::DEMO_NOVA);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
+                // =offer: our teleport offer to her, with our region's badge
+                if std::env::var("AURORA_DEMO_SLURLS").as_deref() == Ok("offer") {
+                    let region = self
+                        .world
+                        .main()
+                        .and_then(|r| r.info.as_ref())
+                        .map(|i| i.name.clone())
+                        .unwrap_or_default();
+                    self.contacts_ui.ask_teleport_offer(vec![crate::demo::DEMO_NOVA], &region);
                 }
             }
             // AURORA_DEMO_MATURITY: "General" asked once the login is known
