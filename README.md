@@ -93,7 +93,8 @@ are planned or in progress: they are not in the viewer yet.
   you can search, kept on your disk only.
 - **A well-behaved client.** Aurora speaks to the servers the way they
   expect: same messages, same request rates.
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Snapshots, gestures, RLVa**, and the shape and clothing editors.
+- **Shape editing**, with body and face categories, visual previews and saved copies.
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Snapshots, gestures, RLVa**, and the clothing editors.
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Smoother avatars**: movement of the people around you extrapolated and
   smoothed between two server updates.
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **A full pass on water**, and PBR terrain.
@@ -189,7 +190,7 @@ The texture memory budget is set automatically from the detected VRAM.
 
 **Not there yet**
 
-- Snapshots, gestures, RLVa, the shape and clothing editors, and the full
+- Snapshots, gestures, RLVa, the clothing editors, and the full
   sky / water editors.
 - Voice is WebRTC only (no Vivox).
 - Linux and macOS builds: the code is portable but not validated.
@@ -247,6 +248,24 @@ folder as its animations. The AO is off at first, as in Firestorm. `cao on` /
 the sit and `cao sit on` keeps the standard sit, like Firestorm. The demo
 scenario is described in
 [the test options](docs/TESTING.md#avatars-and-animations).
+
+### Shape editor
+
+Open **Appearance › Edit worn shape**, use **Appearance › Edit Shape** in your
+avatar's right-click menu, or right-click your worn shape in the
+inventory and choose **Edit**. Nine body/face categories and a filter expose the
+shape parameters as 0–100 sliders and numeric values, with male/female selection
+and height in metres or feet. The images show the minimum and maximum effect on
+your body under neutral lighting; clicking one changes the value by one percent. Preview visibility
+and height units are remembered. Scroll the wheel over the categories to move
+between them. Hints use the worn head, including rigged and static mesh heads,
+and retain their images while new assets are prepared.
+
+Changes are previewed locally until **Save**. **Save As** preserves the original
+and wears the confirmed copy; Copy permission is required. **Cancel** restores
+the current server appearance. Closing a modified shape offers Save, Discard or
+Cancel. A shape without Modify is read-only and can only be copied unchanged;
+a modifiable no-copy shape can be saved in place.
 
 ### Notecards
 

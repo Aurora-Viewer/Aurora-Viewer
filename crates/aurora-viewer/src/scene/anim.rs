@@ -504,6 +504,11 @@ fn facing(dir: Vec3) -> Option<Quat> {
 }
 
 impl Controller {
+    /// Freeze the last local pose for appearance hints; shape deltas are still
+    /// applied independently when each hint is built.
+    pub fn preview_pose(&self) -> (Vec<Quat>, Vec<Vec3>) {
+        (self.rot.clone(), self.pos_delta.clone())
+    }
     pub fn for_control_avatar() -> Self {
         Self {
             control: true,

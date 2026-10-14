@@ -2,6 +2,7 @@ struct Uniforms {
     projection: mat4x4<f32>, eye: vec4<f32>, color: vec4<f32>,
     emissive_metallic: vec4<f32>, params: vec4<f32>,
     edge_color: vec4<f32>, ambient: vec4<f32>, surface: vec4<f32>,
+    uv: array<mat2x4<f32>,4>,
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var base: texture_2d<f32>;
@@ -34,7 +35,12 @@ struct Vertex {
     out.position = p; out.normal = n; out.uv = uv; return out;
 }
 @fragment fn fs(v: Vertex, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let base_color = textureSample(base, samp, v.uv) * u.color;
+    let coord = vec4(v.uv,1.0,0.0);
+    let base_uv = vec2(dot(u.uv[0][0],coord),dot(u.uv[0][1],coord));
+    let normal_uv = vec2(dot(u.uv[1][0],coord),dot(u.uv[1][1],coord));
+    let mr_uv = vec2(dot(u.uv[2][0],coord),dot(u.uv[2][1],coord));
+    let emissive_uv = vec2(dot(u.uv[3][0],coord),dot(u.uv[3][1],coord));
+    let base_color = textureSample(base, samp, base_uv) * u.color;
     let facing = select(-1.0, 1.0, front);
     var n = normalize(v.normal) * facing;
     // Cotangent frame from screen derivatives, the construction of
@@ -49,19 +55,19 @@ struct Vertex {
     // The floor only guards a face without UVs: a larger one would flatten
     // the relief of small models, whose derivatives are tiny.
     let dp1 = dpdx(v.position); let dp2 = dpdy(v.position);
-    let duv1 = dpdx(v.uv); let duv2 = dpdy(v.uv);
+    let duv1 = dpdx(normal_uv); let duv2 = dpdy(normal_uv);
     let dp2perp = cross(dp2, n); let dp1perp = cross(n, dp1);
     let tangent = dp2perp * duv1.x + dp1perp * duv2.x;
     let bitangent = dp2perp * duv1.y + dp1perp * duv2.y;
     let norm = max(max(dot(tangent, tangent), dot(bitangent, bitangent)), 1e-30);
     let frame = facing * sign(dot(dp1, dp2perp)) * inverseSqrt(norm);
-    var nm = textureSample(normal_map, samp, v.uv).xyz * 2.0 - 1.0;
+    var nm = textureSample(normal_map, samp, normal_uv).xyz * 2.0 - 1.0;
     nm = vec3(nm.x*u.surface.x,-nm.y*u.surface.x,nm.z);
     n = normalize(mat3x3(tangent * frame, bitangent * frame, n) * nm);
     let view = normalize(u.eye.xyz - v.position);
     let light = normalize(vec3<f32>(0.4, -0.6, 0.8));
     let half_vector = normalize(light + view);
-    let metallic_roughness = textureSample(mr, samp, v.uv);
+    let metallic_roughness = textureSample(mr, samp, mr_uv);
     let metallic = metallic_roughness.b * u.emissive_metallic.w;
     let roughness = max(metallic_roughness.g * u.params.x, 0.045);
     let n_dot_l = max(dot(n, light), 0.0);
@@ -78,7 +84,7 @@ struct Vertex {
     let specular = distribution * geometry * fresnel / max(4.0 * n_dot_l * n_dot_v, 0.001);
     let diffuse = (vec3<f32>(1.0) - fresnel) * (1.0 - metallic) * base_color.rgb / 3.14159265;
     var color = (diffuse + specular) * n_dot_l * 2.4 + (base_color.rgb * u.ambient.rgb * (1.0 - metallic) + f0 * 0.15) * metallic_roughness.r;
-    color += textureSample(emissive_map, samp, v.uv).rgb * u.emissive_metallic.xyz;
+    color += textureSample(emissive_map, samp, emissive_uv).rgb * u.emissive_metallic.xyz;
     color = color / (vec3<f32>(1.0) + color);
     if u.params.w > 0.5 {
         let grid = abs(fract(v.uv * 10.0) - vec2<f32>(0.5));

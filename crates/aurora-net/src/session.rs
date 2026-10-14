@@ -16,6 +16,7 @@ mod object_actions;
 mod object_cache;
 mod scripts;
 mod task_notecard;
+mod wearable_save;
 
 use crate::agent_update::AgentUpdateRule;
 use crate::caps::{self, EqEvent, EqMessage};
@@ -1708,6 +1709,8 @@ impl Session<'_> {
                 let events = self.sh.events.clone();
                 tokio::spawn(async move {
                     let kind = match it.asset_type {
+                        13 => "bodypart_id",
+                        5 => "clothing_id",
                         21 => "gesture_id",
                         56 => "settings_id",
                         57 => "material_id",
@@ -1747,6 +1750,12 @@ impl Session<'_> {
                 options,
                 source,
             } => self.save_script(request, target, handle, options, source),
+            NetCommand::SaveWearable {
+                request,
+                item,
+                data,
+                copy_name,
+            } => self.save_wearable(request, *item, data, copy_name),
             NetCommand::CreateInventoryWearable { parent, kind, name, data } => self.create_wearable(parent, kind, name, data),
             NetCommand::RestoreInventoryObject(it) => {
                 let mut m = RezRestoreToWorld::default();

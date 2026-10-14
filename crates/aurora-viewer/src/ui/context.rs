@@ -138,6 +138,7 @@ pub struct Facts {
     pub seated: bool,
     pub flying: bool,
     pub hover_height: bool,
+    pub worn_shape: Option<Uuid>,
     pub object: ObjectFacts,
     /// Avatar: (complexity, shown as a silhouette).
     pub complexity: Option<(u32, bool)>,

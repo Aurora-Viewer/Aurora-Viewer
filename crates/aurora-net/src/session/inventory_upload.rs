@@ -8,6 +8,7 @@ use uuid::Uuid;
 #[derive(Default)]
 pub(super) struct Uploads {
     assets: HashMap<Uuid, Upload>,
+    pub(super) wearable_copies: HashMap<u32, super::wearable_save::Pending>,
 }
 
 struct Upload {
@@ -19,6 +20,7 @@ struct Upload {
     started: Instant,
     transfer: Option<Transfer>,
     import: Option<(Uuid, crate::inventory::upload::Request)>,
+    wearable: Option<super::wearable_save::Pending>,
 }
 impl Upload {
     fn asset_type(&self) -> i8 {
@@ -51,6 +53,38 @@ fn packet(data: &[u8], chunk: usize, index: u32) -> Option<(u32, Vec<u8>)> {
 }
 
 impl Session<'_> {
+    pub(super) fn inventory_uploads_busy(&self) -> bool {
+        self.inventory_uploads.assets.len() >= 8
+    }
+
+    pub(super) fn upload_wearable_save(&mut self, pending: super::wearable_save::Pending, data: Vec<u8>) {
+        let transaction = Uuid::new_v4();
+        let mut key = [0u8; 32];
+        key[..16].copy_from_slice(transaction.as_bytes());
+        key[16..].copy_from_slice(self.login.secure_session_id.as_bytes());
+        let asset = Uuid::from_bytes(md5::compute(key).0);
+        let mut message = AssetUploadRequest::default();
+        message.asset_block.transaction_id = transaction;
+        message.asset_block.type_ = 13;
+        if data.len() + 100 < 1200 {
+            message.asset_block.asset_data.clone_from(&data);
+        }
+        self.inventory_uploads.assets.insert(
+            asset,
+            Upload {
+                transaction,
+                parent: pending.item.parent,
+                kind: 0,
+                name: pending.item.name.clone(),
+                data,
+                started: Instant::now(),
+                transfer: None,
+                import: None,
+                wearable: Some(pending),
+            },
+        );
+        self.send_main(&message, true);
+    }
     pub(super) fn legacy_import(&mut self, request: Uuid, mut upload: crate::inventory::upload::Request) {
         use crate::inventory::upload::{Error, Kind};
         if !matches!(upload.kind, Kind::Texture | Kind::Sound | Kind::Animation) || self.inventory_uploads.assets.len() >= 8 {
@@ -86,6 +120,7 @@ impl Session<'_> {
                 started: Instant::now(),
                 transfer: None,
                 import: Some((request, upload)),
+                wearable: None,
             },
         );
         self.send_main(&message, true);
@@ -123,6 +158,7 @@ impl Session<'_> {
                 started: Instant::now(),
                 transfer: None,
                 import: None,
+                wearable: None,
             },
         );
         self.send_main(&m, true);
@@ -196,6 +232,20 @@ impl Session<'_> {
             let Some(upload) = self.inventory_uploads.assets.remove(&m.asset_block.uuid) else {
                 return Ok(false);
             };
+            if let Some(pending) = upload.wearable {
+                if m.asset_block.success && m.asset_block.type_ == 13 {
+                    self.wearable_asset_ready(pending, upload.transaction, m.asset_block.uuid);
+                } else {
+                    emit(
+                        self.sh,
+                        NetEvent::WearableSaved {
+                            request: pending.request,
+                            result: Err(aurora_i18n::tr!("shape-save-rejected").into()),
+                        },
+                    );
+                }
+                return Ok(true);
+            }
             if let Some((request, metadata)) = upload.import {
                 if m.asset_block.success && m.asset_block.type_ == metadata.kind.asset_type() as i8 {
                     self.legacy_asset_ready(request, metadata, upload.transaction, m.asset_block.uuid);
@@ -242,6 +292,16 @@ impl Session<'_> {
                 .find_map(|(id, u)| u.transfer.as_ref().filter(|t| t.id == m.xfer_id.id).map(|_| *id));
             if let Some(asset) = asset {
                 let removed = self.inventory_uploads.assets.remove(&asset);
+                if let Some(pending) = removed.as_ref().and_then(|u| u.wearable.as_ref()) {
+                    emit(
+                        self.sh,
+                        NetEvent::WearableSaved {
+                            request: pending.request,
+                            result: Err(aurora_i18n::tr!("shape-save-interrupted").into()),
+                        },
+                    );
+                    return Ok(true);
+                }
                 if let Some((request, _)) = removed.and_then(|u| u.import) {
                     emit(
                         self.sh,
@@ -268,11 +328,15 @@ impl Session<'_> {
         let mut retry = Vec::new();
         let mut failed = false;
         let mut imports = Vec::new();
+        let mut wearables = Vec::new();
         self.inventory_uploads.assets.retain(|id, u| {
             if u.started.elapsed() > Duration::from_secs(60) {
+                if let Some(pending) = &u.wearable {
+                    wearables.push(pending.request);
+                }
                 if let Some((request, _)) = &u.import {
                     imports.push(*request);
-                } else {
+                } else if u.wearable.is_none() {
                     failed = true;
                 }
                 return false;
@@ -282,9 +346,12 @@ impl Session<'_> {
                 && (t.packet as usize) * t.chunk < u.data.len()
             {
                 if t.retries >= 3 {
+                    if let Some(pending) = &u.wearable {
+                        wearables.push(pending.request);
+                    }
                     if let Some((request, _)) = &u.import {
                         imports.push(*request);
-                    } else {
+                    } else if u.wearable.is_none() {
                         failed = true;
                     }
                     return false;
@@ -297,6 +364,23 @@ impl Session<'_> {
         });
         for asset in retry {
             self.send_inventory_packet(asset);
+        }
+        self.inventory_uploads.wearable_copies.retain(|_, pending| {
+            if pending.started.elapsed() > Duration::from_secs(60) {
+                wearables.push(pending.request);
+                false
+            } else {
+                true
+            }
+        });
+        for request in wearables {
+            emit(
+                self.sh,
+                NetEvent::WearableSaved {
+                    request,
+                    result: Err(aurora_i18n::tr!("shape-save-interrupted").into()),
+                },
+            );
         }
         for request in imports {
             emit(

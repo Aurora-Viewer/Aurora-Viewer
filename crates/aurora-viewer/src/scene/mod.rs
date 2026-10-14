@@ -36,7 +36,7 @@ mod sync_plan;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
 pub mod texture_budget;
-mod texture_cache;
+pub(crate) mod texture_cache;
 mod texture_load;
 pub mod textures;
 pub mod water;
@@ -2807,7 +2807,7 @@ impl Scene {
 
     /// Bake slots (texture-entry index bits) shown by the avatar's attachments
     /// and their child prims.
-    fn bom_mask(world: &World, avatar_idx: usize) -> u64 {
+    pub(crate) fn bom_mask(world: &World, avatar_idx: usize) -> u64 {
         let Some(av) = world.objects.get(avatar_idx) else {
             return 0;
         };
@@ -3892,6 +3892,26 @@ impl Scene {
     pub fn name_tag_anchor(&self, id: &Uuid, root: Vec3) -> Vec3 {
         let height = self.motions.get(id).and_then(|c| c.name_tag_height).map_or(1.05, |h| h + 0.2);
         root + Vec3::Z * height
+    }
+
+    /// Last rendered shape/pose, including mesh joint overrides, for framing.
+    pub fn joint_world(&self, world: &World, id: &Uuid, name: &str, now: Instant) -> Option<Vec3> {
+        let index = world.objects.index_of_uuid(id)?;
+        let (position, rotation, _) = Self::object_transform(world, index, now, 0)?;
+        let rig = &world.avatar_lib.rig;
+        let joint = *rig.names.get(name)?;
+        let rest = rig.default_world_inv[joint].inverse().w_axis.truncate();
+        let posed = world
+            .avatar_poses
+            .get(id)
+            .and_then(|pose| pose.get(joint))
+            .map(|delta| delta.transform_point3(rest))
+            .unwrap_or(rest);
+        Some(position + rotation * (posed - world.avatar_lib.pelvis))
+    }
+
+    pub fn preview_pose(&self, avatar: &Uuid) -> (Vec<Quat>, Vec<Vec3>) {
+        self.motions.get(avatar).map(|motion| motion.preview_pose()).unwrap_or_default()
     }
 
     /// Where a look-at target is (LLHUDEffectLookAt::calcTargetPosition).

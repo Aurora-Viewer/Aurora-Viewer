@@ -124,6 +124,8 @@ pub struct Settings {
     pub gestures: crate::ui::gestures::Settings,
     pub imports: crate::imports::Preferences,
     pub ao: crate::ao::Settings,
+    pub shape_show_hints: bool,
+    pub shape_height_feet: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
     pub remember_username: bool,
@@ -239,6 +241,9 @@ pub struct Settings {
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
     /// lines of text on a flat tag, in the tag colors of the preferences.
     pub classic_name_tags: bool,
+    /// Complete name plates for friends only: the others stop at the
+    /// compact pill (off by default).
+    pub plates_friends_only_full: bool,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
@@ -348,7 +353,7 @@ pub struct Settings {
     pub settings_version: u32,
 }
 
-const SETTINGS_VERSION: u32 = 10;
+const SETTINGS_VERSION: u32 = 11;
 
 /// RGBA color (sRGB, straight alpha).
 pub type Rgba = [u8; 4];
@@ -363,6 +368,11 @@ const fn hex(v: u32) -> Rgba {
 #[serde(default)]
 pub struct ColorSettings {
     // name tags
+    /// Display names colored by who the avatar is to us (me, friend, Linden,
+    /// blocked), on the plates and the classic tags; off, every name is in
+    /// the theme's ink (the human's choice, 2026-10-14). Firestorm always
+    /// colors them (LLVOAvatar::getNameTagColor).
+    pub relation_names: bool,
     pub tag_me: Rgba,
     pub tag_friend: Rgba,
     pub tag_muted: Rgba,
@@ -414,6 +424,7 @@ pub struct ColorSettings {
 impl Default for ColorSettings {
     fn default() -> Self {
         ColorSettings {
+            relation_names: false,
             tag_me: hex(0xFFFFFF),
             tag_friend: hex(0x818CF8),
             tag_muted: hex(0x6F7BA0),
@@ -547,6 +558,8 @@ impl Default for Settings {
             friends_list: Default::default(),
             inventory: Default::default(),
             gestures: Default::default(),
+            shape_show_hints: true,
+            shape_height_feet: false,
             imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),
@@ -618,6 +631,7 @@ impl Default for Settings {
             chat_commands: Default::default(),
             name_tag_distance: 64.0,
             classic_name_tags: false,
+            plates_friends_only_full: false,
             chat_style: ChatStyle::Bubbles,
             invert_mouse: false,
             arrows_strafe: false,
@@ -904,6 +918,11 @@ impl Settings {
             // new default: the background cap is on (a window left behind no
             // longer keeps the GPU and the desktop busy)
             self.background_fps_cap = true;
+        }
+        if self.settings_version < 11 {
+            // the names were colored by relation on the classic tags only:
+            // whoever used them keeps their colors, the plates turn white
+            self.colors.relation_names = self.classic_name_tags;
         }
         if self.settings_version < 4 {
             // walking: arrow keys only (no more WASD / ZQSD by default)
@@ -1458,6 +1477,27 @@ mod tests {
         let mut on = Settings::default();
         on.audio.music_autoplay = true;
         assert!(on.sanitized().audio.music_autoplay);
+    }
+
+    #[test]
+    fn names_by_relation_stay_colored_for_classic_tag_users_only() {
+        assert!(!Settings::default().sanitized().colors.relation_names);
+        // a file from before the switch has no such field
+        for classic in [false, true] {
+            let mut file = serde_json::to_value(Settings {
+                settings_version: 10,
+                classic_name_tags: classic,
+                ..Settings::default()
+            })
+            .expect("synthetic saved settings");
+            file["colors"].as_object_mut().expect("colors").remove("relation_names");
+            let old: Settings = serde_json::from_value(file).expect("read synthetic settings");
+            assert_eq!(old.sanitized().colors.relation_names, classic);
+        }
+        // changed after the migration: kept
+        let mut on = Settings::default();
+        on.colors.relation_names = true;
+        assert!(on.sanitized().colors.relation_names);
     }
 
     #[test]

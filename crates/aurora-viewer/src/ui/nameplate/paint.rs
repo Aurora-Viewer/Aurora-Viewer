@@ -181,7 +181,7 @@ fn line(env: &Env<'_>, text: &str, format: TextFormat, max_width: f32) -> Arc<Ga
 fn face(env: &Env<'_>, level: Level, c: &Content) -> Face {
     let p = env.p;
     let m = Metrics::of(level, SCALE);
-    let color = c.role.name_color(p);
+    let color = c.role.name_color(p, &crate::ui::colors::get());
     let mut format = match level {
         // the far pill's name is a regular weight
         Level::Far => TextFormat::simple(FontId::proportional(m.name_pt), color),
@@ -327,9 +327,7 @@ pub(super) fn cover(size: [usize; 2]) -> Rect {
 fn badge_icon(p: &Palette, badge: Badge) -> Option<(&'static str, Color32)> {
     Some(match badge {
         Badge::Voice => ("microphone-filled", p.success),
-        // as the classic tag's (`ui::hud`)
-        Badge::NoVoice => ("microphone-off", p.danger),
-        Badge::Friend => ("heart-filled", p.violet_light),
+        Badge::Friend => ("heart-filled", p.success),
         Badge::TooComplex => ("alert-triangle-filled", p.amber),
         Badge::Blocked => ("forbid-filled", p.danger),
         Badge::Typing => return None,
