@@ -82,9 +82,8 @@ fn toast_seconds(n: &Notification, message_seconds: f64) -> f64 {
     }
 }
 
-/// Bell button with the unread count; returns true when clicked. In an
-/// island of the Aurora bars (`island`), the count is the violet one the
-/// Conversations button has.
+/// Bell button with the unread count; returns true when clicked, in an
+/// island of the Aurora bars (`island`) or in Firestorm's top bar.
 pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: bool, island: bool) -> (bool, egui::Rect) {
     if island {
         let (rect, resp) = ui.allocate_exact_size(Vec2::splat(super::bars::islands::SLOT), egui::Sense::click());
@@ -120,14 +119,9 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: 
             .image(t.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), col);
     }
     if unread > 0 {
-        let text = if unread > 99 { "99+".to_owned() } else { unread.to_string() };
-        let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(9.0), p.on_accent);
-        // round for one digit, a pill beyond
-        const H: f32 = 12.0;
-        let w = (galley.size().x + 6.0).max(H);
-        let badge = egui::Rect::from_min_size(egui::pos2(rect.right() - w + 3.0, rect.top()), Vec2::new(w, H));
-        ui.painter().rect_filled(badge, H / 2.0, p.rose);
-        super::widgets::paint_ink_centered(ui.painter(), galley, badge.center(), p.on_accent);
+        // the interface's one counter, 3 px past the button's right edge
+        let anchor = rect.right_top() + Vec2::new(3.0, 0.0);
+        super::widgets::unread_count(ui.painter(), p, anchor, unread, super::widgets::CountSize::Bar);
     }
     let tip = aurora_i18n::tr!("notifications-unread-count", count = unread);
     (resp.on_hover_text(tip).clicked(), rect)

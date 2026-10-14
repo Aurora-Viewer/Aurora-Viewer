@@ -1431,28 +1431,26 @@ fn tool_button(
     resp.on_hover_text(tip)
 }
 
-/// The unread count of the Conversations button: the pill of the entries of
-/// the conversation list (violet, its number in `on_accent`), on the top
-/// right corner of the icon like the bell's count, inside the button so
-/// that nothing moves. A button too narrow for it keeps a dot.
+/// The unread count of the Conversations button: the one counter of the
+/// interface (`widgets::UnreadCount`), on the top right corner of the icon
+/// like the bell's count, inside the button so that nothing moves. A button
+/// too narrow for it keeps a dot of the counter's red.
 fn paint_unread_pill(ui: &egui::Ui, p: &Palette, rect: egui::Rect, icon: f32, unread: usize) {
     let painter = ui.painter();
-    let text = if unread > 99 { "99+".to_owned() } else { unread.to_string() };
-    let galley = painter.layout_no_wrap(text, egui::FontId::proportional(9.5), p.on_accent);
-    const H: f32 = 13.0;
-    let w = (galley.size().x + 7.0).max(H);
-    if rect.width() < w + 4.0 {
+    let count = super::widgets::UnreadCount::new(unread, super::widgets::CountSize::Bar);
+    let top = rect.top() - 1.0;
+    let placed = count.place(ui.ctx(), p, egui::pos2(rect.center().x + icon * 0.2, top), egui::Align2::LEFT_TOP);
+    if rect.width() < placed.rect.width() + 4.0 {
         painter.circle_filled(
             egui::pos2(rect.right() - (rect.width() * 0.18).clamp(4.0, 8.0), rect.center().y),
             (rect.width() * 0.07).clamp(2.0, 3.0),
-            p.violet,
+            p.danger_dim,
         );
-        return;
+    } else if placed.rect.right() > rect.right() - 1.0 {
+        count.paint(painter, p, egui::pos2(rect.right() - 1.0, top), egui::Align2::RIGHT_TOP);
+    } else {
+        placed.paint(painter);
     }
-    let left = (rect.center().x + icon * 0.2).min(rect.right() - 1.0 - w);
-    let pill = egui::Rect::from_min_size(egui::pos2(left, rect.top() - 1.0), Vec2::new(w, H));
-    painter.rect_filled(pill, ui.visuals().window_corner_radius, p.violet);
-    super::widgets::paint_ink_centered(painter, galley, pill.center(), p.on_accent);
 }
 
 /// Microphone button state (Firestorm "Speak" button with its arrow).
