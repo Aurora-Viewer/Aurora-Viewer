@@ -527,7 +527,7 @@ impl App {
                 (depth, depth.and_then(|p| self.scene.pick_at(&self.world, p, now)))
             } else {
                 let point = self.scene.action_point(&self.world, ray, depth, build, self.settings.draw_distance);
-                let idx = if self.alt {
+                let idx = if self.alt || self.object_view {
                     point.and_then(|p| self.scene.interaction_at(&self.world, p, now, build))
                 } else {
                     point

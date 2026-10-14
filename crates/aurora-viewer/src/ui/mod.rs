@@ -16,6 +16,7 @@ pub mod color_picker;
 pub mod colors;
 pub mod contacts;
 pub mod context;
+pub mod controls;
 pub mod debug_overlay;
 pub mod display_name;
 pub mod emoji;
@@ -60,11 +61,13 @@ pub mod place_details;
 pub mod places;
 pub mod presence;
 pub mod profile;
+pub mod region;
 pub mod region_restart;
 pub mod report_abuse;
 pub mod scripts;
 pub mod search;
 pub mod shape;
+pub mod sheet;
 pub mod skin;
 pub mod sky_beacons;
 pub mod snap;
@@ -73,6 +76,7 @@ pub mod sound_cues;
 pub mod texture_picker;
 #[cfg(test)]
 mod theme_guard;
+pub mod toolbar;
 pub mod update;
 pub mod voice_tag;
 pub mod web_view;
@@ -106,10 +110,17 @@ pub struct Panels {
     pub contacts: bool,
     /// "About Land" (navigation bar info icon).
     pub about_land: bool,
+    /// "Region / Estate" (World menu, Alt+R).
+    pub region_estate: bool,
     /// "Places" (favorites, landmarks, teleport history, place profiles).
     pub places: bool,
     /// "Search" (Firestorm's legacy search floater, Ctrl+F).
     pub search: bool,
+    /// The Controls window on its Camera tab (Firestorm's camera window
+    /// with Preferences › Aurora), and on its Movement tab (the movement
+    /// window).
+    pub camera_controls: bool,
+    pub movement_controls: bool,
     /// Navigation bar location being edited (text) and "just opened" (select all).
     pub nav_edit: Option<String>,
     pub nav_edit_new: bool,
@@ -139,8 +150,11 @@ impl Panels {
             people_tab: settings.people_tab.min(1),
             contacts: false,
             about_land: false,
+            region_estate: false,
             places: false,
             search: false,
+            camera_controls: false,
+            movement_controls: false,
             nav_edit: None,
             nav_edit_new: false,
         }

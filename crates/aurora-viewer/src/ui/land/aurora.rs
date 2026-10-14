@@ -9,14 +9,18 @@
 use super::manage::Section;
 use super::{LandUi, Tab, View, manage, overview, people};
 use crate::theme::Palette;
+use crate::ui::sheet::{self, GAUGE_W, PICTURE, PageTab, fact, icon_at};
 use crate::ui::{presence, widgets};
 use crate::world::World;
 use crate::world::land::{PrimRoom, PrimUsage};
 use aurora_net::ParcelInfo;
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
-use egui::{Color32, Pos2, Rect, RichText, Sense, Shape, Vec2};
+use egui::{Color32, Rect, RichText, Sense, Shape, Vec2};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+/// The pieces the pages share with the other redesigned windows.
+pub(super) use crate::ui::sheet::{Tone, card_title, cards, cover_uv, kv, pill, semibold};
 
 /// The three pages of the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -75,212 +79,6 @@ impl Page {
 pub(super) const SIZE: Vec2 = Vec2::new(1000.0, 720.0);
 pub(super) const MIN_SIZE: Vec2 = Vec2::new(760.0, 480.0);
 
-/// Side of the header's picture.
-const PICTURE: Vec2 = Vec2::new(220.0, 148.0);
-/// Width of the objects gauge.
-const GAUGE_W: f32 = 220.0;
-
-/// The tint of a pill: allowed, for the group only, refused, or a plain fact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Tone {
-    Allow,
-    Group,
-    Deny,
-    Neutral,
-}
-
-/// Text in the theme's semi-bold face.
-pub(super) fn semibold(ui: &egui::Ui, text: &str, size: f32, color: Color32) -> egui::text::LayoutJob {
-    let family = crate::ui::fonts::semibold(ui.ctx());
-    let mut job = egui::text::LayoutJob::default();
-    job.append(text, 0.0, crate::ui::fonts::semibold_format(&family, size, color));
-    job
-}
-
-/// A small Tabler icon `size` wide.
-fn icon_at(ui: &egui::Ui, name: &str, center: Pos2, size: f32, tint: Color32) {
-    if let Some(t) = crate::ui::icons::global(name) {
-        ui.painter().image(
-            t.id(),
-            Rect::from_center_size(center, Vec2::splat(size)),
-            Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
-            tint,
-        );
-    }
-}
-
-/// A pill: an icon (or none) and a short text on a tinted face.
-pub(super) fn pill(ui: &mut egui::Ui, p: &Palette, tone: Tone, icon: &str, label: &str) -> egui::Response {
-    const PAD: f32 = 9.0;
-    const ICON: f32 = 13.0;
-    let (fill, ink) = match tone {
-        Tone::Allow => (p.success.gamma_multiply(0.12), p.success),
-        Tone::Group => (p.violet_light.gamma_multiply(0.16), p.violet_pale),
-        Tone::Deny => (p.danger.gamma_multiply(0.12), p.danger),
-        Tone::Neutral => (p.bar, p.muted),
-    };
-    let galley = ui.painter().layout_job(semibold(ui, label, 12.0, ink));
-    let lead = if icon.is_empty() { 0.0 } else { ICON + 5.0 };
-    let size = Vec2::new(PAD * 2.0 + lead + galley.size().x, 22.0);
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
-    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-    if !icon.is_empty() {
-        icon_at(ui, icon, egui::pos2(rect.left() + PAD + ICON / 2.0, rect.center().y), ICON, ink);
-    }
-    let pos = egui::pos2(rect.left() + PAD + lead, rect.center().y - galley.size().y / 2.0).round();
-    ui.painter().galley(pos, galley, ink);
-    resp
-}
-
-/// The title of a card: its icon, its name, and a link at the right end
-/// (its response).
-pub(super) fn card_title(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str, link: Option<&str>) -> Option<egui::Response> {
-    let out = ui
-        .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 7.0;
-            widgets::glyph(ui, icon, p.violet_light, 15.0);
-            ui.label(semibold(ui, title, 13.0, p.ink));
-            link.map(|text| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(egui::Label::new(semibold(ui, text, 12.0, p.violet_light)).sense(Sense::click()))
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                })
-                .inner
-            })
-        })
-        .inner;
-    ui.add_space(2.0);
-    out
-}
-
-/// Width of the keys of `kv`.
-const KEY_W: f32 = 140.0;
-
-/// A line of facts: its key in the left column, then `value`.
-pub(super) fn kv(ui: &mut egui::Ui, p: &Palette, key: &str, value: impl FnOnce(&mut egui::Ui)) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        ui.allocate_ui_with_layout(Vec2::new(KEY_W, 16.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.set_min_width(KEY_W);
-            ui.add(egui::Label::new(RichText::new(key).size(12.5).color(p.muted)).truncate());
-        });
-        ui.add_space(6.0);
-        value(ui);
-    });
-}
-
-/// Two cards side by side, `ratio` to 1 (1.3 for the overview's grid), as
-/// tall as the taller one.
-pub(super) fn cards(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    world: &mut World,
-    s: &mut LandUi,
-    ratio: f32,
-    left: impl FnOnce(&mut egui::Ui, &mut World, &mut LandUi),
-    right: impl FnOnce(&mut egui::Ui, &mut World, &mut LandUi),
-) {
-    const GAP: f32 = 12.0;
-    const PAD: Vec2 = Vec2::new(12.0, 10.0);
-    let width = ui.available_width();
-    let left_w = ((width - GAP) * ratio / (ratio + 1.0)).floor();
-    let right_w = width - GAP - left_w;
-    let top = ui.cursor().min;
-    let faces = [ui.painter().add(Shape::Noop), ui.painter().add(Shape::Noop)];
-    let mut column = |x: f32, w: f32, body: &mut dyn FnMut(&mut egui::Ui)| {
-        let inner = Rect::from_min_size(
-            egui::pos2(x + PAD.x, top.y + PAD.y),
-            Vec2::new((w - PAD.x * 2.0).max(1.0), 10_000.0),
-        );
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(inner)
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-        );
-        // the lines of facts as close as the mockup's (12.5 px text, 6 px apart)
-        child.spacing_mut().item_spacing.y = 6.0;
-        child.spacing_mut().interact_size.y = 16.0;
-        body(&mut child);
-        child.min_rect().height()
-    };
-    let mut left = Some(left);
-    let mut right = Some(right);
-    let h_left = column(top.x, left_w, &mut |ui| {
-        if let Some(f) = left.take() {
-            f(ui, world, s)
-        }
-    });
-    let h_right = column(top.x + left_w + GAP, right_w, &mut |ui| {
-        if let Some(f) = right.take() {
-            f(ui, world, s)
-        }
-    });
-    let h = h_left.max(h_right) + PAD.y * 2.0;
-    let radius = ui.visuals().window_corner_radius;
-    ui.painter().set(
-        faces[0],
-        Shape::rect_filled(Rect::from_min_size(top, Vec2::new(left_w, h)), radius, p.field),
-    );
-    ui.painter().set(
-        faces[1],
-        Shape::rect_filled(
-            Rect::from_min_size(egui::pos2(top.x + left_w + GAP, top.y), Vec2::new(right_w, h)),
-            radius,
-            p.field,
-        ),
-    );
-    ui.allocate_rect(Rect::from_min_size(top, Vec2::new(width, h)), Sense::hover());
-}
-
-/// The page tabs: a lit face for the open one; at the right end, for who
-/// may manage the parcel, "View as" themselves or a visitor (`role`: the
-/// name of their own rights).
-fn page_tabs(ui: &mut egui::Ui, p: &Palette, page: &mut Page, role: Option<&str>, visitor: &mut bool) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for it in Page::ALL {
-            let selected = *page == it;
-            let ink = if selected { p.ink } else { p.muted };
-            let galley = ui.painter().layout_job(semibold(ui, it.label(), 12.5, ink));
-            let size = Vec2::new(12.0 * 2.0 + 14.0 + 6.0 + galley.size().x, 28.0);
-            let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-            let face = if selected {
-                Some(p.raised)
-            } else if resp.hovered() {
-                Some(p.raised.gamma_multiply(0.5))
-            } else {
-                None
-            };
-            if let Some(face) = face {
-                ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, face);
-            }
-            icon_at(ui, it.icon(), egui::pos2(rect.left() + 12.0 + 7.0, rect.center().y), 14.0, ink);
-            let pos = egui::pos2(rect.left() + 12.0 + 14.0 + 6.0, rect.center().y - galley.size().y / 2.0).round();
-            ui.painter().galley(pos, galley, ink);
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, it.label()));
-            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                *page = it;
-            }
-        }
-        if let Some(role) = role {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                let mut choice = usize::from(*visitor);
-                let options = [(role, false), (aurora_i18n::tr!("ui-land-overview-visitor"), false)];
-                if widgets::segmented(ui, p, &mut choice, &options) {
-                    *visitor = choice == 1;
-                }
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("ui-land-overview-view-as"))
-                        .size(12.0)
-                        .color(p.muted),
-                )
-                .on_hover_text(aurora_i18n::tr!("ui-land-overview-view-as-tip"));
-            });
-        }
-    });
-}
-
 /// The name of the agent's rights on the parcel for "View as": None when
 /// they can change nothing (they already see what a visitor sees).
 pub(super) fn manager_role(v: &View) -> Option<&'static str> {
@@ -306,19 +104,6 @@ pub(super) fn as_visitor(v: &View) -> View {
         }),
         ..v.clone()
     }
-}
-
-/// The part of a `w` x `h` picture that covers a `size` frame, cut in its
-/// middle.
-pub(super) fn cover_uv(w: usize, h: usize, size: Vec2) -> Rect {
-    let picture = w.max(1) as f32 / h.max(1) as f32;
-    let frame = size.x / size.y.max(1.0);
-    let half = if picture > frame {
-        Vec2::new(frame / picture, 1.0) * 0.5
-    } else {
-        Vec2::new(1.0, picture / frame) * 0.5
-    };
-    Rect::from_min_max(egui::pos2(0.5, 0.5) - half, egui::pos2(0.5, 0.5) + half)
 }
 
 /// What the window draws with, besides the parcel.
@@ -484,45 +269,12 @@ fn owner(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, parc
     });
 }
 
-/// A fact of the header: its small key over its value.
-fn fact(ui: &mut egui::Ui, p: &Palette, key: &str, value: impl FnOnce(&mut egui::Ui)) {
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 2.0;
-        ui.label(RichText::new(key).size(11.0).color(p.muted));
-        value(ui);
-    });
-}
-
 /// The parcel at a glance, over the three pages.
 fn header(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut World, parcel: &ParcelInfo, pics: &Pictures) {
-    const PAD: f32 = 12.0;
-    let width = ui.available_width();
-    let top = ui.cursor().min;
-    let face = ui.painter().add(Shape::Noop);
-    let inner = Rect::from_min_size(top + Vec2::splat(PAD), Vec2::new(width - PAD * 2.0, 10_000.0));
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(inner)
-            .layout(egui::Layout::left_to_right(egui::Align::Min)),
-    );
-    child.spacing_mut().item_spacing.x = 14.0;
-    picture(&mut child, p, s, v, parcel, pics);
-    child.vertical(|ui| {
-        // rows as tall as their text, 8 px apart, like the mockup
-        ui.spacing_mut().item_spacing.y = 8.0;
-        ui.spacing_mut().interact_size.y = 16.0;
-        main_column(ui, p, s, v, world, parcel, pics);
+    sheet::hero(ui, p, |ui| {
+        picture(ui, p, s, v, parcel, pics);
+        sheet::hero_column(ui, |ui| main_column(ui, p, s, v, world, parcel, pics));
     });
-    let h = child.min_rect().height() + PAD * 2.0;
-    ui.painter().set(
-        face,
-        Shape::rect_filled(
-            Rect::from_min_size(top, Vec2::new(width, h)),
-            ui.visuals().window_corner_radius,
-            p.field,
-        ),
-    );
-    ui.allocate_rect(Rect::from_min_size(top, Vec2::new(width, h)), Sense::hover());
 }
 
 fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut World, parcel: &ParcelInfo, pics: &Pictures) {
@@ -573,13 +325,12 @@ fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
                     ui.label(semibold(ui, &main, 14.0, p.ink));
                     ui.label(RichText::new(format!(" · {rest}")).size(12.0).color(p.muted));
                 });
-                ui.add_space(3.0);
                 let tint = match usage.room() {
                     PrimRoom::Plenty => None,
                     PrimRoom::Low => Some(p.warn),
                     PrimRoom::Critical => Some(p.danger),
                 };
-                widgets::progress(ui, p, "land_objects", usage.fraction(), GAUGE_W, "", tint);
+                sheet::gauge(ui, p, "land_objects", usage.fraction(), GAUGE_W, tint);
             });
         }
         fact(ui, p, aurora_i18n::tr!("ui-land-overview-access"), |ui| {
@@ -617,7 +368,19 @@ pub(super) fn show(
     if role.is_none() {
         s.view_as_visitor = false;
     }
-    page_tabs(ui, p, &mut s.page, role, &mut s.view_as_visitor);
+    let tabs = Page::ALL.map(|page| PageTab {
+        page,
+        icon: page.icon(),
+        label: page.label(),
+        disabled: None,
+    });
+    let role = role.map(|mine| sheet::ViewAs {
+        mine,
+        other: aurora_i18n::tr!("ui-land-overview-visitor"),
+        tip: aurora_i18n::tr!("ui-land-overview-view-as-tip"),
+        accent: false,
+    });
+    sheet::page_tabs(ui, p, &tabs, &mut s.page, role, &mut s.view_as_visitor);
     ui.add_space(8.0);
     let Some(parcel) = v.parcel.clone() else {
         super::no_selection(ui, p);
@@ -660,21 +423,6 @@ pub(super) fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The header's picture keeps its aspect: a square picture fills the
-    /// width and loses its top and bottom.
-    #[test]
-    fn a_picture_covers_its_frame() {
-        let frame = Vec2::new(220.0, 148.0);
-        let full = cover_uv(220, 148, frame);
-        assert!((full.width() - 1.0).abs() < 1e-5 && (full.height() - 1.0).abs() < 1e-5);
-        let square = cover_uv(512, 512, frame);
-        assert!((square.width() - 1.0).abs() < 1e-5);
-        assert!((square.height() - 148.0 / 220.0).abs() < 1e-5);
-        assert!((square.center().y - 0.5).abs() < 1e-5);
-        let wide = cover_uv(1024, 256, frame);
-        assert!((wide.height() - 1.0).abs() < 1e-5 && wide.width() < 1.0);
-    }
 
     #[test]
     fn every_classic_tab_has_a_place() {

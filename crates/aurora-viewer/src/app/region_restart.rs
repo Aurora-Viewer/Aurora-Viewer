@@ -495,7 +495,6 @@ impl App {
             still: self.settings.reduce_motion,
             frozen: demo.as_ref().is_some_and(|d| d.still),
             destinations: &destinations,
-            region_estate: false,
         };
         let actions = alert::show(ctx, p, &mut self.region_restart.ui, &view);
         for action in actions {
@@ -549,8 +548,8 @@ impl App {
                     self.send(NetCommand::CancelRegionRestart);
                 }
             }
-            // the Region / Estate window is not there yet: its link is inactive
-            Action::RegionEstate => {}
+            // the window where restarts are scheduled and cancelled
+            Action::RegionEstate => crate::ui::region::request_open(&self.egui_ctx),
         }
     }
 

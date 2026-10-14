@@ -526,6 +526,13 @@ impl Land {
         self.send(LandCommand::CovenantRequest { handle });
     }
 
+    /// The same request for a caller that sends it in its own order (the
+    /// Region / Estate window, between its panels' requests).
+    pub fn covenant_request(&mut self, handle: RegionHandle) -> NetCommand {
+        self.covenant_asked = Some((handle, Instant::now()));
+        NetCommand::Land(LandCommand::CovenantRequest { handle })
+    }
+
     /// The selection is a parcel of `handle`: objects coming and going there
     /// change what the floater shows.
     pub fn watches(&self, handle: RegionHandle) -> bool {

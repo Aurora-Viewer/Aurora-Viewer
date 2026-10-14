@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolButton {
     /// Icon file name without extension.
     pub icon: String,
@@ -51,7 +51,8 @@ impl Default for Layout {
             toolbar: vec![
                 tb("Command_Chat_Icon", "conversations", aurora_i18n::tr!("common-conversations")),
                 tb("Command_Speak_Icon", "speak", aurora_i18n::tr!("ui-skin-speak")),
-                tb("Command_Move_Icon", "fly", aurora_i18n::tr!("extra-fly-land-f")),
+                tb("Command_Move_Icon", "move", aurora_i18n::tr!("controls-movement-title")),
+                tb("video-filled", "view", aurora_i18n::tr!("controls-camera-title")),
                 tb("Command_View_Icon", "mouselook", aurora_i18n::tr!("common-mouselook-m")),
                 tb("Command_People_Icon", "people", aurora_i18n::tr!("common-people")),
                 tb("Command_Inventory_Icon", "inventory", aurora_i18n::tr!("common-inventory")),

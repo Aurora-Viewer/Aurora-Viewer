@@ -19,6 +19,27 @@ pub fn pill_tab(
     selected: bool,
     enabled: bool,
 ) -> egui::Response {
+    tab(ui, p, icon, label, count, accent, selected, enabled, None)
+}
+
+/// A `pill_tab` of the given width, its icon and name in the middle (the
+/// two halves of the Controls window).
+pub fn pill_tab_wide(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool, width: f32) -> egui::Response {
+    tab(ui, p, icon, label, None, false, selected, true, Some(width))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn tab(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    count: Option<String>,
+    accent: bool,
+    selected: bool,
+    enabled: bool,
+    width: Option<f32>,
+) -> egui::Response {
     let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
     let ink = if !enabled {
         p.muted_dim
@@ -36,7 +57,8 @@ pub fn pill_tab(
     let pad = if accent { 5.0 } else { 0.0 };
     let count_w = count.as_ref().map_or(0.0, |g| 5.0 + g.size().x + pad * 2.0);
     let icon_w = if icon.is_empty() { 0.0 } else { 15.0 + 5.0 };
-    let size = Vec2::new(12.0 + icon_w + galley.size().x + count_w + 12.0, 28.0);
+    let content = icon_w + galley.size().x + count_w;
+    let size = Vec2::new(width.unwrap_or(12.0 + content + 12.0), 28.0);
     let (rect, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if selected {
@@ -44,7 +66,10 @@ pub fn pill_tab(
     } else if enabled && resp.hovered() {
         ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.5));
     }
-    let mut x = rect.left() + 12.0;
+    let mut x = match width {
+        Some(_) => rect.center().x - content / 2.0,
+        None => rect.left() + 12.0,
+    };
     if !icon.is_empty() {
         if let Some(t) = crate::ui::icons::global(icon) {
             let r = Rect::from_center_size(Pos2::new(x + 7.5, rect.center().y), Vec2::splat(15.0));

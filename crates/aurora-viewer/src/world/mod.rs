@@ -13,6 +13,7 @@ pub mod env_apply;
 pub mod env_day_edit;
 pub mod env_edit;
 pub mod env_select;
+pub mod estate;
 pub mod experiences;
 pub mod group_data;
 pub mod group_money;
@@ -296,6 +297,8 @@ pub struct World {
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
+    /// The Region / Estate window's region and estate.
+    pub estate: estate::Estate,
     /// Media texture overrides and parcel media messages (media module).
     pub media: crate::media::WorldMedia,
     /// Avatar profiles and the ids still to request.
@@ -372,6 +375,18 @@ fn saved_prefix(timestamp: u32) -> String {
 }
 
 impl World {
+    /// LLFloaterRegionInfo::refreshFromRegion on `handle`: the panels ask
+    /// (estate, access, covenant, experiences, environment), then, when the
+    /// window opens, RequestRegionInfo (requestRegionInfo).
+    pub fn refresh_region_window(&mut self, handle: RegionHandle, request_info: bool) {
+        self.estate.open(handle);
+        let covenant = self.land.covenant_request(handle);
+        self.estate.push(covenant);
+        if request_info {
+            self.estate.request_region_info(handle);
+        }
+    }
+
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
         World {
             hud_aspect: 1.0,
@@ -455,6 +470,7 @@ impl World {
             parcel_name: String::new(),
             parcel: None,
             land: land::Land::default(),
+            estate: estate::Estate::default(),
             media: Default::default(),
             tp_history: tphistory::TeleportHistory::default(),
             tp_storage: Default::default(),
@@ -1987,6 +2003,14 @@ impl World {
                         .push((*local_id, result.as_ref().map(|_| ()).map_err(Clone::clone)));
                 }
                 self.land.apply(ev, &ctx);
+                None
+            }
+            NetEvent::Estate(ev) => {
+                if self.estate.apply(ev)
+                    && let Some(handle) = self.estate.open
+                {
+                    self.refresh_region_window(handle, false);
+                }
                 None
             }
             NetEvent::Health(health) => {

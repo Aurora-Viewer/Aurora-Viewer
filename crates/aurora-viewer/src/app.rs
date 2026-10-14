@@ -32,6 +32,7 @@ mod chat_commands;
 mod click_pick;
 mod color_picker;
 mod context_menu;
+mod controls;
 mod cursor_hold;
 mod dof;
 mod double_click;
@@ -176,6 +177,7 @@ pub struct App {
     demo_mfa_challenge: Option<std::time::Instant>,
     panels: Panels,
     chat_ui: ChatUi,
+    toolbar_ui: ui::toolbar::ToolbarUi,
     /// The History window (a conversation's whole transcript).
     history_ui: ui::chat::history::HistoryUi,
     perf: PerfData,
@@ -229,6 +231,12 @@ pub struct App {
     temp_run: Option<u8>,
     /// "Always run" (Ctrl+R).
     always_run: bool,
+    /// The Controls window (`ui/controls.rs`), the keys its buttons and
+    /// joysticks hold this frame, and its "Object view": a left click in the
+    /// world focuses the camera, as with Alt (LLToolCamera).
+    controls_ui: ui::controls::ControlsUi,
+    controls_held: Vec<Action>,
+    object_view: bool,
     /// Double click on the ground (src/autopilot.rs): the presses of the
     /// left button on the world, whether the one being handled is the
     /// second of a double click, and the walk it may have started.
@@ -472,6 +480,7 @@ pub struct App {
     place_groups: std::collections::HashSet<uuid::Uuid>,
     /// "About Land".
     land_ui: ui::land::LandUi,
+    region_ui: ui::region::RegionUi,
     group_profile_ui: ui::group_profile::GroupProfileUi,
     /// Environment selector and "Personal lighting".
     env_ui: ui::environment::EnvironmentUi,
@@ -679,6 +688,7 @@ impl App {
             demo_mfa_challenge: None,
             panels,
             chat_ui: ChatUi::default(),
+            toolbar_ui: Default::default(),
             history_ui: Default::default(),
             perf: PerfData::default(),
             frame_profile: FrameProfile::default(),
@@ -710,6 +720,9 @@ impl App {
             last_tap: None,
             temp_run: None,
             always_run: false,
+            controls_ui: Default::default(),
+            controls_held: Vec::new(),
+            object_view: false,
             double_click: Default::default(),
             double_press: false,
             autopilot: None,
@@ -856,6 +869,7 @@ impl App {
             lod_infos: Vec::new(),
             place_groups: Default::default(),
             land_ui: Default::default(),
+            region_ui: Default::default(),
             group_profile_ui: Default::default(),
             env_ui: Default::default(),
             env_scan: false,
@@ -2512,16 +2526,9 @@ impl App {
         };
         match action {
             Action::Fly => self.toggle_fly(),
-            Action::AlwaysRun => {
-                self.always_run = !self.always_run;
-                self.send(NetCommand::SetAlwaysRun(self.always_run || self.temp_run.is_some()));
-                self.world.system_message(if self.always_run {
-                    aurora_i18n::tr!("app-always-run-enabled")
-                } else {
-                    aurora_i18n::tr!("app-always-run-disabled")
-                });
-            }
+            Action::AlwaysRun => self.set_always_run(!self.always_run),
             Action::Mouselook => self.toggle_mouselook(),
+            Action::CameraControls => self.panels.camera_controls = !self.panels.camera_controls,
             Action::ResetCamera => {
                 if !self.photo_escape() {
                     self.reset_camera_view();
@@ -2541,6 +2548,7 @@ impl App {
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
             Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
             Action::TeleportHistory => self.toggle_teleport_history(),
+            Action::RegionEstate => ui::widgets::toggle_floater(&self.egui_ctx, ui::region::WINDOW, &mut self.panels.region_estate),
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
@@ -2718,7 +2726,9 @@ impl App {
         let on_avatar = avatar_hit.is_some();
         // a media face takes the click (LLToolPie::handleMediaClick)
         self.media.build_mode = self.build.open;
-        if !self.alt && !on_avatar {
+        // "Object view" of the Controls window: the click is Alt's
+        let alt = self.alt || self.object_view;
+        if !alt && !on_avatar {
             if let Some(ray) = ray {
                 let depth_t = hit.map(|p| (p - ray.0).dot(ray.1));
                 let mods = aurora_media::Modifiers {
@@ -2750,7 +2760,7 @@ impl App {
         // the click acts on the rigged mesh it lands on, as on any object:
         // also one we wear, like the scripted attachments Firestorm lets
         // us touch (its rigged ones are out of the left click's reach)
-        if !self.alt
+        if !alt
             && !self.ctrl
             && !self.shift
             && !self.build.open
@@ -2764,7 +2774,7 @@ impl App {
         }
         if !on_avatar
             && shown.is_none()
-            && !self.alt
+            && !alt
             && !self.ctrl
             && !self.shift
             && !self.build.open
@@ -2777,7 +2787,7 @@ impl App {
             self.activate_object_action(target, idx, point, ray);
             return;
         }
-        if self.alt {
+        if alt {
             // Alt+click (LLToolCamera): lock the camera on the clicked point
             // (our avatar too, to look at a part of it closely); keep holding
             // to zoom, Ctrl to orbit, Ctrl+Shift to pan
@@ -4087,6 +4097,27 @@ impl App {
         self.send(NetCommand::OneShotControl(f));
     }
 
+    /// "Always run" (Ctrl+R, the Controls window's Walk and Run).
+    fn set_always_run(&mut self, on: bool) {
+        if on == self.always_run {
+            return;
+        }
+        self.always_run = on;
+        self.send(NetCommand::SetAlwaysRun(self.always_run || self.temp_run.is_some()));
+        self.world.system_message(if self.always_run {
+            aurora_i18n::tr!("app-always-run-enabled")
+        } else {
+            aurora_i18n::tr!("app-always-run-disabled")
+        });
+    }
+
+    /// Preferences › Camera › "Reset all", and the Controls window's reset:
+    /// every camera setting back to its default, the view behind the avatar.
+    fn reset_camera_all(&mut self) {
+        self.settings.camera = crate::camera::CameraSettings::default();
+        self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+    }
+
     fn toggle_fly(&mut self) {
         self.world.agent.flying = !self.world.agent.flying;
         if !self.world.agent.flying {
@@ -4116,6 +4147,21 @@ impl App {
             // Page Down / C: crouch on the ground (crouch-walk while moving), descend in flight
             i.down = k(Action::Down);
         }
+        // the Controls window's buttons, held like their keys
+        let held = |a: Action| self.controls_held.contains(&a);
+        i.forward |= held(Action::Forward);
+        i.back |= held(Action::Back);
+        if self.shift != self.settings.arrows_strafe {
+            i.strafe_left |= held(Action::Left);
+            i.strafe_right |= held(Action::Right);
+        } else {
+            i.turn_left |= held(Action::Left);
+            i.turn_right |= held(Action::Right);
+        }
+        i.strafe_left |= held(Action::StrafeLeft);
+        i.strafe_right |= held(Action::StrafeRight);
+        i.up |= held(Action::Up);
+        i.down |= held(Action::Down);
         if self.mouse_mode == MouseMode::Steer {
             // left button held on the avatar (Firestorm): the avatar faces the
             // camera; the arrows are camera-relative and turn the avatar toward
@@ -4193,7 +4239,8 @@ impl App {
         ];
         let mut rate = [0.0f32; 10];
         for (n, a) in CAMERA_KEYS.into_iter().enumerate() {
-            if !typing && self.in_world() && self.settings.keybinds.held(a, &self.down, m) {
+            let key = !typing && self.settings.keybinds.held(a, &self.down, m);
+            if self.in_world() && (key || self.controls_held.contains(&a)) {
                 let held = self.cam_key_since[n].get_or_insert(now).elapsed().as_secs_f32();
                 rate[n] = if held < NUDGE_TIME { 0.05 + held * 0.95 / NUDGE_TIME } else { 1.0 };
             } else {
@@ -4409,6 +4456,7 @@ impl App {
         wanted.extend(self.people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
         wanted.extend(self.land_ui.wanted_pics.drain());
+        wanted.extend(self.region_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -4659,6 +4707,10 @@ impl App {
         // About Land requests (selection and its refresh, lists, covenant...)
         self.world.land.tick(Instant::now());
         for c in self.world.land.take_commands() {
+            self.send(c);
+        }
+        // Region / Estate requests, in the panels' order
+        for c in self.world.estate.take_commands() {
             self.send(c);
         }
         self.update_places();
@@ -5748,6 +5800,8 @@ impl App {
             self.gesture_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            raw.events
+                .extend(ui::toolbar::demo_events(&ctx, self.frame_count, &mut self.toolbar_ui));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::resize_events(&ctx, self.frame_count));
@@ -7742,7 +7796,7 @@ impl App {
             self.devices_listed = false;
         }
         if res.reset_camera {
-            self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+            self.reset_camera_all();
         }
         if res.reset {
             // the panels must not write the old time of day back
@@ -8079,11 +8133,15 @@ impl App {
                     output_devices: &self.options_ui.output_devices,
                     ..Default::default()
                 };
+                let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
+                let toolbar_settings = self.settings.toolbar.get_or_insert_default();
                 let (chat, bar2, bottom_top, chat_width_set) = ui::bars::bottom_bar(
                     ui,
                     &p,
                     icons,
                     layout,
+                    &mut self.toolbar_ui,
+                    toolbar_settings,
                     &mut self.panels,
                     &mut self.chat_ui,
                     &self.gesture_state.manager,
@@ -8095,13 +8153,14 @@ impl App {
                     &mut mic,
                     self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused,
                 );
-                if chat_width_set {
-                    self.settings.save();
-                }
                 // what the bars leave: where the windows are laid out, moved
                 // and snapped this frame
                 ui::layout::set_work_area(ui.ctx(), ui.available_rect_before_wrap());
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
+                self.toolbar_ui.show(ui.ctx(), &p, layout, toolbar_settings);
+                if self.toolbar_ui.commit(layout, toolbar_settings) || chat_width_set || toolbar_migrated {
+                    self.settings.save();
+                }
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
                 if mic.mode_changed || mic.devices_changed {
@@ -8674,6 +8733,23 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.about_land = open;
+                // Region / Estate: asked by About Land or the restart notice
+                if ui::region::take_open_request(&ctx) {
+                    ui::widgets::open_floater(&ctx, ui::region::WINDOW, &mut self.panels.region_estate);
+                }
+                let mut open = self.panels.region_estate;
+                let region_map = open
+                    .then_some(self.world.main_region)
+                    .flatten()
+                    .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
+                self.region_ui
+                    .show(&ctx, &p, &mut self.world, &self.avatar_pics, region_map.as_ref(), &mut open);
+                self.panels.region_estate = open;
+                match self.region_ui.action.take() {
+                    Some(ui::region::RegionAction::AboutLand) => self.panels.about_land = true,
+                    Some(ui::region::RegionAction::WorldMap) => ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map),
+                    None => {}
+                }
                 if std::mem::take(&mut self.land_ui.custom_day) {
                     self.open_parcel_day_editor();
                 }
@@ -8686,6 +8762,7 @@ impl App {
                     self.world.experiences.change(experience, change);
                 }
                 self.photo_ui(&ctx, &p, renderer);
+                self.controls_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
                 if self.hover_height_ui.show(
@@ -9662,6 +9739,17 @@ impl ApplicationHandler for App {
                 };
                 self.profile_ui.open(&mut self.world, id);
                 self.profile_ui.demo(&self.egui_ctx, id, option);
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_REGION=overview[:owner|:manager|:resident]: Region /
+            // Estate on that page
+            if let Some(scenario) = crate::demo::region::scenario() {
+                self.region_ui.demo(scenario.page, scenario.preview);
+                if scenario.compact {
+                    let pos = egui::pos2(560.0, 80.0);
+                    ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(480.0, 720.0));
+                }
+                self.panels.region_estate = true;
                 self.panels.perf = false;
             }
             // AURORA_DEMO_LAND=<tab>[:role][:classic]: About Land on that tab

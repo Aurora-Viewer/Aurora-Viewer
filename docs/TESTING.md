@@ -144,6 +144,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
+| `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic` | The Controls window open on a tab, or Firestorm's two windows |
 
 `AURORA_CAPTURE_LAYOUT`: a screenshot otherwise starts from the default
 layout, to be reproducible. With this variable it reloads that of the
@@ -196,6 +197,14 @@ of day 3`); the saved `time_of_day` and `exposure` stay the user's.
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
 
+`AURORA_DEMO_CONTROLS` opens the Controls window at frame 600: `camera` on
+its Camera tab (joysticks, zoom, the four views, object view, mouselook,
+reset, saved positions, the alt-camera keys), `movement` on its Movement tab
+(the eight buttons with the keys of the keyboard's layout, walk / run / fly),
+`compact` the window minimized (its joysticks and zoom only),
+`classic` Firestorm's camera and movement windows (Preferences › Aurora,
+not saved).
+
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
 `<file>-<frame>.png`. The frames-per-second cap in the background ("Limit
@@ -221,7 +230,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
 | `AURORA_DEMO_CLICKS=<ms>` | Clicks on the world at a regular rate |
 | `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs |
-| `AURORA_DEMO_KEYBOARD=<layout>` | Movement keys according to the layout |
+| `AURORA_DEMO_KEYBOARD=<layout>` | Default movement and letter shortcut keys according to the layout |
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
 ### Details
@@ -387,10 +396,15 @@ when unfocused") is ignored during a screenshot.
   `AURORA_DEMO_CAMERA=close,1180,380,35`, `AURORA_FPS_LIMIT=60` and a capture
   at frame 860: crosshairs, names and lines among the crowd, hidden by the
   avatars in front of them.
-- **`AURORA_DEMO_KEYBOARD=system|wasd|zqsd|fallback`**: fresh default values
-  of the movement keys with the Windows layout, a simulated QWERTY / AZERTY,
-  or a failed detection; combine with `AURORA_DEMO_OPTIONS=8` to examine the
-  secondary shortcuts.
+- **`AURORA_DEMO_KEYBOARD=system|wasd|zqsd|qwertz|fallback`**: fresh default
+  values of the movement keys and of the letter shortcuts with the Windows
+  layout, a simulated US QWERTY / French AZERTY / German QWERTZ, or a failed
+  detection (US QWERTY places); combine with `AURORA_DEMO_OPTIONS=8` to
+  examine the shortcuts. With `zqsd`, Mouselook shows M, World map Ctrl+M
+  and Snapshot to disk Ctrl+Ù (the AZERTY keys they are bound to); with
+  `qwertz`, Snapshot to disk shows Ctrl+Ö. Saved bindings keep their keys,
+  except the one-time move of the former US QWERTY defaults (settings
+  version 12).
 - **`AURORA_DEMO_CHATCMD="calc 2+2;rolld 2 20"`**: lines typed in the chat
   bar at frame 240, separated by `;` (chat bar commands: `calc`, `rolld`,
   `gtp`…).
@@ -1339,6 +1353,16 @@ To check with these scenarios:
 
 ## Interface
 
+| Variable | Effect |
+|---|---|
+| `AURORA_DEMO_TOOLBAR=1` | Open the bottom toolbar button catalogue. |
+
+`AURORA_DEMO_TOOLBAR`: `1` opens the catalogue; `drag` holds Friends over
+the toolbar with an insertion marker, `add` releases it, `reorder` moves
+Preferences beside Inventory, and `menu` opens a button's context menu.
+Capture after frame 670. Use an unmodified demo toolbar with Friends absent
+for the add/drag scenarios. Changes use the demo's separate saved settings.
+
 The values of these switches are English words. The French words they had
 before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 
@@ -1398,6 +1422,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
+| `AURORA_DEMO_REGION=overview[:role][:preview][:compact]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
@@ -2084,7 +2109,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   ("Isolated real installation" above: exe copied into
   `<root>\install`, `AURORA_UPDATE_TEST_ROOT=<root>`): the histories
   are then under `<root>\profile\accounts\`.
-- **`AURORA_DEMO_REPORT_ABUSE=menu|avatar|object|chat|pick|send|missing|copyright`**:
+- **`AURORA_DEMO_REPORT_ABUSE=menu|avatar|object|chat|pick|send|missing|copyright|experience|experience-report`**:
   the Report Abuse window opens at frame 600, from Help › Report Abuse
   (`menu`), on Nova (`avatar`), on the nearest object (`object`, its name
   and owner come from the demo server), on a chat line of Nova (`chat`),
@@ -2093,7 +2118,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   700: the thank-you notice, and a `demo abuse report:` line in the log
   with what would have left; `missing` presses it on a blank form (the
   category notice), `copyright` with "copyright" in the details (the
-  intellectual property notice). Capture with `AURORA_FPS_LIMIT=60` and
+  intellectual property notice). `experience` opens instead the profile
+  of the demo group's experience "Sandbox doors": its "Report Abuse"
+  button opens the window on its owner (Orion Example as the abuser) with
+  "Experience id: …" in the details; `experience-report` opens that
+  window directly at frame 640. Capture with `AURORA_FPS_LIMIT=60` and
   `AURORA_CAPTURE_FRAMES=780` so that the screenshot is in. Nothing ever
   leaves the demo; a real report is only made on the grid.
 - **`AURORA_DEMO_PROFILE=wolf|nova|friend|self[:tab|edit|compact]`**: a
@@ -2160,6 +2189,24 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
+- **`AURORA_DEMO_REGION=overview[:owner|:manager|:resident][:preview][:compact]`**:
+  the Region / Estate window opens on the demo region, whose simulator
+  answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
+  at most, estate 104 123, no terraforming, pushing limited, voice, resale
+  but no join / subdivide), SimStats (12 avatars, 10,500 objects of
+  15,000, dilation 0.99, 45 frames, 4.2 ms of scripts for 312 scripts,
+  9.8 ms spare of 22), the server version, the covenant, the region's day
+  cycle ("Nordic Dawn", 4 h), its experiences (1 trusted, 2 allowed) and
+  its restart schedule (Sunday at 06:00 UTC). `owner` (the default) makes
+  the avatar the estate owner; `manager` gives the estate to another
+  resident and makes the avatar its manager (RegionHandshake
+  IsEstateManager); both get `estateupdateinfo` and the estate's lists
+  (the header names the managers, shows the estate's access and voice and
+  the greyed interventions, "View as" offers the role / Resident).
+  `resident` gets neither: no People tab, no "View as", no managers nor
+  interventions. `preview` opens on "View as" Resident; `compact` opens
+  the window 480 px wide (no map, one column, the action buttons as
+  icons). Manage and People are greyed until the next steps.
 - **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members

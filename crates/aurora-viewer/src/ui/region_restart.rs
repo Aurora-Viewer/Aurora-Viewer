@@ -203,8 +203,6 @@ pub struct View<'a> {
     /// The demo's frozen pulse, for screenshots (the mockup's still states).
     pub frozen: bool,
     pub destinations: &'a Destinations,
-    /// The Region / Estate window exists (its link is inactive until then).
-    pub region_estate: bool,
 }
 
 /// What the alert remembers from one frame to the next.
@@ -674,7 +672,7 @@ fn card(
             actions(ui, p, st, v, out);
         }
         if manager {
-            manager_row(ui, p, st, v, inner, out);
+            manager_row(ui, p, st, inner, out);
         }
     });
     let rect = frame.response.rect;
@@ -785,7 +783,7 @@ fn landmark_menu(ui: &mut egui::Ui, p: &Palette, st: &mut RestartUi, v: &View<'_
 
 /// The managers' line (`.rb-mgr`): "Cancel the restart" and the link to
 /// Region / Estate.
-fn manager_row(ui: &mut egui::Ui, p: &Palette, st: &mut RestartUi, v: &View<'_>, inner: f32, out: &mut Vec<Action>) {
+fn manager_row(ui: &mut egui::Ui, p: &Palette, st: &mut RestartUi, inner: f32, out: &mut Vec<Action>) {
     ui.add_space(12.0);
     let (line, _) = ui.allocate_exact_size(Vec2::new(inner, 1.0), Sense::hover());
     // across the whole card, from edge to edge
@@ -832,18 +830,16 @@ fn manager_row(ui: &mut egui::Ui, p: &Palette, st: &mut RestartUi, v: &View<'_>,
     // the link to the window where restarts are scheduled
     ui.allocate_ui_with_layout(Vec2::new(inner, 16.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
         let link = aurora_i18n::tr!("region-restart-region-estate");
-        let color = if v.region_estate { p.violet_light } else { p.muted_dim };
-        let g = ui
-            .painter()
-            .layout_no_wrap(link.to_owned(), FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx())), color);
+        let g = ui.painter().layout_no_wrap(
+            link.to_owned(),
+            FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx())),
+            p.violet_light,
+        );
         let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x, 16.0), Sense::click());
-        ui.painter().galley(Pos2::new(r.left(), r.center().y - g.size().y / 2.0), g, color);
-        if v.region_estate {
-            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                out.push(Action::RegionEstate);
-            }
-        } else {
-            resp.on_hover_text(aurora_i18n::tr!("region-restart-region-estate-soon"));
+        ui.painter()
+            .galley(Pos2::new(r.left(), r.center().y - g.size().y / 2.0), g, p.violet_light);
+        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            out.push(Action::RegionEstate);
         }
     });
     ui.add_space(8.0);
