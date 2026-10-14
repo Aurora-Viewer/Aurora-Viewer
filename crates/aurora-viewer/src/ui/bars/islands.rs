@@ -79,11 +79,30 @@ pub fn count(ui: &egui::Ui, p: &Palette, slot: Rect, unread: usize, scale: f32, 
     let (fill, ink) = if paused { (p.raised, p.muted) } else { (p.danger_dim, p.on_accent) };
     let font = FontId::new(9.5 * scale, crate::ui::fonts::semibold(ui.ctx()));
     let galley = ui.painter().layout_no_wrap(text, font, ink);
-    let h = 13.0 * scale;
-    let w = (galley.size().x + 7.0 * scale).max(h);
-    let pill = Rect::from_min_size(Pos2::new(slot.right() + 2.0 - w, slot.top()), Vec2::new(w, h));
+    let (pill, at) = count_layout(&galley, slot, scale, ui.ctx().pixels_per_point());
     ui.painter().rect_filled(pill, ui.visuals().window_corner_radius, fill);
-    crate::ui::widgets::paint_ink_centered(ui.painter(), galley, pill.center(), ink);
+    ui.painter().galley(at, galley, ink);
+}
+
+/// The counter's pill and where its number goes: the digits' ink exactly
+/// in the middle, to the pixel. Centring the ink on the pill's centre left
+/// it half a pixel off whenever the pill and the digits differ by an odd
+/// number of pixels (a "2" sat low and to the right): the pill grows by a
+/// pixel to make both margins whole, and stands on whole pixels.
+fn count_layout(galley: &egui::Galley, slot: Rect, scale: f32, ppp: f32) -> (Rect, Pos2) {
+    let ink = crate::ui::widgets::ink_rect(galley);
+    // in physical pixels
+    let px = |v: f32| (v * ppp).round();
+    let (iw, ih) = (px(ink.width()), px(ink.height()));
+    let even = |outer: f32, inner: f32| if (outer - inner) as i32 % 2 == 0 { outer } else { outer + 1.0 };
+    let h = even(px(13.0 * scale), ih);
+    let w = even(px(galley.size().x + 7.0 * scale).max(h), iw);
+    let right = px(slot.right() + 2.0);
+    let (left, top) = (right - w, px(slot.top()));
+    let pill = Rect::from_min_size(Pos2::new(left, top) / ppp, Vec2::new(w, h) / ppp);
+    // the ink's top left corner on whole pixels, the galley's origin before it
+    let ink_at = Pos2::new(left + (w - iw) / 2.0, top + (h - ih) / 2.0) / ppp;
+    (pill, ink_at - ink.min.to_vec2())
 }
 
 /// The ink of a slot's icon and text.
@@ -630,6 +649,37 @@ mod tests {
             work_area(Rect::from_min_size(Pos2::ZERO, Vec2::new(1536.0, 864.0)), 834.0).top(),
             52.0
         );
+    }
+
+    /// The counter's number stands in the middle of its pill, to the
+    /// pixel, whatever the number's width and the screen's scale.
+    #[test]
+    fn the_counter_number_is_centred_to_the_pixel() {
+        let ctx = egui::Context::default();
+        let mut checked = 0;
+        for ppp in [1.0f32, 1.25, 1.5, 2.0] {
+            ctx.set_pixels_per_point(ppp);
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                for n in ["1", "2", "7", "12", "99+"] {
+                    let galley = ui.painter().layout_no_wrap(
+                        n.to_owned(),
+                        FontId::proportional(9.5),
+                        crate::theme::Theme::default().palette().ink,
+                    );
+                    let slot = Rect::from_min_size(Pos2::new(100.3, 7.6), Vec2::splat(28.0));
+                    let (pill, at) = count_layout(&galley, slot, 1.0, ppp);
+                    let ink = crate::ui::widgets::ink_rect(&galley).translate(at.to_vec2());
+                    let margin = |a: f32, b: f32| ((b - a) * ppp * 100.0).round() / 100.0;
+                    let (l, r) = (margin(pill.left(), ink.left()), margin(ink.right(), pill.right()));
+                    let (t, b) = (margin(pill.top(), ink.top()), margin(ink.bottom(), pill.bottom()));
+                    assert!((l - r).abs() <= 0.51 && (t - b).abs() <= 0.51, "{n} at {ppp}: {l} {r} {t} {b}");
+                    assert_eq!((pill.left() * ppp).fract(), 0.0, "{n} at {ppp}: the pill on whole pixels");
+                    checked += 1;
+                }
+            });
+            out.textures_delta.clear();
+        }
+        assert_eq!(checked, 20);
     }
 
     /// The pointer over an island is over the interface; between the
