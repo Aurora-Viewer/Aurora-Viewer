@@ -233,7 +233,7 @@ fn more_menu(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, act
                 } else {
                     aurora_i18n::tr!("common-block")
                 };
-                if menu::item(ui, p, "forbid-filled", label) {
+                if menu::item(ui, p, "ban", label) {
                     actions.push(ConvAction::ToggleBlock(other));
                 }
             }

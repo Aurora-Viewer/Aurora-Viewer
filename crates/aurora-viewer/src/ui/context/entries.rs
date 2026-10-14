@@ -208,7 +208,7 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         let (icon, label) = if o.blocked {
             ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
         } else {
-            ("forbid-filled", aurora_i18n::tr!("common-ignore"))
+            ("ban", aurora_i18n::tr!("common-ignore"))
         };
         ui.item(icon, label, CtxAction::ToggleBlockObject { id, name: o.name.clone() });
     });
@@ -357,7 +357,7 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         let (icon, label) = if f.blocked {
             ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
         } else {
-            ("forbid-filled", aurora_i18n::tr!("common-ignore"))
+            ("ban", aurora_i18n::tr!("common-ignore"))
         };
         ui.item(icon, label, CtxAction::ToggleBlock(id));
         // Avatar.ReportAbuse: showFromObject on the avatar
@@ -433,7 +433,7 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         let (icon, label) = if f.blocked {
             ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
         } else {
-            ("forbid-filled", aurora_i18n::tr!("common-ignore"))
+            ("ban", aurora_i18n::tr!("common-ignore"))
         };
         ui.item(icon, label, CtxAction::ToggleBlock(id));
         ui.item(

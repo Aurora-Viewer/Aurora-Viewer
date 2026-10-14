@@ -416,7 +416,7 @@ fn avatar_menu_reporting(
         }
     };
     let block = |ui: &mut egui::Ui| {
-        if menu::check(ui, p, "forbid-filled", aurora_i18n::tr!("common-ignore"), blocked, true) {
+        if menu::check(ui, p, "ban", aurora_i18n::tr!("common-ignore"), blocked, true) {
             act(CtxAction::ToggleBlock(id));
         }
     };
