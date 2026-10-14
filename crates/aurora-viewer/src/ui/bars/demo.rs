@@ -6,7 +6,8 @@
 //! island's right click), `favorites`, `star`, `status`, `emoji` (the chat
 //! island's emoji picker); `nobug` / `bug`: the bug report button hidden /
 //! shown; `voice`: talking on the Speak button, its level at 62 %;
-//! `chatwide`: the chat island 560 px wide. `normal` or nothing else: the
+//! `chatwide`: the chat island 560 px wide; `read`: no unread conversation
+//! counted. `normal` or nothing else: the
 //! islands as set. With any word the voice light is the mockup's
 //! (connected).
 
@@ -36,6 +37,8 @@ pub struct DemoBars {
     pub voice: bool,
     /// The chat island's width for this run.
     pub chat_width: Option<f32>,
+    /// No unread conversation shown (the demo's IMs count otherwise).
+    pub read: bool,
 }
 
 pub fn parse(value: &str) -> DemoBars {
@@ -61,11 +64,12 @@ pub fn parse(value: &str) -> DemoBars {
             "emoji" => d.open = Some(Open::Emoji),
             "voice" => d.voice = true,
             "chatwide" => d.chat_width = Some(560.0),
+            "read" => d.read = true,
             _ => {}
         }
     }
     // a menu or a look of the islands: the islands, whatever is saved
-    let islands_only = d.open.is_some() || d.stretch.is_some() || d.rights_text.is_some() || d.bug.is_some() || d.voice;
+    let islands_only = d.open.is_some() || d.stretch.is_some() || d.rights_text.is_some() || d.bug.is_some() || d.voice || d.read;
     if d.classic.is_none() && (islands_only || d.chat_width.is_some()) {
         d.classic = Some(false);
     }

@@ -2213,7 +2213,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   hidden / shown: the bug's own island, after the wolf's, goes away and
   the place follows the wolf 8 px away), `voice` (talking on the dock's Speak button, its level at
   62 %), `chatwide` (the chat island 560 px wide: the dock moves right, its
-  buttons narrow at 1280); and one menu opened at frame 300: `menu`
+  buttons narrow at 1280), `read` (no unread conversation counted); and one menu opened at frame 300: `menu`
   (the place), `options` (right click on the place island), `favorites`,
   `star`, `status` (the account's picture), `emoji` (the chat island's
   emoji picker). The bottom: the chat island on the left, the dock centred

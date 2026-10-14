@@ -8284,7 +8284,7 @@ impl App {
                     &mut self.panels,
                     &mut self.chat_ui,
                     &self.gesture_state.manager,
-                    self.world.conversations_badge(),
+                    if demo_bars.read { 0 } else { self.world.conversations_badge() },
                     self.world.social.latest_unread(),
                     self.world.agent.flying,
                     self.world.agent.is_sitting(),
