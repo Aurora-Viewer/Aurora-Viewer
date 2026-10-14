@@ -304,7 +304,9 @@ change to the interface:
    - **issues**: look at the open issues and the new comments on the issues
      linked to your task (section 15), then update their triage.
 1. **Read** AGENTS.md, ARCHITECTURE.md, TASKS.md; study Firestorm.
-2. **Create the worktree** (`new-task.ps1`), set the task to 🔧 in TASKS.md.
+2. **Create the worktree** (`new-task.ps1`), set the task to 🔧 in TASKS.md;
+   when the task comes from an issue, assign it to yourself and set it to
+   `in-progress` (section 15).
 3. **Develop** in small local commits (clear messages, section 10).
 4. **Test in demo mode**, `check.ps1` green.
 5. **Human validation (mandatory, before the PR)**:
@@ -518,6 +520,21 @@ the review comment.
   (test something, log in, decide).
 - Never claim something is tested when it is not.
 - Keep the logs and screenshots to back up what you state.
+- **Answer from fresh data.** Before answering any question on the state of
+  the project (what is left to do, missing features, progress of a task,
+  issues, PRs, what was merged):
+  - run `git fetch origin`;
+  - read `TASKS.md` from `origin/main` (`git show origin/main:TASKS.md`),
+    not a worktree's copy nor an earlier reading in the session;
+  - list the open issues (`gh issue list`), the open PRs and the recently
+    merged ones (`gh pr list --state open`, `gh pr list --state merged
+    --limit 30`);
+  - say what changed since your last answer.
+
+  Never answer from memory, a session summary or a worktree that is behind,
+  even at the start of a new conversation. If some data could not be
+  refreshed (command refused, network), say so instead of presenting old
+  data as current.
 
 ## 15. GitHub issues: read, analyse, label, reply and close
 
@@ -583,7 +600,7 @@ gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n>/comments --paginate
 |---|---|
 | Nature | One main label: `bug` for a reported problem, `feature-request` for a feature or an improvement asked for by a user (the label of the "Feature request" issue template), `feature`, `performance`, `maintenance`, `docs` or `question`. A `bug` issue can also carry `performance` if the problem is about smoothness. `fix` designates the PR that fixes the bug, `feature` the PR that brings what a `feature-request` asked for. |
 | Area | One or more established areas: `render`, `avatar`, `world`, `network`, `audio-voice`, `ui`, `build-tools`, `tooling` (section 9). Do not guess an area that is still unknown. |
-| Tracking | Only one for an open issue: `needs-triage`, `needs-info`, `needs-repro`, `confirmed`, `in-progress` or `needs-validation`. `confirmed` requires a reproduction or a demonstrated cause; `in-progress` requires real, announced ownership. Remove the previous state when it changes, and the tracking states on closing. |
+| Tracking | Only one for an open issue: `needs-triage`, `needs-info`, `needs-repro`, `confirmed`, `in-progress` or `needs-validation`. `confirmed` requires a reproduction or a demonstrated cause; `in-progress` requires real, announced ownership: the issue is assigned to the human whose agent works on it. Remove the previous state when it changes, and the tracking states on closing. |
 | Priority | Only one: `priority:high` (major blocker, frequent crash, data loss), `priority:normal` (common impact) or `priority:low` (cosmetic / comfort). Explain a high priority; if the impact is missing, ask for details before setting it. |
 | Context / closing | Keep `alpha` for the reports of the alpha test. Add `duplicate` or `out-of-scope` only if that reason is established and explained. |
 
@@ -598,6 +615,22 @@ duplicating another agent's work. Link the issue number in `TASKS.md` and the
 PR; keep the work in your own worktree. Read the thread and the labels again
 just before a mutation, to preserve the changes made in the meantime by
 others.
+
+**Assign yourself when you start.** When you begin working on an issue,
+assign it to your human's `gh` account, in the same step as `in-progress`:
+
+```powershell
+gh issue edit <n> --repo Aurora-Viewer/Aurora-Viewer --add-assignee @me
+```
+
+- If the issue is already assigned to someone else, do not take it: it is
+  someone else's work. Tell your human.
+- If you drop or hand back the task, remove your assignment
+  (`--remove-assignee @me`) and set the tracking state that fits again.
+- On closing, the assignment stays: it records who did the work.
+- Run the command alone, with no `cd` or `;`, like the other `gh issue`
+  commands. If your tool refuses it, do not work around it: give it to your
+  human.
 
 ### Reply and close
 

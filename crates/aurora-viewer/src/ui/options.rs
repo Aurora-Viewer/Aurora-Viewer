@@ -4,6 +4,7 @@
 mod aurora;
 mod camera;
 mod commands;
+mod dof;
 mod privacy;
 mod sections;
 
@@ -1535,6 +1536,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     },
                 );
             });
+            c |= dof::show(ui, p, &mut s.dof);
             group(ui, p, aurora_i18n::tr!("ui-options-smoothness"), |ui| {
                 c |= row(
                     ui,
