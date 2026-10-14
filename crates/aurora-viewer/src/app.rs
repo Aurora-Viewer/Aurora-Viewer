@@ -1601,6 +1601,7 @@ impl App {
         self.day_fetch = None;
         self.day_import = None;
         self.env_applying = None;
+        self.env_beacons_frame();
         self.world.eep.clear_edit();
         self.world.save_inventory_cache();
         self.world.save_mute_cache();
@@ -3371,6 +3372,10 @@ impl App {
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
         self.record_inventory_logout();
+        // revertBeaconsState when the editors close with the viewer
+        self.env_editor.open = false;
+        self.day_editor.open = false;
+        self.env_beacons_frame();
         self.drop_clicks();
         if self.hud_drag.is_some() {
             self.on_left_release();
