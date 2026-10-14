@@ -423,6 +423,14 @@ pub enum NetEvent {
         kind: u8,
         duration: f32,
     },
+    /// An avatar asks the others to reset its skeleton (ViewerEffect,
+    /// LLHUDEffectResetSkeleton::unpackData): `source` is the sender, `target`
+    /// the object to reset (the sender itself when the packet names none).
+    ResetSkeleton {
+        source: Uuid,
+        target: Uuid,
+        animations: bool,
+    },
     /// TeleportLocal (a teleport inside the current region), sent just before
     /// its AgentMovementComplete: whether the simulator says we are flying.
     TeleportLocal {
@@ -1022,6 +1030,21 @@ pub enum NetCommand {
         anim: Uuid,
         start: bool,
     },
+    /// Start / stop several animations in one AgentAnimation
+    /// (LLAgent::sendAnimationRequests); nothing is sent without any.
+    AgentAnimations {
+        anims: Vec<Uuid>,
+        start: bool,
+    },
+    /// Clear the region's animation state overrides of our avatar
+    /// (LLAgent::sendAnimationStateReset: a nil animation, stopped).
+    AnimationStateReset,
+    /// Revoke script permissions in the scripts of an object, or of the whole
+    /// region when `target` is its id (LLAgent::sendRevokePermissions).
+    RevokePermissions {
+        target: Uuid,
+        permissions: u32,
+    },
     /// Accept / decline a session invitation or fetch its history (ChatSessionRequest).
     ChatSession {
         method: crate::social::SessionMethod,
@@ -1059,6 +1082,13 @@ pub enum NetCommand {
         offset: [f64; 3],
         kind: u8,
         duration: f32,
+    },
+    /// Ask the other viewers to reset our skeleton (ViewerEffect,
+    /// LLHUDEffectResetSkeleton::packData), and our animations with it.
+    ResetSkeleton {
+        effect: Uuid,
+        target: Uuid,
+        animations: bool,
     },
     /// Raw IM with a given dialog (offer answers: accepted / declined...).
     SendImDialog {

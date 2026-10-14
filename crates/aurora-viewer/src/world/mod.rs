@@ -233,6 +233,9 @@ pub struct World {
     animation_sources: HashMap<Uuid, HashSet<Uuid>>,
     /// Motions to stop on the simulator after leaving a seat (drained by app).
     pub animation_stops: Vec<Uuid>,
+    /// Skeletons other avatars asked us to reset, with their animations or
+    /// not (ViewerEffect ResetSkeleton, drained by app).
+    pub skeleton_resets: Vec<(Uuid, bool)>,
     /// EEP environments (region, parcel, local) and their crossfades.
     pub eep: eep_env::EnvSelector,
     /// Monotonic clock of the environment crossfades.
@@ -378,6 +381,7 @@ impl World {
             preview_server_motion: None,
             animation_sources: HashMap::new(),
             animation_stops: Vec::new(),
+            skeleton_resets: Vec::new(),
             eep: eep_env::EnvSelector::default(),
             env_clock: Instant::now(),
             cloud_scroll: glam::Vec2::ZERO,
@@ -1918,6 +1922,16 @@ impl World {
                 }
                 None
             }
+            NetEvent::ResetSkeleton {
+                source,
+                target,
+                animations,
+            } => {
+                if let Some(reset) = self.skeleton_reset_from(source, target, animations) {
+                    self.skeleton_resets.push(reset);
+                }
+                None
+            }
             other => Some(other),
         }
     }
@@ -2445,6 +2459,20 @@ impl World {
         }
         self.bodies.retain(|id, _| seen.contains(id));
         own_turn
+    }
+
+    /// LLHUDEffectResetSkeleton::unpackData / update: a reset is followed
+    /// only when an avatar we see asks it for itself. Our own effect, if the
+    /// simulator ever sends it back, was already applied when we sent it
+    /// (it would otherwise stop our animations a second time).
+    fn skeleton_reset_from(&self, source: Uuid, target: Uuid, animations: bool) -> Option<(Uuid, bool)> {
+        let is_avatar = |id: &Uuid| {
+            self.objects
+                .index_of_uuid(id)
+                .and_then(|i| self.objects.get(i))
+                .is_some_and(|o| o.is_avatar())
+        };
+        (source != self.agent_id && source == target && is_avatar(&source)).then_some((target, animations))
     }
 
     pub fn animations_of(&self, owner: &Uuid) -> &[PlayingAnimation] {
@@ -3223,6 +3251,32 @@ mod motion_tests {
         let neighbor = handle + (256_u64 << 32);
         world.ensure_region(neighbor, (256, 256));
         assert_eq!(world.clip_to_visible_regions(start, end), end);
+    }
+
+    /// LLHUDEffectResetSkeleton::update: only an avatar resetting itself.
+    #[test]
+    fn a_skeleton_reset_is_followed_only_for_an_avatar_resetting_itself() {
+        let (mut world, _, _) = fixture();
+        for ev in crate::demo::events() {
+            if matches!(ev, NetEvent::ObjectUpdates { .. }) {
+                world.apply(ev);
+            }
+        }
+        let (me, loup, nova) = (world.agent_id, crate::demo::DEMO_LOUP, crate::demo::DEMO_NOVA);
+        assert!(world.objects.index_of_uuid(&loup).is_some(), "the demo avatar is there");
+        let reset = |source, target| NetEvent::ResetSkeleton {
+            source,
+            target,
+            animations: true,
+        };
+        world.apply(reset(loup, loup));
+        assert_eq!(world.skeleton_resets, vec![(loup, true)]);
+        world.skeleton_resets.clear();
+        // someone else's skeleton, our own echo, an unknown sender: ignored
+        world.apply(reset(loup, nova));
+        world.apply(reset(me, me));
+        world.apply(reset(Uuid::from_u128(99), Uuid::from_u128(99)));
+        assert!(world.skeleton_resets.is_empty());
     }
 
     #[test]

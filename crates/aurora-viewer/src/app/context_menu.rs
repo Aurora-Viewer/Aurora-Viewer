@@ -393,6 +393,8 @@ impl App {
                 self.settings.set_render_exception(id, mode);
                 self.settings.save();
             }
+            CtxAction::ResetSkeleton { avatar, animations } => self.reset_skeleton(avatar, animations),
+            CtxAction::StopAnimations => self.stop_current_animations(),
             CtxAction::OfferTeleport(id) => self.contacts_ui.ask_teleport_offer(vec![id], &self.world.region_name()),
             CtxAction::OpenPeople(tab) => {
                 self.panels.people = true;

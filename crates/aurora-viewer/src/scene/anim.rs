@@ -510,6 +510,25 @@ impl Controller {
             ..Default::default()
         }
     }
+    /// Forget the held pose (LLVOAvatar::resetSkeleton): a joint no motion
+    /// drives keeps the rotation and position the last motion gave it, which
+    /// is how an avatar stays deformed after a pose or a mesh animation
+    /// stopped. The next frame starts again from the rest skeleton.
+    /// `animations`: also LLMotionController::flushAllMotions, which restarts
+    /// the active motions at the time they had reached; motions easing out
+    /// are dropped instead (restarted, they would never be stopped again).
+    pub fn reset_pose(&mut self, animations: bool) {
+        self.rot.clear();
+        self.pos_delta.clear();
+        self.tag_pos_delta.clear();
+        self.pelvis_offset = Vec3::ZERO;
+        self.tag_pelvis_offset = 0.0;
+        self.last_eval = None;
+        if animations {
+            self.motions.retain(|m| m.stop.is_none());
+        }
+    }
+
     /// Skeleton-space position of the head as posed last frame.
     pub fn head_pos(&self) -> Option<Vec3> {
         self.posed.head.map(|h| h.1)
@@ -1194,6 +1213,48 @@ mod tests {
             Some(normal),
             "removing the structural deformation restores height"
         );
+    }
+
+    /// A stopped animation leaves its joint positions held (the deformed
+    /// avatar of #272); "Reset skeleton" brings the rest skeleton back,
+    /// "and animations" also drops the motions still easing out.
+    #[test]
+    fn reset_skeleton_drops_the_pose_a_stopped_animation_left() {
+        let rig = rig();
+        let mut deformer = crate::demo::tags::height_animation(&rig);
+        deformer.ease_in = 0.0;
+        deformer.ease_out = 0.5;
+        let deformer = Arc::new(BoundAnim::bind(deformer, &rig));
+        let torso = rig.names["mTorso"];
+        let epoch = Instant::now();
+        let at = |s: f32| epoch + Duration::from_secs_f32(s);
+        let id = Uuid::from_u128(272);
+        let mut c = Controller::default();
+        let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let torso_z = |c: &mut Controller, t: Instant, pose: &mut Vec<[[f32; 4]; 4]>| {
+            c.evaluate(&rig, t, None, pose);
+            Mat4::from_cols_array_2d(&pose[torso]).w_axis.z
+        };
+        let rest = torso_z(&mut c, at(0.0), &mut pose);
+        c.sync(&[signal(id, 1, epoch)], at(0.0), |_| Some(deformer.clone()));
+        c.sync(&[signal(id, 1, epoch)], at(1.0), |_| Some(deformer.clone()));
+        assert!(torso_z(&mut c, at(1.0), &mut pose) > rest + 0.7);
+        // stopped, eased out: the stretched torso stays
+        c.sync(&[], at(1.0), |_| None);
+        c.sync(&[], at(2.0), |_| None);
+        assert!(c.motions.is_empty());
+        assert!(torso_z(&mut c, at(2.0), &mut pose) > rest + 0.7, "the pose is held");
+        c.reset_pose(false);
+        assert!((torso_z(&mut c, at(2.1), &mut pose) - rest).abs() < 1e-4);
+        // with the animations: a motion easing out goes, the playing one stays
+        let other = Uuid::from_u128(273);
+        c.sync(&[signal(id, 2, at(3.0)), signal(other, 1, at(3.0))], at(3.0), |_| {
+            Some(deformer.clone())
+        });
+        c.sync(&[signal(other, 1, at(3.0))], at(3.1), |_| Some(deformer.clone()));
+        assert_eq!(c.motions.len(), 2);
+        c.reset_pose(true);
+        assert_eq!(c.motions.iter().map(|m| m.id).collect::<Vec<_>>(), vec![other]);
     }
 
     #[test]

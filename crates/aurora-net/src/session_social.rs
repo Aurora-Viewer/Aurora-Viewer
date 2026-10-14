@@ -126,6 +126,38 @@ impl Session<'_> {
                 m.physical_avatar_event_list = Vec::new();
                 self.send_main(&m, true);
             }
+            NetCommand::AgentAnimations { anims, start } => {
+                // LLAgent::sendAnimationRequests: one message, the nil ids left
+                // out, not sent without an animation
+                let list: Vec<_> = anims
+                    .iter()
+                    .filter(|id| !id.is_nil())
+                    .map(|id| agent_animation::AnimationList {
+                        anim_id: *id,
+                        start_anim: *start,
+                    })
+                    .collect();
+                if !list.is_empty() {
+                    self.send_main(&agent_animation_message(self.agent_id(), self.session_id(), list), true);
+                }
+            }
+            NetCommand::AnimationStateReset => {
+                // LLAgent::sendAnimationStateReset
+                let list = vec![agent_animation::AnimationList {
+                    anim_id: uuid::Uuid::nil(),
+                    start_anim: false,
+                }];
+                self.send_main(&agent_animation_message(self.agent_id(), self.session_id(), list), true);
+            }
+            NetCommand::RevokePermissions { target, permissions } => {
+                // LLAgent::sendRevokePermissions
+                let mut m = RevokePermissions::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.data.object_id = *target;
+                m.data.object_permissions = *permissions;
+                self.send_main(&m, true);
+            }
             _ => return false,
         }
         true
@@ -366,6 +398,17 @@ impl Session<'_> {
         }
         true
     }
+}
+
+/// AgentAnimation with its list and the one empty PhysicalAvatarEventList
+/// block LLAgent::sendAnimationRequests / sendAnimationStateReset add.
+fn agent_animation_message(agent: uuid::Uuid, session: uuid::Uuid, list: Vec<agent_animation::AnimationList>) -> AgentAnimation {
+    let mut m = AgentAnimation::default();
+    m.agent_data.agent_id = agent;
+    m.agent_data.session_id = session;
+    m.animation_list = list;
+    m.physical_avatar_event_list = vec![agent_animation::PhysicalAvatarEventList { type_data: Vec::new() }];
+    m
 }
 
 /// Xfer ids only need to be unique among our transfers.
