@@ -1858,6 +1858,7 @@ impl App {
                     self.world.social.avatar_names.load(&path);
                 }
                 self.screen = Screen::Loading { since: Instant::now() };
+                self.world.notifications.started = false;
                 self.loading_frac = 0.0;
                 self.loading_target = 0.0;
                 self.loading_stage = aurora_i18n::tr!("common-connecting-to-region").into();
@@ -2897,12 +2898,25 @@ impl App {
         // conversations by their IM mode (LLIMMgr::addMessage), never in
         // do not disturb; "in front" = shown in the focused window
         let dnd = w.status.dnd;
+        w.notifications.toasts = crate::world::notifications::ToastPrefs {
+            presence: self.settings.toast_friends_online,
+            im: self.settings.toast_im,
+            // AURORA_DEMO_TOASTS shows a group message too (off by default)
+            group_im: self.settings.toast_group_im || (self.demo && crate::demo::toasts::mode().is_some()),
+        };
+        // a conversation in sight: its tab shown in the Conversations window
+        // (FSFloaterIM visible), whether or not the viewer has the focus
+        let shown = (self.panels.chat && !crate::ui::widgets::floater_minimized(&self.egui_ctx, "conversations"))
+            .then_some(self.chat_ui.selected)
+            .flatten();
         for m in std::mem::take(&mut w.im_messages) {
             let front = self.focused && self.panels.chat && self.chat_ui.selected == Some(m.session);
             if !dnd && let Some(s) = ui.im_sound(m, front) {
                 w.ui_sounds.push(s);
             }
+            w.notify_message(&m, shown == Some(m.session));
         }
+        w.acknowledge_read_messages();
         for (old, new) in std::mem::take(&mut w.balance_changes) {
             if let Some(s) = ui.money_sound(old, new) {
                 w.ui_sounds.push(s);
@@ -4028,6 +4042,7 @@ impl App {
         wanted.extend(self.plates.wanted_pics.drain());
         wanted.extend(self.search_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
+        wanted.extend(self.notif_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -4932,6 +4947,7 @@ impl App {
             let terrain = self.world.terrain_progress();
             if self.world.movement_complete && since.elapsed() > Duration::from_millis(1500) && (terrain > 0.97 || moved > 6.0) {
                 self.screen = Screen::World;
+                self.world.notifications.started = true;
                 self.camera.snap();
                 // the loading screen fades out over the world
                 let mut o = TpOverlay::new(String::new(), true);
@@ -5755,6 +5771,31 @@ impl App {
             }
             if let Some((avatar, animations)) = crate::demo::deform::reset_at(self.frame_count, mode) {
                 self.on_ctx_action(ui::context::CtxAction::ResetSkeleton { avatar, animations });
+            }
+        }
+        if self.demo
+            && let Some(mode) = crate::demo::toasts::mode()
+        {
+            let agent = self.world.agent_id;
+            for event in crate::demo::toasts::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+            if self.frame_count == crate::demo::toasts::LIST_AT && mode == "1" {
+                self.notif_ui.open = true;
+            }
+            if self.frame_count == crate::demo::toasts::CLICK_AT && (mode == "click" || mode == "minimized") {
+                // the click on the resident's toast, as the card answers it
+                let nova = self.world.notifications.list.iter().find_map(|n| match n.data {
+                    crate::world::notifications::Data::Message { session, .. } if session == crate::demo::DEMO_NOVA => Some(n.id),
+                    _ => None,
+                });
+                if let Some(id) = nova
+                    && self.world.open_from_notification(id).is_some()
+                {
+                    ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
+                }
             }
         }
         if self.demo {
@@ -7319,7 +7360,7 @@ impl App {
                     &mut self.panels,
                     &mut self.chat_ui,
                     &self.gesture_state.manager,
-                    self.world.chat_unread + self.world.social.total_unread(),
+                    self.world.conversations_badge(),
                     self.world.agent.flying,
                     self.world.agent.is_sitting(),
                     self.camera.mouselook(),
@@ -7776,14 +7817,39 @@ impl App {
                         n.read = true;
                     }
                 }
-                for (id, r) in ui::notifications::show(
+                // nothing over the view in mouselook or the photo's full frame
+                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame();
+                let mut toast_env = ui::notifications::ToastEnv {
+                    pics: &self.avatar_pics,
+                    emoji: &mut self.emoji,
+                    hidden: toasts_hidden,
+                    message_seconds: f64::from(self.settings.im_toast_seconds),
+                };
+                let answers = ui::notifications::show(
                     &ctx,
                     &p,
                     &self.skin.icons,
                     &self.world.map.ratings,
                     &mut self.world.notifications,
                     &mut self.notif_ui,
-                ) {
+                    &mut toast_env,
+                );
+                for (id, r) in answers {
+                    if matches!(r, crate::world::notifications::Response::Open) {
+                        let presence = self
+                            .world
+                            .notifications
+                            .list
+                            .iter()
+                            .any(|n| n.id == id && matches!(n.data, crate::world::notifications::Data::Presence { .. }));
+                        if self.world.open_from_notification(id).is_some() {
+                            if presence {
+                                self.world.ui_sounds.push(UiSound::StartIm);
+                            }
+                            ui::notifications::open_conversations(&ctx, &mut self.panels.chat);
+                        }
+                        continue;
+                    }
                     let (cmds, url) = self.world.respond_notification(id, r);
                     if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
                         self.begin_teleport(String::new(), false);
@@ -8821,6 +8887,16 @@ impl ApplicationHandler for App {
             // captures: AURORA_DEMO_NOTIF=1 opens the notification list
             if std::env::var_os("AURORA_DEMO_NOTIF").is_some() {
                 self.notif_ui.open = true;
+            }
+            // AURORA_DEMO_TOASTS: the toasts arrive with the Conversations
+            // window closed, or minimized for `minimized`
+            if let Some(mode) = crate::demo::toasts::mode() {
+                self.panels.perf = false;
+                self.panels.chat = mode == "minimized";
+                if mode == "minimized" {
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(700.0, 560.0));
+                    ui::widgets::minimize_floater(&self.egui_ctx, "conversations");
+                }
             }
             // AURORA_DEMO_MATURITY: the content rating changed in the
             // Preferences, answered by the demo server

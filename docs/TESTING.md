@@ -1268,6 +1268,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or `search:<text>` | World map and mini-map, the region search |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
+| `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
@@ -1468,6 +1469,20 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the inventory opens on the received object and the offer is still to be
   answered; `offer-reject` rejects it at frame 700, then shows the object in
   the Trash. Take the screenshot after frame 900.
+- **`AURORA_DEMO_TOASTS=1|click|minimized`**: a friend goes offline at
+  frame 700 and comes back at 760 (two presence toasts, round picture with
+  its status dot), two IMs from the same resident arrive at 820 and 880 (one
+  card, "(2)"), a group IM at 940 (group toasts are forced on for the
+  scenario). The Conversations button of the bottom bar shows the unread
+  IMs and group chats in a violet pill (5 at frame 1000), not the nearby
+  chat lines.
+  The friends announced at login get no toast, only their chat line. `1` opens the bell list at frame 1100: only the
+  two conversations are listed, never the presence notices. `click` (window
+  closed) and `minimized` (window minimized at start) click the first IM
+  card at frame 1250: the Conversations window opens or expands, comes to
+  the front on that conversation, and its card leaves the list. Capture
+  with `AURORA_FPS_LIMIT=60`, at `900,1160` for `1` and `1240,1310` for the
+  click modes. Add `AURORA_DEMO_SOUND=1` to hear the existing sounds.
 - **`AURORA_DEMO_EXIT=1|cancel|logout|quit`**: opens the modal at frame 650.
   `1` leaves it interactive; the other modes make the choice at frame 800.
   Take screenshots at `740,900` to compare the blurred background then the
