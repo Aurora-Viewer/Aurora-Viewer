@@ -2194,7 +2194,10 @@ impl Session<'_> {
             | NetCommand::GroupRoleUpdate { .. }
             | NetCommand::UpdateGroupInfo { .. }
             | NetCommand::JoinGroup(_)
-            | NetCommand::InviteToGroup { .. } => {}
+            | NetCommand::InviteToGroup { .. }
+            | NetCommand::GroupLandQuery { .. }
+            | NetCommand::SetGroupContribution { .. }
+            | NetCommand::GroupAccount(_) => {}
             // handled by on_search_command
             NetCommand::DirQuery { .. }
             | NetCommand::EventInfoRequest(_)
@@ -2765,6 +2768,7 @@ impl Session<'_> {
         if self.on_social_eq(&e.message, b)
             || self.on_land_eq(&e.message, b)
             || self.on_search_eq(&e.message, b)
+            || self.on_groups_eq(&e.message, b)
             || self.on_build_eq(&e.message, b)
         {
             return;

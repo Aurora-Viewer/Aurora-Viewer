@@ -211,6 +211,7 @@ impl World {
     pub fn take_social_commands(&mut self) -> Vec<NetCommand> {
         let mut cmds = self.groups.take_commands();
         cmds.extend(self.group_data.take_commands());
+        cmds.extend(self.group_money.take_commands());
         cmds
     }
 }

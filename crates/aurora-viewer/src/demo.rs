@@ -1487,6 +1487,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             let mut groups = vec![
                 aurora_net::GroupMembership {
                     powers: group::my_powers(),
+                    contribution: group::MY_CONTRIBUTION,
                     ..g(DEMO_GROUP1, "Aurora Builders", true)
                 },
                 g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),

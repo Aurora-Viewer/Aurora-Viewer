@@ -673,12 +673,20 @@ impl Search {
         self.lists.get_mut(tab.list_index()?)
     }
 
+    /// The land types (ProductInfoRequest), asked once when a list of
+    /// parcels needs them.
+    pub fn want_land_types(&mut self) {
+        if !self.land_types_asked {
+            self.land_types_asked = true;
+            self.out.push(NetCommand::ProductInfoRequest);
+        }
+    }
+
     /// onBtnFind: back to the first page (resetSearch), then `find()`.
     pub fn find(&mut self, request: Request, access: search::AgentAccess, now: Instant) {
         let tab = request.tab();
-        if tab == Tab::Land && !self.land_types_asked {
-            self.land_types_asked = true;
-            self.out.push(NetCommand::ProductInfoRequest);
+        if tab == Tab::Land {
+            self.want_land_types();
         }
         if tab == Tab::Classifieds {
             self.banned_notice = false;
