@@ -59,6 +59,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "RenderMaterials",
     "RequestTaskInventory",
     "ResourceCostSelected",
+    // the clicks of a classified (LLPanelProfileClassified)
+    "SearchStatRequest",
+    "SearchStatTracking",
     "SetDisplayName",
     "SimulatorFeatures",
     "UpdateAvatarAppearance",

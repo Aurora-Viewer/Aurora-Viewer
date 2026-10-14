@@ -926,6 +926,7 @@ impl World {
             NetCommand::PickUpdate(p) => self.profiles.pick_saved(self.agent_id, (**p).clone()),
             NetCommand::PickDelete(id) => self.profiles.pick_deleted(self.agent_id, *id),
             NetCommand::ClassifiedDelete(id) => self.profiles.classified_deleted(self.agent_id, *id),
+            NetCommand::ClassifiedUpdate(c) => self.profiles.classified_saved(self.agent_id, (**c).clone()),
             NetCommand::GrantUserRights { friend, rights } => {
                 if let Some(f) = self.social.friends.iter_mut().find(|f| f.id == *friend) {
                     f.rights_given = *rights;
@@ -1960,6 +1961,10 @@ impl World {
             }
             NetEvent::ClassifiedInfo(c) => {
                 self.profiles.classifieds.insert(c.id, *c);
+                None
+            }
+            NetEvent::ClassifiedStats { id, stats } => {
+                self.profiles.classified_stats.insert(id, stats);
                 None
             }
             NetEvent::ParcelInfo(p) => {

@@ -23,6 +23,8 @@ pub struct Profiles {
     /// Classifieds of each avatar (AvatarClassifiedReply).
     pub classified_lists: HashMap<Uuid, Vec<(Uuid, String)>>,
     pub classifieds: HashMap<Uuid, ClassifiedInfo>,
+    /// Clicks on our classifieds (SearchStatRequest).
+    pub classified_stats: HashMap<Uuid, aurora_net::profile::ClassifiedStats>,
     /// Parcels of the picks and classifieds (ParcelInfoReply).
     pub parcels: HashMap<Uuid, ParcelSummary>,
 }
@@ -85,6 +87,17 @@ impl Profiles {
             p.picks.retain(|(pid, _)| *pid != id);
         }
         self.picks.remove(&id);
+    }
+
+    /// One of our classifieds saved or published: shown at once, at the end
+    /// of our list when it is new.
+    pub fn classified_saved(&mut self, owner: Uuid, c: ClassifiedInfo) {
+        let list = self.classified_lists.entry(owner).or_default();
+        match list.iter_mut().find(|(id, _)| *id == c.id) {
+            Some(e) => e.1 = c.name.clone(),
+            None => list.push((c.id, c.name.clone())),
+        }
+        self.classifieds.insert(c.id, c);
     }
 
     pub fn classified_deleted(&mut self, owner: Uuid, id: Uuid) {

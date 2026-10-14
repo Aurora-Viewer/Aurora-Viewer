@@ -1394,6 +1394,56 @@ impl Session<'_> {
                 m.data.classified_id = id;
                 self.send_main(&m, true);
             }
+            NetCommand::ClassifiedUpdate(c) => {
+                // LLAvatarPropertiesProcessor::sendClassifiedInfoUpdate; the
+                // simulator fills ParcelID and ParentEstate on the way
+                let mut m = ClassifiedInfoUpdate::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                let d = &mut m.data;
+                d.classified_id = c.id;
+                d.category = c.category;
+                d.name = str_field(&c.name);
+                d.desc = str_field(&c.desc);
+                d.parcel_id = c.parcel;
+                d.parent_estate = 0;
+                d.snapshot_id = c.snapshot;
+                d.pos_global = c.pos_global;
+                d.classified_flags = c.flags;
+                d.price_for_listing = c.price;
+                self.send_main(&m, true);
+            }
+            NetCommand::ClassifiedStatsRequest(id) => {
+                // LLPanelProfileClassified::onOpen: the stats of the new table
+                // when the capability exists
+                let Some(url) = self.main_cap("SearchStatRequest") else {
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    let body = aurora_llsd::llsd_map! { "classified_id" => id };
+                    match caps::post_llsd(&http, &url, &body).await {
+                        Ok(reply) => {
+                            let stats = crate::profile::ClassifiedStats::from_llsd(&reply);
+                            let _ = events.send(NetEvent::ClassifiedStats { id, stats });
+                        }
+                        Err(e) => log::warn!("SearchStatRequest {id}: {e}"),
+                    }
+                });
+            }
+            NetCommand::ClassifiedClick { kind, classified } => {
+                let Some(url) = self.main_cap("SearchStatTracking") else {
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let body = crate::profile::click_body(kind, &classified);
+                tokio::spawn(async move {
+                    if let Err(e) = caps::post_llsd(&http, &url, &body).await {
+                        log::info!("SearchStatTracking click report not sent: {e}");
+                    }
+                });
+            }
             NetCommand::Land(l) => self.on_land_command(l),
             NetCommand::ParcelInfoRequest(id) => {
                 let mut m = ParcelInfoRequest::default();
