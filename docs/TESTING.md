@@ -988,9 +988,22 @@ To check with these scenarios:
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
+| `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 
 ### Details
 
+- **`AURORA_DEMO_DOF=<f-number>:<distance>[:debug]`**: the depth of field on
+  whatever Preferences say, at that aperture, focused at that distance (m,
+  along the view axis, no transition). At frame 600 the log gives the
+  scene's distances: `dof demo: … own avatar at 3.3 m, other avatars at
+  7.9 m` (the foreground, the subject with its panels; the sphere and the
+  hills are the background, 15 to 40 m). Compare `1.4:3.3` (the avatar
+  sharp, the rest blurred), `1.4:7.9` (the subject sharp, the avatar a soft
+  blur that spreads over it) and `8:7.9` (barely any blur), under MSAA
+  (`AURORA_AA=3`) and SMAA (`AURORA_AA=6`): no halo around a sharp edge in
+  front of a blurred background, no staircase on a blurred foreground's
+  edge. `:debug` paints the circle of confusion: near red, far blue, sharp
+  grey.
 - **`AURORA_DEMO_PARTICLES=wind|smoke|both|legacy`**: wind streaks of the
   motorbike and parameters of the smoke script received through compressed
   updates, in front of a dark panel; extended glow format (`legacy`:

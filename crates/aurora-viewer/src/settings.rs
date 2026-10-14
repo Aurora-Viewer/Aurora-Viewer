@@ -149,6 +149,8 @@ pub struct Settings {
     pub ao: crate::ao::Settings,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
+    /// Depth of field (Preferences › Graphics).
+    pub dof: crate::dof::Settings,
     pub shape_show_hints: bool,
     pub shape_height_feet: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
@@ -665,6 +667,7 @@ impl Default for Settings {
             show_ao: false,
             ao: Default::default(),
             snapshot: Default::default(),
+            dof: Default::default(),
             loading_backdrop: true,
             mouse_sensitivity: 1.0,
             window_width: 1600,
@@ -1089,6 +1092,7 @@ impl Settings {
         self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
         self.chat_commands.sanitize();
         self.snapshot.sanitize();
+        self.dof.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
         self.sharpen = if self.sharpen.is_finite() {
             self.sharpen.clamp(0.0, 1.0)

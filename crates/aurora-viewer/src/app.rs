@@ -32,6 +32,7 @@ mod click_pick;
 mod color_picker;
 mod context_menu;
 mod cursor_hold;
+mod dof;
 mod double_click;
 mod gestures;
 mod hover_height;
@@ -336,6 +337,8 @@ pub struct App {
     minimap_ui: ui::minimap::MiniMap,
     display_name_ui: ui::display_name::DisplayNameUi,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// The depth of field's focus distance and its transition.
+    dof_focus: crate::dof::Focus,
     /// Photos: the window, the frames drawn at their size, the saves.
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
@@ -723,6 +726,7 @@ impl App {
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
             hover_height_ui: Default::default(),
+            dof_focus: Default::default(),
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             buy_currency_ui: Default::default(),
@@ -5220,6 +5224,16 @@ impl App {
             all_lights: self.frame_profile.all_lights(),
             probe_walk_list: self.frame_profile.probe_walk_list(),
             debug: self.settings.debug.render(),
+            dof: {
+                // the image's own vertical field of view (a photo's may be
+                // wider than the window's)
+                let lens_proj = match &photo {
+                    Some(f) => self.camera.photo_proj(f.aspect, window_aspect),
+                    None => self.camera.proj(aspect),
+                };
+                let fov = 2.0 * (1.0 / lens_proj.y_axis.y.max(1e-6)).atan();
+                self.dof_frame(&mut gfx.renderer, dt, fov, lod_height, h)
+            },
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
