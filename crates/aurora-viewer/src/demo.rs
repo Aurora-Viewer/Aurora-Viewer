@@ -421,9 +421,11 @@ fn demo_raw() -> Llsd {
         .collect();
     let mut raw = llsd_map! {
         "inventory-root" => Llsd::Array(vec![llsd_map!{"folder_id" => u(1)}]),
-        // an adult account that wants every rating (the search window's boxes)
-        "agent_access_max" => "A",
-        "agent_region_access" => "A",
+        // an adult account that wants every rating (the search window's boxes);
+        // AURORA_DEMO_LURE=exceeded: it wants General and Moderate only,
+        // =blocked: it is not adult
+        "agent_access_max" => demo_access().0,
+        "agent_region_access" => demo_access().1,
         "inventory-skeleton" => Llsd::Array(skel),
         "buddy-list" => Llsd::Array(buddies),
         "classified_categories" => Llsd::Array(
@@ -711,12 +713,30 @@ pub enum LureScene {
     NotificationAnswered,
     /// The offer's card in the legacy lines.
     Legacy,
+    /// An offer to an Adult region while the account wants General and
+    /// Moderate: "Change and Continue" (part C).
+    Exceeded,
+    /// The same, answered by "Change and Continue": the rating is asked
+    /// for, then the teleport leaves.
+    ExceededContinue,
+    /// An offer to an Adult region for an account that is not adult: no
+    /// teleport, the sender is told.
+    Blocked,
 }
 
 impl LureScene {
     /// Her conversation is open on the card.
     pub fn shows_card(self) -> bool {
         !matches!(self, LureScene::Offer | LureScene::Request | LureScene::God | LureScene::Reject)
+    }
+}
+
+/// The demo account's content ceiling and preference (login letters).
+fn demo_access() -> (&'static str, &'static str) {
+    match lure_scene() {
+        Some(LureScene::Exceeded | LureScene::ExceededContinue) => ("A", "M"),
+        Some(LureScene::Blocked) => ("M", "M"),
+        _ => ("A", "A"),
     }
 }
 
@@ -750,6 +770,9 @@ pub fn lure_scene() -> Option<LureScene> {
         "card-answered" => Some(LureScene::CardAnswered),
         "notification-answered" => Some(LureScene::NotificationAnswered),
         "legacy" => Some(LureScene::Legacy),
+        "exceeded" => Some(LureScene::Exceeded),
+        "exceeded-continue" => Some(LureScene::ExceededContinue),
+        "blocked" => Some(LureScene::Blocked),
         _ => None,
     }
 }
@@ -782,6 +805,10 @@ pub fn lure_events(scene: LureScene, agent: Uuid) -> Vec<NetEvent> {
     match scene {
         LureScene::Offer | LureScene::OfferCard | LureScene::CardAnswered | LureScene::NotificationAnswered | LureScene::Legacy => {
             vec![im(d::LURE_USER, &invitation, plaza)]
+        }
+        // the plaza, rated Adult
+        LureScene::Exceeded | LureScene::ExceededContinue | LureScene::Blocked => {
+            vec![im(d::LURE_USER, &invitation, b"256000|256000|128|130|25|0|1|0|A")]
         }
         LureScene::Request | LureScene::RequestCard => vec![im(d::TELEPORT_REQUEST, aurora_i18n::tr!("demo-can-i-join-you"), b"")],
         LureScene::God => vec![im(d::GODLIKE_LURE_USER, &invitation, plaza)],

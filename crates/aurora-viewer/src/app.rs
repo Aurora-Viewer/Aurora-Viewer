@@ -8535,7 +8535,10 @@ impl ApplicationHandler for App {
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
                 }
                 // the card alone: the list stays closed where no answer is shown
-                if matches!(scene, LureScene::OfferCard | LureScene::RequestCard | LureScene::Legacy) {
+                if matches!(
+                    scene,
+                    LureScene::OfferCard | LureScene::RequestCard | LureScene::Legacy | LureScene::Exceeded
+                ) {
                     self.notif_ui.open = false;
                 }
                 if scene == LureScene::Legacy {
@@ -8569,7 +8572,9 @@ impl ApplicationHandler for App {
             {
                 use crate::demo::LureScene;
                 match scene {
-                    LureScene::CardAnswered => self.on_ctx_action(ui::context::CtxAction::AnswerTeleport { invite: v.0, accept: true }),
+                    LureScene::CardAnswered | LureScene::ExceededContinue => {
+                        self.on_ctx_action(ui::context::CtxAction::AnswerTeleport { invite: v.0, accept: true })
+                    }
                     LureScene::NotificationAnswered => {
                         let (cmds, _) = self.world.respond_notification(v.1, crate::world::notifications::Response::Decline);
                         for c in cmds {

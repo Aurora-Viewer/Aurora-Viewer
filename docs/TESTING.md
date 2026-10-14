@@ -1656,7 +1656,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Adult" and the notification list shows "Content rating not changed".
   `fail`: the request fails, the same notice at once. A teleport asked
   meanwhile waits for the answer and is dropped on a failure.
-- **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy`**:
+- **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy|exceeded|exceeded-continue|blocked`**:
   teleports received from Tess Touch (issue #280, parts B1 and B2). Each
   offer and request opens her conversation (unread) with its card and has
   an entry in the notification centre; answering one closes the entry and
@@ -1672,7 +1672,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   card: "Accepted" on the card, the list empty, the teleport starts and fails
   offline. `notification-answered`: the offer declined from its entry:
   "Declined" on the card. `legacy`: the card as one line of the legacy
-  style, its buttons at the end. `god`: no notification, the
+  style, its buttons at the end. `exceeded` (part C): the demo account
+  wants General and Moderate and the offer leads to an Adult plaza: the
+  card and the entry explain it and offer "Change and Continue" / Decline.
+  `exceeded-continue`: answered by "Change and Continue": the rating is
+  asked for, then the teleport leaves (and fails offline); the card says
+  "Accepted". `blocked`: the demo account is not adult: the card and the
+  entry say the region is for adults only, without a button, and the
+  sender gets "The Resident cannot visit this region." then the decline
+  (in the log of the demo commands). `god`: no notification, the
   teleport starts at once and fails offline (two lines in the nearby chat).
   `answers`: her conversation is open with "Tess … declined your teleport
   offer" as a system line, without a notification; Nova's acceptance goes to
