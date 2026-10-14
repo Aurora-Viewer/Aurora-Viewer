@@ -223,7 +223,7 @@ mod tests {
             } else {
                 Vec::new()
             };
-            let output = f.ctx.run_ui(
+            let mut output = f.ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
                     events,
@@ -234,12 +234,12 @@ mod tests {
                     complete(ui, &mut edit, &mut text, &f.gestures);
                 },
             );
-            assert!(
-                output.shapes.iter().any(|shape| {
-                    matches!(&shape.shape, egui::epaint::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default())
-                }),
-                "the input must still paint the color emoji image"
-            );
+            let painted_emoji = output
+                .shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::epaint::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default()));
+            output.textures_delta.clear();
+            assert!(painted_emoji, "the input must still paint the color emoji image");
         }
         assert_eq!(text, "/😀 wave");
         let range = egui::text_edit::TextEditState::load(&f.ctx, id)
