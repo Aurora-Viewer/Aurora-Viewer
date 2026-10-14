@@ -221,6 +221,11 @@ pub struct InventoryWindow {
 #[derive(Debug, Clone, Copy)]
 pub struct InvDrag(pub Uuid);
 
+/// A folder dragged from the inventory: only the Marketplace listings
+/// window takes it (LLFolderBridge::dragCategoryIntoFolder).
+#[derive(Debug, Clone, Copy)]
+pub struct FolderDrag(pub Uuid);
+
 pub(crate) struct WorldDrag {
     pub item: Uuid,
     pub position: egui::Pos2,
@@ -639,12 +644,18 @@ fn folder_row(
         if rename_row(ui, p, inv, id, state, prefs, actions) {
             return;
         }
+        // personal folders can be dragged to the Marketplace listings window
+        let draggable = rules::movable(inv, id, &prefs.protected) && folder.info.type_default == -1;
         let r = ui.add_sized(
             [ui.available_width(), 20.0],
             egui::Button::selectable(state.selection.contains(&id), "")
                 .left_text(RichText::new(label).size(13.0).color(p.ink))
-                .wrap_mode(egui::TextWrapMode::Extend),
+                .wrap_mode(egui::TextWrapMode::Extend)
+                .sense(if draggable { egui::Sense::click_and_drag() } else { egui::Sense::click() }),
         );
+        if draggable {
+            r.dnd_set_drag_payload(FolderDrag(id));
+        }
         clipboard::demo_row(&r, state, id);
         task_drop::target(ui, p, &r, inv, id, prefs, actions);
         if first_open {

@@ -18,6 +18,7 @@ pub mod land;
 pub mod landmarks;
 pub mod lookat;
 pub mod lslbridge;
+pub mod marketplace;
 pub mod maturity;
 pub mod motion;
 pub mod mutes;
