@@ -15,7 +15,7 @@ use super::widgets::{self, Floater};
 use crate::settings::MapSettings;
 use crate::theme::Palette;
 use crate::world::World;
-use crate::world::worldmap::{SIM_ACCESS_ADULT, SIM_ACCESS_MATURE, Track, access_label, location_label, teleport_command};
+use crate::world::worldmap::{Track, access_label, location_label, teleport_command};
 use aurora_net::{NetCommand, map_item};
 use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2, pos2, vec2};
 use uuid::Uuid;
@@ -95,6 +95,13 @@ pub enum WorldMapAction {
 }
 
 impl WorldMapUi {
+    /// AURORA_DEMO_MAP=search:<text>: the region search, as if typed.
+    pub fn demo_search(&mut self, world: &mut World, text: &str) {
+        self.search = text.to_owned();
+        self.selected = None;
+        world.map.search_region(text);
+    }
+
     /// Center the map on a global position (centerOnTarget).
     fn center_on(&mut self, world: &World, cam: &MapCamera, x: f64, y: f64) {
         let (cx, cy) = to_global(world, cam.pos);
@@ -436,6 +443,19 @@ impl WorldMapUi {
                 );
             } else {
                 draw_tracking(&painter, rect, sp, TRACK_COLOR, 0.0, Some(&t.label));
+                // the rating of the region there (a llMapDestination, a
+                // place link), left of its label as in the navigation bar
+                if rect.shrink(2.0).contains(sp)
+                    && let Some((_, sim)) = world.map.sim_at_global(t.x, t.y)
+                {
+                    let font = egui::FontId::proportional(11.0);
+                    let label = painter.layout_no_wrap(t.label.clone(), font.clone(), Color32::WHITE);
+                    let row = ui.fonts_mut(|f| f.row_height(&font));
+                    let side = 12.0;
+                    let at = pos2(sp.x - label.size().x * 0.5 - side - 4.0, sp.y + 9.0 + (row - side) * 0.5);
+                    let badge = Rect::from_min_size(at, Vec2::splat(side));
+                    widgets::paint_maturity_badge(&painter, p, super::bars::maturity_name(sim.access), badge, 2);
+                }
             }
         }
 
@@ -703,14 +723,20 @@ impl WorldMapUi {
                 .show(ui, |ui| {
                     for (key, name, access) in &results {
                         let sel = self.selected == Some(*key);
-                        let text = RichText::new(format!("{name}  ·  {}", access_label(*access)))
-                            .size(12.5)
-                            .color(match *access {
-                                SIM_ACCESS_ADULT => p.rose,
-                                SIM_ACCESS_MATURE => p.amber,
-                                _ => p.ink,
-                            });
-                        if ui.selectable_label(sel, text).clicked() {
+                        // the navigation bar's badge, else the state in text
+                        // (offline, unknown)
+                        let clicked = ui
+                            .horizontal(|ui| {
+                                let badge = super::widgets::maturity_badge_of(ui, p, *access, 14.0).is_some();
+                                let text = if badge {
+                                    name.to_string()
+                                } else {
+                                    format!("{name}  ·  {}", access_label(*access))
+                                };
+                                ui.selectable_label(sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
+                            })
+                            .inner;
+                        if clicked {
                             self.selected = Some(*key);
                             self.select_region(world, cam, *key);
                         }

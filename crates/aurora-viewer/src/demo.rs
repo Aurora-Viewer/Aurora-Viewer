@@ -785,6 +785,61 @@ pub fn lure_scene() -> Option<LureScene> {
     }
 }
 
+/// AURORA_DEMO_SLURLS=1: place links in every form, in Tess Touch's
+/// conversation, in the chat console and in a notification: the plaza
+/// (General, connected), the lagoon (Moderate) and Nordheim (Adult) known
+/// from the map, the pine grove unknown until the demo server answers its
+/// lookup (`SLURLS_LOOKUP_DELAY` later), and a region that does not exist,
+/// left without a badge.
+pub fn slurls_scene() -> bool {
+    std::env::var_os("AURORA_DEMO_SLURLS").is_some()
+}
+
+/// How late the demo server answers a region lookup in `slurls_scene`, so
+/// the unknown region's badge is seen to arrive.
+pub const SLURLS_LOOKUP_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// The text of `slurls_scene`, its links in each SLURL form.
+pub fn slurls_text() -> String {
+    let link = |prefix: &str, region: &str, pos: (f32, f32, f32)| {
+        crate::slurl::make(region, glam::Vec3::new(pos.0, pos.1, pos.2)).replace("http://maps.secondlife.com/secondlife/", prefix)
+    };
+    [
+        link(
+            "http://maps.secondlife.com/secondlife/",
+            aurora_i18n::tr!("common-aurora-demo"),
+            (128.0, 130.0, 25.0),
+        ),
+        link(
+            "secondlife:///app/teleport/",
+            aurora_i18n::tr!("common-boreal-lagoon"),
+            (60.0, 200.0, 21.0),
+        ),
+        link("secondlife://", "Nordheim", (100.0, 100.0, 30.0)),
+        link(
+            "secondlife:///app/region/",
+            aurora_i18n::tr!("common-pine-grove"),
+            (40.0, 80.0, 22.0),
+        ),
+        link("https://slurl.com/secondlife/", "Atlantide", (1.0, 2.0, 3.0)),
+    ]
+    .join(" · ")
+}
+
+/// What the map would have taught before `slurls_scene`: the lagoon and
+/// Nordheim, not the pine grove.
+pub fn slurls_events() -> Vec<NetEvent> {
+    let known = [aurora_i18n::tr!("common-boreal-lagoon"), "Nordheim"];
+    vec![NetEvent::MapBlocks {
+        blocks: demo_sims()
+            .iter()
+            .filter(|s| known.contains(&s.2))
+            .map(|s| map_block(s.0, s.1, s.2, s.3))
+            .collect(),
+        null_sims: false,
+    }]
+}
+
 /// The instant messages of `lure_scene`, from Tess Touch.
 pub fn lure_events(scene: LureScene, agent: Uuid) -> Vec<NetEvent> {
     use crate::world::notifications::im as d;

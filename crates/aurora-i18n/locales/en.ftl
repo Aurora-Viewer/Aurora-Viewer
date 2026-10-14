@@ -3473,6 +3473,7 @@ ui-options-clear-cache = Clear cache
 ui-profile-real-life = Real life
 ui-profile-second-life = Second Life
 demo-come-see-the-lagoon-at-sunset = Come see the lagoon at sunset!
+demo-places-sign = Visitor sign
 demo-bubbles-concert = Are you coming to the concert tonight?
 demo-bubbles-cant = I can't, I'm working late 😕
 demo-bubbles-sorry = Sorry about yesterday!

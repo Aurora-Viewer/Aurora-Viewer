@@ -1265,13 +1265,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent |
-| `AURORA_DEMO_MAP=1` or `mini` | World map and mini-map |
+| `AURORA_DEMO_MAP=1`, `mini` or `search:<text>` | World map and mini-map, the region search |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
 | `AURORA_DEMO_MATURITY=agree\|disagree\|fail` | Content rating changed, the server's answer |
+| `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
@@ -1696,6 +1697,20 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (that notice only goes to the resident's transcript, when instant messages
   are logged). `tp:reject`: "Request teleport" while teleports are rejected
   only shows the warning, with OK and no message to type.
+- **`AURORA_DEMO_MAP=search:<text>`**: the world map with the region
+  search already typed (`search:o` lists several demo regions). What to see:
+  each result has the navigation bar's rating badge (G / M / A) before its
+  name; a region offline or unknown keeps its state in text.
+- **`AURORA_DEMO_SLURLS=1|offer`**: Tess Touch's conversation, the chat
+  console and the notification list show the same place links, one per
+  SLURL form: the plaza (General), the lagoon (Moderate), Nordheim (Adult),
+  the pine grove and Atlantide. What to see: G, M and A badges before the
+  first three at once; the pine grove gets its G badge about 3 seconds
+  later, when the demo server answers its lookup; Atlantide does not exist
+  and stays without a badge. `offer`: the "Offer teleport" dialog for Tess
+  shows our region with its badge. `AURORA_DEMO_PLACES=history` shows the
+  badges on the teleport history (Ahern, unknown to the demo, has none);
+  `AURORA_DEMO_MAP=1` shows one next to the tracked place's label.
 - **`AURORA_DEMO_MATURITY=agree|disagree|fail`**: the Preferences open on
   Interface › Content and the demo account (adult, every rating) asks for
   "General". `agree`: the server accepts, the list shows "General".
