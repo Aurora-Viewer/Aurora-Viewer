@@ -91,17 +91,8 @@ impl App {
         }
     }
 
-    /// LLEnvironment::isInventoryEnabled.
-    fn settings_inventory_enabled(&self) -> bool {
-        self.demo
-            || self
-                .world
-                .main_region
-                .and_then(|h| self.world.regions.get(&h))
-                .is_some_and(|r| r.caps.contains_key("UpdateSettingsAgentInventory") && r.caps.contains_key("UpdateSettingsTaskInventory"))
-    }
-
     pub(super) fn draw_env_editor(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        self.env_apply_answers();
         if let Some(item) = self.env_editor.wait_item
             && self.world.inventory.items.contains_key(&item)
         {
@@ -117,18 +108,33 @@ impl App {
         if !self.env_editor.open {
             return;
         }
-        let can_inventory = self.settings_inventory_enabled();
-        let actions = self.env_editor.show(ctx, p, &self.world.inventory, &self.ui_images, can_inventory);
+        let access = self.env_editor_access();
+        let actions = self.env_editor.show(ctx, p, &self.world.inventory, &self.ui_images, access);
         if self.env_editor.show_picker(ctx, p, &mut self.world, &self.ui_images) {
             self.show_env_edit();
         }
         for action in actions {
+            // onButtonApply: nothing leaves with a local texture
+            let checked = matches!(
+                action,
+                EditorAction::Save
+                    | EditorAction::SaveAsAsk
+                    | EditorAction::ApplyLocal
+                    | EditorAction::ApplyParcel
+                    | EditorAction::ApplyRegion
+            );
+            if checked && !self.env_editor_settings_ok() {
+                continue;
+            }
             match action {
                 EditorAction::Changed => self.show_env_edit(),
                 EditorAction::Load(item) => self.env_editor_load(item),
                 EditorAction::Import => self.env_editor_import(),
                 EditorAction::Save => self.env_editor_save(None),
+                EditorAction::SaveAsAsk => self.env_editor.ask_save_as(),
                 EditorAction::SaveAs(name) => self.env_editor_save(Some(name)),
+                EditorAction::ApplyParcel => self.env_editor_apply(false),
+                EditorAction::ApplyRegion => self.env_editor_apply(true),
                 EditorAction::ApplyLocal => {
                     // doApplyEnvironment(ACTION_APPLY_LOCAL): ENV_LOCAL, at once
                     // shown once the editor closes

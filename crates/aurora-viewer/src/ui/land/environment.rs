@@ -113,8 +113,16 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             egui::Button::new(aurora_i18n::tr!("ui-land-environment-use-inventory")).min_size(w),
         )
         .on_disabled_hover_text(not_yet());
-        ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-customize")).min_size(w))
-            .on_disabled_hover_text(not_yet());
+        // onBtnEdit: the day cycle editor on the parcel's day
+        if ui
+            .add_enabled(
+                can_edit && summary.is_some(),
+                egui::Button::new(aurora_i18n::tr!("common-customize")).min_size(w),
+            )
+            .clicked()
+        {
+            s.custom_day = true;
+        }
         ui.add_space(10.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("ui-land-environment-day-settings"))

@@ -35,6 +35,7 @@ mod context_menu;
 mod cursor_hold;
 mod dof;
 mod double_click;
+mod env_apply;
 mod env_day_editor;
 mod env_editor;
 mod gestures;
@@ -481,6 +482,10 @@ pub struct App {
     day_editor: ui::env_day_editor::DayEditorUi,
     /// A sky, water or day item the day editor waits for, and what for.
     day_fetch: Option<(uuid::Uuid, env_day_editor::DayFetch)>,
+    /// A Windlight day being read for the day editor's "Import".
+    day_import: Option<std::sync::mpsc::Receiver<env_apply::DayImport>>,
+    /// The ExtEnvironment update an editor sent and waits for.
+    env_applying: Option<env_apply::Applying>,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
     gesture_state: gestures::State,
@@ -850,6 +855,8 @@ impl App {
             env_import: None,
             day_editor: Default::default(),
             day_fetch: None,
+            day_import: None,
+            env_applying: None,
             demo: false,
             inventory_ui: Default::default(),
             gesture_state: Default::default(),
@@ -1187,9 +1194,10 @@ impl App {
                 // a saved settings item's new asset, as the simulator would serve it
                 if let Ok(it) = &result
                     && it.asset_type == 56
-                    && let Some(s) = crate::world::eep::Settings::from_asset(data)
+                    && let Some(map) = crate::world::eep::Settings::decode_asset(data)
+                    && let Some(s) = crate::world::eep::Settings::from_llsd(&map)
                 {
-                    self.scene.settings.insert_local(it.asset_id, s);
+                    self.scene.settings.insert_local(it.asset_id, s, Some(map));
                 }
                 self.on_app_event(NetEvent::InventoryContentSaved {
                     request: *request,
@@ -1224,8 +1232,10 @@ impl App {
                     ..Default::default()
                 };
                 self.demo_documents.insert(item.id, data.clone());
-                if let Some(s) = crate::world::eep::Settings::from_asset(data) {
-                    self.scene.settings.insert_local(item.asset_id, s);
+                if let Some(map) = crate::world::eep::Settings::decode_asset(data)
+                    && let Some(s) = crate::world::eep::Settings::from_llsd(&map)
+                {
+                    self.scene.settings.insert_local(item.asset_id, s, Some(map));
                 }
                 self.world.inventory.add_items(vec![item.clone()]);
                 self.on_app_event(NetEvent::InventoryContentSaved {
@@ -1586,6 +1596,8 @@ impl App {
         self.env_import = None;
         self.day_editor.close();
         self.day_fetch = None;
+        self.day_import = None;
+        self.env_applying = None;
         self.world.eep.clear_edit();
         self.world.save_inventory_cache();
         self.world.save_mute_cache();
@@ -6232,6 +6244,8 @@ impl App {
             if let Some(scenario) = crate::demo::env::editor() {
                 if scenario.starts_with("day") {
                     self.demo_day_editor(scenario, self.frame_count);
+                } else if crate::demo::env::parcel_scenario() {
+                    self.demo_env_apply(scenario, self.frame_count);
                 } else if self.frame_count == 400 {
                     self.demo_env_editor(scenario);
                 } else if scenario == "item-save" {
@@ -7191,6 +7205,10 @@ impl App {
             BarAction::ResetCamera => self.reset_camera_view(),
             BarAction::BanLines(v) => self.settings.maps.ban_lines = v,
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
+            BarAction::NewEnvironment(kind) => match kind {
+                crate::world::env_select::SettingsKind::Day => self.open_new_day_editor(),
+                kind => self.open_env_editor_snapshot(kind),
+            },
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::LandmarkStar(star) => self.landmark_star(star),
@@ -8530,6 +8548,9 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.about_land = open;
+                if std::mem::take(&mut self.land_ui.custom_day) {
+                    self.open_parcel_day_editor();
+                }
                 a.set_display_name = self.display_name_ui.show(&ctx, &p, &self.world);
                 for cmd in self.create_landmark_ui.show(&ctx, &p, &self.world.inventory) {
                     self.send(cmd);
@@ -9315,8 +9336,8 @@ impl ApplicationHandler for App {
             );
             // AURORA_DEMO_ENV_SELECT: the library's settings assets, known locally
             if crate::demo::env::enabled() {
-                for (id, settings) in crate::demo::env::settings_assets() {
-                    self.scene.settings.insert_local(id, settings);
+                for (id, settings, map) in crate::demo::env::settings_assets() {
+                    self.scene.settings.insert_local(id, settings, Some(map));
                 }
             }
             // AURORA_DEMO_PERF=compact|full|network: the performance window in

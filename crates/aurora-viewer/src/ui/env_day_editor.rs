@@ -1,14 +1,16 @@
 //! Day cycle editor: Firestorm's LLFloaterEditExtDayCycle
 //! (newview/llfloatereditextdaycycle.cpp, floater_edit_ext_day_cycle.xml),
-//! in its inventory context. Top to bottom like the XML: the name; the
-//! track buttons (Water, Ground Level, Sky 2 to 4); the timeline with the
-//! time cursor (WLTimeSlider) above the key frames (WLDayCycleFrames) and
-//! the 0..100 % labels; Clone / Load / Clear Track, the play buttons, Add /
-//! Load / Delete the frame; the selected frame's sky tabs or water panel
-//! (the panels of the sky and water editors); Save with its menu and
-//! Cancel. Originally LGPL 2.1.
+//! in its inventory, parcel and region contexts. Top to bottom like the
+//! XML: the name and Import; the track buttons (Water, Ground Level, Sky 2
+//! to 4, named by their altitude for a parcel or a region, greyed without
+//! the extended environment); the timeline with the time cursor
+//! (WLTimeSlider) above the key frames (WLDayCycleFrames) and the 0..100 %
+//! labels; Clone / Load / Clear Track, the play buttons, Add / Load / Delete
+//! the frame; the selected frame's sky tabs or water panel (the panels of
+//! the sky and water editors); Save (or "Apply To Parcel / Region" in those
+//! contexts) with its menu and Cancel. Originally LGPL 2.1.
 
-use super::env_editor::EnvEditorUi;
+use super::env_editor::{EditorAccess, EnvEditorUi};
 use super::widgets::{self, ActionKind, Floater};
 use crate::theme::Palette;
 use crate::world::World;
@@ -32,15 +34,37 @@ pub enum DayAction {
     LoadFrame(Uuid),
     /// "Load Track From": a day cycle item whose track is copied.
     LoadTrack(Uuid),
+    /// "Import": a Windlight day file.
+    Import,
     Save,
+    /// "Save As" chosen: the name is asked once the day is checked.
+    SaveAsAsk,
     SaveAs(String),
     ApplyLocal,
+    /// "Apply To Parcel" / "Apply To Region" (inventory context).
+    ApplyParcel,
+    ApplyRegion,
+    /// The parcel and region contexts' "Apply To …" (doApplyCommit).
+    Commit,
     Closed,
+}
+
+/// LLFloaterEditExtDayCycle's edit context.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DayContext {
+    /// A day cycle item, or a new day.
+    #[default]
+    Inventory,
+    /// About Land's "Custom": the parcel's day, by its local id.
+    Parcel(i32),
+    /// The region's day.
+    Region,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Confirm {
     Close,
+    Import,
 }
 
 /// A key frame dragged on the timeline: (index, copy with Shift, position).
@@ -80,6 +104,20 @@ pub struct DayEditorUi {
     pub track_source: Option<DayDoc>,
     /// Day length (s) for the time labels (parcel and region contexts).
     pub day_length: Option<f64>,
+    /// Where the day comes from and goes back to.
+    pub context: DayContext,
+    /// The day as opened in a parcel or region context: committed only when
+    /// changed (onEditCommitted compares the hashes).
+    pub committed: Option<aurora_llsd::Llsd>,
+    /// The parcel's or region's day length and offset (s, -1 unknown).
+    pub timing: (i32, i32),
+    /// The region's sky altitudes for the track names (parcel and region
+    /// contexts with the extended environment).
+    pub altitudes: Option<[f32; 4]>,
+    /// The region has the extended environment: skies 2 to 4 can be edited.
+    pub extended: bool,
+    /// Waiting for Firestorm's default day (setEditDefaultDayCycle).
+    pub wait_default: bool,
     confirm: Option<Confirm>,
     save_as: Option<String>,
     name: String,
@@ -88,11 +126,23 @@ pub struct DayEditorUi {
     pub wait_item: Option<Uuid>,
 }
 
-fn track_label(t: usize) -> String {
-    match t {
-        TRACK_WATER => aurora_i18n::tr!("common-water").to_owned(),
-        TRACK_GROUND => aurora_i18n::tr!("ui-day-editor-ground").to_owned(),
-        n => aurora_i18n::tr!("ui-day-editor-sky-n", n = format!("{n}")),
+/// An altitude as onOpen writes it into "Sky [ALT]" (a float streamed
+/// with "m").
+fn altitude_text(alt: f32) -> String {
+    if alt.fract() == 0.0 {
+        format!("{alt:.0}m")
+    } else {
+        format!("{alt}m")
+    }
+}
+
+/// The track buttons' labels: skies 2 to 4 by their altitude when known.
+pub fn track_label(t: usize, altitudes: Option<&[f32; 4]>) -> String {
+    match (t, altitudes) {
+        (TRACK_WATER, _) => aurora_i18n::tr!("common-water").to_owned(),
+        (TRACK_GROUND, _) => aurora_i18n::tr!("ui-day-editor-ground").to_owned(),
+        (n, Some(a)) => aurora_i18n::tr!("ui-day-editor-sky-n", n = altitude_text(a[n - 1])),
+        (n, None) => aurora_i18n::tr!("ui-day-editor-sky-n", n = format!("{n}")),
     }
 }
 
@@ -116,6 +166,7 @@ impl DayEditorUi {
         self.track_source = None;
         self.confirm = None;
         self.save_as = None;
+        self.wait_default = false;
         self.select_at_cursor();
     }
 
@@ -123,6 +174,50 @@ impl DayEditorUi {
         self.open = true;
         self.loading = Some(item);
         self.message = None;
+    }
+
+    /// Open on a day that is not an item (a parcel's or region's day, the
+    /// default day), in `context`; `timing` is the environment's day length
+    /// and offset (s, -1 when unknown) the commit sends back, the length
+    /// also naming the times of the timeline (KEY_DAY_LENGTH, four hours
+    /// when unknown).
+    pub fn start_in(&mut self, doc: DayDoc, context: DayContext, timing: (i32, i32)) {
+        let rights = Rights::from_flags(doc.flags());
+        self.start(doc, None, rights);
+        self.context = context;
+        self.timing = timing;
+        let (day_length, committed) = match context {
+            DayContext::Inventory => (None, None),
+            _ => (
+                Some(if timing.0 > 0 { timing.0 as f64 } else { 4.0 * 3600.0 }),
+                self.doc.as_ref().map(DayDoc::to_llsd),
+            ),
+        };
+        self.day_length = day_length;
+        self.committed = committed;
+    }
+
+    /// "Save As" confirmed by the app: the name prompt.
+    pub fn ask_save_as(&mut self) {
+        self.save_as = Some(self.name.clone());
+    }
+
+    /// Import over the current day (loadSettingFromFile: no item, the
+    /// ground track selected, unsaved).
+    pub fn imported(&mut self, doc: DayDoc) {
+        // the context, day length and committed day stay
+        let rights = Rights::from_flags(doc.flags());
+        self.start(doc, None, rights);
+        self.dirty = true;
+    }
+
+    /// The label of the commit action in a parcel or region context.
+    fn commit_label(&self) -> Option<&'static str> {
+        match self.context {
+            DayContext::Inventory => None,
+            DayContext::Parcel(_) => Some(aurora_i18n::tr!("ui-env-editor-apply-parcel")),
+            DayContext::Region => Some(aurora_i18n::tr!("ui-env-editor-apply-region")),
+        }
     }
 
     pub fn close(&mut self) {
@@ -256,7 +351,7 @@ impl DayEditorUi {
         p: &Palette,
         inv: &Inventory,
         images: &HashMap<Uuid, egui::TextureHandle>,
-        can_inventory: bool,
+        access: EditorAccess,
     ) -> Vec<DayAction> {
         let mut out = Vec::new();
         if !self.open {
@@ -286,9 +381,9 @@ impl DayEditorUi {
                 });
                 return;
             }
-            self.name_row(ui, p);
+            self.name_row(ui, p, &mut out);
             ui.add_space(4.0);
-            self.tracks_row(ui, p);
+            self.tracks_row(ui, p, &mut out);
             self.timeline(ui, p, &mut out);
             self.track_row(ui, p, inv, &mut out);
             self.frame_row(ui, p, inv, &mut out);
@@ -296,7 +391,7 @@ impl DayEditorUi {
             let body_h = (ui.available_height() - 64.0).max(120.0);
             self.frame_panels(ui, p, images, body_h, &mut out);
             widgets::divider(ui, p);
-            self.footer(ui, p, can_inventory, &mut out);
+            self.footer(ui, p, access, &mut out);
         });
         if !open {
             if self.dirty {
@@ -310,7 +405,7 @@ impl DayEditorUi {
         out
     }
 
-    fn name_row(&mut self, ui: &mut egui::Ui, p: &Palette) {
+    fn name_row(&mut self, ui: &mut egui::Ui, p: &Palette, out: &mut Vec<DayAction>) {
         ui.horizontal(|ui| {
             ui.label(RichText::new(aurora_i18n::tr!("ui-day-editor-name")).size(12.0).color(p.ink));
             // refresh: renaming needs modify rights and an item
@@ -326,16 +421,45 @@ impl DayEditorUi {
                 doc.set_name(&self.name);
                 self.dirty = true;
             }
+            // btn_import (mImportButton->setEnabled(mCanMod))
+            if widgets::action_button_if(
+                ui,
+                p,
+                "folder-open-filled",
+                aurora_i18n::tr!("ui-env-editor-import"),
+                ActionKind::Flat,
+                Vec2::new(0.0, 24.0),
+                self.rights.modify,
+            )
+            .on_hover_text(aurora_i18n::tr!("ui-day-editor-import-tip"))
+            .clicked()
+            {
+                if self.dirty {
+                    self.confirm = Some(Confirm::Import);
+                } else {
+                    out.push(DayAction::Import);
+                }
+            }
         });
     }
 
-    fn tracks_row(&mut self, ui: &mut egui::Ui, p: &Palette) {
-        // the track buttons, Water first like timeline_layers
-        let labels: Vec<String> = (0..TRACKS).map(track_label).collect();
-        let tabs: Vec<(&str, bool)> = labels.iter().map(|l| (l.as_str(), self.playing.is_none())).collect();
+    fn tracks_row(&mut self, ui: &mut egui::Ui, p: &Palette, out: &mut Vec<DayAction>) {
+        // the track buttons, Water first like timeline_layers; skies 2 to 4
+        // need the extended environment (onOpen)
+        let labels: Vec<String> = (0..TRACKS).map(|t| track_label(t, self.altitudes.as_ref())).collect();
+        let tabs: Vec<(&str, bool)> = labels
+            .iter()
+            .enumerate()
+            .map(|(t, l)| (l.as_str(), self.playing.is_none() && (t <= TRACK_GROUND || self.extended)))
+            .collect();
+        if !self.extended && self.track > TRACK_GROUND {
+            self.select_track(TRACK_GROUND);
+            out.push(DayAction::Changed);
+        }
         let mut t = self.track;
         if widgets::tabs(ui, p, &mut t, &tabs) {
             self.select_track(t);
+            out.push(DayAction::Changed);
         }
     }
 
@@ -503,7 +627,7 @@ impl DayEditorUi {
                 for t in TRACK_GROUND..TRACKS {
                     let filled = self.doc.as_ref().is_some_and(|d| !d.tracks[t].is_empty());
                     if t != self.track
-                        && super::menu::item_if(ui, p, "sun-filled", &track_label(t), filled)
+                        && super::menu::item_if(ui, p, "sun-filled", &track_label(t, self.altitudes.as_ref()), filled)
                         && self.copy_track(t, self.track)
                     {
                         self.changed(out);
@@ -690,7 +814,9 @@ impl DayEditorUi {
         true
     }
 
-    fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, can_inventory: bool, out: &mut Vec<DayAction>) {
+    fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, access: EditorAccess, out: &mut Vec<DayAction>) {
+        let can_inventory = access.inventory;
+        let commit = self.commit_label();
         ui.horizontal(|ui| {
             if let Some((text, error)) = &self.message {
                 ui.label(RichText::new(text).size(11.5).color(if *error { p.danger } else { p.muted }));
@@ -719,36 +845,54 @@ impl DayEditorUi {
                 let save_as = idle && can_inventory && self.rights.copy && self.rights.save;
                 let more = widgets::action_button(ui, p, "caret-down-filled", "", ActionKind::Flat, Vec2::new(26.0, 26.0))
                     .on_hover_text(aurora_i18n::tr!("ui-env-editor-more"));
+                // refresh: the commit entry in the parcel and region contexts,
+                // Apply To Parcel / Region in the inventory one; Save and
+                // Save As only where the region keeps settings
+                let commit_icon = if self.context == DayContext::Region {
+                    "world-filled"
+                } else {
+                    "map-pin-filled"
+                };
                 super::menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                    if super::menu::item_if(ui, p, "device-floppy-filled", aurora_i18n::tr!("common-save"), save) {
-                        out.push(DayAction::Save);
+                    if let Some(label) = commit
+                        && super::menu::item(ui, p, commit_icon, label)
+                    {
+                        out.push(DayAction::Commit);
                     }
-                    if super::menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("common-save-as"), save_as) {
-                        self.save_as = Some(self.name.clone());
+                    if can_inventory {
+                        if super::menu::item_if(ui, p, "device-floppy-filled", aurora_i18n::tr!("common-save"), save) {
+                            out.push(DayAction::Save);
+                        }
+                        if super::menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("common-save-as"), save_as) {
+                            out.push(DayAction::SaveAsAsk);
+                        }
                     }
                     super::menu::separator(ui, p);
                     if super::menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-apply-to-myself-only")) {
                         out.push(DayAction::ApplyLocal);
                     }
-                    for label in [
-                        aurora_i18n::tr!("ui-env-editor-apply-parcel"),
-                        aurora_i18n::tr!("ui-env-editor-apply-region"),
-                    ] {
-                        super::menu::item_if(ui, p, "map-pin-filled", label, false);
+                    if commit.is_none() {
+                        if super::menu::item_if(
+                            ui,
+                            p,
+                            "map-pin-filled",
+                            aurora_i18n::tr!("ui-env-editor-apply-parcel"),
+                            access.parcel,
+                        ) {
+                            out.push(DayAction::ApplyParcel);
+                        }
+                        if super::menu::item_if(ui, p, "world-filled", aurora_i18n::tr!("ui-env-editor-apply-region"), access.region) {
+                            out.push(DayAction::ApplyRegion);
+                        }
                     }
                 });
-                if widgets::action_button_if(
-                    ui,
-                    p,
-                    "device-floppy-filled",
-                    aurora_i18n::tr!("common-save"),
-                    ActionKind::Primary,
-                    size,
-                    save,
-                )
-                .clicked()
-                {
-                    out.push(DayAction::Save);
+                // the flyout's selected item: Save, or the commit
+                let (icon, label, enabled, action) = match commit {
+                    Some(label) => (commit_icon, label, idle, DayAction::Commit),
+                    None => ("device-floppy-filled", aurora_i18n::tr!("common-save"), save, DayAction::Save),
+                };
+                if widgets::action_button_if(ui, p, icon, label, ActionKind::Primary, size, enabled).clicked() {
+                    out.push(action);
                 }
             });
         });
@@ -779,13 +923,17 @@ impl DayEditorUi {
             if modal.should_close() && answer.is_none() {
                 answer = Some(false);
             }
-            match answer {
-                Some(true) => {
+            match (answer, self.confirm) {
+                (Some(true), Some(Confirm::Import)) => {
+                    self.confirm = None;
+                    out.push(DayAction::Import);
+                }
+                (Some(true), _) => {
                     self.close();
                     out.push(DayAction::Closed);
                 }
-                Some(false) => self.confirm = None,
-                None => {}
+                (Some(false), _) => self.confirm = None,
+                (None, _) => {}
             }
         }
         if let Some(mut name) = self.save_as.clone() {
@@ -832,7 +980,7 @@ impl DayEditorUi {
                         ui,
                         p,
                         "sun-filled",
-                        &track_label(t),
+                        &track_label(t, self.altitudes.as_ref()),
                         ActionKind::Flat,
                         Vec2::new(0.0, 24.0),
                         enabled,

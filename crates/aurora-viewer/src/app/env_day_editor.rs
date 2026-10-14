@@ -4,7 +4,7 @@
 //! and LLFloaterEditEnvironmentBase, originally LGPL 2.1).
 
 use super::App;
-use crate::ui::env_day_editor::DayAction;
+use crate::ui::env_day_editor::{DayAction, DayContext};
 use crate::world::env_day_edit::DayDoc;
 use crate::world::env_edit::{Rights, SettingsDoc};
 use aurora_net::NetCommand;
@@ -29,6 +29,13 @@ impl App {
             self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-unable-to-edit").into(), true));
             return;
         }
+        // LLSettingsBridgeAction opens the inventory context
+        self.day_editor.context = DayContext::Inventory;
+        self.day_editor.committed = None;
+        self.day_editor.timing = (-1, -1);
+        self.day_editor.day_length = None;
+        self.day_editor.altitudes = None;
+        self.day_editor.wait_default = false;
         self.day_editor.start_loading(item);
         if !self.env_scan {
             self.env_scan = true;
@@ -85,7 +92,7 @@ impl App {
     }
 
     /// The edit slot shows the day at the editor's time cursor.
-    fn show_day_edit(&mut self) {
+    pub(super) fn show_day_edit(&mut self) {
         if let Some((sky, water)) = self.day_editor.shown() {
             self.world.eep.set_edit(sky, water);
         }
@@ -98,20 +105,37 @@ impl App {
             self.day_editor.wait_item = None;
             self.day_editor_load(item);
         }
+        self.day_editor_imported();
         if !self.day_editor.open {
             return;
         }
-        let can_inventory =
-            self.demo
-                || self.world.main_region.and_then(|h| self.world.regions.get(&h)).is_some_and(|r| {
-                    r.caps.contains_key("UpdateSettingsAgentInventory") && r.caps.contains_key("UpdateSettingsTaskInventory")
-                });
-        let actions = self.day_editor.show(ctx, p, &self.world.inventory, &self.ui_images, can_inventory);
+        self.day_editor_default();
+        self.day_editor.extended = self.extended_environment();
+        let access = self.env_editor_access();
+        let actions = self.day_editor.show(ctx, p, &self.world.inventory, &self.ui_images, access);
         if self.day_editor.show_picker(ctx, p, &mut self.world, &self.ui_images) {
             self.show_day_edit();
         }
         for action in actions {
+            // onButtonApply: nothing leaves with a local texture
+            let checked = matches!(
+                action,
+                DayAction::Save
+                    | DayAction::SaveAsAsk
+                    | DayAction::ApplyLocal
+                    | DayAction::ApplyParcel
+                    | DayAction::ApplyRegion
+                    | DayAction::Commit
+            );
+            if checked && !self.day_editor_settings_ok() {
+                continue;
+            }
             match action {
+                DayAction::Import => self.day_editor_import(),
+                DayAction::SaveAsAsk => self.day_editor.ask_save_as(),
+                DayAction::ApplyParcel => self.day_editor_apply(false),
+                DayAction::ApplyRegion => self.day_editor_apply(true),
+                DayAction::Commit => self.day_editor_commit(),
                 DayAction::Changed => self.show_day_edit(),
                 DayAction::LoadFrame(item) | DayAction::LoadTrack(item) => {
                     let purpose = if matches!(action, DayAction::LoadFrame(_)) {
