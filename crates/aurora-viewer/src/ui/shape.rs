@@ -218,8 +218,68 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
                 })
                 .collect();
             params.sort_by(|a, b| a.group.cmp(&b.group).then(a.order.total_cmp(&b.order)).then(a.id.cmp(&b.id)));
-            let bottom = if st.message.is_empty() { 52.0 } else { 82.0 };
-            let available = (ui.available_height() - bottom).max(70.0);
+            // LLPanelEditWearable keeps its save controls at the bottom.
+            // Lay them out first using their actual height: an unreserved
+            // pending/wrapped label otherwise grows the floater every frame.
+            let rest = ui.available_rect_before_wrap();
+            ui.allocate_rect(rest, egui::Sense::hover());
+            let mut footer = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rest)
+                    .layout(egui::Layout::bottom_up(egui::Align::Min)),
+            );
+            if busy {
+                footer.label(RichText::new(aurora_i18n::tr!("shape-saving")).color(p.muted));
+            }
+            footer.add_enabled_ui(!busy, |ui| {
+                ui.horizontal(|ui| {
+                    let size = Vec2::new((ui.available_width() - 16.0) / 3.0, 30.0);
+                    if widgets::action_button_if(
+                        ui,
+                        p,
+                        "copy-filled",
+                        aurora_i18n::tr!("common-save-as"),
+                        ActionKind::Flat,
+                        size,
+                        copy,
+                    )
+                    .clicked()
+                    {
+                        st.copy_name = Some(draft.item.name.clone());
+                    }
+                    if widgets::action_button_if(ui, p, "restore", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size, true)
+                        .clicked()
+                    {
+                        reset = true;
+                        close = true;
+                    }
+                    if widgets::action_button_if(
+                        ui,
+                        p,
+                        "device-floppy",
+                        aurora_i18n::tr!("common-save"),
+                        ActionKind::Primary,
+                        size,
+                        modify && draft.dirty(),
+                    )
+                    .clicked()
+                    {
+                        actions.push(Action::Save(None));
+                    }
+                });
+            });
+            if !st.message.is_empty() {
+                footer.add_space(6.0);
+                footer.label(RichText::new(&st.message).size(12.0).color(p.warn));
+            }
+            footer.add_space(6.0);
+            let mut controls = footer.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(footer.available_rect_before_wrap())
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            let ui = &mut controls;
+            let available = ui.available_height().max(0.0);
             // Keep a complete row (both hints, captions and value) reachable
             // at the minimum viewport. Fixed row geometry makes virtualisation
             // accurate even while asynchronous previews replace placeholders.
@@ -233,6 +293,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
                 .max_height(available)
                 .auto_shrink([false, false])
                 .show_rows(ui, row_height, params.len(), |ui, range| {
+                    if params.is_empty() {
+                        ui.label(RichText::new(aurora_i18n::tr!("shape-no-results")).color(p.muted));
+                    }
                     ui.add_enabled_ui(modify && !busy, |ui| {
                         for index in range {
                             let param = params[index];
@@ -321,53 +384,6 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
             // Keep offscreen geometry bounded to the visible rows.
             hint_views.extend(visible.iter().copied());
             st.models.retain(|(id, _), _| hint_views.contains(id));
-            if params.is_empty() {
-                ui.label(RichText::new(aurora_i18n::tr!("shape-no-results")).color(p.muted));
-            }
-            if !st.message.is_empty() {
-                ui.label(RichText::new(&st.message).size(12.0).color(p.warn));
-            }
-            ui.add_space(6.0);
-            ui.add_enabled_ui(!busy, |ui| {
-                ui.horizontal(|ui| {
-                    let size = Vec2::new((ui.available_width() - 16.0) / 3.0, 30.0);
-                    if widgets::action_button_if(
-                        ui,
-                        p,
-                        "copy-filled",
-                        aurora_i18n::tr!("common-save-as"),
-                        ActionKind::Flat,
-                        size,
-                        copy,
-                    )
-                    .clicked()
-                    {
-                        st.copy_name = Some(draft.item.name.clone());
-                    }
-                    if widgets::action_button_if(ui, p, "restore", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size, true)
-                        .clicked()
-                    {
-                        reset = true;
-                        close = true;
-                    }
-                    if widgets::action_button_if(
-                        ui,
-                        p,
-                        "device-floppy",
-                        aurora_i18n::tr!("common-save"),
-                        ActionKind::Primary,
-                        size,
-                        modify && draft.dirty(),
-                    )
-                    .clicked()
-                    {
-                        actions.push(Action::Save(None));
-                    }
-                });
-            });
-            if busy {
-                ui.label(RichText::new(aurora_i18n::tr!("shape-saving")).color(p.muted));
-            }
         } else {
             ui.label(
                 RichText::new(if st.loading.is_some() {
@@ -563,6 +579,73 @@ mod tests {
             vec![egui::Event::PointerMoved(at), wheel(egui::MouseWheelUnit::Line, 1.0)],
         );
         assert_eq!(state.group, 8);
+    }
+
+    #[test]
+    fn saving_and_wrapped_feedback_keep_the_editor_size_and_footer_visible() {
+        for (screen, hints) in [
+            (Vec2::new(1280.0, 1000.0), true),
+            (Vec2::new(800.0, 560.0), true),
+            (Vec2::new(800.0, 560.0), false),
+        ] {
+            let (mut world, mut state) = crate::shape_editor::tests::fixture();
+            state.hints = hints;
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
+                ..Default::default()
+            };
+            let mut frame = |state: &mut State| {
+                ctx.run_ui(input.clone(), |ui| {
+                    let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, state);
+                })
+            };
+            for _ in 0..8 {
+                frame(&mut state);
+            }
+            let initial = egui::AreaState::load(&ctx, egui::Id::new("shape_editor"))
+                .and_then(|s| s.size)
+                .expect("editor size");
+            // Both save commands share the asynchronous pending state. Keep
+            // each pending for many frames, as a real grid upload may be.
+            for copy in [false, true] {
+                state.draft.as_mut().expect("draft").pending = Some(uuid::Uuid::from_u128(91));
+                state.copy_name = copy.then(|| "Copy".into());
+                state.message.clear();
+                for _ in 0..40 {
+                    frame(&mut state);
+                    let size = egui::AreaState::load(&ctx, egui::Id::new("shape_editor"))
+                        .and_then(|s| s.size)
+                        .expect("editor size");
+                    assert!((size - initial).length() < 0.5, "pending copy={copy}: {initial:?} -> {size:?}");
+                }
+                state.draft.as_mut().expect("draft").pending = None;
+                state.copy_name = None;
+            }
+            for message in [
+                aurora_i18n::tr!("shape-saved").to_owned(),
+                aurora_i18n::tr!("shape-save-interrupted").repeat(3),
+                String::new(),
+            ] {
+                state.message = message;
+                for _ in 0..8 {
+                    let output = frame(&mut state);
+                    let size = egui::AreaState::load(&ctx, egui::Id::new("shape_editor"))
+                        .and_then(|s| s.size)
+                        .expect("editor size");
+                    assert!((size - initial).length() < 0.5, "feedback: {initial:?} -> {size:?}");
+                    assert!(
+                        output.shapes.iter().any(|shape| {
+                            matches!(&shape.shape, egui::Shape::Text(text)
+                            if text.galley.text() == aurora_i18n::tr!("common-save-as")
+                            && shape.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))
+                        }),
+                        "footer must remain visible"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

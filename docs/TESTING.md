@@ -1677,11 +1677,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_RESTRICTED=1`**: red parcel icons, damage
   enabled, health at 72%.
 
-**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|mesh-head|static-head|pbr-head|mesh-drag|layered-head`**
+**`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|saving|save-feedback|mesh-head|static-head|pbr-head|mesh-drag|layered-head`**
 opens the editor with a synthetic worn shape, without reading a real inventory or
 connecting to a grid. Category modes select the corresponding controls; `male`
 selects the male shape, `readonly` removes Modify, `nocopy` removes Copy, `dirty`
 opens the unsaved-changes confirmation and `save-as` opens the copy name dialog.
+`saving` holds a synthetic save pending, and `save-feedback` shows a wrapped
+save error. In both, the editor must keep its size, with the three buttons
+reachable at the bottom; only the parameter list gives space to the status.
 `mesh-head` and `static-head` wear a tinted head through the real mesh codec,
 with/without skin weights, using BOM so the system head is hidden in the world
 and in the hints. Check the same head in both views and change Head Size. Wheel

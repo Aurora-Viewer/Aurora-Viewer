@@ -212,6 +212,16 @@ impl App {
                 draft.edited.params.insert(33, 2.0);
                 self.shape_ui.close_confirmation = true;
             }
+            if mode == "saving" {
+                draft.pending = Some(uuid::Uuid::from_u128(91));
+            }
+        }
+        if mode == "save-feedback" {
+            self.shape_ui.message = format!(
+                "{} {}",
+                aurora_i18n::tr!("shape-save-unconfirmed"),
+                aurora_i18n::tr!("shape-save-interrupted")
+            );
         }
         self.shape_ui.changed(&mut self.world);
         self.focus_shape_category();

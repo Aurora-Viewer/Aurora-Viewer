@@ -125,7 +125,9 @@ sex filters, ranges and hint cameras; its test checks the catalogue against the
 XML. `aurora-assets/wearable.rs` parses the bounded LLWearable format and retains
 permissions, sale, textures and unknown sections when parameters are changed.
 `ui/shape.rs` uses Aurora's Floater, tabs, surfaces and modals, with visible-row
-virtualisation and a fixed Save As / Cancel / Save footer. `app/shape_editor.rs`
+virtualisation and a bottom-anchored Save As / Cancel / Save footer. The footer
+measures pending/status labels before the list receives the remaining height,
+so asynchronous saves and wrapped errors never enlarge the floater. `app/shape_editor.rs`
 opens it from Appearance, the self-avatar/attachment menu or the worn shape's
 inventory menu, restores the camera
 on closing and provides `AURORA_DEMO_SHAPE`.
