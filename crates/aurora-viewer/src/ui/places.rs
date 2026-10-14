@@ -83,6 +83,9 @@ pub enum PlacesAction {
     SortByDate(bool),
     /// "Do not show again" ticked in an accepted teleport confirmation.
     StopConfirmingTeleports,
+    /// "Add landmark" (LLLandmarksPanel::onAddAction "add_landmark"): the
+    /// Create Landmark window, saving in the selected folder if any.
+    CreateLandmark(Option<Uuid>),
 }
 
 /// One line of a landmarks tab.
@@ -238,6 +241,9 @@ fn now_secs() -> f64 {
 #[derive(Default)]
 pub struct PlacesUi {
     pub tab: usize,
+    /// A landmark already points at the agent's position: the "add
+    /// landmark" entries are greyed out (landmarkAlreadyExists).
+    pub landmark_here: bool,
     filter: String,
     selected: Option<Sel>,
     /// Folders opened in the landmarks tabs.
@@ -412,7 +418,10 @@ impl PlacesUi {
             if !history {
                 widgets::icon_menu(ui, p, "plus", aurora_i18n::tr!("ui-places-add-a-new-landmark-or-folder"), |ui| {
                     super::menu::todo(ui, p, "folder-filled", aurora_i18n::tr!("ui-places-add-folder"));
-                    super::menu::todo(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-places-add-landmark"));
+                    // "add_landmark_root": the Landmarks folder
+                    if super::menu::item_if(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-places-add-landmark"), !self.landmark_here) {
+                        actions.push(PlacesAction::CreateLandmark(None));
+                    }
                 });
                 widgets::icon_button(ui, p, "trash-filled", super::menu::not_yet(), false);
             }
@@ -688,7 +697,10 @@ impl PlacesUi {
             super::menu::todo(ui, p, "star-filled", aurora_i18n::tr!("ui-places-move-to-favorites"));
         }
         super::menu::separator(ui, p);
-        super::menu::todo(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-places-create-landmark"));
+        // "add_landmark" on a landmark: no destination folder
+        if super::menu::item_if(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-places-create-landmark"), !self.landmark_here) {
+            actions.push(PlacesAction::CreateLandmark(None));
+        }
         super::menu::todo(ui, p, "folder-filled", aurora_i18n::tr!("ui-places-create-folder"));
         super::menu::separator(ui, p);
         super::menu::todo(ui, p, "cut", aurora_i18n::tr!("common-cut"));
@@ -710,7 +722,20 @@ impl PlacesUi {
 
     /// menu_places_gear_folder.xml.
     fn folder_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, by_date: bool, actions: &mut Vec<PlacesAction>) {
-        super::menu::todo(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-places-add-landmark"));
+        // "add_landmark": saved in the selected folder
+        let folder = match self.selected {
+            Some(Sel::Folder(f)) => Some(f),
+            _ => None,
+        };
+        if super::menu::item_if(
+            ui,
+            p,
+            "map-pin-filled",
+            aurora_i18n::tr!("ui-places-add-landmark"),
+            folder.is_some() && !self.landmark_here,
+        ) {
+            actions.push(PlacesAction::CreateLandmark(folder));
+        }
         super::menu::todo(ui, p, "folder-filled", aurora_i18n::tr!("ui-places-add-folder"));
         super::menu::separator(ui, p);
         super::menu::todo(ui, p, "cut", aurora_i18n::tr!("common-cut"));

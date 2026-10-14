@@ -30,6 +30,7 @@ pub mod icons;
 pub mod inspect;
 pub mod inventory;
 pub mod land;
+pub mod landmark_create;
 pub mod layout;
 pub mod loading;
 pub mod login;

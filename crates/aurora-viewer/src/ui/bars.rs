@@ -60,6 +60,8 @@ pub enum BarAction {
     Marketplace,
     /// Me › Marketplace listings (menu_viewer.xml "MarketplaceListings").
     MarketplaceListings,
+    /// World › Landmark this Place (World.CreateLandmark).
+    CreateLandmark,
 }
 
 pub struct StatusInfo<'a> {
@@ -96,6 +98,9 @@ pub struct StatusInfo<'a> {
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
+    /// A landmark already points here: World › Landmark this Place is
+    /// greyed out (World.EnableCreateLandmark).
+    pub landmark_here: bool,
 }
 
 pub fn maturity_name(sim_access: u8) -> &'static str {
@@ -512,6 +517,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "worldmap",
             &mut panels.world_map,
         );
+        // menu_viewer.xml: Landmark this Place, after the maps
+        if menu::item_if(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-create-here"), !st.landmark_here) {
+            *action = BarAction::CreateLandmark;
+        }
         menu::submenu(ui, p, "barrier-block-filled", aurora_i18n::tr!("ui-bars-ban-lines"), true, |ui| {
             for (v, icon, label) in [
                 (0u8, "eye-off", aurora_i18n::tr!("ui-bars-hidden")),
