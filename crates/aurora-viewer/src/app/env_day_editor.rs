@@ -110,6 +110,10 @@ impl App {
             return;
         }
         self.day_editor_default();
+        self.day_editor_follow_parcel();
+        if !self.day_editor.open {
+            return;
+        }
         self.day_editor.extended = self.extended_environment();
         let access = self.env_editor_access();
         let actions = self.day_editor.show(ctx, p, &self.world.inventory, &self.ui_images, access);
@@ -135,7 +139,8 @@ impl App {
                 DayAction::SaveAsAsk => self.day_editor.ask_save_as(),
                 DayAction::ApplyParcel => self.day_editor_apply(false),
                 DayAction::ApplyRegion => self.day_editor_apply(true),
-                DayAction::Commit => self.day_editor_commit(),
+                DayAction::Commit if !self.day_editor.commit_lost => self.day_editor_commit(),
+                DayAction::Commit => {}
                 DayAction::Changed => self.show_day_edit(),
                 DayAction::LoadFrame(item) | DayAction::LoadTrack(item) => {
                     let purpose = if matches!(action, DayAction::LoadFrame(_)) {

@@ -426,7 +426,63 @@ impl App {
             "environment: custom day of parcel {local_id} ({})",
             if day.is_some() { "its own" } else { "default" }
         );
+        let followed = summary.and_then(|e| e.day_cycle);
         self.open_day_editor_in(DayContext::Parcel(local_id), day, timing);
+        self.day_editor.followed = followed;
+    }
+
+    /// LLPanelEnvironmentInfo::updateEditFloater while the parcel context's
+    /// editor is open: About Land's environment changed (another parcel
+    /// selected, a day applied or reset elsewhere, the right lost). A new day
+    /// replaces the edited one, changes or not; without a day (or the right)
+    /// the editor closes, or stays without its commit when it has changes.
+    /// About Land closed: the editor keeps its parcel, as the hidden panel.
+    pub(super) fn day_editor_follow_parcel(&mut self) {
+        let DayContext::Parcel(edited) = self.day_editor.context else {
+            return;
+        };
+        if !self.day_editor.open {
+            return;
+        }
+        let extended = self.extended_environment();
+        let Some(sel) = self.world.land.sel.as_ref() else { return };
+        let (Some(local_id), EnvState::Ready(summary)) = (sel.local_id(), &sel.env) else {
+            return;
+        };
+        let rights = AgentRights {
+            id: self.world.agent_id,
+            groups: &self.world.groups.groups,
+        };
+        let enabled = sel
+            .parcel
+            .as_ref()
+            .is_some_and(|p| env_apply::can_update_parcel(p, &rights, extended));
+        let summary = summary.clone();
+        let day = summary.day_cycle.clone();
+        let same = local_id == edited && day == self.day_editor.followed;
+        if same && (enabled || self.day_editor.commit_lost) {
+            return;
+        }
+        match day.as_deref().and_then(day_doc).filter(|_| enabled) {
+            Some(mut doc) if !same => {
+                log::info!("environment: the parcel's day changed, the editor follows it (parcel {local_id})");
+                doc.set_name(&summary.day_name);
+                let timing = (summary.day_length as i32, summary.day_offset as i32);
+                self.open_day_editor_in(DayContext::Parcel(local_id), Some(doc), timing);
+                self.day_editor.followed = day;
+            }
+            Some(_) => {}
+            None if self.day_editor.dirty => {
+                log::info!("environment: the parcel can no longer take the edited day, its commit is off");
+                self.day_editor.commit_lost = true;
+            }
+            None => {
+                log::info!("environment: the parcel has no day to edit any more, the editor closes");
+                self.day_editor.close();
+                self.day_fetch = None;
+                self.world.eep.clear_edit();
+            }
+        }
     }
 
     /// The region's day in the region context (Region / Estate's
@@ -502,7 +558,7 @@ impl App {
     /// - `custom`: About Land on the parcel's environment, "Custom" chosen
     ///   (400): the parcel's day in the parcel context, left to the tester.
     pub(super) fn demo_env_apply(&mut self, scenario: &str, frame: u64) {
-        let base = scenario.strip_suffix("-refused").unwrap_or(scenario);
+        let base = scenario.split('-').next().unwrap_or(scenario);
         match (base, frame) {
             ("parcel", 400) => {
                 let item = crate::demo::env::editor_item();
@@ -535,6 +591,21 @@ impl App {
                 self.day_editor_commit();
             }
             ("custom", 400) => self.land_ui.custom_day = true,
+            // custom-follow: another day applied to the parcel meanwhile
+            // (the library's "Dynamic Day", as About Land's picker does)
+            ("custom", 900) if scenario == "custom-follow" => {
+                log::info!("demo environment: another day applied to the parcel");
+                let asset = crate::demo::env::library_day_asset();
+                self.world.land.environment(|local_id| LandCommand::EnvironmentApply {
+                    local_id,
+                    track: None,
+                    asset,
+                    name: "Dynamic Day".into(),
+                    flags: 0,
+                    day_length: -1,
+                    day_offset: -1,
+                });
+            }
             _ => {}
         }
     }

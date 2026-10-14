@@ -111,6 +111,12 @@ pub struct DayEditorUi {
     pub committed: Option<aurora_llsd::Llsd>,
     /// The parcel's or region's day length and offset (s, -1 unknown).
     pub timing: (i32, i32),
+    /// The parcel's day as About Land last showed it (None: it had none),
+    /// to follow its changes (updateEditFloater).
+    pub followed: Option<std::sync::Arc<aurora_llsd::Llsd>>,
+    /// The parcel can no longer take the edited day: the commit is off
+    /// (mCommitSignal disconnected), the changes kept.
+    pub commit_lost: bool,
     /// The region's sky altitudes for the track names (parcel and region
     /// contexts with the extended environment).
     pub altitudes: Option<[f32; 4]>,
@@ -848,6 +854,7 @@ impl DayEditorUi {
                 // refresh: the commit entry in the parcel and region contexts,
                 // Apply To Parcel / Region in the inventory one; Save and
                 // Save As only where the region keeps settings
+                let can_commit = !self.commit_lost;
                 let commit_icon = if self.context == DayContext::Region {
                     "world-filled"
                 } else {
@@ -855,7 +862,7 @@ impl DayEditorUi {
                 };
                 super::menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                     if let Some(label) = commit
-                        && super::menu::item(ui, p, commit_icon, label)
+                        && super::menu::item_if(ui, p, commit_icon, label, can_commit)
                     {
                         out.push(DayAction::Commit);
                     }
@@ -888,7 +895,7 @@ impl DayEditorUi {
                 });
                 // the flyout's selected item: Save, or the commit
                 let (icon, label, enabled, action) = match commit {
-                    Some(label) => (commit_icon, label, idle, DayAction::Commit),
+                    Some(label) => (commit_icon, label, idle && can_commit, DayAction::Commit),
                     None => ("device-floppy-filled", aurora_i18n::tr!("common-save"), save, DayAction::Save),
                 };
                 if widgets::action_button_if(ui, p, icon, label, ActionKind::Primary, size, enabled).clicked() {

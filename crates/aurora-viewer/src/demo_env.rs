@@ -42,14 +42,12 @@ pub fn editor() -> Option<&'static str> {
     (!s.is_empty() && s != "0").then_some(s.as_str())
 }
 
-/// `AURORA_DEMO_ENV_EDITOR=parcel|region|custom` (or `…-refused`): the
+/// `AURORA_DEMO_ENV_EDITOR=parcel|region|custom` (or `…-refused`,
+/// `custom-follow`): the
 /// editors' parcel and region scenarios. The avatar owns its parcel (and
 /// manages the estate for `region`), the region has an EEP day.
 pub fn parcel_scenario() -> bool {
-    editor().is_some_and(|s| {
-        let base = s.strip_suffix("-refused").unwrap_or(s);
-        matches!(base, "parcel" | "region" | "custom")
-    })
+    editor().is_some_and(|s| matches!(s.split('-').next(), Some("parcel" | "region" | "custom")))
 }
 
 /// `AURORA_DEMO_ENV_EDITOR=region…`: the avatar manages the demo estate.
@@ -66,6 +64,11 @@ pub fn enabled() -> bool {
 /// The user's day cycle item the `day` editor scenarios open.
 pub fn day_item() -> Uuid {
     u(0x503 + 0x1000)
+}
+
+/// The library's "Dynamic Day".
+pub fn library_day_asset() -> Uuid {
+    u(0x402)
 }
 
 /// The asset of the user's day cycle item.
