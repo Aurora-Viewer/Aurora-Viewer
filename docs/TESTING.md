@@ -2331,12 +2331,12 @@ What the inventory must show with these scenarios:
   the voice session: the call connects after 1.5 s and the others talk in
   turn, two seconds each (green ring around their picture). Every call made
   from the interface works with it, without the variable. Three seconds
-  after arriving, `p2p` calls Nova: "Calling…" until she answers 3 s later,
-  then "In call" with a timer; `hangup` is the same and Nova hangs up after
+  after arriving, `p2p` calls Tess: "Calling…" until she answers 3 s later,
+  then "In call" with a timer; `hangup` is the same and Tess hangs up after
   12 s (back to nearby voice, a notice in the conversation); `group` calls
-  the group Aurora Builders (Tess, Nova and Violet Wolf); `incoming` makes
-  Nova call us (the card with Accept, Decline and Reply by text) and
-  `incoming-group` makes Tess start a call in Aurora Builders. Voice must be
+  the group Aurora Builders (Nova, Tess and Orion); `incoming` makes Tess
+  call us (the card with Accept, Decline and Reply by text) and
+  `incoming-group` makes Nova start a call in Aurora Builders. Voice must be
   enabled (Preferences › Sound and voice), as on the grid.
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less

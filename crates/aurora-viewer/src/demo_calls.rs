@@ -3,11 +3,12 @@
 //! not have. Every call made from the interface works with it; the variable
 //! starts one, or makes someone call:
 //!
-//! - `p2p`: we call Nova; she answers after 3 s, then the two talk in turn;
-//! - `hangup`: the same, and Nova hangs up after 12 s;
-//! - `group`: a call in the group Aurora Builders (Tess, Nova, Violet Wolf);
-//! - `incoming`: Nova calls us (the card with Accept / Decline / Start IM);
-//! - `incoming-group`: Tess starts a call in Aurora Builders.
+//! - `p2p`: we call Tess; she answers after 3 s, then the two talk in turn;
+//! - `hangup`: the same, and Tess hangs up after 12 s;
+//! - `group`: a call in the group Aurora Builders (Nova, Tess, Orion);
+//! - `incoming`: Tess calls us (the card with Accept / Decline / Reply by
+//!   text);
+//! - `incoming-group`: Nova starts a call in Aurora Builders.
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
 use crate::world::World;
@@ -72,12 +73,13 @@ pub fn reply(method: CallMethod, session: Uuid) -> Vec<NetEvent> {
 
 fn invite(group: bool) -> VoiceInvite {
     let (session, from, from_name, session_name) = if group {
-        (DEMO_GROUP1, DEMO_TESS, "Tess Touch", "Aurora Builders")
+        (DEMO_GROUP1, DEMO_TESS, "Nova Example", "Aurora Builders")
     } else {
+        // (the demo's names call DEMO_NOVA "Tess" and DEMO_TESS "Nova")
         (
             Uuid::from_u128(DEMO_AGENT.as_u128() ^ DEMO_NOVA.as_u128()),
             DEMO_NOVA,
-            "Nova Example",
+            "Tess Touch",
             "",
         )
     };

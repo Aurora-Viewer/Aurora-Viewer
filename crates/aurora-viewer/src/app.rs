@@ -3455,7 +3455,7 @@ impl App {
         // a new call shows its conversation (started, accepted, answered by text)
         let call = self.world.calls.active.as_ref().map(|c| c.session);
         if call.is_some() && call != self.call_shown {
-            self.panels.chat = true;
+            ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
         }
         self.call_shown = call;
         // the microphone a call wants when it connects or ends (toggle mode)
