@@ -1,7 +1,9 @@
 //! Voice chat glue: one WebRTC session for the agent's region / parcel
-//! channel (LLVoiceWebRTC spatial channel), the microphone capture and
+//! channel (LLVoiceWebRTC spatial channel) or, during a call, for the call's
+//! "multiagent" channel (startAdHocSession); the microphone capture and
 //! push-to-talk. Vivox regions are not supported (proprietary daemon).
 
+use crate::world::calls::{CallChannel, CallMember, ChannelStatus};
 use aurora_audio::{AudioEngine, MicCapture, OVERDRIVEN_POWER_LEVEL};
 use aurora_net::parcel_flags;
 use aurora_voice::{ChannelKind, VoiceConnectParams, VoiceSession, VoiceStatus};
@@ -11,10 +13,15 @@ use uuid::Uuid;
 
 /// Channel the session is joined to.
 #[derive(Debug, Clone, PartialEq)]
-struct ChannelKey {
-    region: u64,
-    /// None = estate (region-wide) channel.
-    parcel: Option<i32>,
+enum ChannelKey {
+    Local {
+        region: u64,
+        /// None = estate (region-wide) channel.
+        parcel: Option<i32>,
+    },
+    /// A call's channel (its id): the spatial channel is left meanwhile
+    /// (LLWebRTCVoiceClient::leaveChannel before startAdHocSession).
+    Call(String),
 }
 
 /// What the app knows this frame.
@@ -41,6 +48,8 @@ pub struct VoiceInputs<'a> {
     /// Global positions (metres) and rotations of the avatar and the camera.
     pub avatar: (DVec3, Quat),
     pub listener: (DVec3, Quat),
+    /// The channel of the call in progress, joined instead of the spatial one.
+    pub call: Option<&'a CallChannel>,
 }
 
 /// Connection light shown in the top bar.
@@ -74,8 +83,8 @@ pub struct Voice {
 }
 
 impl Voice {
-    /// The channel wanted now, or why there is none.
-    fn wanted(v: &VoiceInputs) -> Result<(ChannelKey, String, Option<String>), String> {
+    /// The channel wanted now, its kind for the server, or why there is none.
+    fn wanted(v: &VoiceInputs) -> Result<(ChannelKey, ChannelKind, String, Option<String>), String> {
         if !v.enabled {
             return Err(aurora_i18n::tr!("common-voice-disabled").into());
         }
@@ -100,13 +109,28 @@ impl Voice {
         if !aurora_voice::is_webrtc_voice_server(v.voice_server) {
             return Err(aurora_i18n::tr!("voice-vivox-region-voice-is-not-supported").into());
         }
+        let signaling = caps.get("VoiceSignalingRequest").cloned();
+        // a call does not depend on the parcel's voice settings
+        if let Some(call) = v.call {
+            let kind = ChannelKind::Multiagent {
+                channel_id: call.id.clone(),
+                credentials: call.credentials.clone(),
+            };
+            return Ok((ChannelKey::Call(call.id.clone()), kind, provision, signaling));
+        }
         let parcel = v.parcel.ok_or_else(|| aurora_i18n::tr!("voice-waiting-for-parcel").to_owned())?;
         if parcel.flags & parcel_flags::ALLOW_VOICE_CHAT == 0 {
             return Err(aurora_i18n::tr!("voice-voice-disabled-on-this-parcel").into());
         }
         let parcel_id = (parcel.flags & parcel_flags::USE_ESTATE_VOICE_CHAN == 0).then_some(parcel.local_id);
-        let signaling = caps.get("VoiceSignalingRequest").cloned();
-        Ok((ChannelKey { region, parcel: parcel_id }, provision, signaling))
+        Ok((
+            ChannelKey::Local { region, parcel: parcel_id },
+            ChannelKind::Local {
+                parcel_local_id: parcel_id,
+            },
+            provision,
+            signaling,
+        ))
     }
 
     pub fn update(&mut self, v: VoiceInputs) {
@@ -149,20 +173,21 @@ impl Voice {
 
         // session for the current channel
         match Self::wanted(&v) {
-            Ok((key, provision, signaling)) => {
+            Ok((key, channel, provision, signaling)) => {
                 if self.session.as_ref().map(|(k, _)| k) != Some(&key) {
                     // changing channel: leave the old one first (drop logs out)
                     self.session = None;
                     if let Some(engine) = v.engine {
-                        log::info!("voice: joining region {:x} parcel {:?}", key.region, key.parcel);
+                        match &key {
+                            ChannelKey::Local { region, parcel } => log::info!("voice: joining region {region:x} parcel {parcel:?}"),
+                            ChannelKey::Call(_) => log::info!("voice: joining the call's channel"),
+                        }
                         let params = VoiceConnectParams {
                             provision_cap_url: provision,
                             signaling_cap_url: signaling,
                             agent_id: v.agent_id,
                             voice_server_type: v.voice_server.to_owned(),
-                            channel: ChannelKind::Local {
-                                parcel_local_id: key.parcel,
-                            },
+                            channel,
                             grid: v.grid.to_owned(),
                             stun_servers: None,
                         };
@@ -232,6 +257,30 @@ impl Voice {
                 }
             }
         }
+    }
+
+    /// The call's channel this frame: its state and participants (us
+    /// included), `None` while the session is not on a call's channel.
+    pub fn call_report(&self) -> Option<(ChannelStatus, Vec<CallMember>)> {
+        let (ChannelKey::Call(_), s) = self.session.as_ref()? else {
+            return None;
+        };
+        let status = match s.status() {
+            VoiceStatus::Connecting | VoiceStatus::Error(_) | VoiceStatus::Disconnected => ChannelStatus::Connecting,
+            VoiceStatus::Connected => ChannelStatus::Connected,
+            VoiceStatus::ChannelFull | VoiceStatus::ChannelLocked => ChannelStatus::Full,
+            VoiceStatus::Unsupported(_) => ChannelStatus::Failed,
+        };
+        let members = s
+            .participants()
+            .into_iter()
+            .map(|p| CallMember {
+                id: p.agent_id,
+                level: p.level,
+                speaking: p.speaking,
+            })
+            .collect();
+        Some((status, members))
     }
 
     /// Voice participants: level (0..1) and speaking, including our local mic.

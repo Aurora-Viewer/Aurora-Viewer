@@ -170,6 +170,84 @@ pub fn parse_invitation(body: &Llsd) -> Option<SessionInvite> {
     })
 }
 
+/// `invitation_type` of a voice invitation (EMultiAgentChatSessionType, llimview.cpp).
+const P2P_CHAT_SESSION: i32 = 2;
+
+/// Voice call invitation: a ChatterBoxInvitation carrying "voice" instead of
+/// an instant message (LLViewerChatterBoxInvitation::post).
+#[derive(Debug, Clone, PartialEq)]
+pub struct VoiceInvite {
+    pub session: Uuid,
+    pub session_name: String,
+    pub from: Uuid,
+    pub from_name: String,
+    /// A call between two residents (IM_SESSION_P2P_INVITE), else a group or
+    /// ad-hoc call (IM_SESSION_INVITE).
+    pub p2p: bool,
+    /// The voice channel info ("voice" map: channel_uri,
+    /// channel_credentials, voice_server_type…), handed back on accept.
+    pub voice: Llsd,
+}
+
+/// Body of a ChatterBoxInvitation carrying a voice invitation.
+pub fn parse_voice_invitation(body: &Llsd) -> Option<VoiceInvite> {
+    let voice = &body["voice"];
+    voice.as_map()?;
+    Some(VoiceInvite {
+        session: body["session_id"].as_uuid(),
+        session_name: body["session_name"].as_str().to_owned(),
+        from: body["from_id"].as_uuid(),
+        from_name: body["from_name"].as_str().to_owned(),
+        p2p: voice["invitation_type"].as_i32() == P2P_CHAT_SESSION,
+        voice: voice.clone(),
+    })
+}
+
+/// ChatSessionRequest methods of the voice calls (llvoicechannel.cpp,
+/// llimview.cpp).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallMethod {
+    /// Ask the channel credentials of a group / ad-hoc / P2P session
+    /// (LLVoiceChannelGroup::voiceCallCapCoro).
+    Call,
+    /// Start a P2P voice session with a resident (startP2PVoiceCoro).
+    StartP2p { other: Uuid },
+    /// Decline a P2P call (LLIncomingCallDialog::processCallResponse).
+    DeclineP2p,
+}
+
+impl CallMethod {
+    pub fn name(self) -> &'static str {
+        match self {
+            CallMethod::Call => "call",
+            CallMethod::StartP2p { .. } => "start p2p voice",
+            CallMethod::DeclineP2p => "decline p2p voice",
+        }
+    }
+
+    /// The POST body, as Firestorm builds it. `server_type` is the region's
+    /// voice server type (VoiceServerType unset: getVersion's).
+    pub fn body(self, session: Uuid, server_type: &str) -> Llsd {
+        match self {
+            CallMethod::Call => aurora_llsd::llsd_map! {
+                "method" => self.name(),
+                "session-id" => session,
+                "alt_params" => aurora_llsd::llsd_map! { "preferred_voice_server_type" => server_type },
+            },
+            CallMethod::StartP2p { other } => aurora_llsd::llsd_map! {
+                "method" => self.name(),
+                "session-id" => session,
+                "params" => other,
+                "alt_params" => aurora_llsd::llsd_map! { "voice_server_type" => server_type },
+            },
+            CallMethod::DeclineP2p => aurora_llsd::llsd_map! {
+                "method" => self.name(),
+                "session-id" => session,
+            },
+        }
+    }
+}
+
 /// AgentGroupDataUpdate from the event queue (LLAgentGroupDataUpdateViewerNode).
 pub fn parse_group_data(body: &Llsd) -> Vec<GroupMembership> {
     let body = if body.as_map().is_some_and(|m| m.contains_key("body")) {
@@ -225,6 +303,43 @@ pub fn ll_crc(data: &[u8]) -> u32 {
 mod tests {
     use super::*;
     use aurora_llsd::llsd_map;
+
+    #[test]
+    fn voice_invitations_are_told_apart_from_messages() {
+        let session = Uuid::from_u128(5);
+        let from = Uuid::from_u128(6);
+        let body = llsd_map! {
+            "session_id" => session,
+            "session_name" => "Nova",
+            "from_id" => from,
+            "from_name" => "Nova Resident",
+            "voice" => llsd_map! { "invitation_type" => 2, "channel_uri" => "ch", "channel_credentials" => "cr" },
+        };
+        let inv = parse_voice_invitation(&body).expect("voice invitation");
+        assert_eq!((inv.session, inv.from, inv.p2p), (session, from, true));
+        assert_eq!(inv.voice["channel_uri"].as_str(), "ch");
+        assert!(parse_invitation(&body).is_none());
+        let group = llsd_map! { "session_id" => session, "voice" => llsd_map! { "invitation_type" => 0 } };
+        assert!(!parse_voice_invitation(&group).expect("group call").p2p);
+        assert!(parse_voice_invitation(&llsd_map! { "session_id" => session }).is_none());
+    }
+
+    #[test]
+    fn call_bodies_follow_firestorm() {
+        let s = Uuid::from_u128(1);
+        let other = Uuid::from_u128(2);
+        let call = CallMethod::Call.body(s, "webrtc");
+        assert_eq!(call["method"].as_str(), "call");
+        assert_eq!(call["session-id"].as_uuid(), s);
+        assert_eq!(call["alt_params"]["preferred_voice_server_type"].as_str(), "webrtc");
+        let start = CallMethod::StartP2p { other }.body(s, "webrtc");
+        assert_eq!(start["method"].as_str(), "start p2p voice");
+        assert_eq!(start["params"].as_uuid(), other);
+        assert_eq!(start["alt_params"]["voice_server_type"].as_str(), "webrtc");
+        let decline = CallMethod::DeclineP2p.body(s, "webrtc");
+        assert_eq!(decline["method"].as_str(), "decline p2p voice");
+        assert!(decline.as_map().is_some_and(|m| !m.contains_key("alt_params")));
+    }
 
     #[test]
     fn crc_matches_crc32() {

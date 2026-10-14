@@ -3,6 +3,7 @@
 pub mod appearance;
 pub mod blocking;
 pub mod body;
+pub mod calls;
 pub mod chat_log;
 pub mod contact_sets;
 pub mod eep;
@@ -235,6 +236,8 @@ pub struct World {
     pub lsl_bridge: lslbridge::LslBridge,
     /// Our groups and the group / conference chat sessions.
     pub groups: groups::GroupChats,
+    /// Voice calls with residents, groups and conferences.
+    pub calls: calls::Calls,
     /// Online status (away, do not disturb...) and automatic responses.
     pub status: status::Status,
     pub inventory: inventory::Inventory,
@@ -400,6 +403,7 @@ impl World {
             mutes: mutes::MuteList::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
             groups: groups::GroupChats::default(),
+            calls: calls::Calls::default(),
             status: status::Status::default(),
             inventory: inventory::Inventory::default(),
             active_gestures: Default::default(),
@@ -1476,7 +1480,18 @@ impl World {
             | NetEvent::SessionAgents { .. }
             | NetEvent::SessionError { .. }
             | NetEvent::SessionClosed { .. }
-            | NetEvent::ChatSessionReply { .. }) => self.on_group_event(ev),
+            | NetEvent::ChatSessionReply { .. }) => {
+                match &ev {
+                    NetEvent::SessionStarted { session, success, .. } => self.call_session_started(*session, *success),
+                    NetEvent::SessionClosed { session, .. } => self.call_session_closed(*session),
+                    _ => {}
+                }
+                self.on_group_event(ev)
+            }
+            ev @ (NetEvent::VoiceInvite(_) | NetEvent::CallReply { .. } | NetEvent::SessionVoiceChannel { .. }) => {
+                self.on_call_event(ev);
+                None
+            }
             NetEvent::InstantMessage(im) => {
                 self.on_im(im);
                 None
@@ -2495,6 +2510,18 @@ impl World {
                 self.system_message(error);
             }
             return (Vec::new(), None);
+        }
+        // voice calls (LLIncomingCallDialog::processCallResponse): accept,
+        // decline (closing too) or "Start IM"
+        if let Some(notifications::Data::Call { invite }) = &data {
+            let invite = (**invite).clone();
+            self.notifications.respond(id, r.clone(), |_| Uuid::nil(), Uuid::nil());
+            match r {
+                notifications::Response::Accept => self.accept_voice_invite(invite),
+                notifications::Response::Button(0) if invite.p2p => self.answer_voice_invite_by_im(&invite),
+                _ => self.decline_voice_invite(&invite),
+            }
+            return (std::mem::take(&mut self.groups.out), None);
         }
         // teleport offers and requests: answered through their invitation,
         // closing the notification declines (as Firestorm's toasts do)

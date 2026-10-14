@@ -17,6 +17,9 @@ const HANDLE: u64 = (256000u64 << 32) | 256000;
 /// The local asset server of its `net=` option.
 #[path = "demo_asset_server.rs"]
 pub mod asset_server;
+/// Voice calls with a simulated voice server (AURORA_DEMO_CALL).
+#[path = "demo_calls.rs"]
+pub mod calls;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_chatlog.rs"]
 pub mod chatlog;
@@ -1575,6 +1578,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 aurora_net::SessionMethod::DeclineInvitation => Vec::new(),
             }
         }
+        // voice calls: the simulated ChatSessionRequest (AURORA_DEMO_CALL)
+        aurora_net::NetCommand::Call { method, session, .. } => calls::reply(*method, *session),
         // the request made once after login: what the grid kept while we
         // were away (AURORA_DEMO_CHATLOG=offline), else nothing
         aurora_net::NetCommand::RequestOfflineMessages => match chatlog::mode() {

@@ -799,14 +799,17 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             true,
             None,
         ),
-        // voice calls between two residents are not ported yet
-        Act::Call => (
-            "phone-filled",
-            aurora_i18n::tr!("ui-profile-aurora-call"),
-            ActionKind::Flat,
-            false,
-            Some(soon),
-        ),
+        // LLAvatarActions::startCall, enabled with voice (canCall)
+        Act::Call => {
+            let voice = env.world.calls.voice_enabled;
+            (
+                "phone-filled",
+                aurora_i18n::tr!("ui-profile-aurora-call"),
+                ActionKind::Flat,
+                voice,
+                (!voice).then(|| aurora_i18n::tr!("ui-call-voice-off")),
+            )
+        }
         Act::AddFriend => (
             "user-plus",
             aurora_i18n::tr!("ui-profile-aurora-add-friend"),
@@ -879,13 +882,14 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
         Act::AddFriend => context::request(ui.ctx(), CtxAction::AddFriend(id)),
         Act::OfferTeleport => env.actions.push(ProfileAction::OfferTeleport(id)),
         Act::Block => env.actions.push(ProfileAction::ToggleBlock(id)),
+        Act::Call => context::request(ui.ctx(), CtxAction::Call(id)),
         Act::Edit => w.editing = true,
         Act::ViewAsOthers => w.editing = false,
         Act::Done => {
             save_all(w, env.actions);
             w.editing = false;
         }
-        Act::Call | Act::Pay | Act::More => {}
+        Act::Pay | Act::More => {}
     }
 }
 

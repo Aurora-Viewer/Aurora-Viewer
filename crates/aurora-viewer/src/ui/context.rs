@@ -148,6 +148,8 @@ pub struct Facts {
     pub friend: bool,
     /// EditLinkedParts.
     pub edit_linked: bool,
+    /// Voice is enabled: "Call" works (LLAvatarActions::canCall).
+    pub voice: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +177,9 @@ pub enum CtxAction {
     ToggleFly,
     ResetCamera,
     Im(Uuid),
+    /// Call a resident or a group (LLAvatarActions::startCall,
+    /// LLGroupActions::startCall).
+    Call(Uuid),
     /// The History window on the transcript of the nearby chat (None), of
     /// a conversation, a resident or a group.
     ShowHistory(Option<Uuid>),
@@ -447,7 +452,15 @@ pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid,
             offer_tp(ui);
             request_tp(ui);
             tp_to(ui);
-            menu::todo(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"));
+            if menu::item_if(
+                ui,
+                p,
+                "phone-filled",
+                aurora_i18n::tr!("common-voice-call"),
+                world.calls.voice_enabled,
+            ) {
+                act(CtxAction::Call(id));
+            }
             menu::separator(ui, p);
             history(ui);
             menu::separator(ui, p);
@@ -541,7 +554,16 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     if menu::item(ui, p, "message-filled", aurora_i18n::tr!("common-chat")) {
         act(CtxAction::GroupChat(id));
     }
-    menu::todo(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"));
+    // LLGroupActions::startCall (enabled with voice, isVoiceCallEnabled)
+    if menu::item_if(
+        ui,
+        p,
+        "phone-filled",
+        aurora_i18n::tr!("common-voice-call"),
+        world.calls.voice_enabled,
+    ) {
+        act(CtxAction::Call(id));
+    }
     let pin = if world.groups.favorites.contains(&id) {
         aurora_i18n::tr!("common-unpin-group")
     } else {

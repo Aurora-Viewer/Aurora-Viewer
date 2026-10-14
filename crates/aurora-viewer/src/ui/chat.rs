@@ -1,6 +1,7 @@
 //! Local chat window (nearby chat + instant messages).
 
 mod bubbles;
+mod call;
 mod completion;
 mod find;
 mod header;
@@ -46,6 +47,11 @@ pub struct ChatUi {
     pub style: crate::settings::ChatStyle,
     /// A demo scenario's style, which the settings do not keep.
     pub demo_style: Option<crate::settings::ChatStyle>,
+    /// Voice is enabled (calls possible), given every frame by the app.
+    pub voice_on: bool,
+    /// The microphone in toggle mode (None: hold to talk), for the call's
+    /// mute button.
+    pub mic: Option<bool>,
 }
 
 /// How a conversation's lines are drawn (`LineEnv::bubbles`): legacy lines,
@@ -449,6 +455,12 @@ pub enum ConvAction {
     BlockGroupChat(uuid::Uuid),
     /// Open an avatar's profile window.
     Profile(uuid::Uuid),
+    /// Call the conversation's resident, group or conference.
+    Call(uuid::Uuid),
+    /// Hang up the call in progress.
+    HangUp,
+    /// Mute / unmute the microphone (toggle mode).
+    ToggleMic,
 }
 
 use super::widgets::initials;
@@ -1281,6 +1293,11 @@ pub fn show(
                 // who the conversation is with, and its actions
                 header::show(ui, p, icons, pics, world, st, &mut actions);
                 ui.add_space(4.0);
+                // the call of this conversation, while it is in progress
+                if let Some(call) = st.selected.and_then(|s| world.call_of(&s)) {
+                    call::strip(ui, p, icons, pics, world, call, st, &mut actions);
+                    ui.add_space(4.0);
+                }
                 // profile card
                 if let (true, Some(Some(info))) = (st.show_profile, st.selected.map(|s| world.groups.sessions.get(&s))) {
                     // participants of a group / conference session

@@ -368,6 +368,21 @@ pub enum NetEvent {
         session: Uuid,
         result: Option<aurora_llsd::Llsd>,
     },
+    /// Someone calls us (ChatterBoxInvitation with "voice").
+    VoiceInvite(crate::social::VoiceInvite),
+    /// Answer of a voice call request: the body, or the HTTP status of the
+    /// failure (0 = no capability / no reply).
+    CallReply {
+        method: crate::social::CallMethod,
+        session: Uuid,
+        result: Result<aurora_llsd::Llsd, u16>,
+    },
+    /// New voice channel of a session (ChatterBoxSessionUpdate with
+    /// "voice_channel_info"): a call in progress moves to it.
+    SessionVoiceChannel {
+        session: Uuid,
+        info: aurora_llsd::Llsd,
+    },
     LoginProgress {
         message: String,
         fraction: f32,
@@ -1104,6 +1119,13 @@ pub enum NetCommand {
     ChatSession {
         method: crate::social::SessionMethod,
         session: Uuid,
+    },
+    /// Voice call request on ChatSessionRequest (credentials, P2P start /
+    /// decline); `server_type` is the region's VoiceServerType.
+    Call {
+        method: crate::social::CallMethod,
+        session: Uuid,
+        server_type: String,
     },
     Login(Box<LoginRequest>),
     Logout,

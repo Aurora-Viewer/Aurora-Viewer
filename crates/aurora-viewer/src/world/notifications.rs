@@ -81,6 +81,8 @@ pub enum Kind {
     Presence,
     /// A message in a conversation that is not in sight (IMToast).
     Message,
+    /// Someone calls (LLIncomingCallDialog).
+    Call,
 }
 
 /// What an answer needs (a friendship offer's `from` becomes a friend when
@@ -158,6 +160,11 @@ pub enum Data {
         from: Uuid,
         count: usize,
     },
+    /// A voice call invitation (VoiceInviteP2P / VoiceInviteGroup /
+    /// VoiceInviteAdHoc), answered by `World::respond_notification`.
+    Call {
+        invite: Box<aurora_net::VoiceInvite>,
+    },
 }
 
 /// What the question of an experience shows besides the permissions.
@@ -202,6 +209,7 @@ impl Kind {
             Kind::Permissions => Look::Permissions,
             Kind::Url => Look::Url,
             Kind::Message => Look::Message,
+            Kind::Call => Look::Call,
         }
     }
 
@@ -217,6 +225,7 @@ impl Kind {
             Look::Permissions => Kind::Permissions,
             Look::Url => Kind::Url,
             Look::Message => Kind::Message,
+            Look::Call => Kind::Call,
         }
     }
 }
@@ -238,6 +247,8 @@ impl Notification {
             Data::Message { session, .. } => Follow::Conversation(*session),
             Data::Lure { from, .. } => place_link(&self.body).map_or(Follow::Conversation(*from), Follow::Place),
             Data::TeleportRequest { from, .. } | Data::Friend { from, .. } => Follow::Conversation(*from),
+            Data::Call { invite } if invite.p2p => Follow::Conversation(invite.from),
+            Data::Call { invite } => Follow::Conversation(invite.session),
             Data::Inventory { object, .. } if !object.is_nil() && outcome == Outcome::Kept => Follow::Inventory(*object),
             _ => Follow::None,
         };

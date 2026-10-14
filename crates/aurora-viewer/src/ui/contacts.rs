@@ -1286,7 +1286,15 @@ fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
     if menu::item_if(ui, p, "message-filled", aurora_i18n::tr!("common-chat"), real) {
         actions.push(ContactsAction::GroupChat(id));
     }
-    menu::todo(ui, p, "phone-filled", aurora_i18n::tr!("common-voice-call"));
+    if menu::item_if(
+        ui,
+        p,
+        "phone-filled",
+        aurora_i18n::tr!("common-voice-call"),
+        real && world.calls.voice_enabled,
+    ) {
+        super::context::request(ui.ctx(), super::context::CtxAction::Call(id));
+    }
     if real {
         let label = if world.groups.favorites.contains(&id) {
             aurora_i18n::tr!("common-unpin-group")

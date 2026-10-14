@@ -31,7 +31,7 @@ pub mod xmlrpc;
 pub use fetch::{FetchRequest, FetchResult, Fetcher};
 pub use login::{LoginRequest, LoginResponse, StartLocation};
 pub use profile::{AvatarProfile, ClassifiedInfo, ParcelSummary, PickInfo, ProfileGroup};
-pub use social::{GroupMembership, HistoryLine, MuteListSource, SessionAgent, SessionInvite, SessionMethod};
+pub use social::{CallMethod, GroupMembership, HistoryLine, MuteListSource, SessionAgent, SessionInvite, SessionMethod, VoiceInvite};
 pub use stats::{NetStats, NetStatsSnapshot};
 pub use types::*;
 

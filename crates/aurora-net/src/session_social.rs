@@ -5,7 +5,7 @@
 //! ChatSessionRequest capability (LLIMMgr, llimview.cpp).
 
 use super::{Session, emit};
-use crate::social::{self, MuteListSource, SessionMethod};
+use crate::social::{self, CallMethod, MuteListSource, SessionMethod};
 use crate::types::{NetCommand, NetEvent};
 use aurora_llsd::{Llsd, llsd_map};
 use aurora_msg::msgs::*;
@@ -114,6 +114,11 @@ impl Session<'_> {
                 self.send_main(&m, true);
             }
             NetCommand::ChatSession { method, session } => self.chat_session_request(*method, *session),
+            NetCommand::Call {
+                method,
+                session,
+                server_type,
+            } => self.call_request(*method, *session, server_type),
             NetCommand::AgentAnimation { anim, start } => {
                 // LLAgent::sendAnimationRequest
                 let mut m = AgentAnimation::default();
@@ -189,6 +194,36 @@ impl Session<'_> {
                 }
             };
             let _ = events.send(NetEvent::ChatSessionReply { method, session, result });
+        });
+    }
+
+    /// POST a voice call request to ChatSessionRequest (voiceCallCapCoro,
+    /// startP2PVoiceCoro, the "decline p2p voice" of processCallResponse).
+    fn call_request(&mut self, method: CallMethod, session: uuid::Uuid, server_type: &str) {
+        let Some(url) = self.main_cap("ChatSessionRequest") else {
+            log::warn!("ChatSessionRequest: no capability ({})", method.name());
+            emit(
+                self.sh,
+                NetEvent::CallReply {
+                    method,
+                    session,
+                    result: Err(0),
+                },
+            );
+            return;
+        };
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        let body = method.body(session, server_type);
+        tokio::spawn(async move {
+            let result = crate::caps::post_llsd(&http, &url, &body).await.map_err(|e| {
+                log::warn!("ChatSessionRequest {} for {session}: {e}", method.name());
+                match e {
+                    crate::caps::CapsError::Status(s) => s,
+                    _ => 0,
+                }
+            });
+            let _ = events.send(NetEvent::CallReply { method, session, result });
         });
     }
 
@@ -345,8 +380,10 @@ impl Session<'_> {
             "ChatterBoxInvitation" => {
                 if let Some(inv) = social::parse_invitation(b) {
                     emit(self.sh, NetEvent::SessionInvite(inv));
+                } else if let Some(inv) = social::parse_voice_invitation(b) {
+                    emit(self.sh, NetEvent::VoiceInvite(inv));
                 } else {
-                    // voice / immediate invitations: no text session
+                    // immediate invitations: no text session
                     log::info!("ChatterBoxInvitation without an instant message ignored");
                 }
             }
@@ -392,8 +429,20 @@ impl Session<'_> {
                     },
                 );
             }
-            // moderation / voice channel info of a session: nothing to show yet
-            "ChatterBoxSessionUpdate" => {}
+            // moderation: nothing to show yet; a new voice channel moves the
+            // call in progress (LLViewerChatterBoxSessionUpdate)
+            "ChatterBoxSessionUpdate" => {
+                let info = &b["info"]["voice_channel_info"];
+                if info.as_map().is_some() {
+                    emit(
+                        self.sh,
+                        NetEvent::SessionVoiceChannel {
+                            session: b["session_id"].as_uuid(),
+                            info: info.clone(),
+                        },
+                    );
+                }
+            }
             _ => return false,
         }
         true

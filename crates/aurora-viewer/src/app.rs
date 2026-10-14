@@ -230,6 +230,8 @@ pub struct App {
     autopilot_flags: u32,
     /// Microphone switched on (toggle mode).
     mic_on: bool,
+    /// AURORA_DEMO_CALL: the simulated voice server of the calls.
+    call_demo: crate::demo::calls::CallDemo,
     /// Microphone button of the bottom bar held (hold-to-talk mode).
     mic_button_held: bool,
     /// Voice: connected in this region, own speaking level (0..1).
@@ -670,6 +672,7 @@ impl App {
             autopilot: None,
             autopilot_flags: 0,
             mic_on: false,
+            call_demo: Default::default(),
             mic_button_held: false,
             voice_connected: false,
             voice_level: 0.0,
@@ -3424,8 +3427,34 @@ impl App {
             transmit,
             avatar: (global(self.world.agent.position), self.world.agent.body_rotation()),
             listener: (global(self.camera.position), cam_rot),
+            call: self.world.calls.active.as_ref().and_then(|c| c.channel.as_ref()),
         };
         self.voice.update(inputs);
+        // the call's channel: its state and participants (the demo has no
+        // voice server and simulates them)
+        let server_type = main.map(|r| r.voice_server.clone()).unwrap_or_default();
+        self.world.calls.voice_enabled = self.settings.audio.voice_enabled;
+        self.world.calls.server_type = server_type;
+        let report = if self.demo {
+            let in_world = self.in_world();
+            for ev in self.call_demo.scenario(&mut self.world, in_world) {
+                if let Some(e) = self.world.apply(ev) {
+                    self.on_app_event(e);
+                }
+            }
+            self.call_demo.report(&self.world, transmit)
+        } else {
+            self.voice.call_report()
+        };
+        if let Some((status, members)) = report {
+            self.world.call_voice_update(status, members);
+        }
+        // the microphone a call wants when it connects or ends (toggle mode)
+        if let Some(on) = self.world.calls.mic.take()
+            && !self.settings.audio.mic_hold
+        {
+            self.mic_on = on;
+        }
         let world = &self.world;
         self.voice.apply_blocks(|id| world.voice_blocked(id));
         self.voice_connected = self.voice.connected;
@@ -7664,6 +7693,8 @@ impl App {
                 let mut open = self.panels.chat;
                 let mut contact_actions = Vec::new();
                 self.chat_ui.style = self.settings.chat_style;
+                self.chat_ui.voice_on = self.settings.audio.voice_enabled;
+                self.chat_ui.mic = (!self.settings.audio.mic_hold).then_some(self.mic_on);
                 for c in ui::chat::show(
                     &ctx,
                     &p,
@@ -7684,6 +7715,7 @@ impl App {
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::chat::ConvAction::Close(id) => {
+                            self.world.conversation_closed(&id);
                             self.world.leave_session(id);
                             self.chat_ui.forget(id);
                             // closed from the list, another conversation may be shown
@@ -7692,7 +7724,11 @@ impl App {
                                 self.chat_ui.show_profile = false;
                             }
                         }
+                        ui::chat::ConvAction::Call(id) => a.ctx_action = Some(ui::context::CtxAction::Call(id)),
+                        ui::chat::ConvAction::HangUp => self.world.end_call(),
+                        ui::chat::ConvAction::ToggleMic => self.mic_on = !self.mic_on,
                         ui::chat::ConvAction::BlockGroupChat(id) => {
+                            self.world.conversation_closed(&id);
                             self.world.set_group_chat_blocked(id, true);
                             self.chat_ui.forget(id);
                             self.chat_ui.selected = None;
