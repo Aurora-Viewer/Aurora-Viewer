@@ -68,18 +68,25 @@ pub fn grid(uri: &str) -> crate::settings::GridChoice {
     }
 }
 
-fn read(path: &Path) -> std::io::Result<Vec<Account>> {
+/// The catalogue, and whether something in it was left out because this
+/// build does not understand it (an account saved by a newer Aurora).
+fn read(path: &Path) -> std::io::Result<(Vec<Account>, bool)> {
     match std::fs::read(path) {
-        Ok(bytes) if bytes.len() <= 1024 * 1024 => serde_json::from_slice(&bytes).map_err(std::io::Error::other),
+        Ok(bytes) if bytes.len() <= 1024 * 1024 => crate::tolerant::from_slice::<Vec<Account>>(&bytes, "login_accounts.json")
+            .map(|read| {
+                let repaired = read.repaired();
+                (read.value, repaired)
+            })
+            .ok_or_else(|| std::io::Error::other("account catalogue unreadable")),
         Ok(_) => Err(std::io::Error::other("account catalogue too large")),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok((Vec::new(), false)),
         Err(error) => Err(error),
     }
 }
 
 pub fn load() -> Vec<Account> {
     match read(&crate::settings::config_dir().join("login_accounts.json")) {
-        Ok(accounts) => accounts,
+        Ok((accounts, _)) => accounts,
         Err(error) => {
             log::warn!("account catalogue unreadable: {error}");
             Vec::new()
@@ -98,7 +105,14 @@ fn change_at(path: &Path, update: impl FnOnce(&mut Vec<Account>)) -> std::io::Re
         .truncate(false)
         .open(path.with_extension("lock"))?;
     lock.lock()?;
-    let mut accounts = read(path)?;
+    let (mut accounts, repaired) = read(path)?;
+    if repaired {
+        // Rewriting would drop what a newer build saved there (as an
+        // unreadable catalogue always was): shown, never overwritten.
+        return Err(std::io::Error::other(
+            "account catalogue holds entries from a newer Aurora, not rewritten",
+        ));
+    }
     update(&mut accounts);
     let bytes = serde_json::to_vec_pretty(&accounts).map_err(std::io::Error::other)?;
     crate::atomic_file::write(path, &bytes)?;
@@ -241,6 +255,26 @@ mod tests {
     }
 
     #[test]
+    fn an_account_from_a_newer_build_is_shown_and_never_overwritten() {
+        let root = std::env::temp_dir().join(format!("aurora-newer-accounts-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("accounts.json");
+        let file = serde_json::json!([
+            { "username": "synthetic-kept", "uri": "synthetic-grid", "remember_password": false, "a_newer_field": 1 },
+            { "username": "synthetic-newer", "uri": { "a newer kind": "of grid" }, "remember_password": true },
+        ]);
+        let bytes = serde_json::to_vec(&file).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let (accounts, repaired) = read(&path).expect("catalogue");
+        assert!(repaired);
+        assert_eq!(accounts.iter().map(|a| a.username.as_str()).collect::<Vec<_>>(), ["synthetic-kept"]);
+        // a change would drop the newer account: refused, the file untouched
+        assert!(change_at(&path, |accounts| accounts.clear()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn saved_order_uses_latest_metadata_and_keeps_concurrent_additions() {
         let root = std::env::temp_dir().join(format!("aurora-order-{}", uuid::Uuid::new_v4()));
         let path = root.join("accounts.json");
@@ -261,7 +295,7 @@ mod tests {
             move_in(accounts, &alpha.key(), &beta.key(), true);
         })
         .unwrap();
-        let saved = read(&path).unwrap();
+        let (saved, _) = read(&path).unwrap();
         assert_eq!(
             saved.iter().map(Account::key).collect::<Vec<_>>(),
             vec![beta.key(), alpha.key(), gamma.key()]
@@ -346,10 +380,10 @@ mod tests {
                 });
             }
         });
-        let accounts = read(&path).expect("catalogue");
+        let (accounts, _) = read(&path).expect("catalogue");
         assert_eq!(accounts.len(), 8);
         change_at(&path, |accounts| accounts.retain(|a| a.username != "synthetic-0")).expect("remove one");
-        let remaining = read(&path).expect("catalogue");
+        let (remaining, _) = read(&path).expect("catalogue");
         assert_eq!(remaining.len(), 7);
         assert_eq!(remaining.iter().filter(|a| a.remember_password).count(), 3);
         std::fs::remove_dir_all(root).expect("cleanup");

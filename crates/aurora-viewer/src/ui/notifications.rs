@@ -175,6 +175,39 @@ fn card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, n: &mut Notification, toa
                     buttons.push((aurora_i18n::tr!("ui-notifications-keep").into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-reject").into(), Response::Decline, false));
                 }
+                // ScriptQuestionExperience: Yes, No, Block object (Mute),
+                // Block experience; the experience's name opens its profile
+                Data::Permissions {
+                    experience: Some(prompt), ..
+                } => {
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(22.0);
+                        let link = ui
+                            .add(
+                                egui::Label::new(
+                                    RichText::new(aurora_i18n::tr!("ui-notifications-experience-profile"))
+                                        .size(12.0)
+                                        .underline()
+                                        .color(p.teal),
+                                )
+                                .sense(egui::Sense::click()),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(&prompt.name);
+                        if link.clicked() {
+                            out = Some(Response::OpenExperience(prompt.id));
+                        }
+                    });
+                    buttons.push((aurora_i18n::tr!("common-yes").into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("common-no").into(), Response::Decline, false));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-block-object").into(), Response::Block, false));
+                    buttons.push((
+                        aurora_i18n::tr!("ui-notifications-block-experience").into(),
+                        Response::BlockExperience,
+                        false,
+                    ));
+                }
                 Data::Permissions { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-allow").into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
