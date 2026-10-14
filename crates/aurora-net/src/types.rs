@@ -753,6 +753,13 @@ pub enum NetEvent {
         item_type: u32,
         items: Vec<MapItem>,
     },
+    /// FindAgent answered: where a friend who lets us see them on the map
+    /// is (global metres, no height; LLAvatarTracker::processAgentFound).
+    AgentFound {
+        prey: Uuid,
+        x: f64,
+        y: f64,
+    },
     /// Animations currently playing on an avatar (id, sequence).
     AvatarAnimations {
         avatar: Uuid,
@@ -1347,6 +1354,12 @@ pub enum NetCommand {
         item_type: u32,
         handle: RegionHandle,
     },
+    /// The avatar the map follows, nil to stop (TrackAgent,
+    /// LLAvatarTracker::track / untrack).
+    TrackAgent(Uuid),
+    /// Ask where a friend is (FindAgent, LLAvatarTracker::findAgent);
+    /// answered with `NetEvent::AgentFound` when they let us map them.
+    FindAgent(Uuid),
     FetchInventory {
         folders: Vec<Uuid>,
         owner: Uuid,

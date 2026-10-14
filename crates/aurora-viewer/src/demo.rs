@@ -429,6 +429,32 @@ fn demo_raw() -> Llsd {
         aurora_i18n::tr!("common-shopping"),
         -1,
     ));
+    if place::many_landmarks() {
+        skel.push(folder(
+            place::CLUBS_FOLDER,
+            place::LANDMARKS_FOLDER,
+            aurora_i18n::tr!("demo-map-clubs"),
+            -1,
+        ));
+        skel.push(folder(
+            place::BEACHES_FOLDER,
+            place::LANDMARKS_FOLDER,
+            aurora_i18n::tr!("demo-map-beaches"),
+            -1,
+        ));
+        skel.push(folder(
+            place::WALKS_FOLDER,
+            place::LANDMARKS_FOLDER,
+            aurora_i18n::tr!("demo-map-walks"),
+            -1,
+        ));
+        skel.push(folder(
+            place::MARKETS_FOLDER,
+            place::LANDMARKS_FOLDER,
+            aurora_i18n::tr!("demo-map-markets"),
+            -1,
+        ));
+    }
     if env::enabled() {
         skel.push(env::settings_folder(u(1)));
     }
@@ -1559,6 +1585,16 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 .collect();
             blocks.push(map_block(0, 0, "", 0));
             vec![NetEvent::MapBlocks { blocks, null_sims: false }]
+        }
+        // the two online friends who let us map them: one in our region, one
+        // in the Boreal Lagoon
+        aurora_net::NetCommand::FindAgent(prey) if [u(100), u(102)].contains(prey) => {
+            let (x, y) = if *prey == u(100) {
+                (256_020.0, 256_240.0)
+            } else {
+                (256_316.0, 256_200.0)
+            };
+            vec![NetEvent::AgentFound { prey: *prey, x, y }]
         }
         aurora_net::NetCommand::MapItemRequest { item_type, handle } => {
             use aurora_net::map_item;

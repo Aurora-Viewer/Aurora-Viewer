@@ -4142,6 +4142,7 @@ impl App {
             wanted.push(self.world.agent_id);
         }
         wanted.extend(self.profile_ui.wanted_pics.drain());
+        wanted.extend(self.worldmap_ui.wanted_pics.drain());
         wanted.extend(self.contacts_ui.wanted_pics.drain());
         wanted.extend(self.plates.wanted_pics.drain());
         wanted.extend(self.search_ui.wanted_pics.drain());
@@ -4197,6 +4198,7 @@ impl App {
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
+        images.extend(self.worldmap_ui.wanted_images.drain());
         for note in self.task_notecards.values_mut() {
             images.extend(note.state.wanted_images.drain());
         }
@@ -4263,7 +4265,7 @@ impl App {
         for asset in self.places_ui.want_landmarks.drain() {
             self.world.landmarks.resolve(asset);
         }
-        for folder in self.places_ui.want_folders.drain() {
+        for folder in self.places_ui.want_folders.drain().chain(self.worldmap_ui.want_folders.drain()) {
             self.world.inventory.request(folder);
         }
         for g in self.place_groups.drain() {
@@ -8330,7 +8332,7 @@ impl App {
                     match ma {
                         ui::minimap::MiniMapAction::Teleport { x, y, z } => self.world.map.track_location(x, y, z, true),
                         ui::minimap::MiniMapAction::Track { x, y, z } => self.world.map.track_location(x, y, z, false),
-                        ui::minimap::MiniMapAction::StopTracking => self.world.map.track = None,
+                        ui::minimap::MiniMapAction::StopTracking => self.world.map.clear_track(),
                         ui::minimap::MiniMapAction::OpenWorldMap => self.panels.world_map = true,
                         ui::minimap::MiniMapAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::minimap::MiniMapAction::AboutLand(gx, gy) => {
@@ -8342,6 +8344,10 @@ impl App {
                     }
                 }
                 let mut open = self.panels.world_map;
+                let pictures = ui::worldmap::MapPictures {
+                    images: &self.ui_images,
+                    avatars: &self.avatar_pics,
+                };
                 let wm = self.worldmap_ui.show(
                     &ctx,
                     &p,
@@ -8349,6 +8355,8 @@ impl App {
                     &mut self.map_tiles,
                     &map_cam,
                     &mut self.settings.maps,
+                    self.settings.world_map_style,
+                    &pictures,
                     &mut open,
                 );
                 self.panels.world_map = open;
@@ -8359,6 +8367,7 @@ impl App {
                             self.panels.world_map = false;
                         }
                         ui::worldmap::WorldMapAction::TeleportLandmark(asset) => a.landmark = Some(asset),
+                        ui::worldmap::WorldMapAction::OpenPlace(source) => self.show_place_profile(source),
                     }
                 }
                 t = self.ui_parts.lap(Part::UiMaps, t);
@@ -9105,17 +9114,27 @@ impl ApplicationHandler for App {
             }
             // captures: AURORA_DEMO_MAP=1 opens the mini-map and the world map
             // (with a tracked spot east of the plaza)
-            if std::env::var_os("AURORA_DEMO_MAP").is_some() {
+            if let Ok(scenario) = std::env::var("AURORA_DEMO_MAP") {
                 self.panels.minimap = true;
-                self.panels.world_map = std::env::var("AURORA_DEMO_MAP").as_deref() != Ok("mini");
+                self.panels.world_map = scenario != "mini";
                 self.panels.perf = false;
                 self.world.map.track_location(256000.0 + 200.0, 256000.0 + 150.0, 25.0, false);
-                // =search:<text>: the region search with its results
-                if let Some(text) = std::env::var("AURORA_DEMO_MAP")
-                    .ok()
-                    .and_then(|v| v.strip_prefix("search:").map(str::to_owned))
-                {
-                    self.worldmap_ui.demo_search(&mut self.world, &text);
+                // words separated by commas: search:<text> (the search with its
+                // suggestions), drawer:<landmarks|history|friends>, landmarks
+                // (212 of them, the drawer open), friend (Nova followed),
+                // legacy (the side panel layout, the setting untouched)
+                for word in scenario.split(',').map(str::trim) {
+                    if let Some(text) = word.strip_prefix("search:") {
+                        self.worldmap_ui.demo_search(&mut self.world, text);
+                    } else if let Some(tab) = word.strip_prefix("drawer:") {
+                        self.worldmap_ui.demo_drawer(tab);
+                    } else if word == "landmarks" {
+                        self.worldmap_ui.demo_drawer("landmarks");
+                    } else if word == "friend" {
+                        self.world.map.track_avatar(crate::demo::DEMO_FRIEND, "Nova ♪");
+                    } else if word == "legacy" {
+                        self.worldmap_ui.demo_style = Some(crate::settings::WorldMapStyle::Legacy);
+                    }
                 }
             }
             // captures: AURORA_DEMO_SIT keeps the toolbar sit button visible
