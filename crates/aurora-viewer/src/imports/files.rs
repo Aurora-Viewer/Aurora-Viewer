@@ -265,7 +265,7 @@ pub(super) fn load(
             Source::Mesh(Box::new(draft))
         }
         "png" | "jpg" | "jpeg" | "bmp" | "tga" | "j2c" | "j2k" | "jp2" => Source::Texture(Arc::new(import_texture::decode(&data)?)),
-        "wav" => Source::Sound(Arc::new(import_sound::decode_wav(&data, sound_limit)?)),
+        "wav" => Source::Sound(Arc::new(import_sound::decode_wav(&data, sound::SOURCE_LIMIT)?)),
         "anim" => Source::Animation {
             animation: Arc::new(aurora_assets::parse_animation_upload(&data)?),
             bytes: Arc::new(data),
@@ -423,6 +423,9 @@ pub(super) fn load(
         _ => return Err(AssetError::Unsupported(format!("import format {extension}"))),
     };
     let mut entry = Entry::new(path.to_owned(), Ok(source), options);
+    if matches!(&entry.source, Some(Source::Sound(sound)) if sound.duration() > sound_limit as f32) {
+        entry.sound.options.segment = Some(sound_limit as f32);
+    }
     entry.local = choice == Choice::Local;
     if entry.local {
         entry.watch = Some(local::Watch::new(vec![path.to_owned()]));
@@ -475,10 +478,10 @@ fn mesh_dependencies(path: &Path, scene: &aurora_assets::import_mesh::Scene) -> 
     paths
 }
 
-pub(super) fn encode(source: &Source, options: import_texture::Options) -> Result<Vec<u8>, String> {
+pub(super) fn encode(source: &Source, options: import_texture::Options, sound_options: sound::Options) -> Result<Vec<u8>, String> {
     let result = match source {
         Source::Texture(pixels) => import_texture::prepare(pixels, options).and_then(|image| import_texture::encode(&image, options)),
-        Source::Sound(sound) => sound.encode(),
+        Source::Sound(sound) => return sound_options.render(sound)?.encode().map_err(|error| error.to_string()),
         Source::Animation { bytes, animation, bvh } => {
             if bvh.is_some() {
                 import_animation::encode(animation)
@@ -763,7 +766,7 @@ mod tests {
                         .map_err(|e| e.to_string())?;
                         counts[0] += 1;
                     } else {
-                        let data = encode(source, entry.options)?;
+                        let data = encode(source, entry.options, entry.sound.options)?;
                         assert!(!data.is_empty());
                         let index = match source {
                             Source::Texture(_) => 1,
@@ -879,6 +882,34 @@ mod tests {
         );
     }
     #[test]
+    fn long_wav_sources_enable_bounded_splitting_instead_of_uploading_an_oversized_asset() {
+        let files = Files::new();
+        let mut wav = std::fs::read(files.0.join("sound-demo.wav")).expect("WAV fixture");
+        let length = 44100_u32 * 70 * 4;
+        wav.resize(length as usize + 44, 0);
+        wav[4..8].copy_from_slice(&(length + 36).to_le_bytes());
+        wav[40..44].copy_from_slice(&length.to_le_bytes());
+        std::fs::write(files.0.join("long.wav"), wav).expect("long fixture");
+        let entries = files.load("long.wav", Choice::Sound);
+        let entry = &entries[0];
+        let Some(Source::Sound(source)) = &entry.source else {
+            panic!("sound")
+        };
+        assert_eq!(source.duration(), 70.0);
+        assert_eq!(entry.sound.options.segment, Some(30.0));
+        assert_eq!(entry.sound.options.pieces(source).expect("pieces"), 3);
+        assert!(entry.sound.options.importable(source, 30));
+        assert!(!sound::Options::default().importable(source, 30));
+        assert_eq!(
+            sound::Options {
+                piece: Some(2),
+                ..entry.sound.options
+            }
+            .duration(source),
+            10.0
+        );
+    }
+    #[test]
     fn disk_files_follow_filters_codecs_and_mesh_reload() {
         let files = Files::new();
         assert!(matches!(
@@ -895,7 +926,7 @@ mod tests {
         ));
         let native = files.load("animation-demo.anim", Choice::Bulk).remove(0);
         assert_eq!(
-            encode(native.source.as_ref().expect("animation"), native.options).expect("encode"),
+            encode(native.source.as_ref().expect("animation"), native.options, native.sound.options).expect("encode"),
             read(&native.path).expect("bytes")
         );
         assert!(

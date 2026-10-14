@@ -39,8 +39,12 @@ pub(super) fn fixtures(root: &Path) -> Result<(), String> {
         "animation-demo.anim",
         &aurora_assets::import_animation::encode(&animation.animation).map_err(|e| e.to_string())?,
     )?;
-    let samples: Vec<i16> = (0..44100)
-        .map(|i| ((i as f32 * 440.0 * std::f32::consts::TAU / 44100.0).sin() * 0.15 * i16::MAX as f32) as i16)
+    let samples: Vec<i16> = (0..44100 * 6)
+        .map(|i| {
+            let time = i as f32 / 44100.0;
+            let envelope = 0.1 + 0.7 * (1.0 - (time * 2.0).fract());
+            ((time * 440.0 * std::f32::consts::TAU).sin() * envelope * i16::MAX as f32) as i16
+        })
         .collect();
     let length = samples.len() as u32 * 4;
     let mut wav = b"RIFF".to_vec();
@@ -64,7 +68,17 @@ pub(super) fn fixtures(root: &Path) -> Result<(), String> {
 
 pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
     let Ok(mode) = std::env::var("AURORA_DEMO_IMPORTS") else { return };
+    if matches!(mode.as_str(), "launcher" | "settings" | "permissions") {
+        imports.demo_mode = mode.clone();
+        imports.launcher_open = mode == "launcher";
+        imports.settings_open = mode != "launcher";
+        return;
+    }
     imports.open = true;
+    if mode == "inspectors" {
+        imports.open = false;
+        imports.launcher_open = true;
+    }
     imports.demo_mode = mode.clone();
     imports.choice = match mode.as_str() {
         "texture" | "destination" => Choice::Texture,
@@ -75,15 +89,13 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         | "material-zoom"
         | "material-texture-zoom"
         | "material-loading" => Choice::Material,
-        "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" | "mesh-normals" => {
-            Choice::Mesh
-        }
+        "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" | "mesh-normals"
+        | "mesh-colors" => Choice::Mesh,
         "animation" | "animation-own" => Choice::Animation,
-        "sound" => Choice::Sound,
+        "sound" | "sound-split" => Choice::Sound,
         mode if mode.starts_with("local") => Choice::Local,
         _ => Choice::Bulk,
     };
-    imports.permissions_open = mode == "permissions";
     imports.mesh_permission_denied = mode == "bulk-mesh-denied";
     let choice = imports.choice;
     if mode == "local-restored" {
@@ -109,6 +121,17 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         let entries = match fixture_result {
             Ok(()) => {
                 let files: &[(&str, Choice)] = match choice {
+                    Choice::Bulk if mode == "inspectors" => &[
+                        ("texture-demo.png", Choice::Texture),
+                        ("material-demo.gltf", Choice::Material),
+                        ("animation-demo.bvh", Choice::Animation),
+                        ("animation-demo.anim", Choice::Animation),
+                        ("sound-demo.wav", Choice::Sound),
+                        ("mesh-demo.dae", Choice::Mesh),
+                        ("texture-demo.png", Choice::Local),
+                        ("material-demo.gltf", Choice::Local),
+                        ("mesh-demo.dae", Choice::Local),
+                    ],
                     Choice::Texture => &[("texture-demo.png", Choice::Texture)],
                     Choice::Material => &[("material-demo.gltf", Choice::Material)],
                     Choice::Mesh => &[("mesh-demo.dae", Choice::Mesh)],
@@ -141,8 +164,31 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                 };
                 let mut entries = Vec::new();
                 for (path, loader) in paths {
-                    match files::load(&path, loader, prefs.texture(), 30, &prefs, choice == Choice::Local) {
+                    match files::load(
+                        &path,
+                        loader,
+                        prefs.texture(),
+                        30,
+                        &prefs,
+                        choice == Choice::Local || loader == Choice::Local,
+                    ) {
                         Ok(mut loaded) => {
+                            if mode == "mesh-colors"
+                                && let Some(entry) = loaded.first()
+                            {
+                                wake.data_mut(|data| data.insert_temp(egui::Id::new(("import_preview_colors_open", entry.id)), true));
+                            }
+                            if mode == "sound-split" {
+                                for entry in &mut loaded {
+                                    entry.sound.options = sound::Options {
+                                        gain: 2.0,
+                                        start: 0.25,
+                                        end: Some(5.5),
+                                        segment: Some(2.0),
+                                        ..Default::default()
+                                    };
+                                }
+                            }
                             if matches!(mode.as_str(), "material-cube" | "material-aurora") {
                                 for entry in &mut loaded {
                                     entry.material_shape = if mode == "material-cube" {

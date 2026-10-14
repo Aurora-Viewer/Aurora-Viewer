@@ -65,7 +65,7 @@ impl Picker {
             .unwrap_or(aurora_i18n::tr!("import-no-folder"));
         let response = egui::ComboBox::from_id_salt("import_folder")
             .selected_text(current)
-            .width(360.0)
+            .width(ui.available_width().clamp(160.0, 360.0))
             .height(300.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show_ui(ui, |ui| {

@@ -1490,7 +1490,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
 | `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
-| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets |
+| `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
@@ -1549,36 +1549,76 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   refuses, with its "Go to website" link. `:confirm` after a mode (`rich:confirm`,
   `upgrade:confirm`) ticks the covenant and opens the confirmation by itself,
   for captures.
+- **`AURORA_DEMO_IMPORTS=launcher|settings`** opens the compact horizontal
+  import chooser or its saved-defaults window, without loading fixtures or
+  opening a disk dialog. The configurable Import shortcut (Ctrl+U by default)
+  toggles the chooser; a type button opens the filtered picker when its list
+  is empty, otherwise the existing inspector. Clicking the displayed type
+  closes its inspector. The icon bar stays open. Check that another type can be clicked while
+  an inspector is displayed, even when a narrow viewport causes overlap.
+  Build › Import performs the same toggle; Contents has no Import entry.
+  The glass variant has eight independent frosted buttons with clear gaps,
+  no group background, and a plain close cross at the right.
+  The Settings icon toggles the permissions/payment window, closing it on the
+  second click even if its title bar was minimized.
+- **`AURORA_DEMO_IMPORTS=inspectors`** opens the chooser with fixtures already
+  loaded for every type, including local previews. A type button therefore
+  opens its inspector directly without a disk dialog, as in the normal viewer.
+  Check each dedicated window and its filtered file list, then Multiple's
+  complete tabs. Permissions belong only to Settings. First-opened windows
+  have the same top-left position; moved windows retain their placement.
 - **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
   previews, the camera, the permissions, the selection and the confirmation.
+  Each type has a dedicated window with the file list at the left and only
+  its relevant metadata, preview and controls at the right. There
+  are no other type tabs in these windows. Sound uses a shorter window.
+  `bulk` is labelled Multiple and retains every type tab and the existing
+  mixed import flow. Switching its tabs keeps the
+  same window and never reopens the picker.
   `material-cube` / `material-aurora` select the additional preview shapes.
-  `material-maps` shows four distinct cards in a 2 × 2 grid without scrolling,
-  square thumbnails preserving original proportions, left-aligned titles
+  `material-maps` shows four unframed rows in one column below a compact preview,
+  95.2-point square thumbnails (1.7× the previous size) preserving original proportions, left-aligned titles
   and texture names, right-aligned commands and common parameter rows.
   Metallic / Roughness use only numeric fields; Normal appears only in
-  its card title. `material-loading` keeps the same 230 × 230 canvas
-  and gesture hints while the model is pending.
+  its row title. The narrower vertical inspector uses a 176 × 176 canvas;
+  `material-loading` keeps that same canvas
+  and gesture tooltip while the model is pending. Multiple keeps its wider grid.
   The preview model selector offers Sphere, Cube and Aurora 3D. Drag to
   orbit, Shift + drag or the middle button to pan in screen coordinates,
   wheel to zoom; Reset view and double-click reset the full camera.
   `material-zoom`, `mesh-zoom` and `material-texture-zoom` open the loupes.
   Texture pixels are prepared on a worker at native resolution, capped
   to 2,048 per side, without upscaling; closing or switching frees the cache.
-  `permissions` opens the shared main tab: Modify / Copy / Transfer for
-  Texture, Sound, Animation, Mesh and PBR Material, with the file list
-  still present. Each row is saved independently; disabling Copy
-  requires Transfer. The batch includes a mesh and needs its quote
-  before confirmation. Ctrl+U opens Batch and the file picker together;
-  rebind it in Preferences › Shortcuts.
+  `permissions` is an alias for Settings: Modify / Copy / Transfer for
+  Texture, Sound, Animation, Mesh and PBR Material, plus group sharing and
+  everyone-copy columns within each type's row. Each row is saved independently; disabling
+  Copy requires Transfer. There are no rights controls in any inspector.
+  Settings contains only the permissions table and payment preference.
+  `mesh-colors` opens the mesh palette floater. Click each pastille, then edit
+  through the viewer's common picker: the palette remains open and the preview
+  updates immediately. Background, edges, physics fill/edges and degenerate
+  fill/edges follow their selected colors without rebuilding the model.
+  `sound` loads a six-second decaying tone: inspect the waveform, drag crop
+  markers, change numeric bounds, adjust import volume up to 400% and reset. The playhead
+  follows the prepared clip; cropping stops it until Play is clicked again.
+  Gain commits restart playback with the processed, ceiling-limited PCM.
+  `sound-split` selects 0.25–5.5 seconds, boosts to 200% and splits at two
+  seconds: verify orange peak indication, division markers, three named assets
+  (`_01`–`_03`), the short tail and a three-asset price. Split length is limited
+  to the grid's asset maximum; long WAV sources enable splitting on load.
+  `animation` shows aligned settings beside its preview, with loop units
+  labelled and easing fields aligned. The batch includes a mesh and needs its quote
+  before confirmation. Ctrl+U toggles the compact chooser; the file picker
+  opens after clicking a type. Rebind it in Preferences › Shortcuts.
   The quote and the uploads stay entirely inside the demo server.
   `destination` opens the folder choice with the "Textures" filter;
   typing another name must filter without changing the destination or
   closing the list. Choosing a result closes the list and applies that folder.
-  The import window defaults to 900 × 760 points, keeping the 180-point
-  file list and closer checkbox / name spacing. Name, Description and
+  Each type has its own default size, with narrower file lists for Material
+  and Animation and closer checkbox / name spacing. Name, Description and
   Destination use the same three rows above every asset panel, including
   meshes; Upload no longer repeats them. Preview and LOD cards are side
   by side, with gesture hints directly under the preview and compact tools.

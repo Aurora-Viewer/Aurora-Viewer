@@ -372,6 +372,48 @@ around 0.63), struck-through Tabler microphone (`microphone-off`) for the
 avatars outside voice. `voice.rs` guarantees the entry of our avatar from the
 local microphone, even without an echo of its presence from the voice server.
 
+The configurable Import shortcut and Build › Import both toggle
+`imports/ui/launcher.rs`: seven type-specific actions, Settings and a plain
+close cross in a horizontal toolstrip, without title, shortcut text, help
+footer or common background. Each button uses `widgets::glass_action_icon`
+for independent world blur, a translucent palette tint and the theme's
+border, shadow and radius; opaque skins remain opaque. `widgets::toolstrip`
+retains movable layout placement without painting a group surface. The
+filtered file picker is scheduled when the chosen type has no listed file;
+otherwise its inspector opens directly. Choosing the displayed type closes
+its window. The chooser stays open above overlapping inspectors. Newly shown import
+windows and Settings share the same top-left default; saved placement wins.
+Settings contains only permissions and payment. Its five independent columns
+per type cover next-owner modify/copy/transfer, group sharing and everyone-copy.
+Missing sharing fields in saved rows inherit the legacy common flags; explicit
+per-type overrides are saved without resetting other rows.
+`imports/ui/inspector.rs` draws dedicated Texture, Sound, Animation,
+Material, Mesh and Local floaters, each with its own saved geometry and a
+filtered file list at the left. The right pane keeps the shared metadata,
+the current asset panel. `imports/sound.rs` retains the original PCM, a cached
+amplitude envelope and non-destructive crop / gain / segmentation options. `ui/sound_panel.rs`
+draws the waveform and a playhead started when the audio engine receives the
+prepared clip; gain commits restart audition with the processed PCM, while
+cropping stops stale audio. Gain is applied once, with a digital ceiling and
+waveform clipping indication; preview and upload use the same renderer.
+PCM cropping, upload encoding and preview preparation stay on workers, and
+each confirmed queue step freezes the sound options with its permissions.
+Optional splitting plans exact consecutive sample ranges, suffixed inventory
+names and per-piece costs. The parent draft stays until the last receipt;
+acknowledged indices survive a failed draft's explicit restoration, so a retry
+does not charge its successful pieces again. Bounded long WAV sources are
+accepted for editing; each output still obeys the grid's asset duration limit.
+Animations pair the preview with labelled metadata, loop units and easing
+grids in a narrow inspector, with a full reserved reset-button row below the
+preview. Dedicated materials use a narrow vertical arrangement with a larger
+preview and unframed map rows in one column. Mesh and material palettes open
+a separate small floater, so clicking the shared `widgets::color_button`
+does not dismiss a parent menu. Colors update the preview's render uniforms
+immediately, without rebuilding geometry or changing imported data.
+Multiple keeps the complete inspector and its type tabs;
+`Imports::inspector` keeps that window identity independent of its active
+type tab. Parsing, preview jobs and the confirmed upload queue stay shared.
+
 ## Life of a frame
 
 `build/task_inventory.rs` centralises the permissions and the destinations of
