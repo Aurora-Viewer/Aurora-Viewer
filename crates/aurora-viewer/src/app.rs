@@ -25,7 +25,8 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 mod ao;
-mod bug_report;
+// Bug report form (disabled, see main.rs):
+// mod bug_report;
 mod buy_currency;
 mod buy_land;
 mod chat_commands;
@@ -170,7 +171,8 @@ pub struct App {
     ctrl: bool,
     screen: Screen,
     login_form: LoginForm,
-    bug_report: ui::bug_report::BugReportUi,
+    // Bug report form (disabled, see main.rs):
+    // bug_report: ui::bug_report::BugReportUi,
     login_progress: Option<(String, f32)>,
     /// `AURORA_DEMO_LOGIN=add-mfa`: when the offline login server asks for
     /// the second factor, after the request has been pending a moment.
@@ -694,7 +696,8 @@ impl App {
             ctrl: false,
             screen: Screen::Login,
             login_form: LoginForm::default(),
-            bug_report: Default::default(),
+            // Bug report form (disabled, see main.rs):
+            // bug_report: Default::default(),
             login_progress: None,
             demo_mfa_challenge: None,
             panels,
@@ -5940,23 +5943,24 @@ impl App {
         let mut actions = UiActions::default();
         let vsync = gfx.renderer.vsync();
         self.frame_profile.lap(Lap::UiPrep);
-        // Serialize the report capture with other users of renderer.captured.
-        // Start before drawing so the report window is absent from the picture.
-        if self.bug_report.capture_requested.is_some()
-            && !self.inventory_images.auto_capture_pending
-            && self.inventory_images.capturing.is_none()
-            && !self.scene_capture_pending
-            && !gfx.renderer.capture_request
-            && !gfx.renderer.capture_scene
-            && let Some(with_ui) = self.bug_report.capture_requested.take()
-        {
-            self.bug_report.capture_pending = true;
-            if with_ui {
-                gfx.renderer.capture_request = true;
-            } else {
-                gfx.renderer.capture_scene = true;
-            }
-        }
+        // Bug report form (disabled, see main.rs):
+        // // Serialize the report capture with other users of renderer.captured.
+        // // Start before drawing so the report window is absent from the picture.
+        // if self.bug_report.capture_requested.is_some()
+        //     && !self.inventory_images.auto_capture_pending
+        //     && self.inventory_images.capturing.is_none()
+        //     && !self.scene_capture_pending
+        //     && !gfx.renderer.capture_request
+        //     && !gfx.renderer.capture_scene
+        //     && let Some(with_ui) = self.bug_report.capture_requested.take()
+        // {
+        //     self.bug_report.capture_pending = true;
+        //     if with_ui {
+        //         gfx.renderer.capture_request = true;
+        //     } else {
+        //         gfx.renderer.capture_scene = true;
+        //     }
+        // }
         self.report_abuse_capture(&mut gfx.renderer);
         self.sound_cues.before(&ctx, &raw);
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
@@ -6186,7 +6190,8 @@ impl App {
             if self.scene_capture_pending
                 || self.inventory_images.capturing.is_some()
                 || self.inventory_images.auto_capture_pending
-                || self.bug_report.capture_pending
+                // Bug report form (disabled, see main.rs):
+                // || self.bug_report.capture_pending
                 || self.report_abuse.capture_pending
             {
                 self.inventory_images.capture = Some(request);
@@ -6199,7 +6204,8 @@ impl App {
             && !self.scene_capture_pending
             && self.inventory_images.capturing.is_none()
             && !self.inventory_images.auto_capture_pending
-            && !self.bug_report.capture_pending
+            // Bug report form (disabled, see main.rs):
+            // && !self.bug_report.capture_pending
             && !self.report_abuse.capture_pending
         {
             self.want_scene_capture = false;
@@ -6429,11 +6435,12 @@ impl App {
             }
         }
         // last view for the loading screens (blurred in a thread, or now when quitting)
-        if self.bug_report.capture_pending
-            && let Some((w, h, pixels)) = gfx.renderer.captured.take()
-        {
-            self.bug_report.captured(w, h, pixels);
-        }
+        // Bug report form (disabled, see main.rs):
+        // if self.bug_report.capture_pending
+        //     && let Some((w, h, pixels)) = gfx.renderer.captured.take()
+        // {
+        //     self.bug_report.captured(w, h, pixels);
+        // }
         self.report_abuse_captured(&mut gfx.renderer);
         if self.inventory_images.capturing.is_some()
             && let Some((w, h, pixels)) = gfx.renderer.captured.take()
@@ -7204,6 +7211,14 @@ impl App {
         });
     }
 
+    /// "Report a bug" (login screen, top bar, Help menu): GitHub's issue
+    /// template chooser in the browser, in place of the built-in form
+    /// (disabled, see main.rs).
+    fn open_issue_chooser(&self) {
+        log::info!("bug report: opening the GitHub issue chooser");
+        self.egui_ctx.open_url(egui::OpenUrl::new_tab(crate::links::NEW_ISSUE));
+    }
+
     fn handle_actions(&mut self, a: UiActions, event_loop: &ActiveEventLoop) {
         if let Some(action) = a.exit {
             self.confirm_exit(action);
@@ -7216,7 +7231,7 @@ impl App {
         match a.login {
             LoginAction::Login if !self.updater.blocks_login() && aurora_updater::test_environment().is_none() => self.start_login(),
             LoginAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
-            LoginAction::ReportBug => self.bug_report.requested = true,
+            LoginAction::ReportBug => self.open_issue_chooser(),
             LoginAction::Quit => self.request_exit(),
             LoginAction::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
             LoginAction::None | LoginAction::Login => {}
@@ -7290,7 +7305,7 @@ impl App {
         }
         match a.bar {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
-            BarAction::ReportBug => self.bug_report.requested = true,
+            BarAction::ReportBug => self.open_issue_chooser(),
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
             BarAction::Import => {
                 self.imports.toggle_launcher(&self.egui_ctx);
@@ -8159,7 +8174,7 @@ impl App {
         {
             // the folder may not exist before the first line
             let _ = std::fs::create_dir_all(dir);
-            if let Err(e) = crate::bug_report::files::open_directory(dir) {
+            if let Err(e) = crate::logging::open_directory(dir) {
                 log::warn!("cannot open the transcripts folder: {e}");
             }
         }
@@ -8932,7 +8947,7 @@ impl App {
                     &self.avatar_pics,
                     &self.world,
                     &mut self.chat_ui.wanted_names,
-                ) && let Err(e) = crate::bug_report::files::open_directory(&dir)
+                ) && let Err(e) = crate::logging::open_directory(&dir)
                 {
                     log::warn!("cannot open the transcripts folder: {e}");
                 }
@@ -9832,17 +9847,18 @@ impl App {
                 }
             }
         }
-        if self.demo && self.frame_count == 550 && std::env::var_os("AURORA_DEMO_BUG_REPORT").is_some() {
-            self.bug_report.requested = true;
-        }
-        if self.bug_report.requested {
-            self.open_bug_report(renderer);
-        }
-        if self.demo {
-            self.bug_report.demo_step(self.frame_count);
-        }
-        self.bug_report
-            .show(&ctx, &p, &self.skin.icons, matches!(self.screen, Screen::World));
+        // Bug report form (disabled, see main.rs):
+        // if self.demo && self.frame_count == 550 && std::env::var_os("AURORA_DEMO_BUG_REPORT").is_some() {
+        //     self.bug_report.requested = true;
+        // }
+        // if self.bug_report.requested {
+        //     self.open_bug_report(renderer);
+        // }
+        // if self.demo {
+        //     self.bug_report.demo_step(self.frame_count);
+        // }
+        // self.bug_report
+        //     .show(&ctx, &p, &self.skin.icons, matches!(self.screen, Screen::World));
         a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
         self.ui_parts.lap(Part::UiRest, t);
         a

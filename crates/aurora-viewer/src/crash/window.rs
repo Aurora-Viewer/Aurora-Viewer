@@ -46,7 +46,8 @@ pub fn show(dir: &Path, record: super::Record) -> anyhow::Result<()> {
         frames: 0,
         copied: false,
         action_error: None,
-        bug_report: Default::default(),
+        // Bug report form (disabled, see main.rs):
+        // bug_report: Default::default(),
         reason: if dir.join("panic.txt").metadata().is_ok_and(|m| m.len() > 0) {
             aurora_i18n::tr!("crash-reason-rust")
         } else if dir.join("native.txt").metadata().is_ok_and(|m| m.len() > 0) {
@@ -79,23 +80,26 @@ struct Recovery {
     copied: bool,
     action_error: Option<String>,
     reason: &'static str,
-    bug_report: crate::ui::bug_report::BugReportUi,
+    // Bug report form (disabled, see main.rs):
+    // bug_report: crate::ui::bug_report::BugReportUi,
 }
 
 impl Recovery {
     fn content(&mut self, ui: &mut egui::Ui, event_loop: &ActiveEventLoop) {
         let p = self.record.theme.palette();
-        if self.bug_report.requested {
-            self.open_report();
-        }
+        // Bug report form (disabled, see main.rs):
+        // if self.bug_report.requested {
+        //     self.open_report();
+        // }
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(p.panel).inner_margin(28.0))
             .show(ui, |ui| {
-                // Do not leave the private stack readable behind the shared
-                // report form's translucent viewer surface.
-                if self.bug_report.open {
-                    return;
-                }
+                // Bug report form (disabled, see main.rs):
+                // // Do not leave the private stack readable behind the shared
+                // // report form's translucent viewer surface.
+                // if self.bug_report.open {
+                //     return;
+                // }
                 let radius = ui.visuals().window_corner_radius;
                 ui.horizontal(|ui| {
                     if let Some(icon) = self.icons.get("alert-triangle-filled") {
@@ -197,26 +201,33 @@ impl Recovery {
                     }
                     let send = aurora_i18n::tr!("crash-send-report");
                     if widgets::action_button(ui, &p, "send-filled", send, ActionKind::Primary, big).clicked() {
-                        self.open_report();
+                        // GitHub's issue chooser in the browser, like
+                        // "Report a bug" in the viewer.
+                        log::info!("crash report: opening the GitHub issue chooser");
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(crate::links::NEW_ISSUE));
+                        // Bug report form (disabled, see main.rs):
+                        // self.open_report();
                     }
                 });
             });
-        self.bug_report.show(ui.ctx(), &p, &self.icons, false);
+        // Bug report form (disabled, see main.rs):
+        // self.bug_report.show(ui.ctx(), &p, &self.icons, false);
     }
 
-    fn open_report(&mut self) {
-        self.bug_report
-            .begin_preserved(super::report::draft(&self.record, &self.dir), self.dir.clone(), self.record.demo);
-        if let Some(window) = &self.window {
-            let scale = window.scale_factor();
-            let height = window
-                .current_monitor()
-                .map(|m| f64::from(m.size().height) / scale - 100.0)
-                .unwrap_or(940.0)
-                .clamp(500.0, 940.0);
-            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(840.0, height));
-        }
-    }
+    // Bug report form (disabled, see main.rs):
+    // fn open_report(&mut self) {
+    //     self.bug_report
+    //         .begin_preserved(super::report::draft(&self.record, &self.dir), self.dir.clone(), self.record.demo);
+    //     if let Some(window) = &self.window {
+    //         let scale = window.scale_factor();
+    //         let height = window
+    //             .current_monitor()
+    //             .map(|m| f64::from(m.size().height) / scale - 100.0)
+    //             .unwrap_or(940.0)
+    //             .clamp(500.0, 940.0);
+    //         let _ = window.request_inner_size(winit::dpi::LogicalSize::new(840.0, height));
+    //     }
+    // }
 
     fn render(&mut self, event_loop: &ActiveEventLoop) -> anyhow::Result<()> {
         if let Some(fps) = crate::cli::get().fps_limit {
@@ -332,9 +343,10 @@ impl ApplicationHandler for Recovery {
                 self.window = Some(window);
                 self.surface = Some(surface);
                 self.input = Some(input);
-                if self.record.demo && std::env::var_os("AURORA_DEMO_BUG_REPORT").is_some() {
-                    self.open_report();
-                }
+                // Bug report form (disabled, see main.rs):
+                // if self.record.demo && std::env::var_os("AURORA_DEMO_BUG_REPORT").is_some() {
+                //     self.open_report();
+                // }
             }
             Err(error) => {
                 self.error = Some(error.to_string());

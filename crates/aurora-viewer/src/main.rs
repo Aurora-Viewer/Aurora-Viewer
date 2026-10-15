@@ -7,7 +7,13 @@ mod ao;
 mod app;
 mod atomic_file;
 mod autopilot;
-mod bug_report;
+// Bug report form, disabled for now: "Report a bug" (login screen, top bar,
+// crash window) opens GitHub's issue chooser in the browser instead
+// (`links::NEW_ISSUE`). Its code stays in the tree, out of the build
+// (`bug_report/`, `ui/bug_report.rs`, `app/bug_report.rs`,
+// `crash/report.rs`): to bring it back, uncomment every line marked "Bug
+// report form (disabled, see main.rs)".
+// mod bug_report;
 mod build;
 mod cache;
 mod camera;

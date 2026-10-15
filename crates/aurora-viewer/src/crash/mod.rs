@@ -4,7 +4,8 @@
 //! no automatic submission; diagnostics stay in the local session folder.
 
 mod native;
-mod report;
+// Bug report form (disabled, see main.rs):
+// mod report;
 mod software;
 mod window;
 

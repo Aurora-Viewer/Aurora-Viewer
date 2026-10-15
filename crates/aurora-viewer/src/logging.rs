@@ -4,7 +4,7 @@
 //! Capability URLs are secrets for the session: their id is masked.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn logs_dir() -> PathBuf {
     if let Some(test) = aurora_updater::test_environment() {
@@ -41,6 +41,13 @@ fn log_stem() -> String {
 pub fn open_logs_dir() {
     let dir = logs_dir();
     let _ = std::fs::create_dir_all(&dir);
+    if let Err(e) = open_directory(&dir) {
+        log::warn!("cannot open {}: {e}", dir.display());
+    }
+}
+
+/// Show a directory in the system file manager (also the transcripts folder).
+pub fn open_directory(path: &Path) -> std::io::Result<()> {
     let program = if cfg!(windows) {
         "explorer"
     } else if cfg!(target_os = "macos") {
@@ -48,9 +55,7 @@ pub fn open_logs_dir() {
     } else {
         "xdg-open"
     };
-    if let Err(e) = std::process::Command::new(program).arg(&dir).spawn() {
-        log::warn!("cannot open {}: {e}", dir.display());
-    }
+    std::process::Command::new(program).arg(path).spawn().map(|_| ())
 }
 
 /// Mask the id of capability URLs (".../cap/<uuid>").

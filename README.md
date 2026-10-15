@@ -163,8 +163,6 @@ are planned or in progress: they are not in the viewer yet.
   Credential Manager, as a hash only.
 - **Try it without an account**: an offline demo mode simulates a server
   locally, with no grid connection.
-- **Bug reports from inside the viewer**, with a screenshot and the data you
-  choose to share ([details](#reporting-a-bug-during-the-alpha)).
 
 ### Open
 
@@ -401,48 +399,13 @@ destination folder then confirm with Move.
 ### Reporting a bug during the alpha
 
 The bug icon in the top bar, the Help menu, the login screen and the "Send a
-crash report" button after a crash open the same form. After a crash, the
-data comes from the session that stopped. The bar button can be hidden in
-Preferences › Interface.
-
-**Filling in the form**
-
-- Describe the problem and check the information in the Data tab; untick
-  what you want to keep private. The screenshot and the filtered diagnostics
-  are optional.
-- The interface follows the chosen language, even with the form open. The
-  file meant for GitHub uses English headings; your description stays in the
-  language you typed it in.
-- A new report opens on Description. Closing then reopening the form resumes
-  the draft at the same place until it is sent or the viewer is closed.
-- After a screenshot taken in Aurora, ticking or unticking "Include the
-  interface" retakes the picture automatically; imported files stay
-  unchanged.
-
-**Sending it**
-
-Two modes, both with a GitHub account: "Send from Aurora", shown first and
-selected by default, or opening a pre-filled issue in the browser. Without an
-account, save a local copy.
-
-- **Send from Aurora** asks you to authorise its GitHub application; the
-  authorisation stays in memory only, until the viewer is closed or logged
-  out; nothing is published automatically after the authorisation. It
-  publishes the chosen image on auroraviewer.com and shows it in the issue.
-  A separate option of the Data tab, unticked by default, attaches the ZIP of
-  the logs for the developers; its link requires a GitHub login authorised in
-  the private repository. The files stay in the private Cellar. An
-  interrupted upload can be finished on the same issue.
-- **In the browser**, add the image by hand from the `public` folder. If the
-  text is too long for a link, Aurora copies it in full so that you can paste
-  it into GitHub. Click "I have published the report" after publishing on
-  GitHub to start another report.
-
-Never publish the `private-do-not-upload` folder.
-
-Offline test: `AURORA_DEMO=1` and `AURORA_DEMO_BUG_REPORT=1` open a sample
-report; sending is simulated and the browser stays closed. See
-[TESTING.md](docs/TESTING.md) and the [GitHub configuration](docs/BUG_REPORTING.md).
+crash report" button after a crash open the project's
+[GitHub issue forms](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/new/choose)
+in your browser; a GitHub account is needed. Choose the bug report template
+and describe what you were doing and what happened. After a crash, "Copy
+trace" and "Open report folder" in the same window give the technical
+details: the full trace may contain personal paths, review it before sharing.
+The bar button can be hidden in Preferences › Interface.
 
 ### Where your files are
 
