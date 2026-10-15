@@ -9,6 +9,8 @@ pub mod dock;
 pub mod favorites;
 pub mod islands;
 mod place;
+pub mod side;
+pub(crate) mod sizing;
 
 use super::Panels;
 use super::icons::Icons;
@@ -95,6 +97,8 @@ pub enum BarAction {
     NetworkGraph,
     /// The toolbar's "Toolbar buttons" window.
     CustomizeBars,
+    /// The toolbar's Stop Animations (Firestorm's stop_animations command).
+    StopAnimations,
     /// Show User Interface (Alt+Shift+U), and hiding it once confirmed.
     ToggleInterface,
     HideInterface,
@@ -1353,6 +1357,31 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "mouselook" => return BarAction::ToggleMouselook,
         "sit" => return BarAction::SitGround,
         "home" => return BarAction::TeleportHome,
+        // Firestorm's commands on what Aurora already does (commands.xml)
+        "aboutland" => panels.about_land = !panels.about_land,
+        "regioninfo" => panels.region_estate = !panels.region_estate,
+        "myenvironments" => panels.environment = !panels.environment,
+        "radar" | "block_list" | "contact_sets" => {
+            let tab = match cmd {
+                "radar" => super::people::TAB_NEARBY,
+                "block_list" => super::people::TAB_BLOCKED,
+                _ => super::people::TAB_SETS,
+            };
+            // the same button again closes People on its tab
+            if panels.people && panels.people_tab == tab {
+                toggle("people", &mut panels.people);
+            } else {
+                super::widgets::open_floater(ctx, "people", &mut panels.people);
+            }
+            panels.people_tab = tab;
+        }
+        "build" => return BarAction::Build(0),
+        "profile" => return BarAction::MyProfile,
+        "reporter" => return BarAction::ReportAbuse,
+        "teleport_history" => return BarAction::TeleportHistory,
+        "landmark_here" => return BarAction::CreateLandmark,
+        "marketplacelistings" => return BarAction::MarketplaceListings,
+        "stop_animations" => return BarAction::StopAnimations,
         _ => {}
     }
     BarAction::None
@@ -1362,6 +1391,12 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
     match cmd {
         "conversations" => panels.chat,
         "people" | "friends" => panels.people,
+        "radar" => panels.people && panels.people_tab == super::people::TAB_NEARBY,
+        "block_list" => panels.people && panels.people_tab == super::people::TAB_BLOCKED,
+        "contact_sets" => panels.people && panels.people_tab == super::people::TAB_SETS,
+        "aboutland" => panels.about_land,
+        "regioninfo" => panels.region_estate,
+        "myenvironments" => panels.environment,
         "inventory" => panels.inventory,
         "gestures" => panels.gestures,
         "appearance" => panels.appearance,
@@ -1401,12 +1436,20 @@ pub(crate) fn tool_button_id(command: &str) -> egui::Id {
 
 /// The size of a toolbar button and of its icon: Firestorm's full-width bar
 /// (22 high, the icon follows the width) or the dock of the islands (fixed
-/// buttons, 18 px icons, `bars/dock.rs`).
+/// buttons, 18 px icons, `bars/dock.rs`); its icon, label or both
+/// (`toolbar::ButtonMode`), the label after the icon at the left in a side
+/// bar, else the pair centred; where its pop-ups open.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ButtonLook {
     pub size: Vec2,
     pub icon: f32,
     pub dock: bool,
+    pub mode: super::toolbar::ButtonMode,
+    pub left: bool,
+    pub opens: egui::RectAlign,
+    /// The "Toolbar buttons" window is open: every button shows a faint
+    /// face, the mockup's buttons that can be dragged.
+    pub editing: bool,
 }
 
 impl ButtonLook {
@@ -1415,8 +1458,66 @@ impl ButtonLook {
             size: Vec2::new(width, 22.0),
             icon: (width - 6.0).clamp(10.0, 16.0),
             dock: false,
+            mode: super::toolbar::ButtonMode::IconsOnly,
+            left: false,
+            opens: egui::RectAlign::TOP,
+            editing: false,
         }
     }
+}
+
+/// The width of a button's label in a toolbar.
+pub(crate) fn label_width(ctx: &egui::Context, text: &str) -> f32 {
+    ctx.fonts_mut(|f| {
+        f.layout_no_wrap(
+            text.to_owned(),
+            egui::FontId::proportional(sizing::LABEL_FONT),
+            Color32::PLACEHOLDER,
+        )
+        .size()
+        .x
+    })
+}
+
+/// A button's own width in a toolbar (`sizing::natural`): `square` for an
+/// icon (`mic` for Speak), its label's room otherwise; Speak keeps room for
+/// its arrow.
+pub(crate) fn natural_width(
+    ctx: &egui::Context,
+    b: &super::skin::ToolButton,
+    mode: super::toolbar::ButtonMode,
+    square: f32,
+    icon: f32,
+    mic: f32,
+) -> f32 {
+    let speak = b.command == "speak";
+    if mode == super::toolbar::ButtonMode::IconsOnly {
+        return if speak { mic } else { square };
+    }
+    let extra = if speak { DOCK_MIC_ARROW } else { 0.0 };
+    sizing::natural(mode, square, icon, label_width(ctx, super::toolbar::label(b)), extra)
+}
+
+/// Where a button's icon and label go in `rect`: the icon's rectangle (None
+/// with the label alone) and the label's left end and width (none with the
+/// icon alone).
+fn content(ui: &egui::Ui, rect: egui::Rect, look: ButtonLook, text: &str) -> (Option<egui::Rect>, Option<(f32, f32)>) {
+    use super::toolbar::ButtonMode;
+    let icon = look.icon;
+    if look.mode == ButtonMode::IconsOnly {
+        return (Some(egui::Rect::from_center_size(rect.center(), Vec2::splat(icon))), None);
+    }
+    let with_icon = look.mode == ButtonMode::IconsWithText;
+    let lead = if with_icon { icon + sizing::ICON_GAP } else { 0.0 };
+    let room = (rect.width() - sizing::LABEL_PAD * 2.0 - lead).max(0.0);
+    let text_w = label_width(ui.ctx(), text).min(room);
+    let start = if look.left {
+        rect.left() + sizing::LABEL_PAD
+    } else {
+        (rect.center().x - (lead + text_w) / 2.0).max(rect.left() + sizing::LABEL_PAD)
+    };
+    let icon_rect = with_icon.then(|| egui::Rect::from_center_size(egui::pos2(start + icon / 2.0, rect.center().y), Vec2::splat(icon)));
+    (icon_rect, Some((start + lead, room)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1426,6 +1527,7 @@ fn tool_button(
     icons: &Icons,
     command: &str,
     icon: &str,
+    label: &str,
     tip: &str,
     active: bool,
     look: ButtonLook,
@@ -1436,12 +1538,24 @@ fn tool_button(
     let icon_size = look.icon;
     let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
-    if let Some(fill) = tool_fill(p, active, resp.hovered()) {
+    // a saved Firestorm command Aurora does not run yet: very dimmed, with
+    // neither face nor pill under the pointer, as in the window
+    let ready = super::toolbar::ready(command);
+    let hovered = ready && resp.hovered();
+    if let Some(fill) = tool_fill(p, ready && active, hovered).or_else(|| look.editing.then(|| p.raised.gamma_multiply(0.55))) {
         painter.rect_filled(rect, radius, fill);
     }
-    if let Some(t) = icons.get(icon) {
-        let tint = if active || resp.hovered() { p.ink } else { p.muted };
-        let ir = egui::Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
+    let tint = if !ready {
+        p.muted_dim.gamma_multiply(0.55)
+    } else if active || hovered {
+        p.ink
+    } else {
+        p.muted
+    };
+    let (icon_rect, text) = content(ui, rect, look, label);
+    if let Some(ir) = icon_rect
+        && let Some(t) = icons.get(icon)
+    {
         painter.image(
             t.id(),
             ir,
@@ -1449,17 +1563,28 @@ fn tool_button(
             tint,
         );
     }
-    if icon == "AO" {
+    if icon == "AO"
+        && let Some(ir) = icon_rect
+    {
         // centered on the letters' ink like the icons beside it: the line box
         // of a font sits lower than its capitals
-        let color = if active || resp.hovered() { p.ink } else { p.muted };
         let size = if look.dock { 13.0 } else { 12.0 };
-        let galley = painter.layout_no_wrap("AO".to_owned(), egui::FontId::proportional(size), color);
+        let galley = painter.layout_no_wrap("AO".to_owned(), egui::FontId::proportional(size), tint);
         // bold like the worn names (LLFontGL BOLD_OFFSET): the letters weigh
         // as much as the filled icons of the other buttons
         let bold = super::widgets::bold_text_offset(ui);
-        super::widgets::paint_ink_centered(painter, galley.clone(), rect.center(), color);
-        super::widgets::paint_ink_centered(painter, galley, rect.center() + bold, color);
+        super::widgets::paint_ink_centered(painter, galley.clone(), ir.center(), tint);
+        super::widgets::paint_ink_centered(painter, galley, ir.center() + bold, tint);
+    }
+    if let Some((left, width)) = text {
+        super::widgets::paint_elided(
+            ui,
+            label,
+            egui::pos2(left, rect.center().y),
+            width,
+            egui::FontId::proportional(sizing::LABEL_FONT),
+            tint,
+        );
     }
     if unread > 0 && look.dock {
         // the one counter of the islands, as on the bell: 3 px in from the
@@ -1542,11 +1667,13 @@ pub(crate) const DOCK_MIC_W: f32 = 44.0;
 /// The arrow's zone in the dock: a 10 px caret 1 px after the microphone.
 const DOCK_MIC_ARROW: f32 = 12.0;
 
+#[allow(clippy::too_many_arguments)]
 fn mic_button(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
     look: ButtonLook,
+    label: &str,
     mic: &mut MicButton,
     toolbar_menu: bool,
     open_requested: bool,
@@ -1554,24 +1681,30 @@ fn mic_button(
     let (rect, _) = ui.allocate_exact_size(look.size, egui::Sense::hover());
     let width = look.size.x;
     let icon_size = look.icon;
+    let labelled = look.mode != super::toolbar::ButtonMode::IconsOnly;
     // the microphone stands in the middle of the button, in line with the
     // icons of its neighbors, and the arrow right after it; a button too
     // narrow for the arrow keeps the microphone, and a right click on it
-    // opens the panel. In the dock the pair is centred instead.
+    // opens the panel. In the dock the pair is centred instead; with a
+    // label, the arrow takes the button's right end.
     let arrow_w = if look.dock { DOCK_MIC_ARROW } else { MIC_ARROW };
-    let with_arrow = look.dock || width >= icon_size + 2.0 * (MIC_ARROW + 1.0);
-    let icon_x = if look.dock {
-        rect.center().x - arrow_w / 2.0
+    let with_arrow = look.dock || labelled || width >= icon_size + 2.0 * (MIC_ARROW + 1.0);
+    let (icon_rect, text, arrow_left) = if labelled {
+        let body = egui::Rect::from_min_max(rect.min, egui::pos2(rect.right() - arrow_w, rect.bottom()));
+        let (icon_rect, text) = content(ui, body, look, label);
+        (icon_rect, text, rect.right() - arrow_w)
     } else {
-        rect.center().x
+        let icon_x = if look.dock {
+            rect.center().x - arrow_w / 2.0
+        } else {
+            rect.center().x
+        };
+        let icon_rect = egui::Rect::from_center_size(egui::pos2(icon_x, rect.center().y), Vec2::splat(icon_size));
+        (Some(icon_rect), None, icon_rect.right())
     };
-    let icon_rect = egui::Rect::from_center_size(egui::pos2(icon_x, rect.center().y), Vec2::splat(icon_size));
     let resp = ui.interact(rect, ui.id().with("mic_main"), egui::Sense::click_and_drag());
     let arrow = with_arrow.then(|| {
-        let zone = egui::Rect::from_min_max(
-            egui::pos2(icon_rect.right(), rect.top()),
-            egui::pos2(icon_rect.right() + arrow_w, rect.bottom()),
-        );
+        let zone = egui::Rect::from_min_max(egui::pos2(arrow_left, rect.top()), egui::pos2(arrow_left + arrow_w, rect.bottom()));
         ui.interact(zone, ui.id().with("mic_arrow"), egui::Sense::click())
     });
     if mic.hold {
@@ -1620,9 +1753,27 @@ fn mic_button(
     } else {
         p.muted_dim
     };
-    paint_icon(ui, icons, icon, icon_rect, icon_size, tint);
+    if let Some(icon_rect) = icon_rect {
+        paint_icon(ui, icons, icon, icon_rect, icon_size, tint);
+    }
+    if let Some((left, room)) = text {
+        super::widgets::paint_elided(
+            ui,
+            label,
+            egui::pos2(left, rect.center().y),
+            room,
+            egui::FontId::proportional(sizing::LABEL_FONT),
+            tint,
+        );
+    }
     if let Some((light, _)) = &mic.voice_dot {
-        voice_dot(ui, p, icon_rect, *light);
+        // on the microphone, or past the label's end without it
+        let anchor = icon_rect.unwrap_or_else(|| {
+            let (left, room) = text.unwrap_or((rect.left(), 0.0));
+            let end = left + label_width(ui.ctx(), label).min(room);
+            egui::Rect::from_center_size(egui::pos2(end, rect.center().y), Vec2::splat(icon_size))
+        });
+        voice_dot(ui, p, anchor, *light);
     }
     if let Some(arrow) = &arrow {
         // the arrow points to where its panel opens
@@ -1682,7 +1833,11 @@ fn mic_button(
     // Escape and the panel's own `ui.close()` clear the flag
     let shown = egui::Popup::from_response(anchor)
         .open_bool(&mut open_now)
-        .align(egui::RectAlign::TOP_END)
+        .align(if look.opens == egui::RectAlign::TOP {
+            egui::RectAlign::TOP_END
+        } else {
+            look.opens
+        })
         .gap(7.0)
         .frame(egui::Frame::NONE)
         .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
@@ -1843,6 +1998,7 @@ fn mic_mode(
 }
 
 /// What lights the toolbar's buttons, besides the open windows.
+#[derive(Clone, Copy)]
 pub(crate) struct Row<'a> {
     pub unread: usize,
     /// The conversation the chat island's button opens while there are
@@ -1855,6 +2011,11 @@ pub(crate) struct Row<'a> {
     pub locked: bool,
     /// The favourites, for the Favorites button (F3, or added by hand).
     pub favorites: &'a favorites::View,
+    /// The toolbar drawn, and its settings for the look in use.
+    pub bar: super::toolbar::Bar,
+    pub style: super::toolbar::Style,
+    /// The "Toolbar buttons" window is open (and the toolbars unlocked).
+    pub editing: bool,
 }
 
 /// The toolbar's buttons one after the other in `ui` (Firestorm's bar or
@@ -1878,9 +2039,9 @@ pub(crate) fn toolbar_row(
     for b in buttons {
         if b.command == "speak" {
             let open_voice = std::mem::take(&mut toolbar.voice_options);
-            let response = mic_button(ui, p, icons, look(b), mic, true, open_voice);
+            let response = mic_button(ui, p, icons, look(b), super::toolbar::label(b), mic, true, open_voice);
             rects.push(response.rect);
-            toolbar.button(&response, b, p, row.locked);
+            toolbar.button(&response, row.bar, row.style, b, p, row.locked);
             if !row.locked && response.dragged() {
                 mic.held = false;
             }
@@ -1903,15 +2064,32 @@ pub(crate) fn toolbar_row(
                 value0 = super::toolbar::label(b).to_string(),
                 unread = format!("{}", row.unread)
             )
+        } else if !super::toolbar::ready(&b.command) {
+            format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
         } else {
             super::toolbar::label(b).to_owned()
         };
         // the Favorites button: its grid of favourites opens upwards
         let grid_id = egui::Id::new("bars_favorites_grid_open");
         let active = active || (b.command == "favorites" && ui.ctx().data(|d| d.get_temp::<bool>(grid_id)).unwrap_or(false));
-        let response = tool_button(ui, p, icons, &b.command, &b.icon, &tip, active, look(b), count);
+        let response = tool_button(
+            ui,
+            p,
+            icons,
+            &b.command,
+            &b.icon,
+            super::toolbar::label(b),
+            &tip,
+            active,
+            look(b),
+            count,
+        );
         rects.push(response.rect);
-        toolbar.button(&response, b, p, row.locked);
+        toolbar.button(&response, row.bar, row.style, b, p, row.locked);
+        if !super::toolbar::ready(&b.command) {
+            // a saved Firestorm command Aurora does not have yet
+            continue;
+        }
         if b.command == "favorites" {
             islands::demo_open(ui.ctx(), &response, demo::Open::Favorites);
             let mut fav = None;
@@ -1919,7 +2097,7 @@ pub(crate) fn toolbar_row(
                 &response,
                 p,
                 egui::PopupCloseBehavior::CloseOnClickOutside,
-                Some((egui::RectAlign::TOP, 12.0)),
+                Some((look(b).opens, 12.0)),
                 |ui| favorites::grid_body(ui, p, icons, row.favorites, &mut fav),
             );
             ui.ctx().data_mut(|d| d.insert_temp(grid_id, open));
@@ -1965,6 +2143,9 @@ pub fn bottom_bar(
     emoji: Option<&mut super::emoji::Emoji>,
     favorites: &favorites::View,
 ) -> (Option<super::chat::OutgoingChat>, BarAction, f32, bool) {
+    let bar = super::toolbar::Bar::Bottom;
+    let style = toolbar_settings.style(bar).resolve(bar, islands);
+    let editing = toolbar.open && !toolbar_settings.locked;
     if islands {
         let row = Row {
             unread,
@@ -1975,6 +2156,9 @@ pub fn bottom_bar(
             ao_active,
             locked: toolbar_settings.locked,
             favorites,
+            bar,
+            style,
+            editing,
         };
         return dock::bottom(
             ui,
@@ -2043,15 +2227,30 @@ pub fn bottom_bar(
                     width_committed = true;
                 }
 
-                // buttons stretch over the whole remaining width (hover and
-                // click area included); the gap and the pill drawn under the
-                // pointer show where each one starts and ends
+                // by default the buttons stretch over the whole remaining
+                // width (hover and click area included); the gap and the
+                // pill drawn under the pointer show where each one starts
+                // and ends. Else Firestorm's layout styles and alignments.
                 let remaining = ui.available_width();
                 let gap = 4.0;
-                let btn_w = ((remaining - gap * (n - 1.0) - 1.0) / n).floor().max(MIN_BTN);
+                let labelled = style.mode != super::toolbar::ButtonMode::IconsOnly;
+                // Firestorm's icon buttons when they do not fill the bar
+                let square = if style.sizing == super::toolbar::Sizing::Fill {
+                    MIN_BTN
+                } else {
+                    32.0
+                };
+                let natural: Vec<f32> = buttons
+                    .iter()
+                    .map(|b| natural_width(ui.ctx(), b, style.mode, square, 16.0, square))
+                    .collect();
+                let widths = sizing::fit(&natural, style.sizing, labelled, remaining - 1.0, gap, MIN_BTN);
+                let widths: Vec<f32> = widths.into_iter().map(|w| w.max(MIN_BTN)).collect();
+                let used = widths.iter().sum::<f32>() + gap * (n - 1.0);
+                let lead = (sizing::place(style.align, 0.0, remaining - 1.0, used)).max(0.0);
                 let zone = egui::Rect::from_min_size(ui.cursor().min, Vec2::new(remaining.max(4.0), 22.0));
                 let target = ui.interact(zone, egui::Id::new("toolbar_background"), egui::Sense::click());
-                toolbar.context(&target, p, None, toolbar_settings.locked);
+                toolbar.context(&target, p, bar, style, None, toolbar_settings.locked);
                 let mut rects = Vec::new();
                 egui::ScrollArea::horizontal()
                     .id_salt("toolbar_scroll")
@@ -2061,6 +2260,9 @@ pub fn bottom_bar(
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = gap;
+                            if lead > 0.0 {
+                                ui.add_space(lead - gap);
+                            }
                             let row = Row {
                                 unread,
                                 latest_unread: None,
@@ -2070,22 +2272,24 @@ pub fn bottom_bar(
                                 ao_active,
                                 locked: toolbar_settings.locked,
                                 favorites,
+                                bar,
+                                style,
+                                editing,
                             };
-                            rects = toolbar_row(
-                                ui,
-                                p,
-                                icons,
-                                buttons,
-                                |_| ButtonLook::bar(btn_w),
-                                toolbar,
-                                panels,
-                                mic,
-                                &row,
-                                &mut action,
-                            );
+                            let look = |b: &crate::ui::skin::ToolButton| {
+                                let at = buttons.iter().position(|x| x.command == b.command).unwrap_or(0);
+                                let w = widths.get(at).copied().unwrap_or(MIN_BTN);
+                                ButtonLook {
+                                    icon: if labelled { 16.0 } else { (w - 6.0).clamp(10.0, 16.0) },
+                                    mode: style.mode,
+                                    editing,
+                                    ..ButtonLook::bar(w)
+                                }
+                            };
+                            rects = toolbar_row(ui, p, icons, buttons, look, toolbar, panels, mic, &row, &mut action);
                         });
                     });
-                toolbar.drop_bar(&target, &rects, p, toolbar_settings.locked);
+                toolbar.drop_bar(&target, bar, &rects, p, toolbar_settings.locked);
             });
         });
     if let Some((painter, slot)) = glass {
@@ -2106,7 +2310,7 @@ mod tests {
         let mut open_id = None;
         for requested in [false, true, true] {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                let response = mic_button(ui, &p, &Icons::default(), ButtonLook::bar(22.0), &mut mic, true, requested);
+                let response = mic_button(ui, &p, &Icons::default(), ButtonLook::bar(22.0), "", &mut mic, true, requested);
                 open_id = Some(response.parent_id().with("mic_panel_open"));
             });
             output.textures_delta.clear();
@@ -2155,7 +2359,7 @@ mod tests {
                 |ui| {
                     let slot = egui::Rect::from_min_size(BUTTON, Vec2::new(WIDTH, 22.0));
                     ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
-                        mic_button(ui, &p, &icons, ButtonLook::bar(WIDTH), &mut mic, false, false);
+                        mic_button(ui, &p, &icons, ButtonLook::bar(WIDTH), "", &mut mic, false, false);
                     });
                 },
             );

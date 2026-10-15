@@ -10,18 +10,19 @@
 //! Firestorm's bar back (`bars::bottom_bar`, unchanged).
 
 use super::islands::{GAP, MARGIN, PAD, area, slot_face, slot_ink};
-use super::{BarAction, ButtonLook, DOCK_MIC_W, MicButton, Row, paint_icon, toolbar_row};
+use super::{BarAction, ButtonLook, DOCK_MIC_W, MicButton, Row, natural_width, paint_icon, sizing, toolbar_row};
 use crate::theme::Palette;
 use crate::ui::Panels;
 use crate::ui::icons::Icons;
+use crate::ui::toolbar::{Align, ButtonMode, Style};
 use egui::{Id, Pos2, Rect, RichText, Sense, Vec2};
 
 /// Room between an island's edge and its buttons, above and below.
 const V_PAD: f32 = 4.0;
 /// Icons of the dock's buttons (smaller in the reduced buttons).
-const BUTTON_ICON: f32 = 18.0;
+pub(super) const BUTTON_ICON: f32 = 18.0;
 /// The reduced buttons, when the others do not fit in the screen's width.
-const MIN_BUTTON: f32 = 24.0;
+pub(super) const MIN_BUTTON: f32 = 24.0;
 /// Room between the chat island and the dock, at the least.
 const AFTER_CHAT: f32 = 12.0;
 /// Narrowest chat island.
@@ -32,7 +33,7 @@ const EMOJI_ICON: f32 = 15.0;
 
 /// A screen under 1408 px wide (the mockup's 1280) takes the narrower
 /// chat island and buttons.
-fn narrow(screen: Rect) -> bool {
+pub(super) fn narrow(screen: Rect) -> bool {
     screen.width() < 1408.0
 }
 
@@ -42,16 +43,17 @@ pub fn default_chat_width(screen: Rect) -> f32 {
 }
 
 /// Where the bottom islands stand on `screen`: the chat island, the dock,
-/// the size of the dock's buttons (square; the Speak button is
-/// `DOCK_MIC_W` wide, as high as the others) and the one height of both
-/// islands, the buttons' and their margins (the human's rule: the two
-/// islands share their top and their bottom).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// the size of the dock's buttons (their height; square with their icon
+/// alone, the Speak button `DOCK_MIC_W` wide), each button's width, and the
+/// one height of both islands, the buttons' and their margins (the human's
+/// rule: the two islands share their top and their bottom).
+#[derive(Debug, Clone, PartialEq)]
 pub struct Geometry {
     pub chat: Rect,
     pub dock: Rect,
     pub button: f32,
     pub height: f32,
+    pub widths: Vec<f32>,
 }
 
 impl Geometry {
@@ -62,40 +64,59 @@ impl Geometry {
     }
 }
 
-fn dock_width(buttons: usize, mic: bool, button: f32) -> f32 {
-    if buttons == 0 {
-        // an empty dock keeps one slot, where a button can be dropped
+/// The width of a row of buttons `widths` wide; an empty dock keeps one
+/// slot, where a button can be dropped.
+fn row_width(widths: &[f32], button: f32) -> f32 {
+    if widths.is_empty() {
         return PAD * 2.0 + button;
     }
-    let plain = buttons - usize::from(mic);
-    PAD * 2.0 + plain as f32 * button + if mic { DOCK_MIC_W } else { 0.0 } + GAP * (buttons - 1) as f32
+    PAD * 2.0 + widths.iter().sum::<f32>() + GAP * (widths.len() - 1) as f32
+}
+
+/// The dock of `buttons` icons (Speak among them when `mic`), centred with
+/// fixed buttons: the layout before PR 6, for the tests.
+#[cfg(test)]
+pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geometry {
+    geometry_styled(screen, chat_width, Style::default(), |square| {
+        (0..buttons).map(|i| if mic && i == 0 { DOCK_MIC_W } else { square }).collect()
+    })
 }
 
 /// The bottom islands' layout: the chat island on the left, `chat_width`
-/// wide (its default when 0), the dock centred on the screen but at least
-/// `AFTER_CHAT` after the chat island; when the buttons do not fit, they
-/// all take the reduced size (`MIN_BUTTON`), and a chat island that would
-/// still push the dock out shrinks. Both islands are as high as the
-/// buttons and their margins.
-pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geometry {
+/// wide (its default when 0), the dock centred on the screen (or at the
+/// start or end of the room after the chat island, by `style.align`) but at
+/// least `AFTER_CHAT` after the chat island, its buttons as wide as
+/// `natural` gives them for a button height and `style.sizing` lays them
+/// out (`Fill`: the whole room). When they do not fit, they all take the
+/// reduced size (`MIN_BUTTON`) and their labels are cut, and a chat island
+/// that would still push the dock out shrinks. Both islands are as high as
+/// the buttons and their margins.
+pub fn geometry_styled(screen: Rect, chat_width: f32, style: Style, natural: impl Fn(f32) -> Vec<f32>) -> Geometry {
     let bottom = screen.bottom() - MARGIN;
     let left = screen.left() + MARGIN;
     let right = screen.right() - MARGIN;
+    let labelled = style.mode != ButtonMode::IconsOnly;
+    let least = natural(MIN_BUTTON);
+    let least = if labelled { vec![MIN_BUTTON; least.len()] } else { least };
     let wanted = if chat_width > 0.0 { chat_width } else { default_chat_width(screen) };
-    let max_chat = (right - left - AFTER_CHAT - dock_width(buttons, mic, MIN_BUTTON)).max(MIN_CHAT);
+    let max_chat = (right - left - AFTER_CHAT - row_width(&least, MIN_BUTTON)).max(MIN_CHAT);
     let chat_w = wanted.clamp(MIN_CHAT, max_chat);
     let chat_right = left + chat_w;
-    let place = |button: f32| {
-        let width = dock_width(buttons, mic, button);
-        let x = (left + ((right - left - width) / 2.0).round()).max(chat_right + AFTER_CHAT);
-        (x, width)
-    };
+    let start = chat_right + AFTER_CHAT;
+    let room = right - start;
+    let row = |button: f32| sizing::fit(&natural(button), style.sizing, labelled, room - PAD * 2.0, GAP, MIN_BUTTON);
     let mut button = if narrow(screen) { 32.0 } else { 34.0 };
-    let (mut x, mut width) = place(button);
-    if x + width > right {
+    let mut widths = row(button);
+    if row_width(&widths, button) > room {
         button = MIN_BUTTON;
-        (x, width) = place(button);
+        widths = row(button);
     }
+    let width = row_width(&widths, button);
+    let x = match style.align {
+        // centred on the screen, as the mockup's dock
+        Align::Center => (left + ((right - left - width) / 2.0).round()).max(start),
+        align => sizing::place(align, start, right, width),
+    };
     let height = button + V_PAD * 2.0;
     let chat = Rect::from_min_max(Pos2::new(left, bottom - height), Pos2::new(chat_right, bottom));
     let dock = Rect::from_min_max(Pos2::new(x, bottom - height), Pos2::new(x + width, bottom));
@@ -104,6 +125,7 @@ pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geo
         dock,
         button,
         height,
+        widths,
     }
 }
 
@@ -130,19 +152,36 @@ pub fn bottom(
     let ctx = ui.ctx().clone();
     let screen = ui.max_rect();
     let buttons = toolbar_settings.buttons(layout);
-    let has_mic = buttons.iter().any(|b| b.command == "speak");
-    let geo = geometry(screen, *chat_width, buttons.len(), has_mic);
+    let style = row.style;
+    let geo = geometry_styled(screen, *chat_width, style, |square| {
+        buttons
+            .iter()
+            .map(|b| natural_width(&ctx, b, style.mode, square, BUTTON_ICON.min(square - 6.0), DOCK_MIC_W))
+            .collect()
+    });
     let mut action = BarAction::None;
     let mut committed = false;
 
     let out = area(&ctx, p, "chat", geo.chat, |ui| {
-        chat_island(ui, p, icons, panels, chat, gestures, emoji, row, geo, chat_width, &mut committed)
+        chat_island(
+            ui,
+            p,
+            icons,
+            panels,
+            chat,
+            gestures,
+            emoji,
+            row,
+            geo.clone(),
+            chat_width,
+            &mut committed,
+        )
     });
 
     area(&ctx, p, "dock", geo.dock, |ui| {
         // the dock's background: its right-click menu and the drop target
         let target = ui.interact(geo.dock, Id::new("toolbar_background"), Sense::click());
-        toolbar.context(&target, p, None, row.locked);
+        toolbar.context(&target, p, row.bar, style, None, row.locked);
         let inner = geo.dock.shrink2(Vec2::new(PAD, V_PAD));
         let mut child = ui.new_child(
             egui::UiBuilder::new()
@@ -151,10 +190,17 @@ pub fn bottom(
         );
         child.spacing_mut().item_spacing.x = GAP;
         // Speak keeps its width for its arrow, within the common height
-        let look = |b: &crate::ui::skin::ToolButton| ButtonLook {
-            size: Vec2::new(if b.command == "speak" { DOCK_MIC_W } else { geo.button }, geo.button),
-            icon: BUTTON_ICON.min(geo.button - 6.0),
-            dock: true,
+        let look = |b: &crate::ui::skin::ToolButton| {
+            let at = buttons.iter().position(|x| x.command == b.command).unwrap_or(0);
+            ButtonLook {
+                size: Vec2::new(geo.widths.get(at).copied().unwrap_or(geo.button), geo.button),
+                icon: BUTTON_ICON.min(geo.button - 6.0),
+                dock: true,
+                mode: style.mode,
+                left: false,
+                opens: egui::RectAlign::TOP,
+                editing: row.editing,
+            }
         };
         let rects = toolbar_row(&mut child, p, icons, buttons, look, toolbar, panels, mic, row, &mut action);
         if cfg!(test)
@@ -170,7 +216,7 @@ pub fn bottom(
             Id::new("dock_drop"),
             Sense::hover(),
         );
-        toolbar.drop_bar(&drop, &rects, p, row.locked);
+        toolbar.drop_bar(&drop, row.bar, &rects, p, row.locked);
     });
     (out, action, screen.bottom() - geo.reserved(), committed)
 }
@@ -519,6 +565,9 @@ mod tests {
                 ao_active: false,
                 locked: false,
                 favorites: &view,
+                bar: crate::ui::toolbar::Bar::Bottom,
+                style: Style::default(),
+                editing: false,
             };
             let mut result = (None, 0.0, false);
             let mut output = self.ctx.run_ui(
@@ -623,7 +672,7 @@ mod tests {
         assert_eq!(layout.toolbar.len(), skin.toolbar.len() - 1);
         let saved = crate::ui::toolbar::ToolbarSettings {
             buttons: Some(skin.toolbar.clone()),
-            locked: false,
+            ..Default::default()
         };
         assert!(saved.buttons(dock.of(&skin)).iter().any(|b| b.command == "conversations"));
     }

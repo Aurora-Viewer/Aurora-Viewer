@@ -1428,13 +1428,21 @@ To check with these scenarios:
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_TOOLBAR=1` | Open the bottom toolbar button catalogue. |
+| `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
 
-`AURORA_DEMO_TOOLBAR`: `1` opens the catalogue; `drag` holds Friends over
-the toolbar with an insertion marker, `add` releases it, `reorder` moves
-Preferences beside Inventory, and `menu` opens a button's context menu.
-Capture after frame 670. Use an unmodified demo toolbar with Friends absent
-for the add/drag scenarios. Changes use the demo's separate saved settings.
+`AURORA_DEMO_TOOLBAR`: `1` opens the "Toolbar buttons" window at frame 300;
+`drag` holds Friends over the toolbar with an insertion marker (the empty
+side toolbars show where a button can go), `add` releases it, `reorder`
+moves Preferences beside Inventory, and `menu` opens a button's context
+menu. Capture after frame 670. Use an unmodified demo toolbar with Friends
+absent for the add/drag scenarios. Changes use the demo's separate saved
+settings. The bars mockup's states, for this run only (nothing is saved):
+`custom` (Environments, Radar and Teleport history in the left toolbar,
+Performance out of the dock, the window open and, from frame 652, Build
+dragged from it between the mini-map and Sit), `side` (the same toolbars
+without the window; `sidemenu`: Radar's right click at frame 650, the
+vertical toolbar's menu), `right` (them in the right toolbar), `labels` (the
+dock in icons and labels, the left toolbar in labels). Capture at frame 780.
 
 The values of these switches are English words. The French words they had
 before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
@@ -2268,7 +2276,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `hidden` (hidden at frame 600 as Alt+Shift+U does: the bars and the
   windows go, the hint at the top in the middle for 6 s; with `legacy`,
   Firestorm's question instead), `peek` (hidden, the pointer held at the
-  top edge: the top islands back, no hint under them).
+  top edge: the top islands back, no hint under them), `peekleft` (hidden,
+  the pointer held at the left edge: the left toolbar back, with
+  `AURORA_DEMO_TOOLBAR=side`).
   Capture at
   `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
   at frame 780: at 1280 the place shows the parcel and the region, at

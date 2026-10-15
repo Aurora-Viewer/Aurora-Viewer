@@ -29,6 +29,8 @@ pub struct Interface {
     /// The bars an edge brought back.
     peek_top: bool,
     peek_bottom: bool,
+    /// The left and right toolbars an edge brought back.
+    peek_sides: [bool; 2],
     /// ConfirmHideUI is asked (Firestorm's bars).
     pub confirm: bool,
     /// "Confirm before hiding the interface", as ticked in the question.
@@ -72,6 +74,7 @@ impl Interface {
         self.hidden_at = hidden.then(|| ctx.input(|i| i.time));
         self.peek_top = false;
         self.peek_bottom = false;
+        self.peek_sides = [false; 2];
         self.confirm = false;
         super::widgets::hide_windows(ctx, hidden);
         if hidden {
@@ -115,6 +118,31 @@ impl Interface {
             top: self.peek_top,
             bottom: self.peek_bottom || f.chat_active,
         }
+    }
+
+    /// The left and right toolbars this frame draws, as the other bars:
+    /// none in mouselook unless the interface stays there; hidden, with the
+    /// islands, the left or right edge hovered brings its toolbar back while
+    /// the pointer stays on it (`edges`: their inner sides, last frame) or a
+    /// menu is open.
+    pub fn sides(&mut self, f: &Frame, edges: [f32; 2]) -> [bool; 2] {
+        if f.mouselook {
+            let on = f.show_in_mouselook && !self.hidden;
+            return [on, on];
+        }
+        if !self.hidden {
+            return [true, true];
+        }
+        if f.classic {
+            return [false, false];
+        }
+        let near = |test: &dyn Fn(Pos2) -> bool| f.pointer.is_some_and(test);
+        let at = [near(&|p| p.x <= f.screen.left() + EDGE), near(&|p| p.x >= f.screen.right() - EDGE)];
+        let on = [near(&|p| p.x <= edges[0] + MARGIN), near(&|p| p.x >= edges[1] - MARGIN)];
+        for i in 0..2 {
+            self.peek_sides[i] = at[i] || (self.peek_sides[i] && (on[i] || f.menu_open));
+        }
+        self.peek_sides
     }
 
     /// Seconds left to the hint at `now` (the islands' look), while shown.
@@ -314,6 +342,44 @@ mod tests {
         let mut classic = frame(Some(Pos2::new(700.0, 2.0)));
         classic.classic = true;
         assert_eq!(ui.bars(&classic), NONE, "no edge with Firestorm's bars");
+    }
+
+    /// The left and right toolbars go with the interface; with the islands,
+    /// a side edge brings its toolbar back while the pointer stays on it
+    /// (its inner side last frame, 8 px past it) or a menu is open; with
+    /// Firestorm's bars, the shortcut only; in mouselook, as the other bars.
+    #[test]
+    fn a_side_edge_brings_its_toolbar_back() {
+        let edges = [50.0, 1486.0];
+        let mut ui = Interface::default();
+        assert_eq!(ui.sides(&frame(None), edges), [true, true]);
+        ui.hidden = true;
+        assert_eq!(ui.sides(&frame(Some(Pos2::new(700.0, 400.0))), edges), [false, false]);
+        assert_eq!(
+            ui.sides(&frame(Some(Pos2::new(40.0, 400.0))), edges),
+            [false, false],
+            "not come from the edge"
+        );
+        assert_eq!(ui.sides(&frame(Some(Pos2::new(1.0, 400.0))), edges), [true, false]);
+        assert_eq!(
+            ui.sides(&frame(Some(Pos2::new(55.0, 400.0))), edges),
+            [true, false],
+            "on the toolbar"
+        );
+        let mut menu = frame(Some(Pos2::new(700.0, 400.0)));
+        menu.menu_open = true;
+        assert_eq!(ui.sides(&menu, edges), [true, false], "a menu of its own keeps it");
+        assert_eq!(ui.sides(&frame(Some(Pos2::new(700.0, 400.0))), edges), [false, false]);
+        assert_eq!(ui.sides(&frame(Some(Pos2::new(1535.0, 400.0))), edges), [false, true]);
+        let mut classic = frame(Some(Pos2::new(1.0, 400.0)));
+        classic.classic = true;
+        assert_eq!(ui.sides(&classic, edges), [false, false], "no edge with Firestorm's bars");
+        let mut ml = frame(None);
+        ml.mouselook = true;
+        ui.hidden = false;
+        assert_eq!(ui.sides(&ml, edges), [false, false]);
+        ml.show_in_mouselook = true;
+        assert_eq!(ui.sides(&ml, edges), [true, true]);
     }
 
     #[test]
