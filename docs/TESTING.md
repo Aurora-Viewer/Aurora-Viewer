@@ -410,7 +410,13 @@ when unfocused") is ignored during a screenshot.
   not move the avatar (it stays on the car, extrapolated and smoothed like
   any object), and standing up must start from the simulator's position,
   then walk at once. Plain `AURORA_DEMO` (no link) has nothing to predict:
-  the setting has no effect there.
+  the setting has no effect there. Any prim of the demo can be sat on
+  (right-click › Sit, or `/siton <key>` in the chat bar) and stood up from
+  (Stand up), with or without the link: our avatar sits on its top and
+  stands up beside it; through the link both answers come back one round
+  trip later, and the stand-in stops reporting while seated. With
+  `AURORA_DEMO_ACTIONS=1` a row of cubes stands in front of the avatar
+  (the Sit chair keeps its own answer without the link).
 - **`AURORA_DEMO_SIT=n`**: clicks at frames 240, 300, 360…
 - **`AURORA_DEMO_MMO="x,y[,1|2]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead,

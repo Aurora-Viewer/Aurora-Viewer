@@ -545,6 +545,9 @@ pub struct App {
     demo_link: Option<crate::demo::link::DemoLink>,
     /// When the prediction's calibration was last logged (app/own_motion.rs).
     own_motion_logged: Option<Instant>,
+    /// The demo's seat our avatar sits on (its place and size), to stand up
+    /// beside it (app/own_motion.rs).
+    demo_seat: Option<(Vec3, Vec3)>,
     inventory_drag: inventory_drag::InventoryDrag,
     task_notecards: std::collections::HashMap<(uuid::Uuid, uuid::Uuid), task_notecards::TaskNotecard>,
     demo_documents: std::collections::HashMap<uuid::Uuid, Vec<u8>>,
@@ -947,6 +950,7 @@ impl App {
             demo_link_cfg: crate::demo::link::Config::from_env(),
             demo_link: None,
             own_motion_logged: None,
+            demo_seat: None,
             inventory_drag: Default::default(),
             task_notecards: Default::default(),
             demo_documents: Default::default(),
@@ -1127,7 +1131,14 @@ impl App {
                     amount = format!("{}", amount)
                 ));
             }
+            // a sit on any prim, and the stand up from it (app/own_motion.rs);
+            // the stand up's animations still come from demo::respond
+            let seated_on_demo_prim = self.demo_seat.is_some();
+            if self.demo_sit_command(&cmd) && matches!(cmd, NetCommand::RequestSit { .. }) {
+                return;
+            }
             if matches!(&cmd, NetCommand::OneShotControl(f) if f & control::STAND_UP != 0)
+                && !seated_on_demo_prim
                 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some()
             {
                 self.world.apply(NetEvent::ObjectUpdates {

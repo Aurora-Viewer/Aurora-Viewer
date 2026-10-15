@@ -115,6 +115,11 @@ pub struct DemoLink {
     /// reports are raised by the difference, or each would pull the
     /// avatar down.
     stand_offset: f32,
+    /// The viewer's avatar was seated last frame (`follow_viewer`).
+    viewer_seated: bool,
+    /// Sits and stand ups of `reply`, when they reach the stand-in: from
+    /// then on it reports nothing, or stands where it put the avatar.
+    seat_changes: VecDeque<(Instant, bool, Vec3)>,
 }
 
 /// What the log tells of each press and release of a walking key: how
@@ -159,11 +164,50 @@ impl DemoLink {
             start: now,
             vehicle_step: 0,
             probe: Probe::default(),
+            viewer_seated: false,
+            seat_changes: VecDeque::new(),
             stand_offset: if plausible_half_height(half_height) {
                 half_height - SIMULATED_STAND
             } else {
                 0.0
             },
+        }
+    }
+
+    /// The answer of the simulator to a command the viewer sent at `now`
+    /// (a sit, a stand up): the command reaches it after half the ping and
+    /// its answer comes back after the other half.
+    pub fn reply(&mut self, now: Instant, events: Vec<NetEvent>) {
+        let at_simulator = now + self.one_way();
+        for ev in &events {
+            if let NetEvent::ObjectUpdates { objects, .. } = ev
+                && let Some(me) = objects.iter().find(|o| o.full_id == super::DEMO_AGENT)
+            {
+                self.seat_changes.push_back((at_simulator, me.parent_id != 0, me.position));
+            }
+        }
+        for ev in events {
+            self.send(at_simulator, Delivery::Event(Box::new(ev), at_simulator));
+        }
+    }
+
+    /// The viewer's avatar sat down or stood up (the answer of `reply`
+    /// arrived): the stand-in follows, seated without reports, or standing
+    /// where the viewer was put.
+    pub fn follow_viewer(&mut self, seated: bool, position: Vec3) {
+        if seated == self.viewer_seated {
+            return;
+        }
+        self.viewer_seated = seated;
+        if seated {
+            self.sim.seated = true;
+        } else if self.sim.seated {
+            let p = position - Vec3::Z * self.stand_offset;
+            self.sim.position = p;
+            self.sim.server_pos = p;
+            self.sim.seated = false;
+            self.sim.reset_motion();
+            self.animation = None;
         }
     }
 
@@ -231,6 +275,18 @@ impl DemoLink {
         }
         if self.cfg.vehicle {
             self.vehicle(now);
+        }
+        while self.seat_changes.front().is_some_and(|(at, _, _)| *at <= now) {
+            if let Some((_, seated, position)) = self.seat_changes.pop_front() {
+                self.sim.seated = seated;
+                if !seated {
+                    let p = position - Vec3::Z * self.stand_offset;
+                    self.sim.position = p;
+                    self.sim.server_pos = p;
+                    self.sim.reset_motion();
+                    self.animation = None;
+                }
+            }
         }
         if let Some(k) = self.keys
             && !self.sim.seated
@@ -596,6 +652,46 @@ mod tests {
         }
         let t = first_moving.expect("the stand-in walked");
         assert!((0.19..=0.22).contains(&t), "{t}");
+    }
+
+    /// A sit answered through the link comes back one round trip after
+    /// the request; the stand-in then stays seated and silent, and stands
+    /// where the viewer was put.
+    #[test]
+    fn a_sit_and_a_stand_up_come_back_one_round_trip_later() {
+        let cfg = Config::parse("200").expect("ping");
+        let start = Instant::now();
+        let mut link = DemoLink::new(cfg, Vec3::new(128.0, 128.0, 25.0), 0.0, 0.84, start);
+        let keys = Keys {
+            input: MoveInput::default(),
+            yaw: 0.0,
+            flying: false,
+            running: false,
+            mouselook: false,
+        };
+        let seat = super::super::action_id(970);
+        link.reply(start, super::super::sit_on_prim(970, seat, Vec3::ONE));
+        link.frame(start + Duration::from_millis(105), keys, 0.105);
+        assert!(link.sim.seated, "seated when the request reached it");
+        let mut sat_at = None;
+        for n in 1..=40 {
+            let now = start + Duration::from_millis(n * 10);
+            for d in link.frame(now, keys, 0.01) {
+                if let Delivery::Event(ev, at) = d
+                    && matches!(*ev, NetEvent::SitResponse { .. })
+                {
+                    sat_at = Some(at.duration_since(start).as_secs_f32());
+                }
+            }
+        }
+        let t = sat_at.expect("the sit came back");
+        assert!((0.19..=0.21).contains(&t), "{t}");
+        link.follow_viewer(true, Vec3::ZERO);
+        assert!(link.sim.seated);
+        let stood = Vec3::new(130.0, 127.0, 26.0);
+        link.follow_viewer(false, stood);
+        assert!(!link.sim.seated);
+        assert_eq!(link.sim.server_pos, stood);
     }
 
     #[test]

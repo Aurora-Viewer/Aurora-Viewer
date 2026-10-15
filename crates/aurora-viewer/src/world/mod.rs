@@ -4726,4 +4726,47 @@ mod motion_tests {
         world.update_own_locomotion(walk, 0.8, now);
         assert_eq!(ids(&world), [ANIM_STAND]);
     }
+
+    /// Offline, any prim can be sat on and stood up from (`demo::sit_on_prim`):
+    /// seated, our avatar is its child; standing, it is beside it, and the
+    /// first frame standing starts from that report, with no lead.
+    #[test]
+    fn the_demo_seats_our_avatar_on_any_prim_and_stands_it_up() {
+        let (mut world, _, handle) = arrived_fixture();
+        let cube = crate::demo::events()
+            .into_iter()
+            .find_map(|ev| match ev {
+                NetEvent::ObjectUpdates { objects, .. } => objects
+                    .into_iter()
+                    .find(|o| o.parent_id == 0 && o.pcode == aurora_prim::params::LL_PCODE_VOLUME),
+                _ => None,
+            })
+            .expect("a prim of the demo");
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![cube.clone()],
+        });
+        world.agent.set_predicting(true);
+        for ev in crate::demo::sit_on_prim(cube.local_id, cube.full_id, cube.scale) {
+            world.apply(ev);
+        }
+        assert!(world.agent.seated);
+        let me = world
+            .objects
+            .index_of_uuid(&world.agent_id)
+            .and_then(|i| world.objects.get(i))
+            .expect("our avatar");
+        assert_eq!(me.parent_id, cube.local_id);
+        for ev in crate::demo::stand_from_prim(cube.position, cube.scale) {
+            world.apply(ev);
+        }
+        assert!(!world.agent.seated);
+        let stood = world.agent.position;
+        assert!(
+            stood.truncate().distance(cube.position.truncate()) < cube.scale.length() + 1.0,
+            "{stood:?}"
+        );
+        assert_eq!(world.agent.wanted_lead(), Vec3::ZERO);
+        assert_eq!(world.agent.predicted_position(), stood);
+    }
 }

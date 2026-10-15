@@ -37,6 +37,7 @@ impl App {
             .demo_link
             .get_or_insert_with(|| DemoLink::new(cfg, position, yaw, half_height, now));
         link.probe(now, &keys.input, position);
+        link.follow_viewer(self.world.agent.seated, position);
         for delivery in link.frame(now, keys, dt) {
             match delivery {
                 Delivery::Event(ev, received) => {
@@ -48,6 +49,73 @@ impl App {
             }
         }
         self.world.predict_agent(1.0, 0.0);
+    }
+
+    /// Offline, any prim of the demo can be sat on, and stood up from, as on
+    /// a grid (the demo's own answers only knew two seats). With the
+    /// simulated link the answers come back one round trip later. True when
+    /// the command was answered here.
+    pub(super) fn demo_sit_command(&mut self, cmd: &NetCommand) -> bool {
+        match cmd {
+            NetCommand::RequestSit { target, .. } => {
+                // the demo's own seats keep their answer without the link
+                let own = [970, 986].map(crate::demo::action_id).contains(target);
+                if own && self.demo_link.is_none() {
+                    return false;
+                }
+                let Some(seat) = self.demo_seat_root(target) else {
+                    return false;
+                };
+                let Some(o) = self.world.objects.get(seat) else {
+                    return false;
+                };
+                let (local_id, full_id, position, size) = (o.key.local_id, o.full_id, o.position, o.scale);
+                log::info!("demo sit: on {local_id} at {position:.1?}");
+                self.demo_seat = Some((position, size));
+                self.demo_answer(crate::demo::sit_on_prim(local_id, full_id, size));
+                true
+            }
+            NetCommand::OneShotControl(f) if f & control::STAND_UP != 0 => {
+                if let Some((position, size)) = self.demo_seat.take() {
+                    log::info!("demo sit: standing up");
+                    self.demo_answer(crate::demo::stand_from_prim(position, size));
+                    return true;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// The root prim of `target` when it is a prim of the scene (not an
+    /// avatar nor something one wears).
+    fn demo_seat_root(&self, target: &uuid::Uuid) -> Option<usize> {
+        let mut idx = self.world.objects.index_of_uuid(target)?;
+        for _ in 0..16 {
+            let o = self.world.objects.get(idx)?;
+            if o.is_avatar() {
+                return None;
+            }
+            if o.parent_id == 0 {
+                return Some(idx);
+            }
+            idx = self.world.objects.parent_of(o)?;
+        }
+        None
+    }
+
+    /// The demo simulator's answer: through the simulated link when there is
+    /// one, at once otherwise.
+    fn demo_answer(&mut self, events: Vec<NetEvent>) {
+        if let Some(link) = &mut self.demo_link {
+            link.reply(Instant::now(), events);
+            return;
+        }
+        for ev in events {
+            if let Some(e) = self.world.apply(ev) {
+                self.on_app_event(e);
+            }
+        }
     }
 
     /// Aurora's movement of our avatar for this frame (Preferences › Aurora

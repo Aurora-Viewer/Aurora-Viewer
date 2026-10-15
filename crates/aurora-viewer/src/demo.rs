@@ -2251,6 +2251,52 @@ pub fn action_avatar(seated: bool) -> ObjectUpdate {
     o
 }
 
+/// Our avatar's centre above the top of a prim it sits on (no sit target:
+/// the demo's simulator puts it on top).
+const SEAT_LIFT: f32 = 0.5;
+
+/// The simulator's answer to a sit on any prim of the demo (a root, its
+/// local id and size): the sit response, our avatar parented to it on its
+/// top, the seat's animation.
+pub fn sit_on_prim(local_id: u32, full_id: Uuid, size: Vec3) -> Vec<NetEvent> {
+    let mut avatar = action_avatar(true);
+    avatar.parent_id = local_id;
+    avatar.position = Vec3::Z * (0.5 * size.z + SEAT_LIFT);
+    avatar.rotation = Quat::IDENTITY;
+    vec![
+        NetEvent::SitResponse {
+            object: full_id,
+            camera_eye: Vec3::ZERO,
+            camera_at: Vec3::ZERO,
+            force_mouselook: false,
+        },
+        NetEvent::ObjectUpdates {
+            handle: HANDLE,
+            objects: vec![avatar],
+        },
+        NetEvent::AvatarAnimations {
+            avatar: DEMO_AGENT,
+            anims: vec![(SEAT_ANIM, 1)],
+            sources: Vec::new(),
+        },
+    ]
+}
+
+/// Standing up from a prim at `seat` (region coordinates) of `size`: our
+/// avatar unparented beside it, on the land or at the height of the seat's
+/// base, whichever is higher.
+pub fn stand_from_prim(seat: Vec3, size: Vec3) -> Vec<NetEvent> {
+    let (x, y) = (seat.x, seat.y - 0.5 * size.y - 0.6);
+    let half_height = 0.5 * action_avatar(false).scale.z;
+    let z = (floor_at(x, y) + half_height).max(seat.z - 0.5 * size.z + half_height);
+    let mut avatar = action_avatar(false);
+    avatar.position = Vec3::new(x, y, z);
+    vec![NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![avatar],
+    }]
+}
+
 pub fn action_mode_id(mode: &str) -> u32 {
     match mode {
         "linked-touch" => return 985,
