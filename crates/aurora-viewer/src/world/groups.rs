@@ -43,6 +43,8 @@ pub struct SessionInfo {
     /// Group chat (session id = group id); else an ad-hoc conference.
     pub group: bool,
     pub participants: BTreeSet<Uuid>,
+    /// Those who were in it and left (a conference's offline members).
+    pub left: BTreeSet<Uuid>,
     pub moderators: HashSet<Uuid>,
     /// Our text muted by a moderator.
     pub text_muted: bool,
@@ -662,9 +664,12 @@ fn apply_agents(s: &mut SessionInfo, agents: &[SessionAgent]) {
         match a.present {
             Some(true) => {
                 s.participants.insert(a.agent);
+                s.left.remove(&a.agent);
             }
             Some(false) => {
-                s.participants.remove(&a.agent);
+                if s.participants.remove(&a.agent) {
+                    s.left.insert(a.agent);
+                }
             }
             None => {}
         }

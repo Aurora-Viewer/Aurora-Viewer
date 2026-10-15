@@ -65,10 +65,14 @@ pub struct ChatUi {
     pub emoji_open: bool,
     /// The emoji picker of the chat island's field is open.
     pub bar_emoji_open: bool,
-    /// The lines' style of the settings, given every frame by the app.
+    /// The lines' style of the settings, given every frame by the app
+    /// (`set_style`).
     pub style: crate::settings::ChatStyle,
-    /// A demo scenario's style, which the settings do not keep.
+    /// A demo scenario's style, which the settings do not keep, until the
+    /// preferences choose another.
     pub demo_style: Option<crate::settings::ChatStyle>,
+    /// `style` was given once: a change after it is the preferences'.
+    style_given: bool,
     /// Voice is enabled (calls possible), given every frame by the app.
     pub voice_on: bool,
     /// The microphone in toggle mode (None: hold to talk), for the call's
@@ -158,6 +162,16 @@ impl ChatUi {
         self.show_profile = false;
         self.contacts = false;
         self.conv_focus_request = true;
+    }
+
+    /// The style of the settings, every frame. A change made in the
+    /// preferences shows at once, over a demo scenario's style too.
+    pub fn set_style(&mut self, style: crate::settings::ChatStyle) {
+        if self.style_given && self.style != style {
+            self.demo_style = None;
+        }
+        self.style = style;
+        self.style_given = true;
     }
 
     /// Open the resident picker of the column: one resident for an IM,

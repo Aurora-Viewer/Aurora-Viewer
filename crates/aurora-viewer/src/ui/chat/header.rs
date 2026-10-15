@@ -250,6 +250,12 @@ pub(super) fn more_menu(
     crate::ui::widgets::icon_menu(ui, p, "dots-filled", aurora_i18n::tr!("ui-chat-more"), |ui| {
         match selected {
             Some(other) if group => {
+                if workspace
+                    && super::head::can_add_people(world, &other)
+                    && menu::item(ui, p, "user-plus", aurora_i18n::tr!("ui-call-add-people"))
+                {
+                    actions.push(ConvAction::PickPeople(other));
+                }
                 if world.groups.is_member(&other)
                     && menu::item(ui, p, "message-off", aurora_i18n::tr!("common-stop-receiving-this-group-s-chat"))
                 {
@@ -259,6 +265,9 @@ pub(super) fn more_menu(
             Some(other) => {
                 if workspace && menu::item(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport")) {
                     actions.push(ConvAction::OfferTeleport(other));
+                }
+                if workspace && menu::item(ui, p, "user-plus", aurora_i18n::tr!("ui-call-add-people")) {
+                    actions.push(ConvAction::PickPeople(other));
                 }
                 if !workspace {
                     menu::todo(ui, p, "user-plus", aurora_i18n::tr!("ui-chat-add-friend-coming-soon"));

@@ -201,6 +201,15 @@ pub(super) fn show(
             }
         }
     }
+    // add people: to a resident's conversation (a new conference, once
+    // confirmed) or a conference; a role group's chat cannot
+    // (FSFloaterIM's add_participant_panel, isInviteAllowed)
+    if let Some(other) = selected
+        && can_add_people(world, &other)
+        && tool(ui, p, slot(), "user-plus", aurora_i18n::tr!("ui-call-add-people"), Tone::Plain).clicked()
+    {
+        actions.push(ConvAction::PickPeople(other));
+    }
     if let Some(other) = selected {
         call_tool(ui, p, slot(), world, st, actions, other);
     }
@@ -243,6 +252,14 @@ pub(super) fn show(
     } else if cut {
         r.on_hover_text(&who.title);
     }
+}
+
+/// People can be added to a conversation with a resident or a
+/// conference, not to a role group's chat (FSFloaterIM::isInviteAllowed:
+/// IM_NOTHING_SPECIAL, IM_SESSION_CONFERENCE_START, an invitation that is
+/// not a group's).
+pub(super) fn can_add_people(world: &World, conversation: &Uuid) -> bool {
+    !world.groups.is_member(conversation) && !world.groups.sessions.get(conversation).is_some_and(|s| s.group)
 }
 
 /// The look of a head button.

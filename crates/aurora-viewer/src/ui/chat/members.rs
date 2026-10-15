@@ -6,8 +6,11 @@
 //! menu. Firestorm's participant list of a session (LLParticipantList,
 //! FSParticipantList), as a column.
 //!
-//! A session only lists who is in it: its offline members are not known
-//! (Firestorm shows none either).
+//! A conference also lists who is not in it: the residents it was started
+//! with who never joined (FSFloaterIM's mInitialInvitedIDs) and those who
+//! left. A role group's chat lists only who is in it (its whole roll would
+//! be thousands of names), which the panel says; a conference and a
+//! resident's conversation can take more people from its head.
 
 use super::{ChatUi, ConvAction, presence};
 use crate::theme::Palette;
@@ -81,16 +84,24 @@ pub(super) fn show(
             }
         }
     }
-    let invited: Vec<Member> = world
+    let present = |id: &Uuid| info.is_some_and(|i| i.participants.contains(id));
+    let pending: Vec<Uuid> = world
         .calls
         .invited
         .get(&conversation)
         .into_iter()
         .flatten()
-        .filter(|id| !info.is_some_and(|i| i.participants.contains(id)))
-        .map(member)
+        .copied()
+        .filter(|id| !present(id))
         .collect();
-    for list in [&mut moderators, &mut participants] {
+    let mut invited: Vec<Member> = pending.iter().map(member).collect();
+    let role_group = info.is_some_and(|i| i.group) || world.groups.is_member(&conversation);
+    let mut offline: Vec<Member> = if role_group {
+        Vec::new()
+    } else {
+        offline_ids(world, conversation, &pending).iter().map(member).collect()
+    };
+    for list in [&mut moderators, &mut participants, &mut invited, &mut offline] {
         list.sort_by_key(|m| m.name.to_lowercase());
     }
     egui::ScrollArea::vertical()
@@ -106,10 +117,20 @@ pub(super) fn show(
                         .color(p.muted),
                 );
             }
+            if super::head::can_add_people(world, &conversation) {
+                ui.add_space(8.0);
+                let size = egui::vec2(ui.available_width(), 26.0);
+                let label = aurora_i18n::tr!("ui-call-add");
+                let add = crate::ui::widgets::action_button(ui, p, "user-plus", label, crate::ui::widgets::ActionKind::Flat, size);
+                if add.on_hover_text(aurora_i18n::tr!("ui-call-add-people")).clicked() {
+                    actions.push(ConvAction::PickPeople(conversation));
+                }
+            }
             let sections = [
                 (aurora_i18n::tr!("ui-chat-members-moderators"), &moderators, false),
                 (aurora_i18n::tr!("ui-chat-members-participants"), &participants, false),
                 (aurora_i18n::tr!("ui-chat-members-invited"), &invited, true),
+                (aurora_i18n::tr!("ui-chat-members-offline"), &offline, true),
             ];
             for (title, list, dim) in sections {
                 if list.is_empty() {
@@ -136,6 +157,14 @@ pub(super) fn show(
                         info.is_some_and(|i| i.moderators.contains(&m.id)),
                     );
                 }
+            }
+            if role_group {
+                ui.add_space(10.0);
+                ui.add(egui::Label::new(
+                    RichText::new(aurora_i18n::tr!("ui-chat-members-present-only"))
+                        .size(11.0)
+                        .color(p.muted_dim),
+                ));
             }
         });
 }
@@ -211,4 +240,24 @@ fn row(
     if resp.clicked() {
         actions.push(ConvAction::Profile(m.id));
     }
+}
+
+/// The offline members of a conference: those it was started with who are
+/// not in it (and not still being asked), and those who left; never us.
+fn offline_ids(world: &World, conversation: Uuid, pending: &[Uuid]) -> Vec<Uuid> {
+    let info = world.groups.sessions.get(&conversation);
+    let present = |id: &Uuid| info.is_some_and(|i| i.participants.contains(id));
+    let mut out: Vec<Uuid> = world
+        .calls
+        .conferences
+        .get(&conversation)
+        .into_iter()
+        .flatten()
+        .chain(info.into_iter().flat_map(|i| i.left.iter()))
+        .copied()
+        .filter(|id| *id != world.agent_id && !present(id) && !pending.contains(id))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }

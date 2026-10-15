@@ -261,3 +261,55 @@ fn the_members_panel_lists_a_conference() {
     let texts = h.settle();
     assert!(texts.iter().all(|t| !t.source.starts_with(&moderators)), "closed");
 }
+
+/// The style chosen in Preferences › Aurora switches the window at once,
+/// over a demo scenario's style too (the human's report of 2026-10-15:
+/// the choice did nothing while `AURORA_DEMO_CONV=aurora` held its own).
+#[test]
+fn the_style_of_the_preferences_switches_the_window_live() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.st.demo_style = Some(ChatStyle::Aurora);
+    let workspace_shown = |h: &Harness| h.frames.ctx.read_response(entry_id(Pinned::Local)).is_some();
+    h.st.set_style(ChatStyle::Aurora);
+    h.settle();
+    assert!(workspace_shown(&h));
+    for style in [
+        ChatStyle::Bubbles,
+        ChatStyle::Legacy,
+        ChatStyle::Compact,
+        ChatStyle::Aurora,
+        ChatStyle::Legacy,
+    ] {
+        h.st.set_style(style);
+        h.settle();
+        assert_eq!(workspace_shown(&h), style.workspace(), "{style:?}");
+    }
+}
+
+/// A conference lists who is not in it: those it started with who never
+/// joined and those who left; a role group's chat lists only who is in it.
+#[test]
+fn a_conference_lists_its_offline_members() {
+    const MEETING: Uuid = Uuid::from_u128(0xC0);
+    const LEFT: Uuid = Uuid::from_u128(0xC1);
+    const NEVER: Uuid = Uuid::from_u128(0xC2);
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let mut info = crate::world::groups::SessionInfo::default();
+    info.name = "Meeting".into();
+    info.participants = [JANE].into_iter().collect();
+    info.left = [LEFT].into_iter().collect();
+    h.world.groups.sessions.insert(MEETING, info);
+    h.world.calls.conferences.insert(MEETING, vec![JANE, NEVER]);
+    h.world.conversation_line(MEETING, line("Jane", JANE, ChatKind::Im, "hi all"));
+    h.st.selected = Some(MEETING);
+    h.st.members_open = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 560.0));
+    let texts = h.settle();
+    let offline = format!("{} — 2", aurora_i18n::tr!("ui-chat-members-offline").to_uppercase());
+    assert!(
+        texts.iter().any(|t| t.source == offline),
+        "the one who left and the one who never came"
+    );
+    let note = aurora_i18n::tr!("ui-chat-members-present-only");
+    assert!(texts.iter().all(|t| t.source != note), "a conference is not a role group");
+}

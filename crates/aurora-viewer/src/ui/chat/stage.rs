@@ -263,6 +263,8 @@ fn stage(
         }
         // ---- the buttons, centred
         ui.add_space(8.0);
+        // a role group's call adds nobody (isInviteAllowed); a resident's
+        // or a conference's does
         let group = matches!(call.kind, CallKind::Group);
         let count = 1 + usize::from(st.mic.is_some()) + usize::from(!group);
         let buttons_w = count as f32 * BUTTON + 56.0 + count as f32 * 10.0;
