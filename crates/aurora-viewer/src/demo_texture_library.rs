@@ -47,23 +47,24 @@ pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
         let folder = id(10 + group as u128);
         inv.created_folders(vec![InvFolder {
             id: folder,
-            parent: id(3),
+            parent: if empty { id(3) } else { root },
             name: (*label).into(),
             type_default: -1,
             ..Default::default()
         }]);
-        if !empty {
-            items.push(InvItem {
-                id: id(20 + group as u128),
-                parent: root,
-                asset_id: folder,
-                asset_type: 25,
-                inv_type: 8,
-                name: (*label).into(),
-                owner: agent,
+        let nested = if group == 1 {
+            let nested = id(14);
+            inv.created_folders(vec![InvFolder {
+                id: nested,
+                parent: folder,
+                name: aurora_i18n::tr!("texture-library-demo-polished").into(),
+                type_default: -1,
                 ..Default::default()
-            });
-        }
+            }]);
+            Some(nested)
+        } else {
+            None
+        };
         for variant in 0..3 {
             let map = id(100 + group as u128 * 3 + variant);
             let mat = id(200 + group as u128 * 3 + variant);
@@ -79,7 +80,7 @@ pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
             for (material, asset, number) in [(false, map, 300), (true, mat, 400)] {
                 items.push(InvItem {
                     id: id(number + group as u128 * 3 + variant),
-                    parent: folder,
+                    parent: nested.filter(|_| variant == 2).unwrap_or(folder),
                     asset_id: asset,
                     asset_type: if material { 57 } else { 0 },
                     inv_type: if material { 26 } else { 0 },

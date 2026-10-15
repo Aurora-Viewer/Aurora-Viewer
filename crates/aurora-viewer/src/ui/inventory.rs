@@ -395,6 +395,12 @@ impl InventoryUi {
         }
     }
 
+    /// Reveal a folder with its contents expanded for direct inventory management.
+    pub fn show_folder(&mut self, inv: &Inventory, id: Uuid) {
+        self.show_original(inv, id);
+        self.reveal_path.insert(id);
+    }
+
     pub fn selected_ids(&self, id: Uuid) -> Vec<Uuid> {
         let mut ids: Vec<_> = if self.selection.contains(&id) {
             self.selection.iter().copied().collect()

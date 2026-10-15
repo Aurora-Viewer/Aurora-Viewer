@@ -1,6 +1,6 @@
 use super::*;
 use crate::world::inventory::Folder;
-use aurora_net::inventory::{InvFolder, InvItem};
+use aurora_net::inventory::InvFolder;
 
 fn folder(inv: &mut Inventory, id: u128, parent: Uuid, kind: i32, name: &str) -> Uuid {
     let id = Uuid::from_u128(id);
@@ -34,49 +34,6 @@ fn inventory() -> (Inventory, Uuid, Uuid) {
     let library = folder(&mut inv, 4, aurora, -1, catalogue::LIBRARY);
     let source = folder(&mut inv, 5, root, -1, "Stone");
     (inv, library, source)
-}
-#[test]
-fn texture_library_folder_selection_creates_links_without_moving_sources() {
-    let (inv, library, source) = inventory();
-    let change = sources_change(&inv, library, &HashSet::from([source]), &HashSet::new()).expect("source link");
-    assert_eq!(change.operations.len(), 1);
-    let Operation::Links { parent, links } = &change.operations[0] else {
-        panic!("folder link")
-    };
-    assert_eq!(*parent, library);
-    assert_eq!(links[0].target, source);
-    assert!(links[0].folder);
-}
-#[test]
-fn texture_library_unchecking_only_moves_the_link_to_trash() {
-    let (mut inv, library, source) = inventory();
-    let link = Uuid::from_u128(6);
-    inv.add_items(vec![InvItem {
-        id: link,
-        parent: library,
-        asset_id: source,
-        asset_type: 25,
-        name: "Stone".into(),
-        ..Default::default()
-    }]);
-    let change = sources_change(&inv, library, &HashSet::new(), &HashSet::new()).expect("remove link");
-    assert_eq!(change.operations.len(), 1);
-    assert!(matches!(&change.operations[0],Operation::Patch {id,folder:false,..} if *id==link));
-    assert!(inv.folders.contains_key(&source));
-}
-#[test]
-fn texture_library_unchanged_sources_do_not_duplicate_links() {
-    let (mut inv, library, source) = inventory();
-    inv.add_items(vec![InvItem {
-        id: Uuid::from_u128(6),
-        parent: library,
-        asset_id: source,
-        asset_type: 25,
-        name: "Stone".into(),
-        ..Default::default()
-    }]);
-    let change = sources_change(&inv, library, &HashSet::from([source]), &HashSet::new()).expect("same link");
-    assert!(change.operations.is_empty());
 }
 #[test]
 fn texture_library_root_creation_reuses_aurora_and_does_not_repeat() {
@@ -139,31 +96,10 @@ fn texture_library_shortcut_is_ctrl_space_and_rebindable() {
 }
 
 #[test]
-fn texture_library_source_candidates_exclude_bridge_trash_and_library_ancestors() {
-    let (mut inv, library, source) = inventory();
-    folder(&mut inv, 10, Uuid::from_u128(3), -1, "Bridge data");
-    folder(&mut inv, 11, Uuid::from_u128(2), -1, "Deleted source");
-    let nested = folder(&mut inv, 12, source, -1, "Nested");
-    let candidates = source_folders(&inv, library);
-    assert_eq!(
-        candidates.iter().map(|f| f.0).collect::<HashSet<_>>(),
-        HashSet::from([source, nested])
-    );
-    assert!(candidates.iter().any(|f| f.1 == "Stone / Nested"));
-}
-
-#[test]
 fn texture_library_header_switch_and_toolbar_restore_keep_the_active_state() {
     use std::sync::Arc;
-    let (mut inv, library, source) = inventory();
-    inv.add_items(vec![InvItem {
-        id: Uuid::from_u128(71),
-        parent: library,
-        asset_type: 25,
-        asset_id: source,
-        name: "Stone".into(),
-        ..Default::default()
-    }]);
+    let (mut inv, library, _) = inventory();
+    folder(&mut inv, 71, library, -1, "Stone");
     let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
     let mut world = World::new(avatars.clone());
     world.agent_id = Uuid::from_u128(70);
@@ -191,16 +127,7 @@ fn texture_library_header_switch_and_toolbar_restore_keep_the_active_state() {
                 ..Default::default()
             },
             |host| {
-                ui.show(
-                    host.ctx(),
-                    &p,
-                    &mut world,
-                    &mut scene,
-                    &HashMap::new(),
-                    prefs,
-                    open,
-                    &HashSet::new(),
-                );
+                ui.show(host.ctx(), &p, &mut world, &mut scene, &HashMap::new(), prefs, open);
             },
         );
     };

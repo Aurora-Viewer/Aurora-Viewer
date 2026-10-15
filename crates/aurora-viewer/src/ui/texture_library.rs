@@ -89,12 +89,6 @@ pub struct LibraryUi {
     preview: Option<Uuid>,
     preview_view: aurora_render::preview::View,
     previews: previews::Previews,
-    manager: bool,
-    manager_initialized: bool,
-    manager_generation: Option<(Uuid, u64)>,
-    manager_folders: Vec<(Uuid, String, String)>,
-    manager_search: String,
-    manager_selection: HashSet<Uuid>,
     agent: Uuid,
     prepared: bool,
     pub pending: Option<Uuid>,
@@ -106,9 +100,6 @@ impl LibraryUi {
     pub fn demo(&mut self, mode: &str, agent: Uuid) {
         self.reset();
         self.agent = agent;
-        if mode == "sources" {
-            self.manager = true;
-        }
         if mode == "search" {
             self.search = aurora_i18n::tr!("texture-library-demo-stone").into();
             self.kind = Kind::Material;
@@ -135,7 +126,6 @@ impl LibraryUi {
         images: &HashMap<Uuid, egui::TextureHandle>,
         prefs: &mut Preferences,
         open: &mut bool,
-        protected: &HashSet<Uuid>,
     ) -> Vec<Action> {
         self.previews.poll();
         if self.agent != world.agent_id {
@@ -215,7 +205,9 @@ impl LibraryUi {
                     }
                     return;
                 }
-                self.controls(ui, p, prefs, horizontal);
+                if let Some(root) = self.controls(ui, p, prefs, horizontal) {
+                    actions.push(Action::Reveal(root));
+                }
                 let entries = self.filtered(prefs);
                 let empty = entries.is_empty();
                 if horizontal {
@@ -323,9 +315,6 @@ impl LibraryUi {
                 prefs.presentation.flip();
             }
         }
-        if self.manager && *open {
-            self.manager(ctx, p, &world.inventory, protected, &mut actions);
-        }
         if self.preview.is_some() && *open {
             self.preview(ctx, p, world, scene, images);
         }
@@ -402,8 +391,9 @@ impl LibraryUi {
         }
         entries
     }
-    fn controls(&mut self, ui: &mut egui::Ui, p: &Palette, prefs: &Preferences, horizontal: bool) {
-        let row = |this: &mut Self, ui: &mut egui::Ui| {
+    fn controls(&mut self, ui: &mut egui::Ui, p: &Palette, prefs: &Preferences, horizontal: bool) -> Option<Uuid> {
+        let mut reveal = None;
+        let mut row = |this: &mut Self, ui: &mut egui::Ui| {
             let label = this
                 .folder
                 .and_then(|id| this.catalogue.folders.iter().find(|f| f.id == id))
@@ -435,11 +425,10 @@ impl LibraryUi {
                     });
             });
             response.on_hover_text(label);
-            if icon_button(ui, p, "folder-filled", aurora_i18n::tr!("texture-library-folders")).clicked() {
-                this.manager = true;
-                this.manager_initialized = false;
-                this.manager_search.clear();
-                this.manager_selection.clear();
+            let manage = icon_button(ui, p, "folder-filled", aurora_i18n::tr!("texture-library-manage"))
+                .on_hover_text(aurora_i18n::tr!("texture-library-content-hint"));
+            if manage.clicked() {
+                reveal = this.catalogue.root;
             }
         };
         if horizontal {
@@ -453,6 +442,7 @@ impl LibraryUi {
             ui.horizontal(|ui| row(self, ui));
             ui.horizontal(|ui| self.filters(ui, p, prefs));
         }
+        reveal
     }
     fn filters(&mut self, ui: &mut egui::Ui, p: &Palette, _prefs: &Preferences) {
         for (kind, label) in [
@@ -611,105 +601,6 @@ impl LibraryUi {
             });
         });
     }
-    fn manager(&mut self, ctx: &egui::Context, p: &Palette, inv: &Inventory, protected: &HashSet<Uuid>, actions: &mut Vec<Action>) {
-        let Some(root) = self.catalogue.root else { return };
-        let links: HashMap<Uuid, Uuid> = inv
-            .folders
-            .get(&root)
-            .into_iter()
-            .flat_map(|f| &f.items)
-            .filter_map(|id| {
-                let item = inv.items.get(id)?;
-                (item.asset_type == 25)
-                    .then(|| rules::original(inv, *id).map(|target| (target, *id)))
-                    .flatten()
-            })
-            .collect();
-        // Initialise on opening; editing an empty selection must stay empty.
-        if !self.manager_initialized {
-            self.manager_selection = links.keys().copied().collect();
-            self.manager_initialized = true;
-        }
-        if self.manager_generation != Some((root, inv.generation)) {
-            self.manager_folders = source_folders(inv, root);
-            self.manager_generation = Some((root, inv.generation));
-        }
-        let mut done = false;
-        let modal = widgets::Modal::new(egui::Id::new("texture_library_sources")).show(ctx, |ui| {
-            ui.heading(aurora_i18n::tr!("texture-library-folders"));
-            ui.set_width(420.0);
-            ui.label(aurora_i18n::tr!("texture-library-source-hint"));
-            widgets::search_field(
-                ui,
-                &mut self.manager_search,
-                aurora_i18n::tr!("common-search"),
-                ui.available_width(),
-            );
-            let query = catalogue::folded(&self.manager_search);
-            let folders: Vec<_> = self
-                .manager_folders
-                .iter()
-                .filter(|(_, _, search)| search.contains(&query))
-                .collect();
-            egui::ScrollArea::vertical()
-                .max_height(300.0)
-                .show_rows(ui, 24.0, folders.len(), |ui, rows| {
-                    for row in rows {
-                        let (id, name, _) = folders[row];
-                        let mut selected = self.manager_selection.contains(id);
-                        if widgets::checkbox(ui, p, &mut selected, name).changed() {
-                            if selected {
-                                self.manager_selection.insert(*id);
-                            } else {
-                                self.manager_selection.remove(id);
-                            }
-                        }
-                    }
-                });
-            ui.label(
-                RichText::new(aurora_i18n::tr!("texture-library-source-links"))
-                    .size(11.0)
-                    .color(p.muted),
-            );
-            ui.horizontal(|ui| {
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
-                    done = true;
-                }
-                if widgets::action_button_if(
-                    ui,
-                    p,
-                    "check",
-                    aurora_i18n::tr!("common-save"),
-                    ActionKind::Primary,
-                    Vec2::new(110.0, 26.0),
-                    self.pending.is_none(),
-                )
-                .clicked()
-                {
-                    match sources_change(inv, root, &self.manager_selection, protected) {
-                        Ok(change) => {
-                            if !change.operations.is_empty() {
-                                actions.push(Action::Change(change));
-                            }
-                            done = true;
-                        }
-                        Err(reason) => self.message = reason,
-                    }
-                }
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("texture-library-inventory")).clicked() {
-                    actions.push(Action::Reveal(root));
-                    done = true;
-                }
-            });
-            if !self.message.is_empty() {
-                ui.label(RichText::new(&self.message).color(p.warn));
-            }
-        });
-        if done || modal.should_close() {
-            self.manager = false;
-            self.manager_initialized = false;
-        }
-    }
     fn preview(&mut self, ctx: &egui::Context, p: &Palette, world: &World, scene: &mut Scene, images: &HashMap<Uuid, egui::TextureHandle>) {
         let Some(entry) = self
             .preview
@@ -777,67 +668,4 @@ fn scope_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, active: b
         Vec2::splat(20.0),
     )
     .on_hover_text(tip)
-}
-fn source_folders(inv: &Inventory, root: Uuid) -> Vec<(Uuid, String, String)> {
-    let Some(library) = inv.folders.get(&root) else { return Vec::new() };
-    let mut folders: Vec<_> = inv
-        .folders
-        .values()
-        .filter(|f| {
-            !f.library
-                && f.info.id != inv.root
-                && rules::under(inv, f.info.id, inv.root)
-                && !rules::under(inv, root, f.info.id)
-                && !rules::under(inv, f.info.id, library.info.parent)
-                && !inv.in_folder_type(f.info.id, 14)
-                && !matches!(f.info.type_default, 46..=50 | 53 | 54)
-        })
-        .map(|f| {
-            let mut path = vec![f.info.name.as_str()];
-            let mut parent = f.info.parent;
-            for _ in 0..64 {
-                if parent == inv.root {
-                    break;
-                }
-                let Some(folder) = inv.folders.get(&parent) else {
-                    break;
-                };
-                path.push(&folder.info.name);
-                parent = folder.info.parent;
-            }
-            path.reverse();
-            let name = path.join(" / ");
-            (f.info.id, name.clone(), catalogue::folded(&name))
-        })
-        .collect();
-    folders.sort_by(|a, b| a.2.cmp(&b.2).then(a.0.cmp(&b.0)));
-    folders
-}
-fn sources_change(inv: &Inventory, root: Uuid, selected: &HashSet<Uuid>, protected: &HashSet<Uuid>) -> Result<Mutation, String> {
-    let folder = inv.folders.get(&root).ok_or(aurora_i18n::tr!("common-folder-not-found"))?;
-    let mut existing = HashSet::new();
-    let mut remove = Vec::new();
-    for id in &folder.items {
-        if inv.items.get(id).is_some_and(|it| it.asset_type == 25)
-            && let Some(target) = rules::original(inv, *id)
-        {
-            existing.insert(target);
-            if !selected.contains(&target) {
-                remove.push(*id);
-            }
-        }
-    }
-    let mut change = Mutation::default();
-    if !remove.is_empty() {
-        let trash = rules::system(inv, 14).ok_or(aurora_i18n::tr!("common-trash-folder-not-found"))?;
-        change = rules::move_selection(inv, &remove, trash, protected, &HashSet::new())?;
-    }
-    let add: Vec<_> = selected.iter().filter(|id| !existing.contains(id)).copied().collect();
-    if !add.is_empty() {
-        let links = rules::paste(inv, &add, root, false, true, protected, &HashSet::new())?;
-        change.operations.extend(links.operations);
-        change.refresh.extend(links.refresh);
-    }
-    // Removing a folder link never removes the source folder or its items.
-    Ok(change)
 }

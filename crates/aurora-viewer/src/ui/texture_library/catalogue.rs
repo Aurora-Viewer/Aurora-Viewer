@@ -1,5 +1,5 @@
-//! A generation-cached view of the library's inventory subtree, including
-//! folder and item links. Never walk the bridge or unrelated inventory contents.
+//! A generation-cached view of actual texture/material items and folders in
+//! the library. Links never extend this subtree into other inventory contents.
 
 use crate::world::inventory::{FetchState, Inventory, actions};
 use aurora_net::inventory::InvItem;
@@ -55,7 +55,7 @@ pub struct Folder {
 }
 #[derive(Clone)]
 pub struct Entry {
-    /// Keep the inventory link as cargo so permissions are refreshed at drop.
+    /// Carry the actual inventory item so permissions are refreshed at drop.
     pub id: Uuid,
     pub original: Uuid,
     pub asset: Uuid,
@@ -96,72 +96,64 @@ impl Catalogue {
         self.loading = false;
         self.failed.clear();
         let Some(root) = self.root else { return };
-        let aurora = inv.folders[&root].info.parent;
-        let mut queue = VecDeque::from([(root, root, root, Vec::new(), String::new())]);
+        let mut queue = VecDeque::from([(root, Vec::new(), String::new())]);
         let mut visited = HashSet::new();
         let mut fetches = 0;
-        while let Some((target, logical, collection, mut ancestry, path)) = queue.pop_front() {
-            // A linked folder can point back at its source or another link.
-            if !visited.insert((target, collection)) || ancestry.len() > 64 {
+        while let Some((id, mut ancestry, path)) = queue.pop_front() {
+            if !visited.insert(id) || ancestry.len() > 64 {
                 continue;
             }
-            ancestry.push(logical);
-            let Some(folder) = inv.folders.get(&target) else { continue };
+            ancestry.push(id);
+            let Some(folder) = inv.folders.get(&id) else { continue };
             if folder.state != FetchState::Fetched {
                 if folder.state == FetchState::Failed {
-                    self.failed.push(target);
+                    self.failed.push(id);
                 } else {
                     self.loading = true;
                 }
                 if fetches < 32 && folder.state == FetchState::Unknown {
-                    inv.request(target);
+                    inv.request(id);
                     fetches += 1;
                 }
                 continue;
             }
-            let folder = &inv.folders[&target];
-            let mut descendants: Vec<(Uuid, Uuid, String)> = folder
-                .children
-                .iter()
-                .filter_map(|id| {
-                    let f = inv.folders.get(id)?;
-                    Some((*id, *id, f.info.name.clone()))
-                })
-                .collect();
-            for id in &folder.items {
-                let Some(item) = inv.items.get(id) else { continue };
-                if item.asset_type == 25 {
-                    if let Some(original) = actions::original(inv, *id).filter(|id| inv.folders.contains_key(id)) {
-                        descendants.push((*id, original, item.name.clone()));
-                    }
+            for item in folder.items.iter().filter_map(|item| inv.items.get(item)) {
+                // Inventory links are not library content, even when their
+                // targets happen to be textures or materials inside the tree.
+                if item.parent != id || !matches!(item.asset_type, 0 | 57) {
                     continue;
                 }
-                let Some(original) = resource(inv, *id) else { continue };
-                let asset = asset(original);
+                let asset = asset(item);
                 if asset.is_nil() {
                     continue;
                 }
                 let name = item.name.clone();
                 self.entries.push(Entry {
-                    id: *id,
-                    original: original.id,
+                    id: item.id,
+                    original: item.id,
                     asset,
-                    material: original.asset_type == 57,
-                    thumbnail: original.thumbnail,
+                    material: item.asset_type == 57,
+                    thumbnail: item.thumbnail,
                     search: folded(&format!("{name} {path}")),
                     name,
                     path: path.clone(),
                     ancestors: ancestry.clone(),
                 });
             }
-            descendants.sort_by_key(|(_, _, name)| folded(name));
-            for (id, target, name) in descendants {
-                if actions::under(inv, target, aurora) && !actions::under(inv, target, root) {
+            for child in folder.children.iter().filter_map(|child| inv.folders.get(child)) {
+                if child.library || child.info.parent != id || visited.contains(&child.info.id) {
                     continue;
                 }
-                let label = if path.is_empty() { name } else { format!("{path} / {name}") };
-                self.folders.push(Folder { id, label: label.clone() });
-                queue.push_back((target, id, if logical == root { id } else { collection }, ancestry.clone(), label));
+                let label = if path.is_empty() {
+                    child.info.name.clone()
+                } else {
+                    format!("{path} / {}", child.info.name)
+                };
+                self.folders.push(Folder {
+                    id: child.info.id,
+                    label: label.clone(),
+                });
+                queue.push_back((child.info.id, ancestry.clone(), label));
             }
         }
         self.entries
@@ -232,29 +224,86 @@ mod tests {
         assert!(catalogue.entries[0].matches(&folded("BETON"), None));
     }
     #[test]
-    fn folder_links_include_descendants_and_stop_cycles() {
+    fn actual_nested_folders_are_included_and_folder_links_are_ignored() {
         let (mut inv, root) = fixture();
-        let parent = inv.root;
-        let source = folder(&mut inv, 4, parent, "Source");
+        let source = folder(&mut inv, 4, root, "Stone");
         let nested = folder(&mut inv, 5, source, "Nested");
-        item(&mut inv, 20, root, 25, "Stone", source);
-        item(&mut inv, 21, nested, 25, "Loop", source);
+        let parent = inv.root;
+        let outside = folder(&mut inv, 6, parent, "Outside");
+        // Neither external links nor links back into the tree add folders.
+        item(&mut inv, 20, root, 25, "External link", outside);
+        item(&mut inv, 21, nested, 25, "Loop link", source);
         item(&mut inv, 22, nested, 57, "Marble", Uuid::from_u128(122));
+        item(&mut inv, 23, outside, 0, "External texture", Uuid::from_u128(123));
+        // Ignore stale child lists, including a cycle, using actual parents.
+        inv.folders.get_mut(&nested).unwrap().children.extend([root, outside]);
         let mut catalogue = Catalogue::default();
         catalogue.prepare(&mut inv);
         assert_eq!(catalogue.entries.len(), 1);
-        assert!(catalogue.entries[0].matches("marble", Some(Uuid::from_u128(20))));
+        assert_eq!(
+            catalogue.folders.iter().map(|f| f.id).collect::<HashSet<_>>(),
+            HashSet::from([source, nested])
+        );
+        assert!(catalogue.entries[0].matches("marble", Some(source)));
         assert!(catalogue.entries[0].matches("nested", Some(nested)));
+        assert_eq!(catalogue.entries[0].path, "Stone / Nested");
     }
     #[test]
-    fn broken_item_links_are_excluded_and_blank_materials_are_kept() {
+    fn valid_and_broken_item_links_are_excluded_and_blank_materials_are_kept() {
         let (mut inv, root) = fixture();
         item(&mut inv, 30, root, 24, "Missing", Uuid::from_u128(999));
         item(&mut inv, 31, root, 57, "Blank", Uuid::nil());
+        let parent = inv.root;
+        item(&mut inv, 32, parent, 0, "External texture", Uuid::from_u128(132));
+        item(&mut inv, 33, root, 24, "Valid texture link", Uuid::from_u128(32));
+        item(&mut inv, 34, root, 24, "Valid material link", Uuid::from_u128(31));
         let mut catalogue = Catalogue::default();
         catalogue.prepare(&mut inv);
         assert_eq!(catalogue.entries.len(), 1);
         assert_eq!(catalogue.entries[0].asset, BLANK_MATERIAL);
+    }
+    #[test]
+    fn moving_actual_items_in_and_out_updates_the_library() {
+        let (mut inv, root) = fixture();
+        let outside = inv.root;
+        item(&mut inv, 50, outside, 0, "Texture", Uuid::from_u128(150));
+        let mut catalogue = Catalogue::default();
+        catalogue.prepare(&mut inv);
+        assert!(catalogue.entries.is_empty());
+        let mut actual = inv.items[&Uuid::from_u128(50)].clone();
+        actual.parent = root;
+        inv.server_updated(Vec::new(), vec![actual.clone()]);
+        catalogue.prepare(&mut inv);
+        assert_eq!(catalogue.entries.len(), 1);
+        assert_eq!(catalogue.entries[0].id, actual.id);
+        assert_eq!(catalogue.entries[0].asset, actual.asset_id);
+        actual.parent = outside;
+        inv.server_updated(Vec::new(), vec![actual]);
+        catalogue.prepare(&mut inv);
+        assert!(catalogue.entries.is_empty());
+    }
+    #[test]
+    fn moving_a_real_folder_updates_all_its_nested_resources() {
+        let (mut inv, root) = fixture();
+        let outside = inv.root;
+        let moved = folder(&mut inv, 7, outside, "Stone");
+        let nested = folder(&mut inv, 8, moved, "Polished");
+        item(&mut inv, 60, nested, 57, "Material", Uuid::from_u128(160));
+        let mut catalogue = Catalogue::default();
+        catalogue.prepare(&mut inv);
+        assert!(catalogue.entries.is_empty());
+        let mut info = inv.folders[&moved].info.clone();
+        info.parent = root;
+        inv.server_updated(vec![info.clone()], Vec::new());
+        catalogue.prepare(&mut inv);
+        assert_eq!(catalogue.entries.len(), 1);
+        assert!(catalogue.entries[0].matches("polished", Some(moved)));
+        assert!(catalogue.entries[0].material);
+        info.parent = outside;
+        inv.server_updated(vec![info], Vec::new());
+        catalogue.prepare(&mut inv);
+        assert!(catalogue.entries.is_empty());
+        assert!(catalogue.folders.is_empty());
     }
     #[test]
     fn an_unchanged_inventory_reuses_the_catalogue() {

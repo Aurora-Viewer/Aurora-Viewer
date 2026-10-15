@@ -97,7 +97,12 @@ impl App {
             self.panels.people = false;
             self.panels.perf = false;
             self.panels.minimap = false;
-            self.panels.inventory = false;
+            self.panels.inventory = mode == "inventory";
+            if mode == "inventory"
+                && let Some(root) = catalogue::root(&self.world.inventory)
+            {
+                self.inventory_ui.show_folder(&self.world.inventory, root);
+            }
             self.texture_library.demo(&mode, self.world.agent_id);
         }
         let preferences = self.settings.texture_library.clone();
@@ -109,7 +114,6 @@ impl App {
             &self.ui_images,
             &mut self.settings.texture_library,
             &mut self.panels.texture_library,
-            &self.settings.inventory.protected,
         );
         self.panels.texture_library_presentation = self.settings.texture_library.presentation;
         for action in actions {
@@ -125,8 +129,8 @@ impl App {
                     self.send(NetCommand::EditInventory { request, change });
                 }
                 library::Action::Reveal(id) => {
-                    self.inventory_ui.show_original(&self.world.inventory, id);
-                    self.panels.inventory = true;
+                    self.inventory_ui.show_folder(&self.world.inventory, id);
+                    ui::widgets::open_floater(ctx, "inventory", &mut self.panels.inventory);
                 }
             }
         }
