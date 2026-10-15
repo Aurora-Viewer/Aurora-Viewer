@@ -41,9 +41,11 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "baseline-density-small",
     "bell-off",
     "box",
+    "brand-flickr",
     "building-castle",
     "building-store",
     "cake",
+    "camera-cog",
     "check",
     "chevron-down",
     "chevron-left",
@@ -83,6 +85,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "id-off",
     "indent-decrease",
     "indent-increase",
+    "layout-columns",
     "link",
     "loader-2",
     "lock-open",
@@ -113,9 +116,11 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "rotate-360",
     "rotate-clockwise",
     "rotate-clockwise-2",
+    "rss",
     "run",
     "select-all",
     "share",
+    "shield-off",
     "slash",
     "slashes",
     "snowflake",
@@ -138,6 +143,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "user-off",
     "user-plus",
     "user-scan",
+    "user-search",
     "user-square",
     "user-x",
     "users",
@@ -164,6 +170,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "arrow-big-up",
     "app-window",
     "apple",
+    "arrow-autofit-width",
     "article",
     "aspect-ratio",
     "backspace",
@@ -227,6 +234,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "file-typography",
     "file-upload",
     "files",
+    "filter",
     "flag",
     "flask",
     "folder",
@@ -248,7 +256,12 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "key",
     "keyboard",
     "layout",
+    "layout-align-bottom",
     "layout-align-center",
+    "layout-align-left",
+    "layout-align-middle",
+    "layout-align-right",
+    "layout-align-top",
     "layout-bottombar",
     "layout-grid",
     "layout-navbar-collapse",
@@ -274,6 +287,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "mouse",
     "paint",
     "palette",
+    "panorama-horizontal",
     "paw",
     "pencil",
     "phone",
@@ -360,6 +374,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "sunrise",
     "sunset-2",
     "tag",
+    "tags",
     "thumb-down",
     "ticket",
     "toggle-right",
@@ -430,6 +445,12 @@ const ALIASES: &[(&str, &str)] = &[
     ("Inv_SysClosed", "folder-filled"),
     ("Inv_Invalid", "help-circle-filled"),
 ];
+
+/// Whether `name` is an embedded icon or one of the skin's aliases.
+#[cfg(test)]
+pub(crate) fn embedded(name: &str) -> bool {
+    OUTLINE.iter().chain(FILLED).any(|(n, _)| *n == name) || ALIASES.iter().any(|(alias, _)| *alias == name)
+}
 
 /// Raster size of SVG icons (crisp up to ~2x UI scale at 24 px).
 const RASTER_PX: u32 = 64;

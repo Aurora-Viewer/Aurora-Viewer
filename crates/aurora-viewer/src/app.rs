@@ -7435,6 +7435,7 @@ impl App {
                     .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("perf")));
             }
             BarAction::CustomizeBars => self.toolbar_ui.open = true,
+            BarAction::StopAnimations => self.stop_current_animations(),
         }
     }
 
@@ -8589,9 +8590,19 @@ impl App {
                 self.toolbar_ui.favorites_access = self.favorites_access();
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
                 let mut demo_toolbar = None;
+                // AURORA_DEMO_TOOLBAR=custom|labels|right: the mockup's side
+                // bar, for this run only
+                if self.demo && std::env::var_os("AURORA_DEMO_TOOLBAR").is_some() {
+                    let layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
+                    let mut t = self.settings.toolbar.clone().unwrap_or_default();
+                    ui::toolbar::demo_settings(&mut t, layout);
+                    demo_toolbar = Some(t);
+                }
                 if self.demo && ui::bars::demo::get().access == Some(crate::settings::FavoritesAccess::Dock) {
                     let layout = self.dock_layout.of(layout).clone();
-                    let mut t = self.settings.toolbar.clone().unwrap_or_default();
+                    let mut t = demo_toolbar
+                        .take()
+                        .unwrap_or_else(|| self.settings.toolbar.clone().unwrap_or_default());
                     let mut buttons = t.buttons(&layout).to_vec();
                     if !buttons.iter().any(|b| b.command == "favorites") {
                         let at = buttons.iter().position(|b| b.command == "places").map_or(buttons.len(), |i| i + 1);
@@ -8613,6 +8624,8 @@ impl App {
                 };
                 // the dock leaves the Conversations button out of its default
                 let bar_layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
+                self.toolbar_ui.islands = !classic_bars;
+                let ao_active = self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused;
                 let (chat, bar2, bottom_top, chat_width_set) = if !chrome.bottom {
                     // hidden: the chat lines go down to the screen's bottom
                     (None, BarAction::None, screen_rect.bottom() - ui::bars::islands::MARGIN, false)
@@ -8638,7 +8651,7 @@ impl App {
                             None => &mut self.settings.chat_island_width,
                         },
                         &mut mic,
-                        self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused,
+                        ao_active,
                         !classic_bars,
                         Some(&mut self.emoji),
                         &favorites,
@@ -8651,6 +8664,49 @@ impl App {
                 if !classic_bars && let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
                     area.min.y = area.min.y.max(row + ui::bars::islands::MARGIN);
                 }
+                // the left and right toolbars, and the windows beside them
+                let sides = self.interface.sides(
+                    &ui::interface::Frame {
+                        classic: classic_bars,
+                        mouselook: self.camera.mouselook(),
+                        show_in_mouselook: self.settings.camera.show_interface_in_mouselook,
+                        chat_active: false,
+                        pointer: ctx.input(|i| i.pointer.hover_pos()),
+                        screen: screen_rect,
+                        top_rows: 0.0,
+                        bottom_top,
+                        menu_open: egui::Popup::is_any_open(&ctx),
+                    },
+                    ui::bars::side::edges(&ctx),
+                );
+                let side_row = ui::bars::Row {
+                    unread: if demo_bars.read { 0 } else { self.world.conversations_badge() },
+                    latest_unread: self.world.social.latest_unread(),
+                    flying: self.world.agent.flying,
+                    seated: self.world.agent.is_sitting(),
+                    mouselook: self.camera.mouselook(),
+                    ao_active,
+                    locked: toolbar_settings.locked,
+                    favorites: &favorites,
+                    bar: ui::toolbar::Bar::Left,
+                    style: Default::default(),
+                    editing: self.toolbar_ui.open && !toolbar_settings.locked,
+                };
+                let (room, side_action) = ui::bars::side::bars(
+                    ui,
+                    &p,
+                    icons,
+                    bar_layout,
+                    &mut self.toolbar_ui,
+                    toolbar_settings,
+                    &mut self.panels,
+                    &mut mic,
+                    &side_row,
+                    area,
+                    !classic_bars,
+                    sides,
+                );
+                area = room;
                 // without the bars, the windows keep the room they left
                 if chrome.top && chrome.bottom {
                     self.interface.last_room = Some((area, bottom_top));
@@ -8687,6 +8743,9 @@ impl App {
                     self.options_ui.tab = ui::options::TAB_AUDIO;
                 }
                 a.chat = chat;
+                if !matches!(side_action, BarAction::None) {
+                    a.bar = side_action;
+                }
                 if !matches!(bar2, BarAction::None) {
                     a.bar = bar2;
                 }

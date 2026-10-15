@@ -29,6 +29,8 @@ pub struct Interface {
     /// The bars an edge brought back.
     peek_top: bool,
     peek_bottom: bool,
+    /// The left and right toolbars an edge brought back.
+    peek_sides: [bool; 2],
     /// ConfirmHideUI is asked (Firestorm's bars).
     pub confirm: bool,
     /// "Confirm before hiding the interface", as ticked in the question.
@@ -72,6 +74,7 @@ impl Interface {
         self.hidden_at = hidden.then(|| ctx.input(|i| i.time));
         self.peek_top = false;
         self.peek_bottom = false;
+        self.peek_sides = [false; 2];
         self.confirm = false;
         super::widgets::hide_windows(ctx, hidden);
         if hidden {
@@ -115,6 +118,31 @@ impl Interface {
             top: self.peek_top,
             bottom: self.peek_bottom || f.chat_active,
         }
+    }
+
+    /// The left and right toolbars this frame draws, as the other bars:
+    /// none in mouselook unless the interface stays there; hidden, with the
+    /// islands, the left or right edge hovered brings its toolbar back while
+    /// the pointer stays on it (`edges`: their inner sides, last frame) or a
+    /// menu is open.
+    pub fn sides(&mut self, f: &Frame, edges: [f32; 2]) -> [bool; 2] {
+        if f.mouselook {
+            let on = f.show_in_mouselook && !self.hidden;
+            return [on, on];
+        }
+        if !self.hidden {
+            return [true, true];
+        }
+        if f.classic {
+            return [false, false];
+        }
+        let near = |test: &dyn Fn(Pos2) -> bool| f.pointer.is_some_and(test);
+        let at = [near(&|p| p.x <= f.screen.left() + EDGE), near(&|p| p.x >= f.screen.right() - EDGE)];
+        let on = [near(&|p| p.x <= edges[0] + MARGIN), near(&|p| p.x >= edges[1] - MARGIN)];
+        for i in 0..2 {
+            self.peek_sides[i] = at[i] || (self.peek_sides[i] && (on[i] || f.menu_open));
+        }
+        self.peek_sides
     }
 
     /// Seconds left to the hint at `now` (the islands' look), while shown.
