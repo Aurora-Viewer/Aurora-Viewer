@@ -929,6 +929,17 @@ impl World {
         self.agent.constrain_prediction(clipped, clipped != end);
     }
 
+    /// When our avatar's report counts from: with Aurora's movement, when
+    /// the network read it (item 6 of the network audit); with Firestorm's,
+    /// the frame that applies it, as on Firestorm (`mLastInterpUpdateSecs`).
+    /// The other objects take the reading time in both (`ObjectStore::report_clock`).
+    fn agent_report_time(&self) -> Instant {
+        match self.received {
+            Some(received) if self.agent.predicting() => received,
+            _ => Instant::now(),
+        }
+    }
+
     /// Keep the prediction's lead of our avatar (own_motion.rs) where the
     /// simulator could take it: in the regions we know, and on the land,
     /// whose slope it follows when walking.
@@ -1500,7 +1511,7 @@ impl World {
                     self.on_camera_parent_change(handle, &u);
                     self.objects.upsert_at(handle, u, self.received);
                     if is_me {
-                        let at = self.received.unwrap_or_else(Instant::now);
+                        let at = self.agent_report_time();
                         self.agent
                             .on_server_update_at(pos, velocity, acceleration, parent != 0, Some(handle) == self.main_region, at);
                     }
@@ -1527,7 +1538,7 @@ impl World {
                             seated = o.parent_id != 0;
                         }
                         if mine {
-                            let at = self.received.unwrap_or_else(Instant::now);
+                            let at = self.agent_report_time();
                             self.agent.on_server_update_at(
                                 t.position,
                                 t.velocity,
@@ -4675,11 +4686,13 @@ mod motion_tests {
         (world, update, handle)
     }
 
-    /// Item 6 of the network audit: our avatar's report moves from when the
-    /// network read it, not from when a frame got to it.
+    /// Item 6 of the network audit: with Aurora's movement our avatar's
+    /// report moves from when the network read it, not from when a frame
+    /// got to it; with Firestorm's, from the frame, as on Firestorm.
     #[test]
     fn our_avatars_report_moves_from_when_it_was_received() {
         let (mut world, update, handle) = arrived_fixture();
+        world.agent.set_predicting(true);
         let received = Instant::now() - std::time::Duration::from_millis(100);
         let terse = TerseUpdate {
             local_id: update.local_id,
@@ -4696,13 +4709,25 @@ mod motion_tests {
         world.apply_received(
             NetEvent::TerseUpdates {
                 handle,
-                updates: vec![terse],
+                updates: vec![terse.clone()],
             },
             received,
         );
         world.predict_agent(1.0, 0.0);
         let moved = world.agent.predicted_position().x - update.position.x;
         assert!(moved >= 0.4 - 1e-3, "{moved}");
+        // Firestorm's movement: the frame's time
+        let (mut world, update, handle) = arrived_fixture();
+        world.apply_received(
+            NetEvent::TerseUpdates {
+                handle,
+                updates: vec![terse],
+            },
+            received,
+        );
+        world.predict_agent(1.0, 0.0);
+        let moved = world.agent.predicted_position().x - update.position.x;
+        assert!(moved < 0.1, "{moved}");
     }
 
     /// Aurora's movement starts our walk with the key, over the

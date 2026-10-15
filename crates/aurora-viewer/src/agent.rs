@@ -1141,6 +1141,53 @@ mod tests {
         }
     }
 
+    /// Firestorm's movement stays as it was: a scripted walk, a 0.5 m
+    /// pull-back, a stop and a last correction give, every 0.1 s, the
+    /// positions the code of main gave (recorded on 2026-10-16 from
+    /// origin/main e12ff851, `agent.rs` before Aurora's movement).
+    #[test]
+    fn firestorm_movement_draws_what_main_drew() {
+        const MAIN: [f32; 20] = [
+            10.000000, 10.000000, 10.147933, 10.413735, 10.716663, 11.031286, 11.262022, 11.298966, 11.529809, 11.821727, 12.132880,
+            12.450094, 12.621284, 12.675205, 12.674676, 12.623521, 12.607409, 12.600000, 12.600000, 12.600000,
+        ];
+        let start = Instant::now();
+        let at = |t: f32| start + Duration::from_secs_f32(t);
+        let mut agent = AgentState::default();
+        agent.on_server_update_at(Vec3::new(10.0, 10.0, 20.0), Vec3::ZERO, Vec3::ZERO, false, true, at(0.0));
+        let reports = [(0.2, 10.0, 3.2), (0.45, 10.8, 3.2), (0.7, 11.1, 3.2), (0.95, 11.9, 3.2), (1.2, 12.7, 0.0), (1.5, 12.6, 0.0)];
+        let dt = 1.0 / 60.0;
+        let mut next = 0;
+        let mut drawn = Vec::new();
+        for n in 1..=120 {
+            let t = n as f32 * dt;
+            while next < reports.len() && reports[next].0 <= t + 1e-6 {
+                let (rt, x, v) = reports[next];
+                agent.on_server_update_at(Vec3::new(x, 10.0, 20.0), Vec3::X * v, Vec3::ZERO, false, true, at(rt));
+                next += 1;
+            }
+            // what the app does each frame with the setting on Firestorm
+            agent.set_predicting(false);
+            agent.predict_at(at(t), 1.0, 0.0);
+            let flags = if t < 1.0 { control::AT_POS | control::FAST_AT } else { 0 };
+            agent.step_prediction(Intent::from_flags(flags, 0.0, false), 0.2, dt, at(t));
+            agent.set_lead(agent.wanted_lead());
+            let input = MoveInput {
+                forward: t < 1.0,
+                ..Default::default()
+            };
+            agent.update(&input, false, dt, 5.0);
+            assert_eq!(agent.drawn_velocity(), agent.velocity);
+            if n % 6 == 0 {
+                drawn.push(agent.position.x);
+            }
+        }
+        for (i, (now, main)) in drawn.iter().zip(MAIN).enumerate() {
+            assert!((now - main).abs() < 1e-4, "at {:.1} s: {now} instead of main's {main}", (i + 1) as f32 * 0.1);
+        }
+        assert_eq!(drawn.len(), MAIN.len());
+    }
+
     /// A pull-back of 2 m fades with the prediction's 0.25 s half-life,
     /// Firestorm's 0.06 s without it.
     #[test]
