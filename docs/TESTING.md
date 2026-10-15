@@ -848,9 +848,53 @@ release; the camera must then be stopped. Combine with
 this variable to check the initial focus on the avatar. The HUDs and enabled
 following keep their behaviour.
 
-**`AURORA_DEMO_BUILD_TAB=general|object|transform|shape|features|texture[:pbr|bp|media]|contents`**
-— tab of the build window shown by the script; `+weights`, `+grid`, `+media`
+**`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|media]|contents`**
+— section of the build window shown by the script (General separates object information from Rights); `+weights`, `+grid`, `+media`, `+permissions`
 also open these windows.
+
+Use `AURORA_DEMO_BUILD=contents-properties,object:118` with the Contents
+section to open a task item in the same properties panel as agent inventory
+(name, picture, owner/creator/date, description, masks and sale). Task items
+have no thumbnail metadata, so their Picture action is disabled. Saving must
+update the original object's item even after changing the build selection.
+With `AURORA_DEMO_BUILD=contents-ready,object:118` and
+`AURORA_DEMO_BUILD_TAB=contents+permissions`, check the eleven icon filters,
+All/Clear, Group/Anyone/Next owner columns and OK/Apply/Cancel. No-copy forces
+transfer; environment settings retain copy. Apply leaves the dialog open;
+OK closes it while the queued requests finish. Cancel restores the opening
+choices without starting another update; requests already applied continue.
+Automated regressions check each type,
+inventory fetching, revoked access, failed reads/timeouts and task saves.
+
+`AURORA_DEMO_BUILD=contents-multi,object:118` shows two selected task items;
+`contents-rename-ready,object:118` leaves the first item's inline rename open.
+In Contents, plain click selects one entry, Ctrl toggles entries, Shift
+selects a visible range and Ctrl+Shift extends it. Ctrl+A selects the visible
+list; right click on a selected entry preserves the batch. Delete removes
+only the selected task items while this list owns focus, including after
+repeated presses with an empty or read-only selection. It must never send
+the edited object to trash. Clicking in the world releases list focus and
+retains the object's normal Delete shortcut. F2 requires one modifiable item.
+Rename through F2 or the menu: Enter, clicking another row/field or leaving
+the tab commits once; Escape cancels. Delete inside the rename field edits
+text. Filtering removes hidden entries from the selection. Native inspector
+regressions cover these pointer/key flows and the task inventory commands.
+
+The object inspector resizes in both directions. Combine the build scenario
+with `AURORA_DEMO_BUILD_FRAME=400` and
+`AURORA_DEMO_RESIZE=drag,build_tools_inspector_c3` to exercise its real
+corner handle and capture at frame 780; the footer must follow the new
+bottom/right edges. Each Position/Size/Rotation caption has its own copy/paste
+pair. Linked editing, face selection, both-sided stretching and root-axis
+editing remain in the shared footer throughout the seven Edit sections.
+With `AURORA_DEMO_BUILD=contents-ready,object:118` and
+`AURORA_DEMO_BUILD_TAB=contents`, the inventory surface fills the remaining
+panel down to the shared edit footer and expands after a corner drag; the
+filter must preserve this surface height even when only one item matches.
+With `AURORA_DEMO_BUILD=grab,object:118`, capture at frame 1100: the wrapped
+move-tool hint must stay inside the chosen window height, without the window
+growing on successive frames. The native layout tests also exercise a longer
+wrapped status message and a 64-item object inventory at two heights.
 
 **`AURORA_DEMO_LSL_BRIDGE=1`** — messages of the Firestorm LSL bridge
 (hidden) between two "owner say" lines.

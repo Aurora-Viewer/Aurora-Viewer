@@ -22,7 +22,7 @@ mod move_to;
 pub use document::document_demo_events;
 pub(crate) mod permissions;
 mod progress;
-mod properties;
+pub(crate) mod properties;
 pub(crate) mod task_drop;
 pub mod thumbnail;
 pub(crate) mod tree;

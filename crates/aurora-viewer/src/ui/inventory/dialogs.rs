@@ -50,25 +50,25 @@ pub(super) fn show(
         },
         st.ui_id
     );
-    let mut floater = Floater::new(
-        &window_id,
-        title,
-        ctx.content_rect().center()
-            - if properties {
-                egui::vec2(175.0, 305.0)
-            } else if document_confirmation {
-                egui::vec2(220.0, 70.0)
+    let mut floater = if properties {
+        super::properties::window(ctx, &window_id)
+    } else {
+        Floater::new(
+            &window_id,
+            title,
+            ctx.content_rect().center()
+                - if document_confirmation {
+                    egui::vec2(220.0, 70.0)
+                } else {
+                    egui::vec2(210.0, 130.0)
+                },
+            if document_confirmation {
+                Vec2::new(440.0, 140.0)
             } else {
-                egui::vec2(210.0, 130.0)
+                Vec2::new(420.0, 260.0)
             },
-        if properties {
-            Vec2::new(350.0, 610.0)
-        } else if document_confirmation {
-            Vec2::new(440.0, 140.0)
-        } else {
-            Vec2::new(420.0, 260.0)
-        },
-    );
+        )
+    };
     if confirmation || document_confirmation {
         floater = floater.fixed();
     }

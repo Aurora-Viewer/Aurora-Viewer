@@ -7021,6 +7021,34 @@ impl App {
                         self.panels.inventory = true;
                         self.inventory_ui.expand_all = Some(true);
                     }
+                    crate::build::demo::Step::ContentsProperties => {
+                        if let Some(idx) = self.build.contents_target(&self.world)
+                            && let Some(object) = self.world.objects.get(idx).map(|o| o.full_id)
+                            && let Some(item) = self
+                                .build
+                                .contents
+                                .objects
+                                .get(&object)
+                                .and_then(|inv| inv.items.iter().find(|it| !it.is_folder))
+                                .cloned()
+                        {
+                            self.build.open_task_item_properties(object, &item);
+                        }
+                    }
+                    crate::build::demo::Step::ContentsSelection(rename) => {
+                        if let Some(idx) = self.build.contents_target(&self.world)
+                            && let Some(object) = self.world.objects.get(idx).map(|o| o.full_id)
+                            && let Some(inv) = self.build.contents.objects.get(&object)
+                        {
+                            let mut items: Vec<_> = inv.items.iter().filter(|it| !it.is_folder).collect();
+                            items.sort_by_key(|it| it.name.to_lowercase());
+                            let ids: Vec<_> = items.iter().take(if rename { 1 } else { 2 }).map(|it| it.item_id).collect();
+                            self.build.ui.contents_selection.items = ids.iter().copied().collect();
+                            if rename && let Some(id) = ids.first() {
+                                self.build.begin_contents_rename(&self.world, object, *id);
+                            }
+                        }
+                    }
                     crate::build::demo::Step::TexturePicker(materials) => {
                         let current = self
                             .build

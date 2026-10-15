@@ -238,10 +238,12 @@ pub fn swatch(
             egui::Stroke::new(1.0, stroke),
             egui::StrokeKind::Inside,
         );
-        ui.add_sized(
-            [size, 14.0],
-            egui::Label::new(RichText::new(caption).size(11.0).color(if enabled { p.muted } else { p.muted_dim })),
-        );
+        if !caption.is_empty() {
+            ui.add_sized(
+                [size, 14.0],
+                egui::Label::new(RichText::new(caption).size(11.0).color(if enabled { p.muted } else { p.muted_dim })),
+            );
+        }
         resp
     })
     .inner
@@ -265,10 +267,12 @@ pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str
                 response.on_hover_text(aurora_i18n::tr!("color-picker-open"))
             })
             .inner;
-        ui.add_sized(
-            [size, 14.0],
-            egui::Label::new(RichText::new(caption).size(11.0).color(if enabled { p.muted } else { p.muted_dim })),
-        );
+        if !caption.is_empty() {
+            ui.add_sized(
+                [size, 14.0],
+                egui::Label::new(RichText::new(caption).size(11.0).color(if enabled { p.muted } else { p.muted_dim })),
+            );
+        }
         response
     })
     .inner

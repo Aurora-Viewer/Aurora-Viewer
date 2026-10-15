@@ -16,6 +16,8 @@
 //!   delete it (ready leaves the new prim for the human).
 //!   contents-copy | contents-move | contents-move-plain | contents-ready:
 //!   take an item into inventory or show the move warning (ready stops).
+//!   contents-properties: open a task item in the shared properties panel.
+//!   contents-multi | contents-rename-ready: show task multi-selection or rename.
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -27,10 +29,10 @@
 //! `mode,object:<local_id>[,part,dx,dy]` selects a demo object directly,
 //! so an animated flexible shape needs no fixed screen click coordinate.
 //!
-//! `AURORA_DEMO_BUILD_TAB` shows a section: general | object | transform |
+//! `AURORA_DEMO_BUILD_TAB` shows a section: general | rights | object | transform |
 //! shape | features | texture | contents, the texture tab with `:pbr`, `:bp` or
 //! `:media` (e.g. `texture:bp`), and opens `+weights`, `+grid`, `+media`
-//! (e.g. `general+weights+grid`).
+//! (e.g. `general+weights+grid`); `contents+permissions` opens bulk rights.
 //! `AURORA_DEMO_BUILD_FOCUS=off|on` focuses the selected object before the
 //! drag, with edit camera tracking disabled/enabled.
 //! `AURORA_DEMO_BUILD_EDGE=left|right|top|bottom` moves the cursor to an
@@ -51,6 +53,8 @@ pub enum Step {
     CreateAt(Vec3),
     Delete,
     Contents,
+    ContentsProperties,
+    ContentsSelection(bool),
     TakeTask(bool),
     Cursor(f32, f32),
     Press,
@@ -147,12 +151,14 @@ pub fn apply_tab(tool: &mut BuildTool) {
             "weights" => tool.ui.weights_open = true,
             "grid" => tool.ui.grid_options_open = true,
             "media" => tool.ui.media_settings = Some(super::ui::MediaSettingsState::new(None)),
+            "permissions" => tool.ui.bulk_perms_open = true,
             _ => {}
         }
     }
     let (tab, sub) = v.split_once(':').unwrap_or((v.as_str(), ""));
     tool.tab = match tab.trim() {
-        "general" => 0,
+        "general" => 6,
+        "rights" => 0,
         "object" | "transform" => 1,
         "shape" => 5,
         "features" => 2,
@@ -267,6 +273,10 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
             220 => object.into_iter().map(Step::Select).collect(),
             225 => vec![Step::Contents],
+            260 if parts[0] == "contents-properties" => vec![Step::ContentsProperties],
+            260 if matches!(parts[0], "contents-multi" | "contents-rename-ready") => {
+                vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
+            }
             260 if parts[0] != "contents-ready" => vec![Step::TakeTask(parts[0] == "contents-copy")],
             _ => Vec::new(),
         };
