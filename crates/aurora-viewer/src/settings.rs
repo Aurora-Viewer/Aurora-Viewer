@@ -4,14 +4,26 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// How the Conversations window draws its lines: as a messenger, in bubbles
-/// (the default), or in the lines of Firestorm's conversations (the legacy
-/// style, to be offered by a Preferences tab of its own).
+/// How the Conversations window looks (Preferences › Aurora): Aurora's
+/// workspace (the default: a column of conversations, messages grouped by
+/// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
+/// row per message, no pictures), a messenger's bubbles (`ui/chat/bubbles.rs`)
+/// or the lines of Firestorm's conversations (the legacy style).
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ChatStyle {
     #[default]
+    Aurora,
+    Compact,
     Bubbles,
     Legacy,
+}
+
+impl ChatStyle {
+    /// Aurora's workspace (column, head, members, call stage): the two
+    /// first styles. The others keep the window of tabs.
+    pub fn workspace(self) -> bool {
+        matches!(self, ChatStyle::Aurora | ChatStyle::Compact)
+    }
 }
 
 /// Where the islands show the favourites (Preferences › Interface,
@@ -391,6 +403,9 @@ pub struct Settings {
     /// Show Contacts in Conversations (Preferences > Chat, off by default).
     /// Unlike Firestorm's always-present entry, this is optional at the human's request.
     pub show_contacts_tab: bool,
+    /// Tell the resident of a conversation that we are typing
+    /// (FSSendTypingState, on by default; Preferences > Chat).
+    pub send_typing_state: bool,
     pub chat_toast_seconds: f32,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
@@ -644,7 +659,7 @@ pub struct Settings {
     pub new_profile: bool,
 }
 
-const SETTINGS_VERSION: u32 = 12;
+const SETTINGS_VERSION: u32 = 13;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -940,6 +955,7 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             show_contacts_tab: false,
+            send_typing_state: true,
             chat_toast_seconds: 20.0,
             toast_friends_online: true,
             presence_position: PresencePosition::TopRight,
@@ -979,7 +995,7 @@ impl Default for Settings {
             plates_friends_only_full: false,
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,
-            chat_style: ChatStyle::Bubbles,
+            chat_style: ChatStyle::Aurora,
             notifications_style: NotificationsStyle::Aurora,
             world_map_style: WorldMapStyle::Aurora,
             photo_window: PhotoWindowStyle::Aurora,
@@ -1345,6 +1361,11 @@ impl Settings {
         if self.settings_version < 12 {
             // letter shortcuts follow the layout (M is the M key on AZERTY)
             self.keybinds.follow_layout_letters();
+        }
+        if self.settings_version < 13 && self.chat_style == ChatStyle::Bubbles {
+            // the bubbles were the default every file wrote: Aurora's
+            // workspace takes their place; the Firestorm lines, a choice, stay
+            self.chat_style = ChatStyle::Aurora;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -1985,6 +2006,29 @@ mod tests {
         assert_eq!(chosen.sanitized().keybinds.get(Action::Mouselook)[0], plain(KeyCode::KeyM));
     }
 
+    /// The bubbles every earlier file wrote (they were the default) become
+    /// Aurora's workspace once; Firestorm's lines, a choice, stay; from now
+    /// on the bubbles chosen again are kept.
+    #[test]
+    fn saved_bubbles_move_to_the_aurora_workspace_once() {
+        assert_eq!(Settings::default().chat_style, ChatStyle::Aurora);
+        for (before, after) in [(ChatStyle::Bubbles, ChatStyle::Aurora), (ChatStyle::Legacy, ChatStyle::Legacy)] {
+            let old = Settings {
+                settings_version: 12,
+                chat_style: before,
+                ..Settings::default()
+            };
+            assert_eq!(old.sanitized().chat_style, after, "{before:?}");
+        }
+        for style in [ChatStyle::Bubbles, ChatStyle::Compact, ChatStyle::Legacy] {
+            let chosen = Settings {
+                chat_style: style,
+                ..Settings::default()
+            };
+            assert_eq!(chosen.sanitized().chat_style, style);
+        }
+    }
+
     #[test]
     fn parcel_music_waits_for_the_radio_toggle() {
         assert!(!Settings::default().sanitized().audio.music_autoplay);
@@ -2099,7 +2143,7 @@ mod tests {
         // only what is not understood falls back to its default
         assert_eq!(s.draw_distance, 200.0);
         assert_eq!(s.username, "Someone Resident");
-        assert_eq!(s.chat_style, ChatStyle::Bubbles);
+        assert_eq!(s.chat_style, ChatStyle::Aurora);
         assert_eq!(s.keybinds, Settings::default().keybinds);
         assert!(crate::tolerant::backup_path(&path).exists(), "the newer file is kept aside");
         // saved unchanged: the newer build finds its own values again
@@ -2148,7 +2192,7 @@ mod tests {
         assert!(newer.is_none(), "same version: nothing to keep on save");
         let s = s.finished(newer);
         assert_eq!(s.draw_distance, 180.0);
-        assert_eq!(s.chat_style, ChatStyle::Bubbles);
+        assert_eq!(s.chat_style, ChatStyle::Aurora);
         assert!(crate::tolerant::backup_path(&path).exists(), "the damaged file is kept aside");
         s.save_to(&path);
         let written = read_back(&path);

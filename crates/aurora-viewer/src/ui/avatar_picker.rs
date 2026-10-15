@@ -40,6 +40,13 @@ impl AvatarPicker {
         self.selected.clear();
     }
 
+    /// Start on the search by name with `query` typed (a search begun
+    /// elsewhere, such as the Conversations column).
+    pub fn set_query(&mut self, query: &str) {
+        self.tab = 0;
+        query.clone_into(&mut self.query);
+    }
+
     /// The residents chosen with "Select" (the picker closes).
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, world: &mut World) -> Option<Vec<Uuid>> {
         if !self.open {

@@ -301,6 +301,7 @@ impl Voice {
                 id: p.agent_id,
                 level: p.level,
                 speaking: p.speaking,
+                muted: p.moderator_muted,
             })
             .collect();
         Some((status, members))

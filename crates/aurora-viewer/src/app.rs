@@ -7354,6 +7354,12 @@ impl App {
         if let Some(c) = a.chat {
             self.send_local_chat(c);
         }
+        for cmd in a.typing {
+            self.send(cmd);
+        }
+        for id in a.gestures {
+            self.gesture_play(id, None);
+        }
         for (to, text) in a.ims {
             let text = ui::emoji::expand_shortcodes(&text);
             if self.world.is_group_session(&to) {
@@ -9004,11 +9010,59 @@ impl App {
                 let mut mini = Vec::new();
                 let mut open = self.panels.chat;
                 let mut contact_actions = Vec::new();
-                self.chat_ui.style = self.settings.chat_style;
+                self.chat_ui.set_style(self.settings.chat_style);
                 self.chat_ui.voice_on = self.settings.audio.voice_enabled;
                 self.chat_ui.mic = (!self.settings.audio.mic_hold).then_some(self.mic_on);
                 if self.world.calls.active.is_some() {
                     self.chat_ui.volumes.clone_from(&self.world.calls.volumes);
+                    self.chat_ui.output_devices.clone_from(&self.options_ui.output_devices);
+                    self.chat_ui.output_device.clone_from(&self.settings.audio.output_device);
+                }
+                self.chat_ui.timestamps = self.settings.chat_timestamps;
+                self.chat_ui.send_typing = self.settings.send_typing_state;
+                // who hears the nearby chat, and who of them types (the
+                // radar's avatars in chat range, their typing animation)
+                self.chat_ui.nearby_count = 0;
+                self.chat_ui.nearby_typing.clear();
+                for e in self.radar.entries() {
+                    if !e.left_behind && e.range.is_some_and(|d| d <= crate::world::radar::CHAT_RANGE) {
+                        self.chat_ui.nearby_count += 1;
+                        if e.typing {
+                            self.chat_ui.nearby_typing.push(e.id);
+                        }
+                    }
+                }
+                // AURORA_DEMO_CONV=aurora: someone types in the conversation
+                // shown, and the group's call rings without us
+                if let Some(scene) = crate::demo::aurora_scenario() {
+                    match scene.view {
+                        crate::demo::Bubbles::Local => {
+                            self.chat_ui.nearby_count = self.chat_ui.nearby_count.max(3);
+                            self.chat_ui.nearby_typing = vec![crate::demo::DEMO_NOVA];
+                        }
+                        crate::demo::Bubbles::Friend => self.world.social.set_typing(crate::demo::DEMO_FRIEND, true),
+                        _ => {}
+                    }
+                    // call-away: the call opened its conversation; once it
+                    // is connected the nearby chat comes back
+                    static AWAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                    if scene.away
+                        && self
+                            .world
+                            .calls
+                            .active
+                            .as_ref()
+                            .is_some_and(|c| c.state == crate::world::calls::CallState::Connected)
+                        && !AWAY.swap(true, std::sync::atomic::Ordering::Relaxed)
+                    {
+                        self.chat_ui.selected = None;
+                    }
+                    if scene.call == Some(crate::demo::AuroraCall::Ongoing)
+                        && self.world.calls.invite_for(&crate::demo::DEMO_GROUP1).is_some()
+                    {
+                        self.world
+                            .answer_call_invite(crate::demo::DEMO_GROUP1, crate::world::calls::InviteAnswer::Decline);
+                    }
                 }
                 for c in ui::chat::show(
                     &ctx,
@@ -9064,6 +9118,35 @@ impl App {
                         ui::chat::ConvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::chat::ConvAction::Contacts(c) => contact_actions.push(c),
                         ui::chat::ConvAction::OpenContacts => self.panels.contacts = true,
+                        ui::chat::ConvAction::OpenIm(id) => self.world.start_text_conference(vec![id]),
+                        ui::chat::ConvAction::StartGroupChat(group) => self.world.start_group_chat(group),
+                        // LLIMModel::sendTypingState: to the resident, in
+                        // the session of the two of us (agent XOR other)
+                        ui::chat::ConvAction::Typing { to, typing } => a.typing.push(NetCommand::SendImDialog {
+                            to,
+                            dialog: if typing {
+                                crate::world::IM_TYPING_START
+                            } else {
+                                crate::world::IM_TYPING_STOP
+                            },
+                            id: uuid::Uuid::from_u128(self.world.agent_id.as_u128() ^ to.as_u128()),
+                            message: "typing".to_owned(),
+                            bucket: Vec::new(),
+                        }),
+                        // the inventory's Share dialog confirms, then gives
+                        // (LLGiveInventory::doGiveInventoryItem)
+                        ui::chat::ConvAction::GiveItems { to, items } => {
+                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
+                        }
+                        ui::chat::ConvAction::OpenInventory => self.panels.inventory = true,
+                        ui::chat::ConvAction::PlayGesture(id) => a.gestures.push(id),
+                        ui::chat::ConvAction::SetOutputDevice(device) => {
+                            self.settings.audio.output_device = device;
+                            self.settings.save();
+                        }
+                        ui::chat::ConvAction::ListOutputDevices => {
+                            self.options_ui.output_devices = aurora_audio::output_devices();
+                        }
                     }
                 }
                 self.panels.chat = open;
@@ -10049,6 +10132,10 @@ struct UiActions {
     set_display_name: Option<(String, String)>,
     /// Estimate and purchase requests of the Buy L$ window.
     currency: Vec<NetCommand>,
+    /// The typing notices of the conversations.
+    typing: Vec<NetCommand>,
+    /// Gestures played from the conversations' field.
+    gestures: Vec<uuid::Uuid>,
 }
 
 impl ApplicationHandler for App {
@@ -10677,10 +10764,29 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.panels.perf = false;
                 self.chat_ui.selected = crate::demo::bubbles_conversation(view);
-                if view == crate::demo::Bubbles::Legacy {
-                    self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
+                self.chat_ui.demo_style = Some(if view == crate::demo::Bubbles::Legacy {
+                    crate::settings::ChatStyle::Legacy
+                } else {
+                    crate::settings::ChatStyle::Bubbles
+                });
+                // =aurora[:…]: the workspace, at the scene's width
+                let mut size = egui::vec2(700.0, 560.0);
+                if let Some(scene) = crate::demo::aurora_scenario() {
+                    self.chat_ui.demo_style = Some(if scene.compact {
+                        crate::settings::ChatStyle::Compact
+                    } else {
+                        crate::settings::ChatStyle::Aurora
+                    });
+                    self.chat_ui.selected = crate::demo::aurora_conversation(scene);
+                    self.chat_ui.members_open = view == crate::demo::Bubbles::Group;
+                    self.chat_ui.stage_mini = scene.call == Some(crate::demo::AuroraCall::Mini);
+                    // the window alone, to compare with the mockups
+                    self.panels.people = false;
+                    self.panels.inventory = false;
+                    // the mockups' window: 580 px high, title bar included
+                    size = egui::vec2(scene.width, 580.0);
                 }
-                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(700.0, 560.0));
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), size);
             } else if crate::demo::teleport_offer_scene().is_some() {
                 self.panels.chat = true;
                 self.panels.perf = false;
@@ -10879,6 +10985,9 @@ impl ApplicationHandler for App {
             }
             if let Some(view) = crate::demo::bubbles_scenario() {
                 crate::demo::bubbles_lines(&mut self.world, view);
+            }
+            if let Some(scene) = crate::demo::aurora_scenario() {
+                crate::demo::aurora_lines(&mut self.world, scene);
             }
             // AURORA_DEMO_CONV=tp[:sent|reject]: the avatar menu's teleport
             // offer (its invitation, or sent as invited to the resident whose

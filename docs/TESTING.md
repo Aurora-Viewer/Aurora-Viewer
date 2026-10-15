@@ -1576,6 +1576,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
+| `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
 | `AURORA_DEMO_MATURITY=agree\|disagree\|fail` | Content rating changed, the server's answer |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
@@ -2161,8 +2162,33 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   of bubbles. `local`: the nearby chat (residents, an object with its box
   and its name in its color above its group, the viewer's notices in
   centered pills). `legacy`: the friend's conversation in the legacy lines
-  of the setting `chat_style` (`Legacy`; `Bubbles` by default), which the
+  of the setting `chat_style` (`Legacy`; otherwise `Bubbles`), which the
   demo does not save.
+- **`AURORA_DEMO_CONV=aurora[:flag…]`**: the Conversations window in
+  Aurora's workspace (the default style), alone on screen (People and the
+  inventory closed), 960 x 560 px. Flags, joined by `:`: `im` (default:
+  the friend's conversation over two days, the last three lines unread
+  under the red "New" line, the friend typing), `busy` (Tess in do not
+  disturb), `group` (Aurora Builders with its members' panel: MOD tag,
+  an amber bar on the message that names us, a place link), `local` (the
+  nearby chat: object tag and box, shout and whisper tags, our emote in
+  violet italics, notices with an icon, someone typing, the channel chip
+  and Whisper / Say / Shout); `compact` for the Compact style (one row
+  per message, time, name and tags); `medium` (700 px), `narrow` (460
+  px: the column becomes a rail of pictures) or a width in points;
+  `call-incoming` (Tess calls: the banner and the pulsing entry),
+  `call` (the group's call: the stage, speaking ring, Tess muted by a
+  moderator, the speaker in the column), `call-mini` (the stage reduced to
+  its strip), `call-ongoing` (Nova's group call left ringing: the strip
+  with Join, the green call button), `call-away` (in the group's call
+  with the nearby chat shown: the column's call panel), `call-incoming-group`
+  (Nova's group call ringing: Join / Ignore), `call-p2p` (our call to Tess),
+  `conference` (a voice conference with Tess and Nova). The calls are those of
+  `AURORA_DEMO_CALL` and start 3 s after the login: capture at frame 780
+  with `AURORA_FPS_LIMIT=60`. What to look for: the layout of the
+  validated mockups (variant A, and B with `compact`); the column's entries, the hover toolbar and the head's buttons all act
+  (the other `AURORA_DEMO_CONV` scenarios show the window in the saved
+  style, Aurora by default).
 - **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp[:sent|reject]`**: `1` opens the conversation of
   the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user

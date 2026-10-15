@@ -155,7 +155,7 @@ pub(super) fn show(
                 // ---- actions, from the right edge
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    more_menu(ui, p, world, st, actions, group);
+                    more_menu(ui, p, world, st, actions, group, false);
                     match st.selected {
                         None => {
                             if tool(ui, p, icons, "users", aurora_i18n::tr!("common-nearby-people"), true, false) {
@@ -233,14 +233,45 @@ fn call_tool(ui: &mut egui::Ui, p: &Palette, icons: &crate::ui::icons::Icons, wo
 }
 
 /// The other actions of the conversation: what Firestorm's IM toolbar has
-/// and Aurora does not do yet stays in it, greyed.
-fn more_menu(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, group: bool) {
+/// and Aurora does not do yet stays in it, greyed. The workspace's head
+/// (`head.rs`) has no teleport button: its offer is here.
+pub(super) fn more_menu(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut ChatUi,
+    actions: &mut Vec<ConvAction>,
+    group: bool,
+    workspace: bool,
+) {
+    crate::ui::widgets::icon_menu(ui, p, "dots-filled", aurora_i18n::tr!("ui-chat-more"), |ui| {
+        more_items(ui, p, world, st, actions, group, workspace);
+    });
+}
+
+/// The rows of the conversation's menu (`more_menu`, the workspace head's
+/// "…").
+pub(super) fn more_items(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut ChatUi,
+    actions: &mut Vec<ConvAction>,
+    group: bool,
+    workspace: bool,
+) {
     let selected = st.selected;
     let search = st.searches.entry(selected).or_default();
     let filtering = search.filter.is_some();
-    crate::ui::widgets::icon_menu(ui, p, "dots-filled", aurora_i18n::tr!("ui-chat-more"), |ui| {
+    {
         match selected {
             Some(other) if group => {
+                if workspace
+                    && super::head::can_add_people(world, &other)
+                    && menu::item(ui, p, "user-plus", aurora_i18n::tr!("ui-call-add-people"))
+                {
+                    actions.push(ConvAction::PickPeople(other));
+                }
                 if world.groups.is_member(&other)
                     && menu::item(ui, p, "message-off", aurora_i18n::tr!("common-stop-receiving-this-group-s-chat"))
                 {
@@ -248,8 +279,25 @@ fn more_menu(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, act
                 }
             }
             Some(other) => {
-                menu::todo(ui, p, "user-plus", aurora_i18n::tr!("ui-chat-add-friend-coming-soon"));
-                menu::todo(ui, p, "gift-filled", aurora_i18n::tr!("ui-chat-give-object-coming-soon"));
+                if workspace && menu::item(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport")) {
+                    actions.push(ConvAction::OfferTeleport(other));
+                }
+                if workspace && menu::item(ui, p, "user-plus", aurora_i18n::tr!("ui-call-add-people")) {
+                    actions.push(ConvAction::PickPeople(other));
+                }
+                if !workspace {
+                    menu::todo(ui, p, "user-plus", aurora_i18n::tr!("ui-chat-add-friend-coming-soon"));
+                    menu::todo(ui, p, "gift-filled", aurora_i18n::tr!("ui-chat-give-object-coming-soon"));
+                } else {
+                    // the friendship offer of the residents' menus, and the
+                    // inventory to drag what to give onto the conversation
+                    if !world.social.is_friend(&other) && menu::item(ui, p, "user-plus", aurora_i18n::tr!("common-become-friends")) {
+                        crate::ui::context::request(ui.ctx(), CtxAction::AddFriend(other));
+                    }
+                    if menu::item(ui, p, "gift-filled", aurora_i18n::tr!("ui-chat-give-from-inventory")) {
+                        actions.push(ConvAction::OpenInventory);
+                    }
+                }
                 if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("ui-chat-pay")) {
                     crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(other));
                 }
@@ -286,5 +334,5 @@ fn more_menu(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, act
                 actions.push(ConvAction::Close(other));
             }
         }
-    });
+    }
 }

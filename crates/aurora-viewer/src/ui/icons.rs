@@ -451,7 +451,6 @@ const ALIASES: &[(&str, &str)] = &[
 ];
 
 /// Whether `name` is an embedded icon or one of the skin's aliases.
-#[cfg(test)]
 pub(crate) fn embedded(name: &str) -> bool {
     OUTLINE.iter().chain(FILLED).any(|(n, _)| *n == name) || ALIASES.iter().any(|(alias, _)| *alias == name)
 }

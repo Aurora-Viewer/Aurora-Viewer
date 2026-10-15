@@ -23,7 +23,7 @@ pub enum Look {
 /// avatar plates' own settings are left as they are.
 pub fn set_all(s: &mut Settings, look: Look) {
     let aurora = look == Look::Aurora;
-    s.chat_style = if aurora { ChatStyle::Bubbles } else { ChatStyle::Legacy };
+    s.chat_style = if aurora { ChatStyle::Aurora } else { ChatStyle::Legacy };
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
     s.lookat.aim = if aurora { Aim::Point } else { Aim::Direction };
@@ -264,8 +264,11 @@ fn item(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, control: 
     ui.painter().galley(Pos2::new(rect.left(), top), name_g, p.ink);
     ui.painter().galley(Pos2::new(rect.left(), desc_top), desc_g, p.muted);
     let slot = Rect::from_center_size(Pos2::new(rect.right() - control.x / 2.0, rect.center().y), control);
-    // a child that does not move the page's cursor: the row is already laid out
-    draw(&mut ui.new_child(egui::UiBuilder::new().max_rect(slot)))
+    // a child that does not move the page's cursor: the row is already laid
+    // out. Its own id: without it every row's child had the same, and the
+    // segments of the same place and label ("Aurora", first of several
+    // rows) shared an id, the last row's taking the clicks of the others.
+    draw(&mut ui.new_child(egui::UiBuilder::new().id_salt(("aurora_item", name)).max_rect(slot)))
 }
 
 /// The faint line between two settings of a card.
@@ -305,25 +308,39 @@ fn look_choice(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, au
     })
 }
 
+/// The Conversations window's four looks: Aurora's workspace, its compact
+/// rows, the bubbles, Firestorm's lines (the two Aurora ones in the accent).
+fn chat_style_choice(ui: &mut egui::Ui, p: &Palette, style: &mut ChatStyle) -> bool {
+    const STYLES: [ChatStyle; 4] = [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy];
+    let options = [
+        (aurora_i18n::tr!("ui-options-aurora-workspace"), true),
+        (aurora_i18n::tr!("ui-options-aurora-compact"), true),
+        (aurora_i18n::tr!("ui-options-aurora-bubbles"), true),
+        (aurora_i18n::tr!("ui-options-aurora-lines"), false),
+    ];
+    let size = widgets::segmented_size(ui, &options);
+    item(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-options-aurora-conversations"),
+        aurora_i18n::tr!("ui-options-aurora-conversations-help"),
+        size,
+        |ui| {
+            let mut selected = STYLES.iter().position(|s| s == style).unwrap_or(0);
+            let changed = widgets::segmented(ui, p, &mut selected, &options);
+            *style = STYLES[selected];
+            changed
+        },
+    )
+}
+
 /// `reset`: "Reset this section…" was clicked in the page's head.
 pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) -> bool {
     let mut c = hero(ui, p, s, reset);
     ui.add_space(14.0);
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-appearance"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        let mut legacy = s.chat_style == ChatStyle::Legacy;
-        if look_choice(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-aurora-conversations"),
-            aurora_i18n::tr!("ui-options-aurora-conversations-help"),
-            aurora_i18n::tr!("ui-options-aurora-bubbles"),
-            aurora_i18n::tr!("ui-options-aurora-lines"),
-            &mut legacy,
-        ) {
-            s.chat_style = if legacy { ChatStyle::Legacy } else { ChatStyle::Bubbles };
-            c = true;
-        }
+        c |= chat_style_choice(ui, p, &mut s.chat_style);
         between(ui, p);
         c |= look_choice(
             ui,
@@ -719,5 +736,60 @@ mod tests {
             assert!(!options.contains(field), "{field} is set only on the Aurora page");
         }
         assert!(!options.contains("name-tag-style"), "the former name tag style row is gone");
+    }
+
+    /// The Conversations choice of the page switches the setting, through
+    /// real egui frames: each of its four segments (the window follows the
+    /// setting every frame, `ChatUi::set_style`).
+    #[test]
+    fn the_conversations_choice_switches_the_style() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let mut s = Settings::default();
+        let mut reset = false;
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            texts = frames.run(Vec::new(), |ui| {
+                page(ui, &p, &mut s, &mut reset);
+            });
+        }
+        // the row of the segments ("Aurora" is also the page's title)
+        let row = texts
+            .iter()
+            .find(|t| t.source == aurora_i18n::tr!("ui-options-aurora-compact"))
+            .expect("the Compact segment")
+            .rect
+            .center()
+            .y;
+        for (label, style) in [
+            (aurora_i18n::tr!("ui-options-aurora-compact"), ChatStyle::Compact),
+            (aurora_i18n::tr!("ui-options-aurora-bubbles"), ChatStyle::Bubbles),
+            (aurora_i18n::tr!("ui-options-aurora-lines"), ChatStyle::Legacy),
+            (aurora_i18n::tr!("ui-options-aurora-workspace"), ChatStyle::Aurora),
+        ] {
+            let at = texts
+                .iter()
+                .find(|t| t.source == label && (t.rect.center().y - row).abs() < 4.0)
+                .unwrap_or_else(|| panic!("{label} is painted"))
+                .rect
+                .center();
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            for events in [
+                vec![egui::Event::PointerMoved(at)],
+                vec![button(true)],
+                vec![button(false)],
+                Vec::new(),
+            ] {
+                texts = frames.run(events, |ui| {
+                    page(ui, &p, &mut s, &mut reset);
+                });
+            }
+            assert_eq!(s.chat_style, style, "{label}");
+        }
     }
 }

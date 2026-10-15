@@ -30,13 +30,33 @@ const MEASURE_BUDGET: Duration = Duration::from_micros(300);
 /// What precedes a line's text: the day when it changes, the sender's
 /// header when the sender or the moment does. `tail`: the last line of its
 /// sender's group, which the bubbles end with the picture and the time.
-/// `first`: the first row of the list, against its top edge.
+/// `first`: the first row of the list, against its top edge. `new`: the
+/// first line that was unread when the conversation was opened ("New").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Look {
     pub marker: Option<(i64, i64, i64)>,
     pub header: bool,
     pub tail: bool,
     pub first: bool,
+    pub new: bool,
+}
+
+/// How the rows of a conversation are drawn, for their grouping and their
+/// heights: the window of tabs (bubbles, Firestorm's lines), or Aurora's
+/// workspace with its messages grouped by author (`ui/chat/thread.rs`),
+/// roomy or compact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Layout {
+    #[default]
+    Classic,
+    Aurora,
+    Compact,
+}
+
+impl Layout {
+    pub fn workspace(self) -> bool {
+        self != Layout::Classic
+    }
 }
 
 /// Mark the last line of each group: the one before a new header, a day
@@ -72,6 +92,10 @@ pub struct Source<'a> {
     pub filter: &'a str,
     /// The find bar's text (lowercase; empty = none).
     pub find: &'a str,
+    pub layout: Layout,
+    /// The number of the first line unread when the conversation was
+    /// opened, which carries the "New" marker.
+    pub first_unread: Option<u64>,
 }
 
 #[derive(Default)]
@@ -82,6 +106,8 @@ pub struct View {
     width: f32,
     filter: String,
     find: String,
+    layout: Layout,
+    first_unread: Option<u64>,
     today: (i64, i64, i64),
     rows: Vec<Row>,
     /// Measured height and look of the lines, by number, for this width
@@ -140,20 +166,36 @@ pub fn matches(line: &ChatLine, needle: &str) -> bool {
 
 /// Messages from the same sender within this many seconds share one header.
 const GROUP_SECONDS: u64 = 300;
+/// The same in Aurora's workspace, where an author's messages group over
+/// seven minutes.
+const WORKSPACE_GROUP_SECONDS: u64 = 420;
 
 /// Works out the look of each line from the one shown before it.
 pub struct Grouping<'a> {
     prev: Option<&'a ChatLine>,
     prev_day: Option<Slt>,
     today: Slt,
+    layout: Layout,
+}
+
+/// An emote ("/me waves") is said by its sender's name: in Aurora's
+/// workspace it stands alone, with its own head.
+fn is_emote(line: &ChatLine) -> bool {
+    line.text.starts_with("/me ") || line.text.starts_with("/me'")
 }
 
 impl<'a> Grouping<'a> {
+    #[cfg(test)]
     pub fn new(today: Slt) -> Grouping<'a> {
+        Grouping::with(today, Layout::Classic)
+    }
+
+    pub fn with(today: Slt, layout: Layout) -> Grouping<'a> {
         Grouping {
             prev: None,
             prev_day: None,
             today,
+            layout,
         }
     }
 
@@ -171,21 +213,24 @@ impl<'a> Grouping<'a> {
             self.prev = None;
             return look;
         }
-        look.header = match self.prev {
-            Some(p) => {
-                p.source != line.source
-                    || (p.kind == crate::world::ChatKind::Own) != (line.kind == crate::world::ChatKind::Own)
-                    || p.origin != line.origin
-                    || p.from != line.from
-                    || line
-                        .time
-                        .duration_since(p.time)
-                        .map(|d| d.as_secs() > GROUP_SECONDS)
-                        .unwrap_or(true)
-            }
-            None => true,
+        let (gap, emotes_alone) = match self.layout {
+            Layout::Classic => (GROUP_SECONDS, false),
+            Layout::Aurora | Layout::Compact => (WORKSPACE_GROUP_SECONDS, true),
         };
-        self.prev = Some(line);
+        let emote = emotes_alone && is_emote(line);
+        look.header = emote
+            || match self.prev {
+                Some(p) => {
+                    p.source != line.source
+                        || (p.kind == crate::world::ChatKind::Own) != (line.kind == crate::world::ChatKind::Own)
+                        || p.origin != line.origin
+                        || p.from != line.from
+                        || line.time.duration_since(p.time).map(|d| d.as_secs() > gap).unwrap_or(true)
+                }
+                None => true,
+            };
+        // the line after an emote opens a group of its own too
+        self.prev = (!emote).then_some(line);
         look
     }
 }
@@ -223,8 +268,14 @@ impl View {
         let today_key = (today.year, today.month, today.day);
         // heights hold for a width and for the texts that change the looks
         // (the filter) or split the labels (the find highlight)
-        let layout_changed = self.token != s.clock.token || self.width != width || self.filter != s.filter || self.find != s.find;
-        if !layout_changed && self.revision == s.clock.revision && self.len == s.lines.len() && self.today == today_key {
+        let layout_changed =
+            self.token != s.clock.token || self.width != width || self.filter != s.filter || self.find != s.find || self.layout != s.layout;
+        if !layout_changed
+            && self.revision == s.clock.revision
+            && self.len == s.lines.len()
+            && self.today == today_key
+            && self.first_unread == s.first_unread
+        {
             return false;
         }
         if layout_changed {
@@ -242,13 +293,15 @@ impl View {
         self.width = width;
         s.filter.clone_into(&mut self.filter);
         s.find.clone_into(&mut self.find);
+        self.layout = s.layout;
+        self.first_unread = s.first_unread;
         self.today = today_key;
 
         let first = s.clock.first;
         self.rows.clear();
         self.hits.clear();
         self.unmeasured = 0;
-        let mut grouping = Grouping::new(today);
+        let mut grouping = Grouping::with(today, s.layout);
         let shown: Vec<usize> = (0..s.lines.len())
             .filter(|&i| s.filter.is_empty() || matches(&s.lines[i], s.filter))
             .collect();
@@ -256,6 +309,13 @@ impl View {
         mark_tails(&mut looks, |k| s.lines[shown[k]].kind.is_notice());
         if let Some(look) = looks.first_mut() {
             look.first = true;
+        }
+        if let Some(seq) = s.first_unread
+            && let Some(k) = shown.iter().position(|&i| first + i as u64 == seq)
+            && k > 0
+        {
+            // (above the very first line it would say nothing)
+            looks[k].new = true;
         }
         let mut y = 0.0;
         for (&i, look) in shown.iter().zip(looks) {
@@ -431,7 +491,14 @@ impl View {
         // area under its lines selects too, never moves the window
         let height = self.total.max(viewport.height());
         let (rect, content) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
-        let base = rect.top() - shift_above;
+        // Aurora's workspace keeps a short conversation against the field,
+        // as a chat does: its lines start from the bottom
+        let lift = if self.layout.workspace() {
+            (height - self.total).max(0.0)
+        } else {
+            0.0
+        };
+        let base = rect.top() + lift - shift_above;
         let (view_top, view_bottom) = (viewport.top() + shift_above, viewport.bottom() + shift_above);
         if let Some(r) = target.and_then(|t| self.rows.get(t)) {
             // at once: an animated scroll would run over the corrections of
@@ -534,6 +601,55 @@ mod tests {
         assert!(g.look(&new).header);
     }
 
+    /// Aurora's workspace groups an author's messages within seven
+    /// minutes, and an emote stands alone.
+    #[test]
+    fn the_workspace_groups_by_author_within_seven_minutes() {
+        let lines = [
+            line("Jane", "one", 0),
+            line("Jane", "six minutes later", 360),
+            line("Jane", "/me waves", 370),
+            line("Jane", "after the emote", 380),
+            line("Jane", "eight minutes later", 380 + 480),
+        ];
+        let today = Slt::of(lines[0].time);
+        let looks: Vec<bool> = {
+            let mut g = Grouping::with(today, Layout::Aurora);
+            lines.iter().map(|l| g.look(l).header).collect()
+        };
+        assert_eq!(looks, [true, false, true, true, true]);
+        // the tabs keep five minutes and emotes in their group
+        let mut g = Grouping::new(today);
+        let classic: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(classic, [true, true, false, false, true]);
+    }
+
+    /// The first line unread when the conversation opened carries "New",
+    /// unless it is the very first one.
+    #[test]
+    fn the_first_unread_line_is_marked_new() {
+        let lines: VecDeque<ChatLine> = (0..5).map(|i| line("Jane", &format!("line {i}"), i * 10)).collect();
+        let clock = LineClock::default();
+        let mut view = View::default();
+        let mut sync = |first_unread| {
+            view.sync(
+                &Source {
+                    lines: &lines,
+                    clock,
+                    filter: "",
+                    find: "",
+                    layout: Layout::Aurora,
+                    first_unread,
+                },
+                300.0,
+            );
+            view.rows.iter().map(|r| r.look.new).collect::<Vec<_>>()
+        };
+        assert_eq!(sync(Some(clock.first + 3)), [false, false, false, true, false]);
+        assert_eq!(sync(Some(clock.first)), [false; 5]);
+        assert_eq!(sync(None), [false; 5]);
+    }
+
     #[test]
     fn a_group_ends_before_a_header_a_day_or_a_system_line() {
         let day = 86_400;
@@ -568,6 +684,8 @@ mod tests {
                     clock,
                     filter,
                     find,
+                    layout: Layout::Classic,
+                    first_unread: None,
                 },
                 300.0,
             )

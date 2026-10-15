@@ -69,6 +69,9 @@ pub struct CallMember {
     pub id: Uuid,
     pub level: f32,
     pub speaking: bool,
+    /// Their voice muted by a moderator (the participant list's muted
+    /// speaker icon).
+    pub muted: bool,
 }
 
 /// The call in progress (LLVoiceChannel::sCurrentVoiceChannel when it is
@@ -146,6 +149,10 @@ const RETRIES: u8 = 3;
 /// it alive).
 pub const INVITE_LIFETIME: Duration = Duration::from_secs(30);
 
+/// How long a group's call started by someone stays offered to join once
+/// its invitation is gone: the session does not say when it ends.
+pub const LAUNCHED_KEPT: Duration = Duration::from_secs(2 * 3600);
+
 /// A voice invitation waiting for its answer: its card in the notifications
 /// and the strip of its conversation answer it alike.
 #[derive(Debug, Clone)]
@@ -186,6 +193,11 @@ pub struct Calls {
     /// Voice is enabled and working: invitations are shown only then
     /// (LLViewerChatterBoxInvitation::post).
     pub voice_enabled: bool,
+    /// Calls of a group or a conference someone started, by conversation:
+    /// who invited us and when. After their invitation is gone (ignored,
+    /// expired) the conversation offers to join them, as Firestorm's IM
+    /// window keeps its call button for the session's voice channel.
+    pub launched: std::collections::HashMap<Uuid, (Uuid, Instant)>,
     /// The region's VoiceServerType, sent with the requests.
     pub server_type: String,
     /// VoiceCallsRejectGroup / AdHoc / P2P, given by the app.
@@ -321,6 +333,20 @@ impl World {
     /// The call of a conversation, if it is the one in progress.
     pub fn call_of(&self, conversation: &Uuid) -> Option<&Call> {
         self.calls.active.as_ref().filter(|c| c.conversation() == *conversation)
+    }
+
+    /// A call started by someone in a group or conference conversation,
+    /// which we are not in and no longer asked to join: who started it
+    /// and when (forgotten after `LAUNCHED_KEPT`).
+    pub fn call_launched(&self, conversation: &Uuid) -> Option<(Uuid, Instant)> {
+        if self.call_of(conversation).is_some() || self.calls.invite_for(conversation).is_some() {
+            return None;
+        }
+        self.calls
+            .launched
+            .get(conversation)
+            .copied()
+            .filter(|(_, since)| since.elapsed() < LAUNCHED_KEPT)
     }
 
     /// Start a call with a resident or a group, or in an ad-hoc conference
@@ -603,6 +629,7 @@ impl World {
         if self.call_of(conversation).is_some() {
             self.end_call();
         }
+        self.calls.launched.remove(conversation);
     }
 
     /// Ends the call because of `text`, echoed to its conversation.
@@ -857,6 +884,9 @@ impl World {
                 invite: Box::new(inv.clone()),
             },
         );
+        if !inv.p2p {
+            self.calls.launched.insert(inv.session, (inv.from, Instant::now()));
+        }
         self.calls.invites.push(PendingInvite {
             invite: inv,
             notification,
@@ -918,6 +948,7 @@ impl World {
             .into_iter()
             .partition(|p| p.invite.session == session);
         self.calls.invites = kept;
+        self.calls.launched.remove(&session);
         for p in gone {
             self.notifications.list.retain(|n| n.id != p.notification);
         }
@@ -1065,11 +1096,13 @@ mod tests {
             id: w.agent_id,
             level: 0.0,
             speaking: false,
+            muted: false,
         };
         let them = CallMember {
             id: other,
             level: 0.3,
             speaking: true,
+            muted: false,
         };
         w.call_voice_update(ChannelStatus::Connected, vec![me]);
         assert_eq!(w.calls.active.as_ref().map(|c| c.state), Some(CallState::Ringing));

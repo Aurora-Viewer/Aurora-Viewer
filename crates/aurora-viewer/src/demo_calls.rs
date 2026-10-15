@@ -39,6 +39,17 @@ pub enum Mode {
 }
 
 pub fn mode() -> Option<Mode> {
+    // the calls of AURORA_DEMO_CONV=aurora:call…
+    if let Some(call) = super::aurora_scenario().and_then(|s| s.call) {
+        use super::AuroraCall;
+        return Some(match call {
+            AuroraCall::Incoming => Mode::Incoming,
+            AuroraCall::InCall | AuroraCall::Mini => Mode::Group,
+            AuroraCall::Ongoing | AuroraCall::IncomingGroup => Mode::IncomingGroup,
+            AuroraCall::P2p => Mode::P2p,
+            AuroraCall::Conference => Mode::Conference,
+        });
+    }
     match std::env::var("AURORA_DEMO_CALL").ok()?.as_str() {
         "p2p" => Some(Mode::P2p),
         "hangup" => Some(Mode::Hangup),
@@ -251,6 +262,7 @@ impl CallDemo {
             id: world.agent_id,
             level: if transmit { 0.4 } else { 0.0 },
             speaking: transmit,
+            muted: false,
         };
         if t < CONNECT {
             return Some((ChannelStatus::Connecting, vec![me]));
@@ -262,6 +274,8 @@ impl CallDemo {
             id,
             level: if talking(i, n) { 0.5 } else { 0.0 },
             speaking: talking(i, n),
+            // Tess muted by the group's moderator: her badge on the stage
+            muted: id == DEMO_TESS,
         };
         let mut members = vec![me];
         if call.p2p() {

@@ -50,10 +50,11 @@ pub(super) fn day_label(day: (i64, i64, i64), today: &Slt, yesterday: &Slt) -> D
     }
 }
 
-fn day_marker(ui: &mut egui::Ui, p: &Palette, day: (i64, i64, i64)) {
+/// What the day between two days says: today, yesterday or the date.
+pub(super) fn day_text(day: (i64, i64, i64)) -> String {
     let now = std::time::SystemTime::now();
     let yesterday = Slt::of(now - std::time::Duration::from_secs(86_400));
-    let text = match day_label(day, &Slt::of(now), &yesterday) {
+    match day_label(day, &Slt::of(now), &yesterday) {
         DayLabel::Today => aurora_i18n::tr!("ui-chat-today").to_owned(),
         DayLabel::Yesterday => aurora_i18n::tr!("ui-chat-yesterday").to_owned(),
         DayLabel::Date(year, month, day) => {
@@ -65,7 +66,11 @@ fn day_marker(ui: &mut egui::Ui, p: &Palette, day: (i64, i64, i64)) {
                 year = year.to_string()
             )
         }
-    };
+    }
+}
+
+fn day_marker(ui: &mut egui::Ui, p: &Palette, day: (i64, i64, i64)) {
+    let text = day_text(day);
     ui.add_space(6.0);
     ui.vertical_centered(|ui| {
         ui.label(RichText::new(text).size(11.0).color(p.muted_dim));
@@ -479,6 +484,7 @@ mod tests {
         header: true,
         tail: true,
         first: false,
+        new: false,
     };
 
     /// The sender's name sits just above its bubble, close enough to read as

@@ -157,6 +157,9 @@ pub struct Floater<'a> {
     /// instead of the bar alone, at this width: the body is still drawn and
     /// asks `floater_minimized` what to show.
     pub compact_minimized: Option<f32>,
+    /// The body reaches the window's edges under its title bar (the
+    /// Conversations workspace: its column and panes are the window).
+    pub flush_body: bool,
     cascade: Option<CascadeGroup>,
 }
 
@@ -178,6 +181,7 @@ impl<'a> Floater<'a> {
             compact_header: false,
             attention: false,
             compact_minimized: None,
+            flush_body: false,
             cascade: None,
         }
     }
@@ -241,6 +245,12 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// The body edge to edge under the title bar (see `flush_body`).
+    pub fn flush_body(mut self) -> Self {
+        self.flush_body = true;
+        self
+    }
+
     /// Mark the minimized bar while `waiting` (unread messages inside).
     pub fn attention(mut self, waiting: bool) -> Self {
         self.attention = waiting;
@@ -285,6 +295,13 @@ impl<'a> Floater<'a> {
             .shadow(ctx.global_style().visuals.window_shadow)
             .inner_margin(if self.framed_header.is_some() {
                 egui::Margin::ZERO
+            } else if self.flush_body {
+                egui::Margin {
+                    left: 0,
+                    right: 0,
+                    top: if minimized && !compact { 4 } else { 5 },
+                    bottom: if minimized && !compact { 4 } else { 0 },
+                }
             } else {
                 egui::Margin {
                     left: 10,
@@ -471,7 +488,14 @@ impl<'a> Floater<'a> {
                     });
                 })
             };
-            let header = if framed_header.is_some() {
+            let flush = self.flush_body;
+            let header = if flush {
+                // the title keeps the margins the body gives up
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(10, 0))
+                    .show(ui, &mut header_content)
+                    .response
+            } else if framed_header.is_some() {
                 egui::Frame::new()
                     .fill(p.bar)
                     .inner_margin(egui::Margin {
@@ -503,7 +527,9 @@ impl<'a> Floater<'a> {
                 ui.add_space(5.0);
                 out = Some(body(ui));
             } else if !minimized {
-                if framed_header.is_none() {
+                if flush {
+                    ui.add_space(5.0);
+                } else if framed_header.is_none() {
                     if self.compact_header {
                         ui.painter()
                             .hline(header.rect.x_range(), header.rect.bottom() + 2.0, divider_stroke(p));
@@ -1267,7 +1293,8 @@ pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: 
         if let Some(face) = face {
             ui.painter().rect_filled(rect, inner_radius(ui.visuals()), face);
         }
-        ui.painter().galley(rect.center() - galley.size() / 2.0, galley, text);
+        let at = letters_in_middle(&galley, rect);
+        ui.painter().galley(at, galley, text);
         resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, sel, *label));
         if resp.clicked() && !sel {
             *selected = i;
@@ -1275,6 +1302,22 @@ pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: 
         }
     }
     changed
+}
+
+/// Where to paint a one-line galley so that its letters, from the baseline
+/// up to the capitals, sit in the middle of `rect` — not its whole line box,
+/// whose room for the descenders leaves a word without any ("Chuchoter",
+/// "Dire") visibly high in a short segment.
+fn letters_in_middle(galley: &egui::Galley, rect: egui::Rect) -> egui::Pos2 {
+    let left = rect.center().x - galley.size().x / 2.0;
+    let Some((row, glyph)) = galley.rows.first().and_then(|r| r.row.glyphs.first().map(|g| (r, g))) else {
+        return egui::pos2(left, rect.center().y - galley.size().y / 2.0);
+    };
+    let baseline = row.pos.y + glyph.pos.y;
+    // the capitals of the interface fonts reach about three quarters of
+    // the ascent
+    let middle = baseline - 0.75 * glyph.font_ascent / 2.0;
+    egui::pos2(left, (rect.center().y - middle).round())
 }
 
 /// Column header row for list views.

@@ -425,6 +425,8 @@ impl HistoryUi {
                     clock,
                     filter: "",
                     find: &needle,
+                    layout: super::view::Layout::Classic,
+                    first_unread: None,
                 },
                 width,
             );
