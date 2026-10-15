@@ -315,6 +315,7 @@ impl Inventory {
     }
 
     pub fn failed(&mut self, folders: &[Uuid]) {
+        self.generation += 1;
         for id in folders {
             if let Some(f) = self.folders.get_mut(id) {
                 f.state = FetchState::Failed;

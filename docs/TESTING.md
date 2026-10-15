@@ -1439,6 +1439,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
+| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact texture/material library with synthetic source folders and PBR resources. |
 
 `AURORA_DEMO_TOOLBAR`: `1` opens the "Toolbar buttons" window at frame 300;
 `drag` holds Friends over the toolbar with an insertion marker (the empty
@@ -1453,6 +1454,24 @@ dragged from it between the mini-map and Sit), `side` (the same toolbars
 without the window; `sidemenu`: Radar's right click at frame 650, the
 vertical toolbar's menu), `right` (them in the right toolbar), `labels` (the
 dock in icons and labels, the left toolbar in labels). Capture at frame 780.
+
+`AURORA_DEMO_TEXTURE_LIBRARY`: `vertical` and `horizontal` open the corresponding
+presentation at frame 600; `sources` also opens the source-folder modal, `search`
+filters stone PBR materials and `empty` leaves the library folder empty while
+keeping candidate source folders. `drop` performs a real card drag onto the
+modifiable demo surface at (480, 430), for a 1280 × 800 window. Library scenarios
+make demo objects modifiable so manual surface drops can also be exercised.
+`baseline` keeps the library closed in the same scene for a profiling comparison.
+Capture after frame 780 to allow previews to
+load. All inventory/assets are synthetic; no grid or credentials are used.
+Check the header's presentation switch, Ctrl+Space and bottom toolbar button,
+folder/type/search filters, double-click preview and source selection. Unchecking
+a source moves only its folder link to Trash. Put another folder or link inside
+`#Aurora/Textures Library` through the inventory to check automatic refresh.
+On a modifiable demo object, drag to one face or Shift-drag to all faces;
+Ctrl-drag inserts into contents. Alt-drag a texture onto a PBR face restores
+legacy texturing. Grid validation by the human must cover real asset fetches,
+ModifyMaterialParams/ObjectImage acknowledgement and no-copy/no-transfer rights.
 
 The values of these switches are English words. The French words they had
 before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.

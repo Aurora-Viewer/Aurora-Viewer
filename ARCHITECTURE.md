@@ -95,6 +95,18 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
+shared folder/search/type state, source-folder modal and resource preview.
+`ui/texture_library/catalogue.rs` caches the `#Aurora/Textures Library` subtree
+by inventory generation, resolves folder/item links and excludes the bridge's
+sibling data. `previews.rs` assembles bounded, revisioned PBR models on workers
+and draws them with the importer's shared GPU preview. `app/texture_library.rs`
+routes inventory mutations and permission-aware world face drops through the
+existing build and task-inventory operations. `Settings::texture_library`
+persists presentation, favorites and recent resources. Ctrl+Space and the
+customizable toolbar command toggle the current floater. `demo_texture_library.rs`
+provides synthetic inventory links, tileable textures and PBR materials offline.
+
 `ui/toolbar.rs` owns Firestorm's three toolbars (the bottom one, left and
 right), their context menus and drag/drop edits; a command stands in one of
 them at most. `toolbar/catalogue.rs` lists Firestorm's toybox commands and

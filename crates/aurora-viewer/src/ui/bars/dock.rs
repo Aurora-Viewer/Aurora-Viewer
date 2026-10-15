@@ -211,11 +211,11 @@ pub fn bottom(
         // a button dropped a little past either end still lands in the dock;
         // the marker spans the buttons' row less 2 px at each end, the
         // mockup's 28 px `.dropguide`
-        let drop = ui.interact(
-            inner.expand2(Vec2::new(geo.button + PAD, 0.0)),
-            Id::new("dock_drop"),
-            Sense::hover(),
-        );
+        let mut drop_rect = inner.expand2(Vec2::new(geo.button + PAD, 0.0));
+        // A wider toolbar must not cover the chat's resize handle with a
+        // hover-only drop target on the dock's higher layer.
+        drop_rect.min.x = drop_rect.min.x.max(geo.chat.right() + AFTER_CHAT);
+        let drop = ui.interact(drop_rect, Id::new("dock_drop"), Sense::hover());
         toolbar.drop_bar(&drop, row.bar, &rects, p, row.locked);
     });
     (out, action, screen.bottom() - geo.reserved(), committed)
@@ -661,8 +661,14 @@ mod tests {
     #[test]
     fn the_chat_island_width_follows_its_handle() {
         let mut bench = Bench::shown();
-        let g = geometry(screen(1536.0), 0.0, 18, true);
+        let buttons = crate::ui::skin::Layout::default().toolbar.len();
+        let g = geometry(screen(1536.0), 0.0, buttons, true);
         let from = Pos2::new(g.chat.right() - 1.0, g.chat.center().y);
+        let target = bench.ctx.read_response(Id::new("dock_drop")).expect("the toolbar drop target");
+        assert!(
+            !target.rect.contains(from),
+            "the toolbar target must leave the chat handle interactive"
+        );
         let to = from + Vec2::new(60.0, 0.0);
         let button = |pos, pressed| egui::Event::PointerButton {
             pos,
@@ -677,7 +683,7 @@ mod tests {
         assert!(set, "saved on release");
         // egui counts the drag from its threshold on: 30 to 60 px wider
         assert!((410.0..=441.0).contains(&bench.width), "{}", bench.width);
-        let g = geometry(screen(1536.0), bench.width, 18, true);
+        let g = geometry(screen(1536.0), bench.width, buttons, true);
         assert!(g.dock.left() >= g.chat.right() + AFTER_CHAT);
     }
     /// The default dock leaves the Conversations button to the chat

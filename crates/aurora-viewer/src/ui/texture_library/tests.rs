@@ -1,0 +1,285 @@
+use super::*;
+use crate::world::inventory::Folder;
+use aurora_net::inventory::{InvFolder, InvItem};
+
+fn folder(inv: &mut Inventory, id: u128, parent: Uuid, kind: i32, name: &str) -> Uuid {
+    let id = Uuid::from_u128(id);
+    inv.folders.insert(
+        id,
+        Folder {
+            info: InvFolder {
+                id,
+                parent,
+                type_default: kind,
+                name: name.into(),
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    if let Some(parent) = inv.folders.get_mut(&parent) {
+        parent.children.push(id);
+    }
+    id
+}
+fn inventory() -> (Inventory, Uuid, Uuid) {
+    let mut inv = Inventory::default();
+    let root = folder(&mut inv, 1, Uuid::nil(), 8, "Inventory");
+    inv.root = root;
+    folder(&mut inv, 2, root, 14, "Trash");
+    let aurora = folder(&mut inv, 3, root, -1, catalogue::AURORA);
+    let library = folder(&mut inv, 4, aurora, -1, catalogue::LIBRARY);
+    let source = folder(&mut inv, 5, root, -1, "Stone");
+    (inv, library, source)
+}
+#[test]
+fn texture_library_folder_selection_creates_links_without_moving_sources() {
+    let (inv, library, source) = inventory();
+    let change = sources_change(&inv, library, &HashSet::from([source]), &HashSet::new()).expect("source link");
+    assert_eq!(change.operations.len(), 1);
+    let Operation::Links { parent, links } = &change.operations[0] else {
+        panic!("folder link")
+    };
+    assert_eq!(*parent, library);
+    assert_eq!(links[0].target, source);
+    assert!(links[0].folder);
+}
+#[test]
+fn texture_library_unchecking_only_moves_the_link_to_trash() {
+    let (mut inv, library, source) = inventory();
+    let link = Uuid::from_u128(6);
+    inv.add_items(vec![InvItem {
+        id: link,
+        parent: library,
+        asset_id: source,
+        asset_type: 25,
+        name: "Stone".into(),
+        ..Default::default()
+    }]);
+    let change = sources_change(&inv, library, &HashSet::new(), &HashSet::new()).expect("remove link");
+    assert_eq!(change.operations.len(), 1);
+    assert!(matches!(&change.operations[0],Operation::Patch {id,folder:false,..} if *id==link));
+    assert!(inv.folders.contains_key(&source));
+}
+#[test]
+fn texture_library_unchanged_sources_do_not_duplicate_links() {
+    let (mut inv, library, source) = inventory();
+    inv.add_items(vec![InvItem {
+        id: Uuid::from_u128(6),
+        parent: library,
+        asset_id: source,
+        asset_type: 25,
+        name: "Stone".into(),
+        ..Default::default()
+    }]);
+    let change = sources_change(&inv, library, &HashSet::from([source]), &HashSet::new()).expect("same link");
+    assert!(change.operations.is_empty());
+}
+#[test]
+fn texture_library_root_creation_reuses_aurora_and_does_not_repeat() {
+    let (mut inv, library, _) = inventory();
+    inv.remove(&[library]);
+    let mut ui = LibraryUi::default();
+    let mut actions = Vec::new();
+    ui.prepare_root(&mut inv, &mut actions);
+    assert_eq!(actions.len(), 1);
+    let Action::Change(change) = &actions[0] else { panic!("creation") };
+    assert_eq!(change.operations.len(), 1);
+    assert!(matches!(&change.operations[0],Operation::Folder {parent,name,..} if *parent==Uuid::from_u128(3)&&name==catalogue::LIBRARY));
+    ui.prepare_root(&mut inv, &mut actions);
+    assert_eq!(actions.len(), 1);
+}
+#[test]
+fn texture_library_presentation_changes_preserve_search_and_selection() {
+    let ui = LibraryUi {
+        search: "marble".into(),
+        folder: Some(Uuid::from_u128(5)),
+        kind: Kind::Material,
+        selected: Some(Uuid::from_u128(6)),
+        ..Default::default()
+    };
+    let mut preferences = Preferences::default();
+    preferences.presentation.flip();
+    assert_eq!(preferences.presentation, Presentation::Horizontal);
+    assert_eq!(ui.search, "marble");
+    assert_eq!(ui.folder, Some(Uuid::from_u128(5)));
+    assert!(ui.kind == Kind::Material);
+    assert_eq!(ui.selected, Some(Uuid::from_u128(6)));
+    let encoded = serde_json::to_string(&preferences).expect("preferences");
+    let restored: Preferences = serde_json::from_str(&encoded).expect("restore");
+    assert_eq!(restored.presentation, Presentation::Horizontal);
+}
+#[test]
+fn texture_library_recent_resources_are_bounded_and_deduplicated() {
+    let mut preferences = Preferences::default();
+    for id in 1..=50 {
+        preferences.record(Uuid::from_u128(id));
+    }
+    preferences.record(Uuid::from_u128(49));
+    assert_eq!(preferences.recent.len(), 32);
+    assert_eq!(preferences.recent[0], Uuid::from_u128(49));
+    assert_eq!(preferences.recent.iter().filter(|id| **id == Uuid::from_u128(49)).count(), 1);
+}
+#[test]
+fn texture_library_shortcut_is_ctrl_space_and_rebindable() {
+    use crate::keybinds::{Action, Input, KeyBindings, Mods};
+    let mut bindings = KeyBindings::default();
+    let space = Input::key(winit::keyboard::KeyCode::Space);
+    let modifiers = Mods {
+        ctrl: true,
+        ..Default::default()
+    };
+    assert_eq!(bindings.triggered(&space, modifiers), Some(Action::TextureLibrary));
+    assert_eq!(bindings.triggered(&space, Mods::default()), None);
+    bindings.set(Action::TextureLibrary, 0, None);
+    assert_eq!(bindings.triggered(&space, modifiers), None);
+}
+
+#[test]
+fn texture_library_source_candidates_exclude_bridge_trash_and_library_ancestors() {
+    let (mut inv, library, source) = inventory();
+    folder(&mut inv, 10, Uuid::from_u128(3), -1, "Bridge data");
+    folder(&mut inv, 11, Uuid::from_u128(2), -1, "Deleted source");
+    let nested = folder(&mut inv, 12, source, -1, "Nested");
+    let candidates = source_folders(&inv, library);
+    assert_eq!(
+        candidates.iter().map(|f| f.0).collect::<HashSet<_>>(),
+        HashSet::from([source, nested])
+    );
+    assert!(candidates.iter().any(|f| f.1 == "Stone / Nested"));
+}
+
+#[test]
+fn texture_library_header_switch_and_toolbar_restore_keep_the_active_state() {
+    use std::sync::Arc;
+    let (mut inv, library, source) = inventory();
+    inv.add_items(vec![InvItem {
+        id: Uuid::from_u128(71),
+        parent: library,
+        asset_type: 25,
+        asset_id: source,
+        name: "Stone".into(),
+        ..Default::default()
+    }]);
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut world = World::new(avatars.clone());
+    world.agent_id = Uuid::from_u128(70);
+    world.inventory = inv;
+    let mut scene = Scene::new(std::env::temp_dir(), avatars);
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut ui = LibraryUi {
+        agent: world.agent_id,
+        search: "Stone".into(),
+        folder: Some(Uuid::from_u128(71)),
+        kind: Kind::Material,
+        ..Default::default()
+    };
+    let mut prefs = Preferences::default();
+    let mut open = true;
+    let mut frame = 0;
+    let mut show = |events: Vec<egui::Event>, ui: &mut LibraryUi, prefs: &mut Preferences, open: &mut bool| {
+        frame += 1;
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                time: Some(frame as f64 / 60.0),
+                events,
+                ..Default::default()
+            },
+            |host| {
+                ui.show(
+                    host.ctx(),
+                    &p,
+                    &mut world,
+                    &mut scene,
+                    &HashMap::new(),
+                    prefs,
+                    open,
+                    &HashSet::new(),
+                );
+            },
+        );
+    };
+    for _ in 0..8 {
+        show(vec![], &mut ui, &mut prefs, &mut open);
+    }
+    let rect = ctx.memory(|m| m.area_rect(egui::Id::new(VERTICAL))).expect("vertical window");
+    let switch = egui::pos2(rect.right() - 63.0, rect.top() + 18.0);
+    for pressed in [true, false] {
+        show(
+            vec![
+                egui::Event::PointerMoved(switch),
+                egui::Event::PointerButton {
+                    pos: switch,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ],
+            &mut ui,
+            &mut prefs,
+            &mut open,
+        );
+    }
+    assert_eq!(
+        prefs.presentation,
+        Presentation::Horizontal,
+        "the native title action must switch the view"
+    );
+    for _ in 0..8 {
+        show(vec![], &mut ui, &mut prefs, &mut open);
+    }
+    assert_eq!(ui.search, "Stone");
+    assert_eq!(ui.kind, Kind::Material);
+    assert_eq!(ui.folder, Some(Uuid::from_u128(71)));
+    let rect = ctx.memory(|m| m.area_rect(egui::Id::new(HORIZONTAL))).expect("horizontal window");
+    let minimize = egui::pos2(rect.right() - 41.0, rect.top() + 18.0);
+    for pressed in [true, false] {
+        show(
+            vec![
+                egui::Event::PointerMoved(minimize),
+                egui::Event::PointerButton {
+                    pos: minimize,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ],
+            &mut ui,
+            &mut prefs,
+            &mut open,
+        );
+    }
+    assert!(widgets::floater_minimized(&ctx, HORIZONTAL));
+    let mut panels = super::super::Panels::from_settings(&crate::settings::Settings::default());
+    panels.texture_library = open;
+    panels.texture_library_presentation = prefs.presentation;
+    super::super::bars::run_command(&ctx, "texture_library", &mut panels);
+    assert!(panels.texture_library);
+    open = panels.texture_library;
+    show(vec![], &mut ui, &mut prefs, &mut open);
+    assert!(!widgets::floater_minimized(&ctx, HORIZONTAL));
+    assert_eq!(ui.search, "Stone");
+}
+
+#[test]
+fn texture_library_failed_fetch_refreshes_the_catalogue_and_waits_for_explicit_retry() {
+    let (mut inv, library, _) = inventory();
+    inv.folders.get_mut(&library).unwrap().state = FetchState::Unknown;
+    let mut catalogue = Catalogue::default();
+    catalogue.prepare(&mut inv);
+    assert!(catalogue.loading);
+    assert_eq!(inv.queue.len(), 1);
+    inv.failed(&[library]);
+    catalogue.prepare(&mut inv);
+    assert!(!catalogue.loading);
+    assert_eq!(catalogue.failed, vec![library]);
+    catalogue.prepare(&mut inv);
+    assert_eq!(inv.queue.len(), 1, "failed folders must not flood retries");
+    inv.request(library);
+    assert_eq!(inv.queue.len(), 2, "the retry can enqueue a failed folder");
+}

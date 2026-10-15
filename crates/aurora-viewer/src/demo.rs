@@ -12,6 +12,9 @@ use glam::{Quat, Vec3};
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[path = "demo_texture_library.rs"]
+pub mod texture_library;
+
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
 /// The local asset server of its `net=` option.
@@ -5090,6 +5093,9 @@ fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
 
 /// Pixels of a procedural demo texture (RGBA8, 64×64; the hair demo's 256×256).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    if let Some(pixels) = texture_library::texture(id) {
+        return Some(pixels);
+    }
     let alpha = match *id {
         TEX_PICK_ZERO => Some(0),
         TEX_PICK_FAINT => Some(1),

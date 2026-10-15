@@ -289,6 +289,9 @@ pub(super) fn window_icon(id: &str) -> &'static str {
     if id.starts_with("bug_report") {
         return "bug-filled";
     }
+    if id.starts_with("texture_library") {
+        return "stack-2-filled";
+    }
     if id.contains("texture") || id.contains("thumbnail") {
         return "photo-filled";
     }

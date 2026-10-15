@@ -116,6 +116,67 @@ pub fn convert_to_pbr(scale: [f32; 2], offset: [f32; 2], rotation: f32) -> Textu
 }
 
 impl BuildTool {
+    /// Apply inventory cargo to explicitly picked faces, leaving selection and
+    /// other texture-entry properties unchanged. A texture on PBR replaces its
+    /// base map; Alt restores the legacy face, as dropTextureOneFace does.
+    pub fn apply_inventory_surface(
+        &mut self,
+        world: &mut World,
+        env: &mut Env,
+        idx: usize,
+        faces: &[u8],
+        asset: Uuid,
+        material: bool,
+        remove_pbr: bool,
+    ) {
+        if !self.can_modify(world, idx) {
+            return;
+        }
+        let count = self.num_faces(world, idx);
+        let selected: Vec<Sel> = faces
+            .iter()
+            .filter(|face| (**face as usize) < count)
+            .filter_map(|face| {
+                let te = *world.objects.get(idx)?.te.as_ref()?.faces.get(*face as usize)?;
+                Some(Sel { idx, face: *face, te })
+            })
+            .collect();
+        if material {
+            self.apply_texture(world, env, PickTarget::PbrMaterial, asset, &selected);
+            return;
+        }
+        let mut legacy = Vec::new();
+        let mut updates = Vec::new();
+        for face in selected {
+            if BuildTool::gltf_asset(world, idx, face.face).is_some() {
+                if remove_pbr {
+                    updates.push(GltfUpdate {
+                        object: idx,
+                        face: face.face,
+                        asset: Some(Uuid::nil()),
+                        over: None,
+                    });
+                    legacy.push(face);
+                } else {
+                    let mut over = BuildTool::gltf_override(world, idx, face.face);
+                    over.textures[0] = asset;
+                    updates.push(GltfUpdate {
+                        object: idx,
+                        face: face.face,
+                        asset: None,
+                        over: Some(over),
+                    });
+                }
+            } else {
+                legacy.push(face);
+            }
+        }
+        if !updates.is_empty() {
+            self.gltf_update(world, updates);
+        }
+        self.apply_texture(world, env, PickTarget::Diffuse, asset, &legacy);
+    }
+
     /// Blinn-Phong material of a face as the panel sees it: the one just
     /// sent (until the simulator's new material id arrives), else the
     /// region's, else none.
