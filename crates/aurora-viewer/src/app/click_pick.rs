@@ -27,10 +27,11 @@
 //! camera. Nothing is lost or reordered; the cursor position itself is
 //! never held.
 //!
-//! With the depth, a click that is not a camera gesture asks what the next
-//! frame draws under its pixel (`Renderer::request_drawn`): the object of a
-//! rigged mesh, which only the GPU poses, is designated from that answer
-//! (scene/drawn.rs). It comes a frame after the depth.
+//! With the depth, a click asks what the next frame draws under its pixel
+//! (`Renderer::request_drawn`): the object of a rigged mesh, which only the
+//! GPU poses, is designated from that answer (scene/drawn.rs). Camera picks
+//! reject transparent texture holes; interactions retain invisible Blend
+//! surfaces. The answer comes a frame after the depth.
 //!
 //! `AURORA_CLICK_PICK=wait` reads the depth as before, waiting;
 //! `AURORA_CLICK_PICK=check` does both and logs every click (`click
@@ -40,6 +41,7 @@
 
 use super::*;
 use std::collections::VecDeque;
+use uuid::Uuid;
 
 /// A click that needs the depth under the cursor: what to run again when
 /// the answer is there.
@@ -96,8 +98,23 @@ pub(super) struct Picked {
     pub depth: Option<Vec3>,
     /// The faces drawn under the pixel, in the frame after the click:
     /// whose surface it is when the GPU alone poses it (scene/drawn.rs).
-    /// Nothing for the camera clicks, which only aim at the surface.
+    /// Camera clicks use the visible-surface mode of that same pass.
     pub drawn: aurora_render::Drawn,
+    /// A displayed name tag captured at the original press, before waiting
+    /// for the depth. Camera/avatar motion cannot move its hit rectangle.
+    pub tag: Option<(Uuid, Vec3)>,
+}
+
+impl Picked {
+    pub(super) fn visible_point(&self) -> Option<Vec3> {
+        match self.drawn.blend.or(self.drawn.opaque) {
+            Some(face) => Some(face.point),
+            // The old diagnostic read has no drawn-face pass. Otherwise an
+            // empty answer means sky, not an older depth's phantom surface.
+            None if pick_mode() == PickMode::Wait => self.depth,
+            None => None,
+        }
+    }
 }
 
 /// A click whose depth is asked.
@@ -113,6 +130,7 @@ struct Pending {
     /// Alt, Ctrl, Shift.
     mods: [bool; 3],
     ray: Option<(Vec3, Vec3)>,
+    tags: Vec<(Uuid, Vec3)>,
     asked: Instant,
     frame: u64,
     /// AURORA_CLICK_PICK=check: the waiting read made at the click.
@@ -288,6 +306,7 @@ impl App {
                 ray,
                 depth,
                 drawn: Default::default(),
+                tag: super::plate_click::visible_tag(&self.name_tag_candidates(ray), depth, ray),
             });
         };
         let check = (mode == PickMode::Check).then(|| {
@@ -296,9 +315,16 @@ impl App {
             (depth, t.elapsed())
         });
         let ticket = g.renderer.request_pick(x, y);
-        // camera clicks aim at the surface: they need not know whose it is
-        let camera = self.alt || (self.build.open && self.build.tool == crate::build::Tool::Focus);
-        let drawn = (!camera).then(|| g.renderer.request_drawn(x, y));
+        // LLToolCamera::handleMouseDown: visible surfaces only. Reading the
+        // posed geometry also avoids phantom hits on an attachment's bind pose.
+        let camera = self.alt || self.object_view || (self.build.open && self.build.tool == crate::build::Tool::Focus);
+        let mode = if camera {
+            aurora_render::DrawnMode::Visible
+        } else {
+            aurora_render::DrawnMode::Interaction
+        };
+        let drawn = Some(g.renderer.request_drawn(x, y, mode));
+        let tags = self.name_tag_candidates(ray);
         let check = check.map(|(depth, waited)| Check {
             depth,
             target: self.click_target(click, ray, depth),
@@ -313,6 +339,7 @@ impl App {
             cursor: (x, y),
             mods: [self.alt, self.ctrl, self.shift],
             ray,
+            tags,
             asked: Instant::now(),
             frame: self.frame_count,
             check,
@@ -368,7 +395,13 @@ impl App {
                     Some(c) => self.log_click_check(&p, c, depth, frames, ms),
                     None => self.note_pick(format_args!("answered after {frames} frames, {ms:.2} ms")),
                 }
-                self.clicks.in_hand = Some(Picked { ray: p.ray, depth, drawn });
+                let tag = super::plate_click::visible_tag(&p.tags, depth, p.ray);
+                self.clicks.in_hand = Some(Picked {
+                    ray: p.ray,
+                    depth,
+                    drawn,
+                    tag,
+                });
                 if p.click != Click::Press || !self.camera.mouselook() {
                     self.run_click(p.click);
                 }
@@ -404,10 +437,18 @@ impl App {
         picked: &Picked,
         found: Option<Vec3>,
     ) -> Option<crate::scene::drawn::DrawnObject> {
-        let shown = self
-            .scene
-            .designated(&self.world, gesture, &picked.drawn, picked.ray, found, self.build.open);
-        if self.clicks.scripted() || self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+        let shown = self.scene.designated(
+            &self.world,
+            gesture,
+            &picked.drawn,
+            picked.ray,
+            found,
+            picked.depth,
+            self.build.open,
+        );
+        if self.clicks.scripted()
+            || self.demo && (std::env::var_os("AURORA_DEMO_ACTIONS").is_some() || std::env::var_os("AURORA_DEMO_WORLD_CLICKS").is_some())
+        {
             // AURORA_DEMO_CLICKS: what the click designates, against two
             // things the CPU knows by itself: the object the click was
             // aimed at (`rigged`), and the posed bounds of the object

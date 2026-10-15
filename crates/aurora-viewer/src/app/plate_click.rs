@@ -45,6 +45,15 @@ pub(super) fn plate_at(tags: &[ui::hud::NameTag], pointer: egui::Pos2) -> Option
     tags.iter().rev().find(|t| t.rect.contains(pointer)).map(|t| t.id)
 }
 
+/// Candidates captured at the press, frontmost first. Compare with the
+/// displayed opaque depth, just as labels.wgsl does; invisible touch panels
+/// and Blend faces do not hide a displayed plate (#420).
+pub(super) fn visible_tag(tags: &[(Uuid, Vec3)], depth: Option<Vec3>, ray: Option<(Vec3, Vec3)>) -> Option<(Uuid, Vec3)> {
+    let (origin, direction) = ray?;
+    let limit = depth.map_or(f32::INFINITY, |p| (p - origin).dot(direction) + 0.05);
+    tags.iter().copied().find(|(_, p)| (*p - origin).dot(direction) <= limit)
+}
+
 /// Whether a plate click acts, and so shows the hand: an action chosen, on
 /// someone else's plate.
 pub(super) fn plate_click_acts(action: PlateClick, plate: Option<Uuid>, me: Uuid) -> bool {
@@ -63,6 +72,18 @@ pub(super) fn plate_ctx_action(action: PlateClick, id: Uuid) -> Option<CtxAction
 }
 
 impl App {
+    pub(super) fn name_tag_candidates(&self, ray: Option<(Vec3, Vec3)>) -> Vec<(Uuid, Vec3)> {
+        let Some(ray) = ray else { return Vec::new() };
+        let ppp = self.egui_ctx.pixels_per_point().max(0.1);
+        let pointer = egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp);
+        self.name_tags
+            .iter()
+            .rev()
+            .filter(|t| t.rect.contains(pointer))
+            .filter_map(|t| Some((t.id, t.point(ray)?)))
+            .collect()
+    }
+
     /// The action of a click on a plate: the setting, or the demo's.
     pub(super) fn plate_click_action(&self) -> PlateClick {
         match demo_action() {
@@ -117,7 +138,7 @@ impl App {
     /// A left press on the world: on another avatar's plate with an action
     /// chosen, the action runs and the world does not get the click. Alt,
     /// Ctrl and Shift keep their meaning (camera, grab).
-    pub(super) fn plate_press(&mut self, hit: Option<Vec3>, ray: Option<(Vec3, Vec3)>) -> bool {
+    pub(super) fn plate_press(&mut self, tag: Option<(Uuid, Vec3)>) -> bool {
         if self.alt || self.object_view || self.ctrl || self.shift || self.classic_name_tags() {
             return false;
         }
@@ -125,10 +146,10 @@ impl App {
         if action == PlateClick::Nothing {
             return false;
         }
-        let Some((idx, _)) = self.pick_name_tag(hit, ray) else {
+        let Some((id, _)) = tag else {
             return false;
         };
-        let Some(id) = self.world.objects.get(idx).map(|o| o.full_id) else {
+        let Some(idx) = self.world.objects.index_of_uuid(&id) else {
             return false;
         };
         if !plate_click_acts(action, Some(id), self.world.agent_id) {
@@ -142,6 +163,9 @@ impl App {
         let Some(id) = self.world.objects.get(idx).map(|o| o.full_id) else {
             return;
         };
+        if self.demo {
+            log::info!("demo plate action: {:?} on {id}", self.plate_click_action());
+        }
         match self.plate_click_action() {
             PlateClick::Nothing => {}
             PlateClick::Menu => self.open_avatar_menu(idx),
@@ -190,6 +214,8 @@ mod tests {
         ui::hud::NameTag {
             id: Uuid::from_u128(n),
             rect,
+            at: Vec3::X * 10.0,
+            normal: Vec3::X,
         }
     }
 
@@ -227,5 +253,69 @@ mod tests {
         // nothing runs nothing; the menu is opened apart
         assert!(plate_ctx_action(PlateClick::Nothing, id).is_none());
         assert!(plate_ctx_action(PlateClick::Menu, id).is_none());
+    }
+
+    #[test]
+    fn world_click_plate_uses_the_displayed_plane_at_every_side_and_pitch() {
+        use glam::Mat4;
+        let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.1);
+        for eye in [Vec3::new(0.0, -8.0, 2.0), Vec3::new(0.0, -8.0, 8.0)] {
+            let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::Z, Vec3::Z);
+            let vp = projection * view;
+            let proj = ui::hud::Projector {
+                view_proj: vp,
+                width: 1920.0,
+                height: 1080.0,
+                ppp: 1.5,
+            };
+            for x in [-4.0, 0.0, 4.0] {
+                let at = Vec3::new(x, 4.0, 3.0);
+                let clip = vp * at.extend(1.0);
+                let ndc = clip.truncate() / clip.w;
+                let tag = ui::hud::NameTag::new(Uuid::from_u128(2), egui::Rect::EVERYTHING, at, &proj);
+                for offset in [glam::Vec2::ZERO, glam::Vec2::new(0.10, 0.05), glam::Vec2::new(-0.10, -0.05)] {
+                    let unproject = |z| {
+                        let p = vp.inverse() * glam::Vec4::new(ndc.x + offset.x, ndc.y + offset.y, z, 1.0);
+                        p.truncate() / p.w
+                    };
+                    let origin = unproject(1.0);
+                    let direction = (unproject(0.001) - origin).normalize();
+                    let point = tag.point((origin, direction)).expect("the tag's displayed plane");
+                    let hit = vp * point.extend(1.0);
+                    assert!((hit.z / hit.w - ndc.z).abs() < 1e-6);
+                    let captured = [(tag.id, point)];
+                    assert_eq!(
+                        visible_tag(&captured, Some(point + direction), Some((origin, direction))),
+                        Some((tag.id, point))
+                    );
+                    assert_eq!(visible_tag(&captured, Some(point - direction), Some((origin, direction))), None);
+                }
+            }
+        }
+        // A bad / behind-camera ray must not create a click target.
+        let proj = ui::hud::Projector {
+            view_proj: Mat4::IDENTITY,
+            width: 100.0,
+            height: 100.0,
+            ppp: 1.0,
+        };
+        let tag = ui::hud::NameTag::new(Uuid::nil(), egui::Rect::EVERYTHING, Vec3::X, &proj);
+        assert_eq!(tag.point((Vec3::ZERO, Vec3::X)), None);
+    }
+
+    #[test]
+    fn world_click_plate_snapshot_keeps_the_pressed_target_and_respects_walls() {
+        let ray = Some((Vec3::ZERO, Vec3::X));
+        let near = (Uuid::from_u128(2), Vec3::X * 5.0);
+        let far = (Uuid::from_u128(3), Vec3::X * 10.0);
+        let pressed = vec![near, far];
+        // The current frame's labels can move or change order while the GPU
+        // answers: resolution uses the values owned by the pending press.
+        let later = [far];
+        assert_eq!(visible_tag(&pressed, None, ray), Some(near));
+        assert_eq!(visible_tag(&later, None, ray), Some(far));
+        assert_eq!(visible_tag(&pressed, Some(Vec3::X * 4.0), ray), None);
+        assert_eq!(visible_tag(&pressed, Some(Vec3::X * 7.0), ray), Some(near));
+        assert_eq!(visible_tag(&pressed, None, None), None);
     }
 }

@@ -632,7 +632,7 @@ impl Plates {
         icons: &super::icons::Icons,
         tags: &[Tag<'_>],
         now: f64,
-        mut placed: impl FnMut(Uuid, Rect),
+        mut placed: impl FnMut(Uuid, Rect, glam::Vec3),
     ) {
         let env = paint::Env::new(painter, p, icons, now);
         // nearest first (`tags` ends with them): the level of each plate,
@@ -703,7 +703,7 @@ impl Plates {
                 glass: entry.glass,
             };
             aurora_render::world_label_at(painter.ctx(), Some(tag.at));
-            placed(tag.id, paint::plate(&env, tag, &state, &mut entry.cache));
+            placed(tag.id, paint::plate(&env, tag, &state, &mut entry.cache), tag.at);
             if entry.level == Level::Full && matches!(tag.picture, Picture::Wanted) {
                 waiting.push(tag.id);
             }

@@ -906,6 +906,22 @@ fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
 }
 
+// LLToolCamera::handleMouseDown / LLImageGL::updatePickMask (LGPL 2.1):
+// Alt-focus skips transparent texture holes, even on a scripted attachment.
+// Test the texture's alpha, not its tint: a faint but solid glass pane is
+// still a surface. Invisible TE faces are already absent from the draw lists.
+@fragment
+fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
+    let rec = records[in.record];
+    // An emissive mask uses texture alpha for lighting, not opacity
+    // (eval_material): its visible surface must remain a camera target.
+    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(rec.tex.x, in.uv).a <= 32.0 / 255.0;
+    if (hidden_texel || rec.base_color.a < 0.004) {
+        discard;
+    }
+    return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
+}
+
 // ------------------------------------------------------------- shadow pass
 
 struct ShadowOut {
