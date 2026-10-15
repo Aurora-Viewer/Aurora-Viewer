@@ -105,7 +105,8 @@ pub(super) fn draw(
         return;
     }
     let mentioned = mentions(env, th.me, line);
-    let hovered = ui.rect_contains_pointer(rect) && !ui.input(|i| i.pointer.any_down());
+    // (not while a selection is dragged across the rows)
+    let hovered = ui.rect_contains_pointer(rect) && !ui.input(|i| i.pointer.is_decidedly_dragging());
     let radius = ui.visuals().window_corner_radius;
     if mentioned {
         ui.painter().set(behind, egui::epaint::RectShape::filled(rect, 0.0, p.amber.gamma_multiply(0.07)));
@@ -468,7 +469,7 @@ fn toolbar(ui: &mut egui::Ui, env: &mut LineEnv, th: &mut Thread, line: &ChatLin
     let mut button = |ui: &mut egui::Ui, icon: &str, tip: &str, salt: &str| {
         let rect = egui::Rect::from_min_size(egui::pos2(x, bar.top() + 2.0), egui::Vec2::splat(B));
         x += B;
-        let r = ui.interact(rect, ui.id().with(("thread_tool", salt, line.time, line.source)), egui::Sense::click());
+        let r = ui.interact(rect, tool_id(salt, line), egui::Sense::click());
         if r.hovered() {
             ui.painter().rect_filled(rect, radius, p.raised);
         }
@@ -500,6 +501,12 @@ fn toolbar(ui: &mut egui::Ui, env: &mut LineEnv, th: &mut Thread, line: &ChatLin
             crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, line);
         });
     }
+}
+
+/// The id of a button of a line's toolbar ("copy", "quote", "profile",
+/// "more").
+pub(super) fn tool_id(salt: &str, line: &ChatLine) -> egui::Id {
+    egui::Id::new(("thread_tool", salt, line.time, line.source, line.text.as_str()))
 }
 
 /// The message names us: an explicit mention, or our display or user name

@@ -40,6 +40,19 @@ pub(super) fn kind(world: &World, id: &Uuid) -> Kind {
     }
 }
 
+/// What an entry of the column is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum Pinned {
+    Contacts,
+    Local,
+    Conversation(Uuid),
+}
+
+/// The id of an entry of the column (its close button: `.with("close")`).
+pub(super) fn entry_id(entry: Pinned) -> egui::Id {
+    egui::Id::new(("conversation_entry", entry))
+}
+
 /// The picture of an entry.
 enum Icon<'a> {
     /// A resident: their picture and status.
@@ -119,7 +132,7 @@ pub(super) fn show(
                     ringing: false,
                     in_call: false,
                 };
-                if entry(ui, p, &e, rail).resp.clicked() {
+                if entry(ui, p, &e, rail, entry_id(Pinned::Contacts)).resp.clicked() {
                     if docked {
                         st.contacts = true;
                         st.show_profile = false;
@@ -142,7 +155,7 @@ pub(super) fn show(
                     ringing: false,
                     in_call: false,
                 };
-                if entry(ui, p, &e, rail).resp.clicked() {
+                if entry(ui, p, &e, rail, entry_id(Pinned::Local)).resp.clicked() {
                     st.select_tab(None);
                 }
             }
@@ -185,7 +198,7 @@ pub(super) fn show(
                         ringing: world.calls.invite_for(&id).is_some(),
                         in_call: world.call_of(&id).is_some() || world.call_launched(&id).is_some(),
                     };
-                    let picked = entry(ui, p, &e, rail);
+                    let picked = entry(ui, p, &e, rail, entry_id(Pinned::Conversation(id)));
                     if reveal == Some(id) {
                         picked.resp.scroll_to_me(None);
                         st.reveal = None;
@@ -225,7 +238,7 @@ pub(super) fn show(
                             ringing: false,
                             in_call: false,
                         };
-                        if entry(ui, p, &e, rail).resp.clicked() {
+                        if entry(ui, p, &e, rail, egui::Id::new(("conversation_start", id))).resp.clicked() {
                             st.side_filter.clear();
                             actions.push(ConvAction::OpenIm(id));
                         }
@@ -242,7 +255,7 @@ pub(super) fn show(
                     ringing: false,
                     in_call: false,
                 };
-                if entry(ui, p, &e, rail).resp.clicked() {
+                if entry(ui, p, &e, rail, egui::Id::new("conversation_find")).resp.clicked() {
                     st.start_picker(super::Start::Im);
                 }
             }
@@ -413,9 +426,10 @@ fn plain_head(ui: &mut egui::Ui, p: &Palette, title: &str) {
 
 /// One entry of the column (or of the rail: its picture alone, the name
 /// in its tooltip).
-fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool) -> Picked {
+fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) -> Picked {
     let width = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H), egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H), egui::Sense::hover());
+    let resp = ui.interact(rect, id, egui::Sense::click());
     let over = resp.hovered() || (e.close.is_some() && ui.rect_contains_pointer(rect));
     let radius = ui.visuals().window_corner_radius;
     if e.current {

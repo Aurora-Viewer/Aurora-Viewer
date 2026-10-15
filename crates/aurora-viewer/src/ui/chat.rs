@@ -2645,9 +2645,11 @@ mod tests {
     }
 
     #[test]
-    fn bubbles_by_default_legacy_lines_on_demand() {
+    fn the_workspace_by_default_bubbles_and_legacy_lines_on_demand() {
         use crate::settings::ChatStyle;
-        assert_eq!(crate::settings::Settings::default().chat_style, ChatStyle::Bubbles);
+        assert_eq!(crate::settings::Settings::default().chat_style, ChatStyle::Aurora);
+        assert!(ChatStyle::Aurora.workspace() && ChatStyle::Compact.workspace());
+        assert!(!ChatStyle::Bubbles.workspace() && !ChatStyle::Legacy.workspace());
         // the nearby chat and the groups name their senders, a 1:1 does not
         assert_eq!(line_style(ChatStyle::Bubbles, None), Some(true));
         assert_eq!(line_style(ChatStyle::Bubbles, Some(true)), Some(true));
@@ -2931,6 +2933,17 @@ mod tests {
     /// a copy gives it with the senders, and what is typed goes to the field.
     #[test]
     fn the_lines_select_and_copy_like_a_transcript() {
+        select_and_copy_like_a_transcript(crate::settings::ChatStyle::Bubbles);
+    }
+
+    /// The same in Aurora's workspace, roomy and compact.
+    #[test]
+    fn the_workspace_lines_select_and_copy_like_a_transcript() {
+        select_and_copy_like_a_transcript(crate::settings::ChatStyle::Aurora);
+        select_and_copy_like_a_transcript(crate::settings::ChatStyle::Compact);
+    }
+
+    fn select_and_copy_like_a_transcript(style: crate::settings::ChatStyle) {
         let mut frames = Frames::new();
         let p = crate::theme::Theme::default().palette();
         let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
@@ -2949,7 +2962,10 @@ mod tests {
             world.chat_clock.pushed_back();
         }
         let gestures = crate::gestures::Manager::default();
-        let mut st = ChatUi::default();
+        let mut st = ChatUi {
+            style,
+            ..ChatUi::default()
+        };
         let mut contacts = crate::ui::contacts::ContactsUi::default();
         let mut contacts_settings = crate::ui::contacts::ContactsSettings::default();
         let mut open = true;
@@ -3031,17 +3047,22 @@ mod tests {
         frame(&mut st, vec![egui::Event::PointerMoved(at), button(at, true)]);
         frame(&mut st, vec![button(at, false)]);
         assert!(st.selection.1.is_empty());
-        // from the empty dark area under a short conversation up to its
-        // first line: the window does not move, every line is taken
+        // from the empty dark area of a short conversation (under it; above
+        // it in the workspace, whose lines stand at the bottom) across its
+        // lines: the window does not move, every line is taken
         let (texts, _) = frame(&mut st, Vec::new());
         let last = painted(&texts, "bye now").rect;
-        let empty = egui::pos2(last.center().x, last.bottom() + 80.0);
+        let (empty, end) = if style.workspace() {
+            (egui::pos2(first.center().x, first.top() - 60.0), egui::pos2(last.right() + 2.0, last.center().y))
+        } else {
+            (egui::pos2(last.center().x, last.bottom() + 80.0), from)
+        };
         frame(&mut st, vec![egui::Event::PointerMoved(empty), button(empty, true)]);
         for k in 1..=4 {
-            let at = empty + (from - empty) * (k as f32 / 4.0);
+            let at = empty + (end - empty) * (k as f32 / 4.0);
             frame(&mut st, vec![egui::Event::PointerMoved(at)]);
         }
-        let (texts, _) = frame(&mut st, vec![button(from, false)]);
+        let (texts, _) = frame(&mut st, vec![button(end, false)]);
         assert_eq!(painted(&texts, "hello there").rect, first, "the window stayed in place");
         let (_, out) = frame(&mut st, vec![egui::Event::Copy]);
         let text = copied(&out).expect("the selection from the empty area is copied");
@@ -3055,7 +3076,8 @@ mod tests {
             .read_response(egui::Id::new(("conv_input", None::<uuid::Uuid>)))
             .expect("the conversation's field")
             .rect;
-        let strip = egui::pos2(field.center().x, field.top() - 2.0);
+        // (in the workspace: the line of who is typing, above the box)
+        let strip = egui::pos2(field.center().x, field.top() - if style.workspace() { 10.0 } else { 2.0 });
         let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(strip)]);
         assert_ne!(out.cursor_icon, egui::CursorIcon::Text, "a normal cursor on the strip");
         let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(from)]);

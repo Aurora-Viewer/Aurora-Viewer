@@ -484,6 +484,7 @@ mod tests {
         header: true,
         tail: true,
         first: false,
+        new: false,
     };
 
     /// The sender's name sits just above its bubble, close enough to read as

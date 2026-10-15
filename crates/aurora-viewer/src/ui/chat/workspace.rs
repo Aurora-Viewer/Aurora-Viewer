@@ -61,6 +61,11 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
         }
         st.shown = Some(st.selected);
     }
+    // the window moves by its title bar only: a drag on the workspace's
+    // background (the column, the head, the strips) leaves it in place, as
+    // one on the lines (#427)
+    let all = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(size.x, h));
+    ui.interact(all, ui.id().with("workspace_still"), egui::Sense::drag());
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         sidebar::show(ui, p, pics, world, st, actions, show_contacts_tab, docked, rail, h);
@@ -290,3 +295,7 @@ fn our_names(world: &World, own_name: &str) -> Vec<String> {
     me.dedup();
     me
 }
+
+#[cfg(test)]
+#[path = "workspace_tests.rs"]
+mod tests;
