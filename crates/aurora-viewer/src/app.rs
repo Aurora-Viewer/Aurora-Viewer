@@ -3232,6 +3232,7 @@ impl App {
                         self.world.social.session_mut(session);
                     }
                     self.world.social.focus_im = Some(session);
+                    self.chat_ui.conv_focus_request = true;
                     self.notif_ui.open = false;
                     ui::notifications::open_conversations(ctx, &mut self.panels.chat);
                 }
@@ -4172,6 +4173,17 @@ impl App {
         }
     }
 
+    /// A conversation the user opened (a contact, a name's menu, People)
+    /// comes up with its field taking the keyboard, ready to type in, as
+    /// Firestorm's floater shown with the focus (LLFloaterReg::showInstance,
+    /// LLFloater::setFocus → focusFirstItem). Openings that come from calls
+    /// set `focus_im` alone and leave the keyboard where it is.
+    pub(super) fn open_conversation_to_type(&mut self, id: uuid::Uuid) {
+        self.world.social.focus_im = Some(id);
+        self.chat_ui.conv_focus_request = true;
+        self.panels.chat = true;
+    }
+
     /// A letter key started the nearby chat: in the Conversations window
     /// when it shows the nearby chat, in the chat bar otherwise, with the
     /// character typed in (LLViewerWindow::handleKey; Firestorm's
@@ -4495,8 +4507,7 @@ impl App {
             ContactsAction::Im(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.social.session_mut(id);
-                self.world.social.focus_im = Some(id);
-                self.panels.chat = true;
+                self.open_conversation_to_type(id);
             }
             ContactsAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
             ContactsAction::OfferTeleport(id) => a.offer_tp.push(id),
@@ -4507,8 +4518,7 @@ impl App {
             ContactsAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.start_group_chat(id);
-                self.world.social.focus_im = Some(id);
-                self.panels.chat = true;
+                self.open_conversation_to_type(id);
             }
             ContactsAction::Net(cmd) => {
                 match &cmd {
@@ -9078,8 +9088,7 @@ impl App {
                             self.world.met(id);
                             self.world.ui_sounds.push(UiSound::StartIm);
                             self.world.social.session_mut(id);
-                            self.world.social.focus_im = Some(id);
-                            self.panels.chat = true;
+                            self.open_conversation_to_type(id);
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::people::PeopleAction::Profile(id) => self.profile_ui.open(&mut self.world, id),

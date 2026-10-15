@@ -305,8 +305,7 @@ impl App {
                 // UISndStartIM (LLAvatarActions::startIM)
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.social.session_mut(id);
-                self.world.social.focus_im = Some(id);
-                self.panels.chat = true;
+                self.open_conversation_to_type(id);
             }
             CtxAction::Call(id) => {
                 if self.settings.audio.voice_enabled {
