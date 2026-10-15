@@ -7,7 +7,6 @@ use super::*;
 pub(super) struct PreviewWindow {
     pub id: Uuid,
     pub view: aurora_render::preview::View,
-    slot: usize,
     first_show: bool,
 }
 
@@ -26,13 +25,9 @@ impl LibraryUi {
         };
         let mut existing = self.windows.iter().any(|window| window.id == item.id);
         if !existing {
-            let slot = (0..)
-                .find(|slot| self.windows.iter().all(|window| window.slot != *slot))
-                .unwrap_or(0);
             self.windows.push(PreviewWindow {
                 id: item.id,
                 view: Default::default(),
-                slot,
                 first_show: true,
             });
         }
@@ -74,13 +69,6 @@ impl LibraryUi {
         let material = item.asset_type == 57;
         let asset = catalogue::asset(item);
         let path = super::super::inventory::inventory_path(&world.inventory, item.parent);
-        let screen = ctx.content_rect();
-        let columns = ((screen.width() - 24.0) / 372.0).floor().max(1.0) as usize;
-        let position = screen.min
-            + egui::vec2(
-                12.0 + (window.slot % columns) as f32 * 372.0,
-                60.0 + (window.slot / columns) as f32 * 24.0,
-            );
         let id = window_id(item.id);
         // Human-requested defaults by resource type. Only new windows inherit
         // the last manual size; visible windows retain their own geometry.
@@ -91,7 +79,9 @@ impl LibraryUi {
             window.first_show = false;
         }
         let mut open = true;
-        let mut floater = Floater::new(&id, &item.name, position, Vec2::new(360.0, 420.0));
+        let size = prefs.preview_size(material).unwrap_or(Vec2::new(360.0, 420.0));
+        let mut floater = Floater::new(&id, &item.name, ctx.content_rect().center() - size * 0.5, size)
+            .cascade(widgets::CascadeGroup::inventory(item.asset_type));
         floater.min_size = Vec2::new(220.0, 260.0);
         floater.show(ctx, p, &mut open, |ui| {
             let side = ui.available_width().min((ui.available_height() - 58.0).max(96.0)).min(320.0);

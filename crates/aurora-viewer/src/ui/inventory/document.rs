@@ -126,6 +126,33 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
 }
 
 impl InventoryUi {
+    /// LLFloaterReg::showInstance: each item owns its document. Opening an
+    /// existing item raises/restores it without replacing an unsaved draft.
+    pub fn open_document(&mut self, ctx: &egui::Context, item: Uuid, kind: i32) -> bool {
+        let existing = if self.preview == Some(item) {
+            Some((self.ui_id, self.preview_text.is_none()))
+        } else {
+            self.windows
+                .iter()
+                .find(|w| w.state.preview == Some(item))
+                .map(|w| (w.state.ui_id, w.state.preview_text.is_none()))
+        };
+        if let Some((editor, loading)) = existing {
+            let id = preview_window_id(editor, item, kind);
+            super::super::widgets::open_floater(ctx, &id, &mut true);
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(id)));
+            return loading;
+        }
+        let state = Self::document(item);
+        self.windows.push(InventoryWindow {
+            id: state.ui_id,
+            root: Uuid::nil(),
+            state: Box::new(state),
+            open: false,
+        });
+        true
+    }
+
     pub fn document(item: Uuid) -> Self {
         Self {
             ui_id: Uuid::new_v4(),
@@ -244,9 +271,85 @@ impl InventoryUi {
     }
 }
 
+pub(super) fn preview_window_id(editor: Uuid, item: Uuid, kind: i32) -> String {
+    format!(
+        "{}_{}_{}",
+        if kind == 7 { "notecard_preview" } else { "inventory_preview" },
+        editor,
+        item
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cascade_notecards_keep_independent_drafts_and_restore_existing_items() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        let items = [Uuid::from_u128(1), Uuid::from_u128(2)];
+        inv.add_items(
+            items
+                .map(|id| aurora_net::inventory::InvItem {
+                    id,
+                    asset_type: 7,
+                    name: format!("Note {id}"),
+                    ..Default::default()
+                })
+                .to_vec(),
+        );
+        let mut state = InventoryUi::default();
+        let mut frame = 0;
+        for (n, item) in items.into_iter().enumerate() {
+            assert!(state.open_document(&ctx, item, 7));
+            state.windows[n].state.load_document(7, true, &Ok(b"Original".to_vec()));
+            for _ in 0..8 {
+                frame += 1;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1200.0))),
+                        time: Some(frame as f64 / 60.0),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        for w in &mut state.windows {
+                            show_document(
+                                ui.ctx(),
+                                &crate::theme::Theme::default().palette(),
+                                &Icons::default(),
+                                &inv,
+                                &mut w.state,
+                                &inv,
+                                &Default::default(),
+                            );
+                        }
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            state.windows[n].state.preview_text = Some(Ok(format!("Draft {n}")));
+            state.windows[n].state.document_changed();
+        }
+        let ids: Vec<_> = state
+            .windows
+            .iter()
+            .zip(items)
+            .map(|(w, item)| preview_window_id(w.id, item, 7))
+            .collect();
+        let rects: Vec<_> = ids
+            .iter()
+            .map(|id| ctx.memory(|m| m.area_rect(egui::Id::new(id)).expect("note window")))
+            .collect();
+        assert!(((rects[1].min - rects[0].min) - egui::Vec2::splat(16.0)).length() < 1.0);
+        crate::ui::widgets::minimize_floater(&ctx, &ids[0]);
+        assert!(!state.open_document(&ctx, items[0], 7));
+        assert_eq!(state.windows.len(), 2);
+        assert!(state.windows.iter().all(|w| w.root.is_nil() && !w.open && w.state.preview_dirty));
+        assert_eq!(state.windows[0].state.preview_text, Some(Ok("Draft 0".into())));
+        assert_eq!(state.windows[1].state.preview_text, Some(Ok("Draft 1".into())));
+        assert_eq!(ctx.memory(|m| m.area_rect(egui::Id::new(&ids[0]))), Some(rects[0]));
+    }
 
     fn draft(text: &str) -> InventoryUi {
         let mut st = InventoryUi {

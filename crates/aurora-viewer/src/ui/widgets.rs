@@ -4,10 +4,14 @@
 use crate::theme::Palette;
 use egui::{Color32, CornerRadius, RichText, Sense, Stroke, Vec2};
 
+mod cascade;
+#[cfg(test)]
+mod cascade_tests;
 #[cfg(test)]
 mod check_tests;
 #[cfg(test)]
 mod collapse_tests;
+pub(crate) use cascade::Group as CascadeGroup;
 pub mod color;
 pub mod demo;
 #[cfg(test)]
@@ -153,6 +157,7 @@ pub struct Floater<'a> {
     /// instead of the bar alone, at this width: the body is still drawn and
     /// asks `floater_minimized` what to show.
     pub compact_minimized: Option<f32>,
+    cascade: Option<CascadeGroup>,
 }
 
 impl<'a> Floater<'a> {
@@ -173,11 +178,18 @@ impl<'a> Floater<'a> {
             compact_header: false,
             attention: false,
             compact_minimized: None,
+            cascade: None,
         }
     }
 
     pub fn fixed(mut self) -> Self {
         self.resizable = false;
+        self
+    }
+
+    /// Position new inventory windows like Firestorm's same-type floaters.
+    pub(crate) fn cascade(mut self, group: CascadeGroup) -> Self {
+        self.cascade = Some(group);
         self
     }
 
@@ -238,6 +250,9 @@ impl<'a> Floater<'a> {
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         if window_hidden(ctx, egui::Id::new(self.id), *open) {
+            if self.cascade.is_some() {
+                cascade::hidden(ctx, egui::Id::new(self.id));
+            }
             // still open: no close sound, nor an open one when it comes back
             if !self.silent {
                 super::sound_cues::floater_shown(ctx, egui::Id::new(self.id));
@@ -245,6 +260,9 @@ impl<'a> Floater<'a> {
             return None;
         }
         if !*open {
+            if self.cascade.is_some() {
+                cascade::hidden(ctx, egui::Id::new(self.id));
+            }
             return None;
         }
         let min_id = egui::Id::new((self.id, "minimized"));
@@ -292,6 +310,9 @@ impl<'a> Floater<'a> {
         self.min_size = self.min_size.min(work.size());
         self.default_size = self.default_size.min(work.size());
         self.default_pos = fit_in(work, self.default_pos, self.default_size);
+        let opening = self
+            .cascade
+            .and_then(|group| cascade::prepare(ctx, window_id, group, egui::Rect::from_min_size(self.default_pos, expanded), work));
         // A window as tall as its content (fixed, or of automatic height)
         // whose content is taller than the room scrolls it, from the frame
         // after the one that showed it too tall, and for as long as it is.
@@ -335,6 +356,8 @@ impl<'a> Floater<'a> {
                 minimized_width(expanded.x),
                 if self.framed_header.is_some() { 40.0 } else { 38.0 },
             ));
+        } else if let Some(size) = opening.as_ref().and_then(|o| o.size).filter(|_| !self.auto_height) {
+            w = w.fixed_size(size);
         } else if restore && !self.auto_height {
             w = w.fixed_size(expanded.min(work.size()));
         } else if let Some(size) = shrink {
@@ -350,13 +373,16 @@ impl<'a> Floater<'a> {
         // the viewer window changed size: the floater follows its edges;
         // a placement asked this frame and a resize in progress come after
         let slot = super::layout::slot(ctx, window_id);
-        let mut asked = slot.pos;
+        let mut asked = opening.as_ref().map(|o| o.pos).or(slot.pos);
         // (a window dragged with its group has its own limits; the others
         // stay off the bars, which egui's own limit, the screen, lets them
         // cover)
         w = w.constrain_to(slot.limits.unwrap_or(work));
         if let Some(pos) = ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS))) {
             asked = Some(pos);
+            if self.cascade.is_some() {
+                cascade::placed(ctx, window_id);
+            }
         }
         // the edge dragged snaps to the other windows and to the work area
         let resized = resize_drag.map(|drag| super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()));
@@ -507,6 +533,9 @@ impl<'a> Floater<'a> {
                 ctx.data_mut(|d| d.insert_temp(scroll_id, too_tall));
             }
             slot.shown(ctx, response.response.rect, minimized);
+            if self.cascade.is_some() {
+                cascade::shown(ctx, window_id, response.response.rect, minimized);
+            }
             if let Some((painter, slot)) = glass_slot {
                 let radius = f32::from(ctx.global_style().visuals.window_corner_radius.nw);
                 workspace::finish_glass(
@@ -540,8 +569,14 @@ impl<'a> Floater<'a> {
             // LLFloater::closeFloater: "Always unminimize before trying to
             // close", the window opens again expanded
             unminimize_quietly(ctx, self.id);
+            if self.cascade.is_some() {
+                cascade::hidden(ctx, window_id);
+            }
         } else if toggle_min {
             ctx.data_mut(|d| d.insert_persisted(min_id, !minimized));
+            if self.cascade.is_some() {
+                cascade::minimized(ctx, window_id, !minimized);
+            }
             if minimized {
                 ctx.data_mut(|d| d.insert_temp(restore_id, true));
             }
@@ -728,6 +763,7 @@ pub fn take_floater_resize(ctx: &egui::Context, id: &str) -> Option<Vec2> {
 /// does.
 pub fn minimize_floater(ctx: &egui::Context, id: &str) {
     ctx.data_mut(|d| d.insert_persisted(egui::Id::new((id, "minimized")), true));
+    cascade::minimized(ctx, egui::Id::new(id), true);
 }
 
 /// Is the floater `id` reduced to its title bar?
@@ -766,6 +802,7 @@ pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
             expand_floater(ctx, id);
         }
     } else {
+        cascade::forget(ctx, egui::Id::new(id));
         *open = true;
         unminimize_quietly(ctx, id);
     }

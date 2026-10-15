@@ -18,6 +18,47 @@ pub fn preview_items() -> [Uuid; 4] {
     [id(300), id(301), id(400), id(401)]
 }
 
+pub fn cascade_items(kind: i32) -> [Uuid; 6] {
+    let start = match kind {
+        57 => 400,
+        7 => 600,
+        10 => 700,
+        _ => 300,
+    };
+    std::array::from_fn(|n| id(start + n as u128))
+}
+
+pub fn seed_cascade(inv: &mut Inventory, agent: Uuid, kind: i32) {
+    if !matches!(kind, 7 | 10) {
+        return;
+    }
+    let name = if kind == 7 {
+        aurora_i18n::tr!("common-new-notecard")
+    } else {
+        aurora_i18n::tr!("common-demo-script")
+    };
+    inv.add_items(
+        cascade_items(kind)
+            .into_iter()
+            .enumerate()
+            .map(|(n, item)| InvItem {
+                id: item,
+                parent: inv.root,
+                asset_id: id(800 + n as u128),
+                asset_type: kind,
+                inv_type: kind,
+                name: format!("{name} {:02}", n + 1),
+                owner: agent,
+                creator: agent,
+                base_mask: 0x7fffffff,
+                owner_mask: 0x7fffffff,
+                next_owner_mask: 0x7fffffff,
+                ..Default::default()
+            })
+            .collect(),
+    );
+}
+
 pub fn inventory_drag_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {

@@ -679,6 +679,7 @@ impl Editors {
                 ctx.content_rect().center() - Vec2::new(330.0, 260.0),
                 Vec2::new(660.0, 520.0),
             )
+            .cascade(super::widgets::CascadeGroup::Script)
             .show(ctx, p, &mut open, |ui| {
                 view::body(
                     ui,
@@ -1001,6 +1002,58 @@ mod tests {
             assert!(!editors.prepare_exit());
             editors.documents.clear();
         }
+    }
+
+    #[test]
+    fn cascade_inventory_and_object_scripts_share_one_group_without_replacing_drafts() {
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let mut settings = settings::ScriptSettings::default();
+        let mut colors = super::super::color_picker::Preferences::default();
+        let targets = [
+            ScriptTarget {
+                object: Uuid::nil(),
+                item: Uuid::from_u128(1),
+            },
+            ScriptTarget {
+                object: Uuid::from_u128(10),
+                item: Uuid::from_u128(1),
+            },
+        ];
+        let mut frame = 0;
+        for target in targets {
+            let request = editors.open(target, "Script".into(), true, true).expect("load");
+            editors.loaded(request, target, Ok("default { state_entry() {} }".into()));
+            for _ in 0..8 {
+                frame += 1;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1200.0))),
+                        time: Some(frame as f64 / 60.0),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        editors.show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut settings, &mut colors);
+                    },
+                );
+                output.textures_delta.clear();
+            }
+        }
+        let rects: Vec<_> = targets
+            .iter()
+            .map(|t| {
+                ctx.memory(|m| {
+                    m.area_rect(egui::Id::new(format!("script_editor_{}_{}", t.object, t.item)))
+                        .expect("script window")
+                })
+            })
+            .collect();
+        assert!(((rects[1].min - rects[0].min) - egui::Vec2::splat(16.0)).length() < 1.0);
+        editors.documents[0].source.push_str("\n// Unsaved draft");
+        assert!(editors.open(targets[0], "Script".into(), true, true).is_none());
+        assert_eq!(editors.documents.len(), 2);
+        assert!(editors.documents[0].dirty());
+        assert!(editors.documents[0].source.ends_with("// Unsaved draft"));
     }
 
     #[test]

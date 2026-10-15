@@ -32,10 +32,6 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &Inve
         actions.push(InvAction::Preview(item.id));
         return;
     }
-    if st.preview_dirty || st.save_pending {
-        st.message = aurora_i18n::tr!("ui-inventory-context-save-or-close-the-open-document-before-opening-another").into();
-        return;
-    }
     let Some(original) = rules::original(inv, id) else {
         st.message = aurora_i18n::tr!("common-the-link-is-broken").into();
         return;
@@ -69,8 +65,6 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &Inve
         // LLSettingsBridgeAction: a sky, water or day cycle opens its editor
         actions.push(InvAction::EditEnvironment(original));
     } else {
-        st.preview = Some(original);
-        st.reset_document();
         actions.push(InvAction::Preview(original));
     }
 }

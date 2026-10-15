@@ -207,7 +207,8 @@ impl App {
             } else {
                 library::Presentation::Vertical
             };
-            self.panels.texture_library = !matches!(mode.as_str(), "baseline" | "preview" | "preview-drag" | "inventory-drag");
+            self.panels.texture_library =
+                !matches!(mode.as_str(), "baseline" | "preview" | "preview-drag" | "inventory-drag") && !mode.starts_with("cascade");
             self.panels.chat = false;
             self.panels.people = false;
             self.panels.perf = false;
@@ -231,6 +232,32 @@ impl App {
             self.settings.texture_library.texture_preview_size = None;
             self.settings.texture_library.material_preview_size = None;
             self.texture_library.demo(&mode, self.world.agent_id);
+            if mode.starts_with("cascade") {
+                let kind = match mode.as_str() {
+                    "cascade-notecard" => 7,
+                    "cascade-script" => 10,
+                    _ => 0,
+                };
+                crate::demo::texture_library::seed_cascade(&mut self.world.inventory, self.world.agent_id, kind);
+            }
+        }
+        if self.demo
+            && self.library_demo_seeded
+            && let Ok(mode) = std::env::var("AURORA_DEMO_TEXTURE_LIBRARY")
+            && mode.starts_with("cascade")
+            && (620..=720).contains(&self.frame_count)
+            && (self.frame_count - 620).is_multiple_of(20)
+        {
+            let kind = match mode.as_str() {
+                "cascade-material" => 57,
+                "cascade-notecard" => 7,
+                "cascade-script" => 10,
+                _ => 0,
+            };
+            let items = crate::demo::texture_library::cascade_items(kind);
+            self.apply_inventory_action(crate::ui::inventory::InvAction::Preview(
+                items[((self.frame_count - 620) / 20) as usize],
+            ));
         }
         if self.demo
             && self.library_demo_seeded

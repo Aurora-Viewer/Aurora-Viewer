@@ -215,6 +215,7 @@ impl From<&aurora_net::inventory::InvItem> for PropertyEdit {
 
 pub struct InventoryWindow {
     pub id: Uuid,
+    /// Nil for a standalone document, otherwise a partial inventory tree.
     pub root: Uuid,
     pub state: Box<InventoryUi>,
     pub open: bool,
@@ -1302,7 +1303,7 @@ pub fn show(
     let mut windows = std::mem::take(&mut st.windows);
     let mut spawned = Vec::new();
     for w in &mut windows {
-        if !world.inventory.folders.contains_key(&w.root) {
+        if !w.root.is_nil() && !world.inventory.folders.contains_key(&w.root) {
             w.open = false;
             continue;
         }

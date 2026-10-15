@@ -1490,6 +1490,14 @@ the same size, with distinct stored texture/material sizes. Resizing an older
 window must affect only subsequent opens of that type. Minimizing, restoring,
 moving windows or automatically fitting a smaller viewport must not replace
 the preferred sizes; both preferences survive restart.
+`cascade`, `cascade-material`, `cascade-notecard` and `cascade-script` open six
+real inventory windows of the selected type at frames 620–720 without forcing
+their geometry. New instances advance by 16 logical pixels right/down from the
+last created visible, non-minimized instance of that type; moving or selecting
+an older window does not change that order. Script editors from inventory and
+objects share one group. Check fitting at screen edges, minimizing/closing the
+last instance, reopening an existing item, and independent editable notecard
+drafts. Texture and material sizes retain their separate preferences.
 No-copy resources cannot be applied to multiple selected objects. Restricted
 resources wait for object contents; click again after the loading message.
 Capture after frame 780 to allow previews to

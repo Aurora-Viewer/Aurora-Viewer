@@ -298,6 +298,9 @@ impl App {
                         });
                         return;
                     }
+                    if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
+                        return;
+                    }
                     if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY == 0 {
                         self.inventory_preview(
                             id,

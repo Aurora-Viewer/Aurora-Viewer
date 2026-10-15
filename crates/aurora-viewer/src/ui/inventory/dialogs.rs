@@ -454,20 +454,12 @@ pub(super) fn preview(
     };
     let size = size.min((ctx.content_rect().size() - Vec2::splat(32.0)).max(Vec2::new(300.0, 220.0)));
     Floater::new(
-        &format!(
-            "{}_{}_{}",
-            if it.asset_type == 7 {
-                "notecard_preview"
-            } else {
-                "inventory_preview"
-            },
-            st.ui_id,
-            id
-        ),
+        &super::document::preview_window_id(st.ui_id, id, it.asset_type),
         format!("{}{}", it.name, if st.preview_dirty { " *" } else { "" }),
         ctx.content_rect().center() - size * 0.5,
         size,
     )
+    .cascade(crate::ui::widgets::CascadeGroup::inventory(it.asset_type))
     .show(ctx, p, &mut open, |ui| {
         if it.asset_type == 0 {
             st.wanted_images.insert(it.asset_id);
@@ -706,6 +698,7 @@ fn animation(
         ctx.content_rect().center() - egui::vec2(215.0, 85.0),
         Vec2::new(430.0, 170.0),
     )
+    .cascade(crate::ui::widgets::CascadeGroup::Animation)
     .fixed()
     .show(ctx, p, &mut open, |ui| {
         ui.horizontal(|ui| {

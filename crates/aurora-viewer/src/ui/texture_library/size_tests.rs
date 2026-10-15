@@ -132,6 +132,29 @@ fn same_size(actual: Vec2, expected: Vec2) {
 }
 
 #[test]
+fn cascade_resource_previews_use_creation_order_and_separate_type_groups() {
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    f.open(110);
+    f.open(111);
+    same_size(f.rect(111).min - f.rect(110).min, Vec2::splat(16.0));
+    let last = f.rect(111);
+    f.front(110);
+    f.open(110); // Raising an older item must not become the cascade anchor.
+    f.open(112);
+    same_size(f.rect(112).min - last.min, Vec2::splat(16.0));
+    f.open(113);
+    f.open(114);
+    same_size(f.rect(114).min - f.rect(113).min, Vec2::splat(16.0));
+    let material = f.rect(114);
+    widgets::minimize_floater(&f.ctx, &preview_window_id(Uuid::from_u128(112)));
+    f.settle();
+    f.open(115);
+    same_size(f.rect(115).min - last.min, Vec2::splat(16.0));
+    assert_eq!(f.rect(114), material);
+}
+
+#[test]
 fn preview_sizes_follow_the_last_manual_resize_of_each_type_and_survive_restart() {
     let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
     let mut f = Fixture::new(avatars.clone(), Preferences::default());

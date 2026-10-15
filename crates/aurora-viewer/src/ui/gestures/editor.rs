@@ -113,7 +113,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
     }
     state.assets.refresh(inv);
     let assets = &state.assets;
-    for (id, editor) in &mut state.editors {
+    state.editor_order.retain(|id| state.editors.contains_key(id));
+    for id in &state.editor_order {
+        let Some(editor) = state.editors.get_mut(id) else { continue };
         let Some(it) = inv.items.get(id) else {
             editor.open = false;
             continue;
@@ -122,7 +124,10 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
         let title = aurora_i18n::tr!("gesture-editor-title", name = it.name.as_str());
         let editable = !rules::library(inv, *id);
         let modifiable = editable && it.owner_mask & rules::MODIFY != 0;
-        Floater::new(&format!("gesture_{id}"), &title, egui::pos2(570.0, 130.0), Vec2::new(400.0, 590.0)).show(ctx, p, &mut open, |ui| {
+        let window_id = format!("gesture_{id}");
+        let floater = Floater::new(&window_id, &title, egui::pos2(570.0, 130.0), Vec2::new(400.0, 590.0))
+            .cascade(crate::ui::widgets::CascadeGroup::Gesture);
+        floater.show(ctx, p, &mut open, |ui| {
             let dirty = editor.dirty();
             let Some(g) = &mut editor.definition else {
                 ui.label(if editor.message.is_empty() {
@@ -317,6 +322,11 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
         } else {
             editor.open = open;
         }
+    }
+    if let Some(id) = state.raise_editor.take() {
+        let window_id = format!("gesture_{id}");
+        widgets::open_floater(ctx, &window_id, &mut true);
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(window_id)));
     }
     if let Some(id) = state.discard {
         let response = widgets::Modal::new(egui::Id::new("gesture_discard")).show(ctx, |ui| {
