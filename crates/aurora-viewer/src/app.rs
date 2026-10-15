@@ -5941,6 +5941,7 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             self.texture_library_demo_input(&mut raw);
+            ui::inventory::drag::demo::input(&ctx, self.frame_count, &self.world.inventory, &self.inventory_ui, &mut raw);
             self.gesture_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));

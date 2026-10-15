@@ -232,6 +232,11 @@ impl App {
             self.settings.texture_library.texture_preview_size = None;
             self.settings.texture_library.material_preview_size = None;
             self.texture_library.demo(&mode, self.world.agent_id);
+            if ui::inventory::drag::demo::enabled() {
+                self.panels.texture_library = false;
+                self.panels.inventory = false;
+                ui::inventory::drag::demo::setup(ctx, &self.world.inventory, &mut self.inventory_ui, &mut self.settings.inventory);
+            }
             if mode.starts_with("cascade") {
                 let kind = match mode.as_str() {
                     "cascade-notecard" => 7,

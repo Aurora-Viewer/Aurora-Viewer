@@ -16,6 +16,7 @@ mod delete;
 pub use delete::demo_events as delete_demo_events;
 mod dialogs;
 mod document;
+pub(crate) mod drag;
 mod embedded;
 mod move_to;
 pub use document::document_demo_events;
@@ -225,8 +226,7 @@ pub struct InventoryWindow {
 #[derive(Debug, Clone, Copy)]
 pub struct InvDrag(pub Uuid);
 
-/// A folder dragged from the inventory: only the Marketplace listings
-/// window takes it (LLFolderBridge::dragCategoryIntoFolder).
+/// A single folder dragged to inventory or Marketplace listings.
 #[derive(Debug, Clone, Copy)]
 pub struct FolderDrag(pub Uuid);
 
@@ -519,9 +519,10 @@ fn item_row(
             .inner;
         // One response handles clicks and dragging; a separate drag-source
         // interaction overlay used to consume secondary clicks on the label.
-        r.dnd_set_drag_payload(InvDrag(it.id));
+        drag::source(ui, &r, it.id, false, st);
         clipboard::demo_row(&r, st, it.id);
         task_drop::target(ui, p, &r, inv, it.parent, prefs, actions);
+        drag::target(ui, p, &r, inv, it.parent, st, prefs, facts, actions);
         super::widgets::demo::rez_row(&r, it.id);
         let date = if it.created_at > 0 {
             aurora_net::inventory::created_date(it.created_at)
@@ -636,7 +637,7 @@ fn folder_row(
         if rename_row(ui, p, inv, id, state, prefs, actions) {
             return;
         }
-        // personal folders can be dragged to the Marketplace listings window
+        // Personal folders can move within inventory or to Marketplace listings.
         let draggable = rules::movable(inv, id, &prefs.protected) && folder.info.type_default == -1;
         let sense = if draggable {
             egui::Sense::click_and_drag()
@@ -645,10 +646,15 @@ fn folder_row(
         };
         let r = tree::label(ui, tree::name(&label, p), state.selection.contains(&id), sense, None);
         if draggable {
-            r.dnd_set_drag_payload(FolderDrag(id));
+            drag::source(ui, &r, id, true, state);
+        } else {
+            drag::record_row(ui.ctx(), state.ui_id, id, r.rect);
         }
         clipboard::demo_row(&r, state, id);
         task_drop::target(ui, p, &r, inv, id, prefs, actions);
+        if drag::target(ui, p, &r, inv, id, state, prefs, facts, actions) {
+            *open = true;
+        }
         if first_open {
             scroll_to_row(ui, &r, egui::Align::Min);
         }
@@ -776,6 +782,7 @@ fn folder_window_contents(
         });
     });
     task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
+    drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
@@ -1199,6 +1206,7 @@ fn inventory_contents(
         });
     });
     task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
+    drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
@@ -1405,6 +1413,8 @@ pub fn show(
     actions
 }
 
+#[cfg(test)]
+mod drag_tests;
 #[cfg(test)]
 mod texture_tests;
 

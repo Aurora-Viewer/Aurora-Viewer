@@ -133,6 +133,17 @@ world-drop path with inventory rows and library swatches. A dedicated handle
 in each material preview supplies the same cargo without consuming the
 3D scene's orbit gesture.
 
+`ui/inventory/drag.rs` snapshots the full Ctrl/Shift selection at drag start
+and moves it through `world/inventory/actions.rs::move_selection`. A separate
+batch payload prevents single-item world, attachment and editor targets from
+silently taking only the first item; existing single-item/folder cargo stays
+compatible. Rows claim drops before the enclosing inventory surface, including
+invalid targets. Validation is cached by cargo, destination, inventory generation
+and protection/worn state, then repeated on release. Folder rows spring open
+after one second of valid hovering. The final drag cursor and selection-count
+badge are drawn after all windows. `drag_tests.rs` drives actual Ctrl-selection
+and pointer events; `drag_demo.rs` provides offline move/hover/rejection scenarios.
+
 `ui/toolbar.rs` owns Firestorm's three toolbars (the bottom one, left and
 right), their context menus and drag/drop edits; a command stands in one of
 them at most. `toolbar/catalogue.rs` lists Firestorm's toybox commands and

@@ -231,7 +231,8 @@ impl App {
     /// at end-pass. Wants-pointer stays true during a drag from a widget;
     /// only the actual destination area decides whether the world gets it.
     pub(super) fn inventory_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
-        self.inventory_drag.cursor = ui::inventory::task_drop::cursor(ctx);
+        self.inventory_drag.cursor = ui::inventory::task_drop::cursor(ctx).or_else(|| ui::inventory::drag::cursor(ctx));
+        ui::inventory::drag::badge(ctx, &self.palette);
         if !egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) {
             self.inventory_drag.checked = None;
             return None;
