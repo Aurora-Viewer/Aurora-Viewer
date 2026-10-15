@@ -10,6 +10,19 @@ fn id(n: u128) -> Uuid {
     Uuid::from_u128(BASE + n)
 }
 
+pub fn first_texture() -> Uuid {
+    id(300)
+}
+
+pub fn inventory_drag_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY")
+                .is_ok_and(|mode| matches!(mode.as_str(), "preview" | "preview-drag" | "inventory-drag"))
+    })
+}
+
 pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
     let aurora = catalogue::child(inv, inv.root, catalogue::AURORA).unwrap_or(id(1));
     let root = catalogue::root(inv).unwrap_or(id(2));

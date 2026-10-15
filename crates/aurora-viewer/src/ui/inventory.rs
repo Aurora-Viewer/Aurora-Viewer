@@ -1405,6 +1405,9 @@ pub fn show(
 }
 
 #[cfg(test)]
+mod texture_tests;
+
+#[cfg(test)]
 fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
     // These tests inspect shapes/events without a renderer to apply texture uploads.
     output.textures_delta.clear();
@@ -1508,7 +1511,7 @@ mod tests {
         assert_eq!(facts.worn_label(&world.inventory, link), None);
     }
 
-    fn view_inventory(large: bool) -> Inventory {
+    pub(super) fn view_inventory(large: bool) -> Inventory {
         let mut inv = Inventory {
             root: Uuid::from_u128(1),
             ..Default::default()

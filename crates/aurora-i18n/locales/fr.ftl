@@ -7321,3 +7321,7 @@ texture-library-folder-error = Certains dossiers n’ont pas pu être chargés.
 texture-library-manage = Organiser dans l’inventaire
 texture-library-content-hint = Déplacez ou copiez des textures, matériaux et dossiers dans #Aurora/Textures Library. Les sous-dossiers sont inclus.
 texture-library-demo-polished = Poli
+
+texture-library-click-hint = Cliquez pour appliquer aux faces sélectionnées en mode édition.
+texture-library-no-copy-multiple = Une texture ou un matériau sans copie ne peut être appliqué qu’à un seul objet à la fois.
+texture-library-wait-selection = Chargement du contenu des objets. Cliquez à nouveau sur la ressource une fois le chargement terminé.

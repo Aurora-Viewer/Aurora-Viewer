@@ -39,32 +39,73 @@ fn restricted(item: &aurora_net::inventory::InvItem, agent: Uuid) -> bool {
 fn requires_contents(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem, agent: Uuid) -> bool {
     !rules::library(inv, item.id) && restricted(item, agent)
 }
+// The selection is counted by prim, not by face: a no-copy resource may
+// cover several faces of one object but cannot be moved into two objects.
+fn selection_copy_denied(item: &aurora_net::inventory::InvItem, agent: Uuid, objects: usize) -> bool {
+    objects > 1 && permissions(item, agent) & rules::COPY == 0
+}
+
 impl App {
     pub(super) fn texture_library_demo_input(&self, raw: &mut egui::RawInput) {
-        if std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").as_deref() != Ok("drop") {
-            return;
-        }
-        let Some(source) = self
-            .egui_ctx
-            .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("texture_library_first_card")))
-        else {
+        let Ok(mode) = std::env::var("AURORA_DEMO_TEXTURE_LIBRARY") else {
             return;
         };
-        let target = egui::pos2(480.0, 430.0);
         let button = |pos, pressed| egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
             pressed,
             modifiers: Default::default(),
         };
-        match self.frame_count {
-            650 => raw.events.extend([egui::Event::PointerMoved(source), button(source, true)]),
-            651 => raw.events.push(egui::Event::PointerMoved(source + egui::vec2(12.0, 0.0))),
-            652..=654 => raw.events.push(egui::Event::PointerMoved(target)),
-            655 => raw.events.push(button(target, false)),
-            _ => {}
+        let inventory = matches!(mode.as_str(), "preview" | "preview-drag" | "inventory-drag");
+        if !inventory && !matches!(mode.as_str(), "drop" | "apply" | "apply-pbr") {
+            return;
+        }
+        let item = crate::demo::texture_library::first_texture();
+        let source = if inventory {
+            self.egui_ctx
+                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new(("clipboard_demo_row", self.inventory_ui.ui_id, item))))
+        } else {
+            self.egui_ctx
+                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("texture_library_first_card")))
+        };
+        if let Some(source) = source {
+            if matches!(mode.as_str(), "apply" | "apply-pbr") {
+                match self.frame_count {
+                    650 => raw.events.extend([egui::Event::PointerMoved(source), button(source, true)]),
+                    651 => raw.events.push(button(source, false)),
+                    _ => {}
+                }
+                return;
+            }
+            if matches!(mode.as_str(), "preview" | "preview-drag") {
+                match self.frame_count {
+                    650 | 662 => raw.events.extend([egui::Event::PointerMoved(source), button(source, true)]),
+                    651 | 663 => raw.events.push(button(source, false)),
+                    _ => {}
+                }
+            }
+        }
+        let source = if mode == "preview-drag" {
+            self.egui_ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("inventory_texture_preview", self.inventory_ui.ui_id, item))))
+                .map(|r| r.center())
+        } else {
+            source
+        };
+        let Some(source) = source else { return };
+        let start = if inventory { 720 } else { 650 };
+        let target = egui::pos2(480.0, 430.0);
+        if mode != "preview" {
+            match self.frame_count.saturating_sub(start) {
+                0 if self.frame_count >= start => raw.events.extend([egui::Event::PointerMoved(source), button(source, true)]),
+                1 => raw.events.push(egui::Event::PointerMoved(source + egui::vec2(12.0, 0.0))),
+                2..=4 => raw.events.push(egui::Event::PointerMoved(target)),
+                5 => raw.events.push(button(target, false)),
+                _ => {}
+            }
         }
     }
+
     pub(super) fn show_texture_library(&mut self, ctx: &egui::Context, p: &Palette) {
         if self.demo
             && !self.library_demo_seeded
@@ -92,13 +133,23 @@ impl App {
             } else {
                 library::Presentation::Vertical
             };
-            self.panels.texture_library = mode != "baseline";
+            self.panels.texture_library = !matches!(mode.as_str(), "baseline" | "preview" | "preview-drag" | "inventory-drag");
             self.panels.chat = false;
             self.panels.people = false;
             self.panels.perf = false;
             self.panels.minimap = false;
-            self.panels.inventory = mode == "inventory";
-            if mode == "inventory"
+            let inventory_drag = crate::demo::texture_library::inventory_drag_enabled();
+            self.panels.inventory = mode == "inventory" || inventory_drag;
+            if inventory_drag {
+                let item = crate::demo::texture_library::first_texture();
+                self.inventory_ui.show_original(&self.world.inventory, item);
+                ui::widgets::place_floater(
+                    ctx,
+                    &format!("inventory_preview_{}_{}", self.inventory_ui.ui_id, item),
+                    egui::pos2(20.0, 60.0),
+                    egui::vec2(360.0, 280.0),
+                );
+            } else if mode == "inventory"
                 && let Some(root) = catalogue::root(&self.world.inventory)
             {
                 self.inventory_ui.show_folder(&self.world.inventory, root);
@@ -128,6 +179,7 @@ impl App {
                     self.texture_library.pending_refresh.clone_from(&change.refresh);
                     self.send(NetCommand::EditInventory { request, change });
                 }
+                library::Action::Apply(id) => self.apply_texture_library_selection(id),
                 library::Action::Reveal(id) => {
                     self.inventory_ui.show_folder(&self.world.inventory, id);
                     ui::widgets::open_floater(ctx, "inventory", &mut self.panels.inventory);
@@ -289,42 +341,120 @@ impl App {
             return;
         };
         let object_id = object.full_id;
-        let material = item.asset_type == 57;
-        let asset = catalogue::asset(&item);
-        if !drop.contents && !self.build.can_modify(&self.world, drop.object) {
+        let count = self
+            .media
+            .face_count(&self.world, &self.scene, drop.object)
+            .unwrap_or_else(|| self.build.num_faces(&self.world, drop.object));
+        self.build.face_counts.insert(object_id, count);
+        let faces: Vec<_> = if drop.all {
+            (0..count.min(256)).map(|i| i as u8).collect()
+        } else {
+            vec![drop.face]
+        };
+        if self.apply_inventory_resource(&item, drop.object, &faces, drop.contents, drop.remove_pbr) && !drop.contents {
+            self.texture_resource_applied(item.id);
+        }
+        self.flush_build();
+    }
+
+    fn apply_texture_library_selection(&mut self, id: Uuid) {
+        if !self.build.open || self.build.tool != crate::build::Tool::Edit {
             return;
+        }
+        let Some(item) = catalogue::resource(&self.world.inventory, id).cloned() else {
+            return;
+        };
+        // The expanded texture entry is not a geometry face count (notably
+        // on meshes). Refresh bounds before collecting the selected faces.
+        for idx in self.build.sel_prims(&self.world) {
+            if let Some(object) = self.world.objects.get(idx) {
+                let count = self
+                    .media
+                    .face_count(&self.world, &self.scene, idx)
+                    .unwrap_or_else(|| self.build.num_faces(&self.world, idx));
+                self.build.face_counts.insert(object.full_id, count);
+            }
+        }
+        let targets = self.build.inventory_surface_selection(&self.world);
+        if targets.is_empty() {
+            return;
+        }
+        // LLSelectMgr::selectionSetImage refuses duplicating a no-copy item.
+        if selection_copy_denied(&item, self.world.agent_id, targets.len()) {
+            self.world.system_message(aurora_i18n::tr!("texture-library-no-copy-multiple"));
+            return;
+        }
+        let mut waiting = false;
+        if requires_contents(&self.world.inventory, &item, self.world.agent_id) {
+            for (idx, _) in &targets {
+                let Some(object) = self.world.objects.get(*idx) else { continue };
+                let object_id = object.full_id;
+                self.build.request_contents(&self.world, *idx, false);
+                let inventory = self.build.contents.objects.get(&object_id);
+                if inventory.is_none_or(|inv| inv.loading || inv.requested.is_none()) {
+                    waiting = true;
+                } else if !inventory.is_some_and(|inv| {
+                    inv.items
+                        .iter()
+                        .any(|i| i.asset_id == item.asset_id && i.asset_type as i32 == item.asset_type)
+                }) && super::inventory_drag::target_allowed(&self.world, *idx, &item, true).is_err()
+                {
+                    self.world.system_message(aurora_i18n::tr!("texture-library-locked"));
+                    return;
+                }
+            }
+        }
+        if waiting {
+            self.world.system_message(aurora_i18n::tr!("texture-library-wait-selection"));
+            return;
+        }
+        let mut applied = false;
+        for (idx, faces) in targets {
+            applied |= self.apply_inventory_resource(&item, idx, &faces, false, false);
+        }
+        if applied {
+            self.texture_resource_applied(item.id);
+        }
+        self.flush_build();
+    }
+
+    /// The same inventory retention and surface edit path is used by preview
+    /// drags, inventory drags and clicks on the library's current selection.
+    fn apply_inventory_resource(
+        &mut self,
+        item: &aurora_net::inventory::InvItem,
+        idx: usize,
+        faces: &[u8],
+        contents: bool,
+        remove_pbr: bool,
+    ) -> bool {
+        let Some(object) = self.world.objects.get(idx) else { return false };
+        let object_id = object.full_id;
+        let asset = catalogue::asset(item);
+        if asset.is_nil() || !contents && !self.build.can_modify(&self.world, idx) {
+            return false;
         }
         let retained = self.build.contents.objects.get(&object_id).is_some_and(|inv| {
             inv.items
                 .iter()
                 .any(|i| i.asset_id == item.asset_id && i.asset_type as i32 == item.asset_type)
         });
-        if drop.contents || requires_contents(&self.world.inventory, &item, self.world.agent_id) && !retained {
-            if super::inventory_drag::target_allowed(&self.world, drop.object, &item, true).is_err() {
-                return;
+        if contents || requires_contents(&self.world.inventory, item, self.world.agent_id) && !retained {
+            if super::inventory_drag::target_allowed(&self.world, idx, item, true).is_err() {
+                return false;
             }
-            let task = crate::build::task_inventory::from_inventory(object_id, &item);
+            let task = crate::build::task_inventory::from_inventory(object_id, item);
             self.build.send(BuildCmd::UpdateTaskInventory {
                 handle: object.key.region,
                 local_id: object.key.local_id,
                 item: Box::new(task),
             });
-            if permissions(&item, self.world.agent_id) & rules::COPY == 0 {
+            if permissions(item, self.world.agent_id) & rules::COPY == 0 {
                 self.world.inventory.consume_item(item.id);
             }
-            self.build.request_contents(&self.world, drop.object, true);
+            self.build.request_contents(&self.world, idx, true);
         }
-        if !drop.contents {
-            let count = self
-                .media
-                .face_count(&self.world, &self.scene, drop.object)
-                .unwrap_or_else(|| self.build.num_faces(&self.world, drop.object));
-            self.build.face_counts.insert(object_id, count);
-            let faces: Vec<_> = if drop.all {
-                (0..count.min(256)).map(|i| i as u8).collect()
-            } else {
-                vec![drop.face]
-            };
+        if !contents {
             let mut env = crate::build::ui::Env {
                 images: &self.ui_images,
                 media: &mut self.media,
@@ -333,12 +463,15 @@ impl App {
                 demo: self.demo,
             };
             self.build
-                .apply_inventory_surface(&mut self.world, &mut env, drop.object, &faces, asset, material, drop.remove_pbr);
-            self.settings.texture_library.record(item.id);
-            self.settings.save();
-            self.world.system_message(aurora_i18n::tr!("texture-library-applied"));
+                .apply_inventory_surface(&mut self.world, &mut env, idx, faces, asset, item.asset_type == 57, remove_pbr);
         }
-        self.flush_build();
+        true
+    }
+
+    fn texture_resource_applied(&mut self, id: Uuid) {
+        self.settings.texture_library.record(id);
+        self.settings.save();
+        self.world.system_message(aurora_i18n::tr!("texture-library-applied"));
     }
 }
 
@@ -346,6 +479,24 @@ impl App {
 mod tests {
     use super::*;
     use aurora_net::inventory::InvItem;
+    #[test]
+    fn texture_library_never_duplicates_a_no_copy_resource_across_selected_objects() {
+        let agent = Uuid::from_u128(90);
+        for kind in [0, 57] {
+            let mut item = InvItem {
+                owner: agent,
+                asset_type: kind,
+                owner_mask: rules::TRANSFER,
+                ..Default::default()
+            };
+            assert!(!selection_copy_denied(&item, agent, 1));
+            assert!(selection_copy_denied(&item, agent, 2));
+            item.owner_mask |= rules::COPY;
+            assert!(!selection_copy_denied(&item, agent, 2));
+            item.owner = Uuid::from_u128(91);
+            assert!(selection_copy_denied(&item, agent, 2));
+        }
+    }
     #[test]
     fn texture_library_retains_restricted_assets_with_the_effective_permission_mask() {
         let agent = Uuid::from_u128(90);

@@ -210,3 +210,101 @@ fn texture_library_failed_fetch_refreshes_the_catalogue_and_waits_for_explicit_r
     inv.request(library);
     assert_eq!(inv.queue.len(), 2, "the retry can enqueue a failed folder");
 }
+
+#[test]
+fn texture_library_cards_apply_on_click_and_keep_dragging_separate_in_both_layouts() {
+    use aurora_net::inventory::InvItem;
+    use std::sync::Arc;
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    for presentation in [Presentation::Vertical, Presentation::Horizontal] {
+        for kind in [0, 57] {
+            let (mut inv, library, _) = inventory();
+            let item = Uuid::from_u128(80);
+            inv.add_items(vec![InvItem {
+                id: item,
+                parent: library,
+                asset_id: Uuid::from_u128(81),
+                asset_type: kind,
+                name: "Resource".into(),
+                ..Default::default()
+            }]);
+            let mut world = World::new(avatars.clone());
+            world.agent_id = Uuid::from_u128(70);
+            world.inventory = inv;
+            let mut scene = Scene::new(std::env::temp_dir(), avatars.clone());
+            let ctx = egui::Context::default();
+            let mut ui = LibraryUi {
+                agent: world.agent_id,
+                ..Default::default()
+            };
+            let mut prefs = Preferences {
+                presentation,
+                ..Default::default()
+            };
+            let mut time = 0.0;
+            let mut frame = |events: Vec<egui::Event>, ui: &mut LibraryUi| {
+                time += 1.0 / 60.0;
+                let mut actions = Vec::new();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |host| {
+                        actions = ui.show(
+                            host.ctx(),
+                            &crate::theme::Theme::default().palette(),
+                            &mut world,
+                            &mut scene,
+                            &HashMap::new(),
+                            &mut prefs,
+                            &mut true,
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                actions
+            };
+            for _ in 0..8 {
+                frame(Vec::new(), &mut ui);
+            }
+            let source = ctx
+                .data(|data| data.get_temp::<egui::Pos2>(egui::Id::new("texture_library_first_card")))
+                .expect("resource card");
+            let button = |pos, pressed| {
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        pressed,
+                        button: egui::PointerButton::Primary,
+                        modifiers: Default::default(),
+                    },
+                ]
+            };
+            assert!(frame(button(source, true), &mut ui).is_empty());
+            assert!(frame(vec![egui::Event::PointerMoved(source + egui::vec2(-20.0, 0.0))], &mut ui).is_empty());
+            assert_eq!(egui::DragAndDrop::payload::<InvDrag>(&ctx).expect("inventory cargo").0, item);
+            assert!(
+                frame(button(egui::pos2(50.0, 500.0), false), &mut ui).is_empty(),
+                "a drag must never apply to edit selection"
+            );
+            egui::DragAndDrop::clear_payload(&ctx);
+            for _ in 0..30 {
+                frame(Vec::new(), &mut ui);
+            }
+            assert!(frame(button(source, true), &mut ui).is_empty());
+            let actions = frame(button(source, false), &mut ui);
+            assert!(matches!(actions.as_slice(), [Action::Apply(id)] if *id == item));
+            assert_eq!(ui.selected, Some(item));
+            frame(button(source, true), &mut ui);
+            assert!(
+                frame(button(source, false), &mut ui).is_empty(),
+                "the second click opens preview without reapplying"
+            );
+            assert_eq!(ui.preview, Some(item));
+        }
+    }
+}

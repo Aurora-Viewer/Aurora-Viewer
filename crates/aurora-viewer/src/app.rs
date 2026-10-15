@@ -7016,7 +7016,7 @@ impl App {
                                 .picker
                                 .open_materials(aurora_i18n::tr!("build-ui-texture-choose-material"), uuid::Uuid::nil());
                             self.build.ui.pick_target = Some(crate::build::ui::PickTarget::PbrMaterial);
-                            self.build.ui.tex_tab = 0;
+                            self.build.ui.tex_tab = 1;
                         } else {
                             self.build.ui.picker.open_with_defaults(
                                 aurora_i18n::tr!("build-ui-texture-choose-texture"),

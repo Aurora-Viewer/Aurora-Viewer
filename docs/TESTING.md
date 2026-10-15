@@ -1462,6 +1462,16 @@ folder), and `empty` keeps the sample resources outside the empty library. `drop
 modifiable demo surface at (480, 430), for a 1280 × 800 window. Library scenarios
 make demo objects modifiable so manual surface drops can also be exercised.
 `baseline` keeps the library closed in the same scene for a profiling comparison.
+`preview` double-clicks an actual inventory texture and leaves its preview open;
+`preview-drag` then drags the preview image onto that surface, and `inventory-drag`
+drags the actual inventory row directly. Both use frame 720 for dragging.
+`apply` / `apply-pbr` click a texture / PBR card at frame 650; combine with
+`AURORA_DEMO_BUILD=face,480,430` and `AURORA_DEMO_BUILD_TAB=texture:classic`
+(or `texture:pbr`) to select that face first. Classic is before PBR in the build
+window. The click must update only selected editable faces, preserving other
+faces, transforms and selection; starting a drag must not apply to the selection.
+No-copy resources cannot be applied to multiple selected objects. Restricted
+resources wait for object contents; click again after the loading message.
 Capture after frame 780 to allow previews to
 load. All inventory/assets are synthetic; no grid or credentials are used.
 Check the header's presentation switch, Ctrl+Space and bottom toolbar button,

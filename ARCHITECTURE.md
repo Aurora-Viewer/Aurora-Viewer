@@ -102,11 +102,14 @@ by inventory generation, includes only actual texture/material items and real
 folders/subfolders, and excludes all links and the bridge's sibling data.
 `previews.rs` assembles bounded, revisioned PBR models on workers
 and draws them with the importer's shared GPU preview. `app/texture_library.rs`
-routes inventory mutations and permission-aware world face drops through the
+routes inventory mutations, library clicks on selected edit faces and
+permission-aware world face drops through the
 existing build and task-inventory operations. `Settings::texture_library`
 persists presentation, favorites and recent resources. Ctrl+Space and the
 customizable toolbar command toggle the current floater. `demo_texture_library.rs`
 provides actual synthetic inventory folders, tileable textures and PBR materials offline.
+Inventory texture previews retain the real item as drag cargo, sharing that
+world-drop path with inventory rows and library swatches.
 
 `ui/toolbar.rs` owns Firestorm's three toolbars (the bottom one, left and
 right), their context menus and drag/drop edits; a command stands in one of

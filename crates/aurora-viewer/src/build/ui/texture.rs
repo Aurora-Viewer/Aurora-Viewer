@@ -10,7 +10,7 @@
 use super::common::{Edit, check, color_swatch, combo, label, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
 use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
-use crate::build::{BuildSettings, BuildTool, EditMode};
+use crate::build::{BuildSettings, BuildTool, EditMode, Tool};
 use crate::scene::legacy_mat::{LegacyMaterial, alpha_mode};
 use crate::theme::Palette;
 use crate::ui::widgets::collapsing;
@@ -116,6 +116,31 @@ pub fn convert_to_pbr(scale: [f32; 2], offset: [f32; 2], rotation: f32) -> Textu
 }
 
 impl BuildTool {
+    /// Faces targeted by a library click. Only the active Edit tool can
+    /// modify a selection; keep each prim's selected faces and real bounds.
+    pub fn inventory_surface_selection(&self, world: &World) -> Vec<(usize, Vec<u8>)> {
+        if !self.open || self.tool != Tool::Edit {
+            return Vec::new();
+        }
+        self.sel_prims(world)
+            .into_iter()
+            .filter(|idx| self.can_modify(world, *idx))
+            .filter_map(|idx| {
+                let object = world.objects.get(idx)?;
+                if object.is_avatar() || object.is_tree() {
+                    return None;
+                }
+                let te = object.te.as_ref()?;
+                let count = self.num_faces(world, idx).min(te.faces.len());
+                let mut faces = self.sel_faces(world, idx);
+                faces.retain(|face| (*face as usize) < count);
+                faces.sort_unstable();
+                faces.dedup();
+                (!faces.is_empty()).then_some((idx, faces))
+            })
+            .collect()
+    }
+
     /// Apply inventory cargo to explicitly picked faces, leaving selection and
     /// other texture-entry properties unchanged. A texture on PBR replaces its
     /// base map; Alt restores the legacy face, as dropTextureOneFace does.
@@ -131,6 +156,10 @@ impl BuildTool {
     ) {
         if !self.can_modify(world, idx) {
             return;
+        }
+        // An outstanding picker preview must not later revert this commit.
+        if self.ui.picker.open || self.ui.texture_edit.is_some() {
+            self.cancel_texture_picker(world, env);
         }
         let count = self.num_faces(world, idx);
         let selected: Vec<Sel> = faces
@@ -377,15 +406,15 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         p,
         &mut tool.ui.tex_tab,
         &[
-            ("PBR", true),
             (aurora_i18n::tr!("build-ui-texture-classic"), true),
+            ("PBR", true),
             (aurora_i18n::tr!("extra-media"), true),
         ],
     );
     ui.add_space(4.0);
     match tool.ui.tex_tab {
-        0 => pbr(ui, p, tool, world, env, &sel),
-        1 => blinn_phong(ui, p, tool, world, s, env, &sel),
+        0 => blinn_phong(ui, p, tool, world, s, env, &sel),
+        1 => pbr(ui, p, tool, world, env, &sel),
         _ => media(ui, p, tool, world, env, &sel),
     }
     if tool.ui.tex_tab != 2 {

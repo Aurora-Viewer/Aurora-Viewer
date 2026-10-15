@@ -943,4 +943,64 @@ mod tests {
             assert!(tool.out.is_empty());
         });
     }
+    #[test]
+    fn texture_library_click_targets_only_the_editable_selected_faces() {
+        fixture(|world, tool, env, prims| {
+            tool.open = true;
+            tool.tool = crate::build::Tool::Edit;
+            tool.edit_mode = crate::build::EditMode::Face;
+            let first = world.objects.get(prims[0]).unwrap().key;
+            tool.faces.insert(first, vec![1, 1, u8::MAX]);
+            for material in [false, true] {
+                let before: Vec<_> = prims.iter().map(|idx| world.objects.get(*idx).unwrap().te.clone()).collect();
+                let selection = tool.selection.clone();
+                let faces = tool.faces.clone();
+                let targets = tool.inventory_surface_selection(world);
+                assert_eq!(targets.len(), 2);
+                assert!(targets.contains(&(prims[0], vec![1])));
+                assert!(targets.contains(&(prims[1], vec![0])));
+                let asset = Uuid::from_u128(if material { 920 } else { 921 });
+                for (idx, faces) in targets {
+                    tool.apply_inventory_surface(world, env, idx, &faces, asset, material, false);
+                }
+                for (n, &idx) in prims.iter().enumerate() {
+                    let face = if n == 0 { 1 } else { 0 };
+                    if material {
+                        assert_eq!(BuildTool::gltf_asset(world, idx, face), Some(asset));
+                    } else {
+                        assert_eq!(texture(world, idx, face as usize), asset);
+                    }
+                    let other = if face == 0 { 1 } else { 0 };
+                    assert_eq!(
+                        world.objects.get(idx).unwrap().te.as_ref().unwrap().faces[other],
+                        before[n].as_ref().unwrap().faces[other]
+                    );
+                }
+                assert_eq!(tool.selection, selection);
+                assert_eq!(tool.faces, faces);
+            }
+            world.objects.get_mut(prims[1]).unwrap().owner_id = Uuid::from_u128(922);
+            assert_eq!(tool.inventory_surface_selection(world), vec![(prims[0], vec![1])]);
+            tool.open = false;
+            assert!(tool.inventory_surface_selection(world).is_empty());
+            tool.open = true;
+            tool.tool = crate::build::Tool::Create;
+            assert!(tool.inventory_surface_selection(world).is_empty());
+        });
+    }
+
+    #[test]
+    fn texture_library_commit_finishes_the_old_picker_before_applying() {
+        fixture(|world, tool, env, prims| {
+            let original = texture(world, prims[1], 0);
+            open(tool, world, env, PickTarget::Diffuse);
+            tool.preview_texture(world, env, Uuid::from_u128(923));
+            tool.apply_inventory_surface(world, env, prims[0], &[0], Uuid::from_u128(924), false, false);
+            assert!(!tool.ui.picker.open);
+            assert!(tool.ui.texture_edit.is_none());
+            tool.cancel_texture_picker(world, env);
+            assert_eq!(texture(world, prims[0], 0), Uuid::from_u128(924));
+            assert_eq!(texture(world, prims[1], 0), original);
+        });
+    }
 }

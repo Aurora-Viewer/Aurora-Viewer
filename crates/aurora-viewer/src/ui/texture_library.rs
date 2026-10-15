@@ -77,6 +77,7 @@ enum Scope {
 pub enum Action {
     Change(Mutation),
     Reveal(Uuid),
+    Apply(Uuid),
 }
 #[derive(Default)]
 pub struct LibraryUi {
@@ -100,6 +101,9 @@ impl LibraryUi {
     pub fn demo(&mut self, mode: &str, agent: Uuid) {
         self.reset();
         self.agent = agent;
+        if mode == "apply-pbr" {
+            self.kind = Kind::Material;
+        }
         if mode == "search" {
             self.search = aurora_i18n::tr!("texture-library-demo-stone").into();
             self.kind = Kind::Material;
@@ -224,7 +228,20 @@ impl LibraryUi {
                                 }
                                 for index in entries.iter().take(end).skip(first) {
                                     let entry = self.catalogue.entries[*index].clone();
-                                    self.card(ui, p, world, scene, images, prefs, &entry, 44.0, false);
+                                    if self.card(
+                                        ui,
+                                        p,
+                                        world,
+                                        scene,
+                                        images,
+                                        prefs,
+                                        &entry,
+                                        44.0,
+                                        false,
+                                        entries.first() == Some(index),
+                                    ) {
+                                        actions.push(Action::Apply(entry.id));
+                                    }
                                 }
                             });
                         });
@@ -240,7 +257,20 @@ impl LibraryUi {
                                 ui.horizontal(|ui| {
                                     for index in entries.iter().skip(row * 2).take(2) {
                                         let entry = self.catalogue.entries[*index].clone();
-                                        self.card(ui, p, world, scene, images, prefs, &entry, 106.0, true);
+                                        if self.card(
+                                            ui,
+                                            p,
+                                            world,
+                                            scene,
+                                            images,
+                                            prefs,
+                                            &entry,
+                                            106.0,
+                                            true,
+                                            entries.first() == Some(index),
+                                        ) {
+                                            actions.push(Action::Apply(entry.id));
+                                        }
                                     }
                                 });
                             }
@@ -262,13 +292,13 @@ impl LibraryUi {
                         } else {
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(aurora_i18n::tr!("texture-library-drag-hint"))
+                                    RichText::new(aurora_i18n::tr!("texture-library-click-hint"))
                                         .size(10.0)
                                         .color(p.muted),
                                 )
                                 .truncate(),
                             )
-                            .on_hover_text(aurora_i18n::tr!("texture-library-drag-hint"));
+                            .on_hover_text(aurora_i18n::tr!("texture-library-click-hint"));
                         }
                     });
                 }
@@ -501,7 +531,9 @@ impl LibraryUi {
         entry: &Entry,
         size: f32,
         details: bool,
-    ) {
+        first: bool,
+    ) -> bool {
+        let mut apply = false;
         ui.push_id((entry.id, details), |ui| {
             ui.vertical(|ui| {
                 let visible = ui.is_rect_visible(egui::Rect::from_min_size(ui.next_widget_position(), Vec2::splat(size)));
@@ -546,22 +578,24 @@ impl LibraryUi {
                         egui::StrokeKind::Inside,
                     );
                 }
-                if self.catalogue.entries.first().is_some_and(|first| first.id == entry.id) {
+                if first {
                     ui.ctx()
                         .data_mut(|d| d.insert_temp(egui::Id::new("texture_library_first_card"), response.rect.center()));
                 }
                 response.dnd_set_drag_payload(InvDrag(entry.id));
                 if response.clicked() {
                     self.selected = Some(entry.id);
+                    apply = !response.double_clicked();
                 }
                 if response.double_clicked() {
                     self.preview = Some(entry.id);
                     self.preview_view = previews::view(p);
                 }
                 response.on_hover_text(format!(
-                    "{}\n{}\n{}",
+                    "{}\n{}\n{}\n{}",
                     entry.name,
                     entry.path,
+                    aurora_i18n::tr!("texture-library-click-hint"),
                     aurora_i18n::tr!("texture-library-drag-hint")
                 ));
                 ui.add_sized(
@@ -600,6 +634,7 @@ impl LibraryUi {
                 let _ = world;
             });
         });
+        apply
     }
     fn preview(&mut self, ctx: &egui::Context, p: &Palette, world: &World, scene: &mut Scene, images: &HashMap<Uuid, egui::TextureHandle>) {
         let Some(entry) = self
@@ -633,8 +668,10 @@ impl LibraryUi {
                     ui.add(
                         egui::Image::new(image)
                             .fit_to_exact_size(Vec2::splat(320.0))
-                            .maintain_aspect_ratio(true),
-                    );
+                            .maintain_aspect_ratio(true)
+                            .sense(egui::Sense::click_and_drag()),
+                    )
+                    .dnd_set_drag_payload(InvDrag(entry.id));
                 }
             }
             ui.label(RichText::new(&entry.path).size(11.0).color(p.muted));

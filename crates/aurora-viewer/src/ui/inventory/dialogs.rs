@@ -472,10 +472,26 @@ pub(super) fn preview(
         if it.asset_type == 0 {
             st.wanted_images.insert(it.asset_id);
             if let Some(t) = images.get(&it.asset_id) {
-                ui.add(egui::Image::new(t).max_size(Vec2::splat(350.0)).fit_to_original_size(1.0));
+                // LLPreview::{handleMouseDown,handleHover}: carry the actual
+                // inventory item, so world drops still check its permissions.
+                let response = ui.add(
+                    egui::Image::new(t)
+                        .max_size(Vec2::splat(350.0))
+                        .fit_to_original_size(1.0)
+                        .sense(egui::Sense::click_and_drag()),
+                );
+                if drag_inventory.items.get(&id).is_some_and(|item| item.asset_type == 0) {
+                    response.dnd_set_drag_payload(InvDrag(id));
+                }
+                ctx.data_mut(|data| data.insert_temp(egui::Id::new(("inventory_texture_preview", st.ui_id, id)), response.rect));
             } else {
                 ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
             }
+            ui.label(
+                RichText::new(aurora_i18n::tr!("texture-library-drag-hint"))
+                    .size(10.0)
+                    .color(p.muted),
+            );
         } else if matches!(it.asset_type, 20 | 1) {
             if flat_button(ui, p, aurora_i18n::tr!("common-play")).clicked() {
                 if it.asset_type == 20 {
