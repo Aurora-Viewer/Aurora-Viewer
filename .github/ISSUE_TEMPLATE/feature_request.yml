@@ -3,12 +3,6 @@ description: Suggest a feature or an improvement for Aurora Viewer
 title: "[Feature]: "
 labels: ["FEATURE REQUEST"]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        > **Note:** This issue is PUBLIC. Remove private information before submitting.
-        > Search the open issues first: your idea may already be there, and a comment or a reaction on it helps more than a duplicate.
-
   - type: textarea
     id: what-you-would-like
     attributes:
