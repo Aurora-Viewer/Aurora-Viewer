@@ -8,6 +8,25 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
     let Ok(mode) = std::env::var("AURORA_DEMO_INVENTORY") else {
         return Vec::new();
     };
+    if matches!(mode.as_str(), "note-markdown" | "note-source" | "note-classic") {
+        if frame < 600 {
+            st.notecard_view = match mode.as_str() {
+                "note-markdown" => super::markdown::View::Markdown,
+                "note-source" => super::markdown::View::Source,
+                _ => super::markdown::View::Classic,
+            };
+        }
+        if frame == 610
+            && let Some(item) = st.preview
+        {
+            // Saved auxiliary panels can overlap the scenario's document.
+            ctx.move_to_top(egui::LayerId::new(
+                egui::Order::Middle,
+                egui::Id::new(preview_window_id(st.ui_id, item, 7)),
+            ));
+        }
+        return Vec::new();
+    }
     if !matches!(
         mode.as_str(),
         "note-edit"
@@ -165,6 +184,8 @@ impl InventoryUi {
         self.preview_text = None;
         self.preview_can_edit = false;
         self.preview_source = None;
+        self.notecard_view = Default::default();
+        self.notecard_markdown = Default::default();
         self.attachment_preview = None;
         self.preview_original.clear();
         self.preview_message.clear();

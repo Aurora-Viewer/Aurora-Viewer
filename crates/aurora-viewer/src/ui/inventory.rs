@@ -18,6 +18,7 @@ mod dialogs;
 mod document;
 pub(crate) mod drag;
 mod embedded;
+mod markdown;
 mod move_to;
 pub use document::document_demo_events;
 pub(crate) mod permissions;
@@ -312,6 +313,8 @@ pub struct InventoryUi {
     pub preview_dirty: bool,
     pub save_pending: bool,
     pub preview_source: Option<aurora_net::inventory::notecard::Notecard>,
+    pub notecard_view: markdown::View,
+    notecard_markdown: markdown::Cache,
     pub attachment_preview: Option<aurora_net::inventory::InvItem>,
     pub preview_original: String,
     pub preview_message: String,

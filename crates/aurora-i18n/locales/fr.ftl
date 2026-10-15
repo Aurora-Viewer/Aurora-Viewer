@@ -510,6 +510,24 @@ notecard-task-title = { $note } ({ $object })
 notecard-task-unavailable = Cette note ou son objet n’est plus disponible.
 notecard-task-demo-title = Note dans un objet
 notecard-save-button = Enregistrer (Ctrl+S)
+notecard-view-classic = Classique
+notecard-view-markdown = Markdown
+notecard-view-source = Édition
+notecard-markdown-demo =
+    # Bienvenue dans Aurora
+    Une note avec du **gras**, de l’*italique*, du ~~barré~~ et du `code`.
+
+    ## Vos notes
+    - Conserver le texte original en changeant d’affichage.
+    - Enregistrer depuis chaque vue avec **Ctrl+S**.
+
+    > Les pièces jointes font toujours partie de la note.
+
+    { "[" }Aurora Viewer](https://auroraviewer.com)
+
+    ```text
+    Un bloc de code brut
+    ```
 inventory-preview-busy = Trop de documents sont en cours de chargement. Réessayez dans un instant.
 inventory-preview-timeout = Le chargement du document a expiré. Rouvrez-le pour réessayer.
 notecard-text-too-large = Une note ne peut pas dépasser 65 536 octets de texte.

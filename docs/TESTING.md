@@ -2934,6 +2934,14 @@ offline; the files and snapshots uploaded in demo stay offline.
   text at frame 650 then send Ctrl+S at frame 670; the refusal keeps
   the draft. Saving and closing / reopening keeps the text during
   the demo session, without creating an item in the personal inventory.
+- `note-classic`, `note-markdown`, `note-source`: the same Markdown sample
+  with an image, a landmark and an object in each display mode. Capture
+  after frame 740. Switch tabs, edit the source in Classic or Edit, then
+  save from Markdown and reopen: the Markdown syntax, Unicode text and
+  attachments must survive. Classic defaults to Firestorm's plain,
+  proportional, wrapping text; Edit uses monospace; Markdown is a
+  selectable formatted preview with headings, emphasis, lists, quotes,
+  code and links. Images show their alt text as a link without downloading.
 - `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded`:
   automatic addition of text at frame 650, then save with Ctrl+S
   (`note-save`), close confirmation (`note-close`) or simulated refusal

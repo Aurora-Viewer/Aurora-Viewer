@@ -507,6 +507,24 @@ notecard-task-title = { $note } ({ $object })
 notecard-task-unavailable = This notecard or its object is no longer available.
 notecard-task-demo-title = Notecard in an object
 notecard-save-button = Save (Ctrl+S)
+notecard-view-classic = Classic
+notecard-view-markdown = Markdown
+notecard-view-source = Edit
+notecard-markdown-demo =
+    # Welcome to Aurora
+    A notecard with **bold**, *italic*, ~~strikethrough~~ and `code`.
+
+    ## Your notes
+    - Keep the original text when switching views.
+    - Save from any view with **Ctrl+S**.
+
+    > Embedded items remain part of the notecard.
+
+    { "[" }Aurora Viewer](https://auroraviewer.com)
+
+    ```text
+    A plain code block
+    ```
 inventory-preview-busy = Too many documents are loading. Try again in a moment.
 inventory-preview-timeout = Loading the document timed out. Reopen it to retry.
 notecard-text-too-large = A notecard cannot exceed 65,536 bytes of text.

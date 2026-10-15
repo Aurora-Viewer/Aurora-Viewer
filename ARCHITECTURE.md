@@ -95,6 +95,14 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`ui/inventory/markdown.rs` provides each inventory/object notecard's Classic,
+Markdown and raw Edit views. Classic retains Firestorm's plain proportional
+text with embedded inventory. CommonMark is parsed once per source change on
+the worker pool and displayed as a selectable, read-only rich text editor;
+the existing embedded-item renderer keeps attachment actions in every view.
+All modes share the original source draft and permission-aware save lifecycle
+in `ui/inventory/document.rs`; formatted text never enters the asset encoder.
+
 `ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
 shared folder/search/type state and inventory management shortcut.
 `ui/texture_library/windows.rs` owns independent, resizable texture/material

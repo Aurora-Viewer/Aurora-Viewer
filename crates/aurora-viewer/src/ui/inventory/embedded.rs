@@ -24,6 +24,14 @@ struct Clipboard {
     card: Notecard,
 }
 
+#[derive(Default)]
+pub(super) enum Appearance<'a> {
+    #[default]
+    Classic,
+    Source,
+    Markdown(&'a super::markdown::Rendered),
+}
+
 pub(super) fn clipboard(ctx: &egui::Context, id: egui::Id, source: &mut Notecard, text: &str, editable: bool) {
     if !ctx.memory(|m| m.has_focus(id)) {
         return;
@@ -82,12 +90,24 @@ pub(super) fn editor(
     source: Option<&Notecard>,
     editable: bool,
     size: Vec2,
+    appearance: Appearance<'_>,
 ) -> EditorResult {
-    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let style = if matches!(appearance, Appearance::Source) {
+        egui::TextStyle::Monospace
+    } else {
+        egui::TextStyle::Body
+    };
+    let font = style.resolve(ui.style());
+    let markdown = if let Appearance::Markdown(rendered) = &appearance {
+        Some(*rendered)
+    } else {
+        None
+    };
+    let editable = editable && markdown.is_none();
     let label_font = egui::TextStyle::Body.resolve(ui.style());
     let mut labels = std::collections::HashMap::new();
     if let Some(source) = source {
-        for marker in text.chars() {
+        for marker in markdown.map_or(text.as_str(), |rendered| rendered.text.as_str()).chars() {
             if labels.contains_key(&marker) {
                 continue;
             }
@@ -112,26 +132,33 @@ pub(super) fn editor(
         };
         let mut job = LayoutJob::default();
         job.wrap.max_width = wrap_width;
-        let mut start = 0;
-        for (byte, marker) in buffer.as_str().char_indices() {
-            if let Some(label) = labels.get(&marker) {
-                job.append(&buffer.as_str()[start..byte], 0.0, normal.clone());
-                // One wide glyph keeps egui's character indices, wrapping and
-                // selection aligned with the one-character asset marker.
-                job.append(
-                    &blank.to_string(),
-                    0.0,
-                    TextFormat {
-                        font_id: egui::FontId::new((label.size().x + 24.0) / unit_width, font.family.clone()),
-                        color: egui::Color32::TRANSPARENT,
-                        line_height: Some(line_height),
-                        ..normal.clone()
-                    },
-                );
-                start = byte + marker.len_utf8();
+        let mut append = |job: &mut LayoutJob, segment: &str, normal: TextFormat| {
+            let mut start = 0;
+            for (byte, marker) in segment.char_indices() {
+                if let Some(label) = labels.get(&marker) {
+                    job.append(&segment[start..byte], 0.0, normal.clone());
+                    // One wide glyph keeps egui's character indices, wrapping and
+                    // selection aligned with the one-character asset marker.
+                    job.append(
+                        &blank.to_string(),
+                        0.0,
+                        TextFormat {
+                            font_id: egui::FontId::new((label.size().x + 24.0) / unit_width, font.family.clone()),
+                            color: egui::Color32::TRANSPARENT,
+                            line_height: Some(line_height.max(normal.font_id.size)),
+                            ..normal.clone()
+                        },
+                    );
+                    start = byte + marker.len_utf8();
+                }
             }
+            job.append(&segment[start..], 0.0, normal);
+        };
+        if let Some(rendered) = markdown {
+            rendered.layout(ui, p, &mut append, &mut job);
+        } else {
+            append(&mut job, buffer.as_str(), normal);
         }
-        job.append(&buffer.as_str()[start..], 0.0, normal);
         ui.fonts_mut(|fonts| fonts.layout_job(job))
     };
     let mut show = |ui: &mut egui::Ui, buffer: &mut dyn egui::TextBuffer| {
@@ -140,11 +167,15 @@ pub(super) fn editor(
             .desired_width(size.x)
             .min_size(size)
             .desired_rows(1)
-            .font(egui::TextStyle::Monospace)
+            .font(style.clone())
             .layouter(&mut layouter)
             .show(ui)
     };
-    let output = if editable { show(ui, text) } else { show(ui, &mut text.as_str()) };
+    let output = if editable {
+        show(ui, text)
+    } else {
+        show(ui, &mut markdown.map_or(text.as_str(), |rendered| rendered.text.as_str()))
+    };
     ui.ctx()
         .data_mut(|data| data.insert_temp(id.with("demo_rect"), output.response.rect));
     let mut result = EditorResult {
@@ -156,9 +187,32 @@ pub(super) fn editor(
     if output.response.has_focus() {
         result.save = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
     }
+    if let Some(rendered) = markdown
+        && let Some(pos) = ui
+            .input(|i| i.pointer.hover_pos())
+            .filter(|pos| output.text_clip_rect.contains(*pos))
+    {
+        let cursor = output.galley.cursor_from_pos(pos - output.galley_pos);
+        let cursor_rect = output.galley.pos_from_cursor(cursor).translate(output.galley_pos.to_vec2());
+        if (cursor_rect.min.x - pos.x).abs() < font.size
+            && let Some((_, url)) = rendered.links.iter().find(|(range, _)| range.contains(&cursor.index.0))
+            && (url.starts_with("https://") || url.starts_with("http://"))
+        {
+            egui::Response::clone(&output.response)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(url.as_ref());
+            if output.response.clicked() {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(url.as_ref()));
+            }
+        }
+    }
     let painter = ui.painter().with_clip_rect(output.text_clip_rect);
     if let Some(source) = source {
-        for (index, marker) in text.chars().enumerate() {
+        for (index, marker) in markdown
+            .map_or(text.as_str(), |rendered| rendered.text.as_str())
+            .chars()
+            .enumerate()
+        {
             let Some(attachment) = source.attachment(marker) else { continue };
             let Some(label) = labels.get(&marker) else { continue };
             let mut cursor = CCursor::new(index);
@@ -281,6 +335,7 @@ mod tests {
                     Some(source),
                     editable,
                     egui::vec2(600.0, 300.0),
+                    Appearance::Classic,
                 );
             },
         );
