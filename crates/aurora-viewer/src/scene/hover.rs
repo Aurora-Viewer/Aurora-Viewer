@@ -1441,13 +1441,13 @@ mod tests {
         assert_eq!(both(&mut scene, &world), Some(front));
         assert_eq!(scene.pick.classes[back], class::KNOWN);
         assert_eq!(scene.hover.candidates.see_through, [front]);
-        // it gets a see-through face and a script: its triangles, in front,
-        // hide the object behind from the cursor
+        // It gets a see-through face and a script. Its rest triangles are
+        // in front, but only its GPU-posed surface may intercept a click.
         world.objects.get_mut(back).unwrap().update_flags = 1 << 7;
         scene.gpu[back].faces[0].te_alpha = 0.5;
         scene.pick.changed(back);
         world.objects.take_touched(&mut Vec::new());
-        assert_eq!(both(&mut scene, &world), None);
+        assert_eq!(both(&mut scene, &world), Some(front));
         assert_eq!(scene.pick.classes[back], class::KNOWN | class::SEE_THROUGH);
         assert_eq!(scene.hover.candidates.see_through, [front, back]);
         assert_eq!(scene.hover.candidates.point, [front]);

@@ -1506,8 +1506,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 value4 = format!("{}", DEMO_GROUP2)
             );
             // The animesh fixture needs its wearer visible in full, and
-            // AURORA_DEMO_PEOPLE the wolf as a friend.
-            let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some() || people::mode().is_some() {
+            // AURORA_DEMO_PEOPLE the wolf as a friend. The attachment-click
+            // fixtures need the same visible, unblocked wearer.
+            let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some()
+                || std::env::var("AURORA_DEMO_WORLD_CLICKS").is_ok_and(|m| m.starts_with("worn-"))
+                || people::mode().is_some()
+            {
                 text.lines().skip(1).collect::<Vec<_>>().join("\n")
             } else {
                 text
@@ -2610,7 +2614,7 @@ pub fn events() -> Vec<NetEvent> {
     // ids so other demo objects and replies retain their identities.
     // AURORA_DEMO_TEXANIM puts its own panels there.
     let texanim = std::env::var_os("AURORA_DEMO_TEXANIM").is_some();
-    if !std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|m| m == "1") && !texanim {
+    if !std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|m| m == "1") && std::env::var_os("AURORA_DEMO_WORLD_CLICKS").is_none() && !texanim {
         let yaw = 0.4f32.atan2(0.8);
         let across = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
         let center = Vec3::new(138.5, 125.5, 0.0);

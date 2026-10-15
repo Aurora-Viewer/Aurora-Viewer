@@ -100,9 +100,34 @@ impl Projector {
 
 /// An avatar name tag on screen (egui points): it takes the clicks like its
 /// avatar (LLPipeline::lineSegmentIntersectInWorld picks the tags).
+#[derive(Clone, Copy)]
 pub struct NameTag {
     pub id: uuid::Uuid,
     pub rect: egui::Rect,
+    /// The plane used by labels.wgsl: constant camera depth across the tag,
+    /// rather than a sphere centred on its avatar's current position.
+    pub at: Vec3,
+    pub normal: Vec3,
+}
+
+impl NameTag {
+    pub fn new(id: uuid::Uuid, rect: egui::Rect, at: Vec3, proj: &Projector) -> Self {
+        Self {
+            id,
+            rect,
+            at,
+            normal: proj.view_proj.row(3).truncate().normalize_or_zero(),
+        }
+    }
+
+    pub fn point(&self, (origin, direction): (Vec3, Vec3)) -> Option<Vec3> {
+        let denominator = self.normal.dot(direction);
+        if denominator.abs() < 1e-6 {
+            return None;
+        }
+        let t = self.normal.dot(self.at - origin) / denominator;
+        (t.is_finite() && t >= 0.0).then_some(origin + direction * t)
+    }
 }
 
 /// Painter of what belongs to the world (name tags, floating texts, the
@@ -479,7 +504,7 @@ pub fn draw(
             let w = max_w + 12.0 + super::voice_tag::TAG_EXTRA_WIDTH;
             let r = egui::Rect::from_min_size(Pos2::new(sp.x - w * 0.5, y - 3.0), egui::vec2(w, total_h + 6.0));
             if let Some(id) = avatar {
-                name_tags.push(NameTag { id, rect: r });
+                name_tags.push(NameTag::new(id, r, at, proj));
             }
             painter.rect_filled(
                 r,
@@ -543,8 +568,8 @@ pub fn draw(
     }
     if let Some(plates) = plates {
         plate_tags.sort_by(|a, b| b.distance.total_cmp(&a.distance));
-        plates.paint(&painter, p, icons, &plate_tags, now_s, |id, rect| {
-            name_tags.push(NameTag { id, rect })
+        plates.paint(&painter, p, icons, &plate_tags, now_s, |id, rect, at| {
+            name_tags.push(NameTag::new(id, rect, at, proj))
         });
     }
     // what else is painted for the world (the tracking beacon) stands nowhere

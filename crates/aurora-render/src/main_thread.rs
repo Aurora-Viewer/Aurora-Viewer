@@ -689,7 +689,7 @@ impl Renderer {
     fn fail_picks(&mut self) {
         let asked = self.pick_requests.drain(..).map(|(ticket, _, _)| (ticket, None));
         self.pick_answers.extend(asked);
-        let asked = self.drawn_requests.drain(..).map(|(ticket, _, _)| (ticket, Default::default()));
+        let asked = self.drawn_requests.drain(..).map(|(ticket, _, _, _)| (ticket, Default::default()));
         self.drawn_answers.extend(asked);
     }
 
@@ -913,14 +913,14 @@ impl Renderer {
     /// draws its faces once more through a camera narrowed to that pixel
     /// (drawn_pick.rs), and [`Self::take_drawn`] gives the answer a few
     /// frames later. Costs that pass, in that frame only.
-    pub fn request_drawn(&mut self, x: f32, y: f32) -> u64 {
+    pub fn request_drawn(&mut self, x: f32, y: f32, mode: crate::DrawnMode) -> u64 {
         let ticket = self.pick_ticket;
         self.pick_ticket += 1;
         let (w, h) = self.size;
         if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 || self.failed {
             self.drawn_answers.push((ticket, Default::default()));
         } else {
-            self.drawn_requests.push((ticket, x as u32, y as u32));
+            self.drawn_requests.push((ticket, x as u32, y as u32, mode));
         }
         ticket
     }
@@ -937,7 +937,7 @@ impl Renderer {
 
     /// Give up a [`Self::request_drawn`] nobody waits for any more.
     pub fn forget_drawn(&mut self, ticket: u64) {
-        self.drawn_requests.retain(|(t, _, _)| *t != ticket);
+        self.drawn_requests.retain(|(t, _, _, _)| *t != ticket);
         self.drawn_answers.retain(|(t, _)| *t != ticket);
     }
 

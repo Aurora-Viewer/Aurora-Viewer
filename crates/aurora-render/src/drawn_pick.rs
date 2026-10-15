@@ -16,7 +16,8 @@
 //! and lower neighbours: a 2 × 2 target whose texels hold the record, the
 //! depth and the surface coordinates of the face there. Two passes: opaque
 //! and masked faces (alpha tested as displayed), then blended faces in
-//! front of them (including zero-alpha texels, which stop a click). Nothing is drawn nor allocated
+//! front of them (including zero-alpha texels for interactions; visible
+//! texture texels only for the camera). Nothing is drawn nor allocated
 //! per frame when nobody asks: the cost is one pass over the visible
 //! geometry, vertex work only, in the frame of a click.
 //!
@@ -68,8 +69,16 @@ pub struct Drawn {
     pub blend: Option<DrawnFace>,
 }
 
-/// A request: its ticket and its pixel.
-pub type DrawnRequest = (u64, u32, u32);
+/// Touch/build includes invisible Blend texels; the camera follows visible
+/// surfaces (LLToolCamera::handleMouseDown: pick_transparent = false).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DrawnMode {
+    Interaction,
+    Visible,
+}
+
+/// A request: its ticket, pixel and transparency rule.
+pub type DrawnRequest = (u64, u32, u32, DrawnMode);
 pub type DrawnAnswer = (u64, Drawn);
 
 /// The camera of a frame narrowed to the 2 × 2 pixels at (x, y): applied
@@ -227,8 +236,8 @@ impl DrawnPick {
 
     /// The request this frame draws for, if any and if a readback is free:
     /// its pixel. One a frame; the others wait for the next.
-    pub fn begin(&mut self, size: (u32, u32), inv_view_proj: Mat4) -> Option<(u32, u32)> {
-        while let Some(&(ticket, x, y)) = self.queue.first() {
+    pub fn begin(&mut self, size: (u32, u32), inv_view_proj: Mat4) -> Option<(u32, u32, DrawnMode)> {
+        while let Some(&(ticket, x, y, mode)) = self.queue.first() {
             if x >= size.0 || y >= size.1 {
                 self.queue.remove(0);
                 self.answers.push((ticket, Drawn::default()));
@@ -247,7 +256,7 @@ impl DrawnPick {
                 },
             ));
             self.encoded = Some(i);
-            return Some((x, y));
+            return Some((x, y, mode));
         }
         None
     }

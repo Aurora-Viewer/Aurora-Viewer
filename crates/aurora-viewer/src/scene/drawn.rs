@@ -24,8 +24,8 @@
 //! where it is shown. Once designated it follows the rules of any object of
 //! its kind: click action, touch, IGNORE, transparency, rights, menus.
 //!
-//! Camera clicks (Alt + click, Focus tool) only aim at a surface: they keep
-//! the depth alone and ask nothing here.
+//! Camera clicks (Alt + click, Focus tool) use the visible-surface mode of
+//! that pass directly: no CPU rest-pose or invisible touch-surface search.
 //!
 //! [`reaches`] is that rule, alone and tested. Blend faces intercept a
 //! press regardless of their texel opacity or the presence of an action.
@@ -109,7 +109,7 @@ impl Scene {
         };
         let worn = g.owner_avatar.is_some() && !g.is_avatar;
         Status {
-            posed_by_gpu: !g.hud && !g.is_avatar && (g.rigged || (worn && o.volume.is_mesh())),
+            posed_by_gpu: !g.hud && !g.is_avatar && (g.rigged || (worn && o.visual_volume().is_mesh())),
             worn: worn && !g.hud,
             avatar: g.is_avatar,
             ignored: o.click_action == crate::interaction::code::IGNORE,
@@ -120,8 +120,9 @@ impl Scene {
     /// The object `gesture` designates among the faces drawn under its
     /// pixel, if it is one the drawn faces speak for ([`reaches`]). `ray`:
     /// the cursor ray; `found`: the point the CPU search settled on, which
-    /// keeps the click when it is in front (a transparent prim
-    /// before the rigged mesh).
+    /// keeps the click when it is in front (a transparent prim before the
+    /// rigged mesh). `depth` is the older opaque GPU sample: it is not an
+    /// extra occluder when the CPU search left it unchanged.
     pub fn designated(
         &self,
         world: &World,
@@ -129,13 +130,16 @@ impl Scene {
         drawn: &Drawn,
         ray: Option<(Vec3, Vec3)>,
         found: Option<Vec3>,
+        depth: Option<Vec3>,
         build_open: bool,
     ) -> Option<DrawnObject> {
-        // (the two readings are of consecutive frames: a moving surface
-        // differs by millimetres)
+        // Only a surface actually found by the CPU can bound the newer
+        // GPU pick. An animated attachment can move more than 5 cm between
+        // the two frames (#416); its own older depth must not reject it.
+        // Opaque occlusion is already resolved in the drawn-face pass.
         const SAME: f32 = 0.05;
         let along = |p: Vec3| ray.map_or(0.0, |(o, d)| (p - o).dot(d));
-        let limit = found.map_or(f32::INFINITY, |p| along(p) + SAME);
+        let limit = found.filter(|p| Some(*p) != depth).map_or(f32::INFINITY, |p| along(p) + SAME);
         [(drawn.blend, true), (drawn.opaque, false)].into_iter().find_map(|(hit, blend)| {
             let hit = hit?;
             let (idx, face) = self.record_object(hit.record)?;

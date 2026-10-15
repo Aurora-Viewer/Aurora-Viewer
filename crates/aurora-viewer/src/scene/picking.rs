@@ -320,6 +320,11 @@ impl Scene {
     ) -> Option<pick::FaceHit> {
         let o = world.objects.get(idx)?;
         let g = self.gpu.get(idx)?;
+        // The CPU triangles are in the bind pose. They must never divert a
+        // touch from the surface actually drawn by the GPU (#416, #419).
+        if !g.hud && (g.rigged || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())) {
+            return None;
+        }
         let geom = self.geom_ready(&g.geom?)?;
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
         let model = Mat4::from_scale_rotation_translation(world.visual_scale(idx), rot, pos);
@@ -498,6 +503,9 @@ impl Scene {
     ) -> Option<f32> {
         let o = world.objects.get(idx)?;
         let g = self.gpu.get(idx)?;
+        if g.rigged || (g.owner_avatar.is_some() && o.visual_volume().is_mesh()) {
+            return None;
+        }
         let key = g.geom?;
         let geom = self.geom_ready(&key)?;
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
@@ -964,6 +972,104 @@ impl Scene {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+    #[test]
+    fn world_click_posed_attachment_cannot_intercept_with_its_bind_pose() {
+        use aurora_render::{Drawn, DrawnFace};
+        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let displayed = Vec3::new(6.0, 0.0, 50.0);
+        world.objects.get_mut(front).unwrap().update_flags = 1 << 7;
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::TOUCH;
+        scene.gpu[front].rigged = true;
+        scene.gpu[front].owner_avatar = world.objects.avatars().next().map(|(idx, _)| idx);
+        scene.gpu[front].faces[0].te_alpha = 0.5;
+        let hit = scene.action_point(&world, Some(ray), Some(displayed), false, 100.0);
+        assert_eq!(
+            hit,
+            Some(displayed),
+            "rest triangles at x=2.5 must not replace the posed surface at x=6"
+        );
+        let drawn = Drawn {
+            blend: Some(DrawnFace {
+                record: scene.gpu[front].faces[0].record,
+                point: displayed,
+                st: glam::Vec2::splat(0.5),
+                normal: -Vec3::X,
+                binormal: Vec3::Z,
+            }),
+            ..Default::default()
+        };
+        let designated = scene
+            .designated(
+                &world,
+                super::super::drawn::Gesture::Touch,
+                &drawn,
+                Some(ray),
+                hit,
+                Some(displayed),
+                false,
+            )
+            .unwrap();
+        assert_eq!(designated.idx, front);
+        assert_eq!(
+            crate::interaction::target(&world, designated.idx, &HashMap::new()).unwrap().action,
+            crate::interaction::Action::Touch
+        );
+        // Neither the reference search nor the accelerated hover may use
+        // the rest geometry in the empty space before the real surface.
+        assert!(scene.face_hit(&world, front, ray, Instant::now(), true).is_none());
+        assert_eq!(
+            scene.face_distance(&world, front, ray, Instant::now(), true, FacePick::Surface),
+            None
+        );
+        // A fast-moving mesh is still touchable after the delayed read;
+        // actual CPU geometry in front must continue to stop the press.
+        let moved = Drawn {
+            blend: drawn.blend.map(|f| DrawnFace {
+                point: displayed + Vec3::X * 0.25,
+                ..f
+            }),
+            ..drawn
+        };
+        assert!(
+            scene
+                .designated(
+                    &world,
+                    super::super::drawn::Gesture::Touch,
+                    &moved,
+                    Some(ray),
+                    hit,
+                    Some(displayed),
+                    false
+                )
+                .is_some()
+        );
+        assert!(
+            scene
+                .designated(
+                    &world,
+                    super::super::drawn::Gesture::Touch,
+                    &moved,
+                    Some(ray),
+                    Some(displayed - Vec3::X),
+                    Some(displayed),
+                    false
+                )
+                .is_none()
+        );
+        // Local mesh previews use the rendered volume, not the original
+        // server prim, for both CPU exclusion and GPU designation.
+        scene.gpu[front].rigged = false;
+        let mut volume = world.objects.get(front).unwrap().volume;
+        volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: Uuid::from_u128(0x416),
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        });
+        world.objects.get_mut(front).unwrap().render.local_volume = Some(Box::new(volume));
+        assert!(scene.drawn_status(&world, front).posed_by_gpu);
+        assert!(scene.face_hit(&world, front, ray, Instant::now(), true).is_none());
+    }
+
     #[test]
     fn sphere_test_keeps_what_the_ray_can_reach() {
         let g = |center: Vec3, radius: f32| super::super::ObjGpu {

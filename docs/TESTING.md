@@ -497,6 +497,7 @@ when unfocused") is ignored during a screenshot.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying |
+| `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks and other residents' scripted attachments |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
@@ -511,6 +512,22 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
 
 ### Details
+
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh`:
+install the fixture at frame 600, issue a real left press at 700 and release
+at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
+or later. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
+`camera-te` uses an invisible scripted TE face. Alt-focus must reach the cube
+behind both; `camera-glass` instead reaches the translucent solid pane.
+`plate-hidden` opens the profile of another resident through an invisible
+Blend panel; `plate-wall` keeps the profile closed behind a solid wall.
+`worn-prim` and `worn-mesh` put a scripted attachment on another resident,
+without move/modify rights; both must log `demo touch_start: prim=975` and
+`demo touch_end: prim=975`, with `held=false` in the final result. The mesh
+scenario installs the existing synthetic skinned mesh locally. All scenarios
+write `demo world click` / `demo world click result`; the camera's final
+focus can be compared with the visible cube/pane. Use the usual `blend-zero`,
+`mask-zero`, invisible build/menu and HUD scenarios for neighbouring behavior.
 
 `AURORA_DEMO_TEXREFRESH=1|auto`: a panel right of the avatar wears a texture
 whose file in the disk cache is stale, a grey picture crossed in red written
