@@ -1573,6 +1573,7 @@ ui-options-default-colors = Couleurs par défaut
 ui-options-customize-colors-icons-and-the-toolbar-in = Couleurs, icônes et barre d'outils se personnalisent dans :
 build-ui-texture-mask-cutoff = Coupe masque
 common-cut = Couper
+common-select-all = Tout sélectionner
 common-mute = Couper le son
 build-ui-texture-cut = Coupure
 build-ui-features-coverage = Couverture
