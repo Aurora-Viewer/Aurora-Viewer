@@ -7325,3 +7325,6 @@ texture-library-demo-polished = Poli
 texture-library-click-hint = Cliquez pour appliquer aux faces sélectionnées en mode édition.
 texture-library-no-copy-multiple = Une texture ou un matériau sans copie ne peut être appliqué qu’à un seul objet à la fois.
 texture-library-wait-selection = Chargement du contenu des objets. Cliquez à nouveau sur la ressource une fois le chargement terminé.
+
+texture-library-material-drag = Glisser
+texture-library-material-drag-hint = Glissez cette poignée sur une face pour appliquer le matériau. Glissez dans l’aperçu pour le faire tourner.

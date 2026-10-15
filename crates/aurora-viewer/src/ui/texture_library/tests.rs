@@ -308,3 +308,138 @@ fn texture_library_cards_apply_on_click_and_keep_dragging_separate_in_both_layou
         }
     }
 }
+
+#[test]
+fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
+    use aurora_net::inventory::InvItem;
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    for size in [Vec2::new(1280.0, 800.0), Vec2::new(800.0, 560.0)] {
+        let (mut inv, library, _) = inventory();
+        let item = Uuid::from_u128(82);
+        let asset = Uuid::from_u128(83);
+        inv.add_items(vec![InvItem {
+            id: item,
+            parent: library,
+            asset_id: asset,
+            asset_type: 57,
+            name: "Material".into(),
+            ..Default::default()
+        }]);
+        let mut world = World::new(avatars.clone());
+        world.agent_id = Uuid::from_u128(70);
+        world.inventory = inv;
+        let mut scene = Scene::new(std::env::temp_dir(), avatars.clone());
+        scene.materials.insert(asset, aurora_assets::PbrMaterial::default());
+        let ctx = egui::Context::default();
+        let mut library = LibraryUi {
+            agent: world.agent_id,
+            preview: Some(item),
+            ..Default::default()
+        };
+        let mut preferences = Preferences::default();
+        let mut time = 0.0;
+        let mut frame = |events: Vec<egui::Event>, library: &mut LibraryUi| {
+            time += 1.0 / 60.0;
+            let mut actions = Vec::new();
+            let mut dropped = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |host| {
+                    actions = library.show(
+                        host.ctx(),
+                        &crate::theme::Theme::default().palette(),
+                        &mut world,
+                        &mut scene,
+                        &HashMap::new(),
+                        &mut preferences,
+                        &mut true,
+                    );
+                    if let Some(drag) = super::super::inventory::world_drag(host.ctx())
+                        && drag.released
+                    {
+                        dropped = Some(drag.item);
+                        egui::DragAndDrop::clear_payload(host.ctx());
+                    }
+                },
+            );
+            output.textures_delta.clear();
+            assert!(actions.is_empty(), "preview gestures must not apply to the edit selection");
+            dropped
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            frame(Vec::new(), &mut library);
+            if ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new("texture_library_material_scene")))
+                .is_some()
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "material preview worker did not finish");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        for _ in 0..8 {
+            frame(Vec::new(), &mut library);
+        }
+        let rect = |key| ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new(key))).expect("preview control");
+        let image = rect("texture_library_material_scene");
+        let handle = rect("texture_library_material_handle");
+        let window = ctx
+            .memory(|m| m.area_rect(egui::Id::new("texture_library_preview")))
+            .expect("preview floater");
+        assert!(window.contains_rect(handle), "the handle must fit the compact preview");
+        assert!(!image.intersects(handle), "the orbit surface and handle must not overlap");
+        let button = |pos, pressed| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    pressed,
+                    button: egui::PointerButton::Primary,
+                    modifiers: Default::default(),
+                },
+            ]
+        };
+        let before = library.preview_view;
+        let orbit = image.center() + egui::vec2(40.0, 15.0);
+        frame(button(image.center(), true), &mut library);
+        frame(vec![egui::Event::PointerMoved(orbit)], &mut library);
+        assert_ne!(library.preview_view.yaw, before.yaw);
+        assert_ne!(library.preview_view.pitch, before.pitch);
+        assert!(
+            egui::DragAndDrop::payload::<InvDrag>(&ctx).is_none(),
+            "orbiting must never create inventory cargo"
+        );
+        frame(button(orbit, false), &mut library);
+        let camera = library.preview_view;
+        frame(button(handle.center(), true), &mut library);
+        frame(button(handle.center(), false), &mut library);
+        assert!(
+            egui::DragAndDrop::payload::<InvDrag>(&ctx).is_none(),
+            "a plain click on the handle has no side effect"
+        );
+        frame(button(handle.center(), true), &mut library);
+        frame(
+            vec![egui::Event::PointerMoved(handle.center() + egui::vec2(18.0, 0.0))],
+            &mut library,
+        );
+        assert_eq!(egui::DragAndDrop::payload::<InvDrag>(&ctx).expect("material cargo").0, item);
+        assert!(
+            library.preview_view == camera,
+            "dragging the handle must not change the preview camera"
+        );
+        let target = egui::pos2(50.0, size.y - 35.0);
+        frame(vec![egui::Event::PointerMoved(target)], &mut library);
+        assert_eq!(frame(button(target, false), &mut library), Some(item));
+        assert!(library.preview_view == camera);
+    }
+}

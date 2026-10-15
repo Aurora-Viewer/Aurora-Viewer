@@ -1470,6 +1470,12 @@ drags the actual inventory row directly. Both use frame 720 for dragging.
 (or `texture:pbr`) to select that face first. Classic is before PBR in the build
 window. The click must update only selected editable faces, preserving other
 faces, transforms and selection; starting a drag must not apply to the selection.
+`material-preview` double-clicks a material card and shows its 3D preview with
+an explicit Drag handle. `material-preview-rotate` left-drags the scene at frame
+700 without starting inventory cargo; `material-preview-drag` also drags the
+handle onto the surface at frame 760. Check that rotation changes only the
+preview camera, that the handle does not rotate the scene, and that dropping
+it applies the material. Its permission/retention checks match other sources.
 No-copy resources cannot be applied to multiple selected objects. Restricted
 resources wait for object contents; click again after the loading message.
 Capture after frame 780 to allow previews to

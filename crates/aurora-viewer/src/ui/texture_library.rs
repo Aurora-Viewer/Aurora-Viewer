@@ -101,7 +101,7 @@ impl LibraryUi {
     pub fn demo(&mut self, mode: &str, agent: Uuid) {
         self.reset();
         self.agent = agent;
-        if mode == "apply-pbr" {
+        if mode == "apply-pbr" || mode.starts_with("material-preview") {
             self.kind = Kind::Material;
         }
         if mode == "search" {
@@ -658,7 +658,9 @@ impl LibraryUi {
             if entry.material {
                 if let Some(model) = self.previews.model(entry.asset, scene, &mut self.wanted_images, ctx) {
                     self.preview_view.background = previews::view(p).background;
-                    aurora_render::preview::paint(ui, ui.id().with(entry.asset), model, &mut self.preview_view, Vec2::splat(320.0));
+                    let response =
+                        aurora_render::preview::paint(ui, ui.id().with(entry.asset), model, &mut self.preview_view, Vec2::splat(320.0));
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::new("texture_library_material_scene"), response.rect));
                 } else {
                     ui.allocate_space(Vec2::splat(320.0));
                 }
@@ -674,7 +676,28 @@ impl LibraryUi {
                     .dnd_set_drag_payload(InvDrag(entry.id));
                 }
             }
-            ui.label(RichText::new(&entry.path).size(11.0).color(p.muted));
+            if entry.material {
+                ui.horizontal(|ui| {
+                    let label = aurora_i18n::tr!("texture-library-material-drag");
+                    let width = widgets::action_button_fit(ui, "grip-vertical", label);
+                    let path_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
+                    ui.add_sized(
+                        [path_width, 24.0],
+                        egui::Label::new(RichText::new(&entry.path).size(11.0).color(p.muted)).truncate(),
+                    )
+                    .on_hover_text(&entry.path);
+                    // The scene keeps its orbit gesture; only this explicit
+                    // handle starts an inventory drag with permission checks.
+                    let drag = widgets::action_button(ui, p, "grip-vertical", label, ActionKind::Flat, Vec2::new(width, 24.0))
+                        .interact(egui::Sense::click_and_drag())
+                        .on_hover_cursor(egui::CursorIcon::Grab)
+                        .on_hover_text(aurora_i18n::tr!("texture-library-material-drag-hint"));
+                    drag.dnd_set_drag_payload(InvDrag(entry.id));
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::new("texture_library_material_handle"), drag.rect));
+                });
+            } else {
+                ui.label(RichText::new(&entry.path).size(11.0).color(p.muted));
+            }
             if let Some(item) = world.inventory.items.get(&entry.original) {
                 ui.label(
                     RichText::new(if item.owner_mask & rules::COPY != 0 {

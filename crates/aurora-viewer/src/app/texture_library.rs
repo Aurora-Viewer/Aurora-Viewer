@@ -56,6 +56,48 @@ impl App {
             pressed,
             modifiers: Default::default(),
         };
+        if mode.starts_with("material-preview") {
+            if let Some(source) = self
+                .egui_ctx
+                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("texture_library_first_card")))
+            {
+                match self.frame_count {
+                    650 | 662 => raw.events.extend([egui::Event::PointerMoved(source), button(source, true)]),
+                    651 | 663 => raw.events.push(button(source, false)),
+                    _ => {}
+                }
+            }
+            if mode != "material-preview"
+                && let Some(rect) = self
+                    .egui_ctx
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new("texture_library_material_scene")))
+            {
+                let source = rect.center();
+                let rotated = source + egui::vec2(45.0, 18.0);
+                match self.frame_count {
+                    700 => raw.events.extend([egui::Event::PointerMoved(source), button(source, true)]),
+                    701..=703 => raw.events.push(egui::Event::PointerMoved(rotated)),
+                    704 => raw.events.push(button(rotated, false)),
+                    _ => {}
+                }
+            }
+            if mode == "material-preview-drag"
+                && let Some(rect) = self
+                    .egui_ctx
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new("texture_library_material_handle")))
+            {
+                let source = rect.center();
+                let target = egui::pos2(480.0, 430.0);
+                match self.frame_count {
+                    760 => raw.events.extend([egui::Event::PointerMoved(source), button(source, true)]),
+                    761 => raw.events.push(egui::Event::PointerMoved(source + egui::vec2(12.0, 0.0))),
+                    762..=764 => raw.events.push(egui::Event::PointerMoved(target)),
+                    765 => raw.events.push(button(target, false)),
+                    _ => {}
+                }
+            }
+            return;
+        }
         let inventory = matches!(mode.as_str(), "preview" | "preview-drag" | "inventory-drag");
         if !inventory && !matches!(mode.as_str(), "drop" | "apply" | "apply-pbr") {
             return;
@@ -153,6 +195,9 @@ impl App {
                 && let Some(root) = catalogue::root(&self.world.inventory)
             {
                 self.inventory_ui.show_folder(&self.world.inventory, root);
+            }
+            if mode.starts_with("material-preview") {
+                ui::widgets::place_floater(ctx, "texture_library_preview", egui::pos2(20.0, 60.0), egui::vec2(360.0, 420.0));
             }
             self.texture_library.demo(&mode, self.world.agent_id);
         }

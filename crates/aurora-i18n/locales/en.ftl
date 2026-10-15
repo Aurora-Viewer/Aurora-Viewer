@@ -7320,3 +7320,6 @@ texture-library-demo-polished = Polished
 texture-library-click-hint = Click to apply to the faces selected in Edit mode.
 texture-library-no-copy-multiple = A no-copy texture or material can only be applied to one object at a time.
 texture-library-wait-selection = Loading object contents. Click the resource again once loading has finished.
+
+texture-library-material-drag = Drag
+texture-library-material-drag-hint = Drag this handle onto a face to apply the material. Drag the preview itself to rotate it.

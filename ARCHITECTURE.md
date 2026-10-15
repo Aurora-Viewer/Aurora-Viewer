@@ -109,7 +109,9 @@ persists presentation, favorites and recent resources. Ctrl+Space and the
 customizable toolbar command toggle the current floater. `demo_texture_library.rs`
 provides actual synthetic inventory folders, tileable textures and PBR materials offline.
 Inventory texture previews retain the real item as drag cargo, sharing that
-world-drop path with inventory rows and library swatches.
+world-drop path with inventory rows and library swatches. A dedicated handle
+in the library material preview supplies the same cargo without consuming the
+3D scene's orbit gesture.
 
 `ui/toolbar.rs` owns Firestorm's three toolbars (the bottom one, left and
 right), their context menus and drag/drop edits; a command stands in one of
