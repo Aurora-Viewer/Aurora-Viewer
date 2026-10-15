@@ -22,8 +22,13 @@ pub fn get() -> ColorSettings {
     GLOBAL.read().ok().and_then(|g| *g).unwrap_or_default()
 }
 
+/// A configured color as drawn: daltonised for the colour blindness chosen
+/// in the preferences (`crate::colorblind::adapt`).
 pub fn c(v: Rgba) -> Color32 {
-    Color32::from_rgba_unmultiplied(v[0], v[1], v[2], v[3])
+    crate::colorblind::adapt(
+        Color32::from_rgba_unmultiplied(v[0], v[1], v[2], v[3]),
+        crate::colorblind::current(),
+    )
 }
 
 /// Linden Lab staff ("First Linden" / "first.linden").

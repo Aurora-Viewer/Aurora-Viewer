@@ -141,13 +141,70 @@ impl Status {
     }
 }
 
+/// What tells a status apart without its colour (#418, colour blindness):
+/// the shape of its dot, like Discord's (a full disc online, a crescent
+/// moon away, a disc crossed by a bar in do not disturb, a hollow ring
+/// offline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    Disc,
+    Crescent,
+    Bar,
+    Ring,
+}
+
+impl Shape {
+    /// The disc cut out of a crescent: its offset (towards the top left)
+    /// and its radius, as fractions of the mark's radius.
+    pub const CUT_OFFSET: f32 = -0.42;
+    pub const CUT_RADIUS: f32 = 0.72;
+    /// The bar across a disc (width, height) and the line of a ring, as
+    /// fractions of the radius.
+    pub const BAR: (f32, f32) = (1.15, 0.38);
+    pub const RING: f32 = 0.42;
+}
+
+impl Status {
+    pub fn shape(self) -> Shape {
+        match self {
+            Status::Online => Shape::Disc,
+            Status::Away => Shape::Crescent,
+            Status::Busy => Shape::Bar,
+            Status::Offline | Status::Unknown => Shape::Ring,
+        }
+    }
+}
+
+/// A status mark of radius `r`: `shape` in `color`, its cuts in `hole`
+/// (the surface it lies on).
+pub fn paint_mark(painter: &egui::Painter, center: egui::Pos2, r: f32, shape: Shape, color: Color32, hole: Color32) {
+    match shape {
+        Shape::Disc => {
+            painter.circle_filled(center, r, color);
+        }
+        Shape::Crescent => {
+            painter.circle_filled(center, r, color);
+            painter.circle_filled(center + egui::Vec2::splat(r * Shape::CUT_OFFSET), r * Shape::CUT_RADIUS, hole);
+        }
+        Shape::Bar => {
+            painter.circle_filled(center, r, color);
+            let bar = egui::Rect::from_center_size(center, egui::vec2(r * Shape::BAR.0, r * Shape::BAR.1));
+            painter.rect_filled(bar, bar.height() / 2.0, hole);
+        }
+        Shape::Ring => {
+            let w = r * Shape::RING;
+            painter.circle_stroke(center, r - w / 2.0, egui::Stroke::new(w, color));
+        }
+    }
+}
+
 /// The dot on the bottom right edge of a round picture, ringed in `ring`
 /// (the surface under the picture) so that it reads over any picture.
 pub fn paint_dot(painter: &egui::Painter, p: &Palette, picture: egui::Rect, status: Status, ring: Color32) {
     let r = (picture.width() * 0.16).clamp(3.0, 6.0);
     let c = picture.center() + egui::Vec2::splat(picture.width() * 0.5 * std::f32::consts::FRAC_1_SQRT_2);
     painter.circle_filled(c, r + 1.5, ring);
-    painter.circle_filled(c, r, status.color(p));
+    paint_mark(painter, c, r, status.shape(), status.color(p), ring);
 }
 
 #[cfg(test)]
@@ -211,5 +268,18 @@ mod tests {
         assert_eq!(color(&p, animation_status(true, false)), p.amber);
         assert_eq!(color(&p, animation_status(false, true)), p.danger);
         assert_eq!(color(&p, Status::Unknown), color(&p, Status::Offline));
+    }
+
+    /// #418: like Discord, the shape tells the status without the colour —
+    /// a disc online, a crescent away, a disc with a bar in do not
+    /// disturb, a hollow ring offline (unknown reads as offline).
+    #[test]
+    fn every_status_has_its_own_shape() {
+        let shapes = [Status::Online, Status::Away, Status::Busy, Status::Offline].map(Status::shape);
+        assert_eq!(shapes, [Shape::Disc, Shape::Crescent, Shape::Bar, Shape::Ring]);
+        assert_eq!(Status::Unknown.shape(), Status::Offline.shape());
+        // the cuts stay inside the mark
+        assert!(Shape::BAR.0 < 2.0 && Shape::BAR.1 < 1.0 && Shape::RING < 1.0);
+        assert!(Shape::CUT_RADIUS < 1.0 && Shape::CUT_OFFSET < 0.0);
     }
 }

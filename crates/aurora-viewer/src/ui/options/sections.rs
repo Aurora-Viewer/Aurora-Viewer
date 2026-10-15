@@ -4,7 +4,7 @@
 //! fails when a setting it shows is missing from its list (or listed on the
 //! wrong page), so a new row cannot escape the reset of its section.
 
-use super::{TAB_AUDIO, TAB_AURORA, TAB_CAMERA, TAB_CHAT, TAB_COMMANDS, TAB_PRIVACY};
+use super::{TAB_ACCESSIBILITY, TAB_AUDIO, TAB_AURORA, TAB_CAMERA, TAB_CHAT, TAB_COMMANDS, TAB_PRIVACY};
 use crate::settings::Settings;
 
 /// Shortcuts page (index of its tab).
@@ -94,6 +94,7 @@ sections! {
         classic_about_land, classic_region_estate, classic_pay_window, classic_controls, classic_restart_alert,
         lookat.aim, plates_hover_expand, plates_friends_only_full, plate_click,
     ],
+    TAB_ACCESSIBILITY => [color_blindness, color_blindness_strength],
 }
 
 #[cfg(test)]
@@ -210,6 +211,9 @@ mod tests {
         pages[TAB_AURORA]
             .1
             .extend(accessed(body(include_str!("aurora.rs"), "page"), "s", ""));
+        pages[TAB_ACCESSIBILITY]
+            .1
+            .extend(accessed(body(include_str!("accessibility.rs"), "page"), "s", ""));
         pages
     }
 

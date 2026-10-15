@@ -163,6 +163,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
 /// Embedded Tabler filled icons, named `<Tabler name>-filled`.
 const FILLED: &[(&str, &[u8])] = svg_list!(
     "filled", "-filled":
+    "accessible",
     "adjustments-horizontal",
     "archive",
     "adjustments",
