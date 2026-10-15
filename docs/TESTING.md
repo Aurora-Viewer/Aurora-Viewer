@@ -1493,6 +1493,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
+| `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -1896,6 +1897,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
+- **`AURORA_DEMO_CONV_SELECT=all|part`**: the Conversations window open on
+  the local chat with a selection made as soon as its lines are drawn: `all`
+  as Ctrl+A (every line, out of sight included), `part` from the middle of
+  the last line drawn but two to the middle of the last one. What to see: the
+  selected text on the theme's selection (violet, the text in its light
+  colour), inverted in my own bubbles (light, violet text), nothing outside
+  the selected characters; with the classic lines
+  (Preferences › Aurora › Conversations) as with the bubbles.
 - **`AURORA_DEMO_EMOJI_PICKER=1|<text>`**: the Conversations window open on
   local chat with its emoji picker shown (first tab, smileys); any value
   other than `1` is put in the input field, as if picked. With

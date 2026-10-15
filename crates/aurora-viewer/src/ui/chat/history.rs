@@ -29,6 +29,8 @@ pub struct HistoryUi {
     lines: VecDeque<ChatLine>,
     clock: LineClock,
     view: View,
+    /// The text selected in the page's lines (`select.rs`).
+    selection: super::select::Selection,
     search: Option<Search>,
     /// Counts the searches: answers to an older one are dropped.
     searches: u64,
@@ -137,6 +139,8 @@ impl HistoryUi {
                     self.lines = world.history_lines(entries, false, true).into();
                     self.clock = LineClock::default();
                     self.loaded = Some(page);
+                    // the lines are another page's: numbered again
+                    self.selection.clear();
                     if let Some(spot) = self.search.as_ref().and_then(|s| s.current).filter(|s| s.page == page) {
                         self.view.scroll_to(spot.message);
                     }
@@ -405,7 +409,7 @@ impl HistoryUi {
             bubbles: None,
         };
         let wash = find::wash(p);
-        let (lines, clock, view) = (&self.lines, self.clock, &mut self.view);
+        let (lines, clock, view, selection) = (&self.lines, self.clock, &mut self.view, &mut self.selection);
         // a page opens at its end, the most recent of its messages
         let area = egui::ScrollArea::vertical()
             .id_salt(("chat_history", self.page))
@@ -425,15 +429,29 @@ impl HistoryUi {
                 width,
             );
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
-            view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+            let (shift, content) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
                 let Some(line) = lines.get(row.line) else {
                     return;
                 };
-                super::draw_line(ui, &mut env, line, row.look, mark.filter(|_| row.hit));
+                let seq = clock.first + row.line as u64;
+                super::select::row(ui, seq, selection.of_row(seq), painted, |ui| {
+                    super::draw_line(ui, &mut env, line, row.look, mark.filter(|_| row.hit));
+                });
                 if painted && current == Some(row.line) {
                     find::current_marker(ui, p);
                 }
-            })
+            });
+            let drawn = super::select::take_drawn();
+            let copied = super::Copied {
+                view,
+                lines,
+                first: clock.first,
+                world,
+                own_name: &own_name,
+            };
+            // (no field here: what is typed goes nowhere)
+            super::select_lines(ui, &content, &drawn, selection, &copied);
+            shift
         });
         if out.inner != 0.0 {
             let mut state = out.state;

@@ -350,8 +350,17 @@ impl View {
     ///
     /// Returns how much the scroll offset must grow so that the next frame
     /// shows the same rows at the same place (0 at the end of the
-    /// conversation, which the scroll area follows by itself).
-    pub fn show(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, first: u64, draw: &mut dyn FnMut(&mut egui::Ui, &Row, bool)) -> f32 {
+    /// conversation, which the scroll area follows by itself), and the
+    /// response of the content under the rows: it takes the clicks and the
+    /// drags (a text selection, `select.rs`), which then never move the
+    /// window.
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        viewport: egui::Rect,
+        first: u64,
+        draw: &mut dyn FnMut(&mut egui::Ui, &Row, bool),
+    ) -> (f32, egui::Response) {
         let width = self.width;
         // at the end of the conversation the scroll area follows its growth
         // by itself (stick to bottom): no correction to add then
@@ -418,7 +427,7 @@ impl View {
         // ---- the content takes its whole height; rows are placed in it.
         // What changed above the viewport is not applied to this frame's
         // positions: the scroll offset follows at the next one.
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, self.total), egui::Sense::hover());
+        let (rect, content) = ui.allocate_exact_size(egui::vec2(width, self.total), egui::Sense::click_and_drag());
         let base = rect.top() - shift_above;
         let (view_top, view_bottom) = (viewport.top() + shift_above, viewport.bottom() + shift_above);
         if let Some(r) = target.and_then(|t| self.rows.get(t)) {
@@ -451,7 +460,12 @@ impl View {
             self.reflow(changed_from);
             ui.ctx().request_repaint();
         }
-        if at_end { 0.0 } else { shift_above }
+        (if at_end { 0.0 } else { shift_above }, content)
+    }
+
+    /// The lines shown, in order: their index in the conversation.
+    pub fn lines(&self) -> impl Iterator<Item = usize> + '_ {
+        self.rows.iter().map(|r| r.line)
     }
 }
 
