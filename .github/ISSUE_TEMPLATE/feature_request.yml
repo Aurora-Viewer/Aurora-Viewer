@@ -1,0 +1,45 @@
+name: Feature Request
+description: Suggest a feature or an improvement for Aurora Viewer
+title: "[Feature]: "
+labels: ["feature-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Note:** This issue is PUBLIC. Remove private information before submitting.
+        > Search the open issues first: your idea may already be there, and a comment or a reaction on it helps more than a duplicate.
+
+  - type: textarea
+    id: what-you-would-like
+    attributes:
+      label: What you would like
+      description: Describe the feature or improvement you are suggesting.
+      placeholder: Describe what you want to happen...
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-it-would-help
+    attributes:
+      label: Why it would help
+      description: Explain why this feature would be useful to you and other users.
+      placeholder: This would help because...
+    validations:
+      required: true
+
+  - type: textarea
+    id: other-viewer-reference
+    attributes:
+      label: How it works in another viewer (if applicable)
+      description: If this exists in another viewer, describe how it works there.
+      placeholder: In Firestorm / other viewers, this works by...
+    validations:
+      required: false
+
+  - type: input
+    id: viewer-version
+    attributes:
+      label: Viewer version
+      placeholder: e.g., v2.4.1
+    validations:
+      required: false
