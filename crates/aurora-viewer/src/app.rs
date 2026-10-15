@@ -5938,12 +5938,6 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
         }
-        let projector = ui::hud::Projector {
-            view_proj: vp,
-            width: w as f32,
-            height: h as f32,
-            ppp: ctx.pixels_per_point(),
-        };
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
             let point = if matches!(mode, "object" | "contents") {
@@ -6025,6 +6019,7 @@ impl App {
         let mut full = ctx.run_ui(raw, |ui| {
             self.sound_cues.pass_start(ui.ctx());
             let t = Instant::now();
+            let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
             if inventory_drop.is_none() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);

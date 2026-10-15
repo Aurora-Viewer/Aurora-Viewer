@@ -51,6 +51,18 @@ pub struct Projector {
 }
 
 impl Projector {
+    /// Construct inside the UI pass: egui applies pending zoom at its start.
+    /// Sampling ppp before run_ui projects with the previous frame's zoom,
+    /// then painting with the new zoom shifts every world-space label.
+    pub fn for_ui(ctx: &egui::Context, view_proj: Mat4, size: [f32; 2]) -> Self {
+        Self {
+            view_proj,
+            width: size[0],
+            height: size[1],
+            ppp: ctx.pixels_per_point(),
+        }
+    }
+
     /// World -> egui points (None if behind the camera / off-screen).
     pub fn project(&self, p: Vec3) -> Option<(Pos2, f32)> {
         let c = self.view_proj * p.extend(1.0);
@@ -543,6 +555,48 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_ui_zoom_keeps_world_text_and_avatar_anchors_at_the_same_physical_pixels() {
+        let mut old_drift: f32 = 0.0;
+        for native in [1.0, 1.5, 2.0] {
+            let ctx = egui::Context::default();
+            let size = [1920.0, 1080.0];
+            // Separate avatar root/height, plus text off-center on both sides.
+            let root = Vec3::new(0.4, -0.2, 0.0);
+            let head = Vec3::new(0.7, 0.6, 0.0);
+            for zoom in [1.0, 1.01, 1.384, 1.39, 1.0, 0.75, 2.0, 1.0] {
+                let previous_ppp = ctx.pixels_per_point();
+                ctx.set_zoom_factor(zoom);
+                let mut raw = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(size[0], size[1]) / previous_ppp)),
+                    ..Default::default()
+                };
+                raw.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(native);
+                let mut output = ctx.run_ui(raw, |ui| {
+                    let proj = Projector::for_ui(ui.ctx(), Mat4::IDENTITY, size);
+                    let ppp = ui.ctx().pixels_per_point();
+                    assert!((ppp - native * zoom).abs() < 0.00001);
+                    let physical = proj.project_name_tag(root, head).expect("visible avatar") * ppp;
+                    assert!(physical.distance(Pos2::new(1344.0, 216.0)) < 0.001);
+                    for (point, expected) in [
+                        (Vec3::new(-0.6, 0.3, 0.0), Pos2::new(384.0, 378.0)),
+                        (Vec3::new(0.8, -0.5, 0.0), Pos2::new(1728.0, 810.0)),
+                    ] {
+                        let physical = proj.project(point).expect("visible floating text").0 * ppp;
+                        assert!(
+                            physical.distance(expected) < 0.001,
+                            "world text stays anchored at {native} DPI / {zoom} zoom"
+                        );
+                        let old = Projector { ppp: previous_ppp, ..proj };
+                        old_drift = old_drift.max((old.project(point).expect("visible point").0 * ppp).distance(expected));
+                    }
+                });
+                output.textures_delta.clear();
+            }
+        }
+        assert!(old_drift > 10.0, "the pre-pass scale reproduces the reported jump");
+    }
 
     #[test]
     fn name_tags_stay_centred_on_the_root_from_both_sides_and_at_any_height() {

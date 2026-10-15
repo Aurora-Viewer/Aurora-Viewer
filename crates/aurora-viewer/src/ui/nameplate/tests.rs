@@ -668,6 +668,49 @@ fn a_plate_glides_from_one_level_to_the_next() {
 }
 
 #[test]
+fn a_plate_and_its_hit_rect_keep_the_world_anchor_through_pending_ui_zoom() {
+    for native in [1.0, 1.5, 2.0] {
+        let ctx = egui::Context::default();
+        let mut plates = Plates::default();
+        let p = Theme::default().palette();
+        let icons = crate::ui::icons::Icons::default();
+        let size = [1000.0, 600.0];
+        for zoom in [1.0, 1.01, 1.384, 1.39, 1.0, 0.75, 2.0, 1.0] {
+            let previous_ppp = ctx.pixels_per_point();
+            ctx.set_zoom_factor(zoom);
+            let mut raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(size[0], size[1]) / previous_ppp)),
+                ..Default::default()
+            };
+            raw.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(native);
+            let mut output = ctx.run_ui(raw, |ui| {
+                let proj = crate::ui::hud::Projector::for_ui(ui.ctx(), glam::Mat4::IDENTITY, size);
+                let current = Tag {
+                    anchor: proj
+                        .project_name_tag(glam::Vec3::new(0.2, -0.2, 0.0), glam::Vec3::new(0.7, 0.3, 0.0))
+                        .expect("visible avatar"),
+                    ..tag(1, 5.0, content())
+                };
+                let painter = crate::ui::hud::world_painter(ui.ctx());
+                let mut shown = false;
+                plates.paint(&painter, &p, &icons, &[current], 1.0, |_, rect| {
+                    shown = true;
+                    let anchor = rect.center_bottom() * ui.ctx().pixels_per_point();
+                    // Only the plate's intentional whole-pixel alignment may
+                    // offset its anchor, never the previous frame's zoom.
+                    assert!(
+                        anchor.distance(Pos2::new(600.0, 210.0)) < 0.75,
+                        "{native} DPI / {zoom} zoom: {anchor:?}"
+                    );
+                });
+                assert!(shown, "the plate and its hit rectangle are drawn");
+            });
+            output.textures_delta.clear();
+        }
+    }
+}
+
+#[test]
 fn only_the_nearest_plates_blur_the_world() {
     let ctx = egui::Context::default();
     let mut plates = Plates::default();
