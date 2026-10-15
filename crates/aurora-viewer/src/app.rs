@@ -6218,6 +6218,11 @@ impl App {
         if actions.font_changed {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
         }
+        if actions.ui_scale_changed {
+            // Zoom changes no render/network setting or crash record field.
+            // In particular, never fsync the crash snapshot during a drag.
+            self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
+        }
         if actions.settings_changed || std::mem::take(&mut self.snapshots.settings_changed) {
             aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
             crate::crash::update(&self.skin.theme, &self.settings);
@@ -8215,7 +8220,19 @@ impl App {
             };
         }
         self.options_ui.maturity = self.world.login.is_some().then(|| self.world.agent_access());
-        let res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        // Repeatable live-scale profiling without taking the native pointer.
+        if self.demo && self.frame_count >= 600 && std::env::var("AURORA_DEMO_OPTIONS").is_ok_and(|mode| mode == "1:scale") {
+            let phase = (self.frame_count - 600) % 600;
+            let scale = 1.0 + phase.min(600 - phase) as f32 / 600.0;
+            if self.settings.ui_scale != scale {
+                self.settings.ui_scale = scale;
+                res.ui_scale_changed = true;
+            }
+            if phase.is_multiple_of(300) {
+                log::info!("demo interface scale: frame={} scale={scale:.3}", self.frame_count);
+            }
+        }
         if let Some(maturity) = res.maturity {
             self.world.set_maturity_preference(maturity);
         }
@@ -8240,6 +8257,7 @@ impl App {
             self.world.chat_log.erase();
         }
         a.settings_changed = res.changed;
+        a.ui_scale_changed = res.ui_scale_changed;
         a.font_changed = res.font_changed;
         if res.refresh_devices {
             self.devices_listed = false;
@@ -9965,6 +9983,7 @@ struct UiActions {
     chat: Option<ui::chat::OutgoingChat>,
     bar: BarAction,
     settings_changed: bool,
+    ui_scale_changed: bool,
     font_changed: bool,
     cancel_loading: bool,
     ims: Vec<(uuid::Uuid, String)>,

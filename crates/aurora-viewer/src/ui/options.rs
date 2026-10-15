@@ -113,7 +113,10 @@ impl OptionsUi {
 
 #[derive(Default)]
 pub struct OptionsResult {
+    /// Settings that need the general application path (rendering, network,
+    /// crash recovery, theme). UI zoom has its own per-frame path below.
     pub changed: bool,
+    pub ui_scale_changed: bool,
     pub font_changed: bool,
     pub clear_cache: bool,
     /// Devices, volumes or voice settings changed: apply to the audio engine.
@@ -1757,7 +1760,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-traffic-indicator-help"),
                     |ui| toggle(ui, p, &mut s.show_net_stats),
                 );
-                c |= row(
+                r.ui_scale_changed |= row(
                     ui,
                     p,
                     aurora_i18n::tr!("ui-options-interface-scale"),
@@ -3147,6 +3150,94 @@ mod tests {
     use super::*;
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn interface_scale_uses_only_the_zoom_path_and_neighboring_settings_keep_the_general_path() {
+        fn label_position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(0.0, t.galley.size().y * 0.5)),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| label_position(s, label)),
+                _ => None,
+            }
+        }
+        fn frame(
+            ctx: &egui::Context,
+            st: &mut OptionsUi,
+            s: &mut Settings,
+            label: &str,
+            events: Vec<egui::Event>,
+        ) -> (OptionsResult, egui::Pos2) {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1000.0, 2400.0))),
+                events,
+                ..Default::default()
+            };
+            st.prepare_scale_input(&raw, ctx.pixels_per_point(), false);
+            let p = crate::theme::Theme::default().palette();
+            let mut result = OptionsResult::default();
+            let mut output = ctx.run_ui(raw, |ui| {
+                let changed = content(ui, &p, s, st, &mut result);
+                result.changed |= changed;
+            });
+            output.textures_delta.clear();
+            let at = output
+                .shapes
+                .iter()
+                .find_map(|s| label_position(&s.shape, label))
+                .expect("preference label visible");
+            (result, at)
+        }
+        for zoom in [true, false] {
+            let ctx = egui::Context::default();
+            let mut st = OptionsUi {
+                tab: 1,
+                ..Default::default()
+            };
+            let mut s = Settings::default();
+            let initial_scale = s.ui_scale;
+            let initial_snap = s.snap_windows;
+            let label = if zoom {
+                aurora_i18n::tr!("ui-options-interface-scale")
+            } else {
+                aurora_i18n::tr!("ui-options-snap-windows")
+            };
+            let (_, at) = frame(&ctx, &mut st, &mut s, label, vec![]);
+            let pos = at + egui::vec2(LABEL_W + 8.0 + if zoom { SLIDER_W * 0.6 } else { 12.0 }, 0.0);
+            let mut general_changed = false;
+            let mut scale_changed = false;
+            for pressed in [true, false] {
+                let (result, _) = frame(
+                    &ctx,
+                    &mut st,
+                    &mut s,
+                    label,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                );
+                general_changed |= result.changed;
+                scale_changed |= result.ui_scale_changed;
+            }
+            assert_eq!(scale_changed, zoom, "only interface scale takes the per-frame zoom path");
+            assert_eq!(
+                general_changed, !zoom,
+                "other settings still update rendering/network/crash recovery"
+            );
+            if zoom {
+                assert_ne!(s.ui_scale, initial_scale);
+                assert_eq!(s.snap_windows, initial_snap);
+            } else {
+                assert_eq!(s.ui_scale, initial_scale);
+                assert_ne!(s.snap_windows, initial_snap);
+            }
+        }
+    }
 
     #[test]
     fn the_content_ratings_follow_the_account() {

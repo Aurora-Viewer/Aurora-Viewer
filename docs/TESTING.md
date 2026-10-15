@@ -1876,6 +1876,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Graphics?"). `0` shows the Presets row at the top of the Graphics page:
   with `AURORA_GRAPHICS_PRESET` its level is lit, otherwise (the defaults)
   no segment is and "Custom" follows the row.
+  `1:scale` profiles live UI scaling: from frame 600, resize from 1.0× to
+  1.5× and back over 600 frames, repeating through the same setting action
+  as the slider. Combine with `AURORA_PROFILE=1`, `AURORA_FPS_LIMIT=60` and
+  captures at frames 600, 900 and 1200. It does not take the native pointer.
   With `AURORA_DEMO_LOGIN` (for example `empty` or `cards`) the preferences
   open over the login screen, as its top right cogwheel does: every page
   works before login, and Chat › Conversation logs says that the folder
