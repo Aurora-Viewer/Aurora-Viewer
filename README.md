@@ -21,7 +21,8 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 </div>
 
-![Aurora Viewer in Second Life](docs/screenshots/scene.jpg)
+<img width="2558" height="1392" alt="image" src="https://github.com/user-attachments/assets/1fda8e77-2d3f-41bb-a0cc-c93e9a6723aa" />
+
 
 Aurora Viewer is a Second Life client built from scratch in Rust, with a
 modern GPU renderer (wgpu on Vulkan) and a clean, flat interface. It follows
