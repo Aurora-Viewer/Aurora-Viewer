@@ -121,29 +121,27 @@ pub(super) fn show(
 /// A card under the head, 12 px from the sides.
 fn card<R>(ui: &mut egui::Ui, fill: Color32, edge: Option<Color32>, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.add_space(8.0);
-    let r = ui
-        .horizontal(|ui| {
-            ui.add_space(12.0);
-            let inner = egui::Frame::new()
-                .fill(fill)
-                .corner_radius(ui.visuals().window_corner_radius)
-                .inner_margin(egui::Margin::same(10))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width() - 12.0 - 20.0);
-                    ui.vertical(body).inner
-                });
-            if let Some(edge) = edge {
-                ui.painter().rect_stroke(
-                    inner.response.rect,
-                    ui.visuals().window_corner_radius,
-                    egui::Stroke::new(1.0, edge),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            inner.inner
-        })
-        .inner;
-    r
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        let inner = egui::Frame::new()
+            .fill(fill)
+            .corner_radius(ui.visuals().window_corner_radius)
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width() - 12.0 - 20.0);
+                ui.vertical(body).inner
+            });
+        if let Some(edge) = edge {
+            ui.painter().rect_stroke(
+                inner.response.rect,
+                ui.visuals().window_corner_radius,
+                egui::Stroke::new(1.0, edge),
+                egui::StrokeKind::Inside,
+            );
+        }
+        inner.inner
+    })
+    .inner
 }
 
 /// "<Name> is calling you": the caller's picture pulsing, decline, answer.

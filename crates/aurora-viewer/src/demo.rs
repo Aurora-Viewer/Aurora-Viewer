@@ -765,7 +765,8 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
 /// `compact` for the Compact style; `narrow` (460 px: the rail),
 /// `medium` (700 px) or a width in points; `call-incoming` (Tess calls),
 /// `call` (in the group's call), `call-mini` (its stage reduced),
-/// `call-ongoing` (Nova's group call, which we let ring).
+/// `call-ongoing` (Nova's group call, which we let ring), `call-away` (in
+/// the group's call with the nearby chat shown: the column's call panel).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AuroraScene {
     pub view: Bubbles,
@@ -797,6 +798,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
         compact: false,
         call: None,
     };
+    let mut away = false;
     for flag in flags {
         match flag {
             "local" => scene.view = Bubbles::Local,
@@ -810,6 +812,10 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
             "call" => scene.call = Some(AuroraCall::InCall),
             "call-mini" => scene.call = Some(AuroraCall::Mini),
             "call-ongoing" => scene.call = Some(AuroraCall::Ongoing),
+            "call-away" => {
+                scene.call = Some(AuroraCall::InCall);
+                away = true;
+            }
             w => {
                 if let Ok(w) = w.parse::<f32>() {
                     scene.width = w.clamp(300.0, 1600.0);
@@ -820,6 +826,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
     // a call shows in its conversation
     match scene.call {
         Some(AuroraCall::Incoming) => scene.view = Bubbles::Busy,
+        Some(_) if away => scene.view = Bubbles::Local,
         Some(_) => scene.view = Bubbles::Group,
         None => {}
     }
