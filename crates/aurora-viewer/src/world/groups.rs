@@ -666,12 +666,10 @@ fn apply_agents(s: &mut SessionInfo, agents: &[SessionAgent]) {
                 s.participants.insert(a.agent);
                 s.left.remove(&a.agent);
             }
-            Some(false) => {
-                if s.participants.remove(&a.agent) {
-                    s.left.insert(a.agent);
-                }
+            Some(false) if s.participants.remove(&a.agent) => {
+                s.left.insert(a.agent);
             }
-            None => {}
+            Some(false) | None => {}
         }
         match a.moderator {
             Some(true) => {
