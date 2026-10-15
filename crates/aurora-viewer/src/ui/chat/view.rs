@@ -166,8 +166,8 @@ pub fn matches(line: &ChatLine, needle: &str) -> bool {
 
 /// Messages from the same sender within this many seconds share one header.
 const GROUP_SECONDS: u64 = 300;
-/// The same in Aurora's workspace, as Discord groups the messages of an
-/// author (seven minutes).
+/// The same in Aurora's workspace, where an author's messages group over
+/// seven minutes.
 const WORKSPACE_GROUP_SECONDS: u64 = 420;
 
 /// Works out the look of each line from the one shown before it.
@@ -602,7 +602,7 @@ mod tests {
     }
 
     /// Aurora's workspace groups an author's messages within seven
-    /// minutes (Discord's rule), and an emote stands alone.
+    /// minutes, and an emote stands alone.
     #[test]
     fn the_workspace_groups_by_author_within_seven_minutes() {
         let lines = [

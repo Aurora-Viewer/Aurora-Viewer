@@ -142,7 +142,7 @@ impl Status {
 }
 
 /// What tells a status apart without its colour (#418, colour blindness):
-/// the shape of its dot, like Discord's (a full disc online, a crescent
+/// the shape of its dot (a full disc online, a crescent
 /// moon away, a disc crossed by a bar in do not disturb, a hollow ring
 /// offline).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,7 +270,7 @@ mod tests {
         assert_eq!(color(&p, Status::Unknown), color(&p, Status::Offline));
     }
 
-    /// #418: like Discord, the shape tells the status without the colour —
+    /// #418: the shape tells the status without the colour —
     /// a disc online, a crescent away, a disc with a bar in do not
     /// disturb, a hollow ring offline (unknown reads as offline).
     #[test]

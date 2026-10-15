@@ -1,5 +1,5 @@
 //! The messages of a conversation in Aurora's workspace, as a desktop chat
-//! shows them (the human's choice of 2026-10-15, after Discord): left
+//! shows them (the human's choice of 2026-10-15): left
 //! aligned and grouped by author.
 //!
 //! - Roomy (`Aurora`): the author's picture in a 56 px gutter, their name,
