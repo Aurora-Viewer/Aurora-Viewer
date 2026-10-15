@@ -1148,14 +1148,21 @@ mod tests {
     #[test]
     fn firestorm_movement_draws_what_main_drew() {
         const MAIN: [f32; 20] = [
-            10.000000, 10.000000, 10.147933, 10.413735, 10.716663, 11.031286, 11.262022, 11.298966, 11.529809, 11.821727, 12.132880,
-            12.450094, 12.621284, 12.675205, 12.674676, 12.623521, 12.607409, 12.600000, 12.600000, 12.600000,
+            10.0, 10.0, 10.14793, 10.41374, 10.71666, 11.03129, 11.26202, 11.29897, 11.52981, 11.82173, 12.13288, 12.45009, 12.62128,
+            12.67521, 12.67468, 12.62352, 12.60741, 12.6, 12.6, 12.6,
         ];
         let start = Instant::now();
         let at = |t: f32| start + Duration::from_secs_f32(t);
         let mut agent = AgentState::default();
         agent.on_server_update_at(Vec3::new(10.0, 10.0, 20.0), Vec3::ZERO, Vec3::ZERO, false, true, at(0.0));
-        let reports = [(0.2, 10.0, 3.2), (0.45, 10.8, 3.2), (0.7, 11.1, 3.2), (0.95, 11.9, 3.2), (1.2, 12.7, 0.0), (1.5, 12.6, 0.0)];
+        let reports = [
+            (0.2, 10.0, 3.2),
+            (0.45, 10.8, 3.2),
+            (0.7, 11.1, 3.2),
+            (0.95, 11.9, 3.2),
+            (1.2, 12.7, 0.0),
+            (1.5, 12.6, 0.0),
+        ];
         let dt = 1.0 / 60.0;
         let mut next = 0;
         let mut drawn = Vec::new();
@@ -1183,7 +1190,11 @@ mod tests {
             }
         }
         for (i, (now, main)) in drawn.iter().zip(MAIN).enumerate() {
-            assert!((now - main).abs() < 1e-4, "at {:.1} s: {now} instead of main's {main}", (i + 1) as f32 * 0.1);
+            assert!(
+                (now - main).abs() < 1e-4,
+                "at {:.1} s: {now} instead of main's {main}",
+                (i + 1) as f32 * 0.1
+            );
         }
         assert_eq!(drawn.len(), MAIN.len());
     }
