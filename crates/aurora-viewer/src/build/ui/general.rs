@@ -5,8 +5,8 @@
 
 use super::common::{check, combo, label, row, small, spin_i, text};
 use super::{Confirm, LABEL_W, Request};
+use crate::build::BuildTool;
 use crate::build::edits::{CLICK_ACTION_BUY, CLICK_ACTION_TOUCH, FLAGS_INCLUDE_IN_SEARCH};
-use crate::build::{BuildSettings, BuildTool};
 use crate::theme::Palette;
 use crate::world::World;
 use aurora_net::build::{ObjectProps, perm, perm_field};
@@ -73,7 +73,7 @@ fn name_link(ui: &mut egui::Ui, p: &Palette, name: &str) -> bool {
         .clicked()
 }
 
-pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
+pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, permissions: bool) {
     // the roots, or the selected prims when no root is (LLPanelPermissions::refresh)
     let mut targets: Vec<usize> = tool
         .sel_prims(world)
@@ -103,112 +103,6 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let can_sell = self_owned || (owners_identical && group_owned && group_power(GP_OBJECT_SET_SALE));
     let modify = props.iter().all(|x| x.owner_mask & perm::MODIFY != 0) && can_manipulate;
 
-    // ---- name, description
-    for (field, title, limit, description) in [
-        ("name", aurora_i18n::tr!("common-name-2"), 63, false),
-        ("desc", aurora_i18n::tr!("common-description"), 127, true),
-    ] {
-        let current = if count == 1 {
-            if description {
-                first.description.clone()
-            } else {
-                first.name.clone()
-            }
-        } else {
-            String::new()
-        };
-        let mut v = tool.ui.edits.get(field).cloned().unwrap_or_else(|| current.clone());
-        row(ui, p, title, LABEL_W - 30.0, |ui| {
-            let r = ui.add_enabled(
-                first.owner_mask & perm::MODIFY != 0,
-                egui::TextEdit::singleline(&mut v)
-                    .desired_width(ui.available_width())
-                    .char_limit(limit)
-                    .hint_text(if count > 1 {
-                        aurora_i18n::tr!("build-ui-general-multiple-selection")
-                    } else {
-                        ""
-                    }),
-            );
-            if description {
-                r.clone().on_hover_text(aurora_i18n::tr!("build-ui-general-127-bytes-maximum"));
-            } else {
-                r.clone()
-                    .on_hover_text(aurora_i18n::tr!("build-ui-general-63-characters-maximum-printable-ascii-excluding"));
-            }
-            if r.changed() {
-                // validateASCIIPrintableNoPipe
-                v.retain(|c| (' '..='~').contains(&c) && c != '|');
-                tool.ui.edits.insert(field, v.clone());
-            }
-            if r.lost_focus() {
-                tool.ui.edits.remove(field);
-                if v != current && (description || !v.trim().is_empty()) {
-                    tool.set_name(world, &v, description);
-                }
-            }
-        });
-    }
-    ui.add_space(4.0);
-
-    // ---- creator, owner, previous owner, group
-    for id in [first.creator_id, first.owner_id, first.last_owner_id] {
-        if !id.is_nil() {
-            world.social.want_name(id);
-        }
-    }
-    row(ui, p, aurora_i18n::tr!("common-creator-2"), LABEL_W, |ui| {
-        if !same(&|x| x.creator_id) {
-            text(ui, p, aurora_i18n::tr!("status-multiple"));
-        } else if first.creator_id.is_nil() {
-            text(ui, p, aurora_i18n::tr!("status-nobody"));
-        } else if name_link(ui, p, &world.social.name_of(&first.creator_id)) {
-            tool.ui.requests.push(Request::Profile(first.creator_id));
-        }
-    });
-    row(ui, p, aurora_i18n::tr!("common-owner-2"), LABEL_W, |ui| {
-        if !owners_identical {
-            text(ui, p, "(multiple)");
-        } else if group_owned {
-            let name = world
-                .groups
-                .group(&first.group_id)
-                .map(|g| g.name.clone())
-                .unwrap_or_else(|| aurora_i18n::tr!("common-group").into());
-            if name_link(ui, p, &name) {
-                tool.ui.requests.push(Request::GroupProfile(first.group_id));
-            }
-        } else if name_link(ui, p, &world.social.name_of(&first.owner_id)) {
-            tool.ui.requests.push(Request::Profile(first.owner_id));
-        }
-    });
-    row(ui, p, aurora_i18n::tr!("build-ui-general-previous-owner"), LABEL_W, |ui| {
-        if same(&|x| x.last_owner_id) && !first.last_owner_id.is_nil() && name_link(ui, p, &world.social.name_of(&first.last_owner_id)) {
-            tool.ui.requests.push(Request::Profile(first.last_owner_id));
-        }
-    });
-    row(ui, p, aurora_i18n::tr!("common-group-2"), LABEL_W, |ui| {
-        if same(&|x| x.group_id) && !first.group_id.is_nil() {
-            let name = world
-                .groups
-                .group(&first.group_id)
-                .map(|g| g.name.clone())
-                .unwrap_or_else(|| first.group_id.to_string()[..8].to_owned());
-            if name_link(ui, p, &name) {
-                tool.ui.requests.push(Request::GroupProfile(first.group_id));
-            }
-        } else {
-            text(ui, p, "");
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let can_set_group = root_selected && owners_identical && first.owner_id == me;
-            if super::common::icon_button(ui, p, "users-group", aurora_i18n::tr!("build-ui-general-set-group"), can_set_group) {
-                tool.ui.group_picker_open = true;
-            }
-        });
-    });
-
-    // ---- share with group, deed
     let group = perm_state(&refs, |x| x.group_mask);
     let owner = perm_state(&refs, |x| x.owner_mask);
     let base = perm_state(&refs, |x| x.base_mask);
@@ -221,248 +115,350 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         (true, true)
     };
     let can_transfer = owner.0 & perm::TRANSFER != 0;
-    ui.horizontal(|ui| {
-        ui.add_space(LABEL_W);
-        if let Some(v) = check(ui, p, share, share_tentative, aurora_i18n::tr!("common-share"), can_manipulate) {
-            tool.set_perm(world, perm_field::GROUP, v, share_bits);
-        }
-        let deed_ok = !first.group_id.is_nil()
-            && group_power(GP_OBJECT_DEED)
-            && can_transfer
-            && !group_owned
-            && (share && !share_tentative || group.0 & perm::MOVE != 0);
-        if ui
-            .add_enabled(
-                deed_ok,
-                egui::Button::new(RichText::new(aurora_i18n::tr!("common-deed")).size(12.0)),
-            )
-            .on_hover_text(aurora_i18n::tr!("build-ui-general-deed-this-object-to-group"))
-            .clicked()
-        {
-            tool.ui.confirm = Some(Confirm::Deed(first.group_id));
-        }
-    });
-
-    // ---- click action
-    let prims = tool.sel_prims(world);
-    let (click, _) = super::common::same(prims.iter().filter_map(|&i| world.objects.get(i).map(|o| o.click_action)));
-    // PLAY / OPEN_MEDIA show as "Touch"
-    let click = click.map(|c| if click_actions().iter().any(|(_, v)| *v == c) { c } else { 0 });
-    row(ui, p, aurora_i18n::tr!("build-ui-general-click-to"), LABEL_W, |ui| {
-        if let Some(a) = combo(ui, "click_action", click, &click_actions(), 150.0, modify) {
-            if a == CLICK_ACTION_BUY && !props.iter().all(|x| x.sale_type != 0) {
-                // CantSetBuyObject
-                tool.status = aurora_i18n::tr!("build-ui-general-this-object-is-not-for-sale-buy-object-cannot").into();
-            } else {
-                tool.set_click_action(world, a);
-            }
-        }
-    });
-
-    // ---- sale
-    let for_sale_n = props.iter().filter(|x| x.sale_type != 0).count();
-    let sale_mixed = for_sale_n != 0 && for_sale_n != count;
-    let price_mixed = !props.iter().all(|x| x.sale_price == first.sale_price);
-    let sale_type_now = props.iter().find(|x| x.sale_type != 0).map(|x| x.sale_type).unwrap_or(SALE_COPY);
-    let sale_ok = !tool.attachment_selected(world) && can_sell && owner.0 & perm::TRANSFER != 0;
-    let (mut for_sale, mut sale_type, mut price) = tool
-        .ui
-        .sale_draft
-        .unwrap_or((for_sale_n > 0, sale_type_now, first.sale_price.max(0)));
-    let mut draft_changed = false;
-    let mut commit_now = false;
-    egui::Frame::new()
-        .stroke(egui::Stroke::new(
-            1.0,
-            if tool.ui.sale_draft.is_some() { p.violet } else { p.raised },
-        ))
-        .corner_radius(ui.visuals().window_corner_radius)
-        .inner_margin(4)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if let Some(v) = check(
-                    ui,
-                    p,
-                    for_sale,
-                    sale_mixed,
-                    aurora_i18n::tr!("common-for-sale"),
-                    sale_ok && (can_transfer || for_sale_n > 0),
-                ) {
-                    for_sale = v;
-                    draft_changed = true;
-                    // unticking commits at once (onCommitSaleInfo)
-                    commit_now = !v;
+    if !permissions {
+        // ---- name, description
+        for (field, title, limit, description) in [
+            ("name", aurora_i18n::tr!("common-name-2"), 63, false),
+            ("desc", aurora_i18n::tr!("common-description"), 127, true),
+        ] {
+            let current = if count == 1 {
+                if description {
+                    first.description.clone()
+                } else {
+                    first.name.clone()
                 }
-                if let Some(t) = combo(
-                    ui,
-                    "sale_type",
-                    Some(sale_type),
-                    &sale_types(),
-                    110.0,
-                    sale_ok && for_sale && !price_mixed,
-                ) {
-                    sale_type = t;
-                    draft_changed = true;
+            } else {
+                String::new()
+            };
+            let mut v = tool.ui.edits.get(field).cloned().unwrap_or_else(|| current.clone());
+            row(ui, p, title, LABEL_W - 30.0, |ui| {
+                let r = ui.add_enabled(
+                    first.owner_mask & perm::MODIFY != 0,
+                    egui::TextEdit::singleline(&mut v)
+                        .desired_width(ui.available_width())
+                        .char_limit(limit)
+                        .hint_text(if count > 1 {
+                            aurora_i18n::tr!("build-ui-general-multiple-selection")
+                        } else {
+                            ""
+                        }),
+                );
+                if description {
+                    r.clone().on_hover_text(aurora_i18n::tr!("build-ui-general-127-bytes-maximum"));
+                } else {
+                    r.clone()
+                        .on_hover_text(aurora_i18n::tr!("build-ui-general-63-characters-maximum-printable-ascii-excluding"));
+                }
+                if r.changed() {
+                    // validateASCIIPrintableNoPipe
+                    v.retain(|c| (' '..='~').contains(&c) && c != '|');
+                    tool.ui.edits.insert(field, v.clone());
+                }
+                if r.lost_focus() {
+                    tool.ui.edits.remove(field);
+                    if v != current && (description || !v.trim().is_empty()) {
+                        tool.set_name(world, &v, description);
+                    }
                 }
             });
-            ui.horizontal(|ui| {
-                label(ui, p, "L$");
-                ui.add_enabled_ui(sale_ok && for_sale && !sale_mixed, |ui| {
-                    let e = spin_i(ui, &mut price, 0..=999_999_999, 100.0);
-                    if e.changed {
+        }
+        ui.add_space(4.0);
+
+        // ---- creator, owner, previous owner, group
+        for id in [first.creator_id, first.owner_id, first.last_owner_id] {
+            if !id.is_nil() {
+                world.social.want_name(id);
+            }
+        }
+        row(ui, p, aurora_i18n::tr!("common-creator-2"), LABEL_W, |ui| {
+            if !same(&|x| x.creator_id) {
+                text(ui, p, aurora_i18n::tr!("status-multiple"));
+            } else if first.creator_id.is_nil() {
+                text(ui, p, aurora_i18n::tr!("status-nobody"));
+            } else if name_link(ui, p, &world.social.name_of(&first.creator_id)) {
+                tool.ui.requests.push(Request::Profile(first.creator_id));
+            }
+        });
+        row(ui, p, aurora_i18n::tr!("common-owner-2"), LABEL_W, |ui| {
+            if !owners_identical {
+                text(ui, p, "(multiple)");
+            } else if group_owned {
+                let name = world
+                    .groups
+                    .group(&first.group_id)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_else(|| aurora_i18n::tr!("common-group").into());
+                if name_link(ui, p, &name) {
+                    tool.ui.requests.push(Request::GroupProfile(first.group_id));
+                }
+            } else if name_link(ui, p, &world.social.name_of(&first.owner_id)) {
+                tool.ui.requests.push(Request::Profile(first.owner_id));
+            }
+        });
+        row(ui, p, aurora_i18n::tr!("build-ui-general-previous-owner"), LABEL_W, |ui| {
+            if same(&|x| x.last_owner_id) && !first.last_owner_id.is_nil() && name_link(ui, p, &world.social.name_of(&first.last_owner_id))
+            {
+                tool.ui.requests.push(Request::Profile(first.last_owner_id));
+            }
+        });
+        row(ui, p, aurora_i18n::tr!("common-group-2"), LABEL_W, |ui| {
+            if same(&|x| x.group_id) && !first.group_id.is_nil() {
+                let name = world
+                    .groups
+                    .group(&first.group_id)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_else(|| first.group_id.to_string()[..8].to_owned());
+                if name_link(ui, p, &name) {
+                    tool.ui.requests.push(Request::GroupProfile(first.group_id));
+                }
+            } else {
+                text(ui, p, "");
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let can_set_group = root_selected && owners_identical && first.owner_id == me;
+                if super::common::icon_button(ui, p, "users-group", aurora_i18n::tr!("build-ui-general-set-group"), can_set_group) {
+                    tool.ui.group_picker_open = true;
+                }
+            });
+        });
+
+        // ---- share with group, deed
+        ui.horizontal(|ui| {
+            ui.add_space(LABEL_W);
+            if let Some(v) = check(ui, p, share, share_tentative, aurora_i18n::tr!("common-share"), can_manipulate) {
+                tool.set_perm(world, perm_field::GROUP, v, share_bits);
+            }
+            let deed_ok = !first.group_id.is_nil()
+                && group_power(GP_OBJECT_DEED)
+                && can_transfer
+                && !group_owned
+                && (share && !share_tentative || group.0 & perm::MOVE != 0);
+            if ui
+                .add_enabled(
+                    deed_ok,
+                    egui::Button::new(RichText::new(aurora_i18n::tr!("common-deed")).size(12.0)),
+                )
+                .on_hover_text(aurora_i18n::tr!("build-ui-general-deed-this-object-to-group"))
+                .clicked()
+            {
+                tool.ui.confirm = Some(Confirm::Deed(first.group_id));
+            }
+        });
+
+        // ---- click action
+        let prims = tool.sel_prims(world);
+        let (click, _) = super::common::same(prims.iter().filter_map(|&i| world.objects.get(i).map(|o| o.click_action)));
+        // PLAY / OPEN_MEDIA show as "Touch"
+        let click = click.map(|c| if click_actions().iter().any(|(_, v)| *v == c) { c } else { 0 });
+        row(ui, p, aurora_i18n::tr!("build-ui-general-click-to"), LABEL_W, |ui| {
+            if let Some(a) = combo(ui, "click_action", click, &click_actions(), 150.0, modify) {
+                if a == CLICK_ACTION_BUY && !props.iter().all(|x| x.sale_type != 0) {
+                    // CantSetBuyObject
+                    tool.status = aurora_i18n::tr!("build-ui-general-this-object-is-not-for-sale-buy-object-cannot").into();
+                } else {
+                    tool.set_click_action(world, a);
+                }
+            }
+        });
+
+        // ---- sale
+        let for_sale_n = props.iter().filter(|x| x.sale_type != 0).count();
+        let sale_mixed = for_sale_n != 0 && for_sale_n != count;
+        let price_mixed = !props.iter().all(|x| x.sale_price == first.sale_price);
+        let sale_type_now = props.iter().find(|x| x.sale_type != 0).map(|x| x.sale_type).unwrap_or(SALE_COPY);
+        let sale_ok = !tool.attachment_selected(world) && can_sell && owner.0 & perm::TRANSFER != 0;
+        let (mut for_sale, mut sale_type, mut price) =
+            tool.ui
+                .sale_draft
+                .unwrap_or((for_sale_n > 0, sale_type_now, first.sale_price.max(0)));
+        let mut draft_changed = false;
+        let mut commit_now = false;
+        egui::Frame::new()
+            .stroke(egui::Stroke::new(
+                1.0,
+                if tool.ui.sale_draft.is_some() { p.violet } else { p.raised },
+            ))
+            .corner_radius(ui.visuals().window_corner_radius)
+            .inner_margin(4)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(v) = check(
+                        ui,
+                        p,
+                        for_sale,
+                        sale_mixed,
+                        aurora_i18n::tr!("common-for-sale"),
+                        sale_ok && (can_transfer || for_sale_n > 0),
+                    ) {
+                        for_sale = v;
+                        draft_changed = true;
+                        // unticking commits at once (onCommitSaleInfo)
+                        commit_now = !v;
+                    }
+                    if let Some(t) = combo(
+                        ui,
+                        "sale_type",
+                        Some(sale_type),
+                        &sale_types(),
+                        110.0,
+                        sale_ok && for_sale && !price_mixed,
+                    ) {
+                        sale_type = t;
                         draft_changed = true;
                     }
-                    // a typed price commits when "For sale" is ticked
-                    if e.commit && for_sale {
+                });
+                ui.horizontal(|ui| {
+                    label(ui, p, "L$");
+                    ui.add_enabled_ui(sale_ok && for_sale && !sale_mixed, |ui| {
+                        let e = spin_i(ui, &mut price, 0..=999_999_999, 100.0);
+                        if e.changed {
+                            draft_changed = true;
+                        }
+                        // a typed price commits when "For sale" is ticked
+                        if e.commit && for_sale {
+                            commit_now = true;
+                        }
+                    });
+                    if ui
+                        .add_enabled(
+                            tool.ui.sale_draft.is_some() || draft_changed,
+                            egui::Button::new(RichText::new(aurora_i18n::tr!("common-apply")).size(12.0)),
+                        )
+                        .clicked()
+                    {
                         commit_now = true;
                     }
                 });
-                if ui
-                    .add_enabled(
-                        tool.ui.sale_draft.is_some() || draft_changed,
-                        egui::Button::new(RichText::new(aurora_i18n::tr!("common-apply")).size(12.0)),
-                    )
-                    .clicked()
-                {
-                    commit_now = true;
-                }
             });
-        });
-    if draft_changed {
-        tool.ui.sale_draft = Some((for_sale, sale_type, price));
-    }
-    if commit_now {
-        // LLPanelPermissions::setAllSaleInfo
-        let st = if for_sale && price >= 0 { sale_type } else { 0 };
-        let was_for_sale = for_sale_n > 0;
-        tool.set_sale(world, st, price.max(0));
-        tool.ui.sale_draft = None;
-        // FIRE-5273: Buy / Touch follow the sale state when they were Buy or Touch
-        let all_touch_or_buy = prims.iter().all(|&i| {
-            world
-                .objects
-                .get(i)
-                .is_some_and(|o| o.click_action == CLICK_ACTION_BUY || o.click_action == CLICK_ACTION_TOUCH)
-        });
-        if modify && all_touch_or_buy && was_for_sale != (st != 0) {
-            tool.set_click_action(world, if st != 0 { CLICK_ACTION_BUY } else { CLICK_ACTION_TOUCH });
+        if draft_changed {
+            tool.ui.sale_draft = Some((for_sale, sale_type, price));
         }
-    }
+        if commit_now {
+            // LLPanelPermissions::setAllSaleInfo
+            let st = if for_sale && price >= 0 { sale_type } else { 0 };
+            let was_for_sale = for_sale_n > 0;
+            tool.set_sale(world, st, price.max(0));
+            tool.ui.sale_draft = None;
+            // FIRE-5273: Buy / Touch follow the sale state when they were Buy or Touch
+            let all_touch_or_buy = prims.iter().all(|&i| {
+                world
+                    .objects
+                    .get(i)
+                    .is_some_and(|o| o.click_action == CLICK_ACTION_BUY || o.click_action == CLICK_ACTION_TOUCH)
+            });
+            if modify && all_touch_or_buy && was_for_sale != (st != 0) {
+                tool.set_click_action(world, if st != 0 { CLICK_ACTION_BUY } else { CLICK_ACTION_TOUCH });
+            }
+        }
 
-    // ---- key, search
-    ui.horizontal(|ui| {
-        if ui
-            .button(RichText::new(aurora_i18n::tr!("build-ui-general-copy-uuid")).size(12.0))
-            .on_hover_text(aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"))
-            .clicked()
-        {
-            let shift = ui.input(|i| i.modifiers.shift);
-            let keys = tool.copy_keys(world, s, shift);
-            ui.ctx().copy_text(keys);
-        }
-        let roots = tool.roots(world);
-        let (search, search_mixed) = super::common::same(
-            roots
-                .iter()
-                .filter_map(|&r| world.objects.get(r).map(|o| o.update_flags & FLAGS_INCLUDE_IN_SEARCH != 0)),
-        );
-        if let Some(v) = check(
-            ui,
-            p,
-            search.unwrap_or(false),
-            search_mixed,
-            aurora_i18n::tr!("common-show-in-search"),
-            can_sell,
-        ) {
-            tool.set_include_in_search(world, v);
-        }
-    });
+        // ---- key, search
+        ui.horizontal(|ui| {
+            let roots = tool.roots(world);
+            let (search, search_mixed) = super::common::same(
+                roots
+                    .iter()
+                    .filter_map(|&r| world.objects.get(r).map(|o| o.update_flags & FLAGS_INCLUDE_IN_SEARCH != 0)),
+            );
+            if let Some(v) = check(
+                ui,
+                p,
+                search.unwrap_or(false),
+                search_mixed,
+                aurora_i18n::tr!("common-show-in-search"),
+                can_sell,
+            ) {
+                tool.set_include_in_search(world, v);
+            }
+        });
+    }
+    if permissions {
+        // ---- modify info (text modify info 1..6)
+        let info = if !can_manipulate && !root_selected {
+            aurora_i18n::tr!("build-ui-general-select-the-whole-object")
+        } else {
+            match (modify, count == 1) {
+                (true, true) => aurora_i18n::tr!("build-ui-general-you-can-edit-this-object"),
+                (true, false) => aurora_i18n::tr!("build-ui-general-you-can-edit-these-objects"),
+                (false, true) => aurora_i18n::tr!("build-ui-general-you-cannot-edit-this-object"),
+                (false, false) => aurora_i18n::tr!("build-ui-general-you-cannot-edit-these-objects"),
+            }
+        };
+        ui.label(RichText::new(info).size(12.0).color(if modify { p.violet_light } else { p.muted }));
 
-    // ---- modify info (text modify info 1..6)
-    let info = if !can_manipulate && !root_selected {
-        aurora_i18n::tr!("build-ui-general-select-the-whole-object")
+        // ---- everyone / next owner
+        let everyone = perm_state(&refs, |x| x.everyone_mask);
+        let next = perm_state(&refs, |x| x.next_owner_mask);
+        label(ui, p, aurora_i18n::tr!("build-ui-general-anyone"));
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            let (v, t) = bit(everyone, perm::MOVE);
+            if let Some(n) = check(
+                ui,
+                p,
+                v,
+                t,
+                aurora_i18n::tr!("common-move"),
+                can_manipulate && owner.0 & perm::MOVE != 0,
+            ) {
+                tool.set_perm(world, perm_field::EVERYONE, n, perm::MOVE);
+            }
+            let (v, t) = bit(everyone, perm::COPY);
+            let copy_ok = owner.0 & perm::COPY != 0 && owner.0 & perm::TRANSFER != 0;
+            if let Some(n) = check(
+                ui,
+                p,
+                v,
+                t || !copy_ok,
+                aurora_i18n::tr!("common-copy-2"),
+                can_manipulate && copy_ok,
+            ) {
+                tool.set_perm(world, perm_field::EVERYONE, n, perm::COPY);
+            }
+        });
+        label(ui, p, aurora_i18n::tr!("build-ui-general-next-owner"));
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            let next_ok = can_sell && owner.0 & perm::TRANSFER != 0;
+            let (v, t) = bit(next, perm::MODIFY);
+            if let Some(n) = check(ui, p, v, t, aurora_i18n::tr!("common-edit"), next_ok && base.0 & perm::MODIFY != 0) {
+                tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::MODIFY);
+            }
+            let (v, t) = bit(next, perm::COPY);
+            let can_copy = owner.0 & perm::COPY != 0;
+            if let Some(n) = check(
+                ui,
+                p,
+                v,
+                t || !can_copy,
+                aurora_i18n::tr!("common-copy-2"),
+                next_ok && base.0 & perm::COPY != 0,
+            ) {
+                tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::COPY);
+            }
+            let (v, t) = bit(next, perm::TRANSFER);
+            // enabled by the next owner's copy bit (sic, LLPanelPermissions)
+            if let Some(n) = check(
+                ui,
+                p,
+                v,
+                t || !can_transfer,
+                aurora_i18n::tr!("common-transfer"),
+                next_ok && next.0 & perm::COPY != 0,
+            ) {
+                tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::TRANSFER);
+            }
+        });
     } else {
-        match (modify, count == 1) {
-            (true, true) => aurora_i18n::tr!("build-ui-general-you-can-edit-this-object"),
-            (true, false) => aurora_i18n::tr!("build-ui-general-you-can-edit-these-objects"),
-            (false, true) => aurora_i18n::tr!("build-ui-general-you-cannot-edit-this-object"),
-            (false, false) => aurora_i18n::tr!("build-ui-general-you-cannot-edit-these-objects"),
-        }
-    };
-    ui.label(RichText::new(info).size(12.0).color(if modify { p.violet_light } else { p.muted }));
-
-    // ---- everyone / next owner
-    let everyone = perm_state(&refs, |x| x.everyone_mask);
-    let next = perm_state(&refs, |x| x.next_owner_mask);
-    label(ui, p, aurora_i18n::tr!("build-ui-general-anyone"));
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        let (v, t) = bit(everyone, perm::MOVE);
-        if let Some(n) = check(
+        row(
             ui,
             p,
-            v,
-            t,
-            aurora_i18n::tr!("common-move"),
-            can_manipulate && owner.0 & perm::MOVE != 0,
-        ) {
-            tool.set_perm(world, perm_field::EVERYONE, n, perm::MOVE);
-        }
-        let (v, t) = bit(everyone, perm::COPY);
-        let copy_ok = owner.0 & perm::COPY != 0 && owner.0 & perm::TRANSFER != 0;
-        if let Some(n) = check(
-            ui,
-            p,
-            v,
-            t || !copy_ok,
-            aurora_i18n::tr!("common-copy-2"),
-            can_manipulate && copy_ok,
-        ) {
-            tool.set_perm(world, perm_field::EVERYONE, n, perm::COPY);
-        }
-    });
-    label(ui, p, aurora_i18n::tr!("build-ui-general-next-owner"));
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        let next_ok = can_sell && owner.0 & perm::TRANSFER != 0;
-        let (v, t) = bit(next, perm::MODIFY);
-        if let Some(n) = check(ui, p, v, t, aurora_i18n::tr!("common-edit"), next_ok && base.0 & perm::MODIFY != 0) {
-            tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::MODIFY);
-        }
-        let (v, t) = bit(next, perm::COPY);
-        let can_copy = owner.0 & perm::COPY != 0;
-        if let Some(n) = check(
-            ui,
-            p,
-            v,
-            t || !can_copy,
-            aurora_i18n::tr!("common-copy-2"),
-            next_ok && base.0 & perm::COPY != 0,
-        ) {
-            tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::COPY);
-        }
-        let (v, t) = bit(next, perm::TRANSFER);
-        // enabled by the next owner's copy bit (sic, LLPanelPermissions)
-        if let Some(n) = check(
-            ui,
-            p,
-            v,
-            t || !can_transfer,
-            aurora_i18n::tr!("common-transfer"),
-            next_ok && next.0 & perm::COPY != 0,
-        ) {
-            tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::TRANSFER);
-        }
-    });
-    row(
-        ui,
-        p,
-        aurora_i18n::tr!("build-ui-general-pathfinding-attributes"),
-        LABEL_W + 30.0,
-        |ui| {
-            text(ui, p, aurora_i18n::tr!("common-none"));
-        },
-    );
+            aurora_i18n::tr!("build-ui-general-pathfinding-attributes"),
+            LABEL_W + 30.0,
+            |ui| {
+                text(ui, p, aurora_i18n::tr!("common-none"));
+            },
+        );
+    }
 }
 
 #[cfg(test)]

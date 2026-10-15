@@ -518,7 +518,7 @@ impl Default for BuildTool {
             silhouettes: silhouette::Cache::default(),
             pending_create: None,
             rect: None,
-            tab: 1,
+            tab: 6,
             status: String::new(),
             last_frame: None,
         }
@@ -1293,6 +1293,7 @@ impl BuildTool {
             .clamp(0.001, 0.25);
         self.last_frame = Some(now);
         self.update_replacement(world, now);
+        self.advance_bulk_permissions(world, now);
         if !self.open {
             return;
         }

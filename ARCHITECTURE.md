@@ -600,7 +600,22 @@ with the application (`app/color_picker.rs`).
 `ui/widgets/workspace.rs` shares the navigation, the detail panels, the
 dialogs and the rows of the user inventory and of object contents
 (density, hover, selection and name style). `build/ui/compact.rs` arranges
-building in six sections in a narrow inspector.
+building in seven sections in a narrow inspector: General contains identity, group/share/deed, sale and search, while Rights keeps everyone/next-owner permissions. The five tools share the navigation rail; titles follow the section/tool, and edit selection/actions stay at the bottom of the main panel. The inspector resizes on both axes, fills the chosen height and retains its geometry across sections, tools and folding. The object inventory fills the remaining section viewport; tool hint space uses the exact wrapped text galley, preventing frame-by-frame window growth. Each transform vector has its own caption-line copy/paste controls; linked editing, face selection, both-sided stretching and root-axis editing share the footer. Shape rows (including sculpted prims) and the material map/settings/UV grids reuse the existing editing commands. `build/ui/compact_tests.rs` covers the permission split, shared selection options, per-vector clipboard interactions in all manipulators, and actual pointer resizing with section/tool/fold transitions, stable narrow-tool geometry over repeated frames, and inventory filling/filtering after height changes.
+`build/ui/contents_selection.rs` owns the task list's Ctrl/Shift selection,
+focus and Delete/F2 dispatch before global object shortcuts. Rename requests
+focus once and commits on Enter, blur or leaving the panel, rechecking access
+to the pinned object/item; Escape cancels. Filtering prunes hidden selections.
+`build/ui/contents_keyboard_tests.rs` drives the native inspector with pointer
+and key events, checking that task Delete never sends an object DeRez.
+`ui/inventory/properties.rs` supplies the same properties floater and panel
+for agent items and task items. `build/ui/item_properties.rs` pins the source
+object/item and rechecks access before saving through UpdateTaskInventory;
+task thumbnails remain unavailable because the task protocol has no thumbnail
+field. `build/ui/contents_permissions.rs` provides the eleven bulk type
+filters, three permission columns and OK/Apply/Cancel. Its request job pins
+the selected objects/options, fetches each inventory, skips failed, expired or
+no-longer-modifiable sources, and continues after OK closes the floater.
+`build/ui/contents_tests.rs` exercises task saves and the bulk UI/request path.
 `ui/color_picker.rs` composes the shared picker (RGB / LSL / Hex, HSL,
 previews, palette of 32 slots and eyedropper); `ui/color_picker/model.rs`
 keeps the conversions and serialised preferences, `demo.rs` the offline

@@ -1733,6 +1733,15 @@ ui-perf-draw-calls = Draw calls
 common-rights = Rights
 ui-contacts-modify-rights = Modify rights
 build-ui-floaters-content-permissions = Content permissions
+content-perms-body-parts = Body parts
+content-perms-gestures = Gestures
+content-perms-environment = Environment settings
+content-perms-adjust = Adjust content permissions
+content-perms-anyone = Anyone:
+content-perms-next-owner = Next owner:
+content-perms-starting = Starting permission change requests…
+content-perms-reading = Reading object contents…
+content-perms-finished = Permission updates sent: { $count } items. Objects skipped: { $skipped }.
 build-ui-floaters-content-permissions-sent = Content permissions sent.
 ui-inventory-dialogs-duration-s = { "Duration: " }{ $value0 }s
 ui-land-dialogs-ban-duration = Ban duration
@@ -7442,3 +7451,17 @@ texture-library-wait-selection = Loading object contents. Click the resource aga
 
 texture-library-material-drag = Drag
 texture-library-material-drag-hint = Drag this handle onto a face to apply the material. Drag the preview itself to rotate it.
+
+# Object editor presentation
+build-compact-general = General
+build-compact-select-face = Select a face
+build-compact-grab = Move
+build-compact-uuid = UUID
+build-compact-path-cut = Path cut
+build-compact-twist = Twist
+build-compact-hollow-cut = Hollow
+build-compact-slice = Slice
+build-compact-profile-cut = Profile cut
+build-compact-begin = Begin
+build-compact-end = End
+build-compact-projection-options = Projection and options

@@ -325,6 +325,7 @@ impl BuildTool {
     }
 
     pub fn replacement_task_inventory_error(&mut self, object: Uuid, reason: String) {
+        self.bulk_inventory_error(object);
         if let Some(inv) = self.contents.objects.get_mut(&object) {
             inv.loading = false;
         }
