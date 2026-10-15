@@ -1222,6 +1222,7 @@ pub fn show(
     st: &mut ChatUi,
     contacts: &mut super::contacts::ContactsUi,
     contacts_settings: &mut super::contacts::ContactsSettings,
+    show_contacts_tab: bool,
     open: &mut bool,
 ) -> Vec<ConvAction> {
     let mut actions = Vec::new();
@@ -1230,7 +1231,10 @@ pub fn show(
         st.open(f);
     }
     let docked = !contacts_settings.torn_off;
-    if !docked {
+    if !show_contacts_tab && st.contacts {
+        st.selected = None;
+    }
+    if !docked || !show_contacts_tab {
         st.contacts = false;
     }
     let title = match st.selected {
@@ -1257,9 +1261,10 @@ pub fn show(
                 // Contacts first (addFloater at START); once torn off the
                 // entry brings its own window up (Firestorm has the toolbar
                 // button for that)
-                if list_entry(ui, p, aurora_i18n::tr!("common-contacts"), None, None, st.contacts, 0, None)
-                    .resp
-                    .clicked()
+                if show_contacts_tab
+                    && list_entry(ui, p, aurora_i18n::tr!("common-contacts"), None, None, st.contacts, 0, None)
+                        .resp
+                        .clicked()
                 {
                     if docked {
                         st.contacts = true;
@@ -1286,7 +1291,7 @@ pub fn show(
                     st.contacts = false;
                 }
                 let sessions: Vec<(uuid::Uuid, usize)> = world.social.ims.iter().map(|s| (s.other, s.unread)).collect();
-                // The conversations scroll under the two entries above, which
+                // The conversations scroll under the pinned entries above, which
                 // stay in reach (the vertical tabs of FSFloaterIMContainer
                 // scroll with the arrows of LLTabContainer, all together).
                 // (kept until its entry is there: the conversation may open
@@ -2288,6 +2293,51 @@ mod tests {
     }
 
     use crate::ui::widgets::elide_tests::{Frames, LONG, SHORT, WIDE, painted, tooltip_shown};
+
+    #[test]
+    fn contacts_tab_visibility_updates_the_list_and_selected_pane() {
+        let mut frames = Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let pics = HashMap::new();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let gestures = crate::gestures::Manager::default();
+        let mut st = ChatUi::default();
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut contacts_settings = crate::ui::contacts::ContactsSettings::default();
+        let mut open = true;
+        for visible in [false, true, false, true] {
+            st.contacts = true;
+            st.selected = Some(uuid::Uuid::from_u128(42));
+            let mut texts = Vec::new();
+            for _ in 0..2 {
+                texts = frames.run(Vec::new(), |ui| {
+                    show(
+                        ui.ctx(),
+                        &p,
+                        &icons,
+                        &mut emoji,
+                        &pics,
+                        &pics,
+                        &mut world,
+                        &gestures,
+                        &mut st,
+                        &mut contacts,
+                        &mut contacts_settings,
+                        visible,
+                        &mut open,
+                    );
+                });
+            }
+            assert_eq!(texts.iter().any(|t| t.source == aurora_i18n::tr!("common-contacts")), visible);
+            assert_eq!(st.contacts, visible);
+            if !visible {
+                assert!(st.selected.is_none());
+                assert!(local_chat_shown(&frames.ctx, &st));
+            }
+        }
+    }
 
     const LONG_GROUP: &str = "The Honourable Society of Extremely Long Conference Names (Northern Chapter)";
     const USERNAME: &str = "maximilienne.wolfeschlegelsteinhausen";

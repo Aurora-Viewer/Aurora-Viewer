@@ -1040,6 +1040,13 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
         c |= row(ui, p, aurora_i18n::tr!("ui-options-conversations-at-startup"), "", |ui| {
             toggle(ui, p, &mut s.show_chat)
         });
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-show-contacts-tab"),
+            aurora_i18n::tr!("ui-options-show-contacts-tab-hint"),
+            |ui| toggle(ui, p, &mut s.show_contacts_tab),
+        );
     });
     // Firestorm's Chat › Notifications (EnableIMChatPopups,
     // EnableGroupChatPopups) and ChatOnlineNotification
