@@ -121,14 +121,20 @@ pub(super) fn show(
 /// A card under the head, 12 px from the sides.
 fn card<R>(ui: &mut egui::Ui, fill: Color32, edge: Option<Color32>, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.add_space(8.0);
+    // the same 12 px on both sides: the card's text width is what is left
+    // once the two margins and its own inner margins are taken
+    let outer = ui.available_width();
+    let gap = ui.spacing().item_spacing.x;
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(12.0);
         let inner = egui::Frame::new()
             .fill(fill)
             .corner_radius(ui.visuals().window_corner_radius)
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
-                ui.set_width(ui.available_width() - 12.0 - 20.0);
+                ui.spacing_mut().item_spacing.x = gap;
+                ui.set_width((outer - 2.0 * 12.0 - 20.0).max(0.0));
                 ui.vertical(body).inner
             });
         if let Some(edge) = edge {
