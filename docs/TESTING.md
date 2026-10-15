@@ -274,6 +274,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
+| `AURORA_DEMO_TEXT_MENU=1` | Right-click menu of a text field (Cut, Copy, Paste…) |
 | `AURORA_DEMO_POINTER=<points>` | Moves the pointer over the interface |
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
 | `AURORA_DEMO_CLICKS=<ms>` | Clicks on the world at a regular rate |
@@ -401,6 +402,15 @@ when unfocused") is ignored during a screenshot.
   the same targets. For the human test of the selector, remove this
   variable: Preferences › Interface › Layout › Right-click menu; switch
   between List menu and Pie menu (radial), then restart to check the choice.
+- **`AURORA_DEMO_TEXT_MENU=1`**: the chat bar takes the focus at frame 700,
+  gets a line typed and selected at frame 703, and the text fields'
+  right-click menu opens over it at frame 706 (capture at frame 780 with
+  `AURORA_FPS_LIMIT=60`). Cut, Copy, Delete and Select All are enabled,
+  Paste only with text in the clipboard. By hand: right click in any text
+  field; a right click inside the selection keeps it, elsewhere it moves
+  the cursor; a password field never offers Cut or Copy, a read-only one
+  only Copy and Select All; the script editor and the notecards keep their
+  own menu.
 - **`AURORA_DEMO_POINTER="x,y[,l|r|s][;x,y…]"`**: moves the interface
   pointer to these pixels of the window from frame 300, one point every
   60 frames (hover states, submenus); `,l` makes a left click, `,r` a right

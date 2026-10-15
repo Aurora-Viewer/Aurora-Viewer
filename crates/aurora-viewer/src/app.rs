@@ -218,6 +218,8 @@ pub struct App {
     /// The system cursor hidden and locked by mouselook or a camera drag.
     cursor_hold: cursor_hold::CursorHold,
     numeric_drag: ui::numeric_drag::NumericDrag,
+    /// Right-click menu of the text fields (Cut, Copy, Paste…).
+    text_menu: ui::text_menu::TextMenu,
     alt: bool,
     left_down: bool,
     /// Clicks that wait for the depth under them, and what follows them.
@@ -723,6 +725,7 @@ impl App {
             right_drag: false,
             cursor_hold: Default::default(),
             numeric_drag: Default::default(),
+            text_menu: Default::default(),
             alt: false,
             left_down: false,
             clicks: Default::default(),
@@ -5964,6 +5967,13 @@ impl App {
         self.report_abuse_capture(&mut gfx.renderer);
         self.sound_cues.before(&ctx, &raw);
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
+        let egui_state = &mut gfx.egui_state;
+        self.text_menu.before(
+            &ctx,
+            &mut raw,
+            || egui_state.clipboard_text(),
+            self.demo.then_some(self.frame_count),
+        );
         let mut inventory_drop = None;
         let t_pass = Instant::now();
         let mut windows_ms = 0.0;
@@ -5974,6 +5984,8 @@ impl App {
             if inventory_drop.is_none() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
             }
+            // after every window: their text fields have been drawn
+            self.text_menu.after(ui.ctx(), &self.palette);
             // the glass blurs the world: there is none behind the login screen
             if self.in_world() {
                 ui::menu::glaze(ui.ctx(), &self.palette);

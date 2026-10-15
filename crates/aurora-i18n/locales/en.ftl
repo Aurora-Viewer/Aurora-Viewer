@@ -1570,6 +1570,7 @@ ui-options-default-colors = Default colors
 ui-options-customize-colors-icons-and-the-toolbar-in = Customize colors, icons and the toolbar in:
 build-ui-texture-mask-cutoff = Mask cutoff
 common-cut = Cut
+common-select-all = Select all
 common-mute = Mute
 build-ui-texture-cut = Cut
 build-ui-features-coverage = Coverage
