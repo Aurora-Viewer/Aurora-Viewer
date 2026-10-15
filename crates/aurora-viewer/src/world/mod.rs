@@ -277,6 +277,13 @@ pub struct World {
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
     /// AO remapping applies only to our rendered pose, never movement signals.
     pub ao_pose: Option<Vec<PlayingAnimation>>,
+    /// Aurora's movement: our walk, run, crouch and fly started and
+    /// stopped with the keys over the simulator's signals (own_motion.rs),
+    /// and the list drawn instead of `animations` while it differs.
+    own_locomotion: crate::own_motion::Locomotion,
+    own_drawn: Option<Vec<PlayingAnimation>>,
+    /// When the network read the event being applied (`apply_received`).
+    received: Option<Instant>,
     local_preview: Option<PlayingAnimation>,
     /// (motion, start, sample) for the importer's locally controlled timeline.
     pub animation_preview_clock: Option<(Uuid, Instant, Instant)>,
@@ -468,6 +475,9 @@ impl World {
             inventory_edits: Vec::new(),
             animations: HashMap::new(),
             ao_pose: None,
+            own_locomotion: Default::default(),
+            own_drawn: None,
+            received: None,
             local_preview: None,
             animation_preview_clock: None,
             preview_server_motion: None,
@@ -883,6 +893,7 @@ impl World {
                 .find(|s| s.handle == Some(handle))
                 .map_or(1.0, |s| motion::clock_rate(s.time_dilation, s.packet_age()));
             self.objects.advance_motion(handle, dt * f64::from(rate));
+            self.objects.note_motion_tick(now, handle, rate);
         }
         self.objects.expire_corrections(now);
     }
@@ -912,6 +923,59 @@ impl World {
         }
         let clipped = self.clip_to_visible_regions(start, end);
         self.agent.constrain_prediction(clipped, clipped != end);
+    }
+
+    /// Keep the prediction's lead of our avatar (own_motion.rs) where the
+    /// simulator could take it: in the regions we know, and on the land,
+    /// whose slope it follows when walking.
+    pub fn constrain_agent_lead(&mut self) {
+        let lead = self.agent.wanted_lead();
+        if lead == Vec3::ZERO {
+            self.agent.set_lead(Vec3::ZERO);
+            return;
+        }
+        let from = self.agent.predicted_position();
+        let mut to = self.clip_to_visible_regions(from, from + lead);
+        let half_height = self
+            .objects
+            .index_of_uuid(&self.agent_id)
+            .and_then(|idx| self.objects.get(idx))
+            .map_or(0.84, |o| 0.5 * o.scale.z);
+        let (here, there) = (self.ground_height(from), self.ground_height(to));
+        if let (Some(here), Some(there)) = (here, there) {
+            if !self.agent.flying && from.z - (here + half_height) < 0.3 {
+                // walking: up and down the slope, as the simulator will
+                to.z += there - here;
+            }
+            to.z = to.z.max(there + half_height);
+        }
+        self.agent.set_lead(to - from);
+    }
+
+    /// Start or stop our walk, run, crouch and fly animations with the keys
+    /// (`intent`), with Aurora's movement on; off, or seated, in a teleport
+    /// or before the arrival, the simulator's signals as they are.
+    /// `window`: how long a local start or stop waits for the simulator.
+    pub fn update_own_locomotion(&mut self, intent: Option<crate::own_motion::Intent>, window: f32, now: Instant) {
+        let standing = self.agent.has_local_control() && !self.agent.ground_sit;
+        if !self.agent.predicting() || !standing || self.teleporting || !self.movement_complete {
+            self.own_locomotion.reset();
+            self.own_drawn = None;
+            return;
+        }
+        let base = self.animations.get(&self.agent_id).map(Vec::as_slice).unwrap_or_default();
+        let wanted = crate::own_motion::locomotion_animation(intent);
+        self.own_drawn = self.own_locomotion.overlay(base, wanted, self.agent.flying, window, now);
+    }
+
+    /// Our avatar's signals as the AO and the pose take them: the
+    /// simulator's, with the keys' walk or stop over them
+    /// (`update_own_locomotion`).
+    pub fn own_signals(&self) -> &[PlayingAnimation] {
+        match &self.own_drawn {
+            Some(drawn) => drawn,
+            None => self.animations.get(&self.agent_id).map(Vec::as_slice).unwrap_or_default(),
+        }
     }
 
     /// Port of LLWorld::clipToVisibleRegions (indra/newview/llworld.cpp,
@@ -1239,6 +1303,22 @@ impl World {
 
     /// Apply one network event. Returns events the app layer must handle.
     pub fn apply(&mut self, ev: NetEvent) -> Option<NetEvent> {
+        self.received = None;
+        self.apply_event(ev)
+    }
+
+    /// `apply` of an event the network read at `received`: the motion of
+    /// the objects and of our avatar it reports starts from that moment,
+    /// not from the frame that got to it (item 6 of the network audit;
+    /// Firestorm takes the frame time, `mLastInterpUpdateSecs`).
+    pub fn apply_received(&mut self, ev: NetEvent, received: Instant) -> Option<NetEvent> {
+        self.received = Some(received);
+        let out = self.apply_event(ev);
+        self.received = None;
+        out
+    }
+
+    fn apply_event(&mut self, ev: NetEvent) -> Option<NetEvent> {
         self.events_this_frame += 1;
         let ev = self.hold_for_parked(ev)?;
         match ev {
@@ -1411,10 +1491,11 @@ impl World {
                         self.on_seat_parent_change(handle, parent);
                     }
                     self.on_camera_parent_change(handle, &u);
-                    self.objects.upsert(handle, u);
+                    self.objects.upsert_at(handle, u, self.received);
                     if is_me {
+                        let at = self.received.unwrap_or_else(Instant::now);
                         self.agent
-                            .on_server_update(pos, velocity, acceleration, parent != 0, Some(handle) == self.main_region);
+                            .on_server_update_at(pos, velocity, acceleration, parent != 0, Some(handle) == self.main_region, at);
                     }
                 }
                 self.move_rekeyed();
@@ -1433,14 +1514,21 @@ impl World {
                     if let Some(idx) = self.objects.index_of(&key) {
                         let mut mine = false;
                         let mut seated = false;
-                        self.objects.apply_terse(idx, &t);
+                        self.objects.apply_terse_at(idx, &t, self.received);
                         if let Some(o) = self.objects.get(idx) {
                             mine = o.full_id == me;
                             seated = o.parent_id != 0;
                         }
                         if mine {
-                            self.agent
-                                .on_server_update(t.position, t.velocity, t.acceleration, seated, Some(handle) == self.main_region);
+                            let at = self.received.unwrap_or_else(Instant::now);
+                            self.agent.on_server_update_at(
+                                t.position,
+                                t.velocity,
+                                t.acceleration,
+                                seated,
+                                Some(handle) == self.main_region,
+                                at,
+                            );
                         }
                     }
                 }
@@ -3023,10 +3111,12 @@ impl World {
             let is_self = id == self.agent_id && self.agent.has_local_control();
             let input = if is_self {
                 let a = &self.agent;
+                // (with Aurora's movement, the velocity it is drawn at)
+                let velocity = a.drawn_velocity();
                 body::Input {
                     prim_dir: a.forward(),
-                    velocity: a.velocity,
-                    in_air: a.flying || a.velocity.z.abs() > 1.0,
+                    velocity,
+                    in_air: a.flying || velocity.z.abs() > 1.0,
                     mouselook_at: mouselook.then_some(cam_at),
                     flying: a.flying,
                 }
@@ -3072,10 +3162,11 @@ impl World {
     }
 
     pub fn animations_of(&self, owner: &Uuid) -> &[PlayingAnimation] {
-        if *owner == self.agent_id
-            && let Some(pose) = &self.ao_pose
-        {
-            return pose;
+        if *owner == self.agent_id {
+            if let Some(pose) = &self.ao_pose {
+                return pose;
+            }
+            return self.own_signals();
         }
         self.animations.get(owner).map(|v| v.as_slice()).unwrap_or(&[])
     }
@@ -4561,5 +4652,78 @@ mod motion_tests {
         });
         assert!(!world.arrived_by_crossing);
         assert_eq!(world.agent.position, Vec3::new(200.0, 50.0, 30.0));
+    }
+
+    fn arrived_fixture() -> (World, aurora_net::objects::ObjectUpdate, RegionHandle) {
+        let (mut world, update, handle) = fixture();
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update.clone()],
+        });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: update.position,
+            look_at: Vec3::X,
+        });
+        (world, update, handle)
+    }
+
+    /// Item 6 of the network audit: our avatar's report moves from when the
+    /// network read it, not from when a frame got to it.
+    #[test]
+    fn our_avatars_report_moves_from_when_it_was_received() {
+        let (mut world, update, handle) = arrived_fixture();
+        let received = Instant::now() - std::time::Duration::from_millis(100);
+        let terse = TerseUpdate {
+            local_id: update.local_id,
+            state: 0,
+            is_avatar: true,
+            foot_plane: None,
+            position: update.position,
+            velocity: Vec3::X * 4.0,
+            acceleration: Vec3::ZERO,
+            rotation: glam::Quat::IDENTITY,
+            angular_velocity: Vec3::ZERO,
+            texture_entry: None,
+        };
+        world.apply_received(
+            NetEvent::TerseUpdates {
+                handle,
+                updates: vec![terse],
+            },
+            received,
+        );
+        world.predict_agent(1.0, 0.0);
+        let moved = world.agent.predicted_position().x - update.position.x;
+        assert!(moved >= 0.4 - 1e-3, "{moved}");
+    }
+
+    /// Aurora's movement starts our walk with the key, over the
+    /// simulator's signals, which stay as they came; off, or seated, the
+    /// simulator's list alone.
+    #[test]
+    fn with_aurora_movement_our_walk_follows_the_keys_but_never_seated() {
+        use crate::own_motion::{ANIM_STAND, ANIM_WALK, Intent};
+        let (mut world, _, _) = arrived_fixture();
+        let me = world.agent_id;
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: me,
+            anims: vec![(ANIM_STAND, 1)],
+            sources: Vec::new(),
+        });
+        let walk = Intent::from_flags(aurora_net::control::AT_POS, 0.0, false);
+        let ids = |w: &World| w.animations_of(&me).iter().map(|a| a.id).collect::<Vec<_>>();
+        let now = Instant::now();
+        world.agent.set_predicting(true);
+        world.update_own_locomotion(walk, 0.8, now);
+        assert_eq!(ids(&world), [ANIM_WALK]);
+        assert_eq!(world.animations[&me].iter().map(|a| a.id).collect::<Vec<_>>(), [ANIM_STAND]);
+        world.agent.set_predicting(false);
+        world.update_own_locomotion(walk, 0.8, now);
+        assert_eq!(ids(&world), [ANIM_STAND]);
+        world.agent.set_predicting(true);
+        world.agent.seated = true;
+        world.update_own_locomotion(walk, 0.8, now);
+        assert_eq!(ids(&world), [ANIM_STAND]);
     }
 }

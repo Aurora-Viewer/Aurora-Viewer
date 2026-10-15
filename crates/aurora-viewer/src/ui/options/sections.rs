@@ -92,7 +92,7 @@ sections! {
     TAB_AURORA => [
         chat_style, classic_name_tags, lookat.style, notifications_style, classic_bars, world_map_style, classic_people, classic_profiles, photo_window,
         classic_about_land, classic_region_estate, classic_pay_window, classic_controls, classic_restart_alert,
-        lookat.aim, plates_hover_expand, plates_friends_only_full, plate_click,
+        lookat.aim, predict_own_motion, plates_hover_expand, plates_friends_only_full, plate_click,
     ],
     TAB_ACCESSIBILITY => [color_blindness, color_blindness_strength],
 }

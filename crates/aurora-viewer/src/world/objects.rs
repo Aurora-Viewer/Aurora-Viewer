@@ -559,6 +559,10 @@ pub struct ObjectStore {
     /// Clock of each region, in simulator seconds (motion.rs): what the
     /// objects of the region extrapolate along. Advanced by the world.
     motion_clocks: HashMap<RegionHandle, f64>,
+    /// When the clocks were last advanced, and the rate each region ran at:
+    /// what a report received since then is stamped from (`report_clock`).
+    motion_tick: Option<Instant>,
+    motion_rates: HashMap<RegionHandle, f32>,
     /// Slots whose object has a correction fading (`expire_corrections`).
     correcting: Vec<usize>,
 }
@@ -574,6 +578,30 @@ impl ObjectStore {
         if seconds > 0.0 {
             *self.motion_clocks.entry(region).or_insert(0.0) += seconds;
         }
+    }
+
+    /// The clocks were advanced up to `now`, `region`'s at `rate`.
+    pub fn note_motion_tick(&mut self, now: Instant, region: RegionHandle, rate: f32) {
+        self.motion_tick = Some(now);
+        self.motion_rates.insert(region, rate);
+    }
+
+    /// The clock of a region at the moment a report was received: a report
+    /// describes the object when the datagram was read, not when the main
+    /// thread got to it (item 6 of the network audit). Without a time, or
+    /// before the clocks ever ran, the clock as it is.
+    pub fn report_clock(&self, region: RegionHandle, received: Option<Instant>) -> f64 {
+        let clock = self.motion_time(region);
+        let (Some(received), Some(tick)) = (received, self.motion_tick) else {
+            return clock;
+        };
+        let rate = f64::from(self.motion_rates.get(&region).copied().unwrap_or(1.0));
+        let offset = if received >= tick {
+            received.duration_since(tick).as_secs_f64()
+        } else {
+            -tick.duration_since(received).as_secs_f64()
+        };
+        clock + rate * offset
     }
 
     /// Where an object is drawn at `now`, in its parent's (or its region's)
@@ -608,12 +636,20 @@ impl ObjectStore {
     }
 
     /// Apply a terse update to the object in `idx`.
+    #[cfg(test)]
     pub fn apply_terse(&mut self, idx: usize, t: &TerseUpdate) {
-        let now = Instant::now();
+        self.apply_terse_at(idx, t, None);
+    }
+
+    /// Apply a terse update the network `received` at: its motion starts
+    /// from that moment, and the gap it opens is measured with where the
+    /// object was drawn for that same moment.
+    pub fn apply_terse_at(&mut self, idx: usize, t: &TerseUpdate, received: Option<Instant>) {
+        let now = received.unwrap_or_else(Instant::now);
         let Some(region) = self.get(idx).map(|o| o.key.region) else {
             return;
         };
-        let clock = self.motion_time(region);
+        let clock = self.report_clock(region, received);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
@@ -626,9 +662,9 @@ impl ObjectStore {
 
     /// Apply a full update to an object already known. `moved_frame`: its
     /// parent changed, so its coordinates are not those it was drawn in.
-    fn apply_full(&mut self, idx: usize, region: RegionHandle, u: ObjectUpdate, moved_frame: bool) {
-        let now = Instant::now();
-        let clock = self.motion_time(region);
+    fn apply_full(&mut self, idx: usize, region: RegionHandle, u: ObjectUpdate, moved_frame: bool, received: Option<Instant>) {
+        let now = received.unwrap_or_else(Instant::now);
+        let clock = self.report_clock(region, received);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
@@ -924,7 +960,13 @@ impl ObjectStore {
     }
 
     /// Insert or update from a full update. Returns the slot index.
+    #[cfg(test)]
     pub fn upsert(&mut self, region: RegionHandle, u: ObjectUpdate) -> usize {
+        self.upsert_at(region, u, None)
+    }
+
+    /// `upsert` of a report the network `received` at (`apply_terse_at`).
+    pub fn upsert_at(&mut self, region: RegionHandle, u: ObjectUpdate, received: Option<Instant>) -> usize {
         let key = ObjKey {
             region,
             local_id: u.local_id,
@@ -937,7 +979,7 @@ impl ObjectStore {
             if parent_changed {
                 self.unlink(idx);
             }
-            self.apply_full(idx, region, u, parent_changed);
+            self.apply_full(idx, region, u, parent_changed, received);
             if parent_changed {
                 self.link(idx);
             }
@@ -970,14 +1012,18 @@ impl ObjectStore {
             }
             // (it came under another key: its place is not corrected from
             // where it was drawn in the other region's coordinates)
-            self.apply_full(old, region, u, true);
+            self.apply_full(old, region, u, true, received);
             if parent_changed {
                 self.link(old);
             }
             self.touch(old);
             return old;
         }
-        self.insert(Object::from_update(region, u))
+        let mut obj = Object::from_update(region, u);
+        if received.is_some() {
+            obj.motion_time = self.report_clock(region, received);
+        }
+        self.insert(obj)
     }
 
     /// Put a new object in a slot, under its key and its UUID.
@@ -1589,5 +1635,36 @@ mod tests {
         // a move of more than 10 m is a move, not a correction
         s.apply_terse(seat, &terse(5, Vec3::X * 40.0, Vec3::ZERO));
         assert!(!s.get(seat).expect("seat").has_motion());
+    }
+
+    /// A report describes the object when the datagram was read: the wait
+    /// before the main thread applied it is extrapolated, not lost (item 6
+    /// of the network audit).
+    #[test]
+    fn a_report_moves_from_the_moment_it_was_received() {
+        let mut s = ObjectStore::default();
+        let tick = Instant::now();
+        s.advance_motion(1, 10.0);
+        s.note_motion_tick(tick, 1, 1.0);
+        // read 50 ms before the clocks' last tick
+        let mut walker = update(10, AVATAR, "");
+        walker.velocity = Vec3::X * 4.0;
+        let idx = s.upsert_at(1, walker, Some(tick - Duration::from_millis(50)));
+        let drawn = |s: &ObjectStore| s.predicted(s.get(idx).expect("walker"), tick).0;
+        near(drawn(&s), Vec3::X * 0.2);
+        // read 20 ms after it: there 20 ms later on the clock
+        s.apply_terse_at(
+            idx,
+            &terse(10, Vec3::X * 30.0, Vec3::X * 4.0),
+            Some(tick + Duration::from_millis(20)),
+        );
+        near(drawn(&s), Vec3::X * 30.0);
+        s.advance_motion(1, 0.12);
+        near(drawn(&s), Vec3::X * 30.4);
+        // a time dilation of one half: half as far on the clock
+        s.note_motion_tick(tick, 1, 0.5);
+        assert!((s.report_clock(1, Some(tick - Duration::from_millis(100))) - (10.12 - 0.05)).abs() < 1e-9);
+        // without a time, the clock as it is
+        assert_eq!(s.report_clock(1, None), s.motion_time(1));
     }
 }

@@ -46,6 +46,9 @@ pub struct NetPeriod {
     /// carried it; None when no such change was sent.
     pub input_delay_ms: Option<f32>,
     pub corrections: Corrections,
+    /// Largest lead of our avatar over the simulator's position with
+    /// Aurora's movement (own_motion.rs), 0 without it (m).
+    pub lead_max: f32,
     pub http_active: u32,
     pub http_queued: u32,
     pub http_done: u64,
@@ -75,6 +78,7 @@ pub struct NetProfile {
     events_left: usize,
     event_wait: Duration,
     corrections: Corrections,
+    lead_max: f32,
     pub last: NetPeriod,
     pub totals: NetTotals,
 }
@@ -109,6 +113,7 @@ impl NetProfile {
             events_left: 0,
             event_wait: Duration::ZERO,
             corrections: Corrections::default(),
+            lead_max: 0.0,
             last: NetPeriod::default(),
             totals: NetTotals::default(),
         }
@@ -129,6 +134,11 @@ impl NetProfile {
     pub fn corrections(&mut self, c: Corrections) {
         self.corrections.count += c.count;
         self.corrections.largest = self.corrections.largest.max(c.largest);
+    }
+
+    /// Largest lead of our avatar this frame.
+    pub fn lead(&mut self, lead: f32) {
+        self.lead_max = self.lead_max.max(lead);
     }
 
     /// A session ended: its totals do not carry over to the next login.
@@ -178,6 +188,7 @@ impl NetProfile {
             agent_updates: since(snap.agent_updates, prev.agent_updates),
             input_delay_ms: peaks.input_delay_ms,
             corrections: self.corrections,
+            lead_max: self.lead_max,
             http_active: snap.http_in_flight,
             http_queued: snap.http_queued,
             http_done: since(snap.http_completed, prev.http_completed),
@@ -197,6 +208,7 @@ impl NetProfile {
         self.events_left = 0;
         self.event_wait = Duration::ZERO;
         self.corrections = Corrections::default();
+        self.lead_max = 0.0;
         // (no circuit: the login screen, the offline demo)
         (snap.sim_count > 0).then(|| summary(&self.last))
     }
@@ -208,7 +220,7 @@ fn summary(p: &NetPeriod) -> String {
     format!(
         "ping={} avg={} | udp in={:.0} out={:.0} pkt/s {:.0} / {:.0} kb/s | resent={} given_up={} dup={} unacked={} gaps={} late={} \
          | loop_max={:.2} | events={} left_max={} wait_max={:.2} | agent_updates={} input_delay_max={input} \
-         | corrections={} largest={:.2} | http active={} queued={} done={} failed={} retries={} {:.0} kb/s \
+         | corrections={} largest={:.2} lead_max={:.2} | http active={} queued={} done={} failed={} retries={} {:.0} kb/s \
          | event_queue idle={} errors={}",
         p.ping_ms,
         p.ping_avg_ms,
@@ -229,6 +241,7 @@ fn summary(p: &NetPeriod) -> String {
         p.agent_updates,
         p.corrections.count,
         p.corrections.largest,
+        p.lead_max,
         p.http_active,
         p.http_queued,
         p.http_done,
@@ -294,7 +307,7 @@ mod tests {
             "{line}"
         );
         assert!(
-            line.contains("| corrections=1 largest=2.50 | http active=0 queued=0 done=0 failed=0 retries=1 500 kb/s"),
+            line.contains("| corrections=1 largest=2.50 lead_max=0.00 | http active=0 queued=0 done=0 failed=0 retries=1 500 kb/s"),
             "{line}"
         );
         assert!(line.ends_with("| event_queue idle=4 errors=1"), "{line}");

@@ -268,7 +268,8 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
-| `AURORA_DEMO_KEY=<arrow>` | Holds an arrow key |
+| `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
+| `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_MMO="x,y[,1\|2]"` | Steering the avatar with the mouse |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
@@ -379,7 +380,37 @@ when unfocused") is ignored during a screenshot.
   nearby scenery jumps. Combine with `AURORA_DEMO_ALTITUDE` and
   `AURORA_STILL_CHECK=1`.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
-  (movement, body orientation).
+  (movement, body orientation). `:pulse` (`up:pulse`): held 120 frames,
+  released 120 frames, over and over.
+- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,aurora|firestorm][,vehicle]`**:
+  instead of moving our avatar at once, the demo sends the keys to a
+  stand-in simulator after half the ping; it moves its own copy of the
+  avatar with the demo's rules and its reports (terse updates of our
+  avatar, its walk / run / fly / stand animations) come back after the
+  other half, stamped with their arrival like the network's
+  (`demo_link.rs`). The viewer then runs the grid's path: extrapolation,
+  smoothing and, with Aurora's movement (Preferences › Aurora › Movement,
+  "Instant"), the prediction of `own_motion.rs`. `jitter` delays each
+  message by up to that much more (order kept); `aurora` / `firestorm`
+  force the movement for the run without touching the saved choice;
+  without them, the choice of Preferences applies and can be switched
+  while walking. The log says, for each press and release of a walking
+  key, `demo link: the drawn avatar moved N ms after the press` and
+  `… stopped N ms after the release, D m on (P m travelled)`, and
+  `own motion learned: …` (the speeds, ramps and delay the prediction
+  learned, as on a grid). Measured on 2026-10-16 with `200` and
+  `AURORA_DEMO_KEY=up:pulse`, `AURORA_FPS_LIMIT=60`: Firestorm's movement
+  starts 250 to 317 ms after the press and stops 500 ms and 0.9 m after the
+  release; Aurora's, once its calibration has seen two presses, starts
+  within 50 ms (the first frame) and stops within 17 ms, 0.00 to 0.01 m on
+  (`jitter=40`: the same). `vehicle`: at 2 s a car appears, at 3 s our
+  avatar sits on it, from 4 s to 16 s the car drives back and forth at
+  4 m/s with a report every quarter of a second, at 17 s the avatar stands
+  up beside it. With `AURORA_DEMO_KEY=up`, the keys held while seated must
+  not move the avatar (it stays on the car, extrapolated and smoothed like
+  any object), and standing up must start from the simulator's position,
+  then walk at once. Plain `AURORA_DEMO` (no link) has nothing to predict:
+  the setting has no effect there.
 - **`AURORA_DEMO_SIT=n`**: clicks at frames 240, 300, 360…
 - **`AURORA_DEMO_MMO="x,y[,1|2]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead,
@@ -1950,7 +1981,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   and its clear button restores all actions. Search follows the selected language.
   `13` opens the Aurora page: the aurora entry at the top of the list, the
   page head with "All in Firestorm version" / "All in Aurora version", then
-  the Appearance, Gaze and Avatar plates groups; each choice changes its
+  the Appearance, Gaze, Movement (its choice marked experimental by a
+  warning triangle, whose tooltip says why: `AURORA_DEMO_POINTER` on it)
+  and Avatar plates groups; each choice changes its
   element at once (conversations, name tags, look-at targets with
   `AURORA_DEMO_LOOKAT=own`, gaze under the cursor). `<section>:end` (other
   than `8`) opens the page scrolled to its end, for example `13:end` for the
@@ -3812,6 +3845,16 @@ the variable.
   more than 0.5 m from where it was extrapolated (Firestorm's
   `AGENT_POSITION_SNAP`), and the largest distance of the second, moves of
   more than 10 m left out. A lagging simulator shows here as rubber-banding.
+- `lead_max`: with Aurora's movement (Preferences › Aurora › Movement), the
+  largest lead of our drawn avatar over the simulator's position in the
+  second (about the speed × the round trip while walking or running), 0
+  with Firestorm's. The lines `own motion learned: walk=3.20/6 … ramp … delay=+0.012/4`
+  (at most one every 5 s, when something changed) give the speeds (m/s),
+  climbing speeds, ramps (s) and the delay beyond the round trip (s) the
+  prediction learned from the simulator's reports, each with the number of
+  samples it comes from (0: still the starting value, `own_motion.rs`);
+  `own motion: the simulator does not follow …` marks a lead given up (a
+  wall, a push), `own motion: suspended …` three of them within 10 s.
 - `http active= queued= done= failed= retries=`, then its throughput: asset
   requests in flight and waiting at the end of the second, finished, failed
   for good and sent again during it. The line `asset host <name> answers in
