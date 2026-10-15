@@ -1078,6 +1078,15 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
             aurora_i18n::tr!("ui-options-show-contacts-tab-hint"),
             |ui| toggle(ui, p, &mut s.show_contacts_tab),
         );
+        // FSSendTypingState: the IM_TYPING notices of a conversation with
+        // one resident (LLIMModel::sendTypingState)
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-send-typing"),
+            aurora_i18n::tr!("ui-options-send-typing-hint"),
+            |ui| toggle(ui, p, &mut s.send_typing_state),
+        );
     });
     // Firestorm's Chat › Notifications (EnableIMChatPopups,
     // EnableGroupChatPopups) and ChatOnlineNotification

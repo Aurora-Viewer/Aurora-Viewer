@@ -3,12 +3,20 @@
 mod bubbles;
 mod call;
 mod completion;
+mod compose;
 mod find;
+mod head;
 mod header;
 pub mod history;
 mod invite_card;
+mod members;
 pub(crate) mod select;
+mod sidebar;
+mod stage;
+mod thread;
+mod typing;
 mod view;
+mod workspace;
 
 use super::context::CtxAction;
 use super::presence;
@@ -68,6 +76,48 @@ pub struct ChatUi {
     pub mic: Option<bool>,
     /// Residents' voice volumes, for the call's participants.
     pub volumes: std::collections::BTreeMap<uuid::Uuid, f32>,
+    /// The times of the lines are shown (Preferences › Chat), given every
+    /// frame by the app.
+    pub timestamps: bool,
+    /// Typing notices are sent (Preferences › Chat), given every frame by
+    /// the app.
+    pub send_typing: bool,
+    /// The avatars in chat range and those of them who type, given every
+    /// frame by the app (the radar) for the nearby chat.
+    pub nearby_count: usize,
+    pub nearby_typing: Vec<uuid::Uuid>,
+    /// The audio outputs and the one in use, given by the app while a call
+    /// is in progress.
+    pub output_devices: Vec<String>,
+    pub output_device: String,
+    /// Aurora's workspace (`workspace.rs`): the members' panel of a group
+    /// or a conference is open.
+    pub members_open: bool,
+    /// The stage of the call is reduced to its strip.
+    pub stage_mini: bool,
+    /// Where the "New" line of each conversation sits: its first unread
+    /// line when it was opened, until it is left.
+    first_unread: HashMap<Option<uuid::Uuid>, u64>,
+    /// The conversation shown at the last frame.
+    shown: Option<Option<uuid::Uuid>>,
+    /// The search field of the column.
+    side_filter: String,
+    /// The nearby chat's volume: whisper, say or shout.
+    volume: compose::Volume,
+    /// Our typing notices, and what the field did this frame.
+    me_typing: typing::MeTyping,
+    typing_field: Option<typing::Field>,
+    /// The resident picker of the column's "+", and what it starts.
+    picker: super::avatar_picker::AvatarPicker,
+    start: Start,
+}
+
+/// What the column's resident picker starts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Start {
+    #[default]
+    Im,
+    Conference,
 }
 
 /// How a conversation's lines are drawn (`LineEnv::bubbles`): legacy lines,
@@ -108,6 +158,22 @@ impl ChatUi {
         self.show_profile = false;
         self.contacts = false;
         self.conv_focus_request = true;
+    }
+
+    /// Open the resident picker of the column: one resident for an IM,
+    /// several for a conference; a search typed in the column carries over.
+    fn start_picker(&mut self, start: Start) {
+        self.start = start;
+        let query = self.side_filter.trim().to_owned();
+        self.picker.open("conversations_start", start == Start::Conference);
+        if !query.is_empty() {
+            self.picker.set_query(&query);
+        }
+    }
+
+    /// The names of the avatars in chat range who type.
+    fn nearby_typing_names(&self, world: &World) -> Vec<String> {
+        self.nearby_typing.iter().map(|id| world.social.name_of(id)).collect()
     }
 }
 
@@ -529,6 +595,23 @@ pub enum ConvAction {
     PickPeople(uuid::Uuid),
     /// Residents dropped on a conversation, to add to it.
     AddPeople(uuid::Uuid, Vec<uuid::Uuid>),
+    /// Open a conversation with a resident (the column's search).
+    OpenIm(uuid::Uuid),
+    /// Open the chat of one of our groups (the column's "+").
+    StartGroupChat(uuid::Uuid),
+    /// We start or stop typing to a resident (IM_TYPING_START / STOP).
+    Typing { to: uuid::Uuid, typing: bool },
+    /// Inventory dropped on a conversation with a resident: give it, once
+    /// confirmed (the inventory's Share dialog).
+    GiveItems { to: uuid::Uuid, items: Vec<uuid::Uuid> },
+    /// Open the inventory, to drag what to give from it.
+    OpenInventory,
+    /// Play one of our active gestures.
+    PlayGesture(uuid::Uuid),
+    /// The audio output of the call ("" = the system's default).
+    SetOutputDevice(String),
+    /// List the audio outputs again (their menu opens).
+    ListOutputDevices,
 }
 
 use super::widgets::initials;
@@ -1120,6 +1203,160 @@ fn demo_selection(sel: &mut select::Selection, mode: &str, drawn: &[select::Row]
     }
 }
 
+/// The conversation shown is read: its unread count goes, and in the
+/// workspace its first unread line is kept for the "New" line.
+fn mark_read(world: &mut World, selected: Option<uuid::Uuid>) -> Option<(usize, usize)> {
+    match selected {
+        None => {
+            let unread = std::mem::take(&mut world.chat_unread);
+            Some((unread, world.chat.len()))
+        }
+        Some(id) => world
+            .social
+            .ims
+            .iter_mut()
+            .find(|s| s.other == id)
+            .map(|s| (std::mem::take(&mut s.unread), s.lines.len())),
+    }
+}
+
+/// What the lines of a conversation are drawn with.
+struct Lines<'a> {
+    icons: &'a super::icons::Icons,
+    emoji: &'a mut super::emoji::Emoji,
+    pics: &'a HashMap<uuid::Uuid, egui::TextureHandle>,
+    world: &'a World,
+    own_name: &'a str,
+    /// The height they take.
+    height: f32,
+}
+
+/// How they are drawn.
+enum Rows<'t, 'a> {
+    /// The classic lines, or the bubbles (`LineEnv::bubbles`).
+    Classic(Option<bool>),
+    /// The rows of Aurora's workspace (`thread.rs`).
+    Thread(&'t mut thread::Thread<'a>),
+}
+
+/// The lines of the conversation shown, laid out by its view (only those in
+/// sight are drawn), with the find bar's highlights and the selection.
+fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi, mut rows: Rows) -> ToField {
+    let Lines {
+        icons,
+        emoji,
+        pics,
+        world: w,
+        own_name,
+        height,
+    } = l;
+    let search = st.searches.entry(st.selected).or_default();
+    let filter = search.filter.as_deref().unwrap_or("").to_lowercase();
+    let needle = search.find.as_ref().map(|f| f.text.to_lowercase()).unwrap_or_default();
+    let view = st.views.entry(st.selected).or_default();
+    if st.selection.0 != st.selected {
+        st.selection = (st.selected, select::Selection::default());
+    }
+    let (layout, first_unread) = match &rows {
+        Rows::Classic(_) => (view::Layout::Classic, None),
+        Rows::Thread(th) if th.compact => (view::Layout::Compact, st.first_unread.get(&st.selected).copied()),
+        Rows::Thread(_) => (view::Layout::Aurora, st.first_unread.get(&st.selected).copied()),
+    };
+    let mut to_field = ToField::Nothing;
+    let (lines, clock) = match st.selected {
+        None => (Some(&w.chat), w.chat_clock),
+        Some(id) => match w.social.ims.iter().find(|s| s.other == id) {
+            Some(s) => (Some(&s.lines), s.clock),
+            None => (None, w.chat_clock),
+        },
+    };
+    let mut env = LineEnv {
+        p,
+        icons,
+        emoji,
+        pics,
+        world: w,
+        want_names: &mut st.wanted_names,
+        wanted: &mut st.wanted_pics,
+        own_name,
+        plain_history: false,
+        bubbles: match rows {
+            Rows::Classic(style) => style,
+            Rows::Thread(_) => None,
+        },
+    };
+    let wash = find::wash(p);
+    let current = search.find.as_ref().and_then(|f| f.current_line(view));
+    let out = egui::ScrollArea::vertical()
+        .id_salt(("conv", st.selected))
+        .stick_to_bottom(true)
+        .auto_shrink([false, false])
+        .max_height(height)
+        .min_scrolled_height(height)
+        .show_viewport(ui, |ui, viewport| {
+            let Some(lines) = lines else {
+                return 0.0;
+            };
+            let width = (ui.available_width() * 2.0).round() / 2.0;
+            let changed = view.sync(
+                &view::Source {
+                    lines,
+                    clock,
+                    filter: &filter,
+                    find: &needle,
+                    layout,
+                    first_unread,
+                },
+                width,
+            );
+            if changed && let Some(f) = search.find.as_mut() {
+                f.hits_changed(view);
+            }
+            let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
+            let selection = &mut st.selection.1;
+            let (shift, content) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+                let Some(line) = lines.get(row.line) else {
+                    return;
+                };
+                let mark = mark.filter(|_| row.hit);
+                let mut draw = |ui: &mut egui::Ui| match &mut rows {
+                    Rows::Classic(_) => draw_line(ui, &mut env, line, row.look, mark),
+                    Rows::Thread(th) => thread::draw(ui, &mut env, th, line, row.look, mark, painted),
+                };
+                if matches!(line.kind, ChatKind::Invite(_)) {
+                    // a card: its own labels and buttons
+                    draw(ui);
+                } else {
+                    let seq = clock.first + row.line as u64;
+                    select::row(ui, seq, selection.of_row(seq), painted, draw);
+                }
+                if painted && current == Some(row.line) {
+                    find::current_marker(ui, p);
+                }
+            });
+            let drawn = select::take_drawn();
+            let copied = Copied {
+                view,
+                lines,
+                first: clock.first,
+                world: w,
+                own_name,
+            };
+            if let Some(mode) = st.demo_select.take_if(|_| !drawn.is_empty()) {
+                demo_selection(selection, &mode, &drawn, copied.ends());
+            }
+            to_field = select_lines(ui, &content, &drawn, selection, &copied);
+            shift
+        });
+    if out.inner != 0.0 {
+        // rows above changed height: what is in sight stays
+        let mut state = out.state;
+        state.offset.y += out.inner;
+        state.store(ui.ctx(), out.id);
+    }
+    to_field
+}
+
 /// What drawing a line of a conversation needs.
 pub(crate) struct LineEnv<'a> {
     pub p: &'a Palette,
@@ -1498,7 +1735,25 @@ pub fn show(
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
     }
+    let style = st.demo_style.unwrap_or(st.style);
     floater.show(ctx, p, open, |ui| {
+        if style.workspace() {
+            let env = workspace::Env {
+                p,
+                icons,
+                emoji: &mut *emoji,
+                pics,
+                images,
+                gestures,
+                contacts: &mut *contacts,
+                contacts_settings: &mut *contacts_settings,
+                show_contacts_tab,
+                docked,
+                compact: style == crate::settings::ChatStyle::Compact,
+            };
+            workspace::show(ui, env, world, st, &mut actions);
+            return;
+        }
         let h = (ui.available_height() - 6.0).max(140.0);
         ui.horizontal_top(|ui| {
             // ---- contacts column
@@ -1680,114 +1935,27 @@ pub fn show(
                 // the lines, the 4 points before the row and the row itself (a
                 // row that overflows makes the resizable window grow every frame)
                 let lines_h = (ui.available_height() - input_h - find_h - 4.0 - ui.spacing().item_spacing.y - 1.0).clamp(60.0, h);
-                let filter = search.filter.as_deref().unwrap_or("").to_lowercase();
-                let needle = search.find.as_ref().map(|f| f.text.to_lowercase()).unwrap_or_default();
-                let view = st.views.entry(st.selected).or_default();
-                if st.selection.0 != st.selected {
-                    st.selection = (st.selected, select::Selection::default());
-                }
                 let mut to_field = ToField::Nothing;
                 egui::Frame::new()
                     .fill(p.field)
                     .corner_radius(ui.visuals().window_corner_radius)
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        match st.selected {
-                            None => world.chat_unread = 0,
-                            Some(id) => {
-                                if let Some(s) = world.social.ims.iter_mut().find(|s| s.other == id) {
-                                    s.unread = 0;
-                                }
-                            }
-                        }
+                        mark_read(world, st.selected);
                         let w: &World = world;
-                        let (lines, clock) = match st.selected {
-                            None => (Some(&w.chat), w.chat_clock),
-                            Some(id) => match w.social.ims.iter().find(|s| s.other == id) {
-                                Some(s) => (Some(&s.lines), s.clock),
-                                None => (None, w.chat_clock),
-                            },
-                        };
-                        let mut env = LineEnv {
-                            p,
+                        let style = line_style(st.demo_style.unwrap_or(st.style), st.selected.map(|id| w.is_group_session(&id)));
+                        let lines = Lines {
                             icons,
                             emoji,
                             pics,
                             world: w,
-                            want_names: &mut st.wanted_names,
-                            wanted: &mut st.wanted_pics,
                             own_name: &own_name,
-                            plain_history: false,
-                            bubbles: line_style(st.demo_style.unwrap_or(st.style), st.selected.map(|id| w.is_group_session(&id))),
+                            height: lines_h,
                         };
-                        let wash = find::wash(p);
-                        let current = search.find.as_ref().and_then(|f| f.current_line(view));
-                        let out = egui::ScrollArea::vertical()
-                            .id_salt(("conv", st.selected))
-                            .stick_to_bottom(true)
-                            .auto_shrink([false, false])
-                            .max_height(lines_h)
-                            .min_scrolled_height(lines_h)
-                            .show_viewport(ui, |ui, viewport| {
-                                let Some(lines) = lines else {
-                                    return 0.0;
-                                };
-                                let width = (ui.available_width() * 2.0).round() / 2.0;
-                                let changed = view.sync(
-                                    &view::Source {
-                                        lines,
-                                        clock,
-                                        filter: &filter,
-                                        find: &needle,
-                                        layout: view::Layout::Classic,
-                                        first_unread: None,
-                                    },
-                                    width,
-                                );
-                                if changed && let Some(f) = search.find.as_mut() {
-                                    f.hits_changed(view);
-                                }
-                                let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
-                                let selection = &mut st.selection.1;
-                                let (shift, content) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
-                                    let Some(line) = lines.get(row.line) else {
-                                        return;
-                                    };
-                                    let mark = mark.filter(|_| row.hit);
-                                    if matches!(line.kind, ChatKind::Invite(_)) {
-                                        // a card: its own labels and buttons
-                                        draw_line(ui, &mut env, line, row.look, mark);
-                                    } else {
-                                        let seq = clock.first + row.line as u64;
-                                        select::row(ui, seq, selection.of_row(seq), painted, |ui| {
-                                            draw_line(ui, &mut env, line, row.look, mark);
-                                        });
-                                    }
-                                    if painted && current == Some(row.line) {
-                                        find::current_marker(ui, p);
-                                    }
-                                });
-                                let drawn = select::take_drawn();
-                                let copied = Copied {
-                                    view,
-                                    lines,
-                                    first: clock.first,
-                                    world: w,
-                                    own_name: &own_name,
-                                };
-                                if let Some(mode) = st.demo_select.take_if(|_| !drawn.is_empty()) {
-                                    demo_selection(selection, &mode, &drawn, copied.ends());
-                                }
-                                to_field = select_lines(ui, &content, &drawn, selection, &copied);
-                                shift
-                            });
-                        if out.inner != 0.0 {
-                            // rows above changed height: what is in sight stays
-                            let mut state = out.state;
-                            state.offset.y += out.inner;
-                            state.store(ui.ctx(), out.id);
-                        }
+                        to_field = conversation_lines(ui, p, lines, st, Rows::Classic(style));
                     });
+                let search = st.searches.entry(st.selected).or_default();
+                let view = st.views.entry(st.selected).or_default();
                 match to_field {
                     ToField::Nothing => {}
                     ToField::Focus => st.conv_focus_request = true,
@@ -1878,11 +2046,13 @@ pub fn show(
                     resp.request_focus();
                     cursor_to_end(ui.ctx(), conv_input, &draft);
                 }
+                let mut sent = false;
                 if send_clicked
                     || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt))
                 {
                     let text = draft.trim().to_owned();
                     if !text.is_empty() {
+                        sent = true;
                         match st.selected {
                             None => {
                                 let (channel, message) = parse_channel(&text);
@@ -1907,6 +2077,14 @@ pub fn show(
                     draft.clear();
                     resp.request_focus();
                 }
+                st.typing_field = Some(typing::Field {
+                    to: st
+                        .selected
+                        .filter(|id| !world.is_group_session(id) && (resp.has_focus() || sent)),
+                    typed: resp.changed(),
+                    empty: draft.trim().is_empty(),
+                    sent,
+                });
                 if !draft.is_empty() {
                     *st.draft_mut(st.selected) = draft;
                 } else {
@@ -1917,6 +2095,26 @@ pub fn show(
     });
     if tear_off {
         actions.push(ConvAction::Contacts(super::contacts::ContactsAction::ToggleTornOff));
+    }
+    // the column's "+" and search: one resident for an IM, several for a
+    // conference (LLAvatarActions::startIM / startConference)
+    if let Some(residents) = st.picker.show(ctx, p, world) {
+        let residents = match st.start {
+            Start::Im => residents.into_iter().take(1).collect(),
+            Start::Conference => residents,
+        };
+        world.start_text_conference(residents);
+        st.side_filter.clear();
+    }
+    // our typing notices to the resident written to (FSFloaterIM::setTyping)
+    let field = st.typing_field.take().filter(|_| st.send_typing && *open).unwrap_or(typing::Field {
+        to: None,
+        typed: false,
+        empty: true,
+        sent: false,
+    });
+    for (to, typing) in st.me_typing.update(std::time::Instant::now(), field) {
+        actions.push(ConvAction::Typing { to, typing });
     }
     actions
 }

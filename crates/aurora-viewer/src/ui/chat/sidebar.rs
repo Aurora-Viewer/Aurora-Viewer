@@ -43,7 +43,7 @@ pub(super) fn kind(world: &World, id: &Uuid) -> Kind {
 /// The picture of an entry.
 enum Icon<'a> {
     /// A resident: their picture and status.
-    Avatar(Uuid, Option<&'a egui::TextureHandle>, presence::Status),
+    Avatar(Option<&'a egui::TextureHandle>, presence::Status),
     /// A group: its initials on the accent.
     Group(&'a str),
     /// A Tabler icon on a tinted square (nearby chat, Contacts, a conference).
@@ -169,11 +169,11 @@ pub(super) fn show(
                     let status = presence::of(world, &id);
                     let initials = crate::ui::widgets::initials(&name);
                     let icon = match section {
-                        Kind::Private => Icon::Avatar(id, pics.get(&id), status),
+                        Kind::Private => Icon::Avatar(pics.get(&id), status),
                         Kind::Group => Icon::Group(&initials),
                         Kind::Conference => Icon::Glyph("users", p.muted),
                     };
-                    let (sub, sub_icon) = sub_line(world, st, id, section, status);
+                    let (sub, sub_icon) = sub_line(p, world, id, section, status);
                     let e = Entry {
                         icon,
                         name: &name,
@@ -215,7 +215,7 @@ pub(super) fn show(
                     for (id, name) in friends.into_iter().take(8) {
                         st.wanted_pics.insert(id);
                         let e = Entry {
-                            icon: Icon::Avatar(id, pics.get(&id), presence::of(world, &id)),
+                            icon: Icon::Avatar(pics.get(&id), presence::of(world, &id)),
                             name: &name,
                             sub: Some(aurora_i18n::tr!("ui-chat-start-im").to_owned()),
                             sub_icon: Some(("message-circle-filled", p.muted_dim)),
@@ -286,9 +286,7 @@ fn preview(world: &World, line: &crate::world::ChatLine, named: bool) -> String 
 
 /// What an entry says under its name, by priority: a call, someone typing,
 /// a status that is not online (residents), the last message.
-fn sub_line(world: &World, st: &ChatUi, id: Uuid, kind: Kind, status: presence::Status) -> (String, Option<(&'static str, Color32)>) {
-    let _ = st;
-    let p = crate::ui::colors::palette();
+fn sub_line(p: &Palette, world: &World, id: Uuid, kind: Kind, status: presence::Status) -> (String, Option<(&'static str, Color32)>) {
     if let Some(invite) = world.calls.invite_for(&id) {
         let text = if invite.invite.p2p {
             aurora_i18n::tr!("ui-chat-sub-calls-you")
@@ -299,7 +297,8 @@ fn sub_line(world: &World, st: &ChatUi, id: Uuid, kind: Kind, status: presence::
     }
     if let Some(call) = world.call_of(&id) {
         let secs = call.connected_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
-        let text = aurora_i18n::tr!("ui-chat-sub-in-call", time = super::call::duration(secs).as_str());
+        let time = super::call::duration(secs);
+        let text = aurora_i18n::tr!("ui-chat-sub-in-call", time = time.as_str());
         return (text.to_owned(), Some(("volume", p.success)));
     }
     if world.call_launched(&id).is_some() {
@@ -481,7 +480,7 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool) -> Picked {
     let bold = e.current || e.unread > 0;
     let name_color = if bold { p.ink } else { p.muted };
     let font = if bold {
-        crate::ui::fonts::semibold_font(ui.ctx(), 13.0)
+        egui::FontId::new(13.0, crate::ui::fonts::semibold(ui.ctx()))
     } else {
         egui::FontId::proportional(13.0)
     };
@@ -513,7 +512,7 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool) -> Picked {
 fn paint_picture(ui: &egui::Ui, p: &Palette, icon: &Icon, name: &str, rect: egui::Rect, ring: Color32) {
     let radius = ui.visuals().window_corner_radius;
     match icon {
-        Icon::Avatar(_, pic, status) => {
+        Icon::Avatar(pic, status) => {
             crate::ui::widgets::avatar_disc(ui, p, rect, *pic, name, false);
             if *status != presence::Status::Unknown {
                 presence::paint_dot(ui.painter(), p, rect, *status, ring);

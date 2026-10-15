@@ -185,6 +185,7 @@ fn is_emote(line: &ChatLine) -> bool {
 }
 
 impl<'a> Grouping<'a> {
+    #[cfg(test)]
     pub fn new(today: Slt) -> Grouping<'a> {
         Grouping::with(today, Layout::Classic)
     }

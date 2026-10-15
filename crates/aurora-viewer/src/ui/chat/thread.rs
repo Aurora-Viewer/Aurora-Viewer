@@ -95,7 +95,7 @@ pub(super) fn draw(
     let name = sender_name(env.world, env.own_name, line);
     let who = Who::of(env, line);
     let rect = if th.compact {
-        compact_row(ui, env, th, line, &name, &who, mark, width)
+        compact_row(ui, env, th, line, &name, &who, mark)
     } else {
         roomy_row(ui, env, th, line, head, &name, &who, mark, width)
     };
@@ -247,13 +247,14 @@ fn when(line: &ChatLine) -> String {
     }
     let now = std::time::SystemTime::now();
     let day = Slt::of(line.time);
+    let date = super::bubbles::day_text((day.year, day.month, day.day));
     let yesterday = Slt::of(now - std::time::Duration::from_secs(86_400));
     match super::bubbles::day_label((day.year, day.month, day.day), &Slt::of(now), &yesterday) {
         super::bubbles::DayLabel::Today => aurora_i18n::tr!("ui-chat-today-at", time = time.as_str()).to_owned(),
         super::bubbles::DayLabel::Yesterday => aurora_i18n::tr!("ui-chat-yesterday-at", time = time.as_str()).to_owned(),
         super::bubbles::DayLabel::Date(..) => aurora_i18n::tr!(
             "ui-chat-date-at",
-            date = super::bubbles::day_text((day.year, day.month, day.day)).as_str(),
+            date = date.as_str(),
             time = time.as_str()
         )
         .to_owned(),
@@ -316,7 +317,6 @@ fn compact_row(
     name: &str,
     who: &Who,
     mark: Option<Mark>,
-    width: f32,
 ) -> egui::Rect {
     let p = env.p;
     let row = ui.horizontal_top(|ui| {

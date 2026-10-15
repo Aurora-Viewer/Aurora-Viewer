@@ -112,6 +112,36 @@ fn feedback_id() -> egui::Id {
     egui::Id::new("inventory_move_drag_feedback")
 }
 
+/// Inventory dragged over a conversation with a resident, which gives it
+/// (LLFloaterIMSession::handleDragAndDrop → LLGiveInventory, Firestorm
+/// indra/newview/llfloaterimsession.cpp): the items carried, and whether
+/// they were released over `zone` this frame.
+pub(crate) fn give_target(ui: &egui::Ui, zone: egui::Rect) -> Option<(Vec<Uuid>, bool)> {
+    if !ui.rect_contains_pointer(zone) {
+        return None;
+    }
+    let ctx = ui.ctx();
+    let cargo = egui::DragAndDrop::payload::<SelectionDrag>(ctx)
+        .map(Cargo::Selection)
+        .or_else(|| egui::DragAndDrop::payload::<InvDrag>(ctx).map(Cargo::Item))
+        .or_else(|| egui::DragAndDrop::payload::<FolderDrag>(ctx).map(Cargo::Folder))?;
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            feedback_id(),
+            Feedback {
+                pass,
+                cursor: egui::CursorIcon::Copy,
+            },
+        )
+    });
+    let released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+    if released {
+        egui::DragAndDrop::clear_payload(ctx);
+    }
+    Some((cargo.ids().to_vec(), released))
+}
+
 /// Rows precede their enclosing list. A rejected row consumes the release,
 /// rather than accidentally moving the selection to the list's root folder.
 pub(super) fn target(

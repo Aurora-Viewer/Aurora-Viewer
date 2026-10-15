@@ -7354,6 +7354,12 @@ impl App {
         if let Some(c) = a.chat {
             self.send_local_chat(c);
         }
+        for cmd in a.typing {
+            self.send(cmd);
+        }
+        for id in a.gestures {
+            self.gesture_play(id, None);
+        }
         for (to, text) in a.ims {
             let text = ui::emoji::expand_shortcodes(&text);
             if self.world.is_group_session(&to) {
@@ -9009,6 +9015,22 @@ impl App {
                 self.chat_ui.mic = (!self.settings.audio.mic_hold).then_some(self.mic_on);
                 if self.world.calls.active.is_some() {
                     self.chat_ui.volumes.clone_from(&self.world.calls.volumes);
+                    self.chat_ui.output_devices.clone_from(&self.options_ui.output_devices);
+                    self.chat_ui.output_device.clone_from(&self.settings.audio.output_device);
+                }
+                self.chat_ui.timestamps = self.settings.chat_timestamps;
+                self.chat_ui.send_typing = self.settings.send_typing_state;
+                // who hears the nearby chat, and who of them types (the
+                // radar's avatars in chat range, their typing animation)
+                self.chat_ui.nearby_count = 0;
+                self.chat_ui.nearby_typing.clear();
+                for e in self.radar.entries() {
+                    if !e.left_behind && e.range.is_some_and(|d| d <= crate::world::radar::CHAT_RANGE) {
+                        self.chat_ui.nearby_count += 1;
+                        if e.typing {
+                            self.chat_ui.nearby_typing.push(e.id);
+                        }
+                    }
                 }
                 for c in ui::chat::show(
                     &ctx,
@@ -9064,6 +9086,35 @@ impl App {
                         ui::chat::ConvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::chat::ConvAction::Contacts(c) => contact_actions.push(c),
                         ui::chat::ConvAction::OpenContacts => self.panels.contacts = true,
+                        ui::chat::ConvAction::OpenIm(id) => self.world.start_text_conference(vec![id]),
+                        ui::chat::ConvAction::StartGroupChat(group) => self.world.start_group_chat(group),
+                        // LLIMModel::sendTypingState: to the resident, in
+                        // the session of the two of us (agent XOR other)
+                        ui::chat::ConvAction::Typing { to, typing } => a.typing.push(NetCommand::SendImDialog {
+                            to,
+                            dialog: if typing {
+                                crate::world::IM_TYPING_START
+                            } else {
+                                crate::world::IM_TYPING_STOP
+                            },
+                            id: uuid::Uuid::from_u128(self.world.agent_id.as_u128() ^ to.as_u128()),
+                            message: "typing".to_owned(),
+                            bucket: Vec::new(),
+                        }),
+                        // the inventory's Share dialog confirms, then gives
+                        // (LLGiveInventory::doGiveInventoryItem)
+                        ui::chat::ConvAction::GiveItems { to, items } => {
+                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
+                        }
+                        ui::chat::ConvAction::OpenInventory => self.panels.inventory = true,
+                        ui::chat::ConvAction::PlayGesture(id) => a.gestures.push(id),
+                        ui::chat::ConvAction::SetOutputDevice(device) => {
+                            self.settings.audio.output_device = device;
+                            self.settings.save();
+                        }
+                        ui::chat::ConvAction::ListOutputDevices => {
+                            self.options_ui.output_devices = aurora_audio::output_devices();
+                        }
                     }
                 }
                 self.panels.chat = open;
@@ -10049,6 +10100,10 @@ struct UiActions {
     set_display_name: Option<(String, String)>,
     /// Estimate and purchase requests of the Buy L$ window.
     currency: Vec<NetCommand>,
+    /// The typing notices of the conversations.
+    typing: Vec<NetCommand>,
+    /// Gestures played from the conversations' field.
+    gestures: Vec<uuid::Uuid>,
 }
 
 impl ApplicationHandler for App {

@@ -403,6 +403,9 @@ pub struct Settings {
     /// Show Contacts in Conversations (Preferences > Chat, off by default).
     /// Unlike Firestorm's always-present entry, this is optional at the human's request.
     pub show_contacts_tab: bool,
+    /// Tell the resident of a conversation that we are typing
+    /// (FSSendTypingState, on by default; Preferences > Chat).
+    pub send_typing_state: bool,
     pub chat_toast_seconds: f32,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
@@ -952,6 +955,7 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             show_contacts_tab: false,
+            send_typing_state: true,
             chat_toast_seconds: 20.0,
             toast_friends_online: true,
             presence_position: PresencePosition::TopRight,
