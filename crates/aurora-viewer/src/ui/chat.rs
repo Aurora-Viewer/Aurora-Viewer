@@ -1012,17 +1012,25 @@ fn select_lines(
     sel: &mut select::Selection,
     copied: &Copied,
 ) -> ToField {
+    // the lines' own area: egui also hands them a pointer a few points off
+    // (interact_radius), on the strip between them and the field, which
+    // stays neutral (normal cursor, no selection, no keyboard)
+    let area = content.rect.intersect(ui.clip_rect());
+    let pointer_in = ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| area.contains(p));
+    let pressed_in = ui.input(|i| i.pointer.press_origin()).is_some_and(|p| area.contains(p));
     let pressed = ui.input(|i| i.pointer.primary_pressed());
-    if pressed && content.is_pointer_button_down_on() {
+    if pressed && pressed_in && content.is_pointer_button_down_on() {
         content.request_focus();
     }
     if content.drag_started_by(egui::PointerButton::Primary)
+        && pressed_in
         && let Some(origin) = ui.input(|i| i.pointer.press_origin())
         && let Some((p, text)) = select::hit(drawn, origin)
     {
         sel.start_at(p, text);
     }
     if content.dragged_by(egui::PointerButton::Primary)
+        && pressed_in
         && let Some(pos) = content.interact_pointer_pos()
     {
         if let Some((p, text)) = select::hit(drawn, pos) {
@@ -1042,10 +1050,10 @@ fn select_lines(
             ui.ctx().request_repaint();
         }
     }
-    if content.clicked() {
+    if content.clicked() && content.interact_pointer_pos().is_some_and(|p| area.contains(p)) {
         sel.clear();
     }
-    if content.hovered() || content.dragged() {
+    if (content.hovered() && pointer_in) || (content.dragged() && pressed_in) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
     }
     if content.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -1793,6 +1801,7 @@ pub fn show(
                         ui.ctx().memory_mut(|m| m.request_focus(conv_input));
                     }
                 }
+                let strip_top = ui.min_rect().bottom();
                 ui.add_space(4.0);
                 // input + emoji
                 let hint = match st.selected {
@@ -1829,6 +1838,17 @@ pub fn show(
                         output.response
                     })
                     .inner;
+                // the strip between the lines and the field: egui reaches
+                // both from it (interact_radius), it keeps the normal cursor
+                // unless a drag goes through it
+                if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+                    && pos.y > strip_top
+                    && pos.y < resp.rect.top()
+                    && ui.min_rect().x_range().contains(pos.x)
+                    && !ui.input(|i| i.pointer.any_down())
+                {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+                }
                 if st.emoji_open {
                     let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
                     let mut close = false;
@@ -2771,6 +2791,27 @@ mod tests {
         let (_, out) = frame(&mut st, vec![egui::Event::Copy]);
         let text = copied(&out).expect("the selection from the empty area is copied");
         assert_eq!(text.lines().count(), 3, "{text:?}");
+        // the strip between the lines and the field: a normal cursor, and a
+        // drag from it selects nothing
+        frame(&mut st, vec![egui::Event::PointerMoved(from), button(from, true)]);
+        frame(&mut st, vec![button(from, false)]);
+        assert!(st.selection.1.is_empty());
+        let field = ctx
+            .read_response(egui::Id::new(("conv_input", None::<uuid::Uuid>)))
+            .expect("the conversation's field")
+            .rect;
+        let strip = egui::pos2(field.center().x, field.top() - 2.0);
+        let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(strip)]);
+        assert_ne!(out.cursor_icon, egui::CursorIcon::Text, "a normal cursor on the strip");
+        let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(from)]);
+        assert_eq!(out.cursor_icon, egui::CursorIcon::Text, "the text cursor on the lines");
+        frame(&mut st, vec![egui::Event::PointerMoved(strip), button(strip, true)]);
+        for k in 1..=4 {
+            let at = strip + (from - strip) * (k as f32 / 4.0);
+            frame(&mut st, vec![egui::Event::PointerMoved(at)]);
+        }
+        frame(&mut st, vec![button(from, false)]);
+        assert!(st.selection.1.is_empty(), "a drag from the strip selects nothing");
     }
 
     #[test]
