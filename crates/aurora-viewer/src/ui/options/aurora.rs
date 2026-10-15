@@ -264,8 +264,11 @@ fn item(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, control: 
     ui.painter().galley(Pos2::new(rect.left(), top), name_g, p.ink);
     ui.painter().galley(Pos2::new(rect.left(), desc_top), desc_g, p.muted);
     let slot = Rect::from_center_size(Pos2::new(rect.right() - control.x / 2.0, rect.center().y), control);
-    // a child that does not move the page's cursor: the row is already laid out
-    draw(&mut ui.new_child(egui::UiBuilder::new().max_rect(slot)))
+    // a child that does not move the page's cursor: the row is already laid
+    // out. Its own id: without it every row's child had the same, and the
+    // segments of the same place and label ("Aurora", first of several
+    // rows) shared an id, the last row's taking the clicks of the others.
+    draw(&mut ui.new_child(egui::UiBuilder::new().id_salt(("aurora_item", name)).max_rect(slot)))
 }
 
 /// The faint line between two settings of a card.
@@ -733,5 +736,60 @@ mod tests {
             assert!(!options.contains(field), "{field} is set only on the Aurora page");
         }
         assert!(!options.contains("name-tag-style"), "the former name tag style row is gone");
+    }
+
+    /// The Conversations choice of the page switches the setting, through
+    /// real egui frames: each of its four segments (the window follows the
+    /// setting every frame, `ChatUi::set_style`).
+    #[test]
+    fn the_conversations_choice_switches_the_style() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let mut s = Settings::default();
+        let mut reset = false;
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            texts = frames.run(Vec::new(), |ui| {
+                page(ui, &p, &mut s, &mut reset);
+            });
+        }
+        // the row of the segments ("Aurora" is also the page's title)
+        let row = texts
+            .iter()
+            .find(|t| t.source == aurora_i18n::tr!("ui-options-aurora-compact"))
+            .expect("the Compact segment")
+            .rect
+            .center()
+            .y;
+        for (label, style) in [
+            (aurora_i18n::tr!("ui-options-aurora-compact"), ChatStyle::Compact),
+            (aurora_i18n::tr!("ui-options-aurora-bubbles"), ChatStyle::Bubbles),
+            (aurora_i18n::tr!("ui-options-aurora-lines"), ChatStyle::Legacy),
+            (aurora_i18n::tr!("ui-options-aurora-workspace"), ChatStyle::Aurora),
+        ] {
+            let at = texts
+                .iter()
+                .find(|t| t.source == label && (t.rect.center().y - row).abs() < 4.0)
+                .unwrap_or_else(|| panic!("{label} is painted"))
+                .rect
+                .center();
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            for events in [
+                vec![egui::Event::PointerMoved(at)],
+                vec![button(true)],
+                vec![button(false)],
+                Vec::new(),
+            ] {
+                texts = frames.run(events, |ui| {
+                    page(ui, &p, &mut s, &mut reset);
+                });
+            }
+            assert_eq!(s.chat_style, style, "{label}");
+        }
     }
 }
