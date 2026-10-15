@@ -279,7 +279,7 @@ mod tests {
         assert_eq!(shapes, [Shape::Disc, Shape::Crescent, Shape::Bar, Shape::Ring]);
         assert_eq!(Status::Unknown.shape(), Status::Offline.shape());
         // the cuts stay inside the mark
-        assert!(Shape::BAR.0 < 2.0 && Shape::BAR.1 < 1.0 && Shape::RING < 1.0);
-        assert!(Shape::CUT_RADIUS < 1.0 && Shape::CUT_OFFSET < 0.0);
+        const { assert!(Shape::BAR.0 < 2.0 && Shape::BAR.1 < 1.0 && Shape::RING < 1.0) };
+        const { assert!(Shape::CUT_RADIUS < 1.0 && Shape::CUT_OFFSET < 0.0) };
     }
 }

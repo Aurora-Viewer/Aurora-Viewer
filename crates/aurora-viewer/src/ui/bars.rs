@@ -293,9 +293,8 @@ fn status_color(p: &Palette, m: &crate::world::status::StatusModes) -> Color32 {
         p.muted
     } else if m.dnd {
         p.danger
-    } else if m.away {
-        p.amber
-    } else if m.autorespond || m.autorespond_nonfriends {
+    } else if m.away || m.autorespond || m.autorespond_nonfriends {
+        // the shape tells away (a crescent) from an automatic response (a disc)
         p.amber
     } else {
         p.success
