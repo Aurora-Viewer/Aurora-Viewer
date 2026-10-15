@@ -3,7 +3,7 @@
 //! size and rotation with copy / paste actions, the prim shape (22
 //! types, Firestorm's "Working33" extra paths included) and sculpties.
 
-use super::common::{Edit, check, combo, label, section, small, spin};
+use super::common::{Edit, check, combo, label, row, section, small, spin};
 use super::{Env, Request, ShapeClip};
 use crate::build::{BuildSettings, BuildTool, MAX_PRIM_SCALE, MIN_PRIM_SCALE};
 use crate::scene::Scene;
@@ -12,7 +12,7 @@ use crate::ui::menu;
 use crate::world::World;
 use aurora_net::build::{perm, perm_field};
 use aurora_prim::params::*;
-use egui::{Color32, RichText};
+use egui::{Color32, RichText, Vec2};
 use glam::{EulerRot, Quat, Vec3};
 use std::time::Instant;
 
@@ -293,7 +293,6 @@ pub fn parse_vector(t: &str) -> Option<Vec3> {
     (parts.len() == 3).then(|| Vec3::new(parts[0], parts[1], parts[2]))
 }
 
-/// Axis fields with the per-vector copy / paste commands in their menu.
 /// Icon of the paste entries, the one of the paste buttons.
 const PASTE: &str = "clipboard-text-filled";
 
@@ -316,7 +315,40 @@ fn vec_block(
     let mut copy = false;
     let spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 2.0;
-    ui.label(RichText::new(title).size(11.0).color(p.muted));
+    let vector_name = [
+        aurora_i18n::tr!("build-ui-object-position"),
+        aurora_i18n::tr!("build-ui-object-size"),
+        aurora_i18n::tr!("build-ui-object-rotation"),
+    ][which];
+    // LLPanelObject::onCopyPos/Size/Rot keeps a separate value per vector.
+    // Keep each pair on its own caption line, independent of the manipulator.
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(title).size(11.0).color(p.muted));
+        super::compact::actions(ui, |ui| {
+            if super::compact::icon_button(
+                ui,
+                p,
+                PASTE,
+                &aurora_i18n::tr!("build-ui-object-paste", n = vector_name),
+                enabled && tool.ui.vec_clipboard[which].is_some(),
+            )
+            .clicked()
+            {
+                paste = tool.ui.vec_clipboard[which];
+            }
+            if super::compact::icon_button(
+                ui,
+                p,
+                "copy-filled",
+                &aurora_i18n::tr!("build-ui-object-copy", n = vector_name),
+                enabled,
+            )
+            .clicked()
+            {
+                copy = true;
+            }
+        });
+    });
     // Three cells cut out of one row: equal widths from edge to edge and one
     // baseline, whatever the length of the values.
     const GAP: f32 = 6.0;
@@ -387,8 +419,7 @@ fn vec_block(
             );
         }
     });
-    // Keep the per-vector C / P / system paste commands in the row menu,
-    // while the visible heading actions follow the active manipulator.
+    // The row menu also accepts vectors from the system clipboard.
     menu::context_menu(&row.response, p, |ui| {
         if menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("build-compact-copy-vector"), enabled) {
             copy = true;
@@ -434,17 +465,6 @@ pub fn show_transform(
 
     let mixed = mixed_vectors(tool, world, s);
     let can_move = props.as_ref().is_none_or(|pr| pr.owner_mask & perm::MOVE != 0) && ((local && !s.edit_linked) || editable);
-    let which = match tool.effective_mode(mods) {
-        crate::build::EditMode::Rotate => 2,
-        crate::build::EditMode::Stretch => 1,
-        _ => 0,
-    };
-    let can_copy = if which == 1 { editable } else { can_move };
-    let vector_name = [
-        aurora_i18n::tr!("build-ui-object-position"),
-        aurora_i18n::tr!("build-ui-object-size"),
-        aurora_i18n::tr!("build-ui-object-rotation"),
-    ][which];
     let (z, y, x) = if local { local_rot } else { wr }.to_euler(EulerRot::ZYX);
     let wrap = |a: f32| {
         let d = (a.to_degrees() / 0.05).round() * 0.05;
@@ -457,38 +477,6 @@ pub fn show_transform(
         }
     };
     let mut rot = [wrap(x), wrap(y), wrap(z)];
-    let current = [if local { local_pos } else { wp - off }, scale, Vec3::from_array(rot)][which];
-    super::compact::heading(ui, p, "arrows-move", aurora_i18n::tr!("build-compact-transform"), |ui| {
-        let paste = super::compact::icon_button(
-            ui,
-            p,
-            "clipboard-text-filled",
-            &aurora_i18n::tr!("build-ui-object-paste", n = vector_name),
-            can_copy,
-        );
-        if paste.clicked() {
-            tool.ui.requests.push(Request::PasteVector(which));
-        }
-        menu::context_menu(&paste, p, |ui| {
-            let stored = can_copy && tool.ui.vec_clipboard[which].is_some();
-            if menu::item_if(ui, p, PASTE, aurora_i18n::tr!("build-compact-paste-vector"), stored)
-                && let Some(v) = tool.ui.vec_clipboard[which]
-            {
-                tool.paste_vector(world, s, which, &vector_text(v, decimals));
-            }
-        });
-        if super::compact::icon_button(
-            ui,
-            p,
-            "copy-filled",
-            &aurora_i18n::tr!("build-ui-object-copy", n = vector_name),
-            can_copy,
-        )
-        .clicked()
-        {
-            copy_vector(ui, tool, which, current, decimals);
-        }
-    });
     super::compact::manipulation(ui, p, tool, world, s, mods);
     ui.add_space(4.0);
     let mut pos = if local { local_pos } else { wp - off }.to_array();
@@ -644,32 +632,41 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     let (volume, flexible) = (o.volume, o.extra.flexible.is_some());
     let editable = tool.can_modify(world, idx);
     let single = tool.sel_prims(world).len() == 1 || tool.roots(world).len() == 1;
-    super::compact::heading(ui, p, "box", aurora_i18n::tr!("build-compact-shape"), |ui| {
-        let mesh = volume.is_mesh();
-        if super::common::icon_button(
-            ui,
-            p,
-            "clipboard-text-filled",
-            aurora_i18n::tr!("build-ui-object-paste-object-settings-from-the-clipboard"),
-            editable && single && !mesh && tool.ui.shape_clipboard.is_some(),
-        ) && let Some(c) = tool.ui.shape_clipboard
-        {
-            paste_params(tool, world, idx, c);
+    let mut chosen_type = None;
+    ui.horizontal(|ui| {
+        let items: Vec<(&str, usize)> = types().iter().enumerate().map(|(i, t)| (t.0, i)).collect();
+        if volume.is_mesh() {
+            label(ui, p, aurora_i18n::tr!("build-ui-object-mesh"));
+        } else {
+            chosen_type = combo(ui, "prim_type", Some(ui_from_volume(&volume).ty), &items, 128.0, editable && single);
         }
-        if super::common::icon_button(
-            ui,
-            p,
-            "copy-filled",
-            aurora_i18n::tr!("build-ui-object-copy-object-settings-to-clipboard"),
-            editable && single && !mesh,
-        ) {
-            tool.ui.shape_clipboard = Some(ShapeClip {
-                volume,
-                sculpt: volume.sculpt,
-            });
-        }
+        super::compact::actions(ui, |ui| {
+            let mesh = volume.is_mesh();
+            if super::common::icon_button(
+                ui,
+                p,
+                "clipboard-text-filled",
+                aurora_i18n::tr!("build-ui-object-paste-object-settings-from-the-clipboard"),
+                editable && single && !mesh && tool.ui.shape_clipboard.is_some(),
+            ) && let Some(c) = tool.ui.shape_clipboard
+            {
+                paste_params(tool, world, idx, c);
+            }
+            if super::common::icon_button(
+                ui,
+                p,
+                "copy-filled",
+                aurora_i18n::tr!("build-ui-object-copy-object-settings-to-clipboard"),
+                editable && single && !mesh,
+            ) {
+                tool.ui.shape_clipboard = Some(ShapeClip {
+                    volume,
+                    sculpt: volume.sculpt,
+                });
+            }
+        });
     });
-    shape_column(ui, p, tool, world, idx, &volume, editable && single, flexible, env);
+    shape_column(ui, p, tool, world, idx, &volume, chosen_type, editable && single, flexible, env);
 }
 
 /// Show a dash only on axes whose selected objects have different values.
@@ -726,6 +723,51 @@ fn paste_params(tool: &mut BuildTool, world: &mut World, idx: usize, c: ShapeCli
 }
 
 #[allow(clippy::too_many_arguments)]
+fn shape_pair(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    title: &str,
+    values: [&mut f32; 2],
+    axes: [&str; 2],
+    ranges: [std::ops::RangeInclusive<f32>; 2],
+    increment: f32,
+    decimals: usize,
+) -> Edit {
+    let mut edit = Edit::default();
+    ui.horizontal(|ui| {
+        let label_width = (ui.available_width() - 156.0).max(70.0);
+        ui.allocate_ui_with_layout(
+            Vec2::new(label_width, 26.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(label_width);
+                ui.add(egui::Label::new(RichText::new(title).size(11.0).color(p.muted)).truncate())
+                    .on_hover_text(title);
+            },
+        );
+        for ((value, axis), range) in values.into_iter().zip(axes).zip(ranges) {
+            ui.allocate_ui_with_layout(Vec2::new(30.0, 26.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(RichText::new(axis).size(10.0).color(p.muted));
+            });
+            edit = edit.or(spin(ui, value, increment, range, decimals, 36.0, false));
+        }
+    });
+    edit
+}
+
+fn shape_scalar(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    title: &str,
+    value: &mut f32,
+    increment: f32,
+    range: std::ops::RangeInclusive<f32>,
+    decimals: usize,
+) -> Edit {
+    let width = (ui.available_width() - 63.0).max(70.0);
+    row(ui, p, title, width, |ui| spin(ui, value, increment, range, decimals, 58.0, false))
+}
+
 fn shape_column(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -733,10 +775,13 @@ fn shape_column(
     world: &mut World,
     idx: usize,
     volume: &VolumeParams,
+    chosen_type: Option<usize>,
     enabled: bool,
     flexible: bool,
     env: &mut Env,
 ) {
+    ui.style_mut().override_font_id = Some(egui::FontId::proportional(11.0));
+    ui.spacing_mut().button_padding = Vec2::new(3.0, 3.0);
     if volume.is_mesh() {
         section(ui, p, aurora_i18n::tr!("build-ui-object-mesh"));
         small(ui, p, aurora_i18n::tr!("build-ui-object-a-mesh-shape-cannot-be-edited-here"));
@@ -747,76 +792,67 @@ fn shape_column(
     }
     let ui_now = ui_from_volume(volume);
     let mut u = ui_now;
-    let mut e = Edit::default();
-    let items: Vec<(&str, usize)> = types().iter().enumerate().map(|(i, t)| (t.0, i)).collect();
-    if let Some(t) = combo(ui, "prim_type", Some(u.ty), &items, 128.0, enabled) {
-        u.ty = t;
-        e = Edit {
-            changed: true,
-            commit: true,
-        };
+    let mut e = Edit {
+        changed: chosen_type.is_some(),
+        commit: chosen_type.is_some(),
+    };
+    if let Some(ty) = chosen_type {
+        u.ty = ty;
     }
     let ty = u.ty;
     if ty == SCULPTED {
         sculpt_section(ui, p, tool, world, idx, enabled, env);
     } else {
-        let w = 58.0;
-        let pair = |ui: &mut egui::Ui,
-                    title: &str,
-                    a: &mut f32,
-                    b: &mut f32,
-                    inc: f32,
-                    ra: std::ops::RangeInclusive<f32>,
-                    rb: std::ops::RangeInclusive<f32>,
-                    d: usize| {
-            label(ui, p, title);
-            let mut e = Edit::default();
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("D").size(11.0));
-                e = e.or(spin(ui, a, inc, ra, d, w, false));
-                ui.label(RichText::new("F").size(11.0));
-                e = e.or(spin(ui, b, inc, rb, d, w, false));
-            });
-            e
-        };
+        let ends = [aurora_i18n::tr!("build-compact-begin"), aurora_i18n::tr!("build-compact-end")];
         ui.add_enabled_ui(enabled, |ui| {
-            e = e.or(pair(
+            ui.spacing_mut().item_spacing.x = 3.0;
+            e = e.or(shape_pair(
                 ui,
-                aurora_i18n::tr!("build-ui-object-path-cut-begin-end"),
-                &mut u.cut.0,
-                &mut u.cut.1,
+                p,
+                aurora_i18n::tr!("build-compact-path-cut"),
+                [&mut u.cut.0, &mut u.cut.1],
+                ends,
+                [0.0..=0.98, 0.02..=1.0],
                 0.025,
-                0.0..=0.98,
-                0.02..=1.0,
                 3,
             ));
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    label(ui, p, aurora_i18n::tr!("build-ui-object-hollow"));
-                    e = e.or(spin(ui, &mut u.hollow, 5.0, 0.0..=95.0, 1, w, false));
-                });
-                ui.vertical(|ui| {
-                    label(ui, p, aurora_i18n::tr!("build-ui-object-bias"));
-                    e = e.or(spin(ui, &mut u.skew, 0.05, -0.95..=0.95, 2, w, false));
-                });
-            });
-            label(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"));
-            if let Some(h) = combo(ui, "hole_type", Some(u.hole), &holes(), 120.0, u.hollow > 0.0) {
-                u.hole = h;
-                e = e.or(Edit {
-                    changed: true,
-                    commit: true,
-                });
-            }
-            let (tw, ti) = if circular_basic(ty) { (360.0, 18.0) } else { (180.0, 9.0) };
-            e = e.or(pair(
+            e = e.or(shape_scalar(
                 ui,
-                aurora_i18n::tr!("build-ui-object-twist-begin-end"),
-                &mut u.twist.0,
-                &mut u.twist.1,
+                p,
+                aurora_i18n::tr!("build-ui-object-hollow"),
+                &mut u.hollow,
+                5.0,
+                0.0..=95.0,
+                1,
+            ));
+            let width = (ui.available_width() - 125.0).max(70.0);
+            row(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"), width, |ui| {
+                if let Some(h) = combo(ui, "hole_type", Some(u.hole), &holes(), 120.0, u.hollow > 0.0) {
+                    u.hole = h;
+                    e = e.or(Edit {
+                        changed: true,
+                        commit: true,
+                    });
+                }
+            });
+            e = e.or(shape_scalar(
+                ui,
+                p,
+                aurora_i18n::tr!("build-ui-object-bias"),
+                &mut u.skew,
+                0.05,
+                -0.95..=0.95,
+                2,
+            ));
+            let (tw, ti) = if circular_basic(ty) { (360.0, 18.0) } else { (180.0, 9.0) };
+            e = e.or(shape_pair(
+                ui,
+                p,
+                aurora_i18n::tr!("build-compact-twist"),
+                [&mut u.twist.0, &mut u.twist.1],
+                ends,
+                [-tw..=tw, -tw..=tw],
                 ti,
-                -tw..=tw,
-                -tw..=tw,
                 0,
             ));
             let hole_label = matches!(ty, 4..=6);
@@ -826,7 +862,8 @@ fn shape_column(
                 0..=2 => (-1.0..=1.0, -1.0..=1.0),
                 _ => (0.0..=2.0, 0.0..=2.0),
             };
-            label(
+            let [x, y] = &mut u.top_size;
+            e = e.or(shape_pair(
                 ui,
                 p,
                 if hole_label {
@@ -834,46 +871,69 @@ fn shape_column(
                 } else {
                     aurora_i18n::tr!("build-ui-object-bevel")
                 },
-            );
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("X").size(11.0));
-                e = e.or(spin(ui, &mut u.top_size[0], 0.05, rx, 3, w, false));
-                ui.label(RichText::new("Y").size(11.0));
-                e = e.or(spin(ui, &mut u.top_size[1], 0.05, ry, 3, w, false));
-            });
-            label(ui, p, aurora_i18n::tr!("build-ui-object-tilt"));
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("X").size(11.0));
-                e = e.or(spin(ui, &mut u.shear[0], 0.05, -0.5..=0.5, 3, w, false));
-                ui.label(RichText::new("Y").size(11.0));
-                e = e.or(spin(ui, &mut u.shear[1], 0.05, -0.5..=0.5, 3, w, false));
-            });
+                [x, y],
+                ["X", "Y"],
+                [rx, ry],
+                0.05,
+                3,
+            ));
+            let [x, y] = &mut u.shear;
+            e = e.or(shape_pair(
+                ui,
+                p,
+                aurora_i18n::tr!("build-ui-object-tilt"),
+                [x, y],
+                ["X", "Y"],
+                [-0.5..=0.5, -0.5..=0.5],
+                0.05,
+                3,
+            ));
             let adv = match ty {
-                3 => aurora_i18n::tr!("build-ui-object-hollow-begin-end"),
-                0..=2 => aurora_i18n::tr!("build-ui-object-slice-begin-end"),
-                _ => aurora_i18n::tr!("build-ui-object-profile-cut-begin-end"),
+                3 => aurora_i18n::tr!("build-compact-hollow-cut"),
+                0..=2 => aurora_i18n::tr!("build-compact-slice"),
+                _ => aurora_i18n::tr!("build-compact-profile-cut"),
             };
-            e = e.or(pair(ui, adv, &mut u.adv_cut.0, &mut u.adv_cut.1, 0.02, 0.0..=0.98, 0.02..=1.0, 3));
-            // "Bevel" of the path (taper), hidden for the box
+            e = e.or(shape_pair(
+                ui,
+                p,
+                adv,
+                [&mut u.adv_cut.0, &mut u.adv_cut.1],
+                ends,
+                [0.0..=0.98, 0.02..=1.0],
+                0.02,
+                3,
+            ));
             if ty != 0 {
-                label(ui, p, aurora_i18n::tr!("build-ui-object-bevel"));
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("X").size(11.0));
-                    e = e.or(spin(ui, &mut u.taper[0], 0.05, -1.0..=1.0, 3, w, false));
-                    ui.label(RichText::new("Y").size(11.0));
-                    e = e.or(spin(ui, &mut u.taper[1], 0.05, -1.0..=1.0, 3, w, false));
-                });
+                let [x, y] = &mut u.taper;
+                e = e.or(shape_pair(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("build-ui-object-bevel"),
+                    [x, y],
+                    ["X", "Y"],
+                    [-1.0..=1.0, -1.0..=1.0],
+                    0.05,
+                    3,
+                ));
             }
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    label(ui, p, aurora_i18n::tr!("build-ui-object-radius"));
-                    e = e.or(spin(ui, &mut u.radius, 0.05, -1.0..=1.0, 3, w, false));
-                });
-                ui.vertical(|ui| {
-                    label(ui, p, aurora_i18n::tr!("build-ui-object-revolutions"));
-                    e = e.or(spin(ui, &mut u.revolutions, 0.1, 1.0..=4.0, 2, w, false));
-                });
-            });
+            e = e.or(shape_scalar(
+                ui,
+                p,
+                aurora_i18n::tr!("build-ui-object-radius"),
+                &mut u.radius,
+                0.05,
+                -1.0..=1.0,
+                3,
+            ));
+            e = e.or(shape_scalar(
+                ui,
+                p,
+                aurora_i18n::tr!("build-ui-object-revolutions"),
+                &mut u.revolutions,
+                0.1,
+                1.0..=4.0,
+                2,
+            ));
         });
     }
     if e.changed && u != ui_now {
@@ -906,18 +966,20 @@ fn sculpt_section(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     let Some(sc) = world.objects.get(idx).and_then(|o| o.extra.sculpt) else {
         return;
     };
-    label(ui, p, aurora_i18n::tr!("build-ui-object-sculpt-texture"));
-    let r = super::common::swatch(
-        ui,
-        p,
-        env.images,
-        &mut tool.ui.wanted_images,
-        Some(sc.texture),
-        "",
-        64.0,
-        false,
-        enabled,
-    );
+    let width = (ui.available_width() - 69.0).max(70.0);
+    let r = row(ui, p, aurora_i18n::tr!("build-ui-object-sculpt-texture"), width, |ui| {
+        super::common::swatch(
+            ui,
+            p,
+            env.images,
+            &mut tool.ui.wanted_images,
+            Some(sc.texture),
+            "",
+            64.0,
+            false,
+            enabled,
+        )
+    });
     if r.clicked() {
         tool.ui
             .picker
@@ -927,8 +989,10 @@ fn sculpt_section(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     let base = sc.sculpt_type & LL_SCULPT_TYPE_MASK;
     let shown = if base == 0 { 3 } else { base };
     let mut new = sc;
-    label(ui, p, aurora_i18n::tr!("build-ui-object-join-type"));
-    if let Some(t) = combo(ui, "sculpt_type", Some(shown), &sculpt_types(), 110.0, enabled) {
+    let width = (ui.available_width() - 115.0).max(70.0);
+    if let Some(t) = row(ui, p, aurora_i18n::tr!("build-ui-object-join-type"), width, |ui| {
+        combo(ui, "sculpt_type", Some(shown), &sculpt_types(), 110.0, enabled)
+    }) {
         new.sculpt_type = (sc.sculpt_type & !LL_SCULPT_TYPE_MASK) | t;
     }
     if let Some(v) = check(

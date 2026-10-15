@@ -442,6 +442,34 @@ mod tests {
         assert!(target(&w, child_idx, &props).is_none());
     }
     #[test]
+    fn world_click_other_residents_attachment_needs_touch_but_no_edit_rights() {
+        let mut w = world();
+        let (wearer, owner) = w
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != w.agent_id)
+            .map(|(_, o)| (o.key.local_id, o.full_id))
+            .expect("another demo resident");
+        let root_idx = w.objects.index_of_uuid(&crate::demo::action_id(971)).unwrap();
+        let child_idx = w.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
+        let root = w.objects.get_mut(root_idx).unwrap();
+        root.parent_id = wearer;
+        root.owner_id = owner;
+        root.update_flags = 1 << 7;
+        let props = HashMap::new();
+        for idx in [root_idx, child_idx] {
+            let picked = w.objects.get(idx).unwrap();
+            let result = target(&w, idx, &props).expect("scripted attachment");
+            assert_eq!(result.action, Action::Touch);
+            assert_eq!(result.clicked, picked.key);
+            assert_eq!(result.key, picked.key, "ObjectGrab and ObjectDeGrab address the clicked prim");
+            assert_eq!(result.root, crate::demo::action_id(971));
+            assert!(!crate::build::selectable(&w, idx));
+        }
+        w.objects.get_mut(root_idx).unwrap().update_flags = 0;
+        assert!(target(&w, child_idx, &props).is_none());
+    }
+    #[test]
     fn every_wire_action_and_default_touch_physics_and_open_permissions() {
         let mut w = world();
         let idx = w.objects.index_of_uuid(&crate::demo::action_id(970)).unwrap();

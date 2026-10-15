@@ -728,6 +728,7 @@ struct Pipelines {
     /// one-sided and two-sided faces.
     pick: wgpu::RenderPipeline,
     pick_2s: wgpu::RenderPipeline,
+    pick_visible: wgpu::RenderPipeline,
 }
 
 struct Ssao {
@@ -2693,6 +2694,10 @@ impl Backend {
         };
         let pick = pipe(pick_desc("drawn pick", Some(wgpu::Face::Back)));
         let pick_2s = pipe(pick_desc("drawn pick 2s", None));
+        let pick_visible = pipe(PipeDesc {
+            fs: Some("fs_pick_visible"),
+            ..pick_desc("visible pick", Some(wgpu::Face::Back))
+        });
         let refl_obj = refl("reflection objects", "vs_main", "fs_reflect", Vb::Mesh);
         let shadow_desc = |label, fs| PipeDesc {
             label,
@@ -2792,6 +2797,7 @@ impl Backend {
             post,
             pick,
             pick_2s,
+            pick_visible,
         }
     }
 
@@ -3949,7 +3955,7 @@ impl Backend {
         } else {
             None
         };
-        if let Some((x, y)) = drawn_px {
+        if let Some((x, y, _)) = drawn_px {
             let narrow = crate::drawn_pick::narrow(x, y, self.config.width, self.config.height);
             let mut u = main;
             u.view_proj = (narrow * main_vp).to_cols_array_2d();
@@ -5175,6 +5181,11 @@ impl Backend {
         // ---- faces drawn under a clicked pixel: opaque and masked, then
         // blended ones in front of them (only in the frame of a click)
         if drawn_px.is_some() {
+            let blend_pick = if drawn_px.is_some_and(|(_, _, mode)| mode == crate::DrawnMode::Visible) {
+                &self.pipelines.pick_visible
+            } else {
+                &self.pipelines.pick
+            };
             let layers: [&[(&wgpu::RenderPipeline, (u64, u32), Option<usize>)]; 2] = [
                 &[
                     (&self.pipelines.pick, rg.terrain, None),
@@ -5183,7 +5194,7 @@ impl Backend {
                     (&self.pipelines.pick, rg.mask, Some(2)),
                     (&self.pipelines.pick_2s, rg.mask_2s, Some(3)),
                 ],
-                &[(&self.pipelines.pick, rg.blend, None)],
+                &[(blend_pick, rg.blend, None)],
             ];
             for (k, draws) in layers.iter().enumerate() {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

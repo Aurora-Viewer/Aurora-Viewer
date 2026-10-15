@@ -13,7 +13,7 @@ use aurora_net::build::land_action;
 use egui::{Color32, RichText, Vec2};
 
 /// The tool buttons (icon, tooltip, tool).
-fn tools() -> [(&'static str, &'static str, Tool); 5] {
+pub(super) fn tools() -> [(&'static str, &'static str, Tool); 5] {
     [
         ("zoom-filled", aurora_i18n::tr!("build-ui-tools-focus-ctrl-1"), Tool::Focus),
         ("hand-grab", aurora_i18n::tr!("build-ui-tools-move-ctrl-2"), Tool::Grab),
@@ -21,41 +21,6 @@ fn tools() -> [(&'static str, &'static str, Tool); 5] {
         ("wand", aurora_i18n::tr!("build-ui-tools-create-ctrl-4"), Tool::Create),
         ("mountain-filled", aurora_i18n::tr!("build-ui-tools-land-ctrl-5"), Tool::Land),
     ]
-}
-
-/// One of the five big tool buttons (35×25 in Firestorm).
-fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, width: f32, on: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 32.0), egui::Sense::click());
-    let fill = if on {
-        p.violet
-    } else if resp.hovered() {
-        p.raised
-    } else {
-        p.field
-    };
-    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-    let tint = if on { p.on_accent } else { p.muted };
-    if let Some(t) = crate::ui::icons::global(icon) {
-        ui.painter().image(
-            t.id(),
-            egui::Rect::from_center_size(rect.center(), Vec2::splat(17.0)),
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            tint,
-        );
-    }
-    resp.on_hover_text(tip).clicked()
-}
-
-pub fn tool_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool) {
-    let width = (ui.available_width() - 16.0) / 5.0;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        for (icon, tip, t) in tools() {
-            if tool_button(ui, p, icon, tip, width, tool.tool == t) && tool.tool != t {
-                tool.set_tool(t);
-            }
-        }
-    });
 }
 
 /// "text status": the hint of the current tool (floater.string status_*).
@@ -144,11 +109,11 @@ pub fn grab_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: Mo
 
 /// Create tool: the 15 shapes, options, tree / grass species.
 pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
-    ui.horizontal_top(|ui| {
-        let cell = Vec2::new(30.0, 30.0);
+    ui.vertical(|ui| {
+        let cell = Vec2::splat((ui.available_width() - 24.0) / 5.0);
         egui::Grid::new("shapes")
             .min_col_width(cell.x)
-            .spacing(Vec2::splat(3.0))
+            .spacing(Vec2::splat(6.0))
             .show(ui, |ui| {
                 for i in 0..shapes().len() + 2 {
                     let sel = s.create_shape == i && !s.copy_selection;
@@ -187,6 +152,7 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
                     }
                 }
             });
+        ui.add_space(12.0);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);

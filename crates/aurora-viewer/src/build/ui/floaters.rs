@@ -12,7 +12,7 @@ use crate::media::entry::MediaEntry;
 use crate::theme::Palette;
 use crate::ui::widgets::{Floater, flat_button, tabs};
 use crate::world::World;
-use aurora_net::build::{BuildCmd, perm};
+use aurora_net::build::BuildCmd;
 use egui::{RichText, Vec2};
 
 /// The media settings being edited (LLFloaterMediaSettings).
@@ -49,8 +49,8 @@ pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: 
     weights(ctx, p, tool, world);
     media_settings(ctx, p, tool, world, env);
     group_picker(ctx, p, tool, world);
-    bulk_perms(ctx, p, tool, world);
-    item_properties(ctx, p, tool, world);
+    super::contents_permissions::show(ctx, p, tool, world);
+    super::item_properties::show(ctx, p, tool, world, env);
     confirm(ctx, p, tool, world, env);
     super::texture_preview::show(ctx, p, tool, world, env);
     // the picker's previews are wanted images too
@@ -520,214 +520,6 @@ fn group_picker(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &
         open = false;
     }
     tool.ui.group_picker_open = open;
-}
-
-/// LLFloaterBulkPermission for the object's contents.
-fn bulk_perms(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World) {
-    if !tool.ui.bulk_perms_open {
-        return;
-    }
-    let mut open = true;
-    let mut apply = false;
-    let pos = ctx.content_rect().center() - Vec2::new(140.0, 140.0);
-    let b = &mut tool.ui.bulk;
-    Floater::new(
-        "bulk_perms",
-        aurora_i18n::tr!("build-ui-floaters-content-permissions"),
-        pos,
-        Vec2::new(280.0, 260.0),
-    )
-    .fixed()
-    .show(ctx, p, &mut open, |ui| {
-        section(ui, p, aurora_i18n::tr!("build-ui-floaters-apply-to"));
-        ui.horizontal_wrapped(|ui| {
-            for (i, n) in [
-                aurora_i18n::tr!("common-scripts"),
-                aurora_i18n::tr!("common-notes"),
-                aurora_i18n::tr!("common-textures"),
-                aurora_i18n::tr!("common-objects"),
-                aurora_i18n::tr!("common-sounds"),
-                aurora_i18n::tr!("common-animations"),
-                aurora_i18n::tr!("common-others"),
-            ]
-            .iter()
-            .enumerate()
-            {
-                if let Some(v) = check(ui, p, b.types[i], false, n, true) {
-                    b.types[i] = v;
-                }
-            }
-        });
-        section(ui, p, aurora_i18n::tr!("common-rights"));
-        if let Some(v) = check(ui, p, b.share, false, aurora_i18n::tr!("build-ui-floaters-share-with-group"), true) {
-            b.share = v;
-        }
-        if let Some(v) = check(
-            ui,
-            p,
-            b.everyone_copy,
-            false,
-            aurora_i18n::tr!("build-ui-floaters-anyone-can-copy"),
-            true,
-        ) {
-            b.everyone_copy = v;
-        }
-        label(ui, p, aurora_i18n::tr!("build-ui-floaters-next-owner-can"));
-        ui.horizontal(|ui| {
-            if let Some(v) = check(ui, p, b.next_modify, false, aurora_i18n::tr!("common-edit"), true) {
-                b.next_modify = v;
-            }
-            if let Some(v) = check(ui, p, b.next_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
-                b.next_copy = v;
-            }
-            if let Some(v) = check(ui, p, b.next_transfer, false, aurora_i18n::tr!("common-transfer"), true) {
-                b.next_transfer = v;
-            }
-        });
-        if flat_button(ui, p, aurora_i18n::tr!("common-apply")).clicked() {
-            apply = true;
-        }
-    });
-    tool.ui.bulk_perms_open = open;
-    if apply {
-        tool.apply_bulk_perms(world);
-    }
-}
-
-/// Choices of the contents permissions floater (BulkChange* settings).
-#[derive(Debug, Clone)]
-pub struct BulkPerms {
-    /// Scripts, notecards, textures, objects, sounds, animations, others.
-    pub types: [bool; 7],
-    pub share: bool,
-    pub everyone_copy: bool,
-    pub next_modify: bool,
-    pub next_copy: bool,
-    pub next_transfer: bool,
-}
-
-impl Default for BulkPerms {
-    fn default() -> Self {
-        BulkPerms {
-            types: [true; 7],
-            share: false,
-            everyone_copy: false,
-            next_modify: false,
-            next_copy: true,
-            next_transfer: false,
-        }
-    }
-}
-
-impl BuildTool {
-    /// LLFloaterBulkPermission::handleInventory: new masks on every
-    /// matching item of the selected objects (UpdateTaskInventory).
-    fn apply_bulk_perms(&mut self, world: &World) {
-        let b = self.ui.bulk.clone();
-        let kind = |t: i8| match t {
-            10 => 0,
-            7 => 1,
-            0 => 2,
-            6 => 3,
-            1 => 4,
-            20 => 5,
-            _ => 6,
-        };
-        for idx in self.sel_prims(world) {
-            let Some(o) = world.objects.get(idx) else { continue };
-            let (handle, local_id, id) = (o.key.region, o.key.local_id, o.full_id);
-            if !self.contents_editable(world, idx) {
-                continue;
-            }
-            let items: Vec<_> = self
-                .contents
-                .objects
-                .get(&id)
-                .map(|inv| {
-                    inv.items
-                        .iter()
-                        .filter(|i| !i.is_folder && b.types[kind(i.asset_type)])
-                        .cloned()
-                        .collect()
-                })
-                .unwrap_or_default();
-            for mut it in items {
-                let mut next = perm::MOVE;
-                if b.next_modify {
-                    next |= perm::MODIFY;
-                }
-                if b.next_copy {
-                    next |= perm::COPY;
-                }
-                if b.next_transfer {
-                    next |= perm::TRANSFER;
-                }
-                it.next_owner_mask = next;
-                it.everyone_mask = if b.everyone_copy { perm::COPY } else { 0 };
-                it.group_mask = if b.share { perm::COPY | perm::MODIFY | perm::MOVE } else { 0 };
-                self.send(BuildCmd::UpdateTaskInventory {
-                    handle,
-                    local_id,
-                    item: Box::new(it),
-                });
-            }
-        }
-        self.status = aurora_i18n::tr!("build-ui-floaters-content-permissions-sent").into();
-    }
-}
-
-/// An item's properties (show_task_item_profile, read only).
-fn item_properties(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World) {
-    let Some(item) = tool.ui.item_properties.clone() else { return };
-    let mut open = true;
-    let pos = ctx.content_rect().center() - Vec2::new(150.0, 120.0);
-    world.social.want_name(item.creator_id);
-    world.social.want_name(item.owner_id);
-    Floater::new(
-        "task_item_props",
-        aurora_i18n::tr!("build-ui-floaters-item-properties"),
-        pos,
-        Vec2::new(300.0, 240.0),
-    )
-    .fixed()
-    .show(ctx, p, &mut open, |ui| {
-        row(ui, p, aurora_i18n::tr!("common-name-2"), 90.0, |ui| text(ui, p, &item.name));
-        row(ui, p, aurora_i18n::tr!("common-description"), 90.0, |ui| {
-            text(ui, p, &item.description)
-        });
-        row(ui, p, aurora_i18n::tr!("common-creator-2"), 90.0, |ui| {
-            text(ui, p, &world.social.name_of(&item.creator_id))
-        });
-        row(ui, p, aurora_i18n::tr!("common-owner-2"), 90.0, |ui| {
-            text(ui, p, &world.social.name_of(&item.owner_id))
-        });
-        let perms = |m: u32| {
-            let mut v = Vec::new();
-            for (b, n) in [
-                (perm::MODIFY, "modifier"),
-                (perm::COPY, "copier"),
-                (perm::TRANSFER, aurora_i18n::tr!("build-ui-floaters-transfer")),
-            ] {
-                if m & b != 0 {
-                    v.push(n);
-                }
-            }
-            if v.is_empty() {
-                aurora_i18n::tr!("extra-none").into()
-            } else {
-                v.join(", ")
-            }
-        };
-        row(ui, p, aurora_i18n::tr!("build-ui-floaters-you"), 90.0, |ui| {
-            text(ui, p, &perms(item.owner_mask))
-        });
-        row(ui, p, aurora_i18n::tr!("build-ui-floaters-next"), 90.0, |ui| {
-            text(ui, p, &perms(item.next_owner_mask))
-        });
-    });
-    if !open {
-        tool.ui.item_properties = None;
-    }
 }
 
 /// The confirmations, as modal dialogs.

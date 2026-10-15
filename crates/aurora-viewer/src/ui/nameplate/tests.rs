@@ -51,7 +51,7 @@ fn frame(ctx: &egui::Context, plates: &mut Plates, tags: &[Tag<'_>], now: f64) -
         },
         |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::background());
-            plates.paint(&painter, &p, &icons, tags, now, |id, rect| rects.push((id, rect)));
+            plates.paint(&painter, &p, &icons, tags, now, |id, rect, _| rects.push((id, rect)));
         },
     );
     output.textures_delta.clear();
@@ -693,7 +693,7 @@ fn a_plate_and_its_hit_rect_keep_the_world_anchor_through_pending_ui_zoom() {
                 };
                 let painter = crate::ui::hud::world_painter(ui.ctx());
                 let mut shown = false;
-                plates.paint(&painter, &p, &icons, &[current], 1.0, |_, rect| {
+                plates.paint(&painter, &p, &icons, &[current], 1.0, |_, rect, _| {
                     shown = true;
                     let anchor = rect.center_bottom() * ui.ctx().pixels_per_point();
                     // Only the plate's intentional whole-pixel alignment may

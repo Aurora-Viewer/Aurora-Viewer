@@ -39,7 +39,7 @@ pub mod vram;
 pub mod writes;
 
 pub use arena::MeshAlloc;
-pub use drawn_pick::{Drawn, DrawnFace};
+pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
 pub use gpu_cull::set_whole_chunk_uploads;
 pub use hud::HudView;
 pub use label_depth::world_label_at;

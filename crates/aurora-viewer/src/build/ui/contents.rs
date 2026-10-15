@@ -3,7 +3,7 @@
 //! originally LGPL 2.1): the object's inventory with its buttons, filter,
 //! item menu, and inventory items dropped on it.
 
-use super::common::small;
+use super::contents_selection;
 use crate::build::BuildTool;
 use crate::build::contents::AT_LSL_TEXT;
 use crate::theme::Palette;
@@ -93,8 +93,17 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let inv = tool.contents.objects.get(&object_id).cloned().unwrap_or_default();
     let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
     let filter = tool.ui.contents_filter.trim().to_uppercase();
-    // the list is also where inventory items are dropped
-    let height = (ui.clip_rect().bottom() - ui.cursor().top() - 8.0).clamp(80.0, 220.0);
+    let mut list: Vec<&TaskItem> = items
+        .iter()
+        .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
+        .collect();
+    list.sort_by_key(|i| i.name.to_lowercase());
+    tool.ui
+        .contents_selection
+        .sync(object_id, list.iter().map(|it| it.item_id).collect(), ui.layer_id());
+    // Fill the bounded section viewport, including after a user resize.
+    // The list also accepts inventory drops; only its frame margins sit outside it.
+    let height = (ui.clip_rect().bottom() - ui.cursor().top() - 8.0).max(40.0);
     let frame = egui::Frame::new()
         .fill(p.field.gamma_multiply(0.72))
         .corner_radius(ui.visuals().window_corner_radius)
@@ -102,6 +111,15 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let zone = frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
         widgets::inventory_spacing(ui);
+        let background = ui.interact(
+            egui::Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), height)),
+            contents_selection::focus_id(object_id),
+            egui::Sense::click(),
+        );
+        if background.clicked() {
+            background.request_focus();
+            tool.ui.contents_selection.items.clear();
+        }
         egui::ScrollArea::both()
             .id_salt("task_contents_list")
             .max_width(ui.available_width())
@@ -126,11 +144,6 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                     ui.label(RichText::new(title).size(13.0).color(p.ink))
                         .on_hover_text(aurora_i18n::tr!("common-object-contents"));
                 });
-                let mut list: Vec<&TaskItem> = items
-                    .iter()
-                    .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
-                    .collect();
-                list.sort_by_key(|i| i.name.to_lowercase());
                 ui.indent("task_contents_items", |ui| {
                     for item in list {
                         item_row(ui, p, tool, world, idx, object_id, item, editable);
@@ -138,6 +151,12 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 });
             });
     });
+    if ui.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|pos| !zone.response.rect.contains(pos)))
+        && !egui::Popup::is_any_open(ui.ctx())
+    {
+        ui.memory_mut(|m| m.surrender_focus(contents_selection::focus_id(object_id)));
+    }
+    contents_selection::finish_if_hidden_or_blurred(ui.ctx(), tool, world);
     // egui's generic drop zone replaces the frame fill with a button color.
     // Keep the inventory surface and show a border while cargo is over it.
     if egui::DragAndDrop::has_any_payload(ui.ctx()) && zone.response.contains_pointer() {
@@ -159,13 +178,6 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         } else {
             tool.status = aurora_i18n::tr!("build-ui-contents-you-cannot-edit-this-object-s-contents").into();
         }
-    }
-    if !editable {
-        small(
-            ui,
-            p,
-            aurora_i18n::tr!("build-ui-contents-drag-inventory-items-here-to-add-them-modifiable-object"),
-        );
     }
 }
 
@@ -189,17 +201,7 @@ fn item_row(
             ui.add_space(16.0);
         }
         // renaming in place
-        if let Some((id, text)) = tool.ui.rename.as_mut()
-            && *id == item.item_id
-        {
-            let r = ui.add(egui::TextEdit::singleline(text).desired_width(160.0).char_limit(63));
-            r.request_focus();
-            if r.lost_focus() {
-                let (id, text) = tool.ui.rename.take().unwrap_or_default();
-                if ui.input(|i| !i.key_pressed(egui::Key::Escape)) && !text.trim().is_empty() {
-                    tool.rename_item(world, idx, id, text.trim());
-                }
-            }
+        if contents_selection::rename_row(ui, tool, world, object_id, item.item_id) {
             return;
         }
         let running = tool.contents.running.get(&(object_id, item.item_id)).copied();
@@ -208,7 +210,7 @@ fn item_row(
             name.push_str(aurora_i18n::tr!("build-ui-contents-stopped"));
         }
         let permissions = Permissions::new(item.owner_mask, item.next_owner_mask);
-        let selected = tool.ui.contents_selected == Some((object_id, item.item_id));
+        let selected = tool.ui.contents_selection.object == Some(object_id) && tool.ui.contents_selection.items.contains(&item.item_id);
         let r = ui
             .push_id(("task_item", object_id, item.item_id), |ui| permissions.row(ui, p, &name, selected))
             .inner
@@ -221,17 +223,24 @@ fn item_row(
                 ui.label(permissions.tooltip());
             });
         if r.clicked() || r.secondary_clicked() {
-            tool.ui.contents_selected = Some((object_id, item.item_id));
+            tool.ui
+                .contents_selection
+                .select(ui, object_id, item.item_id, r.secondary_clicked());
+        }
+        if r.drag_started() && !selected {
+            tool.ui.contents_selection.select(ui, object_id, item.item_id, false);
         }
         let item_modify = item.owner_mask & perm::MODIFY != 0;
-        crate::ui::inventory::task_drop::source(
-            ui,
-            &r,
-            world,
-            object_id,
-            item,
-            crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
-        );
+        if tool.ui.contents_selection.items.len() <= 1 {
+            crate::ui::inventory::task_drop::source(
+                ui,
+                &r,
+                world,
+                object_id,
+                item,
+                crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
+            );
+        }
         let script = item.asset_type == AT_LSL_TEXT;
         let transfer = tool.task_transfer_kind(world, object_id, item);
         let can_take = transfer.is_ok();
@@ -253,13 +262,19 @@ fn item_row(
                 }
             }
             if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-properties")) {
-                tool.ui.item_properties = Some(item.clone());
+                tool.open_task_item_properties(object_id, item);
             }
-            if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-rename"), editable && item_modify) {
-                tool.ui.rename = Some((item.item_id, item.name.clone()));
+            if menu::item_if(
+                ui,
+                p,
+                "pencil-filled",
+                aurora_i18n::tr!("common-rename"),
+                editable && item_modify && tool.ui.contents_selection.items.len() == 1,
+            ) {
+                contents_selection::begin_rename(tool, world, object_id, item.item_id);
             }
             if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), editable) {
-                tool.remove_item(world, idx, item.item_id);
+                contents_selection::delete_selected(tool, world);
             }
             // a no-copy item leaves the object: the row says so
             let take = if matches!(transfer, Ok(crate::build::task_inventory::TransferKind::Move { .. })) {
@@ -293,7 +308,7 @@ fn item_row(
             } else if item.asset_type == 7 {
                 tool.ui.open_notecard = Some((object_id, item.item_id));
             } else if editable && item_modify {
-                tool.ui.rename = Some((item.item_id, item.name.clone()));
+                contents_selection::begin_rename(tool, world, object_id, item.item_id);
             }
         }
     });
@@ -373,7 +388,8 @@ mod tests {
                 assert!(tool.ui.requests.is_empty());
             }
             assert!(tool.ui.rename.is_none());
-            assert_eq!(tool.ui.contents_selected, Some((object, item.item_id)));
+            assert_eq!(tool.ui.contents_selection.object, Some(object));
+            assert_eq!(tool.ui.contents_selection.items, std::collections::HashSet::from([item.item_id]));
         }
     }
 

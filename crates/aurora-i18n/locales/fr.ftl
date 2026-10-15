@@ -1736,6 +1736,15 @@ ui-perf-draw-calls = Draw calls
 common-rights = Droits
 ui-contacts-modify-rights = Droits de modification
 build-ui-floaters-content-permissions = Droits du contenu
+content-perms-body-parts = Parties du corps
+content-perms-gestures = Gestes
+content-perms-environment = Paramètres d’environnement
+content-perms-adjust = Modifier les droits du contenu
+content-perms-anyone = N’importe qui :
+content-perms-next-owner = Prochain propriétaire :
+content-perms-starting = Envoi des demandes de modification des droits…
+content-perms-reading = Lecture du contenu des objets…
+content-perms-finished = Modifications envoyées : { $count } éléments. Objets ignorés : { $skipped }.
 build-ui-floaters-content-permissions-sent = Droits du contenu envoyés.
 ui-inventory-dialogs-duration-s = { "Durée : " }{ $value0 }s
 ui-land-dialogs-ban-duration = Durée de l'interdiction
@@ -7453,3 +7462,17 @@ texture-library-wait-selection = Chargement du contenu des objets. Cliquez à no
 
 texture-library-material-drag = Glisser
 texture-library-material-drag-hint = Glissez cette poignée sur une face pour appliquer le matériau. Glissez dans l’aperçu pour le faire tourner.
+
+# Object editor presentation
+build-compact-general = Général
+build-compact-select-face = Sélectionner une face
+build-compact-grab = Déplacer
+build-compact-uuid = UUID
+build-compact-path-cut = Découpe du tracé
+build-compact-twist = Vrille
+build-compact-hollow-cut = Creux
+build-compact-slice = Tranche
+build-compact-profile-cut = Découpe du profilé
+build-compact-begin = Début
+build-compact-end = Fin
+build-compact-projection-options = Projection et options

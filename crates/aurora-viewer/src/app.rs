@@ -62,6 +62,7 @@ mod snapshot;
 mod task_notecards;
 mod texture_library;
 mod texture_refresh;
+mod world_click_demo;
 mod worn_demo;
 
 enum Screen {
@@ -2724,24 +2725,8 @@ impl App {
     /// the avatar tags after the world: a tag picks its avatar unless
     /// something is in front of it, the nearest tag winning.
     fn pick_name_tag(&self, hit: Option<Vec3>, ray: Option<(Vec3, Vec3)>) -> Option<(usize, Vec3)> {
-        let (o, d) = ray?;
-        let ppp = self.egui_ctx.pixels_per_point().max(0.1);
-        let cursor = egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp);
-        let now = Instant::now();
-        let world_t = hit.map(|p| (p - o).dot(d));
-        // drawn far first: the last one under the cursor is on top
-        self.name_tags.iter().rev().filter(|t| t.rect.contains(cursor)).find_map(|tag| {
-            let idx = self.world.objects.index_of_uuid(&tag.id)?;
-            let (pos, _, _) = crate::scene::Scene::object_transform(&self.world, idx, now, 0)?;
-            // where the tag stands for the scene's depth: what hides it there
-            // keeps the click, what shows it gives it
-            let anchor = self.scene.name_tag_anchor(&tag.id, pos);
-            let t = (ui::hud::tag_point(anchor, self.camera.position) - o).dot(d);
-            match world_t {
-                Some(h) if h < t - 0.05 => None,
-                _ => Some((idx, o + d * t)),
-            }
-        })
+        let (id, point) = plate_click::visible_tag(&self.name_tag_candidates(ray), hit, ray)?;
+        Some((self.world.objects.index_of_uuid(&id)?, point))
     }
 
     /// Left press on the world, past the build tools (LLToolPie).
@@ -2798,15 +2783,21 @@ impl App {
         // (kept until the depth is in hand: the press is run again then)
         let double = std::mem::take(&mut self.double_press);
         let (ray, depth) = (picked.ray, picked.depth);
-        let hit = self
-            .scene
-            .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
         // another avatar's plate with a click action takes the click
-        if self.plate_press(hit, ray) {
+        if self.plate_press(picked.tag) {
             return;
         }
+        let alt = self.alt || self.object_view;
+        let hit = if alt {
+            picked.visible_point()
+        } else {
+            self.scene
+                .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance)
+        };
         // a rigged mesh or a worn mesh shown there: the GPU alone poses it
-        let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit);
+        let shown = (!alt)
+            .then(|| self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit))
+            .flatten();
         let hit = shown.map_or(hit, |d| Some(d.hit.point));
         // on our avatar: a surface inside its box under the cursor (nothing
         // in front of it); or, when the ray goes through the box without
@@ -2816,6 +2807,7 @@ impl App {
             match hit.map(|p| (p - o).dot(d)) {
                 Some(t) if t < t0 - 0.05 => None,
                 Some(t) if t <= t1 + 0.05 => hit,
+                _ if alt => None,
                 _ => axis.map(|t| o + d * t),
             }
         });
@@ -2828,7 +2820,6 @@ impl App {
         // a media face takes the click (LLToolPie::handleMediaClick)
         self.media.build_mode = self.build.open;
         // "Object view" of the Controls window: the click is Alt's
-        let alt = self.alt || self.object_view;
         if !alt && !on_avatar {
             if let Some(ray) = ray {
                 let depth_t = hit.map(|p| (p - ray.0).dot(ray.1));
@@ -2892,11 +2883,13 @@ impl App {
             // Alt+click (LLToolCamera): lock the camera on the clicked point
             // (our avatar too, to look at a part of it closely); keep holding
             // to zoom, Ctrl to orbit, Ctrl+Shift to pan
-            if let (Some(p), Some(ray)) = (avatar_hit.or(hit), ray) {
-                let idx = if on_avatar {
-                    own_idx
-                } else {
-                    self.scene.interaction_at(&self.world, p, now, self.build.open)
+            if let (Some(p), Some(ray)) = (hit, ray) {
+                let idx = match picked.drawn.blend.or(picked.drawn.opaque) {
+                    // Terrain has no object: do not bind the camera to an
+                    // invisible prim whose box happens to enclose its point.
+                    Some(d) => self.scene.record_object(d.record).map(|(idx, _)| idx),
+                    None if on_avatar => own_idx,
+                    None => self.scene.interaction_at(&self.world, p, now, self.build.open),
                 };
                 let object = idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
                 self.camera.alt_focus(p, object, ray, &mut self.world.agent, &self.settings.camera);
@@ -3853,6 +3846,7 @@ impl App {
             return;
         }
         self.demo_script_steps();
+        self.world_click_demo_steps();
         // AURORA_DEMO_HOVER=1: the cursor swept over the scene, then still
         if let Some(g) = &self.gfx
             && let Some(cursor) = crate::demo::hover_sweep(self.frame_count, g.renderer.size())
@@ -4070,11 +4064,14 @@ impl App {
             return false;
         };
         let (x, y) = self.cursor_pos;
-        let hit = picked.depth;
-        let ray = self.build.cam.ray(x, y);
+        let hit = picked.visible_point();
+        let ray = picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y));
         let now = Instant::now();
         if let Some(p) = hit {
-            let idx = self.scene.pick_at(&self.world, p, now);
+            let idx = match picked.drawn.blend.or(picked.drawn.opaque) {
+                Some(d) => self.scene.record_object(d.record).map(|(idx, _)| idx),
+                None => self.scene.pick_at(&self.world, p, now),
+            };
             let object = idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
             self.camera.alt_focus(p, object, ray, &mut self.world.agent, &self.settings.camera);
         }
@@ -7063,6 +7060,34 @@ impl App {
                         self.build.tab = 4;
                         self.panels.inventory = true;
                         self.inventory_ui.expand_all = Some(true);
+                    }
+                    crate::build::demo::Step::ContentsProperties => {
+                        if let Some(idx) = self.build.contents_target(&self.world)
+                            && let Some(object) = self.world.objects.get(idx).map(|o| o.full_id)
+                            && let Some(item) = self
+                                .build
+                                .contents
+                                .objects
+                                .get(&object)
+                                .and_then(|inv| inv.items.iter().find(|it| !it.is_folder))
+                                .cloned()
+                        {
+                            self.build.open_task_item_properties(object, &item);
+                        }
+                    }
+                    crate::build::demo::Step::ContentsSelection(rename) => {
+                        if let Some(idx) = self.build.contents_target(&self.world)
+                            && let Some(object) = self.world.objects.get(idx).map(|o| o.full_id)
+                            && let Some(inv) = self.build.contents.objects.get(&object)
+                        {
+                            let mut items: Vec<_> = inv.items.iter().filter(|it| !it.is_folder).collect();
+                            items.sort_by_key(|it| it.name.to_lowercase());
+                            let ids: Vec<_> = items.iter().take(if rename { 1 } else { 2 }).map(|it| it.item_id).collect();
+                            self.build.ui.contents_selection.items = ids.iter().copied().collect();
+                            if rename && let Some(id) = ids.first() {
+                                self.build.begin_contents_rename(&self.world, object, *id);
+                            }
+                        }
                     }
                     crate::build::demo::Step::TexturePicker(materials) => {
                         let current = self

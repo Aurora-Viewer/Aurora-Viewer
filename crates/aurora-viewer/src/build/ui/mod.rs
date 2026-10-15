@@ -1,8 +1,9 @@
 //! The build floater (LLFloaterTools, floater_tools.xml, Firestorm) in the
-//! Aurora skin: the five tools and their options on top, the selection
-//! line and a compact navigation rail: Transform, Shape, Materials,
-//! Features, Rights and Contents. The footer folds the sections away
-//! (FSToolboxExpanded). Also the build keyboard shortcuts
+//! Aurora skin: seven editing sections and five tools in one navigation
+//! rail. General holds object information and Rights holds permissions.
+//! The active section supplies the title; edit selection/actions belong
+//! to the main panel. The title bar folds it away (FSToolboxExpanded).
+//! Also the build keyboard shortcuts
 //! (menu_viewer.xml) and the secondary floaters (grid options, weights,
 //! media settings).
 
@@ -10,9 +11,12 @@ mod color;
 mod common;
 mod compact;
 mod contents;
+mod contents_permissions;
+mod contents_selection;
 mod features;
 mod floaters;
 mod general;
+mod item_properties;
 mod object;
 mod replace;
 mod texture;
@@ -143,9 +147,9 @@ pub struct FloaterState {
     /// "For sale" ticked / sale type / price not applied yet (Apply).
     pub sale_draft: Option<(bool, u8, i32)>,
     pub contents_filter: String,
-    pub contents_selected: Option<(Uuid, Uuid)>,
+    pub contents_selection: contents_selection::Selection,
     /// Item being renamed in the Contents tab.
-    pub rename: Option<(Uuid, String)>,
+    pub rename: Option<contents_selection::Rename>,
     pub open_notecard: Option<(Uuid, Uuid)>,
     pub weights_open: bool,
     pub grid_options_open: bool,
@@ -164,9 +168,9 @@ pub struct FloaterState {
     /// "Align planar faces".
     pub planar_align: bool,
     pub bulk_perms_open: bool,
-    pub bulk: floaters::BulkPerms,
+    pub bulk: contents_permissions::BulkState,
     /// Contents item whose properties are shown.
-    pub item_properties: Option<aurora_net::build::TaskItem>,
+    pub item_properties: Option<item_properties::TaskProperties>,
     /// CantSelectReflectionProbe shown once.
     pub probe_warned: bool,
     /// Images the swatches want loaded (drained by the app).
@@ -184,7 +188,10 @@ const INSPECTOR_ID: &str = "build_tools_inspector_c3";
 /// Build shortcuts (menu_viewer.xml): Ctrl+B, Ctrl+1..5, delete, duplicate,
 /// link, edit linked parts, grid, undo...
 pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
-    if ctx.egui_wants_keyboard_input() {
+    if contents_selection::shortcuts(ctx, tool, world) {
+        return;
+    }
+    if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
         return;
     }
     if tool.replacement_active() {
@@ -261,6 +268,7 @@ pub fn show(
     mods: super::Mods,
     env: &mut Env,
 ) -> bool {
+    contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if !tool.open {
         tool.cancel_texture_picker(world, env);
         tool.cancel_color_picker(world);
@@ -275,8 +283,8 @@ pub fn show(
         tool.ui.last_selection = tool.selection.clone();
         tool.ui.edits.clear();
         tool.ui.sale_draft = None;
-        tool.ui.rename = None;
-        tool.ui.contents_selected = None;
+        contents_selection::finish_rename(tool, world);
+        tool.ui.contents_selection = Default::default();
     }
     let screen = ctx.content_rect();
     let demo_picker = egui::Id::new("demo_color_picker_opened");
@@ -300,17 +308,37 @@ pub fn show(
         );
     }
     let mut open = true;
-    let floater = Floater::new(
-        INSPECTOR_ID,
-        compact::selection_title(tool, world),
-        egui::pos2(screen.left() + 12.0, 40.0),
-        Vec2::new(344.0, 500.0),
-    )
-    .help(aurora_i18n::tr!("build-compact-help"))
-    .framed_header("box")
-    .auto_height()
-    .silent();
+    let mut toggle_sections = false;
+    let (title_icon, title) = compact::window_heading(tool);
+    let mut floater = Floater::new(INSPECTOR_ID, title, egui::pos2(screen.left() + 12.0, 40.0), Vec2::new(344.0, 538.0))
+        .help(aurora_i18n::tr!("build-compact-help"))
+        .framed_header(title_icon)
+        .action(
+            if s.expanded { "caret-up-filled" } else { "caret-down-filled" },
+            aurora_i18n::tr!("build-compact-collapse"),
+            &mut toggle_sections,
+        )
+        .silent();
+    floater.min_size = Vec2::new(344.0, 420.0);
+    if !s.expanded {
+        if let Some(size) = ctx.data(|d| d.get_temp::<Vec2>(egui::Id::new(INSPECTOR_ID).with("sections_expanded_size"))) {
+            floater.default_size.x = size.x;
+        }
+        floater = floater.auto_height();
+    }
     floater.show(ctx, p, &mut open, |ui| compact::body(ui, p, tool, world, s, mods, env));
+    contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
+    if toggle_sections {
+        let size_id = egui::Id::new(INSPECTOR_ID).with("sections_expanded_size");
+        if s.expanded {
+            if let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(INSPECTOR_ID))) {
+                ctx.data_mut(|d| d.insert_temp(size_id, rect.size()));
+            }
+        } else if let Some(size) = ctx.data(|d| d.get_temp::<Vec2>(size_id)) {
+            crate::ui::widgets::size_floater(ctx, INSPECTOR_ID, size);
+        }
+        s.expanded = !s.expanded;
+    }
     floaters::secondary(ctx, p, tool, world, s, env);
     if env.demo
         && crate::ui::color_picker::demo::mode().is_some()
@@ -328,6 +356,7 @@ pub fn show(
     color::show(ctx, p, tool, world, s);
     color::finish_gesture(ctx, tool);
     if !open {
+        contents_selection::finish_rename(tool, world);
         tool.cancel_texture_picker(world, env);
         tool.close(world, s);
     }
