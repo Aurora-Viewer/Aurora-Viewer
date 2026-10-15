@@ -119,7 +119,7 @@ fn texture_library_header_switch_and_toolbar_restore_keep_the_active_state() {
     let mut frame = 0;
     let mut show = |events: Vec<egui::Event>, ui: &mut LibraryUi, prefs: &mut Preferences, open: &mut bool| {
         frame += 1;
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
                 time: Some(frame as f64 / 60.0),
@@ -130,6 +130,7 @@ fn texture_library_header_switch_and_toolbar_restore_keep_the_active_state() {
                 ui.show(host.ctx(), &p, &mut world, &mut scene, &HashMap::new(), prefs, open);
             },
         );
+        output.textures_delta.clear();
     };
     for _ in 0..8 {
         show(vec![], &mut ui, &mut prefs, &mut open);
