@@ -30,18 +30,10 @@ body:
   - type: input
     id: viewer-version
     attributes:
-      label: Viewer version
-      placeholder: e.g., v2.4.1
+      label: Viewer version and System information if applicable
+      placeholder: 0.5.1, Windows 11, Intel I9-14900K, RTX 4090 24Gb, 32Gb
     validations:
       required: true
-
-  - type: textarea
-    id: system-info
-    attributes:
-      label: Operating system and graphics card (if it is a rendering issue)
-      placeholder: e.g., Windows 11, Intel I9-14900K, NVIDIA GeForce RTX 3080, 32GB
-    validations:
-      required: false
 
   - type: upload
     id: attachments
