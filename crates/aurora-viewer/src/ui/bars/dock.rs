@@ -636,6 +636,26 @@ mod tests {
         assert_eq!(out.chat_type, aurora_net::ChatType::Shout);
     }
 
+    /// The Enter that starts the chat (the viewer's shortcut, in the same
+    /// frame as its request) gives the field the keyboard: it is not taken
+    /// as Enter on an empty bar, which hands the keyboard back to the world.
+    #[test]
+    fn the_enter_that_starts_the_chat_keeps_the_keyboard() {
+        let mut bench = Bench::shown();
+        bench.frame(vec![]);
+        bench.chat.focus_request = true;
+        bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus);
+        bench.frame(vec![egui::Event::Text("hi".into())]);
+        assert_eq!(bench.chat.input, "hi");
+        // Enter on the empty bar still returns to the world
+        bench.chat.input.clear();
+        bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
+        bench.frame(vec![]);
+        assert!(!bench.chat.has_focus);
+    }
+
     /// The handle on the island's right edge sets its width, saved on
     /// release; a double click goes back to the default.
     #[test]

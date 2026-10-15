@@ -4175,11 +4175,54 @@ impl App {
         }
     }
 
+    /// A letter key started the nearby chat: in the Conversations window
+    /// when it shows the nearby chat, in the chat bar otherwise, with the
+    /// character typed in (LLViewerWindow::handleKey; Firestorm's
+    /// FSLetterKeysFocusNearbyChatBar, on by default).
+    fn start_chat_with(&mut self, text: &str) {
+        if self.panels.chat && ui::chat::local_chat_shown(&self.egui_ctx, &self.chat_ui) {
+            self.chat_ui.draft_mut(None).push_str(text);
+            self.chat_ui.conv_focus_request = true;
+        } else {
+            self.chat_ui.input.push_str(text);
+            self.chat_ui.focus_request = true;
+        }
+    }
+
+    /// The chat bar has the keyboard and hands its movement keys to the
+    /// avatar: empty, or "Arrow keys always move me while in chat".
+    fn chat_bar_moves_avatar(&self) -> bool {
+        self.in_world() && self.chat_ui.has_focus && (self.chat_ui.input.is_empty() || self.settings.arrow_keys_always_move)
+    }
+
+    /// This key, pressed now, goes to the avatar rather than to the chat
+    /// bar's text (crate::keybinds::chat_bar_moves).
+    fn chat_bar_passes_key(&self, code: KeyCode) -> bool {
+        self.in_world()
+            && self.chat_ui.has_focus
+            && crate::keybinds::chat_bar_moves(code, self.ctrl, self.chat_ui.input.is_empty(), self.settings.arrow_keys_always_move)
+    }
+
     fn update_move_input(&mut self, typing: bool, dt: f32) {
         let (kb, m) = (&self.settings.keybinds, self.mods());
-        let k = |a: Action| kb.held(a, &self.down, m);
+        // typing in the chat bar, only the keys it hands to the avatar move
+        // it (crate::keybinds::chat_bar_moves)
+        let chat_moves = typing && self.chat_bar_moves_avatar();
+        let passed: HashSet<Input>;
+        let down = if chat_moves {
+            passed = self
+                .down
+                .iter()
+                .filter(|i| crate::keybinds::is_chat_bar_move_input(i))
+                .cloned()
+                .collect();
+            &passed
+        } else {
+            &self.down
+        };
+        let k = |a: Action| kb.held(a, down, m);
         let mut i = MoveInput::default();
-        if !typing {
+        if !typing || chat_moves {
             i.forward = k(Action::Forward);
             i.back = k(Action::Back);
             let (left, right) = (k(Action::Left), k(Action::Right));
@@ -11239,7 +11282,7 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.chat_ui.emoji_open = true;
                 if text.trim() != "1" {
-                    self.chat_ui.conv_input = text;
+                    *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
                 }
             }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
@@ -11404,10 +11447,25 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // a movement key the chat bar hands to the avatar never reaches its
+        // text (LLViewerWindow::handleKey returns before the focused field)
+        let chat_pass = matches!(
+            &event,
+            WindowEvent::KeyboardInput { event: ke, .. }
+                if ke.state == ElementState::Pressed
+                    && matches!(ke.physical_key, PhysicalKey::Code(code) if self.chat_bar_passes_key(code))
+        );
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
-        let resp = g.egui_state.on_window_event(&g.window, &event);
+        let resp = if chat_pass {
+            egui_winit::EventResponse {
+                consumed: false,
+                repaint: true,
+            }
+        } else {
+            g.egui_state.on_window_event(&g.window, &event)
+        };
         match &event {
             WindowEvent::CloseRequested => {
                 self.request_exit();
@@ -11559,6 +11617,26 @@ impl ApplicationHandler for App {
                             return;
                         }
                     }
+                    // "Letter keys move me" off: a printable key (Shift allowed),
+                    // with the keyboard nowhere, starts the nearby chat with its
+                    // character instead of moving or firing a shortcut; the
+                    // gestures went first (LLViewerWindow::handleKey,
+                    // LetterKeysAffectsMovementNotFocusChatBar)
+                    if pressed
+                        && !ke.repeat
+                        && !typing
+                        && !self.settings.letter_keys_move
+                        && self.in_world()
+                        && !self.ctrl
+                        && !self.alt
+                        && self.media.focus.is_none()
+                        && let Some(text) = ke.text.as_deref()
+                        && !text.is_empty()
+                        && !text.chars().any(char::is_control)
+                    {
+                        self.start_chat_with(text);
+                        return;
+                    }
                     // Ctrl / Alt shortcuts of the viewer still work while a text
                     // field has the focus (chat bar...), as Firestorm's menu
                     // accelerators go before the focused field
@@ -11577,7 +11655,7 @@ impl ApplicationHandler for App {
                     // The key is the one egui reads, which the window takes.
                     let find_key = matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("f"));
                     let find_taken = pressed && self.ctrl && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
-                    if (!pressed || (!resp.consumed && !typing) || shortcut) && !(pressed && ke.repeat) && !find_taken {
+                    if (!pressed || (!resp.consumed && !typing) || shortcut || chat_pass) && !(pressed && ke.repeat) && !find_taken {
                         self.on_input(Input::key(code), pressed);
                     }
                 }
@@ -11598,6 +11676,16 @@ impl ApplicationHandler for App {
                         self.finish_capture(Input::mouse(*button));
                     }
                     return;
+                }
+                // a press in the world takes the keyboard from the fields, also
+                // when it turns into a drag (LLTool::handleAnyMouseClick:
+                // setKeyboardFocus(NULL)); egui lets it go on a click only
+                if pressed && !over_ui && self.in_world() {
+                    self.egui_ctx.memory_mut(|m| {
+                        if let Some(id) = m.focused() {
+                            m.surrender_focus(id);
+                        }
+                    });
                 }
                 // (in its turn behind a click that waits for its depth)
                 self.mouse_input(*button, pressed, over_ui);

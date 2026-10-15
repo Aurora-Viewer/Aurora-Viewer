@@ -504,6 +504,14 @@ pub struct Settings {
     pub classic_region_estate: bool,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
+    /// The arrow keys (and Page Up / Down, Home) move the avatar while the
+    /// chat bar has the keyboard, even with text in it; an empty bar always
+    /// lets them through. Firestorm's `ArrowKeysAlwaysMove`, on by default.
+    pub arrow_keys_always_move: bool,
+    /// Letter keys move the avatar (WASD) instead of starting the nearby
+    /// chat. Firestorm's `LetterKeysAffectsMovementNotFocusChatBar`, on by
+    /// default.
+    pub letter_keys_move: bool,
     /// What a double click on the ground does (Preferences › Controls, the
     /// wolf menu › Me): nothing by default, as in Firestorm.
     pub double_click: crate::autopilot::DoubleClick,
@@ -970,6 +978,8 @@ impl Default for Settings {
             classic_region_estate: false,
             invert_mouse: false,
             arrows_strafe: false,
+            arrow_keys_always_move: true,
+            letter_keys_move: true,
             double_click: crate::autopilot::DoubleClick::Nothing,
             lookat: Default::default(),
             former_look_at: None,

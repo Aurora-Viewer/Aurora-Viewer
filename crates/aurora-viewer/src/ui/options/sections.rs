@@ -75,7 +75,7 @@ sections! {
         report_blocks,
     ],
     4 => [
-        mouse_sensitivity, invert_mouse, arrows_strafe, double_click, lookat.head_yaw, lookat.head_pitch,
+        mouse_sensitivity, invert_mouse, arrows_strafe, arrow_keys_always_move, letter_keys_move, double_click, lookat.head_yaw, lookat.head_pitch,
         lookat.static_eyes,
     ],
     5 => [colors],

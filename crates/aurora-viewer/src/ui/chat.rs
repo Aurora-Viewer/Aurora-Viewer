@@ -31,7 +31,12 @@ pub struct ChatUi {
     /// The "Contacts" tab is shown instead (FSFloaterContacts docked as
     /// the first tab of FSFloaterIMContainer).
     pub contacts: bool,
-    pub conv_input: String,
+    /// What is being typed in each conversation's field (None = nearby
+    /// chat): another tab keeps its own, like each FSFloaterIM's editor.
+    drafts: HashMap<Option<uuid::Uuid>, String>,
+    /// The field of the conversation shown takes the keyboard (its tab was
+    /// clicked, a letter key started the nearby chat).
+    pub conv_focus_request: bool,
     /// Avatars whose profile picture the conversation wants (filled while drawing).
     pub wanted_pics: HashSet<uuid::Uuid>,
     /// Names to resolve (mentions) — taken by the app.
@@ -78,10 +83,24 @@ impl ChatUi {
         self.contacts = false;
     }
 
-    /// A conversation closed: its filter, find bar and rows go with it.
+    /// A conversation closed: its filter, find bar, rows and draft go with it.
     pub fn forget(&mut self, conversation: uuid::Uuid) {
         self.searches.remove(&Some(conversation));
         self.views.remove(&Some(conversation));
+        self.drafts.remove(&Some(conversation));
+    }
+
+    /// What is typed in a conversation's field (None = nearby chat).
+    pub fn draft_mut(&mut self, conversation: Option<uuid::Uuid>) -> &mut String {
+        self.drafts.entry(conversation).or_default()
+    }
+
+    /// Show a tab of the window and give its field the keyboard.
+    fn select_tab(&mut self, conversation: Option<uuid::Uuid>) {
+        self.selected = conversation;
+        self.show_profile = false;
+        self.contacts = false;
+        self.conv_focus_request = true;
     }
 }
 
@@ -1286,9 +1305,7 @@ pub fn show(
                 .resp
                 .clicked()
                 {
-                    st.selected = None;
-                    st.show_profile = false;
-                    st.contacts = false;
+                    st.select_tab(None);
                 }
                 let sessions: Vec<(uuid::Uuid, usize)> = world.social.ims.iter().map(|s| (s.other, s.unread)).collect();
                 // The conversations scroll under the pinned entries above, which
@@ -1322,9 +1339,7 @@ pub fn show(
                             actions.push(ConvAction::Close(other));
                         } else if entry.resp.clicked() {
                             st.reveal = None;
-                            st.selected = Some(other);
-                            st.show_profile = false;
-                            st.contacts = false;
+                            st.select_tab(Some(other));
                         }
                     }
                 });
@@ -1419,7 +1434,8 @@ pub fn show(
                 // Ctrl+F opens the find bar of the conversation shown, when
                 // the keyboard is in this window, or nowhere with the
                 // pointer over it
-                let conv_input = egui::Id::new("conv_input");
+                // each conversation's own field (cursor, undo), like its draft
+                let conv_input = egui::Id::new(("conv_input", st.selected));
                 let search = st.searches.entry(st.selected).or_default();
                 if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
                     search.open_find();
@@ -1529,6 +1545,7 @@ pub fn show(
                 };
                 let mut emoji_btn = None;
                 let mut send_clicked = false;
+                let mut draft = std::mem::take(st.draft_mut(st.selected));
                 let resp = ui
                     .horizontal(|ui| {
                         // the edges of the lines above, half the theme's spacing between
@@ -1541,7 +1558,7 @@ pub fn show(
                         // leave exactly the send button + spacing (else the row overflows
                         // and the resizable window grows every frame)
                         let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
-                        let mut output = emoji.text_field(ui, &mut st.conv_input, |edit| {
+                        let mut output = emoji.text_field(ui, &mut draft, |edit| {
                             edit.id(conv_input)
                                 .hint_text(hint)
                                 .desired_width(field_w)
@@ -1549,9 +1566,9 @@ pub fn show(
                                 .vertical_align(egui::Align::Center)
                         });
                         if st.selected.is_none() {
-                            completion::complete(ui, &mut output, &mut st.conv_input, gestures);
+                            completion::complete(ui, &mut output, &mut draft, gestures);
                         }
-                        let has_text = !st.conv_input.trim().is_empty();
+                        let has_text = !draft.trim().is_empty();
                         send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
                         output.response
                     })
@@ -1568,20 +1585,25 @@ pub fn show(
                             super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                                 ui.set_width(300.0);
                                 if let Some(c) = emoji.picker(ui, p, icons) {
-                                    st.conv_input.push(c);
+                                    draft.push(c);
                                     close = !ui.input(|i| i.modifiers.shift);
                                 }
                             });
                         });
                     if close {
                         st.emoji_open = false;
-                        ui.ctx().memory_mut(|m| m.request_focus(egui::Id::new("conv_input")));
+                        ui.ctx().memory_mut(|m| m.request_focus(conv_input));
                     }
+                }
+                if st.conv_focus_request {
+                    st.conv_focus_request = false;
+                    resp.request_focus();
+                    cursor_to_end(ui.ctx(), conv_input, &draft);
                 }
                 if send_clicked
                     || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt))
                 {
-                    let text = st.conv_input.trim().to_owned();
+                    let text = draft.trim().to_owned();
                     if !text.is_empty() {
                         match st.selected {
                             None => {
@@ -1604,8 +1626,13 @@ pub fn show(
                             Some(to) => actions.push(ConvAction::Im { to, text }),
                         }
                     }
-                    st.conv_input.clear();
+                    draft.clear();
                     resp.request_focus();
+                }
+                if !draft.is_empty() {
+                    *st.draft_mut(st.selected) = draft;
+                } else {
+                    st.drafts.remove(&st.selected);
                 }
             });
         });
@@ -1991,6 +2018,15 @@ fn identified(build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>) -> i
     move |edit| build(edit.id(egui::Id::new("nearby_chat_input")))
 }
 
+/// The text cursor of a field after the last character: the keyboard given
+/// to a field that holds a draft, or the letter that started the chat.
+pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
+    let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+    let end = egui::text::CCursor::new(text.chars().count());
+    state.cursor.set_char_range(Some(egui::text::CCursorRange::one(end)));
+    egui::TextEdit::store_state(ctx, id, state);
+}
+
 /// The local chat's field, Firestorm's chat bar (LLFloaterIMNearbyChat):
 /// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, `/channel` and the
 /// gestures' completion; Enter on an empty field returns to movement. Shared
@@ -2016,13 +2052,17 @@ pub(crate) fn bar_input(
         .response
         .response
         .on_hover_text(aurora_i18n::tr!("ui-chat-enter-to-talk-ctrl-enter-to-shout-shift-enter"));
-    if st.focus_request {
+    // the Enter that asked for the keyboard (start_chat) is not one typed
+    // in the field: taken as Enter on an empty bar, it handed the keyboard
+    // straight back to the world
+    let focusing = std::mem::take(&mut st.focus_request);
+    if focusing {
         resp.request_focus();
-        st.focus_request = false;
+        cursor_to_end(ui.ctx(), resp.id, &st.input);
     }
     st.has_focus = resp.has_focus();
     // Modified Enter does not surrender egui's single-line field focus.
-    let enter = (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
+    let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
     if enter {
         resp.surrender_focus();
     }
@@ -2293,6 +2333,67 @@ mod tests {
     }
 
     use crate::ui::widgets::elide_tests::{Frames, LONG, SHORT, WIDE, painted, tooltip_shown};
+
+    /// A tab chosen in the list gives its field the keyboard; what is typed
+    /// stays with its conversation when another tab is shown, and goes when
+    /// the conversation closes.
+    #[test]
+    fn each_tab_keeps_its_draft_and_takes_the_keyboard() {
+        let mut frames = Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let pics = HashMap::new();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (a, b) = (uuid::Uuid::from_u128(0xA), uuid::Uuid::from_u128(0xB));
+        world.social.session_mut(a);
+        world.social.session_mut(b);
+        let gestures = crate::gestures::Manager::default();
+        let mut st = ChatUi::default();
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut contacts_settings = crate::ui::contacts::ContactsSettings::default();
+        let mut open = true;
+        let ctx = frames.ctx.clone();
+        let mut frame = |st: &mut ChatUi, events: Vec<egui::Event>| {
+            frames.run(events, |ui| {
+                show(
+                    ui.ctx(),
+                    &p,
+                    &icons,
+                    &mut emoji,
+                    &pics,
+                    &pics,
+                    &mut world,
+                    &gestures,
+                    st,
+                    &mut contacts,
+                    &mut contacts_settings,
+                    false,
+                    &mut open,
+                );
+            });
+        };
+        let field = |c: Option<uuid::Uuid>| egui::Id::new(("conv_input", c));
+        for (tab, text) in [(Some(a), "to A"), (Some(b), "to B"), (None, "nearby")] {
+            st.select_tab(tab);
+            frame(&mut st, Vec::new());
+            frame(&mut st, Vec::new());
+            assert!(ctx.memory(|m| m.has_focus(field(tab))), "{tab:?} takes the keyboard");
+            frame(&mut st, vec![egui::Event::Text(text.into())]);
+        }
+        assert_eq!(st.draft_mut(Some(a)), "to A");
+        assert_eq!(st.draft_mut(Some(b)), "to B");
+        assert_eq!(st.draft_mut(None), "nearby");
+        // back on A: its own text, typed on after the cursor at its end
+        st.select_tab(Some(a));
+        frame(&mut st, Vec::new());
+        frame(&mut st, Vec::new());
+        frame(&mut st, vec![egui::Event::Text("!".into())]);
+        assert_eq!(st.draft_mut(Some(a)), "to A!");
+        assert_eq!(st.draft_mut(Some(b)), "to B");
+        st.forget(b);
+        assert_eq!(st.draft_mut(Some(b)), "");
+    }
 
     #[test]
     fn contacts_tab_visibility_updates_the_list_and_selected_pane() {
