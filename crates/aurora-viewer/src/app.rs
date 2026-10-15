@@ -11310,6 +11310,12 @@ impl ApplicationHandler for App {
                     *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
                 }
             }
+            // AURORA_DEMO_CONV_SELECT=all|part: the conversation window open,
+            // its lines selected (Ctrl+A, or across three lines)
+            if let Ok(mode) = std::env::var("AURORA_DEMO_CONV_SELECT") {
+                self.panels.chat = true;
+                self.chat_ui.demo_select = Some(mode.trim().to_owned());
+            }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)
             if std::env::var_os("AURORA_DEMO_SOUND").is_some() {

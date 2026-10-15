@@ -1,0 +1,464 @@
+//! Text selection across the lines of a conversation, like Firestorm's
+//! transcript (FSChatHistory, a read-only LLTextEditor: a drag selects across
+//! the lines without moving the window, Ctrl+A selects the whole
+//! conversation, Ctrl+C copies it).
+//!
+//! The lines are laid out only where they are in sight (`view.rs`), so the
+//! selection belongs to the conversation, not to egui's labels (whose
+//! selection ends when one of its ends scrolls away): its two ends are a line
+//! (by its number, `LineClock`) and a character of the text the line shows.
+//!
+//! - While a line is drawn (`row`), the pieces of its text (runs of text,
+//!   links, names, emoji pictures) go through `label` / `atom`: they are
+//!   recorded with where they stand, and the part of them that is selected
+//!   is painted as in a text field.
+//! - The pieces recorded this frame find the character under the pointer
+//!   (`hit`).
+//! - The copy takes, for a line selected from its start, its time and its
+//!   sender ("[12:34] Name: text", Firestorm's transcript lines), then the
+//!   selected text; the lines out of sight give the text they would show.
+
+use egui::{Pos2, Rect};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::ops::Range;
+use std::sync::Arc;
+
+/// One end of a selection: a line (its number) and a character of its text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Point {
+    pub seq: u64,
+    /// Characters before it in the line's text (`usize::MAX`: its end).
+    pub at: usize,
+}
+
+impl Point {
+    pub fn start(seq: u64) -> Point {
+        Point { seq, at: 0 }
+    }
+
+    pub fn end(seq: u64) -> Point {
+        Point { seq, at: usize::MAX }
+    }
+}
+
+/// The selection of a conversation.
+#[derive(Debug, Clone, Default)]
+pub struct Selection {
+    /// Where the drag started (or the first line for Ctrl+A).
+    pub anchor: Option<Point>,
+    /// Where it is now.
+    pub head: Option<Point>,
+    /// The text of the lines its ends are in, as laid out when they were
+    /// set (a partly selected line is copied from it).
+    texts: HashMap<u64, String>,
+}
+
+impl Selection {
+    /// Both ends, in the order of the conversation; None when nothing is
+    /// selected.
+    pub fn bounds(&self) -> Option<(Point, Point)> {
+        let (a, h) = (self.anchor?, self.head?);
+        let (s, e) = if a <= h { (a, h) } else { (h, a) };
+        (s != e).then_some((s, e))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bounds().is_none()
+    }
+
+    pub fn clear(&mut self) {
+        *self = Selection::default();
+    }
+
+    /// Start a selection at a point (a press on the lines).
+    pub fn start_at(&mut self, p: Point, row_text: &str) {
+        self.texts.clear();
+        self.texts.insert(p.seq, row_text.to_owned());
+        self.anchor = Some(p);
+        self.head = Some(p);
+    }
+
+    /// Move its free end (the drag goes on).
+    pub fn extend_to(&mut self, p: Point, row_text: &str) {
+        let anchor = self.anchor.map(|a| a.seq);
+        self.texts.retain(|&seq, _| Some(seq) == anchor);
+        self.texts.insert(p.seq, row_text.to_owned());
+        self.head = Some(p);
+    }
+
+    /// Every line, from the first to the last one shown.
+    pub fn select_all(&mut self, first: u64, last: u64) {
+        self.texts.clear();
+        self.anchor = Some(Point::start(first));
+        self.head = Some(Point::end(last));
+    }
+
+    /// The characters of a line that are selected.
+    pub fn of_row(&self, seq: u64) -> Option<Range<usize>> {
+        let (s, e) = self.bounds()?;
+        if seq < s.seq || seq > e.seq {
+            return None;
+        }
+        let from = if seq == s.seq { s.at } else { 0 };
+        let to = if seq == e.seq { e.at } else { usize::MAX };
+        (from < to).then_some(from..to)
+    }
+
+    /// The selection as plain text, one line of the conversation per line:
+    /// `rows` are the numbers of the lines shown, in order; `row` gives a
+    /// line's prefix ("[12:34] Name: ") and the text it shows.
+    pub fn copy_text(&self, rows: impl IntoIterator<Item = u64>, row: impl Fn(u64) -> (String, String)) -> String {
+        let mut out: Vec<String> = Vec::new();
+        for seq in rows {
+            let Some(range) = self.of_row(seq) else {
+                continue;
+            };
+            let (prefix, shown) = row(seq);
+            // a line whose end was set by the pointer: the text laid out then
+            let text = self.texts.get(&seq).cloned().unwrap_or(shown);
+            let chars = text.chars().count();
+            let (from, to) = (range.start.min(chars), range.end.min(chars));
+            let part: String = text.chars().skip(from).take(to - from).collect();
+            if from == 0 {
+                out.push(format!("{prefix}{part}"));
+            } else if !part.is_empty() {
+                out.push(part);
+            }
+        }
+        out.join("\n")
+    }
+}
+
+/// Where a piece of a line's text stands this frame.
+#[derive(Clone)]
+enum Shape {
+    Galley {
+        pos: Pos2,
+        galley: Arc<egui::Galley>,
+    },
+    /// A link, a name, an emoji: selected whole.
+    Atom(Rect),
+}
+
+#[derive(Clone)]
+struct Piece {
+    /// Its first character in the line's text.
+    start: usize,
+    len: usize,
+    shape: Shape,
+}
+
+impl Piece {
+    fn rect(&self) -> Rect {
+        match &self.shape {
+            Shape::Galley { pos, galley } => galley.rect.translate(pos.to_vec2()),
+            Shape::Atom(r) => *r,
+        }
+    }
+
+    /// The character of the piece nearest to `pos`.
+    fn at(&self, pos: Pos2) -> usize {
+        match &self.shape {
+            Shape::Galley { pos: origin, galley } => self.start + galley.cursor_from_pos(pos - *origin).index.0.min(self.len),
+            Shape::Atom(r) => self.start + if pos.x < r.center().x { 0 } else { self.len },
+        }
+    }
+}
+
+/// A line drawn this frame: where it stands, its text and its pieces.
+#[derive(Clone)]
+pub struct Row {
+    pub seq: u64,
+    pub rect: Rect,
+    pub text: String,
+    pieces: Vec<Piece>,
+}
+
+/// The line being drawn.
+struct Current {
+    seq: u64,
+    text: String,
+    chars: usize,
+    selected: Option<Range<usize>>,
+    /// Selection colours of the pieces (background, text): the theme's,
+    /// else what a bubble asks for (`colors`).
+    colors: Option<(egui::Color32, egui::Color32)>,
+    pieces: Vec<Piece>,
+}
+
+thread_local! {
+    static CURRENT: RefCell<Option<Current>> = const { RefCell::new(None) };
+    static DRAWN: RefCell<Vec<Row>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Draw a line whose text can be selected: `selected` is its part of the
+/// selection; `painted` false when it is only measured.
+pub fn row<R>(ui: &mut egui::Ui, seq: u64, selected: Option<Range<usize>>, painted: bool, draw: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    CURRENT.with_borrow_mut(|c| {
+        *c = Some(Current {
+            seq,
+            text: String::new(),
+            chars: 0,
+            selected,
+            colors: None,
+            pieces: Vec::new(),
+        });
+    });
+    let out = draw(ui);
+    if let Some(c) = CURRENT.with_borrow_mut(Option::take)
+        && painted
+    {
+        let rect = ui.min_rect();
+        DRAWN.with_borrow_mut(|d| {
+            d.push(Row {
+                seq: c.seq,
+                rect,
+                text: c.text,
+                pieces: c.pieces,
+            });
+        });
+    }
+    out
+}
+
+/// The lines drawn since the last call (this frame's).
+pub fn take_drawn() -> Vec<Row> {
+    DRAWN.with_borrow_mut(std::mem::take)
+}
+
+/// The selection colours of the next pieces of the line being drawn (the
+/// text of my bubbles is on the accent, the theme's selection would vanish
+/// on it).
+pub fn colors(background: egui::Color32, text: egui::Color32) {
+    CURRENT.with_borrow_mut(|c| {
+        if let Some(c) = c {
+            c.colors = Some((background, text));
+        }
+    });
+}
+
+/// A run of text: in a line of a conversation it is recorded and its
+/// selected part painted; elsewhere the usual selectable label.
+pub fn label(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
+    if CURRENT.with_borrow(Option::is_none) {
+        return ui.add(egui::Label::new(text).wrap().selectable(true));
+    }
+    let (pos, mut galley, resp) = egui::Label::new(text).wrap().selectable(false).layout_in_ui(ui);
+    let len = galley.text().chars().count();
+    let (start, selected, colors) = CURRENT.with_borrow_mut(|c| {
+        let c = c.as_mut().expect("a line is being drawn");
+        let start = c.chars;
+        c.chars += len;
+        c.text.push_str(galley.text());
+        let selected = c
+            .selected
+            .clone()
+            .map(|s| s.start.max(start).saturating_sub(start)..s.end.min(start + len).saturating_sub(start))
+            .filter(|r| r.start < r.end);
+        (start, selected, c.colors)
+    });
+    if ui.is_rect_visible(resp.rect) {
+        if let Some(r) = selected {
+            let mut visuals = ui.visuals().clone();
+            if let Some((bg, fg)) = colors {
+                visuals.selection.bg_fill = bg;
+                visuals.selection.stroke.color = fg;
+            }
+            let range = egui::text::CCursorRange::two(egui::text::CCursor::new(r.start), egui::text::CCursor::new(r.end));
+            egui::text_selection::visuals::paint_text_selection(&mut galley, &visuals, &range, None);
+        }
+        ui.painter()
+            .add(egui::epaint::TextShape::new(pos, galley.clone(), ui.visuals().text_color()));
+    }
+    CURRENT.with_borrow_mut(|c| {
+        if let Some(c) = c {
+            c.pieces.push(Piece {
+                start,
+                len,
+                shape: Shape::Galley { pos, galley },
+            });
+        }
+    });
+    resp
+}
+
+/// Before a piece selected whole (a link, a name, an emoji): its place
+/// under the text for the selection's background, when a line is drawn.
+pub fn atom_begin(ui: &egui::Ui) -> Option<egui::layers::ShapeIdx> {
+    CURRENT.with_borrow(Option::is_some).then(|| ui.painter().add(egui::Shape::Noop))
+}
+
+/// After it: `text` is what it shows, `rect` where.
+pub fn atom_end(ui: &egui::Ui, behind: Option<egui::layers::ShapeIdx>, text: &str, rect: Rect) {
+    let Some(behind) = behind else {
+        return;
+    };
+    let len = text.chars().count();
+    let selected = CURRENT.with_borrow_mut(|c| {
+        let c = c.as_mut()?;
+        let start = c.chars;
+        c.chars += len;
+        c.text.push_str(text);
+        c.pieces.push(Piece {
+            start,
+            len,
+            shape: Shape::Atom(rect),
+        });
+        let s = c.selected.clone()?;
+        (s.start < start + len && s.end > start).then(|| c.colors.map_or(ui.visuals().selection.bg_fill, |(bg, _)| bg))
+    });
+    if let Some(bg) = selected {
+        ui.painter().set(behind, egui::Shape::rect_filled(rect, 0.0, bg));
+    }
+}
+
+/// The character under `pos` among the lines drawn: above them the start of
+/// the first, under them the end of the last.
+pub fn hit(rows: &[Row], pos: Pos2) -> Option<(Point, &str)> {
+    let first = rows.first()?;
+    let last = rows.last()?;
+    if pos.y < first.rect.top() {
+        return Some((Point::start(first.seq), &first.text));
+    }
+    if pos.y >= last.rect.bottom() {
+        return Some((Point::end(last.seq), &last.text));
+    }
+    let row = rows.iter().find(|r| pos.y < r.rect.bottom()).unwrap_or(last);
+    // the piece on the pointer's row of text, else the nearest one above
+    // or below it
+    let distance = |p: &Piece| {
+        let r = p.rect();
+        let dy = if pos.y < r.top() {
+            r.top() - pos.y
+        } else {
+            (pos.y - r.bottom()).max(0.0)
+        };
+        let dx = if pos.x < r.left() {
+            r.left() - pos.x
+        } else {
+            (pos.x - r.right()).max(0.0)
+        };
+        (dy, dx)
+    };
+    let at = match row
+        .pieces
+        .iter()
+        .min_by(|a, b| distance(a).partial_cmp(&distance(b)).unwrap_or(std::cmp::Ordering::Equal))
+    {
+        Some(p) => p.at(pos),
+        // a line without text (a card): its start or its end
+        None if pos.y < row.rect.center().y => 0,
+        None => usize::MAX,
+    };
+    Some((Point { seq: row.seq, at }, &row.text))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn copy(sel: &Selection, lines: &[(u64, &str, &str)]) -> String {
+        sel.copy_text(lines.iter().map(|l| l.0), |seq| {
+            let l = lines.iter().find(|l| l.0 == seq).expect("a line shown");
+            (l.1.to_owned(), l.2.to_owned())
+        })
+    }
+
+    const LINES: [(u64, &str, &str); 4] = [
+        (10, "[12:00] Jane: ", "hello there"),
+        (11, "[12:01] Bob: ", "hi Jane"),
+        (12, "[12:02] ", "Jane waves"),
+        (13, "[12:03] Bob: ", "bye"),
+    ];
+
+    #[test]
+    fn the_ends_come_in_any_order() {
+        let mut sel = Selection::default();
+        assert!(sel.is_empty());
+        sel.start_at(Point { seq: 12, at: 4 }, "Jane waves");
+        assert!(sel.is_empty(), "a press alone selects nothing");
+        sel.extend_to(Point { seq: 10, at: 6 }, "hello there");
+        assert_eq!(sel.bounds(), Some((Point { seq: 10, at: 6 }, Point { seq: 12, at: 4 })));
+        assert_eq!(sel.of_row(10), Some(6..usize::MAX));
+        assert_eq!(sel.of_row(11), Some(0..usize::MAX));
+        assert_eq!(sel.of_row(12), Some(0..4));
+        assert_eq!(sel.of_row(13), None);
+        assert_eq!(sel.of_row(9), None);
+    }
+
+    #[test]
+    fn a_copy_names_the_lines_taken_from_their_start() {
+        let mut sel = Selection::default();
+        sel.start_at(Point { seq: 10, at: 6 }, "hello there");
+        sel.extend_to(Point { seq: 12, at: 4 }, "Jane waves");
+        assert_eq!(copy(&sel, &LINES), "there\n[12:01] Bob: hi Jane\n[12:02] Jane");
+        // within one line
+        sel.start_at(Point { seq: 11, at: 3 }, "hi Jane");
+        sel.extend_to(Point { seq: 11, at: 7 }, "hi Jane");
+        assert_eq!(copy(&sel, &LINES), "Jane");
+        // the whole conversation, out of sight or not
+        sel.select_all(10, 13);
+        assert_eq!(
+            copy(&sel, &LINES),
+            "[12:00] Jane: hello there\n[12:01] Bob: hi Jane\n[12:02] Jane waves\n[12:03] Bob: bye"
+        );
+        // lines hidden by the filter are not in `rows`: not copied
+        assert_eq!(copy(&sel, &[LINES[0], LINES[3]]), "[12:00] Jane: hello there\n[12:03] Bob: bye");
+        sel.clear();
+        assert_eq!(copy(&sel, &LINES), "");
+    }
+
+    #[test]
+    fn a_partly_selected_line_is_copied_as_it_was_laid_out() {
+        // the end was set on a line whose text shows a name the copy of a
+        // line out of sight would not know yet
+        let mut sel = Selection::default();
+        sel.start_at(Point { seq: 10, at: 0 }, "hello there");
+        sel.extend_to(Point { seq: 11, at: 7 }, "hi @Jane Doe");
+        assert_eq!(copy(&sel, &LINES), "[12:00] Jane: hello there\n[12:01] Bob: hi @Jan");
+    }
+
+    #[test]
+    fn the_pointer_finds_its_line_and_character() {
+        let ctx = egui::Context::default();
+        let mut drawn = Vec::new();
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 300.0))),
+                ..Default::default()
+            },
+            |ui| {
+                for (seq, text) in [(5, "first line"), (6, "second line")] {
+                    row(ui, seq, None, true, |ui| {
+                        label(ui, egui::RichText::new(text).size(13.0));
+                    });
+                }
+                drawn = take_drawn();
+            },
+        );
+        // no renderer here (the font atlas would trip a debug assertion)
+        out.textures_delta.clear();
+        assert_eq!(drawn.len(), 2);
+        let (a, b) = (&drawn[0], &drawn[1]);
+        assert_eq!((a.text.as_str(), b.text.as_str()), ("first line", "second line"));
+        // the start of the second line, its end, between two letters
+        let left = Pos2::new(b.rect.left() - 5.0, b.rect.center().y);
+        assert_eq!(hit(&drawn, left).map(|(p, _)| p), Some(Point { seq: 6, at: 0 }));
+        let right = Pos2::new(b.rect.right() + 50.0, b.rect.center().y);
+        assert_eq!(hit(&drawn, right).map(|(p, _)| p), Some(Point { seq: 6, at: 11 }));
+        let inside = hit(&drawn, Pos2::new(b.rect.left() + b.rect.width() * 0.5, b.rect.center().y)).map(|(p, _)| p.at);
+        assert!(inside.is_some_and(|at| (3..9).contains(&at)), "{inside:?}");
+        // above and below the lines
+        assert_eq!(
+            hit(&drawn, Pos2::new(10.0, a.rect.top() - 20.0)).map(|(p, _)| p),
+            Some(Point::start(5))
+        );
+        assert_eq!(
+            hit(&drawn, Pos2::new(10.0, b.rect.bottom() + 20.0)).map(|(p, _)| p),
+            Some(Point::end(6))
+        );
+        // outside a line nothing is recorded: the usual label
+        assert!(CURRENT.with_borrow(Option::is_none));
+    }
+}

@@ -7,6 +7,7 @@ mod find;
 mod header;
 pub mod history;
 mod invite_card;
+pub(crate) mod select;
 mod view;
 
 use super::context::CtxAction;
@@ -37,6 +38,12 @@ pub struct ChatUi {
     /// The field of the conversation shown takes the keyboard (its tab was
     /// clicked, a letter key started the nearby chat).
     pub conv_focus_request: bool,
+    /// The text selected in the lines of a conversation (`select.rs`), and
+    /// which conversation: another tab starts without one.
+    selection: (Option<uuid::Uuid>, select::Selection),
+    /// `AURORA_DEMO_CONV_SELECT`: a selection to make once lines are shown
+    /// ("all", or "part" of three lines).
+    pub demo_select: Option<String>,
     /// Avatars whose profile picture the conversation wants (filled while drawing).
     pub wanted_pics: HashSet<uuid::Uuid>,
     /// Names to resolve (mentions) — taken by the app.
@@ -247,9 +254,11 @@ fn place_link(
         ui.add_space(3.0);
     }
     let k = super::colors::get();
+    let behind = select::atom_begin(ui);
     let r = ui.add(egui::Link::new(
         RichText::new(&place.label).size(size).color(super::colors::c(k.chat_slurl)),
     ));
+    select::atom_end(ui, behind, &place.label, r.rect);
     place_menu(&r, p, u, &place);
     // TooltipTeleportUrl / TooltipSLURL; a place opens its
     // details (LLURLDispatcherImpl::regionHandleCallback,
@@ -746,14 +755,15 @@ pub(crate) fn chat_text_marked(
                 Seg::Text(t) => marked_run(ui, emoji, t, size, color, italics, mark),
                 Seg::Url(u) => {
                     link_badge(ui, p, u, size);
+                    let behind = select::atom_begin(ui);
                     let r = ui.add(egui::Link::new(RichText::new(u).size(size).color(super::colors::c(k.chat_urls))));
+                    select::atom_end(ui, behind, u, r.rect);
                     if r.on_hover_text(u).clicked() {
                         open_web_link(ui.ctx(), u);
                     }
                 }
                 Seg::Slurl(u) => {
-                    ui.add(egui::Label::new(RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).selectable(true))
-                        .on_hover_text(u);
+                    select::label(ui, RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
                 }
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size),
                 Seg::Mention(id) => {
@@ -761,15 +771,17 @@ pub(crate) fn chat_text_marked(
                     let me = id == world.agent_id;
                     let bg = if me { k.mention_me } else { k.mention_residents };
                     let label = format!(" @{} ", world.social.name_of(&id));
+                    let behind = select::atom_begin(ui);
                     let r = ui.add(
                         egui::Label::new(
-                            RichText::new(label)
+                            RichText::new(&label)
                                 .size(size)
                                 .color(super::colors::c(k.mention_text))
                                 .background_color(super::colors::c(bg)),
                         )
                         .sense(egui::Sense::click()),
                     );
+                    select::atom_end(ui, behind, &label, r.rect);
                     name_menu(&r, p, world, id);
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         super::profile::request_open(ui.ctx(), id);
@@ -777,14 +789,12 @@ pub(crate) fn chat_text_marked(
                 }
                 Seg::Agent(id) => {
                     want_names.insert(id);
+                    let name = world.social.name_of(&id);
+                    let behind = select::atom_begin(ui);
                     let r = ui.add(
-                        egui::Label::new(
-                            RichText::new(world.social.name_of(&id))
-                                .size(size)
-                                .color(super::colors::c(k.chat_slurl)),
-                        )
-                        .sense(egui::Sense::click()),
+                        egui::Label::new(RichText::new(&name).size(size).color(super::colors::c(k.chat_slurl))).sense(egui::Sense::click()),
                     );
+                    select::atom_end(ui, behind, &name, r.rect);
                     name_menu(&r, p, world, id);
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
@@ -879,6 +889,235 @@ fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&st
     let text = RichText::new(format!("- {u}")).size(11.5).color(p.indigo_light);
     ui.add(super::widgets::elided_label(ui, text, room));
     r
+}
+
+/// The name a line shows for its sender (FSChatHistoryHeader): the display
+/// name looked up, mine, else the name the line came with; history lines are
+/// looked up for nothing.
+pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
+    let logged = line.origin != Origin::Live;
+    let own = line.kind == ChatKind::Own;
+    let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
+    let names = &world.social.avatar_names;
+    let cached = if object || logged {
+        None
+    } else {
+        names.get(if own { &world.agent_id } else { &line.source })
+    };
+    match cached {
+        Some(n) => n.display(&names.options),
+        None if own && !logged => own_name.to_owned(),
+        None => line.from.clone(),
+    }
+}
+
+/// The text of a message and whether it is in italics: an emote is the
+/// sender's name in italics, a shout or a whisper says so.
+pub(crate) fn line_body(line: &crate::world::ChatLine, name: &str) -> (String, bool) {
+    let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
+    if emote {
+        (format!("{}{}", name, &line.text[3..]), true)
+    } else {
+        let prefix = match line.kind {
+            ChatKind::Local(ChatType::Shout) => aurora_i18n::tr!("status-shouts-2"),
+            ChatKind::Local(ChatType::Whisper) => aurora_i18n::tr!("status-whispers-2"),
+            _ => "",
+        };
+        (format!("{prefix}{}", line.text), false)
+    }
+}
+
+/// The text a line shows, as a copy of it gives it: links as written,
+/// places, names and mentions as shown.
+fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> String {
+    let body = match line.kind {
+        ChatKind::System | ChatKind::Invite(_) => line.text.clone(),
+        _ => line_body(line, name).0,
+    };
+    segments(&body)
+        .into_iter()
+        .map(|s| match s {
+            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => t.to_owned(),
+            Seg::Place(_, place) => place.label,
+            Seg::Mention(id) => format!(" @{} ", world.social.name_of(&id)),
+            Seg::Agent(id) => world.social.name_of(&id),
+        })
+        .collect()
+}
+
+/// What a copied line starts with when it is taken from its start, as
+/// Firestorm's transcript lines: "[12:34] Name: " ("[12:34] " for an emote
+/// or a notice, whose text says who).
+fn copy_prefix(line: &crate::world::ChatLine, name: &str) -> String {
+    let time = if line.time == std::time::UNIX_EPOCH {
+        String::new()
+    } else {
+        format!("[{}] ", hhmm(line.time))
+    };
+    let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
+    if line.kind.is_notice() || emote {
+        time
+    } else {
+        format!("{time}{name}: ")
+    }
+}
+
+/// What the keyboard given to the lines leaves for the conversation's field.
+enum ToField {
+    Nothing,
+    /// Enter: the field takes the keyboard.
+    Focus,
+    /// Typed text: it goes on in the field.
+    Text(String),
+}
+
+/// What a copy of the lines reads.
+struct Copied<'a> {
+    view: &'a view::View,
+    lines: &'a std::collections::VecDeque<crate::world::ChatLine>,
+    first: u64,
+    world: &'a World,
+    own_name: &'a str,
+}
+
+impl Copied<'_> {
+    fn text(&self, sel: &select::Selection) -> String {
+        let seqs = self.view.lines().map(|i| self.first + i as u64);
+        sel.copy_text(seqs, |seq| {
+            let Some(line) = seq.checked_sub(self.first).and_then(|i| self.lines.get(i as usize)) else {
+                return (String::new(), String::new());
+            };
+            let name = sender_name(self.world, self.own_name, line);
+            (copy_prefix(line, &name), shown_text(self.world, line, &name))
+        })
+    }
+
+    /// The first and last lines shown.
+    fn ends(&self) -> Option<(u64, u64)> {
+        let first = self.view.lines().next()?;
+        let last = self.view.lines().last()?;
+        Some((self.first + first as u64, self.first + last as u64))
+    }
+}
+
+/// The selection of the lines (`select.rs`), as in Firestorm's transcript:
+/// a drag selects across them (never moving the window), a click without a
+/// drag clears it; a press gives them the keyboard, then Ctrl+A selects the
+/// whole conversation, Ctrl+C (Ctrl+Insert) copies the selection, Escape
+/// clears it, and what is typed goes to the conversation's field.
+fn select_lines(
+    ui: &mut egui::Ui,
+    content: &egui::Response,
+    drawn: &[select::Row],
+    sel: &mut select::Selection,
+    copied: &Copied,
+) -> ToField {
+    // the lines' own area: egui also hands them a pointer a few points off
+    // (interact_radius), on the strip between them and the field, which
+    // stays neutral (normal cursor, no selection, no keyboard)
+    let area = content.rect.intersect(ui.clip_rect());
+    let pointer_in = ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| area.contains(p));
+    let pressed_in = ui.input(|i| i.pointer.press_origin()).is_some_and(|p| area.contains(p));
+    let pressed = ui.input(|i| i.pointer.primary_pressed());
+    if pressed && pressed_in && content.is_pointer_button_down_on() {
+        content.request_focus();
+    }
+    if content.drag_started_by(egui::PointerButton::Primary)
+        && pressed_in
+        && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+        && let Some((p, text)) = select::hit(drawn, origin)
+    {
+        sel.start_at(p, text);
+    }
+    if content.dragged_by(egui::PointerButton::Primary)
+        && pressed_in
+        && let Some(pos) = content.interact_pointer_pos()
+    {
+        if let Some((p, text)) = select::hit(drawn, pos) {
+            sel.extend_to(p, text);
+        }
+        // beyond the top or the bottom, the lines scroll under the pointer
+        let clip = ui.clip_rect();
+        let beyond = if pos.y < clip.top() {
+            clip.top() - pos.y
+        } else if pos.y > clip.bottom() {
+            clip.bottom() - pos.y
+        } else {
+            0.0
+        };
+        if beyond != 0.0 {
+            ui.scroll_with_delta(egui::vec2(0.0, (beyond * 0.5).clamp(-20.0, 20.0)));
+            ui.ctx().request_repaint();
+        }
+    }
+    if content.clicked() && content.interact_pointer_pos().is_some_and(|p| area.contains(p)) {
+        sel.clear();
+    }
+    if (content.hovered() && pointer_in) || (content.dragged() && pressed_in) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+    }
+    if content.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        sel.clear();
+    }
+    if !content.has_focus() {
+        return ToField::Nothing;
+    }
+    // the arrows stay here instead of moving the keyboard to another widget
+    ui.memory_mut(|m| {
+        m.set_focus_lock_filter(
+            content.id,
+            egui::EventFilter {
+                horizontal_arrows: true,
+                vertical_arrows: true,
+                ..Default::default()
+            },
+        );
+    });
+    let mut to_field = ToField::Nothing;
+    for event in ui.input(|i| i.events.clone()) {
+        match event {
+            egui::Event::Key {
+                key: egui::Key::A,
+                pressed: true,
+                modifiers,
+                ..
+            } if modifiers.command && !modifiers.alt => {
+                if let Some((first, last)) = copied.ends() {
+                    sel.select_all(first, last);
+                }
+            }
+            egui::Event::Copy if !sel.is_empty() => ui.ctx().copy_text(copied.text(sel)),
+            egui::Event::Key {
+                key: egui::Key::Enter,
+                pressed: true,
+                ..
+            } => to_field = ToField::Focus,
+            egui::Event::Text(t) if !t.chars().any(char::is_control) => match &mut to_field {
+                ToField::Text(s) => s.push_str(&t),
+                _ => to_field = ToField::Text(t),
+            },
+            _ => {}
+        }
+    }
+    to_field
+}
+
+/// `AURORA_DEMO_CONV_SELECT`: "all" as Ctrl+A, "part" from the middle of the
+/// last line drawn but two to the middle of the last one.
+fn demo_selection(sel: &mut select::Selection, mode: &str, drawn: &[select::Row], ends: Option<(u64, u64)>) {
+    if mode == "part" {
+        let middle = |r: &select::Row| select::Point {
+            seq: r.seq,
+            at: r.text.chars().count() / 2,
+        };
+        let (Some(a), Some(b)) = (drawn.get(drawn.len().saturating_sub(3)), drawn.last()) else {
+            return;
+        };
+        sel.start_at(middle(a), &a.text);
+        sel.extend_to(middle(b), &b.text);
+    } else if let Some((first, last)) = ends {
+        sel.select_all(first, last);
+    }
 }
 
 /// What drawing a line of a conversation needs.
@@ -1007,17 +1246,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
             });
         ui.add_space(2.0);
     }
-    let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
-    let (text, italics) = if emote {
-        (format!("{}{}", name, &line.text[3..]), true)
-    } else {
-        let prefix = match line.kind {
-            ChatKind::Local(ChatType::Shout) => aurora_i18n::tr!("status-shouts-2"),
-            ChatKind::Local(ChatType::Whisper) => aurora_i18n::tr!("status-whispers-2"),
-            _ => "",
-        };
-        (format!("{prefix}{}", line.text), false)
-    };
+    let (text, italics) = line_body(line, &name);
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 6,
@@ -1454,6 +1683,10 @@ pub fn show(
                 let filter = search.filter.as_deref().unwrap_or("").to_lowercase();
                 let needle = search.find.as_ref().map(|f| f.text.to_lowercase()).unwrap_or_default();
                 let view = st.views.entry(st.selected).or_default();
+                if st.selection.0 != st.selected {
+                    st.selection = (st.selected, select::Selection::default());
+                }
+                let mut to_field = ToField::Nothing;
                 egui::Frame::new()
                     .fill(p.field)
                     .corner_radius(ui.visuals().window_corner_radius)
@@ -1513,15 +1746,38 @@ pub fn show(
                                     f.hits_changed(view);
                                 }
                                 let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
-                                view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+                                let selection = &mut st.selection.1;
+                                let (shift, content) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
                                     let Some(line) = lines.get(row.line) else {
                                         return;
                                     };
-                                    draw_line(ui, &mut env, line, row.look, mark.filter(|_| row.hit));
+                                    let mark = mark.filter(|_| row.hit);
+                                    if matches!(line.kind, ChatKind::Invite(_)) {
+                                        // a card: its own labels and buttons
+                                        draw_line(ui, &mut env, line, row.look, mark);
+                                    } else {
+                                        let seq = clock.first + row.line as u64;
+                                        select::row(ui, seq, selection.of_row(seq), painted, |ui| {
+                                            draw_line(ui, &mut env, line, row.look, mark);
+                                        });
+                                    }
                                     if painted && current == Some(row.line) {
                                         find::current_marker(ui, p);
                                     }
-                                })
+                                });
+                                let drawn = select::take_drawn();
+                                let copied = Copied {
+                                    view,
+                                    lines,
+                                    first: clock.first,
+                                    world: w,
+                                    own_name: &own_name,
+                                };
+                                if let Some(mode) = st.demo_select.take_if(|_| !drawn.is_empty()) {
+                                    demo_selection(selection, &mode, &drawn, copied.ends());
+                                }
+                                to_field = select_lines(ui, &content, &drawn, selection, &copied);
+                                shift
                             });
                         if out.inner != 0.0 {
                             // rows above changed height: what is in sight stays
@@ -1530,6 +1786,14 @@ pub fn show(
                             state.store(ui.ctx(), out.id);
                         }
                     });
+                match to_field {
+                    ToField::Nothing => {}
+                    ToField::Focus => st.conv_focus_request = true,
+                    ToField::Text(t) => {
+                        st.drafts.entry(st.selected).or_default().push_str(&t);
+                        st.conv_focus_request = true;
+                    }
+                }
                 if let Some(f) = search.find.as_mut() {
                     ui.add_space(4.0);
                     if find::bar(ui, p, f, view) {
@@ -1537,6 +1801,7 @@ pub fn show(
                         ui.ctx().memory_mut(|m| m.request_focus(conv_input));
                     }
                 }
+                let strip_top = ui.min_rect().bottom();
                 ui.add_space(4.0);
                 // input + emoji
                 let hint = match st.selected {
@@ -1573,6 +1838,17 @@ pub fn show(
                         output.response
                     })
                     .inner;
+                // the strip between the lines and the field: egui reaches
+                // both from it (interact_radius), it keeps the normal cursor
+                // unless a drag goes through it
+                if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+                    && pos.y > strip_top
+                    && pos.y < resp.rect.top()
+                    && ui.min_rect().x_range().contains(pos.x)
+                    && !ui.input(|i| i.pointer.any_down())
+                {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+                }
                 if st.emoji_open {
                     let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
                     let mut close = false;
@@ -2448,6 +2724,149 @@ mod tests {
         frame(&mut st, &mut world);
         assert_eq!(st.selected, Some(b));
         assert!(ctx.memory(|m| m.has_focus(field(b))));
+    }
+
+    /// A drag across the lines selects their text without moving the
+    /// window; with the keyboard on them Ctrl+A selects the conversation,
+    /// a copy gives it with the senders, and what is typed goes to the field.
+    #[test]
+    fn the_lines_select_and_copy_like_a_transcript() {
+        let mut frames = Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let pics = HashMap::new();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for (from, source, text) in [("Jane", 0xA, "hello there"), ("Bob", 0xB, "hi Jane"), ("Jane", 0xA, "bye now")] {
+            world.chat.push_back(crate::world::ChatLine {
+                time: std::time::SystemTime::now(),
+                from: from.into(),
+                text: text.into(),
+                kind: ChatKind::Local(ChatType::Normal),
+                source: uuid::Uuid::from_u128(source),
+                origin: Origin::Live,
+            });
+            world.chat_clock.pushed_back();
+        }
+        let gestures = crate::gestures::Manager::default();
+        let mut st = ChatUi::default();
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut contacts_settings = crate::ui::contacts::ContactsSettings::default();
+        let mut open = true;
+        let ctx = frames.ctx.clone();
+        let mut frame = |st: &mut ChatUi, events: Vec<egui::Event>| {
+            frames.run_with_output(events, |ui| {
+                show(
+                    ui.ctx(),
+                    &p,
+                    &icons,
+                    &mut emoji,
+                    &pics,
+                    &pics,
+                    &mut world,
+                    &gestures,
+                    st,
+                    &mut contacts,
+                    &mut contacts_settings,
+                    false,
+                    &mut open,
+                );
+            })
+        };
+        let copied = |out: &egui::PlatformOutput| {
+            out.commands.iter().find_map(|c| match c {
+                egui::OutputCommand::CopyText(t) => Some(t.clone()),
+                _ => None,
+            })
+        };
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = frame(&mut st, Vec::new()).0;
+        }
+        let first = painted(&texts, "hello there").rect;
+        let second = painted(&texts, "hi Jane").rect;
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        // from the start of the first message to the end of the second
+        let from = egui::pos2(first.left() + 1.0, first.center().y);
+        let to = egui::pos2(second.right() + 2.0, second.center().y);
+        frame(&mut st, vec![egui::Event::PointerMoved(from), button(from, true)]);
+        for k in 1..=4 {
+            let at = from + (to - from) * (k as f32 / 4.0);
+            frame(&mut st, vec![egui::Event::PointerMoved(at)]);
+        }
+        let (texts, _) = frame(&mut st, vec![button(to, false)]);
+        assert_eq!(painted(&texts, "hello there").rect, first, "the window stayed in place");
+        let (_, out) = frame(&mut st, vec![egui::Event::Copy]);
+        let text = copied(&out).expect("the selection is copied");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text:?}");
+        assert!(lines[0].starts_with('[') && lines[0].ends_with("] Jane: hello there"), "{text:?}");
+        assert!(lines[1].ends_with("] Bob: hi Jane"), "{text:?}");
+        // Ctrl+A: the whole conversation
+        let ctrl_a = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        frame(&mut st, vec![ctrl_a]);
+        let (_, out) = frame(&mut st, vec![egui::Event::Copy]);
+        let text = copied(&out).expect("everything is copied");
+        assert_eq!(text.lines().count(), 3, "{text:?}");
+        assert!(text.ends_with("] Jane: bye now"), "{text:?}");
+        // typing goes on in the conversation's field
+        frame(&mut st, vec![egui::Event::Text("ok".into())]);
+        frame(&mut st, Vec::new());
+        frame(&mut st, Vec::new());
+        assert_eq!(st.draft_mut(None), "ok");
+        assert!(ctx.memory(|m| m.has_focus(egui::Id::new(("conv_input", None::<uuid::Uuid>)))));
+        // a click without a drag clears the selection
+        let at = egui::pos2(second.center().x, second.center().y);
+        frame(&mut st, vec![egui::Event::PointerMoved(at), button(at, true)]);
+        frame(&mut st, vec![button(at, false)]);
+        assert!(st.selection.1.is_empty());
+        // from the empty dark area under a short conversation up to its
+        // first line: the window does not move, every line is taken
+        let (texts, _) = frame(&mut st, Vec::new());
+        let last = painted(&texts, "bye now").rect;
+        let empty = egui::pos2(last.center().x, last.bottom() + 80.0);
+        frame(&mut st, vec![egui::Event::PointerMoved(empty), button(empty, true)]);
+        for k in 1..=4 {
+            let at = empty + (from - empty) * (k as f32 / 4.0);
+            frame(&mut st, vec![egui::Event::PointerMoved(at)]);
+        }
+        let (texts, _) = frame(&mut st, vec![button(from, false)]);
+        assert_eq!(painted(&texts, "hello there").rect, first, "the window stayed in place");
+        let (_, out) = frame(&mut st, vec![egui::Event::Copy]);
+        let text = copied(&out).expect("the selection from the empty area is copied");
+        assert_eq!(text.lines().count(), 3, "{text:?}");
+        // the strip between the lines and the field: a normal cursor, and a
+        // drag from it selects nothing
+        frame(&mut st, vec![egui::Event::PointerMoved(from), button(from, true)]);
+        frame(&mut st, vec![button(from, false)]);
+        assert!(st.selection.1.is_empty());
+        let field = ctx
+            .read_response(egui::Id::new(("conv_input", None::<uuid::Uuid>)))
+            .expect("the conversation's field")
+            .rect;
+        let strip = egui::pos2(field.center().x, field.top() - 2.0);
+        let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(strip)]);
+        assert_ne!(out.cursor_icon, egui::CursorIcon::Text, "a normal cursor on the strip");
+        let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(from)]);
+        assert_eq!(out.cursor_icon, egui::CursorIcon::Text, "the text cursor on the lines");
+        frame(&mut st, vec![egui::Event::PointerMoved(strip), button(strip, true)]);
+        for k in 1..=4 {
+            let at = strip + (from - strip) * (k as f32 / 4.0);
+            frame(&mut st, vec![egui::Event::PointerMoved(at)]);
+        }
+        frame(&mut st, vec![button(from, false)]);
+        assert!(st.selection.1.is_empty(), "a drag from the strip selects nothing");
     }
 
     #[test]
