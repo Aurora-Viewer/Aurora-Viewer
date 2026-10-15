@@ -18,6 +18,9 @@ mod typing;
 mod view;
 mod workspace;
 
+#[cfg(test)]
+mod buttons_tests;
+
 use super::context::CtxAction;
 use super::presence;
 use crate::theme::Palette;
@@ -642,9 +645,17 @@ fn avatar_pic(ui: &mut egui::Ui, p: &Palette, pic: Option<&egui::TextureHandle>,
     super::widgets::avatar_picture(ui, p, rect, pic, name, false);
 }
 
+/// The id of a button of the window of tabs (Bubbles and Lines styles) by
+/// its icon ("send" for the send button).
+pub(crate) fn classic_id(icon: &str) -> egui::Id {
+    egui::Id::new(("conv_classic", icon))
+}
+
 /// Tabler icon button of the conversation toolbar.
 fn tool(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: &str, tip: &str, enabled: bool, active: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::hover());
+    // the same id every frame (the tests reach the buttons by their icon)
+    let resp = ui.interact(rect, classic_id(icon), egui::Sense::click());
     let radius = ui.visuals().window_corner_radius;
     if active {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.3));
@@ -917,7 +928,8 @@ const INPUT_H: f32 = 28.0;
 
 /// Icon button returning its response (the emoji button before the input).
 fn tool_resp(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, icon: &str, active: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(INPUT_H), egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(INPUT_H), egui::Sense::hover());
+    let resp = ui.interact(rect, classic_id(icon), egui::Sense::click());
     let radius = ui.visuals().window_corner_radius;
     if active {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.3));
@@ -943,7 +955,8 @@ const SEND_BTN_W: f32 = 32.0;
 /// The send button: the accent face of the window's main action, greyed
 /// while there is nothing to send (Enter sends too).
 fn send_button(ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, enabled: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(SEND_BTN_W, INPUT_H), egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(SEND_BTN_W, INPUT_H), egui::Sense::hover());
+    let resp = ui.interact(rect, classic_id("send"), egui::Sense::click());
     let face = match (enabled, resp.hovered()) {
         (false, _) => p.violet.gamma_multiply(0.35),
         (true, true) => p.violet_light,
@@ -1742,7 +1755,10 @@ pub fn show(
     if !docked || !show_contacts_tab {
         st.contacts = false;
     }
+    let style = st.demo_style.unwrap_or(st.style);
     let title = match st.selected {
+        // the workspace's head names the conversation (the mockup's title)
+        _ if style.workspace() => aurora_i18n::tr!("common-conversations").to_owned(),
         _ if st.contacts => aurora_i18n::tr!("ui-chat-conversations-contacts").to_owned(),
         None => aurora_i18n::tr!("ui-chat-conversations-nearby-chat").to_owned(),
         Some(id) => aurora_i18n::tr!("ui-chat-conversations", value0 = world.session_title(&id).to_string()),
@@ -1755,7 +1771,9 @@ pub fn show(
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
     }
-    let style = st.demo_style.unwrap_or(st.style);
+    if style.workspace() {
+        floater = floater.flush_body();
+    }
     floater.show(ctx, p, open, |ui| {
         if style.workspace() {
             let env = workspace::Env {
@@ -2835,6 +2853,17 @@ mod tests {
     /// the conversation closes.
     #[test]
     fn each_tab_keeps_its_draft_and_takes_the_keyboard() {
+        for style in [
+            crate::settings::ChatStyle::Aurora,
+            crate::settings::ChatStyle::Compact,
+            crate::settings::ChatStyle::Bubbles,
+            crate::settings::ChatStyle::Legacy,
+        ] {
+            each_tab_keeps_its_draft_and_takes_the_keyboard_in(style);
+        }
+    }
+
+    fn each_tab_keeps_its_draft_and_takes_the_keyboard_in(style: crate::settings::ChatStyle) {
         let mut frames = Frames::new();
         let p = crate::theme::Theme::default().palette();
         let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
@@ -2845,7 +2874,10 @@ mod tests {
         world.social.session_mut(a);
         world.social.session_mut(b);
         let gestures = crate::gestures::Manager::default();
-        let mut st = ChatUi::default();
+        let mut st = ChatUi {
+            style,
+            ..ChatUi::default()
+        };
         let mut contacts = crate::ui::contacts::ContactsUi::default();
         let mut contacts_settings = crate::ui::contacts::ContactsSettings::default();
         let mut open = true;
@@ -2896,6 +2928,17 @@ mod tests {
     /// `focus_im` alone (a call) leaves the keyboard where it was.
     #[test]
     fn a_conversation_opened_to_type_takes_the_keyboard() {
+        for style in [
+            crate::settings::ChatStyle::Aurora,
+            crate::settings::ChatStyle::Compact,
+            crate::settings::ChatStyle::Bubbles,
+            crate::settings::ChatStyle::Legacy,
+        ] {
+            a_conversation_opened_to_type_takes_the_keyboard_in(style);
+        }
+    }
+
+    fn a_conversation_opened_to_type_takes_the_keyboard_in(style: crate::settings::ChatStyle) {
         let mut frames = Frames::new();
         let p = crate::theme::Theme::default().palette();
         let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
@@ -2906,7 +2949,10 @@ mod tests {
         world.social.session_mut(a);
         world.social.session_mut(b);
         let gestures = crate::gestures::Manager::default();
-        let mut st = ChatUi::default();
+        let mut st = ChatUi {
+            style,
+            ..ChatUi::default()
+        };
         let mut contacts = crate::ui::contacts::ContactsUi::default();
         let mut contacts_settings = crate::ui::contacts::ContactsSettings::default();
         let mut open = true;
@@ -3114,6 +3160,17 @@ mod tests {
 
     #[test]
     fn contacts_tab_visibility_updates_the_list_and_selected_pane() {
+        for style in [
+            crate::settings::ChatStyle::Aurora,
+            crate::settings::ChatStyle::Compact,
+            crate::settings::ChatStyle::Bubbles,
+            crate::settings::ChatStyle::Legacy,
+        ] {
+            contacts_tab_visibility_updates_the_list_and_selected_pane_in(style);
+        }
+    }
+
+    fn contacts_tab_visibility_updates_the_list_and_selected_pane_in(style: crate::settings::ChatStyle) {
         let mut frames = Frames::new();
         let p = crate::theme::Theme::default().palette();
         let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
@@ -3121,7 +3178,10 @@ mod tests {
         let pics = HashMap::new();
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let gestures = crate::gestures::Manager::default();
-        let mut st = ChatUi::default();
+        let mut st = ChatUi {
+            style,
+            ..ChatUi::default()
+        };
         let mut contacts = crate::ui::contacts::ContactsUi::default();
         let mut contacts_settings = crate::ui::contacts::ContactsSettings::default();
         let mut open = true;

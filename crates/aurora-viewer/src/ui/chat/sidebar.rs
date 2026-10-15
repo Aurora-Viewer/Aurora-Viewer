@@ -40,6 +40,48 @@ pub(super) fn kind(world: &World, id: &Uuid) -> Kind {
     }
 }
 
+/// The id of a control of the workspace by its name ("panel-mic",
+/// "head-call"…): the same every frame, for the tests to reach it.
+pub(super) fn control_id(name: &str) -> egui::Id {
+    egui::Id::new(("conv_control", name))
+}
+
+/// The id of the column's search field.
+pub(super) fn search_id() -> egui::Id {
+    egui::Id::new("conv_column_search")
+}
+
+/// The search field of the column (the mockup's `.search`): a filled
+/// box with its magnifier, no outline.
+fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field);
+    let glass = egui::Rect::from_center_size(egui::pos2(rect.left() + 15.0, rect.center().y), egui::Vec2::splat(13.0));
+    super::thread::paint_icon(ui.painter(), "search", glass, p.muted_dim);
+    let field = egui::Rect::from_min_max(
+        egui::pos2(glass.right() + 6.0, rect.top()),
+        egui::pos2(rect.right() - 6.0, rect.bottom()),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(field)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    child.add(
+        egui::TextEdit::singleline(text)
+            .id(search_id())
+            .hint_text(
+                RichText::new(aurora_i18n::tr!("ui-chat-search-or-start"))
+                    .size(12.0)
+                    .color(p.muted_dim),
+            )
+            .font(egui::FontId::proportional(12.0))
+            .frame(egui::Frame::NONE)
+            .desired_width(field.width()),
+    );
+}
+
 /// What an entry of the column is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Pinned {
@@ -99,7 +141,19 @@ pub(super) fn show(
 ) {
     let width = if rail { RAIL } else { WIDTH };
     let (column, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-    ui.painter().rect_filled(column, 0.0, p.bar);
+    // the mockup's `.side`: the bar's colour at 75 %, a hairline at its
+    // right, its bottom left corner the window's
+    let corner = ui.visuals().window_corner_radius;
+    let radius = egui::CornerRadius {
+        sw: corner.sw,
+        ..egui::CornerRadius::ZERO
+    };
+    ui.painter().rect_filled(column, radius, p.bar.gamma_multiply(0.75));
+    ui.painter().vline(
+        column.right() - 0.5,
+        column.y_range(),
+        egui::Stroke::new(1.0, p.ink.gamma_multiply(0.04)),
+    );
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(column.shrink2(egui::vec2(6.0, 0.0)))
@@ -109,8 +163,7 @@ pub(super) fn show(
     ui.spacing_mut().item_spacing.y = 2.0;
     ui.add_space(8.0);
     if !rail {
-        let hint = aurora_i18n::tr!("ui-chat-search-or-start");
-        crate::ui::widgets::search_field(ui, &mut st.side_filter, hint, ui.available_width());
+        search_box(ui, p, &mut st.side_filter);
         ui.add_space(4.0);
     }
     let filter = st.side_filter.trim().to_lowercase();
@@ -397,7 +450,8 @@ fn section_head(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, 
         ui.label(section_title(ui, p, title));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(4.0);
-            let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(18.0), egui::Sense::click());
+            let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(18.0), egui::Sense::hover());
+            let resp = ui.interact(rect, control_id(&format!("section-add-{section:?}")), egui::Sense::click());
             super::thread::paint_icon(
                 ui.painter(),
                 "plus",
@@ -622,7 +676,15 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
         egui::pos2(ui.max_rect().left(), bottom - voice_panel_h(rail)),
         egui::pos2(ui.max_rect().right(), bottom),
     );
-    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
+    // the mockup's `.vpanel`: a darker card, 8 px inside
+    ui.painter()
+        .rect_filled(rect, ui.visuals().window_corner_radius, p.navy.gamma_multiply(0.6));
+    ui.painter().rect_stroke(
+        rect,
+        ui.visuals().window_corner_radius,
+        egui::Stroke::new(1.0, p.ink.gamma_multiply(0.05)),
+        egui::StrokeKind::Inside,
+    );
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(rect.shrink(8.0))
@@ -667,13 +729,14 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
             } else {
                 ("microphone-off", aurora_i18n::tr!("ui-call-unmute"))
             };
-            if square_button(ui, p, icon, tip, size, !on).clicked() {
+            if square_button(ui, p, "panel-mic", icon, tip, size, !on).clicked() {
                 actions.push(ConvAction::ToggleMic);
             }
         }
         if square_button(
             ui,
             p,
+            "panel-back",
             "message-circle-filled",
             aurora_i18n::tr!("ui-chat-back-to-call"),
             size,
@@ -683,7 +746,8 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
         {
             st.select_tab(Some(conversation));
         }
-        let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        let resp = ui.interact(rect, egui::Id::new(("conv_control", "panel-hang-up")), egui::Sense::click());
         ui.painter().rect_filled(
             rect,
             ui.visuals().widgets.inactive.corner_radius,
@@ -703,8 +767,17 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
 
 /// A small square button of an icon (`off`: the danger tint of a muted
 /// microphone).
-pub(super) fn square_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, size: egui::Vec2, off: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+pub(super) fn square_button(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    name: &str,
+    icon: &str,
+    tip: &str,
+    size: egui::Vec2,
+    off: bool,
+) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let resp = ui.interact(rect, control_id(name), egui::Sense::click());
     let face = match (off, resp.hovered()) {
         (true, _) => p.danger.gamma_multiply(0.2),
         (false, true) => p.raised.gamma_multiply(1.3),

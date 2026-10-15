@@ -313,3 +313,19 @@ fn a_conference_lists_its_offline_members() {
     let note = aurora_i18n::tr!("ui-chat-members-present-only");
     assert!(texts.iter().all(|t| t.source != note), "a conference is not a role group");
 }
+
+/// Who types in the nearby chat shows above the field, their name in the
+/// ink (a layout that once took the fonts' lock twice and froze the
+/// viewer at its first frame: this frame must end).
+#[test]
+fn the_field_says_who_types_nearby() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.st.nearby_typing = vec![BOB];
+    h.st.nearby_count = 1;
+    let texts = h.settle();
+    let name = h.world.social.display_name_of(&BOB);
+    assert!(
+        texts.iter().any(|t| t.source.contains(&name) && t.source != name),
+        "the typing line names {name}"
+    );
+}

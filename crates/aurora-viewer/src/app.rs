@@ -10783,7 +10783,8 @@ impl ApplicationHandler for App {
                     // the window alone, to compare with the mockups
                     self.panels.people = false;
                     self.panels.inventory = false;
-                    size.x = scene.width;
+                    // the mockups' window: 580 px high, title bar included
+                    size = egui::vec2(scene.width, 580.0);
                 }
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), size);
             } else if crate::demo::teleport_offer_scene().is_some() {

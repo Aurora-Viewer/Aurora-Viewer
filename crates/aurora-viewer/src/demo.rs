@@ -766,7 +766,9 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
 /// `medium` (700 px) or a width in points; `call-incoming` (Tess calls),
 /// `call` (in the group's call), `call-mini` (its stage reduced),
 /// `call-ongoing` (Nova's group call, which we let ring), `call-away` (in
-/// the group's call with the nearby chat shown: the column's call panel).
+/// the group's call with the nearby chat shown: the column's call panel),
+/// `call-incoming-group` (Nova's group call ringing), `call-p2p` (our call
+/// to Tess), `conference` (a voice conference with Tess and Nova).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AuroraScene {
     pub view: Bubbles,
@@ -780,9 +782,15 @@ pub struct AuroraScene {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuroraCall {
     Incoming,
+    /// Nova starts a call in the group, which rings.
+    IncomingGroup,
     InCall,
     Mini,
     Ongoing,
+    /// We call Tess (a resident's call).
+    P2p,
+    /// A voice conference with Tess and Nova.
+    Conference,
 }
 
 pub fn aurora_scenario() -> Option<AuroraScene> {
@@ -815,6 +823,9 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
             "call" => scene.call = Some(AuroraCall::InCall),
             "call-mini" => scene.call = Some(AuroraCall::Mini),
             "call-ongoing" => scene.call = Some(AuroraCall::Ongoing),
+            "call-incoming-group" => scene.call = Some(AuroraCall::IncomingGroup),
+            "call-p2p" => scene.call = Some(AuroraCall::P2p),
+            "conference" => scene.call = Some(AuroraCall::Conference),
             "call-away" => {
                 scene.call = Some(AuroraCall::InCall);
                 away = true;
@@ -828,7 +839,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
     }
     // a call shows in its conversation
     match scene.call {
-        Some(AuroraCall::Incoming) => scene.view = Bubbles::Busy,
+        Some(AuroraCall::Incoming | AuroraCall::P2p) => scene.view = Bubbles::Busy,
         Some(_) if away => {
             scene.view = Bubbles::Local;
             scene.away = true;
@@ -843,7 +854,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
 pub fn aurora_conversation(scene: AuroraScene) -> Option<Uuid> {
     match scene.call {
         // the caller of `incoming` (whom the demo's names call Tess)
-        Some(AuroraCall::Incoming) => Some(DEMO_NOVA),
+        Some(AuroraCall::Incoming | AuroraCall::P2p) => Some(DEMO_NOVA),
         _ => bubbles_conversation(scene.view),
     }
 }

@@ -76,19 +76,21 @@ pub(super) fn show(
             ui.set_width(width - 28.0);
             // ---- who is typing
             let (line, _) = ui.allocate_exact_size(egui::vec2(width - 28.0, TYPING_H), egui::Sense::hover());
-            if let Some(text) = typing::text(&typing_names(world, st)) {
+            let names = typing_names(world, st);
+            if let Some(text) = typing::text(&names) {
                 let t = ui.input(|i| i.time) as f32;
                 for k in 0..3 {
                     let phase = ((t * 1.2 - k as f32 * 0.17).rem_euclid(1.0) * std::f32::consts::TAU).sin() * 0.5 + 0.5;
                     let c = egui::pos2(line.left() + 6.0 + k as f32 * 6.0, line.center().y);
                     ui.painter().circle_filled(c, 2.0, p.muted.gamma_multiply(0.25 + 0.75 * phase));
                 }
-                crate::ui::widgets::paint_elided(
-                    ui,
-                    &text,
-                    egui::pos2(line.left() + 26.0, line.center().y),
-                    line.width() - 26.0,
-                    egui::FontId::proportional(11.0),
+                // the names in the ink, semi-bold (the mockup's `.typing b`)
+                // (the job is built before the fonts are taken: it reads them)
+                let job = typing_job(ui.ctx(), p, &text, &names, line.width() - 26.0);
+                let galley = ui.painter().layout_job(job);
+                ui.painter().galley(
+                    egui::pos2(line.left() + 26.0, line.center().y - galley.size().y * 0.5),
+                    galley,
                     p.muted,
                 );
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
@@ -139,11 +141,13 @@ pub(super) fn show(
                         } else {
                             0.0
                         };
-                        let chip_w = if local { 34.0 } else { 0.0 };
+                        // narrow, the channel and the volume give their room
+                        // to the text (Ctrl / Shift + Enter and "/n" still work)
+                        let chip_w = if local && roomy { 34.0 } else { 0.0 };
                         let field_w = (ui.available_width() - seg_w - chip_w - BUTTON - 12.0).max(40.0);
                         let hint = match st.selected {
-                            None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
-                            Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
+                            None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
+                            Some(id) => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
                         };
                         let mut output = emoji.text_field(ui, &mut draft, |edit| {
                             edit.id(conv_input)
@@ -155,8 +159,8 @@ pub(super) fn show(
                         });
                         if local {
                             completion::complete(ui, &mut output, &mut draft, gestures);
-                            channel_chip(ui, p, &mut draft, channel);
                             if roomy {
+                                channel_chip(ui, p, &mut draft, channel);
                                 let mut selected = match st.volume {
                                     Volume::Whisper => 0,
                                     Volume::Say => 1,
@@ -251,9 +255,38 @@ pub(super) fn show(
     });
 }
 
+/// "Nova is typing…" with the names in the ink, semi-bold, cut at `width`.
+fn typing_job(ctx: &egui::Context, p: &Palette, text: &str, names: &[String], width: f32) -> egui::text::LayoutJob {
+    let plain = egui::TextFormat::simple(egui::FontId::proportional(11.0), p.muted);
+    let bold = crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ctx), 11.0, p.ink);
+    let mut job = egui::text::LayoutJob::default();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let next = names
+            .iter()
+            .filter(|n| !n.is_empty())
+            .filter_map(|n| rest.find(n.as_str()).map(|at| (at, n.len())))
+            .min();
+        match next {
+            Some((at, len)) => {
+                job.append(&rest[..at], 0.0, plain.clone());
+                job.append(&rest[at..at + len], 0.0, bold.clone());
+                rest = &rest[at + len..];
+            }
+            None => {
+                job.append(rest, 0.0, plain.clone());
+                rest = "";
+            }
+        }
+    }
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(10.0));
+    job
+}
+
 /// A button of the box: an icon, lit while its picker is open.
 fn box_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, active: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(BUTTON), egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(BUTTON), egui::Sense::hover());
+    let resp = ui.interact(rect, sidebar::control_id(&format!("box-{icon}")), egui::Sense::click());
     if active || resp.hovered() {
         ui.painter()
             .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field.gamma_multiply(0.8));
@@ -310,7 +343,8 @@ fn gestures_button(ui: &mut egui::Ui, p: &Palette, world: &World, gestures: &cra
 /// rewrites the "/n" opening the text.
 fn channel_chip(ui: &mut egui::Ui, p: &Palette, draft: &mut String, channel: i32) {
     let text = format!("/{channel}");
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 22.0), egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 22.0), egui::Sense::hover());
+    let resp = ui.interact(rect, sidebar::control_id("box-channel"), egui::Sense::click());
     ui.painter().rect_filled(
         rect,
         ui.visuals().widgets.inactive.corner_radius,
@@ -341,9 +375,10 @@ fn channel_chip(ui: &mut egui::Ui, p: &Palette, draft: &mut String, channel: i32
     });
 }
 
-/// Send: violet once there is something to send.
+/// Send, in the accent (dimmed while there is nothing to send).
 fn send_button(ui: &mut egui::Ui, p: &Palette, enabled: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(BUTTON), egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(BUTTON), egui::Sense::hover());
+    let resp = ui.interact(rect, sidebar::control_id("box-send"), egui::Sense::click());
     if enabled && resp.hovered() {
         ui.painter()
             .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field.gamma_multiply(0.8));
@@ -352,7 +387,11 @@ fn send_button(ui: &mut egui::Ui, p: &Palette, enabled: bool) -> egui::Response 
         ui.painter(),
         "send-filled",
         egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(18.0)),
-        if enabled { p.violet_light } else { p.muted_dim },
+        if enabled {
+            p.violet_light
+        } else {
+            p.violet_light.gamma_multiply(0.45)
+        },
     );
     resp.on_hover_text(aurora_i18n::tr!("ui-chat-send"))
 }

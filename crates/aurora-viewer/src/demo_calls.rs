@@ -45,7 +45,9 @@ pub fn mode() -> Option<Mode> {
         return Some(match call {
             AuroraCall::Incoming => Mode::Incoming,
             AuroraCall::InCall | AuroraCall::Mini => Mode::Group,
-            AuroraCall::Ongoing => Mode::IncomingGroup,
+            AuroraCall::Ongoing | AuroraCall::IncomingGroup => Mode::IncomingGroup,
+            AuroraCall::P2p => Mode::P2p,
+            AuroraCall::Conference => Mode::Conference,
         });
     }
     match std::env::var("AURORA_DEMO_CALL").ok()?.as_str() {

@@ -244,10 +244,26 @@ pub(super) fn more_menu(
     group: bool,
     workspace: bool,
 ) {
+    crate::ui::widgets::icon_menu(ui, p, "dots-filled", aurora_i18n::tr!("ui-chat-more"), |ui| {
+        more_items(ui, p, world, st, actions, group, workspace);
+    });
+}
+
+/// The rows of the conversation's menu (`more_menu`, the workspace head's
+/// "…").
+pub(super) fn more_items(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut ChatUi,
+    actions: &mut Vec<ConvAction>,
+    group: bool,
+    workspace: bool,
+) {
     let selected = st.selected;
     let search = st.searches.entry(selected).or_default();
     let filtering = search.filter.is_some();
-    crate::ui::widgets::icon_menu(ui, p, "dots-filled", aurora_i18n::tr!("ui-chat-more"), |ui| {
+    {
         match selected {
             Some(other) if group => {
                 if workspace
@@ -318,5 +334,5 @@ pub(super) fn more_menu(
                 actions.push(ConvAction::Close(other));
             }
         }
-    });
+    }
 }

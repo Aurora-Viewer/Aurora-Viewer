@@ -26,7 +26,10 @@ struct Identity {
 
 fn identity(world: &World, st: &ChatUi) -> Identity {
     let Some(id) = st.selected else {
-        let region = world.region_name();
+        // where we stand: the parcel (the location bar's name), else the region
+        let region = Some(world.parcel_name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| world.region_name());
         let near = aurora_i18n::tr!("ui-chat-head-in-earshot", n = st.nearby_count);
         return Identity {
             title: aurora_i18n::tr!("common-nearby-chat").to_owned(),
@@ -99,7 +102,7 @@ pub(super) fn show(
     ui.painter().hline(
         rect.x_range(),
         rect.bottom() - 0.5,
-        egui::Stroke::new(1.0, p.raised.gamma_multiply(0.6)),
+        egui::Stroke::new(1.0, p.ink.gamma_multiply(0.05)),
     );
     let pic = egui::Rect::from_min_size(egui::pos2(rect.left() + 12.0, rect.center().y - PIC * 0.5), egui::Vec2::splat(PIC));
     let radius = ui.visuals().window_corner_radius;
@@ -148,13 +151,10 @@ pub(super) fn show(
     let selected = st.selected;
     let group = who.kind.is_some_and(|k| k != sidebar::Kind::Private);
     // the menu of the others
-    let more = slot();
-    let mut menu_ui = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(more)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    header::more_menu(&mut menu_ui, p, world, st, actions, group, true);
+    let more = tool(ui, p, slot(), "dots-filled", aurora_i18n::tr!("ui-chat-more"), Tone::Plain);
+    crate::ui::menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        header::more_items(ui, p, world, st, actions, group, true);
+    });
     // find
     let finding = st.searches.get(&selected).is_some_and(|s| s.find.is_some());
     let find_tip = aurora_i18n::tr!("ui-chat-find-in-conversation");
@@ -281,7 +281,7 @@ impl Tone {
 }
 
 fn tool(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, tip: &str, tone: Tone) -> egui::Response {
-    let id = ui.id().with(("head_tool", icon));
+    let id = sidebar::control_id(&format!("head-{icon}"));
     let resp = ui.interact(
         rect,
         id,

@@ -188,9 +188,12 @@ fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {
         return (format!("{name}{}", &line.text[3..]), tone.unwrap_or(p.violet_pale), true);
     }
     let whisper = matches!(line.kind, ChatKind::Local(ChatType::Whisper));
+    let shout = matches!(line.kind, ChatKind::Local(ChatType::Shout));
     let color = tone.unwrap_or_else(|| {
         if whisper {
             p.muted
+        } else if shout {
+            p.ink
         } else {
             crate::ui::colors::chat_color(line, env.world)
         }
@@ -198,40 +201,49 @@ fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {
     (line.text.clone(), color, whisper)
 }
 
-/// The tags after a name: MOD, OBJECT, SHOUTS, WHISPERS.
+/// The tags after a name: MOD and OBJECT on a pill, SHOUTS and WHISPERS
+/// as words (the mockup's `.tag` and `.vol`).
 fn tags(ui: &mut egui::Ui, p: &Palette, th: &Thread, line: &ChatLine, who: &Who) {
     if who.object {
-        tag(ui, p, aurora_i18n::tr!("ui-chat-tag-object"), p.raised, p.muted);
+        tag(ui, aurora_i18n::tr!("ui-chat-tag-object"), Some(p.raised), p.muted);
     } else if th.moderators.is_some_and(|m| m.contains(&line.source)) {
         tag(
             ui,
-            p,
             aurora_i18n::tr!("ui-chat-tag-moderator"),
-            p.violet.gamma_multiply(0.22),
+            Some(p.violet.gamma_multiply(0.22)),
             p.violet_pale,
         );
     }
     match line.kind {
-        ChatKind::Local(ChatType::Shout) => tag(ui, p, aurora_i18n::tr!("ui-chat-tag-shouts"), p.warn.gamma_multiply(0.16), p.warn),
-        ChatKind::Local(ChatType::Whisper) => tag(ui, p, aurora_i18n::tr!("ui-chat-tag-whispers"), p.raised, p.muted),
+        ChatKind::Local(ChatType::Shout) => tag(ui, aurora_i18n::tr!("ui-chat-tag-shouts"), None, p.warn),
+        ChatKind::Local(ChatType::Whisper) => tag(ui, aurora_i18n::tr!("ui-chat-tag-whispers"), None, p.muted),
         _ => {}
     }
 }
 
-fn tag(ui: &mut egui::Ui, _p: &Palette, text: &str, fill: Color32, color: Color32) {
-    egui::Frame::new()
-        .fill(fill)
-        .corner_radius(ui.visuals().window_corner_radius)
-        .inner_margin(egui::Margin::symmetric(4, 0))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text.to_uppercase()).size(9.5).strong().color(color));
-        });
+/// A tag: small semi-bold capitals, on a pill of `fill` when given.
+fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: Color32) {
+    let font = egui::FontId::new(if fill.is_some() { 9.5 } else { 10.0 }, crate::ui::fonts::semibold(ui.ctx()));
+    let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, color);
+    let pad = if fill.is_some() { 5.0 } else { 0.0 };
+    let size = egui::vec2(galley.size().x + 2.0 * pad, 15.0);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    if let Some(fill) = fill {
+        ui.painter().rect_filled(rect, crate::ui::widgets::inner_radius(ui.visuals()), fill);
+    }
+    ui.painter().galley(
+        egui::pos2(rect.left() + pad, rect.center().y - galley.size().y * 0.5),
+        galley,
+        color,
+    );
 }
 
 /// The name of a head or a compact row: clickable to the profile, with the
 /// author's menu on a right click.
 fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, color: Color32, who: &Who, max: f32) {
-    let text = RichText::new(name).size(13.0).strong().color(color);
+    let text = RichText::new(name)
+        .font(egui::FontId::new(13.5, crate::ui::fonts::semibold(ui.ctx())))
+        .color(color);
     let r = ui.add(crate::ui::widgets::elided_label(ui, text, max).sense(egui::Sense::click()));
     if who.avatar.is_nil() {
         return;

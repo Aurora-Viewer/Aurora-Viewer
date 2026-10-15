@@ -20,8 +20,8 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 pub(super) const WIDTH: f32 = 210.0;
-const ROW_H: f32 = 32.0;
-const PIC: f32 = 24.0;
+const ROW_H: f32 = 34.0;
+const PIC: f32 = 26.0;
 
 struct Member {
     id: Uuid,
@@ -43,11 +43,12 @@ pub(super) fn show(
     height: f32,
 ) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(WIDTH, height), egui::Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, p.bar.gamma_multiply(0.45));
+    // the mockup's `.members`: the bar's colour at 55 %, a hairline at its left
+    ui.painter().rect_filled(rect, 0.0, p.bar.gamma_multiply(0.55));
     ui.painter().vline(
         rect.left() + 0.5,
         rect.y_range(),
-        egui::Stroke::new(1.0, p.raised.gamma_multiply(0.6)),
+        egui::Stroke::new(1.0, p.ink.gamma_multiply(0.05)),
     );
     let mut child = ui.new_child(
         egui::UiBuilder::new()
@@ -139,8 +140,7 @@ pub(super) fn show(
                 ui.add_space(10.0);
                 ui.label(
                     RichText::new(format!("{} — {}", title.to_uppercase(), list.len()))
-                        .size(10.5)
-                        .strong()
+                        .font(egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
                         .color(p.muted_dim),
                 );
                 ui.add_space(4.0);
@@ -182,7 +182,8 @@ fn row(
     moderator: bool,
 ) {
     st.wanted_pics.insert(m.id);
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), egui::Sense::hover());
+    let resp = ui.interact(rect, member_id(m.id), egui::Sense::click());
     if resp.hovered() {
         ui.painter()
             .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised.gamma_multiply(0.45));
@@ -260,4 +261,9 @@ fn offline_ids(world: &World, conversation: Uuid, pending: &[Uuid]) -> Vec<Uuid>
     out.sort();
     out.dedup();
     out
+}
+
+/// The id of a member's row.
+pub(super) fn member_id(id: Uuid) -> egui::Id {
+    super::sidebar::control_id(&format!("member-{id}"))
 }

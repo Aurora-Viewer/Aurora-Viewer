@@ -110,7 +110,14 @@ fn pane(
 ) {
     let pane = ui.available_rect_before_wrap();
     let pane = egui::Rect::from_min_size(pane.min, egui::vec2(pane.width(), h));
-    ui.painter().rect_filled(pane, 0.0, p.field.gamma_multiply(0.55));
+    // the mockup's `.main`: the field's colour at 55 %, its bottom right
+    // corner the window's
+    let corner = ui.visuals().window_corner_radius;
+    let radius = egui::CornerRadius {
+        se: corner.se,
+        ..egui::CornerRadius::ZERO
+    };
+    ui.painter().rect_filled(pane, radius, p.field.gamma_multiply(0.55));
     let width = pane.width();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
     drops(ui, p, pane, st, kind, actions);

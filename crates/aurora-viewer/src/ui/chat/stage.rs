@@ -37,10 +37,13 @@ struct Person {
     muted: bool,
     /// Rung, not in the call yet.
     waiting: bool,
+    /// Ourselves ("Me", our microphone's state).
+    me: bool,
 }
 
-/// Who the stage shows: the others in the call, then those still rung (the
-/// resident of an outgoing call, the residents invited into a conference).
+/// Who the stage shows: the others in the call, ourselves, then those
+/// still rung (the resident of an outgoing call, the residents invited into
+/// a conference).
 fn people(world: &World, call: &Call) -> Vec<Person> {
     let mut out: Vec<Person> = call
         .members
@@ -51,8 +54,17 @@ fn people(world: &World, call: &Call) -> Vec<Person> {
             speaking: m.speaking,
             muted: m.muted,
             waiting: false,
+            me: false,
         })
         .collect();
+    let me = call.members.iter().find(|m| m.id == world.agent_id);
+    out.push(Person {
+        id: world.agent_id,
+        speaking: me.is_some_and(|m| m.speaking),
+        muted: me.is_some_and(|m| m.muted),
+        waiting: false,
+        me: true,
+    });
     let mut waiting: Vec<Uuid> = world.calls.invited.get(&call.session).cloned().unwrap_or_default();
     if let CallKind::P2p { other } = call.kind
         && call.state != CallState::Connected
@@ -66,6 +78,7 @@ fn people(world: &World, call: &Call) -> Vec<Person> {
                 speaking: false,
                 muted: false,
                 waiting: true,
+                me: false,
             });
         }
     }
@@ -178,26 +191,46 @@ fn incoming(
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 ui.add_space(4.0);
-                let title = aurora_i18n::tr!("ui-call-calls-you", name = name.as_str());
-                ui.label(RichText::new(title).size(14.0).strong().color(p.ink));
-                let kind = if inv.p2p {
-                    aurora_i18n::tr!("ui-chat-call-private")
+                // a resident calls us; in a group or conference someone
+                // started a call that we may join (the mockup's two banners)
+                let (title, kind) = if inv.p2p {
+                    (
+                        aurora_i18n::tr!("ui-call-calls-you", name = name.as_str()),
+                        aurora_i18n::tr!("ui-chat-call-private").to_owned(),
+                    )
                 } else {
-                    aurora_i18n::tr!("ui-chat-call-group")
+                    (
+                        aurora_i18n::tr!("ui-chat-call-started-by", name = name.as_str()),
+                        world.session_title(&session),
+                    )
                 };
+                let title = RichText::new(title)
+                    .font(egui::FontId::new(14.0, crate::ui::fonts::semibold(ui.ctx())))
+                    .color(p.ink);
+                ui.label(title);
                 ui.label(RichText::new(kind).size(12.0).color(p.muted));
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                let answer = aurora_i18n::tr!("ui-call-answer");
-                if pill(ui, p, "phone-filled", answer, p.success, egui::vec2(56.0, BUTTON)).clicked() {
+                let answer = if inv.p2p {
+                    aurora_i18n::tr!("ui-call-answer")
+                } else {
+                    aurora_i18n::tr!("ui-chat-join-call")
+                };
+                if pill(ui, p, "call-answer", "phone-filled", answer, p.success, egui::vec2(56.0, BUTTON)).clicked() {
                     actions.push(ConvAction::AnswerCall {
                         session,
                         answer: InviteAnswer::Accept,
                     });
                 }
-                let decline = aurora_i18n::tr!("ui-notifications-decline");
-                if pill(ui, p, "phone-off", decline, p.danger_dim, egui::vec2(56.0, BUTTON)).clicked() {
+                // a group's call is ignored, a resident's declined
+                let declined = if inv.p2p {
+                    let decline = aurora_i18n::tr!("ui-notifications-decline");
+                    pill(ui, p, "call-decline", "phone-off", decline, p.danger_dim, egui::vec2(56.0, BUTTON)).clicked()
+                } else {
+                    text_button(ui, p, "call-decline", aurora_i18n::tr!("ui-chat-call-ignore")).clicked()
+                };
+                if declined {
                     actions.push(ConvAction::AnswerCall {
                         session,
                         answer: InviteAnswer::Decline,
@@ -234,7 +267,11 @@ fn stage(
             if let Some(t) = elapsed(call) {
                 rest.push(t);
             }
-            rest.push(world.session_title(&conversation));
+            rest.push(if call.p2p() {
+                aurora_i18n::tr!("ui-chat-call-private-short").to_owned()
+            } else {
+                world.session_title(&conversation)
+            });
             if !call.p2p() {
                 let n = call.members.len().max(1);
                 rest.push(aurora_i18n::tr!("ui-call-in-call", n = n.to_string()));
@@ -243,7 +280,7 @@ fn stage(
             let text = RichText::new(rest.join(" · ")).size(12.0).color(p.muted);
             ui.add(crate::ui::widgets::elided_label(ui, text, room));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if flat_icon(ui, p, "arrows-minimize", aurora_i18n::tr!("ui-chat-call-reduce")).clicked() {
+                if flat_icon(ui, p, "call-reduce", "arrows-minimize", aurora_i18n::tr!("ui-chat-call-reduce")).clicked() {
                     st.stage_mini = true;
                 }
             });
@@ -290,20 +327,38 @@ fn buttons(ui: &mut egui::Ui, p: &Palette, call: &Call, st: &mut ChatUi, actions
         } else {
             ("microphone-off", aurora_i18n::tr!("ui-call-unmute"))
         };
-        if round(ui, p, icon, tip, side, !on).clicked() {
+        if round(ui, p, "call-mic", icon, tip, side, !on).clicked() {
             actions.push(ConvAction::ToggleMic);
         }
     }
-    let output = round(ui, p, "headphones-filled", aurora_i18n::tr!("ui-options-audio-output"), side, false);
+    let output = round(
+        ui,
+        p,
+        "call-output",
+        "headphones-filled",
+        aurora_i18n::tr!("ui-options-audio-output"),
+        side,
+        false,
+    );
     if output.clicked() {
         actions.push(ConvAction::ListOutputDevices);
     }
     output_menu(&output, p, st, actions);
-    if add && round(ui, p, "user-plus", aurora_i18n::tr!("ui-call-add-people"), side, false).clicked() {
+    if add && round(ui, p, "call-add", "user-plus", aurora_i18n::tr!("ui-call-add-people"), side, false).clicked() {
         actions.push(ConvAction::PickPeople(call.conversation()));
     }
     let hang_up = aurora_i18n::tr!("ui-call-hang-up");
-    if pill(ui, p, "phone-off", hang_up, p.danger_dim, egui::vec2(side * 1.4, side)).clicked() {
+    if pill(
+        ui,
+        p,
+        "call-hang-up",
+        "phone-off",
+        hang_up,
+        p.danger_dim,
+        egui::vec2(side * 1.4, side),
+    )
+    .clicked()
+    {
         actions.push(ConvAction::HangUp);
     }
 }
@@ -345,7 +400,10 @@ fn person_tile(
 ) {
     st.wanted_pics.insert(person.id);
     let name = world.social.display_name_of(&person.id);
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(PERSON_W, PERSON + 22.0), egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(PERSON_W, PERSON + 22.0), egui::Sense::hover());
+    // ourselves: no volume to set
+    let sense = if person.me { egui::Sense::hover() } else { egui::Sense::click() };
+    let resp = ui.interact(rect, person_id(person.id), sense);
     let pic = egui::Rect::from_center_size(
         egui::pos2(rect.center().x, rect.top() + 3.0 + PERSON * 0.5),
         egui::Vec2::splat(PERSON),
@@ -371,12 +429,14 @@ fn person_tile(
         painter.circle_filled(c, 8.0, fill);
         super::thread::paint_icon(painter, icon, egui::Rect::from_center_size(c, egui::Vec2::splat(11.0)), p.on_accent);
     };
-    if person.muted {
+    if person.muted || (person.me && st.mic == Some(false)) {
         badge("microphone-off", p.danger);
     } else if volume <= 0.001 {
         badge("volume-off", p.muted_dim);
     }
-    let label = if person.waiting {
+    let label = if person.me {
+        aurora_i18n::tr!("ui-chat-call-me").to_owned()
+    } else if person.waiting {
         aurora_i18n::tr!("ui-chat-call-ringing-person", name = name.as_str()).to_owned()
     } else {
         name.clone()
@@ -390,10 +450,19 @@ fn person_tile(
         egui::FontId::proportional(11.0),
         color,
     );
+    if person.me {
+        resp.on_hover_text(name);
+        return;
+    }
     let resp = resp
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("ui-call-volume-of", name = name.as_str()));
     person_menu(&resp, p, &name, person.id, volume, actions);
+}
+
+/// The id of someone's place on the stage.
+pub(super) fn person_id(id: Uuid) -> egui::Id {
+    super::sidebar::control_id(&format!("call-person-{id}"))
 }
 
 /// A participant's volume (0–200 %: the 0..1 of LLSpeakerVolumeStorage,
@@ -419,7 +488,7 @@ fn person_menu(resp: &egui::Response, p: &Palette, name: &str, id: Uuid, volume:
             actions.push(ConvAction::SetVolume(id, v));
         }
         let muted = volume <= 0.001;
-        if menu::check(ui, p, "volume-off", aurora_i18n::tr!("ui-chat-call-mute-for-me"), muted, true) {
+        if menu::check(ui, p, "microphone-off", aurora_i18n::tr!("ui-chat-call-mute-for-me"), muted, true) {
             actions.push(ConvAction::SetVolume(id, if muted { 0.5 } else { 0.0 }));
             ui.close();
         }
@@ -450,7 +519,8 @@ fn mini(
     st: &mut ChatUi,
     actions: &mut Vec<ConvAction>,
 ) {
-    let everyone = people(world, call);
+    // the others in the call (the mockup's stack leaves us and the rung out)
+    let everyone: Vec<Person> = people(world, call).into_iter().filter(|m| !m.me && !m.waiting).collect();
     card(ui, p.success.gamma_multiply(0.12), Some(p.success.gamma_multiply(0.35)), |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
@@ -459,7 +529,10 @@ fn mini(
             if let Some(t) = elapsed(call) {
                 text = format!("{text} · {t}");
             }
-            ui.label(RichText::new(text).size(12.0).strong().color(p.success));
+            let text = RichText::new(text)
+                .font(egui::FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx())))
+                .color(p.success);
+            ui.label(text);
             let speakers: Vec<String> = everyone
                 .iter()
                 .filter(|m| m.speaking)
@@ -472,28 +545,48 @@ fn mini(
                 _ => aurora_i18n::tr!("ui-chat-call-speaks-many").to_owned(),
             };
             let shown = everyone.len().min(4);
-            let stack_w = if shown > 0 { 22.0 + (shown - 1) as f32 * 16.0 } else { 0.0 };
+            let stack_w = if shown > 0 { 24.0 + (shown - 1) as f32 * 18.0 } else { 0.0 };
             let buttons_w = SMALL * 2.0 + SMALL * 1.4 + 24.0 + if st.mic.is_some() { 0.0 } else { -SMALL - 8.0 };
             let room = (ui.available_width() - stack_w - buttons_w - 16.0).max(30.0);
             let label = RichText::new(format!("· {said}")).size(12.0).color(p.muted);
             ui.add(crate::ui::widgets::elided_label(ui, label, room));
             // the pictures, overlapping
-            let (stack, _) = ui.allocate_exact_size(egui::vec2(stack_w, 22.0), egui::Sense::hover());
+            let (stack, _) = ui.allocate_exact_size(egui::vec2(stack_w, 24.0), egui::Sense::hover());
             for (i, m) in everyone.iter().take(shown).enumerate() {
                 st.wanted_pics.insert(m.id);
-                let r = egui::Rect::from_min_size(egui::pos2(stack.left() + i as f32 * 16.0, stack.top()), egui::Vec2::splat(22.0));
-                let ring = if m.speaking { p.success } else { p.panel };
-                ui.painter().circle_filled(r.center(), 12.5, ring);
+                let r = egui::Rect::from_min_size(egui::pos2(stack.left() + i as f32 * 18.0, stack.top()), egui::Vec2::splat(24.0));
+                let ring = if m.speaking { p.success } else { p.navy };
+                ui.painter().circle_filled(r.center(), 14.0, ring);
                 let name = world.social.display_name_of(&m.id);
                 crate::ui::widgets::avatar_disc(ui, p, r, pics.get(&m.id), &name, m.waiting);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 let hang_up = aurora_i18n::tr!("ui-call-hang-up");
-                if pill(ui, p, "phone-off", hang_up, p.danger_dim, egui::vec2(SMALL * 1.4, SMALL)).clicked() {
+                if pill(
+                    ui,
+                    p,
+                    "strip-hang-up",
+                    "phone-off",
+                    hang_up,
+                    p.danger_dim,
+                    egui::vec2(SMALL * 1.4, SMALL),
+                )
+                .clicked()
+                {
                     actions.push(ConvAction::HangUp);
                 }
-                if round(ui, p, "arrows-maximize", aurora_i18n::tr!("ui-chat-call-expand"), SMALL, false).clicked() {
+                if round(
+                    ui,
+                    p,
+                    "strip-expand",
+                    "arrows-maximize",
+                    aurora_i18n::tr!("ui-chat-call-expand"),
+                    SMALL,
+                    false,
+                )
+                .clicked()
+                {
                     st.stage_mini = false;
                 }
                 if let Some(on) = st.mic {
@@ -502,7 +595,7 @@ fn mini(
                     } else {
                         ("microphone-off", aurora_i18n::tr!("ui-call-unmute"))
                     };
-                    if round(ui, p, icon, tip, SMALL, !on).clicked() {
+                    if round(ui, p, "strip-mic", icon, tip, SMALL, !on).clicked() {
                         actions.push(ConvAction::ToggleMic);
                     }
                 }
@@ -555,7 +648,7 @@ fn ongoing(
             crate::ui::widgets::avatar_disc(ui, p, r, pics.get(&by), &name, false);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let enabled = st.voice_on;
-                let resp = label_pill(ui, p, "phone-filled", join, enabled);
+                let resp = label_pill(ui, p, "call-join", "phone-filled", join, enabled);
                 let resp = if enabled {
                     resp
                 } else {
@@ -574,8 +667,9 @@ fn first_name(name: &str) -> String {
 }
 
 /// A round button of a call (`off`: the red tint of a muted microphone).
-fn round(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, side: f32, off: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::click());
+fn round(ui: &mut egui::Ui, p: &Palette, name: &str, icon: &str, tip: &str, side: f32, off: bool) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
+    let resp = ui.interact(rect, super::sidebar::control_id(name), egui::Sense::click());
     let face = match (off, resp.hovered()) {
         (true, false) => p.danger.gamma_multiply(0.2),
         (true, true) => p.danger.gamma_multiply(0.3),
@@ -601,9 +695,11 @@ fn label_pill_width(ui: &egui::Ui, label: &str) -> f32 {
 }
 
 /// Join: a green pill with its icon and label (greyed while voice is off).
-fn label_pill(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, enabled: bool) -> egui::Response {
-    let size = egui::vec2(label_pill_width(ui, label), 26.0);
-    let (rect, resp) = ui.allocate_exact_size(size, if enabled { egui::Sense::click() } else { egui::Sense::hover() });
+fn label_pill(ui: &mut egui::Ui, p: &Palette, name: &str, icon: &str, label: &str, enabled: bool) -> egui::Response {
+    let size = egui::vec2(label_pill_width(ui, label), 30.0);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
+    let resp = ui.interact(rect, super::sidebar::control_id(name), sense);
     let face = match (enabled, resp.hovered()) {
         (false, _) => p.raised,
         (true, true) => p.success,
@@ -628,8 +724,9 @@ fn label_pill(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, enabled: 
 }
 
 /// A pill of a call in a strong colour: answer, decline, hang up.
-fn pill(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, color: Color32, size: egui::Vec2) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+fn pill(ui: &mut egui::Ui, p: &Palette, name: &str, icon: &str, tip: &str, color: Color32, size: egui::Vec2) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let resp = ui.interact(rect, super::sidebar::control_id(name), egui::Sense::click());
     let face = if resp.hovered() { color } else { color.gamma_multiply(0.88) };
     ui.painter().rect_filled(rect, rect.height() * 0.5, face);
     super::thread::paint_icon(
@@ -641,9 +738,22 @@ fn pill(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, color: Color32, s
     resp.on_hover_text(tip)
 }
 
+/// A flat button of a word (the mockup's `.btn`: Ignore).
+fn text_button(ui: &mut egui::Ui, p: &Palette, name: &str, label: &str) -> egui::Response {
+    let font = egui::FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx()));
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, p.ink);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(galley.size().x + 20.0, 28.0), egui::Sense::hover());
+    let resp = ui.interact(rect, super::sidebar::control_id(name), egui::Sense::click());
+    let face = if resp.hovered() { p.raised.gamma_multiply(1.3) } else { p.raised };
+    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, face);
+    ui.painter().galley(rect.center() - galley.size() * 0.5, galley, p.ink);
+    resp
+}
+
 /// A flat icon button of a card's top line.
-fn flat_icon(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(24.0), egui::Sense::click());
+fn flat_icon(ui: &mut egui::Ui, p: &Palette, name: &str, icon: &str, tip: &str) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(24.0), egui::Sense::hover());
+    let resp = ui.interact(rect, super::sidebar::control_id(name), egui::Sense::click());
     if resp.hovered() {
         ui.painter()
             .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
