@@ -75,6 +75,7 @@ pub mod sky_beacons;
 pub mod snap;
 pub mod snapshot;
 pub mod sound_cues;
+pub(crate) mod text_menu;
 pub mod texture_picker;
 #[cfg(test)]
 mod theme_guard;

@@ -2671,6 +2671,61 @@ mod tests {
         assert_eq!(st.draft_mut(Some(b)), "");
     }
 
+    /// A conversation opened by the user (a contact's double click, #405)
+    /// shows up with its field taking the keyboard; one opened with
+    /// `focus_im` alone (a call) leaves the keyboard where it was.
+    #[test]
+    fn a_conversation_opened_to_type_takes_the_keyboard() {
+        let mut frames = Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let pics = HashMap::new();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (a, b) = (uuid::Uuid::from_u128(0xA), uuid::Uuid::from_u128(0xB));
+        world.social.session_mut(a);
+        world.social.session_mut(b);
+        let gestures = crate::gestures::Manager::default();
+        let mut st = ChatUi::default();
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut contacts_settings = crate::ui::contacts::ContactsSettings::default();
+        let mut open = true;
+        let ctx = frames.ctx.clone();
+        let mut frame = |st: &mut ChatUi, world: &mut World| {
+            frames.run(Vec::new(), |ui| {
+                show(
+                    ui.ctx(),
+                    &p,
+                    &icons,
+                    &mut emoji,
+                    &pics,
+                    &pics,
+                    world,
+                    &gestures,
+                    st,
+                    &mut contacts,
+                    &mut contacts_settings,
+                    false,
+                    &mut open,
+                );
+            });
+        };
+        let field = |c: uuid::Uuid| egui::Id::new(("conv_input", Some(c)));
+        // opened by a call: shown, the keyboard stays nowhere
+        world.social.focus_im = Some(a);
+        frame(&mut st, &mut world);
+        frame(&mut st, &mut world);
+        assert_eq!(st.selected, Some(a));
+        assert!(ctx.memory(|m| m.focused()).is_none());
+        // opened by the user: shown and ready to type in
+        world.social.focus_im = Some(b);
+        st.conv_focus_request = true;
+        frame(&mut st, &mut world);
+        frame(&mut st, &mut world);
+        assert_eq!(st.selected, Some(b));
+        assert!(ctx.memory(|m| m.has_focus(field(b))));
+    }
+
     /// A drag across the lines selects their text without moving the
     /// window; with the keyboard on them Ctrl+A selects the conversation,
     /// a copy gives it with the senders, and what is typed goes to the field.

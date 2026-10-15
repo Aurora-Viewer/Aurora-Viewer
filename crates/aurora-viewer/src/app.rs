@@ -218,6 +218,8 @@ pub struct App {
     /// The system cursor hidden and locked by mouselook or a camera drag.
     cursor_hold: cursor_hold::CursorHold,
     numeric_drag: ui::numeric_drag::NumericDrag,
+    /// Right-click menu of the text fields (Cut, Copy, Paste…).
+    text_menu: ui::text_menu::TextMenu,
     alt: bool,
     left_down: bool,
     /// Clicks that wait for the depth under them, and what follows them.
@@ -723,6 +725,7 @@ impl App {
             right_drag: false,
             cursor_hold: Default::default(),
             numeric_drag: Default::default(),
+            text_menu: Default::default(),
             alt: false,
             left_down: false,
             clicks: Default::default(),
@@ -3232,6 +3235,7 @@ impl App {
                         self.world.social.session_mut(session);
                     }
                     self.world.social.focus_im = Some(session);
+                    self.chat_ui.conv_focus_request = true;
                     self.notif_ui.open = false;
                     ui::notifications::open_conversations(ctx, &mut self.panels.chat);
                 }
@@ -4172,6 +4176,17 @@ impl App {
         }
     }
 
+    /// A conversation the user opened (a contact, a name's menu, People)
+    /// comes up with its field taking the keyboard, ready to type in, as
+    /// Firestorm's floater shown with the focus (LLFloaterReg::showInstance,
+    /// LLFloater::setFocus → focusFirstItem). Openings that come from calls
+    /// set `focus_im` alone and leave the keyboard where it is.
+    pub(super) fn open_conversation_to_type(&mut self, id: uuid::Uuid) {
+        self.world.social.focus_im = Some(id);
+        self.chat_ui.conv_focus_request = true;
+        self.panels.chat = true;
+    }
+
     /// A letter key started the nearby chat: in the Conversations window
     /// when it shows the nearby chat, in the chat bar otherwise, with the
     /// character typed in (LLViewerWindow::handleKey; Firestorm's
@@ -4495,8 +4510,7 @@ impl App {
             ContactsAction::Im(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.social.session_mut(id);
-                self.world.social.focus_im = Some(id);
-                self.panels.chat = true;
+                self.open_conversation_to_type(id);
             }
             ContactsAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
             ContactsAction::OfferTeleport(id) => a.offer_tp.push(id),
@@ -4507,8 +4521,7 @@ impl App {
             ContactsAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.start_group_chat(id);
-                self.world.social.focus_im = Some(id);
-                self.panels.chat = true;
+                self.open_conversation_to_type(id);
             }
             ContactsAction::Net(cmd) => {
                 match &cmd {
@@ -6007,6 +6020,13 @@ impl App {
         self.report_abuse_capture(&mut gfx.renderer);
         self.sound_cues.before(&ctx, &raw);
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
+        let egui_state = &mut gfx.egui_state;
+        self.text_menu.before(
+            &ctx,
+            &mut raw,
+            || egui_state.clipboard_text(),
+            self.demo.then_some(self.frame_count),
+        );
         let mut inventory_drop = None;
         let t_pass = Instant::now();
         let mut windows_ms = 0.0;
@@ -6017,6 +6037,8 @@ impl App {
             if inventory_drop.is_none() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
             }
+            // after every window: their text fields have been drawn
+            self.text_menu.after(ui.ctx(), &self.palette);
             // the glass blurs the world: there is none behind the login screen
             if self.in_world() {
                 ui::menu::glaze(ui.ctx(), &self.palette);
@@ -9078,8 +9100,7 @@ impl App {
                             self.world.met(id);
                             self.world.ui_sounds.push(UiSound::StartIm);
                             self.world.social.session_mut(id);
-                            self.world.social.focus_im = Some(id);
-                            self.panels.chat = true;
+                            self.open_conversation_to_type(id);
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::people::PeopleAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
