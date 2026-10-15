@@ -2285,10 +2285,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1536 the position too, with `rights` the forbidden rights are named at
   1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
   the bell's red counter.
-- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add`**: Contacts
+- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
-  picker of "Add...".
+  picker of "Add...". These modes enable the optional Contacts entry for
+  the run; `hidden` disables it with Contacts initially selected, showing
+  the fallback to nearby chat. The saved preference defaults to off
+  (Preferences > Chat > Show the Contacts tab).
 - **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in

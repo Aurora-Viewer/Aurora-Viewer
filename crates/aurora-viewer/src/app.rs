@@ -8879,6 +8879,7 @@ impl App {
                     &mut self.chat_ui,
                     &mut self.contacts_ui,
                     &mut self.settings.contacts,
+                    self.settings.show_contacts_tab,
                     &mut open,
                 ) {
                     match c {
@@ -10485,13 +10486,14 @@ impl ApplicationHandler for App {
                 self.group_profile_ui.create.demo(DemoStart { draft, then });
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add: the
+            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden: the
             // Contacts tab of Conversations (or its torn-off window, or the
             // resident picker of "Add...")
             if let Ok(v) = std::env::var("AURORA_DEMO_CONTACTS") {
                 self.panels.chat = true;
                 self.panels.perf = false;
                 self.chat_ui.contacts = true;
+                self.settings.show_contacts_tab = v != "hidden";
                 self.settings.contacts.tab = match v.as_str() {
                     "groups" | "groupes" => 1,
                     "sets" | "cercles" => 2,
