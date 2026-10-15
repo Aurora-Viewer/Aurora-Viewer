@@ -676,7 +676,7 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
         ui.painter().rect_filled(
             rect,
             ui.visuals().widgets.inactive.corner_radius,
-            if resp.hovered() { p.danger } else { p.danger.gamma_multiply(0.85) },
+            if resp.hovered() { p.danger } else { p.danger_dim },
         );
         super::thread::paint_icon(
             ui.painter(),

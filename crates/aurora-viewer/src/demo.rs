@@ -773,6 +773,8 @@ pub struct AuroraScene {
     pub width: f32,
     pub compact: bool,
     pub call: Option<AuroraCall>,
+    /// `call-away`: the nearby chat shown once the call is connected.
+    pub away: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -797,6 +799,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
         width: 960.0,
         compact: false,
         call: None,
+        away: false,
     };
     let mut away = false;
     for flag in flags {
@@ -826,7 +829,10 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
     // a call shows in its conversation
     match scene.call {
         Some(AuroraCall::Incoming) => scene.view = Bubbles::Busy,
-        Some(_) if away => scene.view = Bubbles::Local,
+        Some(_) if away => {
+            scene.view = Bubbles::Local;
+            scene.away = true;
+        }
         Some(_) => scene.view = Bubbles::Group,
         None => {}
     }

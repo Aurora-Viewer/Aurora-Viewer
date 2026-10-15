@@ -9043,6 +9043,20 @@ impl App {
                         crate::demo::Bubbles::Friend => self.world.social.set_typing(crate::demo::DEMO_FRIEND, true),
                         _ => {}
                     }
+                    // call-away: the call opened its conversation; once it
+                    // is connected the nearby chat comes back
+                    static AWAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                    if scene.away
+                        && self
+                            .world
+                            .calls
+                            .active
+                            .as_ref()
+                            .is_some_and(|c| c.state == crate::world::calls::CallState::Connected)
+                        && !AWAY.swap(true, std::sync::atomic::Ordering::Relaxed)
+                    {
+                        self.chat_ui.selected = None;
+                    }
                     if scene.call == Some(crate::demo::AuroraCall::Ongoing)
                         && self.world.calls.invite_for(&crate::demo::DEMO_GROUP1).is_some()
                     {
