@@ -676,7 +676,7 @@ fn folder_name(inv: &Inventory, id: Uuid) -> String {
     }
 }
 
-fn inventory_path(inv: &Inventory, mut id: Uuid) -> String {
+pub(crate) fn inventory_path(inv: &Inventory, mut id: Uuid) -> String {
     let mut parts = Vec::new();
     let mut seen = HashSet::new();
     while seen.insert(id) && inv.folders.contains_key(&id) {

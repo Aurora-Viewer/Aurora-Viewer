@@ -3,6 +3,8 @@
 
 pub(crate) mod catalogue;
 mod previews;
+mod windows;
+pub(crate) use windows::window_id as preview_window_id;
 #[cfg(test)]
 mod tests;
 
@@ -87,8 +89,8 @@ pub struct LibraryUi {
     kind: Kind,
     scope: Scope,
     selected: Option<Uuid>,
-    preview: Option<Uuid>,
-    preview_view: aurora_render::preview::View,
+    windows: Vec<windows::PreviewWindow>,
+    focus_preview: Option<Uuid>,
     previews: previews::Previews,
     agent: Uuid,
     prepared: bool,
@@ -287,7 +289,7 @@ impl LibraryUi {
                             )
                             .on_hover_text(&entry.name);
                             if icon_button(ui, p, "arrows-maximize", aurora_i18n::tr!("texture-library-preview")).clicked() {
-                                self.preview = Some(entry.id);
+                                self.open_preview(ctx, world, entry.id);
                             }
                         } else {
                             ui.add(
@@ -345,9 +347,7 @@ impl LibraryUi {
                 prefs.presentation.flip();
             }
         }
-        if self.preview.is_some() && *open {
-            self.preview(ctx, p, world, scene, images);
-        }
+        self.show_previews(ctx, p, world, scene, images);
         actions
     }
     fn prepare_root(&mut self, inv: &mut Inventory, actions: &mut Vec<Action>) {
@@ -579,8 +579,10 @@ impl LibraryUi {
                     );
                 }
                 if first {
-                    ui.ctx()
-                        .data_mut(|d| d.insert_temp(egui::Id::new("texture_library_first_card"), response.rect.center()));
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(egui::Id::new("texture_library_first_card"), response.rect.center());
+                        d.insert_temp(egui::Id::new("texture_library_first_item"), entry.id);
+                    });
                 }
                 response.dnd_set_drag_payload(InvDrag(entry.id));
                 if response.clicked() {
@@ -588,8 +590,7 @@ impl LibraryUi {
                     apply = !response.double_clicked();
                 }
                 if response.double_clicked() {
-                    self.preview = Some(entry.id);
-                    self.preview_view = previews::view(p);
+                    self.open_preview(ui.ctx(), world, entry.id);
                 }
                 response.on_hover_text(format!(
                     "{}\n{}\n{}\n{}",
@@ -631,90 +632,12 @@ impl LibraryUi {
                         }
                     });
                 }
-                let _ = world;
             });
         });
         apply
     }
-    fn preview(&mut self, ctx: &egui::Context, p: &Palette, world: &World, scene: &mut Scene, images: &HashMap<Uuid, egui::TextureHandle>) {
-        let Some(entry) = self
-            .preview
-            .and_then(|id| self.catalogue.entries.iter().find(|e| e.id == id))
-            .cloned()
-        else {
-            self.preview = None;
-            return;
-        };
-        let size = Vec2::new(360.0, 420.0);
-        let mut open = true;
-        Floater::new(
-            "texture_library_preview",
-            &entry.name,
-            ctx.content_rect().center() - size / 2.0,
-            size,
-        )
-        .fixed()
-        .show(ctx, p, &mut open, |ui| {
-            if entry.material {
-                if let Some(model) = self.previews.model(entry.asset, scene, &mut self.wanted_images, ctx) {
-                    self.preview_view.background = previews::view(p).background;
-                    let response =
-                        aurora_render::preview::paint(ui, ui.id().with(entry.asset), model, &mut self.preview_view, Vec2::splat(320.0));
-                    ctx.data_mut(|data| data.insert_temp(egui::Id::new("texture_library_material_scene"), response.rect));
-                } else {
-                    ui.allocate_space(Vec2::splat(320.0));
-                }
-            } else {
-                self.wanted_images.insert(entry.asset);
-                if let Some(image) = images.get(&entry.asset) {
-                    ui.add(
-                        egui::Image::new(image)
-                            .fit_to_exact_size(Vec2::splat(320.0))
-                            .maintain_aspect_ratio(true)
-                            .sense(egui::Sense::click_and_drag()),
-                    )
-                    .dnd_set_drag_payload(InvDrag(entry.id));
-                }
-            }
-            if entry.material {
-                ui.horizontal(|ui| {
-                    let label = aurora_i18n::tr!("texture-library-material-drag");
-                    let width = widgets::action_button_fit(ui, "grip-vertical", label);
-                    let path_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
-                    ui.add_sized(
-                        [path_width, 24.0],
-                        egui::Label::new(RichText::new(&entry.path).size(11.0).color(p.muted)).truncate(),
-                    )
-                    .on_hover_text(&entry.path);
-                    // The scene keeps its orbit gesture; only this explicit
-                    // handle starts an inventory drag with permission checks.
-                    let drag = widgets::action_button(ui, p, "grip-vertical", label, ActionKind::Flat, Vec2::new(width, 24.0))
-                        .interact(egui::Sense::click_and_drag())
-                        .on_hover_cursor(egui::CursorIcon::Grab)
-                        .on_hover_text(aurora_i18n::tr!("texture-library-material-drag-hint"));
-                    drag.dnd_set_drag_payload(InvDrag(entry.id));
-                    ctx.data_mut(|data| data.insert_temp(egui::Id::new("texture_library_material_handle"), drag.rect));
-                });
-            } else {
-                ui.label(RichText::new(&entry.path).size(11.0).color(p.muted));
-            }
-            if let Some(item) = world.inventory.items.get(&entry.original) {
-                ui.label(
-                    RichText::new(if item.owner_mask & rules::COPY != 0 {
-                        aurora_i18n::tr!("texture-library-copy")
-                    } else {
-                        aurora_i18n::tr!("texture-library-no-copy")
-                    })
-                    .size(11.0)
-                    .color(p.muted),
-                );
-            }
-        });
-        if !open {
-            self.preview = None;
-        }
-    }
 }
+
 fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> egui::Response {
     widgets::action_button(ui, p, icon, "", ActionKind::Flat, Vec2::splat(20.0)).on_hover_text(tip)
 }

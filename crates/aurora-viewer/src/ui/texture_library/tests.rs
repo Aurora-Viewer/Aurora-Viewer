@@ -304,7 +304,7 @@ fn texture_library_cards_apply_on_click_and_keep_dragging_separate_in_both_layou
                 frame(button(source, false), &mut ui).is_empty(),
                 "the second click opens preview without reapplying"
             );
-            assert_eq!(ui.preview, Some(item));
+            assert!(ui.windows.iter().any(|window| window.id == item));
         }
     }
 }
@@ -337,9 +337,9 @@ fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
         let ctx = egui::Context::default();
         let mut library = LibraryUi {
             agent: world.agent_id,
-            preview: Some(item),
             ..Default::default()
         };
+        library.open_preview(&ctx, &world, item);
         let mut preferences = Preferences::default();
         let mut time = 0.0;
         let mut frame = |events: Vec<egui::Event>, library: &mut LibraryUi| {
@@ -379,7 +379,7 @@ fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
         loop {
             frame(Vec::new(), &mut library);
             if ctx
-                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new("texture_library_material_scene")))
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_scene", item))))
                 .is_some()
             {
                 break;
@@ -390,11 +390,14 @@ fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
         for _ in 0..8 {
             frame(Vec::new(), &mut library);
         }
-        let rect = |key| ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new(key))).expect("preview control");
-        let image = rect("texture_library_material_scene");
-        let handle = rect("texture_library_material_handle");
+        let rect = |key| {
+            ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new((key, item))))
+                .expect("preview control")
+        };
+        let image = rect("resource_material_scene");
+        let handle = rect("resource_material_handle");
         let window = ctx
-            .memory(|m| m.area_rect(egui::Id::new("texture_library_preview")))
+            .memory(|m| m.area_rect(egui::Id::new(preview_window_id(item))))
             .expect("preview floater");
         assert!(window.contains_rect(handle), "the handle must fit the compact preview");
         assert!(!image.intersects(handle), "the orbit surface and handle must not overlap");
@@ -409,18 +412,18 @@ fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
                 },
             ]
         };
-        let before = library.preview_view;
+        let before = library.windows[0].view;
         let orbit = image.center() + egui::vec2(40.0, 15.0);
         frame(button(image.center(), true), &mut library);
         frame(vec![egui::Event::PointerMoved(orbit)], &mut library);
-        assert_ne!(library.preview_view.yaw, before.yaw);
-        assert_ne!(library.preview_view.pitch, before.pitch);
+        assert_ne!(library.windows[0].view.yaw, before.yaw);
+        assert_ne!(library.windows[0].view.pitch, before.pitch);
         assert!(
             egui::DragAndDrop::payload::<InvDrag>(&ctx).is_none(),
             "orbiting must never create inventory cargo"
         );
         frame(button(orbit, false), &mut library);
-        let camera = library.preview_view;
+        let camera = library.windows[0].view;
         frame(button(handle.center(), true), &mut library);
         frame(button(handle.center(), false), &mut library);
         assert!(
@@ -434,12 +437,181 @@ fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
         );
         assert_eq!(egui::DragAndDrop::payload::<InvDrag>(&ctx).expect("material cargo").0, item);
         assert!(
-            library.preview_view == camera,
+            library.windows[0].view == camera,
             "dragging the handle must not change the preview camera"
         );
         let target = egui::pos2(50.0, size.y - 35.0);
         frame(vec![egui::Event::PointerMoved(target)], &mut library);
         assert_eq!(frame(button(target, false), &mut library), Some(item));
-        assert!(library.preview_view == camera);
+        assert!(library.windows[0].view == camera);
     }
+}
+
+#[test]
+fn resource_previews_coexist_keep_their_cameras_and_close_independently() {
+    use aurora_net::inventory::InvItem;
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let (mut inv, library_folder, outside) = inventory();
+    let items = [91, 92, 93, 94].map(Uuid::from_u128);
+    let texture = Uuid::from_u128(95);
+    let material = Uuid::from_u128(96);
+    for (index, id) in items.into_iter().enumerate() {
+        inv.add_items(vec![InvItem {
+            id,
+            parent: if index % 2 == 0 { library_folder } else { outside },
+            asset_id: if index < 2 { texture } else { material },
+            asset_type: if index < 2 { 0 } else { 57 },
+            name: format!("Preview {index}"),
+            ..Default::default()
+        }]);
+    }
+    let link = Uuid::from_u128(97);
+    inv.add_items(vec![InvItem {
+        id: link,
+        asset_id: items[2],
+        asset_type: 24,
+        ..Default::default()
+    }]);
+    let mut world = World::new(avatars.clone());
+    world.agent_id = Uuid::from_u128(70);
+    world.inventory = inv;
+    let mut scene = Scene::new(std::env::temp_dir(), avatars);
+    scene.materials.insert(material, aurora_assets::PbrMaterial::default());
+    let ctx = egui::Context::default();
+    let image = ctx.load_texture(
+        "concurrent preview",
+        egui::ColorImage::filled([128, 64], egui::Color32::GRAY),
+        Default::default(),
+    );
+    let images = HashMap::from([(texture, image)]);
+    let mut resources = LibraryUi::default();
+    for (index, item) in items.into_iter().enumerate() {
+        widgets::place_floater(
+            &ctx,
+            &preview_window_id(item),
+            egui::pos2(20.0 + (index % 2) as f32 * 340.0, 60.0 + (index / 2) as f32 * 360.0),
+            Vec2::new(280.0, 300.0),
+        );
+        resources.open_preview(&ctx, &world, item);
+    }
+    let mut preferences = Preferences::default();
+    let mut time = 0.0;
+    let mut frame = |events: Vec<egui::Event>, resources: &mut LibraryUi, world: &mut World| {
+        time += 1.0 / 60.0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 1000.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |host| {
+                // All resource windows survive while the library is closed.
+                assert!(
+                    resources
+                        .show(
+                            host.ctx(),
+                            &crate::theme::Theme::default().palette(),
+                            world,
+                            &mut scene,
+                            &images,
+                            &mut preferences,
+                            &mut false
+                        )
+                        .is_empty()
+                );
+            },
+        );
+        output.textures_delta.clear();
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        frame(Vec::new(), &mut resources, &mut world);
+        if items[2..].iter().all(|item| {
+            ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_scene", *item))))
+                .is_some()
+        }) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "preview workers did not finish");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    for _ in 0..8 {
+        frame(Vec::new(), &mut resources, &mut world);
+    }
+    assert_eq!(resources.windows.len(), 4);
+    for item in items {
+        let window = ctx
+            .memory(|m| m.area_rect(egui::Id::new(preview_window_id(item))))
+            .expect("independent preview");
+        let key = if item == items[0] || item == items[1] {
+            "resource_texture_preview"
+        } else {
+            "resource_material_scene"
+        };
+        let content = ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::new((key, item))))
+            .expect("visible preview content");
+        assert!(window.contains_rect(content));
+    }
+    let button = |pos, pressed| {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                pressed,
+                button: egui::PointerButton::Primary,
+                modifiers: Default::default(),
+            },
+        ]
+    };
+    let canvas = ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_scene", items[2]))))
+        .expect("material scene");
+    let initial = resources.windows[2].view;
+    let other = resources.windows[3].view;
+    frame(button(canvas.center(), true), &mut resources, &mut world);
+    let orbit = canvas.center() + egui::vec2(40.0, 15.0);
+    frame(vec![egui::Event::PointerMoved(orbit)], &mut resources, &mut world);
+    frame(button(orbit, false), &mut resources, &mut world);
+    let camera = resources.windows[2].view;
+    assert!(camera != initial);
+    assert!(
+        resources.windows[3].view == other,
+        "a second instance of the same asset keeps its camera"
+    );
+    resources.open_preview(&ctx, &world, link);
+    frame(Vec::new(), &mut resources, &mut world);
+    assert_eq!(resources.windows.len(), 4, "a link focuses the same item window");
+    assert!(resources.windows[2].view == camera, "reopening preserves the camera");
+    let id = preview_window_id(items[2]);
+    let window = ctx.memory(|m| m.area_rect(egui::Id::new(&id))).expect("preview");
+    let minimize = egui::pos2(window.right() - 40.0, window.top() + 19.0);
+    frame(button(minimize, true), &mut resources, &mut world);
+    frame(button(minimize, false), &mut resources, &mut world);
+    frame(Vec::new(), &mut resources, &mut world);
+    assert!(widgets::floater_minimized(&ctx, &id));
+    resources.open_preview(&ctx, &world, items[2]);
+    for _ in 0..8 {
+        frame(Vec::new(), &mut resources, &mut world);
+    }
+    assert!(!widgets::floater_minimized(&ctx, &id));
+    assert!(resources.windows[2].view == camera);
+    let last = ctx
+        .memory(|m| m.area_rect(egui::Id::new(preview_window_id(items[3]))))
+        .expect("last preview");
+    let close = egui::pos2(last.right() - 18.0, last.top() + 19.0);
+    frame(button(close, true), &mut resources, &mut world);
+    frame(button(close, false), &mut resources, &mut world);
+    frame(Vec::new(), &mut resources, &mut world);
+    assert_eq!(resources.windows.iter().map(|w| w.id).collect::<Vec<_>>(), items[..3]);
+    assert!(resources.windows[2].view == camera);
+    // Moving an item out of the library does not replace or close its preview.
+    world.inventory.items.get_mut(&items[2]).expect("material").parent = outside;
+    frame(Vec::new(), &mut resources, &mut world);
+    assert_eq!(resources.windows.len(), 3);
 }

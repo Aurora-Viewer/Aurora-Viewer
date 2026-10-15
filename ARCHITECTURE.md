@@ -96,7 +96,12 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 ## `aurora-viewer` in detail
 
 `ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
-shared folder/search/type state, inventory management shortcut and resource preview.
+shared folder/search/type state and inventory management shortcut.
+`ui/texture_library/windows.rs` owns independent, resizable texture/material
+windows keyed by inventory item. Inventory and library opens share these windows
+and the same bounded model cache; reopening an item raises/restores its window
+without resetting its camera. Each window survives closing either source panel,
+and closes independently. Unsaved inventory documents keep their editor/draft.
 `ui/texture_library/catalogue.rs` caches the `#Aurora/Textures Library` subtree
 by inventory generation, includes only actual texture/material items and real
 folders/subfolders, and excludes all links and the bridge's sibling data.
@@ -110,7 +115,7 @@ customizable toolbar command toggle the current floater. `demo_texture_library.r
 provides actual synthetic inventory folders, tileable textures and PBR materials offline.
 Inventory texture previews retain the real item as drag cargo, sharing that
 world-drop path with inventory rows and library swatches. A dedicated handle
-in the library material preview supplies the same cargo without consuming the
+in each material preview supplies the same cargo without consuming the
 3D scene's orbit gesture.
 
 `ui/toolbar.rs` owns Firestorm's three toolbars (the bottom one, left and

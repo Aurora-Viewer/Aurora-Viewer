@@ -274,6 +274,10 @@ impl App {
             }
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
             InvAction::Preview(id) => {
+                if crate::ui::texture_library::catalogue::resource(&self.world.inventory, id).is_some() {
+                    self.texture_library.open_preview(&self.egui_ctx, &self.world, id);
+                    return;
+                }
                 if self.world.inventory.items.get(&id).is_some_and(|it| it.asset_type == 21) {
                     self.gesture_action(crate::ui::gestures::Action::Open(id));
                     return;
@@ -312,7 +316,7 @@ impl App {
                                 Vec::new()
                             }),
                         );
-                    } else if matches!(it.asset_type, 7 | 10 | 21 | 56 | 57) {
+                    } else if matches!(it.asset_type, 7 | 10 | 21 | 56) {
                         self.send(NetCommand::PreviewInventoryItem(it));
                     }
                 }

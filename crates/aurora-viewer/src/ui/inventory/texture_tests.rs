@@ -29,6 +29,9 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
     let mut state = InventoryUi::default();
     state.show_original(&world.inventory, item);
     let mut prefs = InventoryPreferences::default();
+    let mut resources = crate::ui::texture_library::LibraryUi::default();
+    let mut library_prefs = crate::ui::texture_library::Preferences::default();
+    let mut scene = crate::scene::Scene::new(std::env::temp_dir(), world.avatar_lib.clone());
     let mut time = 0.0;
     let mut frame = |events: Vec<egui::Event>, state: &mut InventoryUi| {
         time += 1.0 / 60.0;
@@ -52,6 +55,20 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
                     &mut true,
                     false,
                     &images,
+                );
+                for action in &actions {
+                    if let InvAction::Preview(item) = action {
+                        resources.open_preview(host.ctx(), &world, *item);
+                    }
+                }
+                resources.show(
+                    host.ctx(),
+                    &crate::theme::Theme::default().palette(),
+                    &mut world,
+                    &mut scene,
+                    &images,
+                    &mut library_prefs,
+                    &mut false,
                 );
                 if let Some(drag) = world_drag(host.ctx())
                     && drag.released
@@ -93,18 +110,23 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
     frame(button(row, true), &mut state);
     let actions = frame(button(row, false), &mut state).0;
     assert!(actions.iter().any(|action| matches!(action, InvAction::Preview(id) if *id == item)));
-    assert_eq!(state.preview, Some(item));
+    assert_eq!(state.preview, None, "resource windows do not replace document editors");
     for _ in 0..8 {
         frame(Vec::new(), &mut state);
     }
     let rect = ctx
-        .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("inventory_texture_preview", state.ui_id, item))))
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("resource_texture_preview", item))))
         .expect("preview image");
     assert!((rect.aspect_ratio() - 2.0).abs() < 0.01, "preview keeps the image aspect ratio");
     let destination = egui::pos2(100.0, 700.0);
     for source in [rect.center(), row] {
         if source == row {
-            state.preview = None;
+            let window = ctx
+                .memory(|m| m.area_rect(egui::Id::new(crate::ui::texture_library::preview_window_id(item))))
+                .expect("preview window");
+            let close = egui::pos2(window.right() - 18.0, window.top() + 19.0);
+            frame(button(close, true), &mut state);
+            frame(button(close, false), &mut state);
             for _ in 0..4 {
                 frame(Vec::new(), &mut state);
             }

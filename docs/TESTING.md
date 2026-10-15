@@ -1476,6 +1476,13 @@ an explicit Drag handle. `material-preview-rotate` left-drags the scene at frame
 handle onto the surface at frame 760. Check that rotation changes only the
 preview camera, that the handle does not rotate the scene, and that dropping
 it applies the material. Its permission/retention checks match other sources.
+`multi-preview` opens two textures and two materials in separate resizable
+windows at frames 620–680, then reopens the first texture at frame 720: four
+windows remain, with no replacement or duplicate. `multi-preview-closed` also
+closes the library at frame 760; all four previews must remain visible. Check
+individual close/minimize/restore, independent material cameras, texture drags
+and material handles, including from inventory outside the library. Reopening
+the same item restores/raises its existing preview without resetting its view.
 No-copy resources cannot be applied to multiple selected objects. Restricted
 resources wait for object contents; click again after the loading message.
 Capture after frame 780 to allow previews to

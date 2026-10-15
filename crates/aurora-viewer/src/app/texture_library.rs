@@ -57,6 +57,10 @@ impl App {
             modifiers: Default::default(),
         };
         if mode.starts_with("material-preview") {
+            let item = self
+                .egui_ctx
+                .data(|d| d.get_temp::<Uuid>(egui::Id::new("texture_library_first_item")))
+                .unwrap_or_default();
             if let Some(source) = self
                 .egui_ctx
                 .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("texture_library_first_card")))
@@ -70,7 +74,7 @@ impl App {
             if mode != "material-preview"
                 && let Some(rect) = self
                     .egui_ctx
-                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new("texture_library_material_scene")))
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_scene", item))))
             {
                 let source = rect.center();
                 let rotated = source + egui::vec2(45.0, 18.0);
@@ -84,7 +88,7 @@ impl App {
             if mode == "material-preview-drag"
                 && let Some(rect) = self
                     .egui_ctx
-                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new("texture_library_material_handle")))
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_handle", item))))
             {
                 let source = rect.center();
                 let target = egui::pos2(480.0, 430.0);
@@ -129,7 +133,7 @@ impl App {
         }
         let source = if mode == "preview-drag" {
             self.egui_ctx
-                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("inventory_texture_preview", self.inventory_ui.ui_id, item))))
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_texture_preview", item))))
                 .map(|r| r.center())
         } else {
             source
@@ -187,7 +191,7 @@ impl App {
                 self.inventory_ui.show_original(&self.world.inventory, item);
                 ui::widgets::place_floater(
                     ctx,
-                    &format!("inventory_preview_{}_{}", self.inventory_ui.ui_id, item),
+                    &library::preview_window_id(item),
                     egui::pos2(20.0, 60.0),
                     egui::vec2(360.0, 280.0),
                 );
@@ -196,10 +200,32 @@ impl App {
             {
                 self.inventory_ui.show_folder(&self.world.inventory, root);
             }
-            if mode.starts_with("material-preview") {
-                ui::widgets::place_floater(ctx, "texture_library_preview", egui::pos2(20.0, 60.0), egui::vec2(360.0, 420.0));
-            }
             self.texture_library.demo(&mode, self.world.agent_id);
+        }
+        if self.demo
+            && self.library_demo_seeded
+            && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").is_ok_and(|mode| mode.starts_with("multi-preview"))
+        {
+            let items = crate::demo::texture_library::preview_items();
+            for (index, item) in items.into_iter().enumerate() {
+                // Reapply after egui has measured the new windows: its initial
+                // size estimate otherwise clamps the second row too high.
+                if self.frame_count == 620 + index as u64 * 20 || self.frame_count == 700 {
+                    ui::widgets::place_floater(
+                        ctx,
+                        &library::preview_window_id(item),
+                        egui::pos2(20.0 + (index % 2) as f32 * 340.0, 60.0 + (index / 2) as f32 * 345.0),
+                        egui::vec2(300.0, 290.0),
+                    );
+                    self.texture_library.open_preview(ctx, &self.world, item);
+                }
+            }
+            if self.frame_count == 720 {
+                self.texture_library.open_preview(ctx, &self.world, items[0]);
+            }
+            if self.frame_count >= 760 && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").as_deref() == Ok("multi-preview-closed") {
+                self.panels.texture_library = false;
+            }
         }
         let preferences = self.settings.texture_library.clone();
         let actions = self.texture_library.show(

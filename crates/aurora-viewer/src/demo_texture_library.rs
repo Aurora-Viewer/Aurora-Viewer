@@ -14,6 +14,10 @@ pub fn first_texture() -> Uuid {
     id(300)
 }
 
+pub fn preview_items() -> [Uuid; 4] {
+    [id(300), id(301), id(400), id(401)]
+}
+
 pub fn inventory_drag_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
