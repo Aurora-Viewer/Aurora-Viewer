@@ -216,10 +216,12 @@ impl Rendered {
         let mut stack = Vec::new();
         let mut lists: Vec<Option<u64>> = Vec::new();
         let mut cell = 0;
-        for event in Parser::new_ext(
+        for (event, range) in Parser::new_ext(
             source,
             Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_TABLES,
-        ) {
+        )
+        .into_offset_iter()
+        {
             match event {
                 Event::Start(tag) => {
                     stack.push(style.clone());
@@ -301,7 +303,17 @@ impl Rendered {
                         ..style.clone()
                     },
                 ),
-                Event::SoftBreak => rendered.push(" ", &style),
+                Event::SoftBreak => {
+                    // CommonMark folds ordinary soft breaks into spaces, but
+                    // notecard inventory rows must retain their source layout.
+                    let before = source[..range.start].rsplit('\n').next().unwrap_or_default();
+                    let after = source[range.end..].split('\n').next().unwrap_or_default();
+                    let attachment_line = before
+                        .chars()
+                        .chain(after.chars())
+                        .any(|c| c as u32 >= aurora_net::inventory::notecard::FIRST_EMBEDDED_CHAR);
+                    rendered.push(if attachment_line { "\n" } else { " " }, &style);
+                }
                 Event::HardBreak => rendered.push("\n", &style),
                 Event::TaskListMarker(checked) => rendered.push(if checked { "[x] " } else { "[ ] " }, &style),
                 Event::Rule => {
@@ -384,6 +396,27 @@ mod tests {
             rendered.text.chars().skip(range.start).take(range.len()).collect::<String>() == "link" && url.as_ref() == "https://example.com"
         }));
         assert!(source.starts_with("# "));
+    }
+
+    #[test]
+    fn attachment_lines_keep_their_breaks_and_inline_items_stay_inline() {
+        for newline in ["\n", "\r\n"] {
+            let source = [
+                "Été 🐺 **avant**",
+                "\u{100000}",
+                "*Repère* \u{100001}",
+                "\u{100002}",
+                "Texte *après*",
+            ]
+            .join(newline);
+            let rendered = Rendered::parse(&source);
+            assert_eq!(
+                rendered.text,
+                "Été 🐺 avant\n\u{100000}\nRepère \u{100001}\n\u{100002}\nTexte après\n\n"
+            );
+        }
+        let rendered = Rendered::parse("Ordinary\nsoft break\n\n\u{100000} \u{100001}\nafter\ncontinued");
+        assert_eq!(rendered.text, "Ordinary soft break\n\n\u{100000} \u{100001}\nafter continued\n\n");
     }
 
     #[test]

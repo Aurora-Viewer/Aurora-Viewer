@@ -2945,6 +2945,8 @@ offline; the files and snapshots uploaded in demo stay offline.
   updates without leaving the mode, then Ctrl+S from either pane.
   Markdown is a selectable formatted preview with headings, emphasis, lists, quotes,
   code and links. Images show their alt text as a link without downloading.
+  Newlines before and after embedded-item rows must remain newlines in both
+  Markdown views; items written on the same source line must stay inline.
 - `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded`:
   automatic addition of text at frame 650, then save with Ctrl+S
   (`note-save`), close confirmation (`note-close`) or simulated refusal

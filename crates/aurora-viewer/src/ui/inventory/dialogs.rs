@@ -1096,6 +1096,36 @@ mod tests {
     }
 
     #[test]
+    fn markdown_views_keep_attachments_on_separate_source_lines() {
+        use super::super::markdown::View;
+        for view in [View::Markdown, View::Edit] {
+            let ctx = egui::Context::default();
+            let (inv, mut st) = note_fixture();
+            st.load_document(7, true, &Ok(crate::world::inventory::demo::note_asset(true)));
+            st.notecard_view = view;
+            let original = st.preview_text.clone();
+            let preview = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item"))).with("markdown");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                document_frame(&ctx, &inv, &mut st, vec![]);
+                let rects = ctx.data_mut(|data| {
+                    ['\u{100000}', '\u{100001}', '\u{100002}']
+                        .map(|marker| data.get_temp::<egui::Rect>(preview.with(("demo_attachment", marker))))
+                });
+                if let [Some(first), Some(second), Some(third)] = rects {
+                    assert!(second.top() >= first.bottom(), "second attachment must start on its own row");
+                    assert!(third.top() >= second.bottom(), "third attachment must start on its own row");
+                    break;
+                }
+                assert!(std::time::Instant::now() < deadline, "attachment preview did not finish");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            assert_eq!(st.preview_text, original);
+            assert!(!st.preview_dirty);
+        }
+    }
+
+    #[test]
     fn notecard_split_edit_refreshes_preview_and_saves_from_either_pane() {
         let ctx = egui::Context::default();
         let (inv, mut st) = note_fixture();
