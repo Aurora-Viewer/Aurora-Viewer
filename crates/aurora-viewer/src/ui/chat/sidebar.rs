@@ -598,9 +598,19 @@ fn voice_panel_wanted(world: &World, st: &ChatUi) -> bool {
         .is_some_and(|c| st.contacts || st.selected != Some(c.conversation()))
 }
 
+/// Height of the call panel, its 8 px padding included (the mockup's
+/// `.vpanel`): the title, the conversation and its time, then the 28 px
+/// buttons; in the rail the three buttons stacked.
 fn voice_panel_h(rail: bool) -> f32 {
-    if rail { 110.0 } else { 74.0 }
+    if rail {
+        8.0 + 3.0 * VOICE_BUTTON_H + 2.0 * 4.0 + 8.0
+    } else {
+        8.0 + 18.0 + 4.0 + 15.0 + 6.0 + VOICE_BUTTON_H + 8.0
+    }
 }
+
+/// The call panel's buttons (the mockup's `.vpanel .rb`).
+const VOICE_BUTTON_H: f32 = 28.0;
 
 fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, rail: bool) {
     let Some(call) = world.calls.active.as_ref() else {
@@ -637,6 +647,7 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
             RichText::new(text).size(11.0).color(p.muted),
             ui.available_width(),
         ));
+        ui.add_space(2.0);
     }
     let layout = if rail {
         egui::Layout::top_down(egui::Align::Center)
@@ -649,7 +660,7 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
         } else {
             (ui.available_width() - 12.0) / 3.0
         };
-        let size = egui::vec2(w, 26.0);
+        let size = egui::vec2(w, VOICE_BUTTON_H);
         if let Some(on) = st.mic {
             let (icon, tip) = if on {
                 ("microphone-filled", aurora_i18n::tr!("ui-call-mute"))
