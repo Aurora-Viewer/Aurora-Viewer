@@ -427,7 +427,10 @@ impl View {
         // ---- the content takes its whole height; rows are placed in it.
         // What changed above the viewport is not applied to this frame's
         // positions: the scroll offset follows at the next one.
-        let (rect, content) = ui.allocate_exact_size(egui::vec2(width, self.total), egui::Sense::click_and_drag());
+        // at least the height in sight: a short conversation's empty dark
+        // area under its lines selects too, never moves the window
+        let height = self.total.max(viewport.height());
+        let (rect, content) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
         let base = rect.top() - shift_above;
         let (view_top, view_bottom) = (viewport.top() + shift_above, viewport.bottom() + shift_above);
         if let Some(r) = target.and_then(|t| self.rows.get(t)) {

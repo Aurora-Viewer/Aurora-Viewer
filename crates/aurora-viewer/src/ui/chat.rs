@@ -2756,6 +2756,21 @@ mod tests {
         frame(&mut st, vec![egui::Event::PointerMoved(at), button(at, true)]);
         frame(&mut st, vec![button(at, false)]);
         assert!(st.selection.1.is_empty());
+        // from the empty dark area under a short conversation up to its
+        // first line: the window does not move, every line is taken
+        let (texts, _) = frame(&mut st, Vec::new());
+        let last = painted(&texts, "bye now").rect;
+        let empty = egui::pos2(last.center().x, last.bottom() + 80.0);
+        frame(&mut st, vec![egui::Event::PointerMoved(empty), button(empty, true)]);
+        for k in 1..=4 {
+            let at = empty + (from - empty) * (k as f32 / 4.0);
+            frame(&mut st, vec![egui::Event::PointerMoved(at)]);
+        }
+        let (texts, _) = frame(&mut st, vec![button(from, false)]);
+        assert_eq!(painted(&texts, "hello there").rect, first, "the window stayed in place");
+        let (_, out) = frame(&mut st, vec![egui::Event::Copy]);
+        let text = copied(&out).expect("the selection from the empty area is copied");
+        assert_eq!(text.lines().count(), 3, "{text:?}");
     }
 
     #[test]
