@@ -1,0 +1,55 @@
+name: Bug Report
+description: Report a bug in Aurora
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Note:** This issue is PUBLIC. Remove private information before submitting.
+        > Aurora's Report a bug window can prepare this text. Attach only the chosen screenshot from its public folder, never `private-do-not-upload` or a full log.
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: What steps are required to reproduce the problem?
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: A clear and concise description of what you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: A clear and concise description of what actually happened.
+    validations:
+      required: true
+
+  - type: input
+    id: viewer-version
+    attributes:
+      label: Viewer version
+      placeholder: e.g., v2.4.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: system-info
+    attributes:
+      label: Operating system and graphics card (if it is a rendering issue)
+      placeholder: e.g., Windows 11, NVIDIA GeForce RTX 3080
+    validations:
+      required: false
