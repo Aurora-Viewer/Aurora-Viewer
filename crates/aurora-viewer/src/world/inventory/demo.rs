@@ -177,6 +177,56 @@ pub fn seed_received(inv: &mut Inventory, agent: Uuid) {
     );
 }
 
+/// `AURORA_DEMO_INVENTORY=received-big`: a long-time buyer's Received Items,
+/// `folders` purchases of `items` items each, to measure the tab's cost.
+pub fn seed_received_big(inv: &mut Inventory, agent: Uuid, folders: u128, items: u128) {
+    seed_received(inv, agent);
+    let inbox = Uuid::from_u128(8_300_000);
+    for f in 0..folders {
+        let id = Uuid::from_u128(8_400_000 + f);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent: inbox,
+                    name: format!("Marketplace purchase {f:03}"),
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&inbox) {
+            folder.children.push(id);
+        }
+        inv.add_items(
+            (0..items)
+                .map(|i| {
+                    let item = 9_000_000 + f * 1_000 + i;
+                    InvItem {
+                        id: Uuid::from_u128(item),
+                        parent: id,
+                        asset_id: Uuid::from_u128(item + 500_000),
+                        name: format!("Purchase {f:03} item {i:02}"),
+                        asset_type: 6,
+                        inv_type: 6,
+                        owner: agent,
+                        creator: agent,
+                        base_mask: super::actions::COPY | super::actions::MODIFY | super::actions::TRANSFER,
+                        owner_mask: super::actions::COPY | super::actions::MODIFY | super::actions::TRANSFER,
+                        ..Default::default()
+                    }
+                })
+                .collect(),
+        );
+    }
+}
+
 pub fn target(view: &str) -> Option<Uuid> {
     Some(Uuid::from_u128(match view {
         "folder"

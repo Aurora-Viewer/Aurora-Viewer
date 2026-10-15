@@ -280,6 +280,8 @@ pub struct InventoryUi {
     reveal: Option<Uuid>,
     reveal_path: HashSet<Uuid>,
     roots_seen: HashSet<Uuid>,
+    /// Received Items folders already shown once (closed on their arrival).
+    received_seen: HashSet<Uuid>,
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     visible: Vec<Uuid>,
@@ -411,6 +413,14 @@ impl InventoryUi {
         ids.sort();
         ids
     }
+    /// The list is the flattened result tree, drawn row by row in sight only
+    /// (`search_scroll`): a search or a filter, and every tab but the plain
+    /// inventory — Received Items included, whose purchases pile up into
+    /// thousands of rows.
+    fn result_view(&self) -> bool {
+        !self.search.trim().is_empty() || self.filters.active() || self.links_filter.is_some() || self.tab >= RECEIVED_TAB
+    }
+
     fn select(&mut self, ui: &egui::Ui, id: Uuid, secondary: bool) {
         ui.memory_mut(|m| m.request_focus(clipboard::focus_id(self)));
         if secondary && self.selection.contains(&id) {
@@ -419,7 +429,7 @@ impl InventoryUi {
         }
         let mods = ui.input(|i| i.modifiers);
         if mods.shift && !secondary {
-            let order = if !self.search.trim().is_empty() || self.filters.active() || self.links_filter.is_some() || self.tab >= 2 {
+            let order = if self.result_view() {
                 &self.result_tree.order
             } else {
                 &self.previous_visible
@@ -1161,11 +1171,11 @@ fn inventory_contents(
     } else {
         inv.root
     };
-    let filtered = !st.search.trim().is_empty() || st.tab >= 2 || st.links_filter.is_some() || st.filters.active();
+    let filtered = st.result_view();
     if root.is_nil() {
         st.fetch_all = false;
         st.view.results.clear();
-    } else if filtered || st.tab == RECEIVED_TAB {
+    } else if filtered {
         request_search(inv, root, st, prefs);
     }
     if filtered && !root.is_nil() {
@@ -1198,17 +1208,26 @@ fn inventory_contents(
             return;
         }
         if filtered {
+            if st.tab == RECEIVED_TAB {
+                // LLInboxInventoryPanel: the purchases are ordinary folder
+                // views, closed until opened; each one closes once, when it
+                // first shows up, and then keeps what the resident chose
+                let fresh: Vec<Uuid> = st
+                    .view
+                    .result_folders()
+                    .filter(|id| *id != root && st.received_seen.insert(*id))
+                    .collect();
+                if !fresh.is_empty() {
+                    st.result_tree.collapse_folders(fresh, RECEIVED_TAB);
+                }
+            }
             prepare_result_tree(st, inv, root);
             search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
             return;
         }
         let mut scroll = list_scroll(ui, list_h).show(ui, |ui| {
             let expand = st.expand_all.take();
-            if st.tab == RECEIVED_TAB {
-                folder_contents(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
-            } else {
-                folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
-            }
+            folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
         });
         drag::navigation::scroll(ui, &mut scroll, st.ui_id);
     });
@@ -2026,6 +2045,70 @@ mod tests {
             );
             assert_eq!(st.search, "link-query");
         }
+    }
+
+    /// A long-time buyer's Received Items: the purchases arrive closed, one
+    /// opened stays open, and only the rows in sight are drawn, even with
+    /// everything expanded (the tab used to lay out its thousands of rows
+    /// every frame, all open: ~17 ms of interface for 3,000 items).
+    #[test]
+    fn received_purchases_start_closed_and_only_rows_in_sight_are_drawn() {
+        let ctx = egui::Context::default();
+        let mut inv = view_inventory(false);
+        let agent = Uuid::from_u128(2);
+        crate::world::inventory::demo::seed_received_big(&mut inv, agent, 150, 20);
+        let facts = Facts {
+            agent,
+            worn: Default::default(),
+            worn_labels: Default::default(),
+            points: vec![],
+            appearance_busy: false,
+            active_gestures: Default::default(),
+            touchable: Default::default(),
+            names: Default::default(),
+        };
+        let mut prefs = InventoryPreferences::default();
+        let mut st = InventoryUi {
+            tab: RECEIVED_TAB,
+            ..Default::default()
+        };
+        let mut actions = vec![];
+        let mut frame = |inv: &mut Inventory, st: &mut InventoryUi| {
+            st.visible.clear();
+            headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(440.0, 610.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    inventory_contents(
+                        ui,
+                        &crate::theme::Theme::default().palette(),
+                        &Icons::default(),
+                        inv,
+                        st,
+                        &mut prefs,
+                        &facts,
+                        &mut actions,
+                    )
+                },
+            ));
+        };
+        frame(&mut inv, &mut st);
+        frame(&mut inv, &mut st);
+        // the demo purchase and the 150 big ones, all closed
+        assert_eq!(st.result_tree.rows.len(), 151);
+        assert!(st.result_tree.rows.iter().all(|r| r.folder && !r.open));
+        let first = Uuid::from_u128(8_400_000);
+        st.result_tree.toggle(first, RECEIVED_TAB);
+        frame(&mut inv, &mut st);
+        frame(&mut inv, &mut st);
+        assert_eq!(st.result_tree.rows.len(), 171, "the opened purchase stays open");
+        st.expand_all = Some(true);
+        frame(&mut inv, &mut st);
+        frame(&mut inv, &mut st);
+        assert!(st.result_tree.rows.len() > 3_100);
+        assert!(st.visible.len() < 60, "{} rows drawn", st.visible.len());
     }
 
     #[test]
