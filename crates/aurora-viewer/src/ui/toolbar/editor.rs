@@ -23,14 +23,17 @@ const TILE_H: f32 = 27.0;
 const TILE_ICON: f32 = 15.0;
 const TILE_PAD: f32 = 8.0;
 const TILE_FONT: f32 = 11.5;
-/// The grid shows six rows, the mockup's, and scrolls for the others.
-const ROWS_SHOWN: usize = 6;
-
 /// The window's width: the mockup's 820 px (760 on a screen under 1408 px),
 /// never wider than the screen.
 fn width(screen: Rect) -> f32 {
     let wanted: f32 = if screen.width() < 1408.0 { 760.0 } else { 820.0 };
     wanted.min(screen.width() - 32.0).max(320.0)
+}
+
+/// The rows of tiles the grid shows before it scrolls: the mockup's six (five
+/// on a screen under 1408 px).
+fn rows_shown(screen: Rect) -> usize {
+    if screen.width() < 1408.0 { 5 } else { 6 }
 }
 
 /// Where it opens: centred (floater_toybox.xml `positioning="centered"`),
@@ -237,7 +240,8 @@ impl ToolbarUi {
                 let tile_w = ((full - TILE_GAP * (COLUMNS - 1) as f32) / COLUMNS as f32).floor();
                 let rows = shown.len().div_ceil(COLUMNS).max(1);
                 let height = rows as f32 * TILE_H + (rows - 1) as f32 * TILE_GAP;
-                let window = ROWS_SHOWN as f32 * TILE_H + (ROWS_SHOWN - 1) as f32 * TILE_GAP;
+                let shown_rows = rows_shown(screen);
+                let window = shown_rows as f32 * TILE_H + (shown_rows - 1) as f32 * TILE_GAP;
                 egui::ScrollArea::vertical()
                     .id_salt("toolbar_tiles")
                     .max_height(window)
@@ -410,11 +414,12 @@ fn ghost(ctx: &egui::Context, p: &Palette, button: &ToolButton, pointer: egui::P
 
 /// The settings of a demo run (`AURORA_DEMO_TOOLBAR`): `custom` is the
 /// mockup's "custom" state (Environments, Radar and Teleport history in the
-/// left bar, Performance out of the dock); `labels` adds the dock's icons
+/// left bar, Performance out of the dock); `side` the same bars without the
+/// window; `right` them in the right bar; `labels` adds the dock's icons
 /// and labels and the left bar's labels. Never saved.
 pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
     let Some(mode) = demo_mode() else { return };
-    if !matches!(mode, "custom" | "labels" | "right") {
+    if !matches!(mode, "custom" | "side" | "labels" | "right") {
         return;
     }
     let side: Vec<ToolButton> = ["myenvironments", "radar", "teleport_history"]
@@ -453,6 +458,9 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
     let Some(mode) = demo_mode() else {
         return Vec::new();
     };
+    if mode == "side" {
+        return Vec::new();
+    }
     if frame == 300 {
         let size = Vec2::new(width(ctx.content_rect()), 420.0);
         widgets::place_floater(ctx, WINDOW, default_pos(ctx), size);

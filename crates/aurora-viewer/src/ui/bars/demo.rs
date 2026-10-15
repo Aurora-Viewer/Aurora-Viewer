@@ -18,7 +18,9 @@
 //! `sysnet` (Performance opened from the island at frame 300, by its frame
 //! rate / its network, under the island). The hidden interface: `hidden`
 //! (hidden at frame 600, its hint shown), `peek` (hidden, the pointer held at
-//! the top edge: the top islands back); with `legacy`, Firestorm's question.
+//! the top edge: the top islands back), `peekleft` (hidden, the pointer held
+//! at the left edge: the left toolbar back); with `legacy`, Firestorm's
+//! question.
 //! `normal` or nothing
 //! else: the
 //! islands as set. With any word the voice light is the mockup's
@@ -69,6 +71,8 @@ pub struct DemoBars {
     pub perf: Option<Perf>,
     /// The interface hidden at frame 600; true: the pointer at the top edge.
     pub hidden: Option<bool>,
+    /// Hidden, the pointer held at the left edge: the left toolbar back.
+    pub peek_left: bool,
 }
 
 /// How the demo opens Performance from the system island.
@@ -132,6 +136,10 @@ pub fn parse(value: &str) -> DemoBars {
             "sysnet" => d.perf = Some(Perf::Network),
             "hidden" => d.hidden = Some(false),
             "peek" => d.hidden = Some(true),
+            "peekleft" => {
+                d.hidden = Some(false);
+                d.peek_left = true;
+            }
             "rowdrag" => {
                 d.access = Some(crate::settings::FavoritesAccess::Row);
                 d.row_drag = true;
@@ -177,6 +185,8 @@ mod tests {
         assert_eq!(d.rights_text, Some(true));
         assert_eq!(d.open, Some(Open::Place));
         assert_eq!(parse("legacy").classic, Some(true));
+        let peek = parse("peekleft");
+        assert!(peek.peek_left && peek.hidden == Some(false) && peek.classic == Some(false));
         assert_eq!(
             parse("normal"),
             DemoBars {

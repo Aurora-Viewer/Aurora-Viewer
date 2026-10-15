@@ -1538,10 +1538,20 @@ fn tool_button(
     let icon_size = look.icon;
     let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter();
-    if let Some(fill) = tool_fill(p, active, resp.hovered()).or_else(|| look.editing.then(|| p.raised.gamma_multiply(0.55))) {
+    // a saved Firestorm command Aurora does not run yet: very dimmed, with
+    // neither face nor pill under the pointer, as in the window
+    let ready = super::toolbar::ready(command);
+    let hovered = ready && resp.hovered();
+    if let Some(fill) = tool_fill(p, ready && active, hovered).or_else(|| look.editing.then(|| p.raised.gamma_multiply(0.55))) {
         painter.rect_filled(rect, radius, fill);
     }
-    let tint = if active || resp.hovered() { p.ink } else { p.muted };
+    let tint = if !ready {
+        p.muted_dim.gamma_multiply(0.55)
+    } else if active || hovered {
+        p.ink
+    } else {
+        p.muted
+    };
     let (icon_rect, text) = content(ui, rect, look, label);
     if let Some(ir) = icon_rect
         && let Some(t) = icons.get(icon)
@@ -2054,6 +2064,8 @@ pub(crate) fn toolbar_row(
                 value0 = super::toolbar::label(b).to_string(),
                 unread = format!("{}", row.unread)
             )
+        } else if !super::toolbar::ready(&b.command) {
+            format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
         } else {
             super::toolbar::label(b).to_owned()
         };

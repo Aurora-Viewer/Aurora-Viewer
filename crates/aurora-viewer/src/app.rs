@@ -8590,8 +8590,8 @@ impl App {
                 self.toolbar_ui.favorites_access = self.favorites_access();
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
                 let mut demo_toolbar = None;
-                // AURORA_DEMO_TOOLBAR=custom|labels|right: the mockup's side
-                // bar, for this run only
+                // AURORA_DEMO_TOOLBAR=custom|side|labels|right: the mockup's
+                // side bar, for this run only
                 if self.demo && std::env::var_os("AURORA_DEMO_TOOLBAR").is_some() {
                     let layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
                     let mut t = self.settings.toolbar.clone().unwrap_or_default();
@@ -8671,7 +8671,12 @@ impl App {
                         mouselook: self.camera.mouselook(),
                         show_in_mouselook: self.settings.camera.show_interface_in_mouselook,
                         chat_active: false,
-                        pointer: ctx.input(|i| i.pointer.hover_pos()),
+                        // AURORA_DEMO_BARS=peekleft: the pointer at the left edge
+                        pointer: if self.demo && ui::bars::demo::get().peek_left {
+                            Some(egui::pos2(screen_rect.left(), screen_rect.center().y))
+                        } else {
+                            ctx.input(|i| i.pointer.hover_pos())
+                        },
                         screen: screen_rect,
                         top_rows: 0.0,
                         bottom_top,

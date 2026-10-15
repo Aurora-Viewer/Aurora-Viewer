@@ -344,6 +344,44 @@ mod tests {
         assert_eq!(ui.bars(&classic), NONE, "no edge with Firestorm's bars");
     }
 
+    /// The left and right toolbars go with the interface; with the islands,
+    /// a side edge brings its toolbar back while the pointer stays on it
+    /// (its inner side last frame, 8 px past it) or a menu is open; with
+    /// Firestorm's bars, the shortcut only; in mouselook, as the other bars.
+    #[test]
+    fn a_side_edge_brings_its_toolbar_back() {
+        let edges = [50.0, 1486.0];
+        let mut ui = Interface::default();
+        assert_eq!(ui.sides(&frame(None), edges), [true, true]);
+        ui.hidden = true;
+        assert_eq!(ui.sides(&frame(Some(Pos2::new(700.0, 400.0))), edges), [false, false]);
+        assert_eq!(
+            ui.sides(&frame(Some(Pos2::new(40.0, 400.0))), edges),
+            [false, false],
+            "not come from the edge"
+        );
+        assert_eq!(ui.sides(&frame(Some(Pos2::new(1.0, 400.0))), edges), [true, false]);
+        assert_eq!(
+            ui.sides(&frame(Some(Pos2::new(55.0, 400.0))), edges),
+            [true, false],
+            "on the toolbar"
+        );
+        let mut menu = frame(Some(Pos2::new(700.0, 400.0)));
+        menu.menu_open = true;
+        assert_eq!(ui.sides(&menu, edges), [true, false], "a menu of its own keeps it");
+        assert_eq!(ui.sides(&frame(Some(Pos2::new(700.0, 400.0))), edges), [false, false]);
+        assert_eq!(ui.sides(&frame(Some(Pos2::new(1535.0, 400.0))), edges), [false, true]);
+        let mut classic = frame(Some(Pos2::new(1.0, 400.0)));
+        classic.classic = true;
+        assert_eq!(ui.sides(&classic, edges), [false, false], "no edge with Firestorm's bars");
+        let mut ml = frame(None);
+        ml.mouselook = true;
+        ui.hidden = false;
+        assert_eq!(ui.sides(&ml, edges), [false, false]);
+        ml.show_in_mouselook = true;
+        assert_eq!(ui.sides(&ml, edges), [true, true]);
+    }
+
     #[test]
     fn the_hint_lasts_a_few_seconds() {
         let ui = Interface {
