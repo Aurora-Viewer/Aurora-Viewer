@@ -4652,6 +4652,7 @@ demo-scale-scale-alpha-mask = Échelle (SCALE), masque alpha
 ui-environment-hdr-scale = Échelle HDR
 ui-land-media-automatic-scaling = Échelle automatique
 ui-options-interface-scale = Échelle de l'interface
+ui-options-interface-scale-help = Relâchez le curseur pour appliquer la taille de l'interface. Vous pouvez aussi saisir une valeur et appuyer sur Entrée.
 ui-environment-personal-lighting = Éclairage personnel
 common-personal-lighting = Éclairage personnel…
 ui-options-listen = Écouter

@@ -6,6 +6,7 @@ mod camera;
 mod commands;
 mod dof;
 mod privacy;
+mod scale;
 pub(crate) mod sections;
 
 use super::fonts::{self, SystemFont};
@@ -23,6 +24,7 @@ pub enum Capture {
 #[derive(Default)]
 pub struct OptionsUi {
     pub tab: usize,
+    interface_scale: scale::ScaleSlider,
     /// The account's content ceiling and the rating it wants, while logged
     /// in (set by the app).
     pub maturity: Option<aurora_net::search::AgentAccess>,
@@ -1751,9 +1753,13 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-traffic-indicator-help"),
                     |ui| toggle(ui, p, &mut s.show_net_stats),
                 );
-                c |= row(ui, p, aurora_i18n::tr!("ui-options-interface-scale"), "", |ui| {
-                    slider(ui, &mut s.ui_scale, 0.75..=2.0, "×")
-                });
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-interface-scale"),
+                    aurora_i18n::tr!("ui-options-interface-scale-help"),
+                    |ui| st.interface_scale.show(ui, &mut s.ui_scale),
+                );
                 c |= row(
                     ui,
                     p,
