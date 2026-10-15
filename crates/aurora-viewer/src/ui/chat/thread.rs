@@ -575,11 +575,11 @@ mod tests {
 
     #[test]
     fn our_name_counts_as_a_word_only() {
-        let me = vec!["odessa".to_owned(), "odessa.draekavik".to_owned()];
-        assert!(names_in("hey Odessa, ready?", &me));
-        assert!(names_in("ODESSA!", &me));
-        assert!(names_in("ask odessa.draekavik", &me));
-        assert!(!names_in("odessan wine", &me));
+        let me = vec!["nova".to_owned(), "nova.exemple".to_owned()];
+        assert!(names_in("hey Nova, ready?", &me));
+        assert!(names_in("NOVA!", &me));
+        assert!(names_in("ask nova.exemple", &me));
+        assert!(!names_in("novan wine", &me));
         assert!(!names_in("nobody here", &me));
         // too short a name never marks
         assert!(!names_in("an ox", &["ox".to_owned()]));
