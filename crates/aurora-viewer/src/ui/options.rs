@@ -2209,6 +2209,21 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-left-right-strafe-instead-of-turning-shift-reverses-this"),
                     |ui| toggle(ui, p, &mut s.arrows_strafe),
                 );
+                // Firestorm › Move & View › Movement (panel_preferences_move.xml)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-arrow-keys-always-move"),
+                    aurora_i18n::tr!("ui-options-arrow-keys-always-move-help"),
+                    |ui| toggle(ui, p, &mut s.arrow_keys_always_move),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-letter-keys-move"),
+                    aurora_i18n::tr!("ui-options-letter-keys-move-help"),
+                    |ui| toggle(ui, p, &mut s.letter_keys_move),
+                );
                 row(
                     ui,
                     p,
