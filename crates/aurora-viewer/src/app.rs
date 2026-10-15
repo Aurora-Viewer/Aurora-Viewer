@@ -11665,6 +11665,16 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
+                // a press in the world takes the keyboard from the fields, also
+                // when it turns into a drag (LLTool::handleAnyMouseClick:
+                // setKeyboardFocus(NULL)); egui lets it go on a click only
+                if pressed && !over_ui && self.in_world() {
+                    self.egui_ctx.memory_mut(|m| {
+                        if let Some(id) = m.focused() {
+                            m.surrender_focus(id);
+                        }
+                    });
+                }
                 // (in its turn behind a click that waits for its depth)
                 self.mouse_input(*button, pressed, over_ui);
             }

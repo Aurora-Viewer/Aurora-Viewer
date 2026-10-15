@@ -2052,14 +2052,17 @@ pub(crate) fn bar_input(
         .response
         .response
         .on_hover_text(aurora_i18n::tr!("ui-chat-enter-to-talk-ctrl-enter-to-shout-shift-enter"));
-    if st.focus_request {
+    // the Enter that asked for the keyboard (start_chat) is not one typed
+    // in the field: taken as Enter on an empty bar, it handed the keyboard
+    // straight back to the world
+    let focusing = std::mem::take(&mut st.focus_request);
+    if focusing {
         resp.request_focus();
         cursor_to_end(ui.ctx(), resp.id, &st.input);
-        st.focus_request = false;
     }
     st.has_focus = resp.has_focus();
     // Modified Enter does not surrender egui's single-line field focus.
-    let enter = (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
+    let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
     if enter {
         resp.surrender_focus();
     }
