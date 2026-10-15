@@ -3,22 +3,11 @@ description: Report a bug in Aurora
 title: "[Bug]: "
 labels: ["BUG REPORT"]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        > **Note:** This issue is PUBLIC. Remove private information before submitting.
-        > Aurora's Report a bug window can prepare this text. Attach only the chosen screenshot from its public folder, never `private-do-not-upload` or a full log.
-
   - type: textarea
     id: steps-to-reproduce
     attributes:
       label: Steps to reproduce
       description: What steps are required to reproduce the problem?
-      placeholder: |
-        1. Go to '...'
-        2. Click on '....'
-        3. Scroll down to '....'
-        4. See error
     validations:
       required: true
 
@@ -50,7 +39,7 @@ body:
     id: system-info
     attributes:
       label: Operating system and graphics card (if it is a rendering issue)
-      placeholder: e.g., Windows 11, NVIDIA GeForce RTX 3080
+      placeholder: e.g., Windows 11, Intel I9-14900K, NVIDIA GeForce RTX 3080, 32GB
     validations:
       required: false
 
