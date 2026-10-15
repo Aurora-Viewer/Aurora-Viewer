@@ -762,24 +762,3 @@ fn toolbar_drop_anywhere_on_the_window_removes_the_button() {
         assert_eq!(bench.settings.location("people", &layout()), None);
     }
 }
-
-#[test]
-fn zz_debug_tile() {
-    let mut bench = Bench::default();
-    bench.state.open = true;
-    for _ in 0..4 {
-        bench.frame(vec![]);
-    }
-    let build = bench.tile_rect("build");
-    let window = bench.ctx.memory(|m| m.area_rect(egui::Id::new("toolbar_editor")));
-    let r = bench.ctx.read_response(egui::Id::new(("toolbar_tile", "build")));
-    eprintln!("build {build:?} window {window:?} resp {:?}", r.map(|r| (r.rect, r.sense, r.enabled(), r.interact_rect)));
-    bench.frame(vec![egui::Event::PointerMoved(build.center())]);
-    let r = bench.ctx.read_response(egui::Id::new(("toolbar_tile", "build")));
-    eprintln!("hover {:?}", r.map(|r| (r.hovered(), r.contains_pointer())));
-    eprintln!("layer {:?}", bench.ctx.layer_id_at(build.center()));
-    bench.pointer(build.center(), true, false);
-    let r = bench.ctx.read_response(egui::Id::new(("toolbar_tile", "build")));
-    eprintln!("after press {:?}", r.map(|r| (r.hovered(), r.is_pointer_button_down_on(), r.contains_pointer())));
-    panic!("debug");
-}

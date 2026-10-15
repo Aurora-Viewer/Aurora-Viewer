@@ -356,6 +356,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "import_meshes" => "cube-3d-sphere",
         "import_local" => "eye-filled",
         "import_settings" => "settings-filled",
+        "toolbar_editor" => "layout-bottombar-filled",
         _ => "layout-grid-filled",
     }
 }

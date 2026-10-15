@@ -204,9 +204,8 @@ impl ToolbarUi {
         let w = width(screen);
         let islands = self.islands;
         let dragged = egui::DragAndDrop::payload::<Drag>(ctx);
-        let mut body = None;
+        let was_open = self.open;
         widgets::Floater::new(WINDOW, aurora_i18n::tr!("toolbar-title"), default_pos(ctx), Vec2::new(w, 420.0))
-            .framed_header("layout-bottombar-filled")
             .help(aurora_i18n::tr!("toolbar-help-modes"))
             .auto_height()
             .show(ctx, p, &mut self.open, |ui| {
@@ -224,7 +223,10 @@ impl ToolbarUi {
                 );
                 let all = super::catalogue(layout);
                 let hint = aurora_i18n::tr!("toolbar-search", count = all.len().to_string());
-                widgets::pills::search_box(ui, p, &mut self.search, &hint, ui.available_width());
+                // in a row: the field's own layout would take the window's height
+                ui.horizontal(|ui| {
+                    widgets::pills::search_box(ui, p, &mut self.search, &hint, ui.available_width());
+                });
                 let filter = super::sort_key(self.search.trim());
                 let shown: Vec<&ToolButton> = all
                     .iter()
@@ -327,15 +329,15 @@ impl ToolbarUi {
                         }
                     });
                 });
-                body = Some(ui.min_rect());
             });
         // a toolbar button dropped on the window goes back to it
         // (LLFloaterToybox::handleDragAndDrop on its read-only toolbar)
-        if let (Some(body), Some(drag)) = (body, dragged.as_ref())
+        let window = ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW)));
+        if let (true, Some(window), Some(drag)) = (was_open, window, dragged.as_ref())
             && drag.from.is_some()
             && !settings.locked
             && ctx.input(|i| i.pointer.any_released())
-            && ctx.pointer_interact_pos().is_some_and(|pos| body.expand(12.0).contains(pos))
+            && ctx.pointer_interact_pos().is_some_and(|pos| window.contains(pos))
         {
             self.pending = Some(Edit::Remove(drag.button.command.clone()));
             egui::DragAndDrop::clear_payload(ctx);
