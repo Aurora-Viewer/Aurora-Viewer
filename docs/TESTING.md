@@ -2895,6 +2895,11 @@ offline; the files and snapshots uploaded in demo stay offline.
   search limited to its Marketplace box and state with no received folder. The
   list and the Collapse / Expand buttons keep the same presentation; no
   personal folder must appear in this tab.
+- `received-big`, `received-big-open`: a long-time buyer's Received
+  purchases (150 purchases of 20 items). The purchases arrive closed, open
+  and close one by one, and only the rows in sight are drawn; `-open`
+  expands them all. With `AURORA_PROFILE=1`, `ui` stays under 1 ms (it was
+  about 17 ms, all open, before the tab used the result tree).
 - `animation-open`, `animation-properties`, `image`, `image-photo`,
   `image-picker`: the five reference panels.
 - `note-open`, `note-new`, `note-readonly`: editor of an existing note,
