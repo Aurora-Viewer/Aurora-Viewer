@@ -1,7 +1,7 @@
 name: Feature Request
 description: Suggest a feature or an improvement for Aurora Viewer
 title: "[Feature]: "
-labels: ["feature-request"]
+labels: ["FEATURE REQUEST"]
 body:
   - type: markdown
     attributes:
@@ -41,5 +41,16 @@ body:
     attributes:
       label: Viewer version
       placeholder: e.g., v2.4.1
+    validations:
+      required: false
+
+  - type: upload
+    id: attachments
+    attributes:
+      label: Attachments (Mockups, Screenshots, or Reference Files)
+      description: |
+        **WARNING:** All uploaded files are **PUBLIC** and visible to everyone on the internet. 
+        Do **NOT** upload sensitive information, private logs, passwords, or personal data. 
+        Attach only public mockups or reference screenshots.
     validations:
       required: false
