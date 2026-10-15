@@ -362,6 +362,9 @@ const MAX_CHAT: usize = 2000;
 /// An arrival without teleport this far from where the agent is was not a
 /// walk into a neighbour: the agent is placed as for a teleport.
 const CROSSING_MAX_GAP: f32 = 64.0;
+/// The typing notices of a conversation with one resident (llinstantmessage.h).
+pub const IM_TYPING_START: u8 = 41;
+pub const IM_TYPING_STOP: u8 = 42;
 
 /// "(Saved <date>) " before a message kept while we were offline, with the
 /// moment it was sent (Second Life time, like the times of the chat).
@@ -2356,7 +2359,18 @@ impl World {
     }
 
     fn on_im(&mut self, im: InstantMessage) {
-        if self.im_blocked(&im) || self.on_session_im(&im) || self.on_status_im(&im) || self.on_im_offer(&im) {
+        if self.im_blocked(&im) {
+            return;
+        }
+        // IM_TYPING_START / STOP (llimprocessing.cpp: processIMTypingStart /
+        // Stop): "is typing" in their conversation, never a line
+        if matches!(im.dialog, IM_TYPING_START | IM_TYPING_STOP) {
+            if !im.from_agent_id.is_nil() {
+                self.social.set_typing(im.from_agent_id, im.dialog == IM_TYPING_START);
+            }
+            return;
+        }
+        if self.on_session_im(&im) || self.on_status_im(&im) || self.on_im_offer(&im) {
             return;
         }
         // VoiceCallsFriendsOnly: a non-friend's message is neither shown nor
@@ -2372,6 +2386,8 @@ impl World {
             return;
         }
         if im.dialog == 0 && !im.from_agent_id.is_nil() {
+            // their message ends their "is typing" (LLIMModel::addMessage)
+            self.social.set_typing(im.from_agent_id, false);
             // LLIMMgr::addMessage: the sender joins the recent people
             self.met(im.from_agent_id);
             // an ordinary message: their automatic response is behind them

@@ -67,7 +67,15 @@ pub struct Social {
     /// (IM_DO_NOT_DISTURB_AUTO_RESPONSE), until their next ordinary IM: a
     /// hint of do not disturb for their status dot (`ui/presence.rs`).
     pub auto_responded: std::collections::HashSet<Uuid>,
+    /// Residents typing in their conversation with us (IM_TYPING_START),
+    /// since their last start: FSFloaterIM::processIMTyping, cleared by
+    /// IM_TYPING_STOP, their message or OTHER_TYPING_TIMEOUT.
+    typing: HashMap<Uuid, std::time::Instant>,
 }
+
+/// How long a resident's "is typing" lasts without a new start
+/// (OTHER_TYPING_TIMEOUT, fsfloaterim.cpp).
+pub const OTHER_TYPING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(9);
 
 pub fn format_name(first: &str, last: &str) -> String {
     if last.is_empty() || last.eq_ignore_ascii_case("resident") {
@@ -200,6 +208,20 @@ impl Social {
 
     pub fn total_unread(&self) -> usize {
         self.ims.iter().map(|s| s.unread).sum()
+    }
+
+    /// A resident started (true) or stopped typing to us.
+    pub fn set_typing(&mut self, id: Uuid, typing: bool) {
+        if typing {
+            self.typing.insert(id, std::time::Instant::now());
+        } else {
+            self.typing.remove(&id);
+        }
+    }
+
+    /// The resident is typing to us now.
+    pub fn is_typing(&self, id: &Uuid) -> bool {
+        self.typing.get(id).is_some_and(|t| t.elapsed() < OTHER_TYPING_TIMEOUT)
     }
 
     /// The conversation with unread lines whose last line is the newest.

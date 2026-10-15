@@ -1739,6 +1739,8 @@ pub fn show(
                                         clock,
                                         filter: &filter,
                                         find: &needle,
+                                        layout: view::Layout::Classic,
+                                        first_unread: None,
                                     },
                                     width,
                                 );

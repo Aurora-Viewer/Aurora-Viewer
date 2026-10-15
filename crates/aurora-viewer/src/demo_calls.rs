@@ -251,6 +251,7 @@ impl CallDemo {
             id: world.agent_id,
             level: if transmit { 0.4 } else { 0.0 },
             speaking: transmit,
+            muted: false,
         };
         if t < CONNECT {
             return Some((ChannelStatus::Connecting, vec![me]));
@@ -262,6 +263,8 @@ impl CallDemo {
             id,
             level: if talking(i, n) { 0.5 } else { 0.0 },
             speaking: talking(i, n),
+            // Tess muted by the group's moderator: her badge on the stage
+            muted: id == DEMO_TESS,
         };
         let mut members = vec![me];
         if call.p2p() {

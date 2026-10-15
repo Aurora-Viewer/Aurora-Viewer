@@ -23,7 +23,7 @@ pub enum Look {
 /// avatar plates' own settings are left as they are.
 pub fn set_all(s: &mut Settings, look: Look) {
     let aurora = look == Look::Aurora;
-    s.chat_style = if aurora { ChatStyle::Bubbles } else { ChatStyle::Legacy };
+    s.chat_style = if aurora { ChatStyle::Aurora } else { ChatStyle::Legacy };
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
     s.lookat.aim = if aurora { Aim::Point } else { Aim::Direction };
@@ -305,25 +305,39 @@ fn look_choice(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, au
     })
 }
 
+/// The Conversations window's four looks: Aurora's workspace, its compact
+/// rows, the bubbles, Firestorm's lines (the two Aurora ones in the accent).
+fn chat_style_choice(ui: &mut egui::Ui, p: &Palette, style: &mut ChatStyle) -> bool {
+    const STYLES: [ChatStyle; 4] = [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy];
+    let options = [
+        (aurora_i18n::tr!("ui-options-aurora-workspace"), true),
+        (aurora_i18n::tr!("ui-options-aurora-compact"), true),
+        (aurora_i18n::tr!("ui-options-aurora-bubbles"), true),
+        (aurora_i18n::tr!("ui-options-aurora-lines"), false),
+    ];
+    let size = widgets::segmented_size(ui, &options);
+    item(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-options-aurora-conversations"),
+        aurora_i18n::tr!("ui-options-aurora-conversations-help"),
+        size,
+        |ui| {
+            let mut selected = STYLES.iter().position(|s| s == style).unwrap_or(0);
+            let changed = widgets::segmented(ui, p, &mut selected, &options);
+            *style = STYLES[selected];
+            changed
+        },
+    )
+}
+
 /// `reset`: "Reset this section…" was clicked in the page's head.
 pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) -> bool {
     let mut c = hero(ui, p, s, reset);
     ui.add_space(14.0);
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-appearance"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        let mut legacy = s.chat_style == ChatStyle::Legacy;
-        if look_choice(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-aurora-conversations"),
-            aurora_i18n::tr!("ui-options-aurora-conversations-help"),
-            aurora_i18n::tr!("ui-options-aurora-bubbles"),
-            aurora_i18n::tr!("ui-options-aurora-lines"),
-            &mut legacy,
-        ) {
-            s.chat_style = if legacy { ChatStyle::Legacy } else { ChatStyle::Bubbles };
-            c = true;
-        }
+        c |= chat_style_choice(ui, p, &mut s.chat_style);
         between(ui, p);
         c |= look_choice(
             ui,
