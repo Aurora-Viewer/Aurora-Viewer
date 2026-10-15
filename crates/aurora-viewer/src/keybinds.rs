@@ -674,6 +674,38 @@ pub fn is_text_edit_key(code: KeyCode) -> bool {
     )
 }
 
+/// Keys the chat bar hands to the avatar instead of its text: the arrows,
+/// Page Up / Down (jump, crouch) and Home (fly).
+const CHAT_BAR_MOVE_KEYS: [KeyCode; 7] = [
+    KeyCode::ArrowLeft,
+    KeyCode::ArrowRight,
+    KeyCode::ArrowUp,
+    KeyCode::ArrowDown,
+    KeyCode::PageUp,
+    KeyCode::PageDown,
+    KeyCode::Home,
+];
+
+/// A key pressed while the chat bar has the keyboard moves the avatar when
+/// the bar is empty, or always with "Arrow keys always move me while in
+/// chat"; Ctrl + an arrow stays with the field (word moves). Port of
+/// LLViewerWindow::handleKey (indra/newview/llviewerwindow.cpp, FS
+/// Communication UI: FSNearbyChat::defaultChatBarHasFocus / IsIdle and
+/// ArrowKeysAlwaysMove, originally LGPL 2.1). The Conversations window's
+/// field never does, as in Firestorm.
+pub fn chat_bar_moves(code: KeyCode, ctrl: bool, bar_empty: bool, always_move: bool) -> bool {
+    let arrow = matches!(
+        code,
+        KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::ArrowUp | KeyCode::ArrowDown
+    );
+    CHAT_BAR_MOVE_KEYS.contains(&code) && !(arrow && ctrl) && (bar_empty || always_move)
+}
+
+/// The held inputs among those (the avatar's movement while typing).
+pub fn is_chat_bar_move_input(input: &Input) -> bool {
+    CHAT_BAR_MOVE_KEYS.iter().any(|code| *input == Input::key(*code))
+}
+
 /// Current modifier state.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Mods {
@@ -1031,6 +1063,36 @@ mod tests {
         // ...not on the field's own editing keys
         for code in [KeyCode::KeyC, KeyCode::KeyV, KeyCode::KeyZ, KeyCode::KeyQ, KeyCode::ArrowLeft] {
             assert!(is_text_edit_key(code), "{code:?}");
+        }
+    }
+
+    /// LLViewerWindow::handleKey: the chat bar hands the arrows, Page Up /
+    /// Down and Home to the avatar when empty or with ArrowKeysAlwaysMove,
+    /// keeps Ctrl + arrows and every other key.
+    #[test]
+    fn chat_bar_hands_movement_keys_to_the_avatar() {
+        let moving = [
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::ArrowUp,
+            KeyCode::ArrowDown,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+            KeyCode::Home,
+        ];
+        for code in moving {
+            assert!(chat_bar_moves(code, false, true, false), "{code:?} with an empty bar");
+            assert!(chat_bar_moves(code, false, false, true), "{code:?} with text, always move");
+            assert!(!chat_bar_moves(code, false, false, false), "{code:?} with text stays in it");
+            assert!(is_chat_bar_move_input(&Input::key(code)));
+        }
+        for code in [KeyCode::ArrowLeft, KeyCode::ArrowRight, KeyCode::ArrowUp, KeyCode::ArrowDown] {
+            assert!(!chat_bar_moves(code, true, true, true), "Ctrl + {code:?} stays with the field");
+        }
+        assert!(chat_bar_moves(KeyCode::PageUp, true, true, true));
+        for code in [KeyCode::KeyW, KeyCode::End, KeyCode::Enter, KeyCode::Space] {
+            assert!(!chat_bar_moves(code, false, true, true), "{code:?}");
+            assert!(!is_chat_bar_move_input(&Input::key(code)));
         }
     }
 
