@@ -1510,6 +1510,15 @@ showing rejection instead of moving them into the enclosing library root.
 Also test Shift selection, moving between inventory windows, folder/child
 selections, same-parent no-ops, Escape, no-copy items, and protection changes
 while hovering. Single-item world/preview drags continue to work.
+`inventory-move-scroll` adds 81 folders, drags the same selection below the
+viewport at frame 670, returns to the previously hidden last folder at 950 and
+drops at 1050 (capture at 1120). Check automatic downward scrolling and both
+textures arriving together. Also drag above the viewport to scroll upward and
+return to its middle to stop. This must work in filtered and partial inventories.
+`inventory-move-fold` hovers the stone folder until it opens, leaves at 760,
+then returns at 780 until it closes (capture at 750 for open, 900 for closed).
+An uninterrupted hover toggles only once; leaving/re-entering permits another
+toggle. Source folders can close without losing the dragged selection.
 No-copy resources cannot be applied to multiple selected objects. Restricted
 resources wait for object contents; click again after the loading message.
 Capture after frame 780 to allow previews to

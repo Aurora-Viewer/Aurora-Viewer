@@ -652,9 +652,12 @@ fn folder_row(
         }
         clipboard::demo_row(&r, state, id);
         task_drop::target(ui, p, &r, inv, id, prefs, actions);
-        if drag::target(ui, p, &r, inv, id, state, prefs, facts, actions) {
-            *open = true;
-        }
+        // Include the caret and icon while dragging, keeping their normal
+        // click gestures independent from selection and drag initiation.
+        let mut destination = r.clone();
+        destination.rect = destination.rect.union(resp.rect);
+        drag::target(ui, p, &destination, inv, id, state, prefs, facts, actions);
+        drag::navigation::folder(ui, &destination, state.ui_id, id, open);
         if first_open {
             scroll_to_row(ui, &r, egui::Align::Min);
         }
@@ -776,10 +779,11 @@ fn folder_window_contents(
             search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
             return;
         }
-        list_scroll(ui, list_h).show(ui, |ui| {
+        let mut scroll = list_scroll(ui, list_h).show(ui, |ui| {
             let expand = st.expand_all.take();
             folder_contents(ui, p, icons, inv, root, 1, expand, st, prefs, facts, actions);
         });
+        drag::navigation::scroll(ui, &mut scroll, st.ui_id);
     });
     task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
     drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
@@ -945,7 +949,7 @@ fn search_scroll(
     tree_spacing(ui);
     let total = st.result_tree.rows.len();
     let scroll = list_scroll(ui, height);
-    if total == 0 {
+    let mut out = if total == 0 {
         scroll.show(ui, |ui| {
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-inventory-no-results-in-the-loaded-folders"))
@@ -959,7 +963,9 @@ fn search_scroll(
             search_rows(ui, p, icons, inv, st, prefs, facts, actions, range);
             ui.set_min_width(st.result_width);
         })
-    }
+    };
+    drag::navigation::scroll(ui, &mut out, st.ui_id);
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1196,7 +1202,7 @@ fn inventory_contents(
             search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
             return;
         }
-        list_scroll(ui, list_h).show(ui, |ui| {
+        let mut scroll = list_scroll(ui, list_h).show(ui, |ui| {
             let expand = st.expand_all.take();
             if st.tab == RECEIVED_TAB {
                 folder_contents(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
@@ -1204,6 +1210,7 @@ fn inventory_contents(
                 folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
             }
         });
+        drag::navigation::scroll(ui, &mut scroll, st.ui_id);
     });
     task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
     drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);

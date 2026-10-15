@@ -16,11 +16,14 @@ enum Cargo {
     Selection(Arc<SelectionDrag>),
 }
 impl Cargo {
-    fn hover(r: &egui::Response) -> Option<Self> {
-        r.dnd_hover_payload::<SelectionDrag>()
+    fn hover(ui: &egui::Ui, r: &egui::Response) -> Option<Self> {
+        if !ui.rect_contains_pointer(r.rect) {
+            return None;
+        }
+        egui::DragAndDrop::payload::<SelectionDrag>(ui.ctx())
             .map(Self::Selection)
-            .or_else(|| r.dnd_hover_payload::<InvDrag>().map(Self::Item))
-            .or_else(|| r.dnd_hover_payload::<FolderDrag>().map(Self::Folder))
+            .or_else(|| egui::DragAndDrop::payload::<InvDrag>(ui.ctx()).map(Self::Item))
+            .or_else(|| egui::DragAndDrop::payload::<FolderDrag>(ui.ctx()).map(Self::Folder))
     }
     fn ids(&self) -> &[Uuid] {
         match self {
@@ -103,8 +106,6 @@ fn plan(
 #[derive(Clone)]
 struct Feedback {
     pass: u64,
-    response: egui::Id,
-    since: f64,
     cursor: egui::CursorIcon,
 }
 fn feedback_id() -> egui::Id {
@@ -113,7 +114,6 @@ fn feedback_id() -> egui::Id {
 
 /// Rows precede their enclosing list. A rejected row consumes the release,
 /// rather than accidentally moving the selection to the list's root folder.
-/// Returns whether a closed destination should spring open after hovering.
 pub(super) fn target(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -124,29 +124,22 @@ pub(super) fn target(
     prefs: &InventoryPreferences,
     facts: &Facts,
     actions: &mut Vec<InvAction>,
-) -> bool {
-    let Some(cargo) = Cargo::hover(r) else { return false };
+) {
+    let Some(cargo) = Cargo::hover(ui, r) else { return };
     let pass = ui.ctx().cumulative_pass_nr();
     if ui
         .ctx()
         .data(|d| d.get_temp::<Feedback>(feedback_id()).is_some_and(|f| f.pass == pass))
     {
-        return false;
+        return;
     }
     let plan = plan(ui.ctx(), inv, cargo.ids(), to, prefs, facts);
     let allowed = st.pending.is_none() && plan.as_ref().as_ref().is_ok_and(|p| !p.operations.is_empty());
-    let now = ui.input(|i| i.time);
-    let since = ui.ctx().data_mut(|d| {
-        let since = d
-            .get_temp::<Feedback>(feedback_id())
-            .filter(|f| f.response == r.id && f.pass.saturating_add(1) >= pass)
-            .map_or(now, |f| f.since);
+    ui.ctx().data_mut(|d| {
         d.insert_temp(
             feedback_id(),
             Feedback {
                 pass,
-                response: r.id,
-                since,
                 cursor: if allowed {
                     egui::CursorIcon::Move
                 } else {
@@ -154,7 +147,6 @@ pub(super) fn target(
                 },
             },
         );
-        since
     });
     tree::drop_outline(ui, p, r.rect, allowed);
     if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
@@ -173,12 +165,7 @@ pub(super) fn target(
                 Err(reason) => st.message = reason,
             }
         }
-        return false;
     }
-    if allowed {
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
-    }
-    allowed && now - since >= 1.0
 }
 
 /// Resolve feedback after all windows, like the object-inventory drag cursor.
@@ -228,3 +215,5 @@ pub(super) fn record_row(ctx: &egui::Context, editor: Uuid, id: Uuid, rect: egui
 
 #[path = "drag_demo.rs"]
 pub(crate) mod demo;
+#[path = "drag_navigation.rs"]
+pub(crate) mod navigation;

@@ -139,10 +139,15 @@ batch payload prevents single-item world, attachment and editor targets from
 silently taking only the first item; existing single-item/folder cargo stays
 compatible. Rows claim drops before the enclosing inventory surface, including
 invalid targets. Validation is cached by cargo, destination, inventory generation
-and protection/worn state, then repeated on release. Folder rows spring open
-after one second of valid hovering. The final drag cursor and selection-count
+and protection/worn state, then repeated on release. `drag_navigation.rs`
+toggles folders after a one-second hover, once per visit, independently of drop
+validity. It scrolls the actual inventory viewport (including virtualized search
+results) near its top/bottom edges and outside it vertically, with elapsed-time
+acceleration and ownership of the last entered inventory window. The final drag cursor and selection-count
 badge are drawn after all windows. `drag_tests.rs` drives actual Ctrl-selection
-and pointer events; `drag_demo.rs` provides offline move/hover/rejection scenarios.
+and pointer events; `drag_navigation_tests.rs` covers hover latching, scrolling,
+hidden sources, filtered lists, window ownership and cancellation.
+`drag_demo.rs` provides offline move/hover/rejection/scroll/fold scenarios.
 
 `ui/toolbar.rs` owns Firestorm's three toolbars (the bottom one, left and
 right), their context menus and drag/drop edits; a command stands in one of

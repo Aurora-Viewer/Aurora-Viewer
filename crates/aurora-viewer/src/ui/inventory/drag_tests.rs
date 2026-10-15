@@ -12,6 +12,7 @@ struct Fixture {
     time: f64,
     actions: Vec<InvAction>,
     two_windows: bool,
+    scrolling: Option<bool>,
 }
 
 impl Fixture {
@@ -59,6 +60,7 @@ impl Fixture {
             ..Default::default()
         };
         state.reveal_path.insert(id(10));
+        state.reveal = Some(id(100));
         let mut f = Self {
             ctx,
             inv,
@@ -81,6 +83,7 @@ impl Fixture {
             time: 0.0,
             actions: Vec::new(),
             two_windows: false,
+            scrolling: None,
         };
         f.settle();
         f
@@ -109,6 +112,7 @@ impl Fixture {
                         &self.facts,
                         &mut self.actions,
                         id(1),
+                        self.scrolling,
                     );
                     if self.two_windows {
                         draw_tree(
@@ -120,6 +124,7 @@ impl Fixture {
                             &self.facts,
                             &mut self.actions,
                             id(20),
+                            self.scrolling,
                         );
                     }
                 });
@@ -203,6 +208,7 @@ fn draw_tree(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
     root: Uuid,
+    scrolling: Option<bool>,
 ) {
     ui.push_id(st.ui_id, |ui| {
         ui.vertical(|ui| {
@@ -210,7 +216,21 @@ fn draw_tree(
             let zone = egui::Frame::new().show(ui, |ui| {
                 ui.set_min_size(Vec2::new(480.0, 550.0));
                 st.previous_visible = std::mem::take(&mut st.visible);
-                folder_tree(ui, p, &Icons::default(), inv, root, 0, None, st, prefs, facts, actions);
+                if let Some(filtered) = scrolling {
+                    if filtered {
+                        st.view
+                            .search(inv, root, "", prefs, &st.filters, 0, None, facts, facts.agent, view::now());
+                        prepare_result_tree(st, inv, root);
+                        search_scroll(ui, p, &Icons::default(), inv, st, prefs, facts, actions, 170.0);
+                    } else {
+                        let mut out = tree::scroll(ui, 170.0).show(ui, |ui| {
+                            folder_tree(ui, p, &Icons::default(), inv, root, 0, None, st, prefs, facts, actions);
+                        });
+                        drag::navigation::scroll(ui, &mut out, st.ui_id);
+                    }
+                } else {
+                    folder_tree(ui, p, &Icons::default(), inv, root, 0, None, st, prefs, facts, actions);
+                }
             });
             drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
         });
@@ -226,6 +246,9 @@ fn modifiers(ctrl: bool) -> egui::Modifiers {
         ..Default::default()
     }
 }
+
+#[path = "drag_navigation_tests.rs"]
+mod navigation_tests;
 
 #[test]
 fn inventory_drag_ctrl_selection_moves_both_textures_once_without_changing_the_model_before_ack() {
