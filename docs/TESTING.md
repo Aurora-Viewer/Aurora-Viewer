@@ -380,9 +380,9 @@ when unfocused") is ignored during a screenshot.
   nearby scenery jumps. Combine with `AURORA_DEMO_ALTITUDE` and
   `AURORA_STILL_CHECK=1`.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
-  (movement, body orientation). `:pulse` (`up:pulse`): held 120 frames,
-  released 120 frames, over and over.
-- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,aurora|firestorm][,vehicle]`**:
+  (movement, body orientation). `:pulse` (`up:pulse`): held 2 s, released
+  2 s, over and over (by the clock: the same at any frame rate).
+- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,aurora|firestorm][,vehicle][,trace]`**:
   instead of moving our avatar at once, the demo sends the keys to a
   stand-in simulator after half the ping; it moves its own copy of the
   avatar with the demo's rules and its reports (terse updates of our
@@ -401,9 +401,15 @@ when unfocused") is ignored during a screenshot.
   learned, as on a grid). Measured on 2026-10-16 with `200` and
   `AURORA_DEMO_KEY=up:pulse`, `AURORA_FPS_LIMIT=60`: Firestorm's movement
   starts 250 to 317 ms after the press and stops 500 ms and 0.9 m after the
-  release; Aurora's, once its calibration has seen two presses, starts
-  within 50 ms (the first frame) and stops within 17 ms, 0.00 to 0.01 m on
-  (`jitter=40`: the same). `vehicle`: at 2 s a car appears, at 3 s our
+  release; Aurora's starts within 50 ms (the first frame) and eases to a
+  stop over about 0.15 s, 0.2 m on, without coming back (`jitter=40`: the
+  same). `trace` writes one `demo link trace` line per frame (keys, drawn
+  position, simulator's position, lead, correction left, camera, drawn
+  animations): with `AURORA_DEMO_KEY=up:pulse`, the speed frame by frame
+  around each release must fall without a step and never rise again
+  (measured 2026-10-16, 60 and 500 fps: at most 0.5 m/s less from a frame
+  of 16 ms to the next, no rise, no pull-back; Firestorm's: up to 1.16 m/s
+  per frame). `vehicle`: at 2 s a car appears, at 3 s our
   avatar sits on it, from 4 s to 16 s the car drives back and forth at
   4 m/s with a report every quarter of a second, at 17 s the avatar stands
   up beside it. With `AURORA_DEMO_KEY=up`, the keys held while seated must

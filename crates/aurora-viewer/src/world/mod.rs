@@ -135,6 +135,10 @@ pub struct ChatLine {
     pub origin: Origin,
 }
 
+/// Drawn speed (m/s) under which our walk stops after a release, with
+/// Aurora's movement (`World::update_own_locomotion`).
+const GLIDE_WALKING: f32 = 0.5;
+
 /// One simulator signal, with independent sequence and continuous clocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayingAnimation {
@@ -964,7 +968,10 @@ impl World {
             return;
         }
         let base = self.animations.get(&self.agent_id).map(Vec::as_slice).unwrap_or_default();
-        let wanted = crate::own_motion::locomotion_animation(intent);
+        // the walk goes on while the drawn avatar glides to its stop: the
+        // feet do not slide
+        let gliding = self.agent.drawn_velocity().truncate().length() > GLIDE_WALKING;
+        let wanted = crate::own_motion::locomotion_animation(intent).or(if gliding { self.own_locomotion.wanted() } else { None });
         self.own_drawn = self.own_locomotion.overlay(base, wanted, self.agent.flying, window, now);
     }
 

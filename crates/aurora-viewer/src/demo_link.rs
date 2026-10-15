@@ -34,6 +34,8 @@ pub struct Config {
     /// Aurora's movement forced on or off for the session.
     pub prediction: Option<bool>,
     pub vehicle: bool,
+    /// One `demo link trace` line per frame (`trace`).
+    pub trace: bool,
 }
 
 impl Config {
@@ -49,12 +51,14 @@ impl Config {
             jitter: 0.0,
             prediction: None,
             vehicle: false,
+            trace: false,
         };
         for part in parts {
             match part {
                 "aurora" => cfg.prediction = Some(true),
                 "firestorm" => cfg.prediction = Some(false),
                 "vehicle" => cfg.vehicle = true,
+                "trace" => cfg.trace = true,
                 _ => match part.strip_prefix("jitter=").and_then(|ms| ms.parse::<f32>().ok()) {
                     Some(ms) if ms.is_finite() && ms >= 0.0 => cfg.jitter = (ms / 1000.0).min(1.0),
                     _ => log::warn!("AURORA_DEMO_LINK: unknown part {part:?}"),
@@ -172,6 +176,11 @@ impl DemoLink {
                 0.0
             },
         }
+    }
+
+    /// Seconds since the link started.
+    pub fn elapsed(&self) -> f64 {
+        self.start.elapsed().as_secs_f64()
     }
 
     /// The answer of the simulator to a command the viewer sent at `now`

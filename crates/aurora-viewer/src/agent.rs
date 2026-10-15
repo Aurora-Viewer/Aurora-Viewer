@@ -81,6 +81,11 @@ pub struct AgentState {
     /// moving avatar is not drawn late (world/motion.rs does the same for
     /// the other objects).
     offset: Vec3,
+    /// With the prediction, where the simulator's position, the correction
+    /// and the lead put the avatar last frame (`position` glides to it),
+    /// and the velocity of that glide.
+    aim: Vec3,
+    glide: Vec3,
 }
 
 /// Simulator reports that put our avatar away from where it was
@@ -127,6 +132,8 @@ impl Default for AgentState {
             drawn_lead: Vec3::ZERO,
             slow_blend: false,
             offset: Vec3::ZERO,
+            aim: Vec3::new(128.0, 128.0, 25.0),
+            glide: Vec3::ZERO,
         }
     }
 }
@@ -255,6 +262,8 @@ impl AgentState {
         }
         if !self.has_server || was_seated {
             self.position = pos;
+            self.aim = pos;
+            self.glide = Vec3::ZERO;
         } else {
             let gap = pos.distance(self.predicted_pos);
             if gap <= CORRECTION_MAX {
@@ -267,15 +276,21 @@ impl AgentState {
                 self.slow_blend = false;
             }
             if self.predicting {
-                self.prediction.on_report(vel, now);
-                // where the new report puts the avatar at the moment it was
-                // last drawn for, against where it was drawn
-                let back = if self.last_prediction >= now {
-                    self.last_prediction.duration_since(now).as_secs_f32()
+                // (the frame that applies it: what the lead must cover)
+                self.prediction.on_report(vel, now, now.max(Instant::now()));
+                // where the avatar was aimed and where the report puts it,
+                // compared at the later of the report and the last frame:
+                // a report that changes the velocity (a start, a stop) says
+                // nothing of the motion before it
+                let aimed = self.aim - self.drawn_lead;
+                let (was, is) = if now >= self.last_prediction {
+                    let ahead = now.duration_since(self.last_prediction).as_secs_f32();
+                    (aimed + self.velocity * ahead, pos)
                 } else {
-                    -now.duration_since(self.last_prediction).as_secs_f32()
+                    let behind = self.last_prediction.duration_since(now).as_secs_f32();
+                    (aimed, pos + vel * behind)
                 };
-                let offset = (self.position - self.drawn_lead) - (pos + vel * back);
+                let offset = was - is;
                 self.offset = if offset.is_finite() && offset.length() <= CORRECTION_MAX {
                     offset
                 } else {
@@ -336,12 +351,20 @@ impl AgentState {
             // from where the drawable was: no jump when it is turned on
             let offset = self.position - self.predicted_pos;
             self.offset = if offset.length() <= CORRECTION_MAX { offset } else { Vec3::ZERO };
+            self.aim = self.position;
+            self.glide = Vec3::ZERO;
         }
         self.predicting = on;
     }
 
     pub fn predicting(&self) -> bool {
         self.predicting
+    }
+
+    /// What is left of the last correction with the prediction, and the
+    /// lead drawn this frame (`AURORA_DEMO_LINK`'s trace).
+    pub fn drawn_offsets(&self) -> (Vec3, Vec3) {
+        (self.offset, self.drawn_lead)
     }
 
     /// Back to the server's motion alone (a seat, a teleport, the setting).
@@ -353,6 +376,7 @@ impl AgentState {
         self.drawn_lead = Vec3::ZERO;
         self.slow_blend = false;
         self.offset = Vec3::ZERO;
+        self.glide = Vec3::ZERO;
     }
 
     /// One frame of the prediction, from what the keys sent ask for.
@@ -372,6 +396,12 @@ impl AgentState {
             dt,
             now,
         });
+        // the simulator stopped a little short of the lead: the avatar
+        // stays where it is drawn (a correction that waits at rest)
+        let left = self.prediction.settle(self.velocity);
+        if left != Vec3::ZERO {
+            self.offset += left;
+        }
         self.lead = self.prediction.lead();
     }
 
@@ -387,10 +417,11 @@ impl AgentState {
         }
     }
 
-    /// The velocity of the drawn avatar: the keys' while they drive it.
+    /// The velocity of the drawn avatar: with the prediction, that of its
+    /// glide.
     pub fn drawn_velocity(&self) -> Vec3 {
-        if self.predicting {
-            self.prediction.drawn_velocity(self.velocity, Instant::now())
+        if self.predicting && self.has_local_control() {
+            self.glide
         } else {
             self.velocity
         }
@@ -540,7 +571,14 @@ impl AgentState {
             } else {
                 OBJECT_DAMPING_TIME
             };
-            self.offset *= 0.5_f32.powf(dt / half_life);
+            // a few centimetres left at a stop wait for the next move
+            let resting = !self.prediction.keys_held()
+                && self.lead == Vec3::ZERO
+                && !self.slow_blend
+                && self.offset.length() < own_motion::REST_OFFSET;
+            if !resting {
+                self.offset *= 0.5_f32.powf(dt / half_life);
+            }
             let left = self.offset.length_squared();
             if left < min_distance || !self.offset.is_finite() {
                 self.offset = Vec3::ZERO;
@@ -549,7 +587,22 @@ impl AgentState {
                 self.slow_blend = false;
             }
             self.drawn_lead = self.lead;
-            self.position = self.predicted_pos + self.offset + self.drawn_lead;
+            let aim = self.predicted_pos + self.offset + self.drawn_lead;
+            self.aim = aim;
+            // the drawn avatar glides to it, so a stop eases out instead of
+            // halting in one frame, and a frame of the simulator's motion
+            // more or less than the lead does not show as a step
+            if !aim.is_finite() || self.position.distance(aim) > CORRECTION_MAX {
+                self.position = aim;
+                self.glide = Vec3::ZERO;
+            } else {
+                let glided = own_motion::glide(self.position, self.glide, aim, dt);
+                (self.position, self.glide) = if self.prediction.keys_held() {
+                    glided
+                } else {
+                    own_motion::ease_out(self.position, self.glide, glided, aim, dt)
+                };
+            }
             return;
         }
         // LLDrawable::updateXform: 0.06 s is a half-life, not an exponential
@@ -904,12 +957,13 @@ mod tests {
             agent.update(&MoveInput::default(), false, 0.01, 5.0);
         }
         near(agent.predicted_position(), Vec3::ZERO);
-        assert!(agent.position.x > 0.08, "{:?}", agent.position);
-        assert!(agent.drawn_velocity().x > 2.0);
+        let ahead = agent.position.x;
+        assert!(ahead > 0.03, "{:?}", agent.position);
+        assert!(agent.drawn_velocity().x > 1.0, "{:?}", agent.drawn_velocity());
         // turned off: back to the simulator's position, smoothly
         agent.set_predicting(false);
         agent.update(&MoveInput::default(), false, 0.06, 5.0);
-        assert!(agent.position.x > 0.0 && agent.position.x < 0.08, "{:?}", agent.position);
+        assert!(agent.position.x > 0.0 && agent.position.x < ahead, "{:?}", agent.position);
         for _ in 0..20 {
             agent.update(&MoveInput::default(), false, 0.06, 5.0);
         }
@@ -990,6 +1044,103 @@ mod tests {
         assert_eq!(agent.take_corrections(), Corrections::default());
     }
 
+    /// Our avatar walking with Aurora's movement against a simulator one
+    /// round trip away (0.2 s) that starts and stops at once, keys held
+    /// `hold` seconds out of 3: the drawn position frame by frame, and
+    /// where the simulator ends.
+    fn walk_and_stop(fps: f32, hold: f32) -> (Vec<(f32, f32)>, f32) {
+        let start = Instant::now();
+        let at = |t: f32| start + Duration::from_secs_f32(t);
+        let keys = |t: f32| t >= 0.0 && t.rem_euclid(3.0) < hold;
+        let mut agent = AgentState::default();
+        agent.on_server_update_at(Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, false, true, start);
+        agent.set_predicting(true);
+        let (mut server, mut velocity) = (0.0_f32, 0.0_f32);
+        let mut sent: Option<(f32, f32)> = None;
+        let mut on_the_way: std::collections::VecDeque<(f32, f32, f32)> = Default::default();
+        let dt = 1.0 / fps;
+        let mut drawn = Vec::new();
+        let mut t = 0.0;
+        while t < 6.0 {
+            t += dt;
+            // the simulator plays the keys half a round trip late, and its
+            // report comes back after the other half
+            let v = if keys(t - 0.1) { 3.2 } else { 0.0 };
+            server += velocity * dt;
+            velocity = v;
+            if sent.is_none_or(|(last_v, last_t)| last_v != v || t - last_t >= 0.25) {
+                sent = Some((v, t));
+                on_the_way.push_back((t + 0.1, server, v));
+            }
+            while on_the_way.front().is_some_and(|(arrives, _, _)| *arrives <= t) {
+                let (arrives, x, v) = on_the_way.pop_front().expect("report");
+                agent.on_server_update_at(Vec3::X * x, Vec3::X * v, Vec3::ZERO, false, true, at(arrives));
+            }
+            agent.predict_at(at(t), 1.0, 0.0);
+            let flags = if keys(t) { control::AT_POS | control::FAST_AT } else { 0 };
+            agent.step_prediction(Intent::from_flags(flags, 0.0, false), 0.2, dt, at(t));
+            agent.set_lead(agent.wanted_lead());
+            agent.update(&MoveInput::default(), false, dt, 5.0);
+            drawn.push((t, agent.position.x));
+        }
+        (drawn, server)
+    }
+
+    /// At a release the drawn avatar eases to its stop: its speed falls to
+    /// zero without a step (bounded change per frame), never rises again,
+    /// and it does not come back. Before the calibration has seen a stop
+    /// (the first release) and after (the second), at 60 and 500 frames a
+    /// second.
+    #[test]
+    fn a_stop_eases_out_without_a_step_or_a_pull_back() {
+        for fps in [60.0, 500.0] {
+            let (drawn, _) = walk_and_stop(fps, 1.5);
+            for (n, release) in [1.5_f32, 4.5].into_iter().enumerate() {
+                let window: Vec<_> = drawn
+                    .windows(2)
+                    .filter(|w| w[1].0 > release - 0.2 && w[1].0 < release + 1.0)
+                    .collect();
+                let speeds: Vec<(f32, f32)> = window.iter().map(|w| (w[1].0, (w[1].1 - w[0].1) / (w[1].0 - w[0].0))).collect();
+                let max_step = speeds
+                    .windows(2)
+                    .map(|s| (s[1].1 - s[0].1).abs() / (s[1].0 - s[0].0))
+                    .fold(0.0, f32::max);
+                let rise = speeds
+                    .windows(2)
+                    .filter(|s| s[0].0 >= release + 0.02)
+                    .map(|s| s[1].1 - s[0].1)
+                    .fold(0.0, f32::max);
+                let ahead = window.iter().map(|w| w[1].1).fold(f32::MIN, f32::max);
+                let end = window.last().map_or(0.0, |w| w[1].1);
+                let report = format!(
+                    "fps {fps}, release {n}: accel max {max_step:.1} m/s², rise {rise:.3} m/s, pull back {:.3} m",
+                    ahead - end
+                );
+                assert!(max_step < 40.0, "{report}");
+                assert!(rise < 0.05, "{report}");
+                assert!(ahead - end < 0.01, "{report}");
+                assert!(speeds.last().is_some_and(|s| s.1.abs() < 0.01), "{report}: still moving");
+            }
+        }
+    }
+
+    /// A tap shorter than the round trip: the simulator moves after the
+    /// release; the drawn avatar neither counts that motion twice nor
+    /// comes back, and ends where the simulator does.
+    #[test]
+    fn a_tap_shorter_than_the_round_trip_ends_where_the_simulator_does() {
+        for fps in [60.0, 500.0] {
+            let (drawn, server) = walk_and_stop(fps, 0.1);
+            let mut ahead = f32::MIN;
+            for &(_, x) in &drawn {
+                assert!(x > ahead - 0.01, "fps {fps}: came back from {ahead} to {x}");
+                ahead = ahead.max(x);
+            }
+            let end = drawn.last().map_or(0.0, |d| d.1);
+            assert!((end - server).abs() < own_motion::REST_OFFSET, "fps {fps}: {end} for {server}");
+        }
+    }
+
     /// A pull-back of 2 m fades with the prediction's 0.25 s half-life,
     /// Firestorm's 0.06 s without it.
     #[test]
@@ -999,7 +1150,12 @@ mod tests {
             agent.set_predicting(predicting);
             agent.on_server_update_at(Vec3::X * 2.0, Vec3::ZERO, Vec3::ZERO, false, true, at(now, 0.1));
             agent.update(&MoveInput::default(), false, half_life, 5.0);
-            near(agent.position, Vec3::X);
+            if predicting {
+                // (the drawn avatar glides after it)
+                near(agent.drawn_offsets().0, -Vec3::X);
+            } else {
+                near(agent.position, Vec3::X);
+            }
             assert_eq!(agent.take_corrections().count, 1);
         }
     }

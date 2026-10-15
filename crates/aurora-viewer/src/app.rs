@@ -5195,6 +5195,7 @@ impl App {
             }
             let at = self.camera.forward();
             self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml);
+            self.trace_demo_link();
             self.update_look_at(w as f32, h as f32);
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
             // the walk to a double-clicked point (src/autopilot.rs)
@@ -6991,7 +6992,8 @@ impl App {
         }
         // AURORA_DEMO_KEY="down" (up, left, right): hold that arrow from frame
         // 235, log the agent and drawn body headings every 30 frames;
-        // "up:pulse": 120 frames held, 120 released, over and over
+        // "up:pulse": 2 s held, 2 s released, over and over (by the clock,
+        // the same at any frame rate)
         if self.demo
             && self.frame_count >= 235
             && let Ok(v) = std::env::var("AURORA_DEMO_KEY")
@@ -7005,7 +7007,9 @@ impl App {
                 "right" => KeyCode::ArrowRight,
                 _ => KeyCode::ArrowDown,
             };
-            if pulse && !((self.frame_count - 235) / 120).is_multiple_of(2) {
+            static PULSE: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let since = PULSE.get_or_init(Instant::now).elapsed().as_secs();
+            if pulse && !(since / 2).is_multiple_of(2) {
                 self.down.remove(&Input::key(key));
             } else {
                 self.down.insert(Input::key(key));

@@ -154,11 +154,13 @@ impl Intent {
 /// Starting values, until the simulator's reports give the real ones.
 /// Walk and run: the speeds the offline demo already used for SL (3.2 and
 /// 5.13 m/s); fly: 16 m/s, measured in the log of the border-crossing
-/// trial on Agni (2026-10-13). Crouch, nudge, climb and the ramps are
-/// guesses.
+/// trial on Agni (2026-10-13). Crouch, nudge and climb are guesses. No
+/// ramp until one is seen: a lead that stops short of a simulator that
+/// slows down is caught up going on (`ease_out`), one that runs past a
+/// simulator that stops at once would have to come back.
 const SEED_SPEED: [f32; 5] = [3.2, 5.13, 1.2, 1.0, 16.0];
 const SEED_CLIMB: f32 = 4.0;
-const SEED_RAMP: f32 = 0.2;
+const SEED_RAMP: f32 = 0.0;
 /// The simulator plays an input this long after the round trip: one of
 /// its physics steps (45 a second), to be confirmed on the grid.
 const SEED_DELAY: f32 = 1.0 / 45.0;
@@ -261,7 +263,7 @@ impl Calibration {
 
     /// A report of the simulator: `held` seconds after the keys last
     /// changed, `rtt` the round trip.
-    fn observe(&mut self, intent: Option<Intent>, held: f32, rtt: f32, velocity: Vec3, now: Instant) {
+    fn observe(&mut self, intent: Option<Intent>, held: f32, rtt: f32, velocity: Vec3, now: Instant, applied: Instant) {
         let horizontal = velocity.truncate().length();
         let Some(intent) = intent else {
             self.last = None;
@@ -296,7 +298,7 @@ impl Calibration {
             let speed = self.speed(mode);
             if first.is_none() && horizontal > 0.1 * speed {
                 // the first report that moves: the delay of the simulator
-                let extra = now.saturating_duration_since(pressed).as_secs_f32() - rtt;
+                let extra = applied.saturating_duration_since(pressed).as_secs_f32() - rtt;
                 if (-0.05..=0.5).contains(&extra) {
                     self.changed |= learn(&mut self.delay, &mut self.delay_samples, extra.max(0.0));
                 }
@@ -435,6 +437,9 @@ pub struct Prediction {
     /// Largest lead since the last `take_lead_max`.
     lead_max: f32,
     rtt: f32,
+    /// Since the keys were released, the simulator was seen moving: its
+    /// stop is the end of the motion (`settle`).
+    moved_since_release: bool,
 }
 
 impl Default for Prediction {
@@ -454,6 +459,7 @@ impl Default for Prediction {
             flying: false,
             lead_max: 0.0,
             rtt: 0.0,
+            moved_since_release: false,
         }
     }
 }
@@ -482,23 +488,6 @@ impl Prediction {
     fn driving(&self, now: Instant) -> bool {
         let suspended = self.suspended_until.is_some_and(|t| now < t);
         !suspended && !self.given_up
-    }
-
-    /// Whether the keys drive the drawn avatar right now.
-    fn active(&self, now: Instant) -> bool {
-        self.driving(now) && (self.intent.is_some() || self.lead.length_squared() > 1e-6)
-    }
-
-    /// The velocity the drawn avatar moves at: the keys' while they drive
-    /// it, else the simulator's.
-    pub fn drawn_velocity(&self, server: Vec3, now: Instant) -> Vec3 {
-        if !self.active(now) {
-            server
-        } else if self.flying {
-            self.velocity
-        } else {
-            horizontal(self.velocity) + Vec3::Z * server.z
-        }
     }
 
     /// What the keys asked for over the last `delay` seconds.
@@ -532,6 +521,10 @@ impl Prediction {
             self.since = Some(s.now);
             self.given_up = false;
             self.mismatch = 0.0;
+            self.moved_since_release = false;
+        }
+        if s.intent.is_none() && server.length() > 0.1 {
+            self.moved_since_release = true;
         }
         // (a heading that drifts within the same request follows the body)
         self.intent = s.intent;
@@ -612,10 +605,36 @@ impl Prediction {
         }
     }
 
-    /// A report of the simulator, for the calibration.
-    pub fn on_report(&mut self, velocity: Vec3, now: Instant) {
-        let held = self.since.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32());
-        self.calibration.observe(self.intent, held, self.rtt, velocity, now);
+    /// A report of the simulator, for the calibration: read at `received`,
+    /// applied by the frame at `applied` (the delay is counted to that frame:
+    /// until then the drawn simulator's position moves as before).
+    pub fn on_report(&mut self, velocity: Vec3, received: Instant, applied: Instant) {
+        let held = self.since.map_or(0.0, |t| received.saturating_duration_since(t).as_secs_f32());
+        self.calibration.observe(self.intent, held, self.rtt, velocity, received, applied);
+    }
+
+    /// Keys released and the simulator stopped after moving: what is left
+    /// of the lead is a motion it will not make (the release reached it a
+    /// physics step sooner than the lead expected). Dropped and returned,
+    /// for the caller to keep where the avatar is drawn instead of walking
+    /// it back.
+    pub fn settle(&mut self, server_velocity: Vec3) -> Vec3 {
+        let server = if self.flying {
+            server_velocity
+        } else {
+            horizontal(server_velocity)
+        };
+        if self.intent.is_some() || !self.moved_since_release || server.length() > 0.05 || self.lead == Vec3::ZERO {
+            return Vec3::ZERO;
+        }
+        self.history.clear();
+        self.moved_since_release = false;
+        std::mem::take(&mut self.lead)
+    }
+
+    /// A key that moves the avatar is held.
+    pub fn keys_held(&self) -> bool {
+        self.intent.is_some()
     }
 
     /// Largest lead since the previous call (m).
@@ -623,6 +642,56 @@ impl Prediction {
         std::mem::take(&mut self.lead_max)
     }
 }
+
+/// Smoothing time of the drawn avatar's glide to where the prediction puts
+/// it: about Firestorm's drawable damping (0.06 s half-life), so a stop
+/// eases out over a quarter of a second like Firestorm's.
+pub const GLIDE_TIME: f32 = 0.08;
+
+/// One frame of the glide from `current` (moving at `velocity`) to
+/// `target`: a critically damped follow (the "SmoothDamp" of Game
+/// Programming Gems 4, 1.10), which never overshoots a target that stops
+/// and whose acceleration starts from zero. Returns the new position and
+/// velocity.
+pub fn glide(current: Vec3, velocity: Vec3, target: Vec3, dt: f32) -> (Vec3, Vec3) {
+    let omega = 2.0 / GLIDE_TIME;
+    let x = omega * dt.max(0.0);
+    let decay = 1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x);
+    let change = current - target;
+    let temp = (velocity + omega * change) * dt.max(0.0);
+    (target + (change + temp) * decay, (velocity - omega * temp) * decay)
+}
+
+/// Deceleration (m/s²) of the last of a stop that `ease_out` stretches.
+const EASE_DECEL: f32 = 6.0;
+
+/// After a release the drawn avatar only slows down. When the simulator
+/// stops a frame later than the lead expected (the release reached it a
+/// physics step later), the aim moves on a few centimetres after the glide
+/// had nearly stopped: rather than speeding up again for them, the avatar
+/// goes on at the speed it had and slows down as it reaches the aim.
+/// `glided` is the glide's answer from `current` at `velocity`.
+pub fn ease_out(current: Vec3, velocity: Vec3, glided: (Vec3, Vec3), aim: Vec3, dt: f32) -> (Vec3, Vec3) {
+    let ahead = aim - current;
+    let before = velocity.length();
+    if glided.1.length() <= before || ahead.dot(velocity) <= 0.0 {
+        return glided;
+    }
+    let distance = ahead.length();
+    let speed = before.min((2.0 * EASE_DECEL * distance).sqrt());
+    let step = speed * dt.max(0.0);
+    if step >= distance {
+        return (aim, Vec3::ZERO);
+    }
+    let direction = ahead / distance;
+    (current + direction * step, direction * speed)
+}
+
+/// A correction smaller than this, at rest after a release, waits for the
+/// next move to fade (`AgentState::update`): the avatar stopped a few
+/// centimetres from where the simulator did, which is not worth walking
+/// back on the spot.
+pub const REST_OFFSET: f32 = 0.15;
 
 /// Half-life with which a correction of our avatar fades: Firestorm's
 /// 0.06 s (OBJECT_DAMPING_TIME_CONSTANT, LLDrawable::updateXform,
@@ -703,6 +772,11 @@ pub struct Locomotion {
 impl Locomotion {
     pub fn reset(&mut self) {
         *self = Locomotion::default();
+    }
+
+    /// The motion the keys asked for last.
+    pub fn wanted(&self) -> Option<Uuid> {
+        self.wanted
     }
 
     /// The list to draw instead of the simulator's `base`, or None to draw
@@ -884,7 +958,6 @@ mod tests {
         run(&mut p, walk(Vec3::X), 1.0, &mut t);
         assert!(p.given_up);
         assert!(p.lead().length() < 0.01);
-        assert_eq!(p.drawn_velocity(Vec3::ZERO, at(now, t)), Vec3::ZERO);
         // twice more, each after the keys changed: suspended
         for _ in 0..2 {
             run(&mut p, None, 0.1, &mut t);
@@ -911,7 +984,6 @@ mod tests {
             });
         }
         assert_eq!(p.lead(), Vec3::ZERO);
-        assert_eq!(p.drawn_velocity(Vec3::X * 6.0, at(now, 1.0)), Vec3::X * 6.0);
     }
 
     #[test]
@@ -931,7 +1003,6 @@ mod tests {
         p.reset();
         assert_eq!(p.lead(), Vec3::ZERO);
         assert_eq!(p.calibration.speed(Mode::Walk), 3.0);
-        assert_eq!(p.drawn_velocity(Vec3::Y, now), Vec3::Y);
     }
 
     #[test]
@@ -944,29 +1015,29 @@ mod tests {
             direction: Vec3::X,
             vertical: 0.0,
         });
-        c.observe(run, 0.25, 0.2, Vec3::X * 1.0, at(now, 0.25));
-        c.observe(run, 0.40, 0.2, Vec3::X * 4.8, at(now, 0.40));
+        c.observe(run, 0.25, 0.2, Vec3::X * 1.0, at(now, 0.25), at(now, 0.25));
+        c.observe(run, 0.40, 0.2, Vec3::X * 4.8, at(now, 0.40), at(now, 0.40));
         assert!((c.ramp(Mode::Run) - 0.15).abs() < 1e-3, "{}", c.ramp(Mode::Run));
         // its first report that moves came 50 ms after the round trip
         assert!((c.delay(0.2) - 0.25).abs() < 1e-3, "{}", c.delay(0.2));
         // not settled yet: no speed sample
-        c.observe(run, 0.45, 0.2, Vec3::X * 4.9, at(now, 0.45));
+        c.observe(run, 0.45, 0.2, Vec3::X * 4.9, at(now, 0.45), at(now, 0.45));
         assert_eq!(c.speed(Mode::Run), 5.13);
-        c.observe(run, 0.6, 0.2, Vec3::X * 4.9, at(now, 0.6));
-        c.observe(run, 0.7, 0.2, Vec3::X * 4.92, at(now, 0.7));
+        c.observe(run, 0.6, 0.2, Vec3::X * 4.9, at(now, 0.6), at(now, 0.6));
+        c.observe(run, 0.7, 0.2, Vec3::X * 4.92, at(now, 0.7), at(now, 0.7));
         assert!((c.speed(Mode::Run) - 4.92).abs() < 1e-4);
         assert!(c.take_changed());
         // sideways against a wall, or a jitter of 10 %: no sample
-        c.observe(run, 0.8, 0.2, Vec3::Y * 4.9, at(now, 0.8));
-        c.observe(run, 0.9, 0.2, Vec3::X * 4.4, at(now, 0.9));
-        c.observe(run, 1.0, 0.2, Vec3::X * 4.9, at(now, 1.0));
+        c.observe(run, 0.8, 0.2, Vec3::Y * 4.9, at(now, 0.8), at(now, 0.8));
+        c.observe(run, 0.9, 0.2, Vec3::X * 4.4, at(now, 0.9), at(now, 0.9));
+        c.observe(run, 1.0, 0.2, Vec3::X * 4.9, at(now, 1.0), at(now, 1.0));
         assert!((c.speed(Mode::Run) - 4.92).abs() < 1e-4);
         assert!(c.learned().starts_with("walk=3.20/0 run=4.92/1 "), "{}", c.learned());
         // a release: from the first slower report to the first at rest
         c.watch_stop(Mode::Run);
-        c.observe(None, 0.0, 0.2, Vec3::X * 4.9, at(now, 2.0));
-        c.observe(None, 0.0, 0.2, Vec3::X * 2.0, at(now, 2.2));
-        c.observe(None, 0.0, 0.2, Vec3::ZERO, at(now, 2.3));
+        c.observe(None, 0.0, 0.2, Vec3::X * 4.9, at(now, 2.0), at(now, 2.0));
+        c.observe(None, 0.0, 0.2, Vec3::X * 2.0, at(now, 2.2), at(now, 2.2));
+        c.observe(None, 0.0, 0.2, Vec3::ZERO, at(now, 2.3), at(now, 2.3));
         let ramp = 0.15 + LEARN_RATE * (0.1 - 0.15);
         assert!((c.ramp(Mode::Run) - ramp).abs() < 1e-4, "{}", c.ramp(Mode::Run));
     }

@@ -118,6 +118,42 @@ impl App {
         }
     }
 
+    /// `AURORA_DEMO_LINK=…,trace`: one line per frame with the keys, the
+    /// drawn position, the simulator's, the lead, the correction left, the
+    /// camera and the drawn animations, to read a start or a stop.
+    pub(super) fn trace_demo_link(&self) {
+        let Some(link) = self.demo_link.as_ref().filter(|l| l.cfg.trace) else {
+            return;
+        };
+        let a = &self.world.agent;
+        let (offset, lead) = a.drawn_offsets();
+        let anims: Vec<String> = self
+            .world
+            .animations_of(&self.world.agent_id)
+            .iter()
+            .map(|p| p.id.to_string()[..8].to_string())
+            .collect();
+        log::info!(
+            "demo link trace: t={:.4} keys={} pos={:.4} {:.4} {:.4} server={:.4} {:.4} lead={:.4} {:.4} offset={:.4} {:.4} {:.4} cam={:.4} {:.4} {:.4} anims={}",
+            link.elapsed(),
+            self.input.forward,
+            a.position.x,
+            a.position.y,
+            a.position.z,
+            a.predicted_position().x,
+            a.predicted_position().y,
+            lead.x,
+            lead.y,
+            offset.x,
+            offset.y,
+            offset.z,
+            self.camera.position.x,
+            self.camera.position.y,
+            self.camera.position.z,
+            anims.join(",")
+        );
+    }
+
     /// Aurora's movement of our avatar for this frame (Preferences › Aurora
     /// › Movement): the lead the keys still on their way give it, kept on
     /// the land, and the walk or stop of the keys over the simulator's
