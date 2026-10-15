@@ -6,6 +6,8 @@ mod previews;
 mod windows;
 pub(crate) use windows::window_id as preview_window_id;
 #[cfg(test)]
+mod size_tests;
+#[cfg(test)]
 mod tests;
 
 use super::{
@@ -54,8 +56,26 @@ pub struct Preferences {
     pub presentation: Presentation,
     pub favorites: HashSet<Uuid>,
     pub recent: Vec<Uuid>,
+    pub texture_preview_size: Option<[f32; 2]>,
+    pub material_preview_size: Option<[f32; 2]>,
 }
 impl Preferences {
+    fn preview_size(&self, material: bool) -> Option<Vec2> {
+        let size = if material {
+            self.material_preview_size
+        } else {
+            self.texture_preview_size
+        }?;
+        size.iter().all(|v| v.is_finite() && *v > 0.0).then(|| Vec2::from(size))
+    }
+    fn record_preview_size(&mut self, material: bool, size: Vec2) {
+        let target = if material {
+            &mut self.material_preview_size
+        } else {
+            &mut self.texture_preview_size
+        };
+        *target = Some(size.into());
+    }
     pub fn record(&mut self, item: Uuid) {
         self.recent.retain(|id| *id != item);
         self.recent.insert(0, item);
@@ -347,7 +367,7 @@ impl LibraryUi {
                 prefs.presentation.flip();
             }
         }
-        self.show_previews(ctx, p, world, scene, images);
+        self.show_previews(ctx, p, world, scene, images, prefs);
         actions
     }
     fn prepare_root(&mut self, inv: &mut Inventory, actions: &mut Vec<Action>) {

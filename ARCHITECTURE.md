@@ -101,7 +101,11 @@ shared folder/search/type state and inventory management shortcut.
 windows keyed by inventory item. Inventory and library opens share these windows
 and the same bounded model cache; reopening an item raises/restores its window
 without resetting its camera. Each window survives closing either source panel,
-and closes independently. Unsaved inventory documents keep their editor/draft.
+and closes independently. Texture and material windows each persist their own
+last manually resized size in library preferences; only new windows inherit it.
+Shared floater resize completion events exclude placement, minimization and
+screen fitting, and settings save once on release. Unsaved inventory documents
+keep their editor/draft.
 `ui/texture_library/catalogue.rs` caches the `#Aurora/Textures Library` subtree
 by inventory generation, includes only actual texture/material items and real
 folders/subfolders, and excludes all links and the bridge's sibling data.

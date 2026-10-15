@@ -709,6 +709,21 @@ pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2)
     });
 }
 
+/// Set an expanded window's size once, preserving its independent position.
+pub fn size_floater(ctx: &egui::Context, id: &str, size: Vec2) {
+    let window_id = egui::Id::new(id);
+    ctx.data_mut(|d| {
+        d.insert_persisted(window_id.with("expanded_size"), size);
+        d.insert_temp(window_id.with("restore_size"), true);
+    });
+}
+
+/// Consume the actual size after a manual edge/corner resize is released.
+/// Layout placement, minimization and automatic screen fitting do not emit it.
+pub fn take_floater_resize(ctx: &egui::Context, id: &str) -> Option<Vec2> {
+    ctx.data_mut(|d| d.remove_temp::<Vec2>(egui::Id::new(id).with("floater_resized")))
+}
+
 /// Minimize the floater `id` (LLFloater::setMinimized), as its title button
 /// does.
 pub fn minimize_floater(ctx: &egui::Context, id: &str) {

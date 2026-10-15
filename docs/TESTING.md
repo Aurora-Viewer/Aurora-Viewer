@@ -1483,6 +1483,13 @@ closes the library at frame 760; all four previews must remain visible. Check
 individual close/minimize/restore, independent material cameras, texture drags
 and material handles, including from inventory outside the library. Reopening
 the same item restores/raises its existing preview without resetting its view.
+`preview-sizes` manually shrinks the first texture at frame 640, opens another
+texture at 670, resizes the first material at 710 and opens another material at
+740. At 780, the four windows are arranged for comparison: each pair must have
+the same size, with distinct stored texture/material sizes. Resizing an older
+window must affect only subsequent opens of that type. Minimizing, restoring,
+moving windows or automatically fitting a smaller viewport must not replace
+the preferred sizes; both preferences survive restart.
 No-copy resources cannot be applied to multiple selected objects. Restricted
 resources wait for object contents; click again after the loading message.
 Capture after frame 780 to allow previews to

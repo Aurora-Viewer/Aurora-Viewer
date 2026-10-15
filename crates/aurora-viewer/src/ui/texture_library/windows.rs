@@ -8,6 +8,7 @@ pub(super) struct PreviewWindow {
     pub id: Uuid,
     pub view: aurora_render::preview::View,
     slot: usize,
+    first_show: bool,
 }
 
 pub(crate) fn window_id(item: Uuid) -> String {
@@ -32,6 +33,7 @@ impl LibraryUi {
                 id: item.id,
                 view: Default::default(),
                 slot,
+                first_show: true,
             });
         }
         widgets::open_floater(ctx, &window_id(item.id), &mut existing);
@@ -45,10 +47,11 @@ impl LibraryUi {
         world: &World,
         scene: &mut Scene,
         images: &HashMap<Uuid, egui::TextureHandle>,
+        prefs: &mut Preferences,
     ) {
         // Keep one shared worker/GPU cache for every swatch and window.
         let mut windows = std::mem::take(&mut self.windows);
-        windows.retain_mut(|window| self.preview_window(ctx, p, world, scene, images, window));
+        windows.retain_mut(|window| self.preview_window(ctx, p, world, scene, images, prefs, window));
         self.windows = windows;
         if let Some(id) = self.focus_preview.take() {
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(window_id(id))));
@@ -62,6 +65,7 @@ impl LibraryUi {
         world: &World,
         scene: &mut Scene,
         images: &HashMap<Uuid, egui::TextureHandle>,
+        prefs: &mut Preferences,
         window: &mut PreviewWindow,
     ) -> bool {
         let Some(item) = catalogue::resource(&world.inventory, window.id) else {
@@ -78,6 +82,14 @@ impl LibraryUi {
                 60.0 + (window.slot / columns) as f32 * 24.0,
             );
         let id = window_id(item.id);
+        // Human-requested defaults by resource type. Only new windows inherit
+        // the last manual size; visible windows retain their own geometry.
+        if window.first_show {
+            if let Some(size) = prefs.preview_size(material) {
+                widgets::size_floater(ctx, &id, size);
+            }
+            window.first_show = false;
+        }
         let mut open = true;
         let mut floater = Floater::new(&id, &item.name, position, Vec2::new(360.0, 420.0));
         floater.min_size = Vec2::new(220.0, 260.0);
@@ -142,6 +154,9 @@ impl LibraryUi {
                 .color(p.muted),
             );
         });
+        if let Some(size) = widgets::take_floater_resize(ctx, &id) {
+            prefs.record_preview_size(material, size);
+        }
         open
     }
 }

@@ -56,6 +56,34 @@ impl App {
             pressed,
             modifiers: Default::default(),
         };
+        if mode == "preview-sizes" {
+            let (item, start, delta) = if self.frame_count < 690 {
+                (crate::demo::texture_library::preview_items()[0], 640, egui::vec2(-80.0, -130.0))
+            } else {
+                (crate::demo::texture_library::preview_items()[2], 710, egui::vec2(-20.0, -100.0))
+            };
+            if let Some(rect) = self
+                .egui_ctx
+                .memory(|m| m.area_rect(egui::Id::new(library::preview_window_id(item))))
+            {
+                let source = rect.right_bottom() - egui::Vec2::splat(2.0);
+                let origin_key = egui::Id::new(("library_demo_resize_origin", item));
+                if self.frame_count == start {
+                    self.egui_ctx.data_mut(|d| d.insert_temp(origin_key, source));
+                    raw.events.push(egui::Event::PointerMoved(source));
+                }
+                if let Some(origin) = self.egui_ctx.data(|d| d.get_temp::<egui::Pos2>(origin_key)) {
+                    let target = origin + delta;
+                    match self.frame_count.saturating_sub(start) {
+                        1 if self.frame_count >= start => raw.events.push(button(origin, true)),
+                        2..=5 if self.frame_count >= start => raw.events.push(egui::Event::PointerMoved(target)),
+                        6 if self.frame_count >= start => raw.events.push(button(target, false)),
+                        _ => {}
+                    }
+                }
+            }
+            return;
+        }
         if mode.starts_with("material-preview") {
             let item = self
                 .egui_ctx
@@ -200,6 +228,8 @@ impl App {
             {
                 self.inventory_ui.show_folder(&self.world.inventory, root);
             }
+            self.settings.texture_library.texture_preview_size = None;
+            self.settings.texture_library.material_preview_size = None;
             self.texture_library.demo(&mode, self.world.agent_id);
         }
         if self.demo
@@ -225,6 +255,28 @@ impl App {
             }
             if self.frame_count >= 760 && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").as_deref() == Ok("multi-preview-closed") {
                 self.panels.texture_library = false;
+            }
+        }
+        if self.demo && self.library_demo_seeded && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").as_deref() == Ok("preview-sizes") {
+            let items = crate::demo::texture_library::preview_items();
+            for (item, frame) in items.into_iter().zip([620, 670, 690, 740]) {
+                if self.frame_count == frame {
+                    self.texture_library.open_preview(ctx, &self.world, item);
+                }
+            }
+            if self.frame_count == 780 {
+                for (index, item) in items.into_iter().enumerate() {
+                    ui::widgets::move_floater(
+                        ctx,
+                        &library::preview_window_id(item),
+                        egui::pos2(20.0 + (index % 2) as f32 * 380.0, 60.0 + (index / 2) as f32 * 345.0),
+                    );
+                }
+                log::info!(
+                    "demo preview window sizes: texture={:?}, material={:?}",
+                    self.settings.texture_library.texture_preview_size,
+                    self.settings.texture_library.material_preview_size
+                );
             }
         }
         let preferences = self.settings.texture_library.clone();
