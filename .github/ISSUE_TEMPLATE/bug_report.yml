@@ -1,7 +1,7 @@
 name: Bug Report
 description: Report a bug in Aurora
 title: "[Bug]: "
-labels: ["bug"]
+labels: ["bug-report"]
 body:
   - type: markdown
     attributes:
@@ -51,5 +51,16 @@ body:
     attributes:
       label: Operating system and graphics card (if it is a rendering issue)
       placeholder: e.g., Windows 11, NVIDIA GeForce RTX 3080
+    validations:
+      required: false
+
+  - type: upload
+    id: attachments
+    attributes:
+      label: Attachments (Logs, Screenshots, or Files)
+      description: |
+        **WARNING:** All uploaded files are **PUBLIC** and visible to everyone on the internet. 
+        Do **NOT** upload sensitive information, private logs, passwords, or personal data. 
+        Attach only public screenshots or sanitized logs.
     validations:
       required: false
