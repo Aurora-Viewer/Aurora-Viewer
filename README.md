@@ -29,7 +29,8 @@ the behaviour of [Firestorm](https://www.firestormviewer.org) — same protocol,
 same rules, same defaults — while rethinking the user interface.
 
 > **Status:** early development (0.x). Usable for exploring, chatting and
-> testing; many features are still in progress — see [TASKS.md](TASKS.md).
+> testing. Some implemented features still await live-grid validation — see
+> [TASKS.md](TASKS.md).
 
 ## Why Aurora
 
@@ -78,7 +79,8 @@ are planned or in progress: they are not in the viewer yet.
   dedicated render thread keeps the frames coming.
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **AMD FSR upscaling** and its native anti-aliasing, on every brand of
   graphics card.
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Graphics presets matched to your machine**, chosen at first launch.
+- **Graphics presets matched to your machine**, chosen at first launch,
+  with per-section resets when you want to start over.
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Even faster arrivals**: what you are looking at loads first, with fewer
   round trips to the first pixels.
 
@@ -93,21 +95,37 @@ are planned or in progress: they are not in the viewer yet.
   you can search, kept on your disk only.
 - **A well-behaved client.** Aurora speaks to the servers the way they
   expect: same messages, same request rates.
-- **Shape editing**, with body and face categories, visual previews and saved copies.
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Snapshots, gestures, RLVa**, and the clothing editors.
+- **Shape editing**, with 82 body and face controls, textured mesh previews
+  and saved copies; manual or automatic hover height keeps your feet grounded.
+- **Photos with room to compose**: high-resolution snapshots, depth of field,
+  a free camera and lighting controls, saved to disk, inventory or the profile feed.
+- **Gestures**, with a manager, an editor, chat triggers, shortcuts,
+  animations and sounds.
+- **Your own sky and water**, with EEP sky, water and day-cycle editors,
+  personal previews and parcel or region environment settings.
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **RLVa and the clothing editors.**
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Smoother avatars**: movement of the people around you extrapolated and
   smoothed between two server updates.
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **A full pass on water**, and PBR terrain.
 
 ### An interface made for today
 
-- **Flat, calm and readable**: a single top bar, a notification center,
-  searchable conversations and a redesigned performance window.
+- **Flat, calm and readable**: glass island bars, a notification center with
+  history, messenger-style conversations and a redesigned performance window.
+- **Arrange it your way**: customizable bottom, left and right toolbars,
+  favourites in a menu, row or dock, and classic Firestorm layouts available
+  in Preferences › Aurora.
+- **People and places at a glance**: redesigned resident and group profiles,
+  a People window for friends, groups, contact sets, recent and blocked
+  residents, and a world map with floating controls.
 - **Windows that get out of the way**: double-click a window's title to
   collapse it into a movable bar, then restore it with its size and content.
+  Hold Alt while dragging to attach windows together; Alt+Shift+U hides or
+  restores the interface, and the bars hide automatically in mouselook.
 - **Ready for your keyboard**: movement keys adapt to the keyboard layout on
   first launch (WASD or ZQSD), and letter shortcuts use the key that carries
-  their letter (M is M on AZERTY too).
+  their letter (M is M on AZERTY too). Search Preferences › Shortcuts by
+  action, category or key.
 - **English and French**, following the system language or your choice,
   applied at once.
 - **A clean way out**: on closing, a dialog over a blurred background offers
@@ -169,21 +187,46 @@ The texture memory budget is set automatically from the detected VRAM.
 
 - **Rendering** — wgpu / Vulkan, bindless textures, multi-draw-indirect,
   PBR and legacy materials, shadows, reflection probes, water, glow,
-  particles, GPU occlusion (experimental).
+  particles, rainbows, 22° halos and depth of field; GPU occlusion
+  (experimental), graphics presets and per-section resets.
 - **Avatars** — skeleton and Bento animations blended like Firestorm,
-  server bakes, shape, rigged mesh, complexity limits, impostors, look-at.
+  server bakes, rigged mesh, complexity limits, impostors and look-at;
+  a shape editor with textured mesh previews, manual and automatic hover
+  height, rebake, skeleton reset and animation controls; gestures with
+  playback, editing, chat triggers and shortcuts.
 - **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
-  world sounds, parcel music, media on prims.
-- **Social** — local chat, IMs and groups, people list, blocking,
-  notifications, voice (WebRTC); conversation history kept on disk per
-  account and grid in Firestorm's text format, shown greyed when a
-  conversation opens, with search and a History window; instant messages
-  received while offline.
-- **Interface** — flat Aurora theme, Tabler icons, mini-map and world map,
-  inventory, preferences, debug overlays.
+  sky, water and day-cycle editors, world sounds, parcel music and media
+  on prims, with Aurora's downloadable media plugins pack.
+- **Photos and camera** — high-resolution snapshots to disk, inventory or
+  the profile feed; depth of field, a maximum-quality photo mode with 8× MSAA,
+  temporary lighting controls, keyboard free camera and a combined camera /
+  movement Controls window.
+- **Social** — local chat, messenger-style IMs and group conversations,
+  resident profiles, the People window, contact sets, blocking, notifications
+  with history and friend/IM alerts; searchable conversation history kept on
+  disk per account and grid in Firestorm's text format, and offline messages.
+- **Voice** — nearby WebRTC voice, one-to-one, group and conference calls,
+  invitations, adding participants and per-participant call volume.
+- **Groups** — creation, invitations, notices, roles, abilities, member
+  moderation, bans, land contributions, L$ accounts and experiences.
+- **Land and regions** — redesigned About Land, land purchasing, landmarks,
+  Region / Estate overview and management controls, parcel / region
+  environments, experience permission prompts and region restart alerts.
+- **Inventory and commerce** — inventory tools, dedicated Marketplace and
+  listings windows, compact import launcher and per-type editors; sound
+  waveform previews, trimming, gain and splitting.
+- **Interface** — flat Aurora theme, Tabler icons, glass island bars,
+  customizable bottom and side toolbars, classic layout options, mini-map,
+  world map, preferences and debug overlays; double-click walk / run /
+  teleport and content-rating controls for places and teleport offers.
 - **Windows updates** — release checks, cancellable verified downloads,
   installation and restart with rollback. The prompt explains whether cache
   and settings will be preserved, migrated or reset.
+
+Voice calls, photo uploads, environment saving and several group / region
+operations are implemented and tested in the offline demo, but still need
+end-to-end validation on the main grid. [TASKS.md](TASKS.md) distinguishes
+completed work from features awaiting that validation.
 
 ![Login screen](docs/screenshots/login.jpg)
 
@@ -191,10 +234,11 @@ The texture memory budget is set automatically from the detected VRAM.
 
 **Not there yet**
 
-- Snapshots, gestures, RLVa, the clothing editors, and the full
-  sky / water editors.
-- Voice is WebRTC only (no Vivox).
+- RLVa and the clothing texture / colour editors.
+- Photo filters, depth exports and 360° snapshots.
 - Linux and macOS builds: the code is portable but not validated.
+
+Voice is WebRTC only; Vivox is not supported.
 
 **Planned**
 
@@ -268,6 +312,42 @@ the current server appearance. Closing a modified shape offers Save, Discard or
 Cancel. A shape without Modify is read-only and can only be copied unchanged;
 a modifiable no-copy shape can be saved in place.
 
+### Hover height
+
+Open **Appearance › Hover Height** to adjust your height from -3 to +3 m.
+Automatic adjustment is enabled by default: it estimates ground contact
+from your foot attachments and applies your saved offset. A manual height
+change disables automatic adjustment; the automatic offset controls keep
+it enabled. **Affect camera view** decides whether the camera follows the
+height change. Your hover height is remembered per avatar.
+
+### Photos
+
+Open the photo window from the toolbar or with **Ctrl+Shift+S**. Choose a
+destination (disk, inventory or profile feed), an aspect ratio and a
+resolution. Disk photos support PNG, JPEG and BMP, with presets up to 8K.
+Inventory uploads use the grid's upload charge; the profile destination
+offers a caption and an optional location.
+
+**Photo quality** temporarily raises graphics settings and uses 8× MSAA
+for the capture. The window also offers depth of field, exposure, time of
+day, cloud pause and worn-light controls. Closing it restores your ordinary
+graphics and lighting settings.
+
+Enable **Free camera** to move the camera with the movement keys while your
+avatar stays put. Hold the right mouse button to look, use Shift to move
+faster or Ctrl to move slower, and press Escape to return. The **Controls**
+window provides camera and movement pads, saved camera positions and free
+camera controls. A classic Firestorm photo layout is available in
+Preferences › Aurora.
+
+### Gestures
+
+Open the gesture manager with **Ctrl+G** to activate, play or edit gestures.
+Gestures can combine animations, sounds, chat messages and waits, with chat
+triggers and keyboard shortcuts. Active triggers complete inline in local
+chat; activation is also available from the inventory's right-click menu.
+
 ### Notecards
 
 Notecards show images, landmarks and other embedded items with their icon and
@@ -285,12 +365,18 @@ offers Collapse all / Expand all.
 
 ### Toolbar buttons
 
-Right-click the bottom toolbar and choose **Edit toolbar buttons** to add
-buttons from the catalogue. Drag them onto the bar or along it to reorder
-them; right-click a button to remove it. The order and the optional lock are
-shared by all accounts in the same local profile. The catalogue also restores
-the skin defaults or clears the bar. An older per-account layout is adopted
-from the first account used after the update.
+Right-click a toolbar and choose **Toolbar buttons…** to open the command
+catalogue. Drag buttons onto the bottom dock / bar or the left and right
+bars, between bars, or along a bar to reorder them. Empty side bars show
+drop zones while dragging a button. Right-click a button to remove it, or
+drop it back into the catalogue.
+
+Each bar has its own alignment, button sizing and icon / label mode. The
+chosen buttons, order, styles and lock are shared by all accounts in the
+same local profile. The catalogue also restores the defaults or clears all
+bars. An older per-account layout is adopted from the first account used
+after the update. Preferences › Aurora offers the glass island and classic
+bar layouts, including where favourites appear.
 
 ### Inventory
 
