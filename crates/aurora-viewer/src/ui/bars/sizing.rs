@@ -31,8 +31,9 @@ pub fn natural(mode: ButtonMode, square: f32, icon: f32, text: f32, extra: f32) 
 /// The buttons' widths in a row of `room` with `gap` between them: their
 /// own (`Auto`), the widest one's for all when they have labels (`Fixed`;
 /// icons keep their square), or theirs with the rest of the room shared
-/// equally (`Fill`). Too long, labelled buttons narrow together down to
-/// `min` (their labels are cut).
+/// equally (`Fill`). Too long, labelled buttons are held under one common
+/// width, the widest first, so that the longest labels are cut and the
+/// short ones stay whole, down to `min`.
 pub fn fit(natural: &[f32], sizing: Sizing, labelled: bool, room: f32, gap: f32, min: f32) -> Vec<f32> {
     let n = natural.len();
     if n == 0 {
@@ -50,12 +51,23 @@ pub fn fit(natural: &[f32], sizing: Sizing, labelled: bool, room: f32, gap: f32,
     };
     let total = widths.iter().sum::<f32>() + gaps;
     if total > room && labelled {
-        let slack: f32 = widths.iter().map(|w| (w - min).max(0.0)).sum();
-        if slack > 0.0 {
-            let k = ((total - room) / slack).min(1.0);
-            for w in &mut widths {
-                *w = (*w - (*w - min).max(0.0) * k).floor().max(min);
+        // the common width that fills the room: the narrower buttons keep
+        // theirs, the others share what is left
+        let mut sorted = widths.clone();
+        sorted.sort_by(f32::total_cmp);
+        let mut left = room - gaps;
+        let mut cap = min;
+        for (i, w) in sorted.iter().enumerate() {
+            let rest = (n - i) as f32;
+            if w * rest > left {
+                cap = (left / rest).floor();
+                break;
             }
+            left -= w;
+        }
+        let cap = cap.max(min);
+        for w in &mut widths {
+            *w = w.min(cap);
         }
     }
     widths
@@ -113,6 +125,9 @@ mod tests {
         // down to the least width, then over the room
         let w = fit(&own, Sizing::Auto, true, 100.0, 2.0, 24.0);
         assert!(w.iter().all(|x| *x == 24.0));
+        // the long labels are cut first, the short ones stay whole
+        let w = fit(&[50.0, 150.0, 150.0], Sizing::Auto, true, 254.0, 2.0, 24.0);
+        assert_eq!(w, [50.0, 100.0, 100.0]);
     }
 
     #[test]

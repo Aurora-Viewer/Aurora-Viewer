@@ -1440,7 +1440,8 @@ settings. The bars mockup's states, for this run only (nothing is saved):
 `custom` (Environments, Radar and Teleport history in the left toolbar,
 Performance out of the dock, the window open and, from frame 652, Build
 dragged from it between the mini-map and Sit), `side` (the same toolbars
-without the window), `right` (them in the right toolbar), `labels` (the
+without the window; `sidemenu`: Radar's right click at frame 650, the
+vertical toolbar's menu), `right` (them in the right toolbar), `labels` (the
 dock in icons and labels, the left toolbar in labels). Capture at frame 780.
 
 The values of these switches are English words. The French words they had

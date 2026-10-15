@@ -346,19 +346,47 @@ impl ToolbarUi {
             self.pending = Some(Edit::Remove(drag.button.command.clone()));
             egui::DragAndDrop::clear_payload(ctx);
         }
+        // ConfirmRestoreToolbarDefaults / ConfirmClearAllToolbars
         if let Some(restore) = self.confirm {
+            let width = (screen.width() - 80.0).clamp(240.0, 400.0);
             let shown = widgets::Modal::new(egui::Id::new("toolbar_confirm")).show(ctx, |ui| {
-                ui.label(if restore {
-                    aurora_i18n::tr!("toolbar-confirm-restore")
-                } else {
-                    aurora_i18n::tr!("toolbar-confirm-clear")
-                });
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 10.0);
                 ui.horizontal(|ui| {
-                    if ui.button(aurora_i18n::tr!("common-ok")).clicked() {
-                        self.pending = Some(if restore { Edit::Restore } else { Edit::Clear });
+                    widgets::glyph(ui, "layout-bottombar-filled", p.violet_light, 20.0);
+                    ui.label(
+                        egui::RichText::new(if restore {
+                            aurora_i18n::tr!("toolbar-restore")
+                        } else {
+                            aurora_i18n::tr!("toolbar-clear")
+                        })
+                        .size(17.0)
+                        .strong()
+                        .color(p.ink),
+                    );
+                });
+                ui.label(
+                    egui::RichText::new(if restore {
+                        aurora_i18n::tr!("toolbar-confirm-restore")
+                    } else {
+                        aurora_i18n::tr!("toolbar-confirm-clear")
+                    })
+                    .size(13.0)
+                    .color(p.muted),
+                );
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let size = Vec2::new((width - 8.0) / 2.0, 32.0);
+                    if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), widgets::ActionKind::Flat, size).clicked() {
                         self.confirm = None;
                     }
-                    if ui.button(aurora_i18n::tr!("common-cancel")).clicked() {
+                    let (icon, kind) = if restore {
+                        ("refresh", widgets::ActionKind::Primary)
+                    } else {
+                        ("trash-filled", widgets::ActionKind::Danger)
+                    };
+                    if widgets::action_button(ui, p, icon, aurora_i18n::tr!("common-ok"), kind, size).clicked() {
+                        self.pending = Some(if restore { Edit::Restore } else { Edit::Clear });
                         self.confirm = None;
                     }
                 });
@@ -415,11 +443,12 @@ fn ghost(ctx: &egui::Context, p: &Palette, button: &ToolButton, pointer: egui::P
 /// The settings of a demo run (`AURORA_DEMO_TOOLBAR`): `custom` is the
 /// mockup's "custom" state (Environments, Radar and Teleport history in the
 /// left bar, Performance out of the dock); `side` the same bars without the
-/// window; `right` them in the right bar; `labels` adds the dock's icons
-/// and labels and the left bar's labels. Never saved.
+/// window (`sidemenu`: Radar's right click at frame 650); `right` them in
+/// the right bar; `labels` adds the dock's icons and labels and the left
+/// bar's labels. Never saved.
 pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
     let Some(mode) = demo_mode() else { return };
-    if !matches!(mode, "custom" | "side" | "labels" | "right") {
+    if !matches!(mode, "custom" | "side" | "sidemenu" | "labels" | "right") {
         return;
     }
     let side: Vec<ToolButton> = ["myenvironments", "radar", "teleport_history"]
@@ -461,7 +490,9 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
     if mode == "side" {
         return Vec::new();
     }
-    if frame == 300 {
+    // the side toolbar's right click, without the window
+    let menu = matches!(mode, "menu" | "sidemenu");
+    if frame == 300 && mode != "sidemenu" {
         let size = Vec2::new(width(ctx.content_rect()), 420.0);
         widgets::place_floater(ctx, WINDOW, default_pos(ctx), size);
         state.open = true;
@@ -473,6 +504,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
     let catalogue = |command: &str| ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(("toolbar_catalogue", command))));
     let source = match mode {
         "reorder" | "menu" => bar("preferences").map(|r| r.center()),
+        "sidemenu" => bar("radar").map(|r| r.center()),
         "custom" => catalogue("build").map(|r| r.center()),
         _ => catalogue("friends").map(|r| r.center()),
     };
@@ -486,7 +518,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
     let Some(target) = target else { return Vec::new() };
     let button = |pos, pressed| egui::Event::PointerButton {
         pos,
-        button: if mode == "menu" {
+        button: if menu {
             egui::PointerButton::Secondary
         } else {
             egui::PointerButton::Primary
@@ -496,10 +528,10 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
     };
     match frame {
         650 => vec![egui::Event::PointerMoved(source), button(source, true)],
-        651 if mode == "menu" => vec![button(source, false)],
+        651 if menu => vec![button(source, false)],
         651 => vec![egui::Event::PointerMoved(source + Vec2::new(12.0, 0.0))],
-        652..=655 if mode != "menu" => vec![egui::Event::PointerMoved(target)],
-        656 if !matches!(mode, "menu" | "drag" | "custom") => vec![button(target, false)],
+        652..=655 if !menu => vec![egui::Event::PointerMoved(target)],
+        656 if !menu && !matches!(mode, "drag" | "custom") => vec![button(target, false)],
         _ => Vec::new(),
     }
 }

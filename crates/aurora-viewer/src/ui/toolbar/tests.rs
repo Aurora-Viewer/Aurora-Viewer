@@ -740,6 +740,31 @@ fn toolbar_window_tiles_show_placed_and_missing_commands() {
     assert_eq!(bench.settings.location("build", &layout()), Some(Bar::Bottom));
 }
 
+/// Clear all asks first (ConfirmClearAllToolbars): Cancel keeps the three
+/// toolbars, OK empties them in one save.
+#[test]
+fn toolbar_clear_all_asks_before_emptying_the_three_toolbars() {
+    let mut bench = Bench::default();
+    bench.state.open = true;
+    bench.settings.left = vec![button("radar")];
+    for _ in 0..3 {
+        bench.frame(vec![]);
+    }
+    let click = |bench: &mut Bench, text: &str| {
+        let at = bench.text(text);
+        bench.pointer(at, true, false);
+        bench.pointer(at, false, false);
+    };
+    click(&mut bench, aurora_i18n::tr!("toolbar-clear"));
+    click(&mut bench, aurora_i18n::tr!("common-cancel"));
+    assert_eq!(bench.saves, 0);
+    assert_eq!(bench.settings.buttons(&layout()).len(), 3);
+    click(&mut bench, aurora_i18n::tr!("toolbar-clear"));
+    click(&mut bench, aurora_i18n::tr!("common-ok"));
+    assert_eq!(bench.saves, 1);
+    assert!(bench.settings.buttons(&layout()).is_empty() && bench.settings.left.is_empty());
+}
+
 /// A button dragged from the bottom toolbar onto the window goes back to it.
 #[test]
 fn toolbar_drop_anywhere_on_the_window_removes_the_button() {
