@@ -624,8 +624,7 @@ fn ongoing(
             crate::ui::widgets::glyph(ui, "volume", p.success, 17.0);
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-chat-call-ongoing"))
-                    .size(12.0)
-                    .strong()
+                    .font(egui::FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx())))
                     .color(p.ink),
             );
             let name = world.social.display_name_of(&by);

@@ -399,6 +399,8 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
 
 /// A Tabler icon in a rect, in a colour.
 pub(super) fn paint_icon(painter: &egui::Painter, icon: &str, rect: egui::Rect, color: Color32) {
+    // a name that is not built in would paint nothing (a blank button)
+    debug_assert!(crate::ui::icons::embedded(icon), "icon {icon:?} is not embedded");
     if let Some(t) = crate::ui::icons::global(icon) {
         painter.image(
             t.id(),

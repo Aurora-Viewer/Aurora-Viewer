@@ -58,7 +58,7 @@ fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::hover());
     ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field);
     let glass = egui::Rect::from_center_size(egui::pos2(rect.left() + 15.0, rect.center().y), egui::Vec2::splat(13.0));
-    super::thread::paint_icon(ui.painter(), "search", glass, p.muted_dim);
+    super::thread::paint_icon(ui.painter(), "search-filled", glass, p.muted_dim);
     let field = egui::Rect::from_min_max(
         egui::pos2(glass.right() + 6.0, rect.top()),
         egui::pos2(rect.right() - 6.0, rect.bottom()),
@@ -302,7 +302,7 @@ pub(super) fn show(
                     }
                 }
                 let e = Entry {
-                    icon: Icon::Glyph("search", p.muted),
+                    icon: Icon::Glyph("search-filled", p.muted),
                     name: aurora_i18n::tr!("ui-chat-find-resident"),
                     sub: Some(st.side_filter.trim().to_owned()),
                     sub_icon: None,
