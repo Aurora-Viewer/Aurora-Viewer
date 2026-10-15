@@ -2181,7 +2181,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   moderator, the speaker in the column), `call-mini` (the stage reduced to
   its strip), `call-ongoing` (Nova's group call left ringing: the strip
   with Join, the green call button), `call-away` (in the group's call
-  with the nearby chat shown: the column's call panel). The calls are those of
+  with the nearby chat shown: the column's call panel), `call-incoming-group`
+  (Nova's group call ringing: Join / Ignore), `call-p2p` (our call to Tess),
+  `conference` (a voice conference with Tess and Nova). The calls are those of
   `AURORA_DEMO_CALL` and start 3 s after the login: capture at frame 780
   with `AURORA_FPS_LIMIT=60`. What to look for: the layout of the
   validated mockups (variant A, and B with `compact`); the column's entries, the hover toolbar and the head's buttons all act
