@@ -95,6 +95,60 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
+shared folder/search/type state and inventory management shortcut.
+`ui/texture_library/windows.rs` owns independent, resizable texture/material
+windows keyed by inventory item. Inventory and library opens share these windows
+and the same bounded model cache; reopening an item raises/restores its window
+without resetting its camera. Each window survives closing either source panel,
+and closes independently. Texture and material windows each persist their own
+last manually resized size in library preferences; only new windows inherit it.
+Shared floater resize completion events exclude placement, minimization and
+screen fitting, and settings save once on release. Unsaved inventory documents
+keep their editor/draft.
+`ui/widgets/cascade.rs` ports Firestorm's inventory floater registry placement:
+same-type instances follow creation order, skipping hidden/minimized anchors,
+with a human-requested 32 px right/down offset (twice Firestorm's default) and fitting to the work area. Raising an existing
+item preserves its geometry. Inventory and object script editors share a group;
+textures and materials use separate groups and retain their size preferences.
+Notecard, script, animation, sound and gesture groups remember their primary
+window's geometry. `ui/inventory/document.rs` creates independent document states
+inside the inventory's auxiliary window list (nil root, no tree); they retain
+their own drafts, save acknowledgements and close confirmations, and opening
+the same item raises/restores it. Resource, notecard and script integration
+tests exercise the shared placement with their actual floaters.
+`ui/texture_library/catalogue.rs` caches the `#Aurora/Textures Library` subtree
+by inventory generation, includes only actual texture/material items and real
+folders/subfolders, and excludes all links and the bridge's sibling data.
+`previews.rs` assembles bounded, revisioned PBR models on workers
+and draws them with the importer's shared GPU preview. `app/texture_library.rs`
+routes inventory mutations, library clicks on selected edit faces and
+permission-aware world face drops through the
+existing build and task-inventory operations. `Settings::texture_library`
+persists presentation, favorites and recent resources. Ctrl+Space and the
+customizable toolbar command toggle the current floater. `demo_texture_library.rs`
+provides actual synthetic inventory folders, tileable textures and PBR materials offline.
+Inventory texture previews retain the real item as drag cargo, sharing that
+world-drop path with inventory rows and library swatches. A dedicated handle
+in each material preview supplies the same cargo without consuming the
+3D scene's orbit gesture.
+
+`ui/inventory/drag.rs` snapshots the full Ctrl/Shift selection at drag start
+and moves it through `world/inventory/actions.rs::move_selection`. A separate
+batch payload prevents single-item world, attachment and editor targets from
+silently taking only the first item; existing single-item/folder cargo stays
+compatible. Rows claim drops before the enclosing inventory surface, including
+invalid targets. Validation is cached by cargo, destination, inventory generation
+and protection/worn state, then repeated on release. `drag_navigation.rs`
+toggles folders after a one-second hover, once per visit, independently of drop
+validity. It scrolls the actual inventory viewport (including virtualized search
+results) near its top/bottom edges and outside it vertically, with elapsed-time
+acceleration and ownership of the last entered inventory window. The final drag cursor and selection-count
+badge are drawn after all windows. `drag_tests.rs` drives actual Ctrl-selection
+and pointer events; `drag_navigation_tests.rs` covers hover latching, scrolling,
+hidden sources, filtered lists, window ownership and cancellation.
+`drag_demo.rs` provides offline move/hover/rejection/scroll/fold scenarios.
+
 `ui/toolbar.rs` owns Firestorm's three toolbars (the bottom one, left and
 right), their context menus and drag/drop edits; a command stands in one of
 them at most. `toolbar/catalogue.rs` lists Firestorm's toybox commands and
@@ -329,7 +383,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/search.rs`, `ui/search/details.rs`, `world/search.rs`, `aurora-net/src/search.rs`, `aurora-net/src/session_search.rs`, `demo_search.rs` | "Search" (Firestorm's legacy search): directory queries and their flags, reading of the replies and of the event / group details (`aurora-net/src/search.rs`, pure; sending and receiving in `session_search.rs`); one result list per tab with the pending query, pages of 100, statuses, sorting and selection (`world/search.rs`); window with seven tabs, forms, sortable list and web page in the built-in browser (`ui/search.rs`), detail cards and their actions (`ui/search/details.rs`); offline directory of the demo (`demo_search.rs`, AURORA_DEMO_SEARCH) |
 | `ui/group_profile.rs`, `ui/group_profile/`, `world/group_data.rs`, `aurora-net/src/groups.rs`, `aurora-net/src/session_groups.rs`, `demo_group.rs` | Group profile: LLGroupMgr's data of a group (members by the GroupMemberData capability or GroupMembersRequest, roles, role / member pairs, titles, notice list; replies and request ids in `aurora-net/src/groups.rs`, pure; sending and receiving in `session_groups.rs`), kept per group with stale replies dropped (`world/group_data.rs`); window in the Aurora look (`group_profile/view.rs` header and tabs, `home.rs`, `members.rs` with `admin_members.rs` and the abilities catalogue `abilities.rs`, `notices.rs`, `invite.rs`, `administration.rs`) or the classic one; "Create a group" (`create.rs`: LLPanelGroupCreate's rules, the profile's header and the identity cards of `administration.rs`, or Firestorm's creation panel; CreateGroupRequest and its name rules in `aurora-net/src/groups.rs`); demo group server (`demo_group.rs`, AURORA_DEMO_GROUP_PROFILE, AURORA_DEMO_GROUP_CREATE) |
 | `ui/find_shortcut.rs` | Ctrl+F requested by three features: the single rule (`owner`) that gives it to the window one of whose fields has the keyboard (script editor, conversation), otherwise to the conversation under the pointer, otherwise to the viewer's shortcut ("Search"); the windows with a search bar declare themselves to it every frame (`take`), the application queries it before running its shortcut (`window_takes_it`) |
-| `ui/widgets.rs`, `ui/widgets/resize.rs`, `ui/widgets/demo.rs` | Shared widgets and floating windows; collapsing by double-clicking the title or by a button, expanded size kept and collapsed bar movable; offline gestures on the real title; resize handles bounded before the move, opposite edge fixed, limits of the content and of the visible area; position and size kept by egui; names longer than their space cut with "…" with the whole name on hover (`elided_label`, `paint_elided`) for the lists of residents, groups and conversations |
+| `ui/widgets.rs`, `ui/widgets/resize.rs`, `ui/widgets/cascade.rs`, `ui/widgets/demo.rs` | Shared widgets and floating windows; Firestorm inventory preview/editor cascades by type and creation order; collapsing by double-clicking the title or by a button, expanded size kept and collapsed bar movable; offline gestures on the real title; resize handles bounded before the move, opposite edge fixed, limits of the content and of the visible area; position and size kept by egui; names longer than their space cut with "…" with the whole name on hover (`elided_label`, `paint_elided`) for the lists of residents, groups and conversations |
 | `ui/layout.rs`, `ui/layout/gesture.rs` | Interface layout: egui's memory (positions, sizes, collapsed windows) written to `ui_layout.ron` on exit and read back at startup; work area left by the bars (`work_area`) and common gap `GAP` of the default layout and of snapping (none: the windows touch); `Slot`, through which `widgets::Floater` and the minimap (`widgets::bare_window`) go, records where each window stood and in which screen, and makes it follow its nearest edges when the viewer window changes size, during the session or from one session to the next (`follow_edges`; a group of windows stuck together follows as a block). `gesture.rs`: the gestures of the frame (`layout::frame`, `layout::resizing`): window dragged by its title together with those stuck to it, block kept within the screen, snapping proposed then applied on release (under the pointer for a resize), sticking links created, saved with the layout and removed when they no longer hold (window closed, collapsed, moved apart, Alt) |
 | `ui/theme_guard.rs` | Test only: reads the interface sources (`ui/`, `build/ui/`, `imports/ui*`, `crash/window.rs`) and fails if a window directly uses an egui widget replaced by a shared widget of `ui/widgets.rs`, or itself writes a radius or a colour instead of those of the theme (AGENTS.md, section 7); list of the rules, of their replacement and of the exceptions (files of `ALLOWED`, lines marked `// theme-guard:`), themselves checked |
 | `ui/snap.rs`, `ui/snap/overlay.rs` | Window snapping, geometry only: which moving edges stick to what (edge facing another window, same-side edge of a neighbour, work area; 10 px margin, edges that touch (`layout::GAP`, no gap), size limits of a resize, holding of the displayed snap), guide to draw, side-by-side windows (`touching`), groups (`group`, `block_limits`). `layout/gesture.rs` only snaps and attaches moved windows while Alt is held, and Alt also detaches the dragged window from its group; resize snapping retains its separate behavior. `overlay.rs`: the guide and the "Alt" pill drawn above the windows |

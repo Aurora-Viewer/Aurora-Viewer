@@ -1439,6 +1439,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
+| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact texture/material library with synthetic real inventory folders, textures and PBR resources. |
 
 `AURORA_DEMO_TOOLBAR`: `1` opens the "Toolbar buttons" window at frame 300;
 `drag` holds Friends over the toolbar with an insertion marker (the empty
@@ -1453,6 +1454,85 @@ dragged from it between the mini-map and Sit), `side` (the same toolbars
 without the window; `sidemenu`: Radar's right click at frame 650, the
 vertical toolbar's menu), `right` (them in the right toolbar), `labels` (the
 dock in icons and labels, the left toolbar in labels). Capture at frame 780.
+
+`AURORA_DEMO_TEXTURE_LIBRARY`: `vertical` and `horizontal` open the corresponding
+presentation at frame 600; `inventory` also reveals the actual library folder
+in inventory, `search` filters stone PBR materials (including a nested polished
+folder), and `empty` keeps the sample resources outside the empty library. `drop` performs a real card drag onto the
+modifiable demo surface at (480, 430), for a 1280 × 800 window. Library scenarios
+make demo objects modifiable so manual surface drops can also be exercised.
+`baseline` keeps the library closed in the same scene for a profiling comparison.
+`preview` double-clicks an actual inventory texture and leaves its preview open;
+`preview-drag` then drags the preview image onto that surface, and `inventory-drag`
+drags the actual inventory row directly. Both use frame 720 for dragging.
+`apply` / `apply-pbr` click a texture / PBR card at frame 650; combine with
+`AURORA_DEMO_BUILD=face,480,430` and `AURORA_DEMO_BUILD_TAB=texture:classic`
+(or `texture:pbr`) to select that face first. Classic is before PBR in the build
+window. The click must update only selected editable faces, preserving other
+faces, transforms and selection; starting a drag must not apply to the selection.
+`material-preview` double-clicks a material card and shows its 3D preview with
+an explicit Drag handle. `material-preview-rotate` left-drags the scene at frame
+700 without starting inventory cargo; `material-preview-drag` also drags the
+handle onto the surface at frame 760. Check that rotation changes only the
+preview camera, that the handle does not rotate the scene, and that dropping
+it applies the material. Its permission/retention checks match other sources.
+`multi-preview` opens two textures and two materials in separate resizable
+windows at frames 620–680, then reopens the first texture at frame 720: four
+windows remain, with no replacement or duplicate. `multi-preview-closed` also
+closes the library at frame 760; all four previews must remain visible. Check
+individual close/minimize/restore, independent material cameras, texture drags
+and material handles, including from inventory outside the library. Reopening
+the same item restores/raises its existing preview without resetting its view.
+`preview-sizes` manually shrinks the first texture at frame 640, opens another
+texture at 670, resizes the first material at 710 and opens another material at
+740. At 780, the four windows are arranged for comparison: each pair must have
+the same size, with distinct stored texture/material sizes. Resizing an older
+window must affect only subsequent opens of that type. Minimizing, restoring,
+moving windows or automatically fitting a smaller viewport must not replace
+the preferred sizes; both preferences survive restart.
+`cascade`, `cascade-material`, `cascade-notecard` and `cascade-script` open six
+real inventory windows of the selected type at frames 620–720 without forcing
+their geometry. New instances advance by 32 logical pixels right/down from the
+last created visible, non-minimized instance of that type; moving or selecting
+an older window does not change that order. Script editors from inventory and
+objects share one group. Check fitting at screen edges, minimizing/closing the
+last instance, reopening an existing item, and independent editable notecard
+drafts. Texture and material sizes retain their separate preferences.
+`inventory-move`, `inventory-move-hover` and `inventory-move-rejected` open
+the real library subtree in a separate inventory window. Actual pointer events
+select the first two wood textures (Ctrl-click), start dragging one selected
+row at frame 660, hover the stone folder at 670 and release at 740. Check the
+two-item badge, Move cursor, target outline, one-second spring opening, and
+that both actual inventory items change folders after the acknowledgement.
+`inventory-move-hover` holds until 840 (capture at 800); `inventory-move-rejected`
+protects the destination and must keep both items in their original folder,
+showing rejection instead of moving them into the enclosing library root.
+Also test Shift selection, moving between inventory windows, folder/child
+selections, same-parent no-ops, Escape, no-copy items, and protection changes
+while hovering. Single-item world/preview drags continue to work.
+`inventory-move-scroll` adds 81 folders, drags the same selection below the
+viewport at frame 670, returns to the previously hidden last folder at 950 and
+drops at 1050 (capture at 1120). Check automatic downward scrolling and both
+textures arriving together. Also drag above the viewport to scroll upward and
+return to its middle to stop. This must work in filtered and partial inventories.
+`inventory-move-fold` hovers the stone folder until it opens, leaves at 760,
+then returns at 780 until it closes (capture at 750 for open, 900 for closed).
+An uninterrupted hover toggles only once; leaving/re-entering permits another
+toggle. Source folders can close without losing the dragged selection.
+No-copy resources cannot be applied to multiple selected objects. Restricted
+resources wait for object contents; click again after the loading message.
+Capture after frame 780 to allow previews to
+load. All inventory/assets are synthetic; no grid or credentials are used.
+Check the header's presentation switch, Ctrl+Space and bottom toolbar button,
+folder/type/search filters, double-click preview and the inventory management
+button. Move or copy actual textures, materials and folders/subfolders into
+`#Aurora/Textures Library` through inventory to check automatic refresh. Item
+and folder links must not appear, fetch their targets or contribute resources.
+Removing or moving actual content out of the folder removes it from the library.
+On a modifiable demo object, drag to one face or Shift-drag to all faces;
+Ctrl-drag inserts into contents. Alt-drag a texture onto a PBR face restores
+legacy texturing. Grid validation by the human must cover real asset fetches,
+ModifyMaterialParams/ObjectImage acknowledgement and no-copy/no-transfer rights.
 
 The values of these switches are English words. The French words they had
 before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.

@@ -7286,3 +7286,45 @@ shape-param-880-max = Coin vers le haut
 shape-param-11001-label = Survol
 shape-param-11001-min = Abaisser
 shape-param-11001-max = Plus élevé
+
+# Compact texture and material library
+texture-library-title = Textures et matériaux
+texture-library-side = Afficher sur le côté
+texture-library-bottom = Afficher en bas
+texture-library-empty = Placez des textures ou matériaux dans #Aurora/Textures Library.
+texture-library-preparing = Préparation des dossiers de la bibliothèque…
+texture-library-loading = Chargement des dossiers…
+texture-library-retry = Réessayer
+texture-library-all = Toute la bibliothèque
+texture-library-textures = Textures
+texture-library-pbr = PBR
+texture-library-recent = Récemment utilisés
+texture-library-preview = Ouvrir l’aperçu
+texture-library-drag-hint = Glisser sur une face. Maj : toutes les faces. Ctrl : contenu de l’objet.
+texture-library-copy = Copie autorisée
+texture-library-no-copy = Sans copie : appliquer déplace cet élément dans l’objet.
+texture-library-wait-inventory = Chargement du contenu de l’objet. Recommencez le glisser lorsque le contenu est prêt.
+texture-library-locked = Cette surface ne peut pas recevoir cette texture ou ce matériau.
+texture-library-applied = Texture ou matériau appliqué.
+texture-library-no-results = Aucune ressource ne correspond.
+texture-library-demo-wood = Bois
+texture-library-demo-stone = Pierre
+texture-library-demo-metal = Métal
+texture-library-demo-fabric = Textile
+texture-library-demo-oak = Chêne naturel
+texture-library-demo-marble = Marbre Calacatta
+texture-library-demo-brass = Laiton brossé
+texture-library-demo-linen = Lin naturel
+
+texture-library-demo-sources = Matériaux de démonstration
+texture-library-folder-error = Certains dossiers n’ont pas pu être chargés.
+texture-library-manage = Organiser dans l’inventaire
+texture-library-content-hint = Déplacez ou copiez des textures, matériaux et dossiers dans #Aurora/Textures Library. Les sous-dossiers sont inclus.
+texture-library-demo-polished = Poli
+
+texture-library-click-hint = Cliquez pour appliquer aux faces sélectionnées en mode édition.
+texture-library-no-copy-multiple = Une texture ou un matériau sans copie ne peut être appliqué qu’à un seul objet à la fois.
+texture-library-wait-selection = Chargement du contenu des objets. Cliquez à nouveau sur la ressource une fois le chargement terminé.
+
+texture-library-material-drag = Glisser
+texture-library-material-drag-hint = Glissez cette poignée sur une face pour appliquer le matériau. Glissez dans l’aperçu pour le faire tourner.

@@ -93,7 +93,7 @@ fn group_for_rez(world: &World, under_land: bool) -> Uuid {
         .unwrap_or(world.groups.active)
 }
 
-fn target_allowed(world: &World, idx: usize, item: &InvItem, ctrl: bool) -> Result<(), &'static str> {
+pub(super) fn target_allowed(world: &World, idx: usize, item: &InvItem, ctrl: bool) -> Result<(), &'static str> {
     let o = world.objects.get(idx).ok_or("rez-no-surface")?;
     if o.is_avatar() || o.is_tree() {
         return Err("rez-no-surface");
@@ -231,12 +231,18 @@ impl App {
     /// at end-pass. Wants-pointer stays true during a drag from a widget;
     /// only the actual destination area decides whether the world gets it.
     pub(super) fn inventory_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
-        self.inventory_drag.cursor = ui::inventory::task_drop::cursor(ctx);
+        self.inventory_drag.cursor = ui::inventory::task_drop::cursor(ctx).or_else(|| ui::inventory::drag::cursor(ctx));
+        ui::inventory::drag::badge(ctx, &self.palette);
         if !egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) {
             self.inventory_drag.checked = None;
             return None;
         }
         if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
+            return None;
+        }
+        if egui::DragAndDrop::payload::<InvDrag>(ctx)
+            .is_some_and(|drag| crate::ui::texture_library::catalogue::resource(&self.world.inventory, drag.0).is_some())
+        {
             return None;
         }
         let drag = ui::inventory::world_drag(ctx)?;

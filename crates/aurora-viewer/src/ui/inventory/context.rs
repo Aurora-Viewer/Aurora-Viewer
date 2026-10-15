@@ -27,8 +27,9 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &Inve
         actions.push(InvAction::Gesture(crate::ui::gestures::Action::Open(original)));
         return;
     }
-    if st.preview_dirty || st.save_pending {
-        st.message = aurora_i18n::tr!("ui-inventory-context-save-or-close-the-open-document-before-opening-another").into();
+    // Resource windows are independent of document editors and their drafts.
+    if let Some(item) = crate::ui::texture_library::catalogue::resource(inv, id) {
+        actions.push(InvAction::Preview(item.id));
         return;
     }
     let Some(original) = rules::original(inv, id) else {
@@ -64,8 +65,6 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &Inve
         // LLSettingsBridgeAction: a sky, water or day cycle opens its editor
         actions.push(InvAction::EditEnvironment(original));
     } else {
-        st.preview = Some(original);
-        st.reset_document();
         actions.push(InvAction::Preview(original));
     }
 }
@@ -822,6 +821,32 @@ pub(super) fn show(
 mod tests {
     use super::*;
     use egui::{Pos2, epaint::Shape};
+    #[test]
+    fn resource_previews_preserve_an_unsaved_document() {
+        let mut inv = Inventory::default();
+        let document = Uuid::from_u128(100);
+        let mut st = InventoryUi {
+            preview: Some(document),
+            preview_dirty: true,
+            preview_text: Some(Ok("unsaved draft".into())),
+            ..Default::default()
+        };
+        for (number, asset_type) in [(101, 0), (102, 57)] {
+            let id = Uuid::from_u128(number);
+            inv.add_items(vec![aurora_net::inventory::InvItem {
+                id,
+                asset_type,
+                ..Default::default()
+            }]);
+            let mut actions = Vec::new();
+            open(&inv, id, &mut st, &InventoryPreferences::default(), &mut actions);
+            assert!(matches!(actions.as_slice(), [InvAction::Preview(item)] if *item == id));
+            assert_eq!(st.preview, Some(document));
+            assert!(st.preview_dirty);
+            assert_eq!(st.preview_text, Some(Ok("unsaved draft".into())));
+            assert!(st.message.is_empty());
+        }
+    }
     fn text_position(shape: &Shape, label: &str) -> Option<Pos2> {
         match shape {
             Shape::Text(t) if t.galley.text() == label => Some(t.pos),

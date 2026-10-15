@@ -76,6 +76,7 @@ pub mod snap;
 pub mod snapshot;
 pub mod sound_cues;
 pub(crate) mod text_menu;
+pub mod texture_library;
 pub mod texture_picker;
 #[cfg(test)]
 mod theme_guard;
@@ -105,6 +106,8 @@ pub struct Panels {
     /// "Personal lighting" (LLFloaterEnvironmentAdjust).
     pub personal_lighting: bool,
     pub inventory: bool,
+    pub texture_library: bool,
+    pub texture_library_presentation: texture_library::Presentation,
     pub gestures: bool,
     pub appearance: bool,
     pub ao: bool,
@@ -147,6 +150,8 @@ impl Panels {
             environment: false,
             personal_lighting: false,
             inventory: settings.show_inventory,
+            texture_library: false,
+            texture_library_presentation: settings.texture_library.presentation,
             gestures: false,
             appearance: settings.show_appearance,
             ao: settings.show_ao,

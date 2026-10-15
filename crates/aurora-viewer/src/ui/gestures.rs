@@ -95,6 +95,8 @@ impl Editor {
 #[derive(Default)]
 pub struct GesturesUi {
     pub editors: BTreeMap<Uuid, Editor>,
+    editor_order: Vec<Uuid>,
+    raise_editor: Option<Uuid>,
     pub message: String,
     selected: BTreeSet<Uuid>,
     anchor: Option<Uuid>,
@@ -112,7 +114,12 @@ pub struct GesturesUi {
 impl GesturesUi {
     pub fn open(&mut self, inv: &Inventory, item: Uuid) {
         if let Some(it) = inv.items.get(&item) {
+            if !self.editors.contains_key(&item) {
+                self.editor_order.retain(|id| *id != item);
+                self.editor_order.push(item);
+            }
             self.editors.entry(item).or_insert_with(|| Editor::new(it.desc.clone())).open = true;
+            self.raise_editor = Some(item);
         }
     }
     pub fn refresh_catalog(&mut self, inv: &Inventory) {

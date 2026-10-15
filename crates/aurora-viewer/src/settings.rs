@@ -277,6 +277,7 @@ pub struct Settings {
     /// Friends tab of the People window.
     pub friends_list: crate::ui::people::FriendsSettings,
     pub inventory: crate::ui::inventory::InventoryPreferences,
+    pub texture_library: crate::ui::texture_library::Preferences,
     pub gestures: crate::ui::gestures::Settings,
     pub imports: crate::imports::Preferences,
     pub ao: crate::ao::Settings,
@@ -863,6 +864,7 @@ impl Default for Settings {
             radar: Default::default(),
             friends_list: Default::default(),
             inventory: Default::default(),
+            texture_library: Default::default(),
             gestures: Default::default(),
             shape_show_hints: true,
             shape_height_feet: false,

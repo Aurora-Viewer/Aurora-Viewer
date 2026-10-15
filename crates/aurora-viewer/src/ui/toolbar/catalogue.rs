@@ -36,6 +36,7 @@ pub const COMMANDS: &[Command] = commands![
     "people", "Command_People_Icon", "common-people", true;
     "friends", "Command_People_Icon", "common-friends", true;
     "inventory", "Command_Inventory_Icon", "common-inventory", true;
+    "texture_library", "stack-2-filled", "texture-library-title", true;
     "gestures", "Command_Gestures_Icon", "gesture-title", true;
     "appearance", "Command_Appearance_Icon", "common-appearance", true;
     "search", "Command_Search_Icon", "search-title", true;

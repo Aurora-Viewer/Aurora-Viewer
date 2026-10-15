@@ -212,6 +212,9 @@ impl Drag {
                 data.insert_temp(window.with("floater_resize"), self);
             } else {
                 data.remove::<Self>(window.with("floater_resize"));
+                if (actual.size() - self.start.size()).length_sq() > 0.25 {
+                    data.insert_temp(window.with("floater_resized"), actual.size());
+                }
             }
         });
     }

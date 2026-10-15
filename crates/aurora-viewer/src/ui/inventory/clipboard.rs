@@ -150,7 +150,7 @@ fn demo_mode() -> Option<&'static str> {
 }
 
 pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) {
-    if demo_mode().is_some() || super::delete::demo_enabled() {
+    if demo_mode().is_some() || super::delete::demo_enabled() || crate::demo::texture_library::inventory_drag_enabled() {
         response
             .ctx
             .data_mut(|data| data.insert_temp(egui::Id::new(("clipboard_demo_row", st.ui_id, item)), response.rect.center()));
