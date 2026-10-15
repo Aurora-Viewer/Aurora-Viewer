@@ -4650,6 +4650,7 @@ demo-scale-scale-alpha-mask = Scale (SCALE), alpha mask
 ui-environment-hdr-scale = HDR scale
 ui-land-media-automatic-scaling = Automatic scaling
 ui-options-interface-scale = Interface scale
+ui-options-interface-scale-help = Drag to resize the interface live. The center is the default size (100%). You can also type a percentage and press Enter.
 ui-environment-personal-lighting = Personal lighting
 common-personal-lighting = Personal lighting…
 ui-options-listen = Listen

@@ -5948,12 +5948,6 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
         }
-        let projector = ui::hud::Projector {
-            view_proj: vp,
-            width: w as f32,
-            height: h as f32,
-            ppp: ctx.pixels_per_point(),
-        };
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
             let point = if matches!(mode, "object" | "contents") {
@@ -6019,6 +6013,8 @@ impl App {
         // }
         self.report_abuse_capture(&mut gfx.renderer);
         self.sound_cues.before(&ctx, &raw);
+        self.options_ui
+            .prepare_scale_input(&raw, ctx.pixels_per_point(), self.numeric_drag.active());
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
         let egui_state = &mut gfx.egui_state;
         self.text_menu.before(
@@ -6033,6 +6029,7 @@ impl App {
         let mut full = ctx.run_ui(raw, |ui| {
             self.sound_cues.pass_start(ui.ctx());
             let t = Instant::now();
+            let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
             if inventory_drop.is_none() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
@@ -6225,6 +6222,11 @@ impl App {
         // apply UI actions
         if actions.font_changed {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
+        }
+        if actions.ui_scale_changed {
+            // Zoom changes no render/network setting or crash record field.
+            // In particular, never fsync the crash snapshot during a drag.
+            self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
         }
         if actions.settings_changed || std::mem::take(&mut self.snapshots.settings_changed) {
             aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
@@ -8223,7 +8225,19 @@ impl App {
             };
         }
         self.options_ui.maturity = self.world.login.is_some().then(|| self.world.agent_access());
-        let res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        // Repeatable live-scale profiling without taking the native pointer.
+        if self.demo && self.frame_count >= 600 && std::env::var("AURORA_DEMO_OPTIONS").is_ok_and(|mode| mode == "1:scale") {
+            let phase = (self.frame_count - 600) % 600;
+            let scale = 1.0 + phase.min(600 - phase) as f32 / 600.0;
+            if self.settings.ui_scale != scale {
+                self.settings.ui_scale = scale;
+                res.ui_scale_changed = true;
+            }
+            if phase.is_multiple_of(300) {
+                log::info!("demo interface scale: frame={} scale={scale:.3}", self.frame_count);
+            }
+        }
         if let Some(maturity) = res.maturity {
             self.world.set_maturity_preference(maturity);
         }
@@ -8248,6 +8262,7 @@ impl App {
             self.world.chat_log.erase();
         }
         a.settings_changed = res.changed;
+        a.ui_scale_changed = res.ui_scale_changed;
         a.font_changed = res.font_changed;
         if res.refresh_devices {
             self.devices_listed = false;
@@ -9972,6 +9987,7 @@ struct UiActions {
     chat: Option<ui::chat::OutgoingChat>,
     bar: BarAction,
     settings_changed: bool,
+    ui_scale_changed: bool,
     font_changed: bool,
     cancel_loading: bool,
     ims: Vec<(uuid::Uuid, String)>,

@@ -7,6 +7,8 @@ use egui::{Context, Event, Id, Pos2, RawInput, Vec2, WidgetType, output::OutputE
 
 struct Drag {
     id: Id,
+    /// Physical pixels: a live UI zoom must neither move the native anchor
+    /// nor add movement to the virtual pointer.
     anchor: Pos2,
     pointer: Pos2,
 }
@@ -38,16 +40,17 @@ impl NumericDrag {
                 _ => None,
             })
             .fold(Vec2::ZERO, |sum, delta| sum + delta);
-        drag.pointer += delta / pixels_per_point;
+        drag.pointer += delta;
+        let pointer = drag.pointer / pixels_per_point;
         // Ignore native positions, including synthetic events from cursor warps.
         // DragValue uses pointer.delta(), rather than raw drag_motion(), in egui 0.36.
         input
             .events
             .retain(|event| !matches!(event, Event::PointerMoved(_) | Event::PointerGone));
-        input.events.insert(0, Event::PointerMoved(drag.pointer));
+        input.events.insert(0, Event::PointerMoved(pointer));
         for event in &mut input.events {
             if let Event::PointerButton { pos, .. } = event {
-                *pos = drag.pointer;
+                *pos = pointer;
             }
         }
     }
@@ -74,7 +77,7 @@ impl NumericDrag {
             )
         });
         if let Some(drag) = &self.drag {
-            let anchor = drag.anchor;
+            let anchor = drag.anchor / ctx.pixels_per_point();
             if !down || dragging != Some(drag.id) || ctx.viewport(|v| v.prev_pass.widgets.get(drag.id).is_none()) {
                 self.cancel();
             }
@@ -91,8 +94,8 @@ impl NumericDrag {
         let anchor = rect.clamp(origin?);
         self.drag = Some(Drag {
             id,
-            anchor,
-            pointer: pointer?,
+            anchor: anchor * ctx.pixels_per_point(),
+            pointer: pointer? * ctx.pixels_per_point(),
         });
         Some(anchor)
     }
@@ -103,6 +106,8 @@ mod tests {
     use super::*;
 
     fn frame(ctx: &Context, drag: &mut NumericDrag, value: &mut f64, events: Vec<Event>, focused: bool) -> (egui::Rect, Option<Pos2>) {
+        // The input adapter and egui must agree on the physical pixel scale.
+        ctx.set_pixels_per_point(2.0);
         let mut raw = RawInput {
             events,
             focused,
