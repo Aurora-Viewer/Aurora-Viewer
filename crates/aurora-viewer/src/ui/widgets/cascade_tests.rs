@@ -74,19 +74,19 @@ fn cascade_follows_last_created_window_in_its_group_and_keeps_each_size() {
     let mut f = Fixture::default();
     let first = f.open(CascadeGroup::Texture, egui::vec2(300.0, 250.0));
     let second = f.open(CascadeGroup::Texture, egui::vec2(400.0, 350.0));
-    same(f.rect(second).min - f.rect(first).min, Vec2::splat(16.0));
+    same(f.rect(second).min - f.rect(first).min, Vec2::splat(32.0));
     assert!(f.rect(second).width() > f.rect(first).width() + 90.0);
     // Raising/moving an older instance does not change the registry order.
     f.move_to(first, egui::pos2(420.0, 260.0));
     let older = f.rect(first);
     let last = f.rect(second);
     let third = f.open(CascadeGroup::Texture, egui::vec2(300.0, 250.0));
-    same(f.rect(third).min - last.min, Vec2::splat(16.0));
+    same(f.rect(third).min - last.min, Vec2::splat(32.0));
     assert_eq!(f.rect(first), older);
     assert_eq!(f.rect(second), last);
     f.move_to(third, egui::pos2(300.0, 200.0));
     let fourth = f.open(CascadeGroup::Texture, egui::vec2(300.0, 250.0));
-    same(f.rect(fourth).min - f.rect(third).min, Vec2::splat(16.0));
+    same(f.rect(fourth).min - f.rect(third).min, Vec2::splat(32.0));
     // The material group starts from its own default, independent of textures.
     let material = f.open(CascadeGroup::Material, egui::vec2(300.0, 250.0));
     same(f.rect(material).min.to_vec2(), egui::vec2(100.0, 80.0));
@@ -100,7 +100,7 @@ fn cascade_skips_minimized_and_closed_windows_and_preserves_existing_instances()
     minimize_floater(&f.ctx, &f.windows[second].id);
     f.settle();
     let third = f.open(CascadeGroup::Texture, egui::vec2(300.0, 250.0));
-    same(f.rect(third).min - f.rect(first).min, Vec2::splat(16.0));
+    same(f.rect(third).min - f.rect(first).min, Vec2::splat(32.0));
     let before = f.rect(third);
     let w = &mut f.windows[third];
     open_floater(&f.ctx, &w.id, &mut w.open);
@@ -109,12 +109,12 @@ fn cascade_skips_minimized_and_closed_windows_and_preserves_existing_instances()
     f.windows[third].open = false;
     f.settle();
     let fourth = f.open(CascadeGroup::Texture, egui::vec2(300.0, 250.0));
-    same(f.rect(fourth).min - f.rect(first).min, Vec2::splat(16.0));
+    same(f.rect(fourth).min - f.rect(first).min, Vec2::splat(32.0));
     let w = &mut f.windows[second];
     open_floater(&f.ctx, &w.id, &mut w.open);
     f.settle();
     assert!(!floater_minimized(&f.ctx, &f.windows[second].id));
-    same(f.rect(second).min - f.rect(first).min, Vec2::splat(16.0));
+    same(f.rect(second).min - f.rect(first).min, Vec2::splat(32.0));
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn cascade_fits_actual_geometry_at_screen_edges_without_periodic_wrap() {
     let mut f = Fixture::default();
     for _ in 0..12 {
         let n = f.open(CascadeGroup::Texture, egui::vec2(300.0, 250.0));
-        same(f.rect(n).min.to_vec2(), egui::vec2(100.0, 80.0) + Vec2::splat(n as f32 * 16.0));
+        same(f.rect(n).min.to_vec2(), egui::vec2(100.0, 80.0) + Vec2::splat(n as f32 * 32.0));
     }
     f.move_to(11, egui::pos2(690.0, 540.0));
     let n = f.open(CascadeGroup::Texture, egui::vec2(410.0, 390.0));
@@ -150,7 +150,7 @@ fn cascade_document_groups_remember_primary_geometry_without_size_drift() {
         let saved = f.rect(first);
         let second = f.open(group, egui::vec2(320.0, 260.0));
         same(f.rect(second).size(), saved.size());
-        same(f.rect(second).min - saved.min, Vec2::splat(16.0));
+        same(f.rect(second).min - saved.min, Vec2::splat(32.0));
         // A secondary cascaded window must not overwrite the group's saved rect.
         f.move_to(second, egui::pos2(480.0, 360.0));
         f.windows[first].open = false;

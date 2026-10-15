@@ -1492,7 +1492,7 @@ moving windows or automatically fitting a smaller viewport must not replace
 the preferred sizes; both preferences survive restart.
 `cascade`, `cascade-material`, `cascade-notecard` and `cascade-script` open six
 real inventory windows of the selected type at frames 620–720 without forcing
-their geometry. New instances advance by 16 logical pixels right/down from the
+their geometry. New instances advance by 32 logical pixels right/down from the
 last created visible, non-minimized instance of that type; moving or selecting
 an older window does not change that order. Script editors from inventory and
 objects share one group. Check fitting at screen edges, minimizing/closing the

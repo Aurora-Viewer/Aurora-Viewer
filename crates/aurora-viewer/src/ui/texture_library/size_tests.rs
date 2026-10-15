@@ -137,20 +137,20 @@ fn cascade_resource_previews_use_creation_order_and_separate_type_groups() {
     let mut f = Fixture::new(avatars, Preferences::default());
     f.open(110);
     f.open(111);
-    same_size(f.rect(111).min - f.rect(110).min, Vec2::splat(16.0));
+    same_size(f.rect(111).min - f.rect(110).min, Vec2::splat(32.0));
     let last = f.rect(111);
     f.front(110);
     f.open(110); // Raising an older item must not become the cascade anchor.
     f.open(112);
-    same_size(f.rect(112).min - last.min, Vec2::splat(16.0));
+    same_size(f.rect(112).min - last.min, Vec2::splat(32.0));
     f.open(113);
     f.open(114);
-    same_size(f.rect(114).min - f.rect(113).min, Vec2::splat(16.0));
+    same_size(f.rect(114).min - f.rect(113).min, Vec2::splat(32.0));
     let material = f.rect(114);
     widgets::minimize_floater(&f.ctx, &preview_window_id(Uuid::from_u128(112)));
     f.settle();
     f.open(115);
-    same_size(f.rect(115).min - last.min, Vec2::splat(16.0));
+    same_size(f.rect(115).min - last.min, Vec2::splat(32.0));
     assert_eq!(f.rect(114), material);
 }
 

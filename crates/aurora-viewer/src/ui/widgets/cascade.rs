@@ -43,7 +43,7 @@ impl Group {
     }
 }
 
-const OFFSET: Vec2 = Vec2::splat(16.0); // UIFloaterOffset's default
+const OFFSET: Vec2 = Vec2::splat(32.0); // Human-requested double of Firestorm's 16 px UIFloaterOffset
 
 #[derive(Clone)]
 struct Window {

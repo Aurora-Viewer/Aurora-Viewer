@@ -341,7 +341,7 @@ mod tests {
             .iter()
             .map(|id| ctx.memory(|m| m.area_rect(egui::Id::new(id)).expect("note window")))
             .collect();
-        assert!(((rects[1].min - rects[0].min) - egui::Vec2::splat(16.0)).length() < 1.0);
+        assert!(((rects[1].min - rects[0].min) - egui::Vec2::splat(32.0)).length() < 1.0);
         crate::ui::widgets::minimize_floater(&ctx, &ids[0]);
         assert!(!state.open_document(&ctx, items[0], 7));
         assert_eq!(state.windows.len(), 2);

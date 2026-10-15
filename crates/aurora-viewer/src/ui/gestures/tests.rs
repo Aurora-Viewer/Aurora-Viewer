@@ -17,7 +17,7 @@ fn cascade_gesture_editors_follow_open_order_instead_of_uuid_sort_order() {
         f.ctx
             .memory(|m| m.area_rect(egui::Id::new(format!("gesture_{id}"))).expect("gesture editor"))
     };
-    assert!(((rect(second).min - rect(first).min) - Vec2::splat(16.0)).length() < 1.0);
+    assert!(((rect(second).min - rect(first).min) - Vec2::splat(32.0)).length() < 1.0);
 }
 
 struct Fixture {

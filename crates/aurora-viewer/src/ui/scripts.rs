@@ -1048,7 +1048,7 @@ mod tests {
                 })
             })
             .collect();
-        assert!(((rects[1].min - rects[0].min) - egui::Vec2::splat(16.0)).length() < 1.0);
+        assert!(((rects[1].min - rects[0].min) - egui::Vec2::splat(32.0)).length() < 1.0);
         editors.documents[0].source.push_str("\n// Unsaved draft");
         assert!(editors.open(targets[0], "Script".into(), true, true).is_none());
         assert_eq!(editors.documents.len(), 2);

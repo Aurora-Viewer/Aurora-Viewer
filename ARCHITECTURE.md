@@ -108,7 +108,7 @@ screen fitting, and settings save once on release. Unsaved inventory documents
 keep their editor/draft.
 `ui/widgets/cascade.rs` ports Firestorm's inventory floater registry placement:
 same-type instances follow creation order, skipping hidden/minimized anchors,
-with a 16 px right/down offset and fitting to the work area. Raising an existing
+with a human-requested 32 px right/down offset (twice Firestorm's default) and fitting to the work area. Raising an existing
 item preserves its geometry. Inventory and object script editors share a group;
 textures and materials use separate groups and retain their size preferences.
 Notecard, script, animation, sound and gesture groups remember their primary
