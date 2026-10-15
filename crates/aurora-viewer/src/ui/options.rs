@@ -71,6 +71,10 @@ pub struct OptionsUi {
 }
 
 impl OptionsUi {
+    pub fn prepare_scale_input(&mut self, input: &egui::RawInput, pixels_per_point: f32, numeric_captured: bool) {
+        self.interface_scale.prepare_input(input, pixels_per_point, numeric_captured);
+    }
+
     /// A HUD modifier on its own is captured on release, leaving time to
     /// press a second key for combinations such as Ctrl+B.
     pub fn capture_key(&mut self, code: winit::keyboard::KeyCode, pressed: bool, repeat: bool) -> Option<Option<crate::keybinds::Input>> {

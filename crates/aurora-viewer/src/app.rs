@@ -6009,6 +6009,8 @@ impl App {
         // }
         self.report_abuse_capture(&mut gfx.renderer);
         self.sound_cues.before(&ctx, &raw);
+        self.options_ui
+            .prepare_scale_input(&raw, ctx.pixels_per_point(), self.numeric_drag.active());
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
         let egui_state = &mut gfx.egui_state;
         self.text_menu.before(
