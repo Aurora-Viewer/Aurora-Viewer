@@ -110,7 +110,18 @@ pub struct Palette {
 }
 
 impl Theme {
+    /// The colors, adapted to the colour blindness chosen in the
+    /// preferences (`crate::colorblind`).
     pub fn palette(&self) -> Palette {
+        self.palette_for(crate::colorblind::current())
+    }
+
+    pub fn palette_for(&self, vision: crate::colorblind::Vision) -> Palette {
+        crate::colorblind::palette(self.skin_palette(), vision)
+    }
+
+    /// The colors as the skin writes them.
+    fn skin_palette(&self) -> Palette {
         Palette {
             violet: hex(&self.violet),
             indigo: hex(&self.indigo),

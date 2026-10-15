@@ -19,6 +19,7 @@ mod cache;
 mod camera;
 mod cli;
 mod cmdline;
+mod colorblind;
 mod crash;
 mod credentials;
 mod cursors;

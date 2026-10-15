@@ -11,7 +11,7 @@
 //! Appearance › "Top and bottom bars" brings Firestorm's bars back
 //! (`top_bars`, unchanged).
 
-use super::{BarAction, BellState, StatusInfo, main_menus, paint_icon, slt_time, status_color, status_menu_body, status_tip};
+use super::{BarAction, BellState, StatusInfo, main_menus, paint_icon, slt_time, status_color, status_menu_body, status_shape, status_tip};
 use crate::theme::Palette;
 use crate::ui::Panels;
 use crate::ui::icons::Icons;
@@ -364,11 +364,7 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
     let dot = disc.right_bottom() - Vec2::splat(3.5);
     let col = status_color(p, &st.status);
     ui.painter().circle_filled(dot, 4.5, p.bar);
-    if st.status.invisible {
-        ui.painter().circle_stroke(dot, 2.4, egui::Stroke::new(1.2, col));
-    } else {
-        ui.painter().circle_filled(dot, 3.0, col);
-    }
+    crate::ui::presence::paint_mark(ui.painter(), dot, 3.0, status_shape(&st.status), col, p.bar);
     if let Some(g) = balance {
         crate::ui::widgets::paint_ink_left(ui.painter(), g, Pos2::new(disc.right() + 6.0, rect.center().y), p.ink);
     }

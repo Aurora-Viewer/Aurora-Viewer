@@ -477,6 +477,12 @@ pub struct Settings {
     /// "Reduce animations": the interface's pulses, shakes and spinners
     /// stand still (the region restart alert, for now).
     pub reduce_motion: bool,
+    /// Preferences › Accessibility › Colour blindness: the interface's
+    /// colours adapted to a colour vision deficiency (`crate::colorblind`),
+    /// off by default.
+    pub color_blindness: crate::colorblind::Deficiency,
+    /// How strongly (0–1, 1 by default: the full correction).
+    pub color_blindness_strength: f32,
     /// Firestorm's camera and movement windows (floater_camera.xml,
     /// floater_moveview.xml) instead of `ui/controls.rs`.
     pub classic_controls: bool,
@@ -966,6 +972,8 @@ impl Default for Settings {
             classic_restart_alert: false,
             region_restart: Default::default(),
             reduce_motion: false,
+            color_blindness: crate::colorblind::Deficiency::Off,
+            color_blindness_strength: 1.0,
             classic_controls: false,
             camera_shots: Vec::new(),
             plates_friends_only_full: false,

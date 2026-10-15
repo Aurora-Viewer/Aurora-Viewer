@@ -271,14 +271,30 @@ const INVISIBLE: &str = "eye-off";
 
 /// Color of the online status: grey invisible, red do not disturb, violet
 /// away, orange automatic response, green available.
+/// The shape of our own status dot, as the others' (`presence::Shape`):
+/// hollow invisible, a bar in do not disturb, a crescent away.
+fn status_shape(m: &crate::world::status::StatusModes) -> super::presence::Shape {
+    use super::presence::Shape;
+    if m.invisible {
+        Shape::Ring
+    } else if m.dnd {
+        Shape::Bar
+    } else if m.away {
+        Shape::Crescent
+    } else {
+        Shape::Disc
+    }
+}
+
+/// The colour of our own status dot, as the others' (`presence::color`):
+/// away is the yellow crescent everywhere (#418).
 fn status_color(p: &Palette, m: &crate::world::status::StatusModes) -> Color32 {
     if m.invisible {
         p.muted
     } else if m.dnd {
         p.danger
-    } else if m.away {
-        p.violet
-    } else if m.autorespond || m.autorespond_nonfriends {
+    } else if m.away || m.autorespond || m.autorespond_nonfriends {
+        // the shape tells away (a crescent) from an automatic response (a disc)
         p.amber
     } else {
         p.success
@@ -376,14 +392,10 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
     let col = status_color(p, &status);
-    if status.invisible {
-        // hollow: nobody sees the light
-        ui.painter().circle_stroke(rect.center(), 4.25, egui::Stroke::new(1.5, col));
-    } else {
-        ui.painter().circle_filled(rect.center(), 5.0, col);
-        ui.painter()
-            .circle_stroke(rect.center(), 5.0, egui::Stroke::new(1.0, col.gamma_multiply(0.55)));
-    }
+    // its shape says it without the colour (hollow when invisible: nobody
+    // sees the light), cut in the slot's face
+    let face = if resp.hovered() || open { p.raised } else { p.bar };
+    super::presence::paint_mark(ui.painter(), rect.center(), 5.0, status_shape(&status), col, face);
     // refusals on: a thin ring around the dot
     if status.reject_teleports || status.reject_group_invites || status.reject_friendship || status.ignore_adhoc {
         ui.painter().circle_stroke(rect.center(), 7.5, egui::Stroke::new(1.0, p.muted));
