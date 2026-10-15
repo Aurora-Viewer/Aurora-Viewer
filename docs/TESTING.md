@@ -2939,8 +2939,11 @@ offline; the files and snapshots uploaded in demo stay offline.
   after frame 740. Switch tabs, edit the source in Classic or Edit, then
   save from Markdown and reopen: the Markdown syntax, Unicode text and
   attachments must survive. Classic defaults to Firestorm's plain,
-  proportional, wrapping text; Edit uses monospace; Markdown is a
-  selectable formatted preview with headings, emphasis, lists, quotes,
+  proportional, wrapping text; Edit shows the monospace source on the left
+  and its live Markdown preview on the right, with independent scrolling.
+  Type headings, bold and Unicode in Edit and check that the right side
+  updates without leaving the mode, then Ctrl+S from either pane.
+  Markdown is a selectable formatted preview with headings, emphasis, lists, quotes,
   code and links. Images show their alt text as a link without downloading.
 - `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded`:
   automatic addition of text at frame 650, then save with Ctrl+S

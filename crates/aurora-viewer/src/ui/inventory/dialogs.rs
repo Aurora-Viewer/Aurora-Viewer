@@ -526,23 +526,6 @@ pub(super) fn preview(
                     })
                 });
             }
-            let rendered = if it.asset_type == 7 && st.notecard_view == super::markdown::View::Markdown {
-                st.preview_text
-                    .as_ref()
-                    .and_then(|result| result.as_ref().ok())
-                    .and_then(|text| st.notecard_markdown.get(ctx, text))
-            } else {
-                None
-            };
-            if let (Some(rendered), Some(source)) = (&rendered, &mut st.preview_source) {
-                super::embedded::clipboard(
-                    ctx,
-                    egui::Id::new(("inventory_document_text", st.ui_id, id)).with("markdown"),
-                    source,
-                    &rendered.text,
-                    false,
-                );
-            }
             if it.asset_type == 56 && !it.asset_id.is_nil() && flat_button(ui, p, aurora_i18n::tr!("common-apply-to-myself-only")).clicked()
             {
                 actions.push(InvAction::Environment(it.asset_id, it.flags));
@@ -576,43 +559,45 @@ pub(super) fn preview(
                             0.0
                         };
                     let editor_size = Vec2::new(ui.available_width(), (ui.available_height() - footer_height).max(60.0));
-                    egui::ScrollArea::both()
-                        .id_salt(("inventory_document_scroll", st.ui_id, id, st.notecard_view as usize))
-                        .max_height(if documents { editor_size.y } else { 300.0 })
-                        .auto_shrink(if documents { [false, false] } else { [true, true] })
-                        .show(ui, |ui| {
-                            if matches!(it.asset_type, 7 | 10) {
-                                // beside the scroll bar's strip, when it shows
-                                let size = Vec2::new(ui.available_width().min(editor_size.x), editor_size.y);
-                                let markdown = it.asset_type == 7 && st.notecard_view == super::markdown::View::Markdown;
-                                if markdown && rendered.is_none() {
-                                    ui.allocate_ui(size, |ui| {
-                                        ui.spinner();
-                                    });
-                                    return;
+                    if it.asset_type == 7 {
+                        edited = super::markdown::editor(
+                            ui,
+                            p,
+                            icons,
+                            egui::Id::new(("inventory_document_text", st.ui_id, id)),
+                            text,
+                            st.preview_source.as_mut(),
+                            editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))),
+                            editor_size,
+                            st.notecard_view,
+                            &mut st.notecard_markdown,
+                        );
+                    } else {
+                        egui::ScrollArea::both()
+                            .id_salt(("inventory_document_scroll", st.ui_id, id, st.notecard_view as usize))
+                            .max_height(if documents { editor_size.y } else { 300.0 })
+                            .auto_shrink(if documents { [false, false] } else { [true, true] })
+                            .show(ui, |ui| {
+                                if it.asset_type == 10 {
+                                    // beside the scroll bar's strip, when it shows
+                                    let size = Vec2::new(ui.available_width().min(editor_size.x), editor_size.y);
+                                    let editor_id = egui::Id::new(("inventory_document_text", st.ui_id, id));
+                                    edited = super::embedded::editor(
+                                        ui,
+                                        p,
+                                        icons,
+                                        editor_id,
+                                        text,
+                                        st.preview_source.as_ref(),
+                                        editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))),
+                                        size,
+                                        super::embedded::Appearance::Source,
+                                    );
+                                } else {
+                                    ui.add(egui::Label::new(RichText::new(text.as_str()).monospace()).selectable(true));
                                 }
-                                let editor_id = egui::Id::new(("inventory_document_text", st.ui_id, id));
-                                edited = super::embedded::editor(
-                                    ui,
-                                    p,
-                                    icons,
-                                    if markdown { editor_id.with("markdown") } else { editor_id },
-                                    text,
-                                    st.preview_source.as_ref(),
-                                    editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))),
-                                    size,
-                                    if let Some(rendered) = &rendered {
-                                        super::embedded::Appearance::Markdown(rendered)
-                                    } else if it.asset_type == 10 || st.notecard_view == super::markdown::View::Source {
-                                        super::embedded::Appearance::Source
-                                    } else {
-                                        super::embedded::Appearance::Classic
-                                    },
-                                );
-                            } else {
-                                ui.add(egui::Label::new(RichText::new(text.as_str()).monospace()).selectable(true));
-                            }
-                        });
+                            });
+                    }
                 }
                 Some(Err(reason)) => {
                     ui.label(RichText::new(reason.as_str()).color(p.warn));
@@ -1006,7 +991,7 @@ mod tests {
 
         for (view, label) in [
             (View::Classic, aurora_i18n::tr!("notecard-view-classic")),
-            (View::Source, aurora_i18n::tr!("notecard-view-source")),
+            (View::Edit, aurora_i18n::tr!("notecard-view-source")),
             (View::Markdown, aurora_i18n::tr!("notecard-view-markdown")),
         ] {
             let ctx = egui::Context::default();
@@ -1014,7 +999,7 @@ mod tests {
             st.load_document(7, true, &Ok(crate::world::inventory::demo::note_asset(true)));
             let original = st.preview_source.clone().expect("note");
             let draft = format!("# Été 🐺\n\n**Source** *unchanged*\n\n{}", original.text);
-            st.notecard_view = View::Source;
+            st.notecard_view = View::Edit;
             for _ in 0..5 {
                 document_frame(&ctx, &inv, &mut st, vec![]);
             }
@@ -1111,10 +1096,73 @@ mod tests {
     }
 
     #[test]
+    fn notecard_split_edit_refreshes_preview_and_saves_from_either_pane() {
+        let ctx = egui::Context::default();
+        let (inv, mut st) = note_fixture();
+        st.load_document(7, true, &Ok(b"# Before\n\nBody".to_vec()));
+        st.notecard_view = super::super::markdown::View::Edit;
+        let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+        let preview = editor.with("markdown");
+        let wait_for = |st: &mut InventoryUi, expected: &str| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                let (output, _) = document_frame(&ctx, &inv, st, vec![]);
+                if output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape,
+                    egui::epaint::Shape::Text(text) if text.galley.text() == expected)
+                }) {
+                    return;
+                }
+                assert!(std::time::Instant::now() < deadline, "live preview did not refresh");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        };
+        wait_for(&mut st, "Before\n\nBody\n\n");
+        let rect = |id: egui::Id| {
+            ctx.data_mut(|data| data.get_temp::<egui::Rect>(id.with("demo_rect")))
+                .expect("pane")
+        };
+        let left = rect(editor);
+        let right = rect(preview);
+        assert!(left.right() <= right.left(), "source and preview must be side by side");
+        assert!((left.top() - right.top()).abs() < 1.0);
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                command: true,
+                ..Default::default()
+            },
+        };
+        ctx.memory_mut(|memory| memory.request_focus(editor));
+        document_frame(
+            &ctx,
+            &inv,
+            &mut st,
+            vec![key(egui::Key::End), egui::Event::Text("\n\n## Été 🐺\n\n**Nouveau**".into())],
+        );
+        let draft = "# Before\n\nBody\n\n## Été 🐺\n\n**Nouveau**";
+        assert_eq!(st.preview_text, Some(Ok(draft.into())));
+        assert!(st.preview_dirty);
+        wait_for(&mut st, "Before\n\nBody\n\nÉté 🐺\n\nNouveau\n\n");
+        ctx.memory_mut(|memory| memory.request_focus(preview));
+        document_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("read-only preview".into())]);
+        assert_eq!(st.preview_text, Some(Ok(draft.into())));
+        for pane in [editor, preview] {
+            ctx.memory_mut(|memory| memory.request_focus(pane));
+            let (_, actions) = document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::S)]);
+            assert!(matches!(&actions[..], [InvAction::SaveContent { text, .. }] if text == draft));
+        }
+    }
+
+    #[test]
     fn notecard_views_never_enable_writing_or_saving_a_read_only_document() {
         use super::super::markdown::View;
 
-        for view in [View::Classic, View::Source, View::Markdown] {
+        for view in [View::Classic, View::Edit, View::Markdown] {
             let ctx = egui::Context::default();
             let (inv, mut st) = note_fixture();
             st.load_document(7, false, &Ok(b"# Read only\n**Source**".to_vec()));

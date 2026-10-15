@@ -512,7 +512,9 @@ notecard-task-demo-title = Note dans un objet
 notecard-save-button = Enregistrer (Ctrl+S)
 notecard-view-classic = Classique
 notecard-view-markdown = Markdown
-notecard-view-source = Édition
+notecard-view-source = Éditer
+notecard-source-heading = Texte brut
+notecard-preview-heading = Aperçu Markdown
 notecard-markdown-demo =
     # Bienvenue dans Aurora
     Une note avec du **gras**, de l’*italique*, du ~~barré~~ et du `code`.

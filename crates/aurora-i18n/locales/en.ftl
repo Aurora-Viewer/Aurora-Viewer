@@ -510,6 +510,8 @@ notecard-save-button = Save (Ctrl+S)
 notecard-view-classic = Classic
 notecard-view-markdown = Markdown
 notecard-view-source = Edit
+notecard-source-heading = Plain text
+notecard-preview-heading = Markdown preview
 notecard-markdown-demo =
     # Welcome to Aurora
     A notecard with **bold**, *italic*, ~~strikethrough~~ and `code`.

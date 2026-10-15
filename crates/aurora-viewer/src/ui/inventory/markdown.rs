@@ -1,6 +1,6 @@
 //! An optional CommonMark view of the source draft. Never used for uploads.
 //! Classic follows LLPreviewNotecard / LLViewerTextEditor (Firestorm, LGPL 2.1);
-//! Markdown and the monospace source view are deliberate Aurora additions.
+//! Markdown and the source editor with live preview are Aurora additions.
 
 use std::{ops::Range, sync::Arc};
 
@@ -14,7 +14,7 @@ pub enum View {
     #[default]
     Classic,
     Markdown,
-    Source,
+    Edit,
 }
 
 impl View {
@@ -30,7 +30,7 @@ impl View {
                 (aurora_i18n::tr!("notecard-view-source"), true),
             ],
         );
-        *self = [Self::Classic, Self::Markdown, Self::Source][index];
+        *self = [Self::Classic, Self::Markdown, Self::Edit][index];
         changed
     }
 }
@@ -48,7 +48,8 @@ impl Cache {
     pub(super) fn get(&mut self, ctx: &egui::Context, text: &str) -> Option<Arc<Rendered>> {
         if self.source.as_deref() != Some(text) {
             self.source = Some(text.to_owned());
-            self.ready = None;
+            // Keep the last preview visible while typing; only this receiver
+            // can publish a result for the latest draft.
             let text = text.to_owned();
             let ctx = ctx.clone();
             let (tx, rx) = std::sync::mpsc::channel();
@@ -66,6 +67,95 @@ impl Cache {
         }
         self.ready.clone()
     }
+}
+
+pub(super) fn editor(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &super::Icons,
+    id: egui::Id,
+    text: &mut String,
+    source: Option<&mut aurora_net::inventory::notecard::Notecard>,
+    editable: bool,
+    size: egui::Vec2,
+    view: View,
+    cache: &mut Cache,
+) -> super::embedded::EditorResult {
+    use super::embedded::{self, Appearance};
+
+    let preview_id = id.with("markdown");
+    let mut preview = |ui: &mut egui::Ui, text: &mut String, source: Option<&mut aurora_net::inventory::notecard::Notecard>, size| {
+        let Some(rendered) = cache.get(ui.ctx(), text) else {
+            ui.allocate_ui(size, |ui| {
+                ui.spinner();
+            });
+            return embedded::EditorResult::default();
+        };
+        let mut source = source;
+        if let Some(source) = source.as_deref_mut() {
+            embedded::clipboard(ui.ctx(), preview_id, source, &rendered.text, false);
+        }
+        scroll(ui, preview_id, size, |ui, size| {
+            embedded::editor(
+                ui,
+                p,
+                icons,
+                preview_id,
+                text,
+                source.as_deref(),
+                false,
+                size,
+                Appearance::Markdown(&rendered),
+            )
+        })
+    };
+    match view {
+        View::Classic => scroll(ui, id, size, |ui, size| {
+            embedded::editor(ui, p, icons, id, text, source.as_deref(), editable, size, Appearance::Classic)
+        }),
+        View::Markdown => preview(ui, text, source, size),
+        View::Edit => ui.columns(2, |columns| {
+            for (column, label) in columns.iter_mut().zip([
+                aurora_i18n::tr!("notecard-source-heading"),
+                aurora_i18n::tr!("notecard-preview-heading"),
+            ]) {
+                column.add(egui::Label::new(egui::RichText::new(label).color(p.muted)).truncate());
+            }
+            let height = (size.y - ui_heading_height(&columns[0])).max(24.0);
+            let left_size = egui::vec2(columns[0].available_width(), height);
+            let mut result = scroll(&mut columns[0], id, left_size, |ui, size| {
+                embedded::editor(ui, p, icons, id, text, source.as_deref(), editable, size, Appearance::Source)
+            });
+            // Parse after the source editor consumed this frame's input.
+            let right_size = egui::vec2(columns[1].available_width(), height);
+            let right = preview(&mut columns[1], text, source, right_size);
+            result.save |= right.save;
+            result.open = right.open.or(result.open);
+            result.copy = right.copy.or(result.copy);
+            result
+        }),
+    }
+}
+
+fn ui_heading_height(ui: &egui::Ui) -> f32 {
+    ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y
+}
+
+fn scroll(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    size: egui::Vec2,
+    show: impl FnOnce(&mut egui::Ui, egui::Vec2) -> super::embedded::EditorResult,
+) -> super::embedded::EditorResult {
+    egui::ScrollArea::both()
+        .id_salt(id.with("scroll"))
+        .max_height(size.y)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let size = egui::vec2(ui.available_width().min(size.x), size.y);
+            show(ui, size)
+        })
+        .inner
 }
 
 #[derive(Clone, Default)]

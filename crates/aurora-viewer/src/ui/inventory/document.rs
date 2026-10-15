@@ -12,7 +12,7 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
         if frame < 600 {
             st.notecard_view = match mode.as_str() {
                 "note-markdown" => super::markdown::View::Markdown,
-                "note-source" => super::markdown::View::Source,
+                "note-source" => super::markdown::View::Edit,
                 _ => super::markdown::View::Classic,
             };
         }
