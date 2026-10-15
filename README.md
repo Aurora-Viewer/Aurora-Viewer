@@ -21,7 +21,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 </div>
 
-**High framerates and low frame time, ultra fast teleports and loading, thanks to modern technologies like Vulkan/Rust.**  
+**High framerates and low frame time, ultra fast teleports/loading, thanks to modern technologies like Vulkan/Rust.**  
 <img width="2558" height="1392" alt="image" src="https://github.com/user-attachments/assets/1fda8e77-2d3f-41bb-a0cc-c93e9a6723aa" />
 
 **All the tools you need to experience SecondLife the way it's meant to be experienced, Photo tools, Auto Hover Height, tons of QoL !**  
