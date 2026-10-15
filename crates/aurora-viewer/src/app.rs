@@ -569,6 +569,17 @@ fn bandwidth_kbps(settings: &Settings) -> f32 {
         .unwrap_or(settings.bandwidth_kbps as f32)
 }
 
+/// The colour vision the interface adapts to: the preferences', or in demo
+/// mode `AURORA_DEMO_COLORBLIND` (a capture's, never saved).
+fn wanted_vision(settings: &Settings) -> crate::colorblind::Vision {
+    if std::env::var_os("AURORA_DEMO").is_some()
+        && let Some(v) = crate::colorblind::demo_override()
+    {
+        return v;
+    }
+    crate::colorblind::Vision::new(settings.color_blindness, settings.color_blindness_strength)
+}
+
 /// Test overrides of the settings (used by automated captures): the
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
@@ -635,6 +646,8 @@ impl App {
         let cache_root = cache.clone();
         let egui_ctx = egui::Context::default();
         ui::colors::set(&settings.colors);
+        // before the skin's palette is built and applied
+        crate::colorblind::set(wanted_vision(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
         crate::crash::update(&skin.theme, &settings);
         let palette = skin.theme.palette();
@@ -6263,6 +6276,13 @@ impl App {
                 .set_agent_language(aurora_i18n::language(), self.settings.language_is_public);
             if self.settings.vsync != vsync {
                 gfx.renderer.set_vsync(self.settings.vsync);
+            }
+            // a new colour blindness: the palette again, at once
+            let vision = wanted_vision(&self.settings);
+            if vision != crate::colorblind::current() {
+                crate::colorblind::set(vision);
+                self.palette = self.skin.theme.palette();
+                self.cursors.set_palette(&self.palette);
             }
             self.skin.theme.apply(&self.egui_ctx, self.settings.font_scale);
             ui::colors::set(&self.settings.colors);

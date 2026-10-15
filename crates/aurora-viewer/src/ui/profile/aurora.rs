@@ -751,7 +751,7 @@ fn paint_photo(
     let inset = if rect.width() > 80.0 { 4.0 } else { 0.0 };
     let c = rect.right_bottom() - Vec2::splat(inset + dot);
     painter.circle_filled(c, dot, p.panel);
-    painter.circle_filled(c, dot - ring, presence::color(p, status));
+    presence::paint_mark(painter, c, dot - ring, status.shape(), presence::color(p, status), p.panel);
 }
 
 /// The camera button of our picture in edit mode and its menu (the classic
@@ -1015,7 +1015,14 @@ fn meta_line(ui: &mut egui::Ui, env: &Env, id: Uuid, own: bool, profile: Option<
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(8.0, 14.0), Sense::hover());
-                ui.painter().circle_filled(rect.center(), 3.5, presence::color(p, status));
+                presence::paint_mark(
+                    ui.painter(),
+                    rect.center(),
+                    4.0,
+                    status.shape(),
+                    presence::color(p, status),
+                    p.panel,
+                );
                 ui.label(RichText::new(text).size(12.0).color(color));
             });
         }

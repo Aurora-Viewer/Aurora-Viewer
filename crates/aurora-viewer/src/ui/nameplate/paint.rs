@@ -349,9 +349,27 @@ fn marks(env: &Env<'_>, key: &MarksKey) -> Mesh {
         disc.stroke(&mut mesh, 2.0 * s, p.ink.gamma_multiply(0.22));
     }
     if let (Some(dot), Some(presence)) = (l.dot, key.dot) {
-        let color = crate::ui::presence::color(p, presence.status());
+        use crate::ui::presence::Shape as Mark;
+        let status = presence.status();
+        let color = crate::ui::presence::color(p, status);
         Outline::circle(dot.center, dot.radius, ppp).dot(&mut mesh, env.tint);
-        Outline::circle(dot.center, dot.radius - 3.0 * s, ppp).dot(&mut mesh, color);
+        // the status's shape (ui/presence.rs), its cuts in the plate's tint
+        let r = dot.radius - 3.0 * s;
+        let mark = Outline::circle(dot.center, r, ppp);
+        match status.shape() {
+            Mark::Ring => mark.stroke(&mut mesh, r * Mark::RING, color),
+            shape => {
+                mark.dot(&mut mesh, color);
+                match shape {
+                    Mark::Crescent => {
+                        Outline::circle(dot.center + Vec2::splat(r * Mark::CUT_OFFSET), r * Mark::CUT_RADIUS, ppp).dot(&mut mesh, env.tint)
+                    }
+                    Mark::Bar => Outline::pill(Rect::from_center_size(dot.center, Vec2::new(r * Mark::BAR.0, r * Mark::BAR.1)), ppp)
+                        .dot(&mut mesh, env.tint),
+                    _ => {}
+                }
+            }
+        }
     }
     // still loading: a thin bar under the text, violet to turquoise like
     // the loading screens

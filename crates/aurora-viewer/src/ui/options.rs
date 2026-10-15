@@ -1,6 +1,7 @@
 //! Preferences floater: categories on the left, grouped settings on the
 //! right (label column + control column), flat Aurora style.
 
+mod accessibility;
 mod aurora;
 mod camera;
 mod commands;
@@ -138,7 +139,7 @@ pub struct OptionsResult {
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
-fn categories() -> [(&'static str, &'static str); 14] {
+fn categories() -> [(&'static str, &'static str); 15] {
     [
         (aurora_i18n::tr!("ui-options-graphics"), "device-desktop-filled"),
         (aurora_i18n::tr!("common-interface"), "app-window-filled"),
@@ -154,6 +155,7 @@ fn categories() -> [(&'static str, &'static str); 14] {
         (aurora_i18n::tr!("ui-options-commands"), "square-rounded-chevron-right-filled"),
         (aurora_i18n::tr!("ui-options-privacy"), "lock-filled"),
         (aurora_i18n::tr!("ui-options-aurora"), "sparkles-filled"),
+        (aurora_i18n::tr!("ui-options-accessibility"), "accessible-filled"),
     ]
 }
 
@@ -169,7 +171,23 @@ fn tab_count() -> usize {
 }
 
 /// Order of the tabs in the sidebar.
-const ORDER: [usize; 14] = [TAB_AURORA, 0, 1, 2, 3, TAB_COMMANDS, 7, 4, TAB_CAMERA, 8, 5, TAB_PRIVACY, 6, 9];
+const ORDER: [usize; 15] = [
+    TAB_AURORA,
+    0,
+    1,
+    2,
+    TAB_ACCESSIBILITY,
+    3,
+    TAB_COMMANDS,
+    7,
+    4,
+    TAB_CAMERA,
+    8,
+    5,
+    TAB_PRIVACY,
+    6,
+    9,
+];
 
 pub const TAB_GRAPHICS: usize = 0;
 pub const TAB_AUDIO: usize = 7;
@@ -179,6 +197,8 @@ pub const TAB_COMMANDS: usize = 11;
 pub const TAB_PRIVACY: usize = 12;
 /// What Aurora does differently from Firestorm, with the way back to it.
 pub const TAB_AURORA: usize = 13;
+/// Colour blindness (#418), and what helps reading the interface.
+pub const TAB_ACCESSIBILITY: usize = 14;
 
 const LABEL_W: f32 = 180.0;
 
@@ -209,6 +229,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("ui-options-mouse") => "mouse-filled",
         value if value == aurora_i18n::text("preferences-group-huds") => "hand-grab",
         value if value == aurora_i18n::text("ui-options-keyboard") => "keyboard-filled",
+        value if value == aurora_i18n::text("ui-options-color-blindness") => "eye-filled",
         value if value == aurora_i18n::text("ui-options-name-tag-color") => "tag-filled",
         value if value == aurora_i18n::text("ui-options-mini-map-markers") => "map",
         value if value == aurora_i18n::text("ui-options-disk-cache") => "database-filled",
@@ -793,6 +814,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
                             TAB_PRIVACY => privacy::page(ui, p, &mut s.lookat, &mut s.autoresponse.friends_only),
+                            TAB_ACCESSIBILITY => accessibility::page(ui, p, s),
                             TAB_AURORA => {
                                 let mut reset = false;
                                 let c = aurora::page(ui, p, s, &mut reset);

@@ -388,7 +388,8 @@ pub fn draw(
                         // theme-guard: content — Firestorm's complexity without a limit (LLColor4::grey1)
                         Color32::from_gray(190)
                     } else {
-                        ratio_color(c as f32, tc.max as f32)
+                        // the red–green ramp, daltonised for a colour blindness
+                        crate::colorblind::adapt(ratio_color(c as f32, tc.max as f32), crate::colorblind::current())
                     };
                     lines.push((
                         aurora_i18n::tr!("common-complexity", value0 = group_digits(c).to_string()),

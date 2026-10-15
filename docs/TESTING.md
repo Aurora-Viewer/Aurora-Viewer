@@ -1548,6 +1548,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
 | `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `recent` or `blocked` | People with the mock-up's contents: Near you (rich rows, compact crowd, a person's sheet, Firestorm's table) and the other tabs |
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
+| `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or as the bars open it on its Network section (full for this opening, the section unfolded and scrolled to) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
@@ -1965,6 +1966,19 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   open over the login screen, as its top right cogwheel does: every page
   works before login, and Chat › Conversation logs says that the folder
   belongs to an account.
+- **`AURORA_DEMO_COLORBLIND=protan|deutan|tritan|mono[:strength]`**: the
+  interface adapted to a colour vision deficiency for this run, as
+  Preferences › Accessibility › Colour blindness does, without touching the
+  saved settings (`:0.5` for half the strength). `14` of
+  `AURORA_DEMO_OPTIONS` opens that page, with its preview of the status
+  dots. What to look for (compare with a capture without the variable):
+  `protan` / `deutan` turn success and online blue, `tritan` turns warnings
+  orange and links sky blue, `mono` turns everything grey with the
+  meaningful colours at clearly different lightnesses; the rest of the
+  interface keeps its look. Whatever the mode, the status dots differ by
+  their shape (a disc online, a crescent away, a barred disc in do not
+  disturb, a hollow ring offline): combine with `AURORA_DEMO_CONV=bubbles:busy`,
+  `AURORA_DEMO_PEOPLE=rows` or `AURORA_DEMO_CONTACTS=friends`.
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
   drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Colors): the
