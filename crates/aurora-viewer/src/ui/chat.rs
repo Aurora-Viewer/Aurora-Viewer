@@ -173,7 +173,7 @@ impl ChatUi {
 
     /// The names of the avatars in chat range who type.
     fn nearby_typing_names(&self, world: &World) -> Vec<String> {
-        self.nearby_typing.iter().map(|id| world.social.name_of(id)).collect()
+        self.nearby_typing.iter().map(|id| world.social.display_name_of(id)).collect()
     }
 }
 

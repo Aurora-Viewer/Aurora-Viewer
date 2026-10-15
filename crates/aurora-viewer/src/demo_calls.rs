@@ -39,6 +39,15 @@ pub enum Mode {
 }
 
 pub fn mode() -> Option<Mode> {
+    // the calls of AURORA_DEMO_CONV=aurora:call…
+    if let Some(call) = super::aurora_scenario().and_then(|s| s.call) {
+        use super::AuroraCall;
+        return Some(match call {
+            AuroraCall::Incoming => Mode::Incoming,
+            AuroraCall::InCall | AuroraCall::Mini => Mode::Group,
+            AuroraCall::Ongoing => Mode::IncomingGroup,
+        });
+    }
     match std::env::var("AURORA_DEMO_CALL").ok()?.as_str() {
         "p2p" => Some(Mode::P2p),
         "hangup" => Some(Mode::Hangup),

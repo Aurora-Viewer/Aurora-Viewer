@@ -86,8 +86,8 @@ pub(super) fn show(
 ) {
     let width = if rail { RAIL } else { WIDTH };
     let (column, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-    ui.painter().rect_filled(column, 0.0, p.bar.gamma_multiply(0.75));
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(column.shrink2(egui::vec2(6.0, 0.0))));
+    ui.painter().rect_filled(column, 0.0, p.bar);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(column.shrink2(egui::vec2(6.0, 0.0))).layout(egui::Layout::top_down(egui::Align::Min)));
     let ui = &mut child;
     ui.spacing_mut().item_spacing.y = 2.0;
     ui.add_space(8.0);
@@ -157,7 +157,7 @@ pub(super) fn show(
                     .collect();
                 let titled: Vec<(Uuid, usize, String)> = ids
                     .into_iter()
-                    .map(|(id, unread)| (id, unread, world.session_title(&id)))
+                    .map(|(id, unread)| (id, unread, entry_name(world, &id, section)))
                     .filter(|(_, _, name)| matches(name))
                     .collect();
                 section_head(ui, p, world, st, actions, section, rail);
@@ -257,7 +257,7 @@ fn local_sub(world: &World, st: &ChatUi) -> String {
     if let Some(t) = super::typing::text(&st.nearby_typing_names(world)) {
         return t;
     }
-    let near = aurora_i18n::tr!("ui-chat-in-earshot", n = st.nearby_count.to_string()).to_owned();
+    let near = aurora_i18n::tr!("ui-chat-in-earshot", n = st.nearby_count);
     match world.chat.iter().rev().find(|l| !l.kind.is_notice()) {
         Some(l) => format!("{near} · {}", preview(world, l, true)),
         None => near,
@@ -320,9 +320,25 @@ fn sub_line(p: &Palette, world: &World, id: Uuid, kind: Kind, status: presence::
     }
     if last.is_empty() && kind != Kind::Private {
         let n = world.groups.sessions.get(&id).map(|s| s.participants.len()).unwrap_or(0);
-        return (aurora_i18n::tr!("ui-chat-participants", n = n.to_string()).to_owned(), None);
+        return (aurora_i18n::tr!("ui-chat-head-participants", n = n), None);
     }
     (last, None)
+}
+
+/// The title of a section: small capitals in semi-bold.
+fn section_title(ui: &egui::Ui, p: &Palette, title: &str) -> RichText {
+    RichText::new(title.to_uppercase())
+        .font(egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
+        .color(p.muted_dim)
+}
+
+/// The name of an entry: a resident's display name, else the session's
+/// title (a group, a conference, a name not known yet).
+fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
+    if kind == Kind::Private && world.social.avatar_names.get(id).is_some() {
+        return world.social.display_name_of(id);
+    }
+    world.session_title(id)
 }
 
 /// The head of a section, with its "+": start an IM (the resident picker),
@@ -345,7 +361,7 @@ fn section_head(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, 
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(6.0);
-        ui.label(RichText::new(title.to_uppercase()).size(10.5).strong().color(p.muted_dim));
+        ui.label(section_title(ui, p, title));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(4.0);
             let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(18.0), egui::Sense::click());
@@ -390,7 +406,7 @@ fn plain_head(ui: &mut egui::Ui, p: &Palette, title: &str) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(6.0);
-        ui.label(RichText::new(title.to_uppercase()).size(10.5).strong().color(p.muted_dim));
+        ui.label(section_title(ui, p, title));
     });
     ui.add_space(2.0);
 }
@@ -565,7 +581,7 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
         egui::pos2(ui.max_rect().right(), bottom),
     );
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(8.0)));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(8.0)).layout(egui::Layout::top_down(egui::Align::Min)));
     let ui = &mut child;
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
     if !rail {

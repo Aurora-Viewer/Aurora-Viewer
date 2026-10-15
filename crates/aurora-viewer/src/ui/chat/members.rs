@@ -46,7 +46,7 @@ pub(super) fn show(
         rect.y_range(),
         egui::Stroke::new(1.0, p.raised.gamma_multiply(0.6)),
     );
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))).layout(egui::Layout::top_down(egui::Align::Min)));
     let ui = &mut child;
     let info = world.groups.sessions.get(&conversation);
     let call = world.call_of(&conversation);
@@ -54,7 +54,7 @@ pub(super) fn show(
         let in_call = call.and_then(|c| c.members.iter().find(|m| m.id == *id));
         Member {
             id: *id,
-            name: world.social.name_of(id),
+            name: world.social.display_name_of(id),
             status: if *id == world.agent_id {
                 presence::Status::Online
             } else {

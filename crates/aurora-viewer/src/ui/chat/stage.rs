@@ -127,7 +127,7 @@ fn card<R>(ui: &mut egui::Ui, fill: Color32, edge: Option<Color32>, body: impl F
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width() - 12.0 - 20.0);
-                    body(ui)
+                    ui.vertical(body).inner
                 });
             if let Some(edge) = edge {
                 ui.painter().rect_stroke(
@@ -193,7 +193,7 @@ fn incoming(
                     });
                 }
                 let decline = aurora_i18n::tr!("ui-notifications-decline");
-                if pill(ui, p, "phone-off", decline, p.danger, egui::vec2(56.0, BUTTON)).clicked() {
+                if pill(ui, p, "phone-off", decline, p.danger_dim, egui::vec2(56.0, BUTTON)).clicked() {
                     actions.push(ConvAction::AnswerCall {
                         session,
                         answer: InviteAnswer::Decline,
@@ -297,7 +297,7 @@ fn buttons(ui: &mut egui::Ui, p: &Palette, call: &Call, st: &mut ChatUi, actions
         actions.push(ConvAction::PickPeople(call.conversation()));
     }
     let hang_up = aurora_i18n::tr!("ui-call-hang-up");
-    if pill(ui, p, "phone-off", hang_up, p.danger, egui::vec2(side * 1.4, side)).clicked() {
+    if pill(ui, p, "phone-off", hang_up, p.danger_dim, egui::vec2(side * 1.4, side)).clicked() {
         actions.push(ConvAction::HangUp);
     }
 }
@@ -338,7 +338,7 @@ fn person_tile(
     actions: &mut Vec<ConvAction>,
 ) {
     st.wanted_pics.insert(person.id);
-    let name = world.social.name_of(&person.id);
+    let name = world.social.display_name_of(&person.id);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(PERSON_W, PERSON + 22.0), egui::Sense::click());
     let pic = egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 3.0 + PERSON * 0.5), egui::Vec2::splat(PERSON));
     let painter = ui.painter();
@@ -454,7 +454,7 @@ fn mini(
             let speakers: Vec<String> = everyone
                 .iter()
                 .filter(|m| m.speaking)
-                .map(|m| first_name(&world.social.name_of(&m.id)))
+                .map(|m| first_name(&world.social.display_name_of(&m.id)))
                 .collect();
             let said = match speakers.as_slice() {
                 [] => world.session_title(&call.conversation()),
@@ -475,13 +475,13 @@ fn mini(
                 let r = egui::Rect::from_min_size(egui::pos2(stack.left() + i as f32 * 16.0, stack.top()), egui::Vec2::splat(22.0));
                 let ring = if m.speaking { p.success } else { p.panel };
                 ui.painter().circle_filled(r.center(), 12.5, ring);
-                let name = world.social.name_of(&m.id);
+                let name = world.social.display_name_of(&m.id);
                 crate::ui::widgets::avatar_disc(ui, p, r, pics.get(&m.id), &name, m.waiting);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 let hang_up = aurora_i18n::tr!("ui-call-hang-up");
-                if pill(ui, p, "phone-off", hang_up, p.danger, egui::vec2(SMALL * 1.4, SMALL)).clicked() {
+                if pill(ui, p, "phone-off", hang_up, p.danger_dim, egui::vec2(SMALL * 1.4, SMALL)).clicked() {
                     actions.push(ConvAction::HangUp);
                 }
                 if round(ui, p, "arrows-maximize", aurora_i18n::tr!("ui-chat-call-expand"), SMALL, false).clicked() {
@@ -526,37 +526,29 @@ fn ongoing(
                     .strong()
                     .color(p.ink),
             );
-            let name = world.social.name_of(&by);
+            let name = world.social.display_name_of(&by);
             let minutes = since.elapsed().as_secs() / 60;
             let when = if minutes == 0 {
                 aurora_i18n::tr!("ui-chat-call-started-now", name = name.as_str()).to_owned()
             } else {
-                aurora_i18n::tr!("ui-chat-call-started-ago", name = name.as_str(), n = minutes.to_string()).to_owned()
+                aurora_i18n::tr!("ui-chat-call-started-ago", name = name.as_str(), n = minutes)
             };
-            let join_w = 90.0;
-            let room = (ui.available_width() - join_w - 30.0).max(30.0);
+            let join = aurora_i18n::tr!("ui-chat-join-call");
+            let join_w = label_pill_width(ui, join);
+            let room = (ui.available_width() - join_w - 22.0 - 3.0 * 8.0).max(30.0);
             ui.add(crate::ui::widgets::elided_label(ui, RichText::new(format!("· {when}")).size(12.0).color(p.muted), room));
             st.wanted_pics.insert(by);
             let (r, _) = ui.allocate_exact_size(egui::Vec2::splat(22.0), egui::Sense::hover());
             crate::ui::widgets::avatar_disc(ui, p, r, pics.get(&by), &name, false);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let join = aurora_i18n::tr!("ui-chat-join-call");
                 let enabled = st.voice_on;
-                let resp = crate::ui::widgets::action_button_if(
-                    ui,
-                    p,
-                    "phone-filled",
-                    join,
-                    crate::ui::widgets::ActionKind::Primary,
-                    egui::vec2(0.0, 26.0),
-                    enabled,
-                );
+                let resp = label_pill(ui, p, "phone-filled", join, enabled);
                 let resp = if enabled {
                     resp
                 } else {
-                    resp.on_disabled_hover_text(aurora_i18n::tr!("ui-call-voice-off"))
+                    resp.on_hover_text(aurora_i18n::tr!("ui-call-voice-off"))
                 };
-                if resp.clicked() {
+                if enabled && resp.clicked() {
                     actions.push(ConvAction::Call(conversation));
                 }
             });
@@ -585,6 +577,41 @@ fn round(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, side: f32, off: 
         if off { p.danger } else { p.ink },
     );
     resp.on_hover_text(tip)
+}
+
+/// The width of a `label_pill`.
+fn label_pill_width(ui: &egui::Ui, label: &str) -> f32 {
+    let text = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.5), Color32::PLACEHOLDER);
+    text.size().x + 16.0 + 14.0 + 6.0
+}
+
+/// Join: a green pill with its icon and label (greyed while voice is off).
+fn label_pill(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, enabled: bool) -> egui::Response {
+    let size = egui::vec2(label_pill_width(ui, label), 26.0);
+    let (rect, resp) = ui.allocate_exact_size(size, if enabled { egui::Sense::click() } else { egui::Sense::hover() });
+    let face = match (enabled, resp.hovered()) {
+        (false, _) => p.raised,
+        (true, true) => p.success,
+        (true, false) => p.success.gamma_multiply(0.85),
+    };
+    ui.painter().rect_filled(rect, rect.height() * 0.5, face);
+    let ink = if enabled { p.on_accent } else { p.muted };
+    super::thread::paint_icon(
+        ui.painter(),
+        icon,
+        egui::Rect::from_min_size(egui::pos2(rect.left() + 8.0, rect.center().y - 7.0), egui::Vec2::splat(14.0)),
+        ink,
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + 8.0 + 14.0 + 6.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(12.5),
+        ink,
+    );
+    resp
 }
 
 /// A pill of a call in a strong colour: answer, decline, hang up.

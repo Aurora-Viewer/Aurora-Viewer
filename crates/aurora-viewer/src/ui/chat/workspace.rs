@@ -275,15 +275,10 @@ fn note_first_unread(world: &World, st: &mut ChatUi, read: Option<(usize, usize)
     st.first_unread.entry(st.selected).or_insert(seq);
 }
 
-/// Our names, lowercase, whose mention marks a message: the name we show,
-/// its first word, and our user name.
+/// Our names, lowercase, whose mention marks a message: the name we show
+/// and our user name (a first name alone would mark too much: "Aurora").
 fn our_names(world: &World, own_name: &str) -> Vec<String> {
     let mut me = vec![own_name.to_lowercase()];
-    if let Some(first) = own_name.split_whitespace().next()
-        && first.len() < own_name.len()
-    {
-        me.push(first.to_lowercase());
-    }
     let names = &world.social.avatar_names;
     if let Some(n) = names.get(&world.agent_id) {
         me.push(n.display(&names.options).to_lowercase());

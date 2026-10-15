@@ -9032,6 +9032,24 @@ impl App {
                         }
                     }
                 }
+                // AURORA_DEMO_CONV=aurora: someone types in the conversation
+                // shown, and the group's call rings without us
+                if let Some(scene) = crate::demo::aurora_scenario() {
+                    match scene.view {
+                        crate::demo::Bubbles::Local => {
+                            self.chat_ui.nearby_count = self.chat_ui.nearby_count.max(3);
+                            self.chat_ui.nearby_typing = vec![crate::demo::DEMO_NOVA];
+                        }
+                        crate::demo::Bubbles::Friend => self.world.social.set_typing(crate::demo::DEMO_FRIEND, true),
+                        _ => {}
+                    }
+                    if scene.call == Some(crate::demo::AuroraCall::Ongoing)
+                        && self.world.calls.invite_for(&crate::demo::DEMO_GROUP1).is_some()
+                    {
+                        self.world
+                            .answer_call_invite(crate::demo::DEMO_GROUP1, crate::world::calls::InviteAnswer::Decline);
+                    }
+                }
                 for c in ui::chat::show(
                     &ctx,
                     &p,
@@ -10735,7 +10753,23 @@ impl ApplicationHandler for App {
                 if view == crate::demo::Bubbles::Legacy {
                     self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
                 }
-                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(700.0, 560.0));
+                // =aurora[:…]: the workspace, at the scene's width
+                let mut size = egui::vec2(700.0, 560.0);
+                if let Some(scene) = crate::demo::aurora_scenario() {
+                    self.chat_ui.demo_style = Some(if scene.compact {
+                        crate::settings::ChatStyle::Compact
+                    } else {
+                        crate::settings::ChatStyle::Aurora
+                    });
+                    self.chat_ui.selected = crate::demo::aurora_conversation(scene);
+                    self.chat_ui.members_open = view == crate::demo::Bubbles::Group;
+                    self.chat_ui.stage_mini = scene.call == Some(crate::demo::AuroraCall::Mini);
+                    // the window alone, to compare with the mockups
+                    self.panels.people = false;
+                    self.panels.inventory = false;
+                    size.x = scene.width;
+                }
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), size);
             } else if crate::demo::teleport_offer_scene().is_some() {
                 self.panels.chat = true;
                 self.panels.perf = false;
@@ -10934,6 +10968,9 @@ impl ApplicationHandler for App {
             }
             if let Some(view) = crate::demo::bubbles_scenario() {
                 crate::demo::bubbles_lines(&mut self.world, view);
+            }
+            if let Some(scene) = crate::demo::aurora_scenario() {
+                crate::demo::aurora_lines(&mut self.world, scene);
             }
             // AURORA_DEMO_CONV=tp[:sent|reject]: the avatar menu's teleport
             // offer (its invitation, or sent as invited to the resident whose

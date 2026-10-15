@@ -627,6 +627,9 @@ pub enum Bubbles {
 }
 
 pub fn bubbles_scenario() -> Option<Bubbles> {
+    if let Some(scene) = aurora_scenario() {
+        return Some(scene.view);
+    }
     let v = std::env::var("AURORA_DEMO_CONV").ok()?;
     Some(match v.strip_prefix("bubbles")? {
         "" => Bubbles::Friend,
@@ -753,6 +756,196 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         }
         Bubbles::Group | Bubbles::Local => {}
     }
+}
+
+/// AURORA_DEMO_CONV=aurora[:flag…]: the Conversations window in Aurora's
+/// workspace (ui/chat/workspace.rs), on the lines of the bubbles scenario
+/// and a few more. Flags, joined by ":": `local`, `im` (the default),
+/// `busy`, `group` (members' panel open) for the conversation shown;
+/// `compact` for the Compact style; `narrow` (460 px: the rail),
+/// `medium` (700 px) or a width in points; `call-incoming` (Tess calls),
+/// `call` (in the group's call), `call-mini` (its stage reduced),
+/// `call-ongoing` (Nova's group call, which we let ring).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AuroraScene {
+    pub view: Bubbles,
+    pub width: f32,
+    pub compact: bool,
+    pub call: Option<AuroraCall>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuroraCall {
+    Incoming,
+    InCall,
+    Mini,
+    Ongoing,
+}
+
+pub fn aurora_scenario() -> Option<AuroraScene> {
+    parse_aurora_scene(&std::env::var("AURORA_DEMO_CONV").ok()?)
+}
+
+fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
+    let mut flags = v.split(':');
+    if flags.next()? != "aurora" {
+        return None;
+    }
+    let mut scene = AuroraScene {
+        view: Bubbles::Friend,
+        width: 960.0,
+        compact: false,
+        call: None,
+    };
+    for flag in flags {
+        match flag {
+            "local" => scene.view = Bubbles::Local,
+            "im" => scene.view = Bubbles::Friend,
+            "busy" => scene.view = Bubbles::Busy,
+            "group" => scene.view = Bubbles::Group,
+            "compact" => scene.compact = true,
+            "narrow" => scene.width = 460.0,
+            "medium" => scene.width = 700.0,
+            "call-incoming" => scene.call = Some(AuroraCall::Incoming),
+            "call" => scene.call = Some(AuroraCall::InCall),
+            "call-mini" => scene.call = Some(AuroraCall::Mini),
+            "call-ongoing" => scene.call = Some(AuroraCall::Ongoing),
+            w => {
+                if let Ok(w) = w.parse::<f32>() {
+                    scene.width = w.clamp(300.0, 1600.0);
+                }
+            }
+        }
+    }
+    // a call shows in its conversation
+    match scene.call {
+        Some(AuroraCall::Incoming) => scene.view = Bubbles::Busy,
+        Some(_) => scene.view = Bubbles::Group,
+        None => {}
+    }
+    Some(scene)
+}
+
+/// The conversation of the scene shown in the window (Tess's for her call).
+pub fn aurora_conversation(scene: AuroraScene) -> Option<Uuid> {
+    match scene.call {
+        // the caller of `incoming` (whom the demo's names call Tess)
+        Some(AuroraCall::Incoming) => Some(DEMO_NOVA),
+        _ => bubbles_conversation(scene.view),
+    }
+}
+
+/// The scene's lines beyond the bubbles scenario's: the group's afternoon
+/// (an emote, a place, a mention of us) and a few private conversations for
+/// the column; the last ones of the conversation shown are unread, for its
+/// "New" line.
+pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
+    use crate::world::{ChatKind, ChatLine, Origin};
+    let now = std::time::SystemTime::now();
+    let ago = |minutes: u64| now - std::time::Duration::from_secs(minutes * 60);
+    let me = world.own_name();
+    let line = |time, from: &str, source: Uuid, kind, text: &str| ChatLine {
+        time,
+        from: from.to_owned(),
+        text: text.to_owned(),
+        kind,
+        source,
+        origin: Origin::Live,
+    };
+    let names = |id: Uuid| world_name(id);
+    let group = [
+        (34, DEMO_TESS, aurora_i18n::tr!("demo-aurora-group-1").to_owned()),
+        (31, DEMO_NOVA, aurora_i18n::tr!("demo-aurora-group-2").to_owned()),
+        (31, DEMO_NOVA, aurora_i18n::tr!("demo-aurora-group-3").to_owned()),
+        (28, DEMO_LOUP, aurora_i18n::tr!("demo-aurora-group-4").to_owned()),
+        (27, Uuid::nil(), aurora_i18n::tr!("demo-aurora-group-5").to_owned()),
+        (3, DEMO_NOVA, aurora_i18n::tr!("demo-aurora-mention", name = me.as_str())),
+    ];
+    for (minutes, from, text) in group {
+        let l = if from.is_nil() {
+            line(ago(minutes), &me, Uuid::nil(), ChatKind::Own, &text)
+        } else {
+            line(ago(minutes), &names(from), from, ChatKind::Im, &text)
+        };
+        world.conversation_line(DEMO_GROUP1, l);
+    }
+    if scene.view != Bubbles::Busy {
+        world.conversation_line(
+            DEMO_NOVA,
+            line(ago(50), &names(DEMO_NOVA), DEMO_NOVA, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-busy-reply")),
+        );
+    }
+    world.conversation_line(
+        DEMO_LOUP,
+        line(ago(70), &names(DEMO_LOUP), DEMO_LOUP, ChatKind::Im, aurora_i18n::tr!("demo-aurora-loup")),
+    );
+    world.conversation_line(
+        DEMO_TESS,
+        line(ago(40), &names(DEMO_TESS), DEMO_TESS, ChatKind::Im, aurora_i18n::tr!("demo-aurora-tess")),
+    );
+    // unread: the group's last line, and the friend's last two
+    let unread = |world: &mut crate::world::World, id: Uuid, n: usize| {
+        if let Some(s) = world.social.ims.iter_mut().find(|s| s.other == id) {
+            s.unread = n;
+        }
+    };
+    unread(world, DEMO_GROUP1, 1);
+    unread(world, DEMO_LOUP, 1);
+    if matches!(scene.view, Bubbles::Friend) {
+        unread(world, DEMO_FRIEND, 3);
+    }
+}
+
+/// The demo's name of a resident of the scene.
+fn world_name(id: Uuid) -> String {
+    match id {
+        DEMO_NOVA => aurora_i18n::tr!("demo-nova-example").to_owned(),
+        DEMO_LOUP => aurora_i18n::tr!("demo-violet-wolf").to_owned(),
+        _ => "Tess Touch".to_owned(),
+    }
+}
+
+/// The nearby chat of the scene: a shout, a whisper, our emote and a
+/// mention of us, after the bubbles scenario's lines.
+pub fn aurora_events() -> Vec<NetEvent> {
+    let say = |from: Uuid, name: &str, text: String, chat_type| {
+        NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: name.into(),
+            source_id: from,
+            owner_id: Uuid::nil(),
+            source_type: aurora_net::ChatSourceType::Agent,
+            chat_type,
+            position: Vec3::ZERO,
+            message: text,
+        })
+    };
+    use aurora_net::ChatType;
+    vec![
+        say(
+            DEMO_TESS,
+            "Tess Touch",
+            aurora_i18n::tr!("demo-aurora-local-shout").to_owned(),
+            ChatType::Shout,
+        ),
+        say(
+            DEMO_LOUP,
+            aurora_i18n::tr!("demo-violet-wolf"),
+            aurora_i18n::tr!("demo-aurora-local-whisper").to_owned(),
+            ChatType::Whisper,
+        ),
+        say(
+            DEMO_AGENT,
+            "Aurora Demo",
+            aurora_i18n::tr!("demo-aurora-local-emote").to_owned(),
+            ChatType::Normal,
+        ),
+        say(
+            DEMO_NOVA,
+            aurora_i18n::tr!("demo-nova-example"),
+            aurora_i18n::tr!("demo-aurora-mention", name = "Aurora Demo"),
+            ChatType::Normal,
+        ),
+    ]
 }
 
 /// AURORA_DEMO_CONV=tp[:sent|reject]: a conversation with a resident
@@ -3555,6 +3748,9 @@ pub fn events() -> Vec<NetEvent> {
     }
     if bubbles_scenario().is_some() {
         ev.extend(bubbles_events());
+    }
+    if aurora_scenario().is_some() {
+        ev.extend(aurora_events());
     }
     if teleport_offer_scenario() {
         ev.extend(teleport_offer_events(agent));

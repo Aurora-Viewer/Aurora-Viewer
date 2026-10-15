@@ -27,7 +27,7 @@ struct Identity {
 fn identity(world: &World, st: &ChatUi) -> Identity {
     let Some(id) = st.selected else {
         let region = world.region_name();
-        let near = aurora_i18n::tr!("ui-chat-head-in-earshot", n = st.nearby_count.to_string());
+        let near = aurora_i18n::tr!("ui-chat-head-in-earshot", n = st.nearby_count);
         return Identity {
             title: aurora_i18n::tr!("common-nearby-chat").to_owned(),
             subtitle: if region.is_empty() { near } else { format!("{region} · {near}") },
@@ -66,7 +66,7 @@ fn identity(world: &World, st: &ChatUi) -> Identity {
             );
             let n = world.groups.sessions.get(&id).map(|s| s.participants.len()).unwrap_or(0);
             if n > 0 {
-                parts.push(aurora_i18n::tr!("ui-chat-head-participants", n = n.to_string()).to_owned());
+                parts.push(aurora_i18n::tr!("ui-chat-head-participants", n = n));
             }
             world.session_title(&id)
         }
