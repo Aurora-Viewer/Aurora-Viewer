@@ -8,10 +8,30 @@ const MIN: f32 = 0.75;
 const MAX: f32 = 2.0;
 const NUMERIC_SPEED: f32 = 0.005;
 
+// Keep the established limits while placing the default at the track's center.
+// Numeric editing always uses percentages, independently of this track mapping.
+fn track_position(scale: f32) -> f32 {
+    if scale <= 1.0 {
+        0.5 * (scale - MIN) / (1.0 - MIN)
+    } else {
+        0.5 + 0.5 * (scale - 1.0) / (MAX - 1.0)
+    }
+}
+
+fn track_scale(position: f32) -> f32 {
+    let position = position.clamp(0.0, 1.0);
+    if position <= 0.5 {
+        MIN + position * 2.0 * (1.0 - MIN)
+    } else {
+        1.0 + (position - 0.5) * 2.0 * (MAX - 1.0)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ScaleSlider {
     pointer: Pointer,
     gesture: Option<Gesture>,
+    track_id: Option<egui::Id>,
 }
 
 #[derive(Default)]
@@ -113,46 +133,90 @@ impl ScaleSlider {
                     delta.x - delta.y
                 }
             };
-            value = (g.start + travel * g.per_pixel).clamp(MIN, MAX);
+            value = match g.source {
+                Source::Track { .. } => track_scale(track_position(g.start) + travel * g.per_pixel),
+                Source::Numeric { .. } => (g.start + travel * g.per_pixel).clamp(MIN, MAX),
+            };
             g.value = value;
             g.frame = frame;
         }
         // Keep egui's normal click, keyboard and text editing, but ignore its
         // geometry-based proposals during an established physical gesture.
         let locked = had_gesture || (self.pointer.down && !self.pointer.pressed);
+        // The accessible track exposes percentages too. Consume SetValue here
+        // before the normalized Slider can interpret it as a track position.
+        if let Some(id) = self.track_id {
+            ui.input_mut(|input| {
+                input.events.retain(|event| {
+                    if let Event::AccessKitActionRequest(request) = event
+                        && request.target_tree == egui::accesskit::TreeId::ROOT
+                        && request.target_node == id.accesskit_id()
+                        && request.action == egui::accesskit::Action::SetValue
+                        && let Some(egui::accesskit::ActionData::NumericValue(percent)) = request.data
+                    {
+                        if !locked && self.pointer.focused && percent.is_finite() {
+                            value = (percent / 100.0).clamp(MIN as f64, MAX as f64) as f32;
+                        }
+                        false
+                    } else {
+                        true
+                    }
+                });
+            });
+        }
         ui.spacing_mut().slider_width = super::SLIDER_W;
-        let mut response = ui.add(
-            egui::Slider::from_get_set(MIN as f64..=MAX as f64, |proposed| {
-                if !locked
-                    && self.pointer.focused
-                    && let Some(proposed) = proposed
-                {
-                    value = proposed as f32;
-                }
-                value as f64
+        let (mut track, mut number) = ui
+            .horizontal(|ui| {
+                let track = ui.add(
+                    egui::Slider::from_get_set(0.0..=1.0, |proposed| {
+                        if !locked
+                            && self.pointer.focused
+                            && let Some(proposed) = proposed
+                        {
+                            value = track_scale(proposed as f32);
+                        }
+                        track_position(value) as f64
+                    })
+                    .show_value(false)
+                    .clamping(egui::SliderClamping::Edits)
+                    .trailing_fill(true),
+                );
+                let number = ui.add(
+                    egui::DragValue::from_get_set(|proposed| {
+                        if !locked
+                            && self.pointer.focused
+                            && let Some(proposed) = proposed
+                        {
+                            value = (proposed / 100.0) as f32;
+                        }
+                        value as f64 * 100.0
+                    })
+                    .suffix("%")
+                    .custom_formatter(|percent, _| aurora_i18n::number_text(&egui::emath::format_with_decimals_in_range(percent, 0..=1)))
+                    .custom_parser(|text| aurora_i18n::parse_number(text.trim().trim_end_matches('%').trim()))
+                    .speed(if locked { 0.0 } else { NUMERIC_SPEED as f64 * 100.0 })
+                    .range(MIN as f64 * 100.0..=MAX as f64 * 100.0)
+                    .clamp_existing_to_range(false)
+                    .max_decimals(1)
+                    .update_while_editing(false),
+                );
+                (track, number)
             })
-            .suffix("×")
-            .custom_parser(aurora_i18n::parse_number)
-            .drag_value_speed(if locked { 0.0 } else { NUMERIC_SPEED as f64 })
-            .clamping(egui::SliderClamping::Edits)
-            .max_decimals(3)
-            .update_while_editing(false)
-            .trailing_fill(true),
-        );
+            .inner;
+        self.track_id = Some(track.id);
+        let numeric = number.is_pointer_button_down_on();
         if self.pointer.focused
             && self.pointer.pressed
-            && response.is_pointer_button_down_on()
+            && (track.is_pointer_button_down_on() || numeric)
             && let Some(pointer) = self.pointer.physical
         {
             let ppp = ui.ctx().pixels_per_point();
-            let numeric = pointer.x >= (response.rect.left() + super::SLIDER_W) * ppp;
-            let thickness = ui.text_style_height(&egui::TextStyle::Body).max(ui.spacing().interact_size.y);
             // Same handle allowance as Slider::position_range / handle_radius.
             let aspect = match ui.visuals().handle_shape {
                 egui::style::HandleShape::Circle => 1.0,
                 egui::style::HandleShape::Rect { aspect_ratio } => aspect_ratio,
             };
-            let span = super::SLIDER_W - 2.0 * thickness / 2.5 * aspect;
+            let span = track.rect.width() - 2.0 * track.rect.height() / 2.5 * aspect;
             gesture = Some(Gesture {
                 source: if numeric {
                     Source::Numeric {
@@ -162,34 +226,39 @@ impl ScaleSlider {
                     Source::Track { origin: pointer.x }
                 },
                 start: value,
-                per_pixel: if numeric { NUMERIC_SPEED / ppp } else { (MAX - MIN) / (span * ppp) },
+                per_pixel: if numeric { NUMERIC_SPEED / ppp } else { 1.0 / (span * ppp) },
                 value,
                 frame,
             });
         }
         if value != previous {
-            response.mark_changed();
             let numeric = gesture.as_ref().is_some_and(|g| matches!(g.source, Source::Numeric { .. }));
             // Let the existing native numeric scrubber keep the cursor at the
             // field. Its raw deltas feed prepare_input, not the resized field.
             if numeric {
-                // The child DragValue already exposes this value to
-                // accessibility. Do not change the track's widget role.
-                ui.ctx().output_mut(|o| {
-                    o.events.push(egui::output::OutputEvent::ValueChanged(egui::WidgetInfo::drag_value(
-                        ui.is_enabled(),
-                        value as f64,
-                    )));
-                });
-            } else {
-                response.output_event(egui::output::OutputEvent::ValueChanged(egui::WidgetInfo::slider(
+                number.mark_changed();
+                number.output_event(egui::output::OutputEvent::ValueChanged(egui::WidgetInfo::drag_value(
                     ui.is_enabled(),
-                    value as f64,
-                    "",
+                    value as f64 * 100.0,
                 )));
+            } else {
+                track.mark_changed();
             }
         }
-        response.on_hover_text(aurora_i18n::tr!("ui-options-interface-scale-help"));
+        track.widget_info(|| {
+            egui::WidgetInfo::slider(
+                ui.is_enabled(),
+                value as f64 * 100.0,
+                aurora_i18n::tr!("ui-options-interface-scale"),
+            )
+        });
+        ui.ctx().accesskit_node_builder(track.id, |builder| {
+            builder.set_min_numeric_value(MIN as f64 * 100.0);
+            builder.set_max_numeric_value(MAX as f64 * 100.0);
+        });
+        track
+            .union(number)
+            .on_hover_text(aurora_i18n::tr!("ui-options-interface-scale-help"));
         self.gesture = gesture.filter(|_| self.pointer.down && self.pointer.focused);
         *saved = value;
         value != previous
@@ -211,6 +280,7 @@ mod tests {
         native_scale: f32,
         time: f64,
         rect: Rect,
+        text: Vec<String>,
     }
 
     impl Harness {
@@ -226,6 +296,7 @@ mod tests {
                 native_scale,
                 time: 0.0,
                 rect: Rect::NOTHING,
+                text: Vec::new(),
             };
             h.frame(vec![], true, true);
             h.frame(vec![], true, true);
@@ -268,6 +339,17 @@ mod tests {
                 }
             });
             self.rect = rect * output.pixels_per_point;
+            fn collect_text(shape: &egui::Shape, text: &mut Vec<String>) {
+                match shape {
+                    egui::Shape::Text(t) => text.push(t.galley.text().to_owned()),
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_text(s, text)),
+                    _ => {}
+                }
+            }
+            self.text.clear();
+            for shape in &output.shapes {
+                collect_text(&shape.shape, &mut self.text);
+            }
             self.anchor = self
                 .numeric
                 .after(&self.ctx, &output.platform_output.events, focused)
@@ -318,7 +400,7 @@ mod tests {
             for initial in [0.75, 1.0, 1.6, 2.0] {
                 let mut h = Harness::new(initial, native);
                 for direction in [1.0, -1.0] {
-                    let start = h.track((h.saved - MIN) / (MAX - MIN));
+                    let start = h.track(track_position(h.saved));
                     let distance = super::super::SLIDER_W * h.ctx.pixels_per_point() * direction;
                     h.press(start);
                     assert!(matches!(
@@ -331,7 +413,7 @@ mod tests {
                         let pos = start + egui::vec2(distance * step as f32 / 40.0, 0.0);
                         h.frame(vec![Event::PointerMoved(pos)], true, true);
                         let value = h.saved;
-                        assert!((value - previous).abs() <= 0.05, "small physical moves stay gradual");
+                        assert!((value - previous).abs() <= 0.065, "small physical moves stay gradual");
                         assert!(
                             (value - previous) * direction >= -0.00001,
                             "the value follows the physical direction"
@@ -434,7 +516,7 @@ mod tests {
         let numeric = h.rect.right_center() - egui::vec2(15.0, 0.0);
         h.press(numeric);
         h.frame(vec![Harness::button(numeric, false)], true, true);
-        assert!(!h.frame(vec![Event::Text("1.25".into())], true, true));
+        assert!(!h.frame(vec![Event::Text("125%".into())], true, true));
         assert_eq!(h.saved, 1.0, "typing does not resize its own editor");
         assert!(h.frame(vec![Harness::key(egui::Key::Enter)], true, true));
         assert_eq!(h.saved, 1.25);
@@ -442,7 +524,7 @@ mod tests {
 
         let mut h = Harness::new(1.0, 1.0);
         assert!(h.press(h.track(0.6)), "clicking the track applies immediately");
-        assert!((h.saved - 1.5).abs() < 0.03);
+        assert!((h.saved - 1.2).abs() < 0.03);
         let value = h.saved;
         h.frame(vec![Harness::button(Pos2::ZERO, false)], true, true);
         h.settled();
@@ -472,6 +554,54 @@ mod tests {
             h.settled();
             assert_eq!(h.saved, if interrupted == "reset" { MIN } else { value });
             assert!(h.control.gesture.is_none());
+        }
+    }
+
+    #[test]
+    fn percentage_track_places_the_default_at_center_without_changing_the_limits() {
+        assert_eq!(track_scale(0.0), MIN);
+        assert_eq!(track_scale(0.5), 1.0);
+        assert_eq!(track_scale(1.0), MAX);
+        assert_eq!(track_position(1.0), 0.5);
+        for scale in [MIN, 0.9, 1.0, 1.222, MAX] {
+            assert!((track_scale(track_position(scale)) - scale).abs() < 0.000001);
+        }
+        for native in [1.0, 1.5, 2.0] {
+            let mut h = Harness::new(1.0, native);
+            assert!(h.text.concat() == "100%", "the default displays as a percentage: {:?}", h.text);
+            h.press(h.track(0.5));
+            assert_eq!(h.saved, 1.0, "the midpoint click keeps the default");
+            h.frame(vec![Harness::button(Pos2::ZERO, false)], true, true);
+            for (fraction, expected) in [(0.0, MIN), (1.0, MAX), (0.5, 1.0)] {
+                h.settled();
+                h.press(h.track(fraction));
+                assert_eq!(h.saved, expected);
+                h.frame(vec![Harness::button(Pos2::ZERO, false)], true, true);
+            }
+        }
+        let h = Harness::new(1.222, 1.0);
+        let text = h.text.concat();
+        assert!(text.starts_with("122") && text.ends_with('%'));
+        assert!(!h.text.iter().any(|text| text.contains('×')));
+    }
+
+    #[test]
+    fn accessible_scale_edits_use_percentages_instead_of_track_positions() {
+        let mut h = Harness::new(1.0, 1.0);
+        let id = h.control.track_id.expect("rendered track");
+        for percent in [75.0, 125.5, 200.0, 100.0] {
+            assert!(h.frame(
+                vec![Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+                    action: egui::accesskit::Action::SetValue,
+                    target_tree: egui::accesskit::TreeId::ROOT,
+                    target_node: id.accesskit_id(),
+                    data: Some(egui::accesskit::ActionData::NumericValue(percent)),
+                })],
+                true,
+                true,
+            ));
+            assert!((h.saved as f64 - percent / 100.0).abs() < 0.000001);
+            h.settled();
         }
     }
 }
