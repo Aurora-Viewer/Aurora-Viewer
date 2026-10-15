@@ -475,6 +475,13 @@ impl ViewCache {
     }
 }
 
+impl ViewCache {
+    /// The folders that hold results (the branches of the result tree).
+    pub fn result_folders(&self) -> impl Iterator<Item = Uuid> + '_ {
+        self.result_children.keys().copied()
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct TreeRow {
     pub id: Uuid,
