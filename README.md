@@ -21,9 +21,19 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 </div>
 
+**High framerates and low frame time, ultra fast teleports and loading, thanks to modern technologies like Vulkan/Rust.**  
 <img width="2558" height="1392" alt="image" src="https://github.com/user-attachments/assets/1fda8e77-2d3f-41bb-a0cc-c93e9a6723aa" />
 
+**All the tools you need to experience SecondLife the way it's meant to be experienced, Photo tools, Auto Hover Height, tons of QoL !**  
 <img width="1975" height="1030" alt="image" src="https://github.com/user-attachments/assets/42d3c1c3-e3d9-487c-86e5-6a5453ec0a90" />
+
+**Modern UI and Firestorm toggles to get the Firestorm UI back on the modules you want! (if you prefer).**  
+<img width="2187" height="866" alt="Capture d&#39;écran 2026-10-15 050409" src="https://github.com/user-attachments/assets/d4d2d61f-e2c9-4bfc-80a6-60d0b0dbdf38" />
+
+**Audio input/output quick setting & Notification center**  
+<img width="375" height="327" alt="image" src="https://github.com/user-attachments/assets/b27fa64a-9d88-4008-a50e-5f9456f9b926" /> <img width="397" height="335" alt="image" src="https://github.com/user-attachments/assets/ab7837ef-df34-4d02-9ddf-52cbf2b99588" />
+
+
 
 
 
