@@ -4,6 +4,9 @@
 
 /// Source code repository (GitHub page).
 pub const GITHUB: &str = "https://github.com/Aurora-Viewer/Aurora-Viewer";
+/// Issue template chooser, opened in the browser by "Report a bug" (login
+/// screen, top bar, Help menu) and by the crash window.
+pub const NEW_ISSUE: &str = "https://github.com/Aurora-Viewer/Aurora-Viewer/issues/new/choose";
 /// Community Discord invite.
 pub const DISCORD: &str = "https://discord.gg/TK4nbMGmKt";
 /// Project website.

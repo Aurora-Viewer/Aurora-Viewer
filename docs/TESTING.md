@@ -1473,7 +1473,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
-| `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent |
+| `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent (no effect while the form is disabled) |
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
@@ -1919,14 +1919,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   viewer runs, its session folder holds a `watching` marker; without it
   the watcher did not start (its error is the first line of the console)
   and no window would follow a crash.
-  The "Send a crash report" button must open the shared
-  form, with the title and the information of this session. To
-  capture it automatically, combine with `AURORA_DEMO_BUG_REPORT=1`
-  (Description) or `details` (Data). Demo mode stays without sending,
-  GitHub authorisation or browser opening. The public excerpt and the
-  private ZIP start unchecked. Unchecking a piece of information must remove
-  it from the preview. Closing and reopening the form keeps the draft.
-- **`AURORA_DEMO_BUG_REPORT=1|details|image|image-ui|direct`**: opens the
+  The "Send a crash report" button must open GitHub's issue chooser in
+  the browser, like "Report a bug" in the viewer.
+- **`AURORA_DEMO_BUG_REPORT=1|details|image|image-ui|direct`**: no effect
+  while the built-in bug report form is disabled ("Report a bug" opens
+  GitHub's issue chooser, see [BUG_REPORTING.md](BUG_REPORTING.md)); what
+  follows describes the form once enabled. Opens the
   report after loading (frame 550). `1` shows the description,
   `details` the information with the location unchecked and the diagnostics
   filtered, `image` captures the scene alone, `image-ui` keeps the interface,

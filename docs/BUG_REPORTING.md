@@ -1,5 +1,26 @@
 # Alpha bug reports
 
+"Report a bug", in the top bar, the Help menu and on the login screen, opens
+the project's
+[GitHub issue forms](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/new/choose)
+in the browser. The tester needs a GitHub account, chooses the bug report
+template and fills it in on GitHub. After a crash, "Send a crash report" in
+the standalone window opens the same page; "Copy trace" and "Open report
+folder" give the technical details to paste or attach, after reviewing them
+(the full trace may contain personal paths).
+
+Create the `bug` and `alpha` labels with `scripts/setup-labels.ps1` when
+setting up the repository. The issue templates are in `.github/ISSUE_TEMPLATE/`.
+
+## The built-in form (disabled)
+
+Until 2026-10-15 these buttons opened a report form inside the viewer. It is
+disabled for now; its code stays in the tree, out of the build, to be
+brought back later: uncomment every line marked "Bug report form (disabled,
+see main.rs)" (`main.rs` lists its files). The rest of this page describes
+that form, as it works once enabled, and its GitHub / API setup.
+`AURORA_DEMO_BUG_REPORT` has no effect while it is disabled.
+
 The shared form can be reached from the top bar, Help and the login screen.
 "Send from Aurora" is the first choice and the default mode of new reports.
 The sending options are independent of the report template.
@@ -18,7 +39,7 @@ An image can be attached from a file. As the viewer's GitHub authorisation
 is kept in memory only, sending directly from the crash window requires a
 new authorisation from the tester.
 
-## Setting up direct sending
+### Setting up direct sending
 
 Create a **GitHub App**, in the developer settings of the Aurora-Viewer
 organisation, then:
@@ -47,10 +68,7 @@ public report. Cancellation, refusal, expiry and a slow-down requested by
 GitHub are handled. The creation of an issue is never retried automatically
 after a lost response, to avoid duplicates.
 
-Create the `bug` and `alpha` labels with `scripts/setup-labels.ps1` when
-setting up the repository. The issue template is in `.github/ISSUE_TEMPLATE/`.
-
-## Data and files
+### Data and files
 
 The form has two steps: prepare the report, then choose how to send it.
 The window offers three tabs: Description, Picture and Data. It is larger
@@ -101,7 +119,7 @@ in the issue. The tester's GitHub authorisation is never sent to this
 service. The browser mode keeps the manual addition of the screenshot from
 `public`.
 
-## Public images and private logs
+### Public images and private logs
 
 The PHP service is in the private repository
 [aurora-api](https://github.com/Aurora-Viewer/aurora-api), linked to Clever Cloud.
@@ -136,7 +154,7 @@ resumes the same report and keeps the changes made in GitHub; it does not
 create a second issue. A new form is prepared only after the whole sending
 has succeeded.
 
-## Validation
+### Validation
 
 `AURORA_DEMO_BUG_REPORT=1` with demo mode opens a sample report. Both
 sending modes stay local, without GitHub authorisation and without opening
