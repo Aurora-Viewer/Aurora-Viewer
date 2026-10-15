@@ -387,6 +387,9 @@ pub struct Settings {
     pub font: String,
     pub font_scale: f32,
     pub chat_timestamps: bool,
+    /// Show Contacts in Conversations (Preferences > Chat, off by default).
+    /// Unlike Firestorm's always-present entry, this is optional at the human's request.
+    pub show_contacts_tab: bool,
     pub chat_toast_seconds: f32,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
@@ -920,6 +923,7 @@ impl Default for Settings {
             font: "Noto Sans".into(),
             font_scale: 1.0,
             chat_timestamps: true,
+            show_contacts_tab: false,
             chat_toast_seconds: 20.0,
             toast_friends_online: true,
             presence_position: PresencePosition::TopRight,
@@ -1678,6 +1682,22 @@ mod tests {
         let saved = serde_json::to_vec(&original).expect("serialize synthetic settings");
         let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic settings");
         assert!(!loaded.sanitized().confirm_teleports);
+    }
+
+    #[test]
+    fn contacts_tab_is_hidden_by_default_and_survives_reload() {
+        assert!(!Settings::default().show_contacts_tab);
+        let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
+        assert!(!old.show_contacts_tab);
+        for show_contacts_tab in [false, true] {
+            let original = Settings {
+                show_contacts_tab,
+                ..Settings::default()
+            };
+            let saved = serde_json::to_vec(&original).expect("serialize synthetic contacts preference");
+            let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic contacts preference");
+            assert_eq!(loaded.sanitized().show_contacts_tab, show_contacts_tab);
+        }
     }
 
     #[test]
