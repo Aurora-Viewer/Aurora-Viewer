@@ -2012,10 +2012,7 @@ mod tests {
     #[test]
     fn saved_bubbles_move_to_the_aurora_workspace_once() {
         assert_eq!(Settings::default().chat_style, ChatStyle::Aurora);
-        for (before, after) in [
-            (ChatStyle::Bubbles, ChatStyle::Aurora),
-            (ChatStyle::Legacy, ChatStyle::Legacy),
-        ] {
+        for (before, after) in [(ChatStyle::Bubbles, ChatStyle::Aurora), (ChatStyle::Legacy, ChatStyle::Legacy)] {
             let old = Settings {
                 settings_version: 12,
                 chat_style: before,

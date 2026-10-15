@@ -149,7 +149,11 @@ pub(super) fn show(
     let group = who.kind.is_some_and(|k| k != sidebar::Kind::Private);
     // the menu of the others
     let more = slot();
-    let mut menu_ui = ui.new_child(egui::UiBuilder::new().max_rect(more).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    let mut menu_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(more)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
     header::more_menu(&mut menu_ui, p, world, st, actions, group, true);
     // find
     let finding = st.searches.get(&selected).is_some_and(|s| s.find.is_some());
@@ -178,7 +182,14 @@ pub(super) fn show(
             } else {
                 aurora_i18n::tr!("ui-chat-show-members")
             };
-            let r = tool(ui, p, slot(), "users", tip, if members_room { Tone::active(open) } else { Tone::Off });
+            let r = tool(
+                ui,
+                p,
+                slot(),
+                "users",
+                tip,
+                if members_room { Tone::active(open) } else { Tone::Off },
+            );
             if r.clicked() && members_room {
                 st.members_open = !st.members_open;
             }
@@ -196,9 +207,20 @@ pub(super) fn show(
     // the names, up to the actions
     let text_left = pic.right() + 10.0;
     let text_right = x - 6.0;
-    let title_y = if who.subtitle.is_empty() { rect.center().y } else { rect.center().y - 8.0 };
+    let title_y = if who.subtitle.is_empty() {
+        rect.center().y
+    } else {
+        rect.center().y - 8.0
+    };
     let title_font = egui::FontId::new(14.0, crate::ui::fonts::semibold(ui.ctx()));
-    let cut = crate::ui::widgets::paint_elided(ui, &who.title, egui::pos2(text_left, title_y), text_right - text_left, title_font, p.ink);
+    let cut = crate::ui::widgets::paint_elided(
+        ui,
+        &who.title,
+        egui::pos2(text_left, title_y),
+        text_right - text_left,
+        title_font,
+        p.ink,
+    );
     if !who.subtitle.is_empty() {
         crate::ui::widgets::paint_elided(
             ui,
@@ -243,7 +265,15 @@ impl Tone {
 
 fn tool(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, tip: &str, tone: Tone) -> egui::Response {
     let id = ui.id().with(("head_tool", icon));
-    let resp = ui.interact(rect, id, if tone == Tone::Off { egui::Sense::hover() } else { egui::Sense::click() });
+    let resp = ui.interact(
+        rect,
+        id,
+        if tone == Tone::Off {
+            egui::Sense::hover()
+        } else {
+            egui::Sense::click()
+        },
+    );
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if tone == Tone::Active || (resp.hovered() && tone != Tone::Off) {
         ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.7));
@@ -273,7 +303,14 @@ fn call_tool(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, world: &World, st
             actions.push(ConvAction::HangUp);
         }
     } else if world.calls.invite_for(&other).is_some() {
-        tool(ui, p, rect, "phone-filled", aurora_i18n::tr!("ui-chat-call-ringing-banner"), Tone::Live);
+        tool(
+            ui,
+            p,
+            rect,
+            "phone-filled",
+            aurora_i18n::tr!("ui-chat-call-ringing-banner"),
+            Tone::Live,
+        );
     } else if !st.voice_on {
         tool(ui, p, rect, "phone-filled", aurora_i18n::tr!("ui-call-voice-off"), Tone::Off);
     } else {
@@ -282,7 +319,11 @@ fn call_tool(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, world: &World, st
         } else {
             aurora_i18n::tr!("common-voice-call")
         };
-        let tone = if world.call_launched(&other).is_some() { Tone::Live } else { Tone::Plain };
+        let tone = if world.call_launched(&other).is_some() {
+            Tone::Live
+        } else {
+            Tone::Plain
+        };
         if tool(ui, p, rect, "phone-filled", tip, tone).clicked() {
             actions.push(ConvAction::Call(other));
         }

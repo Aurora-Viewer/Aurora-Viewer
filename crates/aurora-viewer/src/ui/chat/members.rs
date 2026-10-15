@@ -46,7 +46,11 @@ pub(super) fn show(
         rect.y_range(),
         egui::Stroke::new(1.0, p.raised.gamma_multiply(0.6)),
     );
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))).layout(egui::Layout::top_down(egui::Align::Min)));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(egui::vec2(8.0, 4.0)))
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
     let ui = &mut child;
     let info = world.groups.sessions.get(&conversation);
     let call = world.call_of(&conversation);
@@ -120,7 +124,17 @@ pub(super) fn show(
                 );
                 ui.add_space(4.0);
                 for m in list.iter() {
-                    row(ui, p, pics, world, st, actions, m, dim, info.is_some_and(|i| i.moderators.contains(&m.id)));
+                    row(
+                        ui,
+                        p,
+                        pics,
+                        world,
+                        st,
+                        actions,
+                        m,
+                        dim,
+                        info.is_some_and(|i| i.moderators.contains(&m.id)),
+                    );
                 }
             }
         });

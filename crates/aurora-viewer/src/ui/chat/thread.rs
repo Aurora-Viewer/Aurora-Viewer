@@ -109,14 +109,13 @@ pub(super) fn draw(
     let hovered = ui.rect_contains_pointer(rect) && !ui.input(|i| i.pointer.is_decidedly_dragging());
     let radius = ui.visuals().window_corner_radius;
     if mentioned {
-        ui.painter().set(behind, egui::epaint::RectShape::filled(rect, 0.0, p.amber.gamma_multiply(0.07)));
-        ui.painter().rect_filled(
-            egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
-            0.0,
-            p.amber,
-        );
+        ui.painter()
+            .set(behind, egui::epaint::RectShape::filled(rect, 0.0, p.amber.gamma_multiply(0.07)));
+        ui.painter()
+            .rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())), 0.0, p.amber);
     } else if hovered {
-        ui.painter().set(behind, egui::epaint::RectShape::filled(rect, radius, p.raised.gamma_multiply(0.35)));
+        ui.painter()
+            .set(behind, egui::epaint::RectShape::filled(rect, radius, p.raised.gamma_multiply(0.35)));
     }
     if hovered {
         if !th.compact && !head {
@@ -204,7 +203,13 @@ fn tags(ui: &mut egui::Ui, p: &Palette, th: &Thread, line: &ChatLine, who: &Who)
     if who.object {
         tag(ui, p, aurora_i18n::tr!("ui-chat-tag-object"), p.raised, p.muted);
     } else if th.moderators.is_some_and(|m| m.contains(&line.source)) {
-        tag(ui, p, aurora_i18n::tr!("ui-chat-tag-moderator"), p.violet.gamma_multiply(0.22), p.violet_pale);
+        tag(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-chat-tag-moderator"),
+            p.violet.gamma_multiply(0.22),
+            p.violet_pale,
+        );
     }
     match line.kind {
         ChatKind::Local(ChatType::Shout) => tag(ui, p, aurora_i18n::tr!("ui-chat-tag-shouts"), p.warn.gamma_multiply(0.16), p.warn),
@@ -253,12 +258,7 @@ fn when(line: &ChatLine) -> String {
     match super::bubbles::day_label((day.year, day.month, day.day), &Slt::of(now), &yesterday) {
         super::bubbles::DayLabel::Today => aurora_i18n::tr!("ui-chat-today-at", time = time.as_str()).to_owned(),
         super::bubbles::DayLabel::Yesterday => aurora_i18n::tr!("ui-chat-yesterday-at", time = time.as_str()).to_owned(),
-        super::bubbles::DayLabel::Date(..) => aurora_i18n::tr!(
-            "ui-chat-date-at",
-            date = date.as_str(),
-            time = time.as_str()
-        )
-        .to_owned(),
+        super::bubbles::DayLabel::Date(..) => aurora_i18n::tr!("ui-chat-date-at", date = date.as_str(), time = time.as_str()).to_owned(),
     }
 }
 
@@ -282,7 +282,10 @@ fn roomy_row(
         ui.spacing_mut().item_spacing.x = 0.0;
         let (gutter, _) = ui.allocate_exact_size(egui::vec2(GUTTER, if head { AVATAR } else { 1.0 }), egui::Sense::hover());
         if head {
-            let pic = egui::Rect::from_min_size(egui::pos2(gutter.center().x - AVATAR * 0.5, gutter.top() + 2.0), egui::Vec2::splat(AVATAR));
+            let pic = egui::Rect::from_min_size(
+                egui::pos2(gutter.center().x - AVATAR * 0.5, gutter.top() + 2.0),
+                egui::Vec2::splat(AVATAR),
+            );
             picture(ui, env, line, name, who, pic);
         }
         ui.vertical(|ui| {
@@ -402,7 +405,11 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
     ui.add_space(4.0);
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        let lead = if th.compact { 4.0 + if th.times { TIME_W + 6.0 } else { 0.0 } } else { GUTTER };
+        let lead = if th.compact {
+            4.0 + if th.times { TIME_W + 6.0 } else { 0.0 }
+        } else {
+            GUTTER
+        };
         let (r, _) = ui.allocate_exact_size(egui::vec2(lead, 18.0), egui::Sense::hover());
         let icon = if th.compact {
             egui::Rect::from_min_size(egui::pos2(r.right() - 14.0, r.top() + 2.0), egui::Vec2::splat(14.0))
@@ -423,7 +430,9 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
 fn day_separator(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add_space(8.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.0), p.muted_dim);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.0), p.muted_dim);
     let half = galley.size().x * 0.5 + 8.0;
     let y = rect.center().y;
     let stroke = egui::Stroke::new(1.0, p.raised.gamma_multiply(0.8));
@@ -432,8 +441,11 @@ fn day_separator(ui: &mut egui::Ui, p: &Palette, text: &str) {
         ui.painter().hline(l..=rect.center().x - half, y, stroke);
         ui.painter().hline(rect.center().x + half..=r, y, stroke);
     }
-    ui.painter()
-        .galley(egui::pos2(rect.center().x - galley.size().x * 0.5, y - galley.size().y * 0.5), galley, p.muted_dim);
+    ui.painter().galley(
+        egui::pos2(rect.center().x - galley.size().x * 0.5, y - galley.size().y * 0.5),
+        galley,
+        p.muted_dim,
+    );
     ui.add_space(4.0);
 }
 
@@ -449,9 +461,13 @@ fn new_separator(ui: &mut egui::Ui, p: &Palette) {
     );
     let y = rect.center().y;
     let text_left = rect.right() - 16.0 - galley.size().x;
+    ui.painter().hline(
+        rect.left() + 16.0..=text_left - 8.0,
+        y,
+        egui::Stroke::new(1.0, p.danger.gamma_multiply(0.6)),
+    );
     ui.painter()
-        .hline(rect.left() + 16.0..=text_left - 8.0, y, egui::Stroke::new(1.0, p.danger.gamma_multiply(0.6)));
-    ui.painter().galley(egui::pos2(text_left, y - galley.size().y * 0.5), galley, p.danger);
+        .galley(egui::pos2(text_left, y - galley.size().y * 0.5), galley, p.danger);
     ui.add_space(2.0);
 }
 
@@ -462,7 +478,10 @@ fn toolbar(ui: &mut egui::Ui, env: &mut LineEnv, th: &mut Thread, line: &ChatLin
     const B: f32 = 24.0;
     let person = !who.avatar.is_nil();
     let n = if person { 4.0 } else { 2.0 };
-    let bar = egui::Rect::from_min_size(egui::pos2(row.right() - RIGHT - B * n - 4.0, row.top() + 2.0), egui::vec2(B * n + 4.0, B + 4.0));
+    let bar = egui::Rect::from_min_size(
+        egui::pos2(row.right() - RIGHT - B * n - 4.0, row.top() + 2.0),
+        egui::vec2(B * n + 4.0, B + 4.0),
+    );
     let radius = ui.visuals().widgets.inactive.corner_radius;
     ui.painter().rect_filled(bar, radius, p.panel);
     let mut x = bar.left() + 2.0;

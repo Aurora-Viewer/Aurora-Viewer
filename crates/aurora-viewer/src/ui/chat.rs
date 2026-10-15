@@ -600,10 +600,16 @@ pub enum ConvAction {
     /// Open the chat of one of our groups (the column's "+").
     StartGroupChat(uuid::Uuid),
     /// We start or stop typing to a resident (IM_TYPING_START / STOP).
-    Typing { to: uuid::Uuid, typing: bool },
+    Typing {
+        to: uuid::Uuid,
+        typing: bool,
+    },
     /// Inventory dropped on a conversation with a resident: give it, once
     /// confirmed (the inventory's Share dialog).
-    GiveItems { to: uuid::Uuid, items: Vec<uuid::Uuid> },
+    GiveItems {
+        to: uuid::Uuid,
+        items: Vec<uuid::Uuid>,
+    },
     /// Open the inventory, to drag what to give from it.
     OpenInventory,
     /// Play one of our active gestures.
@@ -2078,9 +2084,7 @@ pub fn show(
                     resp.request_focus();
                 }
                 st.typing_field = Some(typing::Field {
-                    to: st
-                        .selected
-                        .filter(|id| !world.is_group_session(id) && (resp.has_focus() || sent)),
+                    to: st.selected.filter(|id| !world.is_group_session(id) && (resp.has_focus() || sent)),
                     typed: resp.changed(),
                     empty: draft.trim().is_empty(),
                     sent,
@@ -3053,7 +3057,10 @@ mod tests {
         let (texts, _) = frame(&mut st, Vec::new());
         let last = painted(&texts, "bye now").rect;
         let (empty, end) = if style.workspace() {
-            (egui::pos2(first.center().x, first.top() - 60.0), egui::pos2(last.right() + 2.0, last.center().y))
+            (
+                egui::pos2(first.center().x, first.top() - 60.0),
+                egui::pos2(last.right() + 2.0, last.center().y),
+            )
         } else {
             (egui::pos2(last.center().x, last.bottom() + 80.0), from)
         };

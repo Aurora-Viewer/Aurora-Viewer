@@ -10750,9 +10750,11 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.panels.perf = false;
                 self.chat_ui.selected = crate::demo::bubbles_conversation(view);
-                if view == crate::demo::Bubbles::Legacy {
-                    self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
-                }
+                self.chat_ui.demo_style = Some(if view == crate::demo::Bubbles::Legacy {
+                    crate::settings::ChatStyle::Legacy
+                } else {
+                    crate::settings::ChatStyle::Bubbles
+                });
                 // =aurora[:…]: the workspace, at the scene's width
                 let mut size = egui::vec2(700.0, 560.0);
                 if let Some(scene) = crate::demo::aurora_scenario() {

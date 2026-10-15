@@ -128,7 +128,10 @@ impl Harness {
 fn the_column_shows_and_closes_conversations() {
     let mut h = Harness::new(ChatStyle::Aurora);
     let texts = h.settle();
-    assert!(painted(&texts, "hello from Bob").rect.width() > 0.0, "the last message under the name");
+    assert!(
+        painted(&texts, "hello from Bob").rect.width() > 0.0,
+        "the last message under the name"
+    );
     let bob = h.rect(entry_id(Pinned::Conversation(BOB)));
     h.click(bob.center());
     h.settle();
@@ -248,7 +251,10 @@ fn the_members_panel_lists_a_conference() {
     let moderators = title(aurora_i18n::tr!("ui-chat-members-moderators"));
     let participants = title(aurora_i18n::tr!("ui-chat-members-participants"));
     let m = texts.iter().find(|t| t.source.starts_with(&moderators)).expect("the moderators");
-    let p = texts.iter().find(|t| t.source.starts_with(&participants)).expect("the participants");
+    let p = texts
+        .iter()
+        .find(|t| t.source.starts_with(&participants))
+        .expect("the participants");
     assert!(m.rect.top() < p.rect.top());
     assert_eq!(super::super::sidebar::kind(&h.world, &MEETING), Kind::Conference);
     h.st.members_open = false;

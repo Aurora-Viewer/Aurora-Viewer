@@ -98,9 +98,12 @@ pub(super) fn show(
         return;
     };
     if let Some(call) = world.call_of(&conversation) {
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(
-            if call.state == CallState::Connected { 250 } else { 50 },
-        ));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(if call.state == CallState::Connected {
+                250
+            } else {
+                50
+            }));
         if st.stage_mini {
             mini(ui, p, pics, world, call, st, actions);
         } else {
@@ -165,11 +168,8 @@ fn incoming(
             let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(44.0), egui::Sense::hover());
             let t = ui.input(|i| i.time) as f32;
             let pulse = (t * 2.6).sin() * 0.5 + 0.5;
-            ui.painter().circle_filled(
-                rect.center(),
-                22.0 + pulse * 6.0,
-                p.success.gamma_multiply(0.35 * (1.0 - pulse)),
-            );
+            ui.painter()
+                .circle_filled(rect.center(), 22.0 + pulse * 6.0, p.success.gamma_multiply(0.35 * (1.0 - pulse)));
             crate::ui::widgets::avatar_disc(ui, p, rect, pics.get(&inv.from), &name, false);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
@@ -340,7 +340,10 @@ fn person_tile(
     st.wanted_pics.insert(person.id);
     let name = world.social.display_name_of(&person.id);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(PERSON_W, PERSON + 22.0), egui::Sense::click());
-    let pic = egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 3.0 + PERSON * 0.5), egui::Vec2::splat(PERSON));
+    let pic = egui::Rect::from_center_size(
+        egui::pos2(rect.center().x, rect.top() + 3.0 + PERSON * 0.5),
+        egui::Vec2::splat(PERSON),
+    );
     let painter = ui.painter();
     let volume = st.volumes.get(&person.id).copied().unwrap_or(0.5);
     if person.speaking {
@@ -536,7 +539,11 @@ fn ongoing(
             let join = aurora_i18n::tr!("ui-chat-join-call");
             let join_w = label_pill_width(ui, join);
             let room = (ui.available_width() - join_w - 22.0 - 3.0 * 8.0).max(30.0);
-            ui.add(crate::ui::widgets::elided_label(ui, RichText::new(format!("· {when}")).size(12.0).color(p.muted), room));
+            ui.add(crate::ui::widgets::elided_label(
+                ui,
+                RichText::new(format!("· {when}")).size(12.0).color(p.muted),
+                room,
+            ));
             st.wanted_pics.insert(by);
             let (r, _) = ui.allocate_exact_size(egui::Vec2::splat(22.0), egui::Sense::hover());
             crate::ui::widgets::avatar_disc(ui, p, r, pics.get(&by), &name, false);
@@ -632,7 +639,8 @@ fn pill(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, color: Color32, s
 fn flat_icon(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::Vec2::splat(24.0), egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
+        ui.painter()
+            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
     }
     super::thread::paint_icon(
         ui.painter(),

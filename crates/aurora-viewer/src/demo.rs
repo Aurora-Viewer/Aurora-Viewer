@@ -872,16 +872,34 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
     if scene.view != Bubbles::Busy {
         world.conversation_line(
             DEMO_NOVA,
-            line(ago(50), &names(DEMO_NOVA), DEMO_NOVA, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-busy-reply")),
+            line(
+                ago(50),
+                &names(DEMO_NOVA),
+                DEMO_NOVA,
+                ChatKind::Im,
+                aurora_i18n::tr!("demo-bubbles-busy-reply"),
+            ),
         );
     }
     world.conversation_line(
         DEMO_LOUP,
-        line(ago(70), &names(DEMO_LOUP), DEMO_LOUP, ChatKind::Im, aurora_i18n::tr!("demo-aurora-loup")),
+        line(
+            ago(70),
+            &names(DEMO_LOUP),
+            DEMO_LOUP,
+            ChatKind::Im,
+            aurora_i18n::tr!("demo-aurora-loup"),
+        ),
     );
     world.conversation_line(
         DEMO_TESS,
-        line(ago(40), &names(DEMO_TESS), DEMO_TESS, ChatKind::Im, aurora_i18n::tr!("demo-aurora-tess")),
+        line(
+            ago(40),
+            &names(DEMO_TESS),
+            DEMO_TESS,
+            ChatKind::Im,
+            aurora_i18n::tr!("demo-aurora-tess"),
+        ),
     );
     // unread: the group's last line, and the friend's last two
     let unread = |world: &mut crate::world::World, id: Uuid, n: usize| {

@@ -269,13 +269,7 @@ fn box_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, active: boo
 
 /// Our active gestures, to play one (the gesture combo of Firestorm's
 /// nearby chat bar, FSNearbyChatControl).
-fn gestures_button(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    world: &World,
-    gestures: &crate::gestures::Manager,
-    actions: &mut Vec<ConvAction>,
-) {
+fn gestures_button(ui: &mut egui::Ui, p: &Palette, world: &World, gestures: &crate::gestures::Manager, actions: &mut Vec<ConvAction>) {
     let resp = box_button(ui, p, "hand-finger", aurora_i18n::tr!("ui-chat-gestures"), false);
     menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         ui.set_min_width(200.0);
@@ -289,11 +283,7 @@ fn gestures_button(
                     .get(id)
                     .map(|i| i.name.clone())
                     .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").to_owned());
-                let trigger = gestures
-                    .entries
-                    .get(id)
-                    .map(|e| e.definition.trigger.clone())
-                    .unwrap_or_default();
+                let trigger = gestures.entries.get(id).map(|e| e.definition.trigger.clone()).unwrap_or_default();
                 (*id, name, trigger)
             })
             .collect();
@@ -303,7 +293,11 @@ fn gestures_button(
         }
         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
             for (id, name, trigger) in list {
-                let label = if trigger.is_empty() { name } else { format!("{name}  ·  {trigger}") };
+                let label = if trigger.is_empty() {
+                    name
+                } else {
+                    format!("{name}  ·  {trigger}")
+                };
                 if menu::item(ui, p, "hand-finger", &label) {
                     actions.push(ConvAction::PlayGesture(id));
                 }

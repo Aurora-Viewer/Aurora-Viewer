@@ -265,7 +265,6 @@ impl Calls {
     pub fn invite_for(&self, conversation: &Uuid) -> Option<&PendingInvite> {
         self.invites.iter().find(|p| p.conversation() == *conversation)
     }
-
 }
 
 /// A Second Life staff member's name ("… Linden", LLMuteList::isLinden):

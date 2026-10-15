@@ -100,7 +100,11 @@ pub(super) fn show(
     let width = if rail { RAIL } else { WIDTH };
     let (column, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     ui.painter().rect_filled(column, 0.0, p.bar);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(column.shrink2(egui::vec2(6.0, 0.0))).layout(egui::Layout::top_down(egui::Align::Min)));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(column.shrink2(egui::vec2(6.0, 0.0)))
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
     let ui = &mut child;
     ui.spacing_mut().item_spacing.y = 2.0;
     ui.add_space(8.0);
@@ -329,7 +333,14 @@ fn sub_line(p: &Palette, world: &World, id: Uuid, kind: Kind, status: presence::
     let last = last.map(|l| preview(world, l, kind != Kind::Private)).unwrap_or_default();
     if kind == Kind::Private && matches!(status, presence::Status::Away | presence::Status::Busy | presence::Status::Offline) {
         let label = status.label();
-        return (if last.is_empty() { label.to_owned() } else { format!("{label} · {last}") }, None);
+        return (
+            if last.is_empty() {
+                label.to_owned()
+            } else {
+                format!("{label} · {last}")
+            },
+            None,
+        );
     }
     if last.is_empty() && kind != Kind::Private {
         let n = world.groups.sessions.get(&id).map(|s| s.participants.len()).unwrap_or(0);
@@ -361,15 +372,24 @@ fn section_head(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, 
     if rail {
         ui.add_space(6.0);
         let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-        ui.painter()
-            .hline(r.center().x - 12.0..=r.center().x + 12.0, r.center().y, egui::Stroke::new(1.0, p.raised));
+        ui.painter().hline(
+            r.center().x - 12.0..=r.center().x + 12.0,
+            r.center().y,
+            egui::Stroke::new(1.0, p.raised),
+        );
         ui.add_space(4.0);
         return;
     }
     let (title, tip) = match section {
         Kind::Private => (aurora_i18n::tr!("ui-chat-section-private"), aurora_i18n::tr!("ui-chat-new-im")),
-        Kind::Group => (aurora_i18n::tr!("ui-chat-section-groups"), aurora_i18n::tr!("ui-chat-new-group-chat")),
-        Kind::Conference => (aurora_i18n::tr!("ui-chat-section-conferences"), aurora_i18n::tr!("ui-chat-new-conference")),
+        Kind::Group => (
+            aurora_i18n::tr!("ui-chat-section-groups"),
+            aurora_i18n::tr!("ui-chat-new-group-chat"),
+        ),
+        Kind::Conference => (
+            aurora_i18n::tr!("ui-chat-section-conferences"),
+            aurora_i18n::tr!("ui-chat-new-conference"),
+        ),
     };
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -440,7 +460,8 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
     if e.unread > 0 && !e.current {
         // the mark of an unread conversation, against the column's edge
         let mark = egui::Rect::from_min_size(egui::pos2(rect.left() - 6.0, rect.center().y - 4.0), egui::vec2(3.0, 8.0));
-        ui.painter().rect_filled(mark, crate::ui::widgets::inner_radius(ui.visuals()), p.ink);
+        ui.painter()
+            .rect_filled(mark, crate::ui::widgets::inner_radius(ui.visuals()), p.ink);
     }
     let pic_x = if rail { rect.center().x - PIC * 0.5 } else { rect.left() + 6.0 };
     let pic = egui::Rect::from_min_size(egui::pos2(pic_x, rect.center().y - PIC * 0.5), egui::Vec2::splat(PIC));
@@ -454,11 +475,7 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
         );
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
     }
-    let ring = if e.current {
-        p.violet.gamma_multiply(0.22)
-    } else {
-        p.bar
-    };
+    let ring = if e.current { p.violet.gamma_multiply(0.22) } else { p.bar };
     paint_picture(ui, p, &e.icon, e.name, pic, ring);
     let tip_name = || e.name.to_owned();
     if rail {
@@ -479,7 +496,8 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
     if let (Some(tip), true) = (e.close, closable) {
         let button = ui.interact(slot, resp.id.with("close"), egui::Sense::click());
         if button.hovered() {
-            ui.painter().rect_filled(slot, ui.visuals().widgets.inactive.corner_radius, p.raised);
+            ui.painter()
+                .rect_filled(slot, ui.visuals().widgets.inactive.corner_radius, p.raised);
         }
         super::thread::paint_icon(
             ui.painter(),
@@ -595,17 +613,30 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
         egui::pos2(ui.max_rect().right(), bottom),
     );
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(8.0)).layout(egui::Layout::top_down(egui::Align::Min)));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink(8.0))
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
     let ui = &mut child;
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
     if !rail {
         ui.horizontal(|ui| {
             crate::ui::widgets::glyph(ui, "phone-filled", p.success, 14.0);
-            ui.label(RichText::new(aurora_i18n::tr!("ui-chat-call-connected")).size(12.0).strong().color(p.success));
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-chat-call-connected"))
+                    .size(12.0)
+                    .strong()
+                    .color(p.success),
+            );
         });
         let secs = call.connected_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
         let text = format!("{} · {}", world.session_title(&conversation), super::call::duration(secs));
-        ui.add(crate::ui::widgets::elided_label(ui, RichText::new(text).size(11.0).color(p.muted), ui.available_width()));
+        ui.add(crate::ui::widgets::elided_label(
+            ui,
+            RichText::new(text).size(11.0).color(p.muted),
+            ui.available_width(),
+        ));
     }
     let layout = if rail {
         egui::Layout::top_down(egui::Align::Center)
@@ -613,7 +644,11 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
         egui::Layout::left_to_right(egui::Align::Center)
     };
     ui.with_layout(layout, |ui| {
-        let w = if rail { ui.available_width() } else { (ui.available_width() - 12.0) / 3.0 };
+        let w = if rail {
+            ui.available_width()
+        } else {
+            (ui.available_width() - 12.0) / 3.0
+        };
         let size = egui::vec2(w, 26.0);
         if let Some(on) = st.mic {
             let (icon, tip) = if on {
@@ -625,7 +660,16 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
                 actions.push(ConvAction::ToggleMic);
             }
         }
-        if square_button(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-chat-back-to-call"), size, false).clicked() {
+        if square_button(
+            ui,
+            p,
+            "message-circle-filled",
+            aurora_i18n::tr!("ui-chat-back-to-call"),
+            size,
+            false,
+        )
+        .clicked()
+        {
             st.select_tab(Some(conversation));
         }
         let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());

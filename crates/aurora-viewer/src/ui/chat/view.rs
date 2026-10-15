@@ -225,11 +225,7 @@ impl<'a> Grouping<'a> {
                         || (p.kind == crate::world::ChatKind::Own) != (line.kind == crate::world::ChatKind::Own)
                         || p.origin != line.origin
                         || p.from != line.from
-                        || line
-                            .time
-                            .duration_since(p.time)
-                            .map(|d| d.as_secs() > gap)
-                            .unwrap_or(true)
+                        || line.time.duration_since(p.time).map(|d| d.as_secs() > gap).unwrap_or(true)
                 }
                 None => true,
             };
@@ -272,11 +268,8 @@ impl View {
         let today_key = (today.year, today.month, today.day);
         // heights hold for a width and for the texts that change the looks
         // (the filter) or split the labels (the find highlight)
-        let layout_changed = self.token != s.clock.token
-            || self.width != width
-            || self.filter != s.filter
-            || self.find != s.find
-            || self.layout != s.layout;
+        let layout_changed =
+            self.token != s.clock.token || self.width != width || self.filter != s.filter || self.find != s.find || self.layout != s.layout;
         if !layout_changed
             && self.revision == s.clock.revision
             && self.len == s.lines.len()
@@ -500,7 +493,11 @@ impl View {
         let (rect, content) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
         // Aurora's workspace keeps a short conversation against the field,
         // as a chat does: its lines start from the bottom
-        let lift = if self.layout.workspace() { (height - self.total).max(0.0) } else { 0.0 };
+        let lift = if self.layout.workspace() {
+            (height - self.total).max(0.0)
+        } else {
+            0.0
+        };
         let base = rect.top() + lift - shift_above;
         let (view_top, view_bottom) = (viewport.top() + shift_above, viewport.bottom() + shift_above);
         if let Some(r) = target.and_then(|t| self.rows.get(t)) {
