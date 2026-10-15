@@ -69,12 +69,8 @@ impl App {
             return;
         }
         let account = self.settings.ao.accounts.get(&self.world.agent_id).cloned().unwrap_or_default();
-        let raw = self
-            .world
-            .animations
-            .get(&self.world.agent_id)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
+        // (with Aurora's movement, the walk or the stop of the keys first)
+        let raw = self.world.own_signals();
         let set = self.ao_catalog.selected(account.selected);
         let on_object = self
             .world

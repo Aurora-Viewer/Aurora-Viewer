@@ -50,6 +50,7 @@ mod inventory_drag;
 mod inventory_thumbnail;
 mod marketplace_listings;
 mod object_actions;
+mod own_motion;
 mod pay;
 mod plate_click;
 mod region_restart;
@@ -539,6 +540,15 @@ pub struct App {
     ao_missing: HashSet<uuid::Uuid>,
     ao_demo: Option<String>,
     ao_default_applied: bool,
+    /// AURORA_DEMO_LINK: the demo's simulated link for our avatar
+    /// (demo_link.rs), created at the first frame in the world.
+    demo_link_cfg: Option<crate::demo::link::Config>,
+    demo_link: Option<crate::demo::link::DemoLink>,
+    /// When the prediction's calibration was last logged (app/own_motion.rs).
+    own_motion_logged: Option<Instant>,
+    /// The demo's seat our avatar sits on (its place and size), to stand up
+    /// beside it (app/own_motion.rs).
+    demo_seat: Option<(Vec3, Vec3)>,
     inventory_drag: inventory_drag::InventoryDrag,
     task_notecards: std::collections::HashMap<(uuid::Uuid, uuid::Uuid), task_notecards::TaskNotecard>,
     demo_documents: std::collections::HashMap<uuid::Uuid, Vec<u8>>,
@@ -938,6 +948,10 @@ impl App {
             ao_missing: Default::default(),
             ao_demo: std::env::var("AURORA_DEMO_AO").ok(),
             ao_default_applied: false,
+            demo_link_cfg: crate::demo::link::Config::from_env(),
+            demo_link: None,
+            own_motion_logged: None,
+            demo_seat: None,
             inventory_drag: Default::default(),
             task_notecards: Default::default(),
             demo_documents: Default::default(),
@@ -1118,7 +1132,14 @@ impl App {
                     amount = format!("{}", amount)
                 ));
             }
+            // a sit on any prim, and the stand up from it (app/own_motion.rs);
+            // the stand up's animations still come from demo::respond
+            let seated_on_demo_prim = self.demo_seat.is_some();
+            if self.demo_sit_command(&cmd) && matches!(cmd, NetCommand::RequestSit { .. }) {
+                return;
+            }
             if matches!(&cmd, NetCommand::OneShotControl(f) if f & control::STAND_UP != 0)
+                && !seated_on_demo_prim
                 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some()
             {
                 self.world.apply(NetEvent::ObjectUpdates {
@@ -4974,7 +4995,9 @@ impl App {
         self.world.script_debug.owner_say = self.settings.script_editor.owner_say_debug;
         self.sync_chat_log();
         while let Ok((sent, ev)) = self.net.events.try_recv() {
-            if let Some(app_ev) = self.world.apply(ev) {
+            // (`sent`: when the session read the datagram, the time its
+            // motion starts from)
+            if let Some(app_ev) = self.world.apply_received(ev, sent) {
                 self.on_app_event(app_ev);
             }
             let now = Instant::now();
@@ -4985,6 +5008,7 @@ impl App {
         }
         self.net_profile.events_left(self.net.events.len());
         self.net_profile.corrections(self.world.agent.take_corrections());
+        self.net_profile.lead(self.world.agent.prediction.take_lead_max());
         // a border crossing changed what positions are relative to: the
         // camera moves with the agent, in the same frame
         let shift = self.world.take_origin_shift();
@@ -5119,7 +5143,10 @@ impl App {
             // the clocks the other avatars and the objects move along
             // (world/motion.rs); offline there is no simulator to slow them
             self.world.advance_motion(Instant::now(), &self.net.stats.simulators.lock());
-            if self.demo {
+            if self.demo && self.demo_link_cfg.is_some() {
+                // offline through a simulated link, as on a grid
+                self.drive_demo_link(ml, dt);
+            } else if self.demo {
                 // no simulator offline: move the avatar locally
                 let p = self.world.agent.position;
                 let floor = crate::demo::floor_at(p.x, p.y);
@@ -5134,6 +5161,7 @@ impl App {
                     self.world.predict_agent(motion.time_dilation, motion.packet_age());
                 }
             }
+            self.update_own_prediction(ml, dt);
             let camera_distance = self.camera.position.distance(self.world.agent.position);
             self.world.agent.update(&self.input, ml, dt, camera_distance);
             // seated, the agent's position is the one its seat gives it: the
@@ -5164,6 +5192,7 @@ impl App {
             }
             let at = self.camera.forward();
             self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml);
+            self.trace_demo_link();
             self.update_look_at(w as f32, h as f32);
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
             // the walk to a double-clicked point (src/autopilot.rs)
@@ -6959,18 +6988,29 @@ impl App {
             }
         }
         // AURORA_DEMO_KEY="down" (up, left, right): hold that arrow from frame
-        // 235, log the agent and drawn body headings every 30 frames
+        // 235, log the agent and drawn body headings every 30 frames;
+        // "up:pulse": 2 s held, 2 s released, over and over (by the clock,
+        // the same at any frame rate)
         if self.demo
             && self.frame_count >= 235
             && let Ok(v) = std::env::var("AURORA_DEMO_KEY")
         {
-            let key = match v.as_str() {
+            let (name, pulse) = v
+                .split_once(':')
+                .map_or((v.as_str(), false), |(name, mode)| (name, mode == "pulse"));
+            let key = match name {
                 "up" => KeyCode::ArrowUp,
                 "left" => KeyCode::ArrowLeft,
                 "right" => KeyCode::ArrowRight,
                 _ => KeyCode::ArrowDown,
             };
-            self.down.insert(Input::key(key));
+            static PULSE: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let since = PULSE.get_or_init(Instant::now).elapsed().as_secs();
+            if pulse && !(since / 2).is_multiple_of(2) {
+                self.down.remove(&Input::key(key));
+            } else {
+                self.down.insert(Input::key(key));
+            }
             if self.frame_count.is_multiple_of(30) {
                 let body = self.world.bodies.get(&self.world.agent_id).map(|b| {
                     let f = b.rotation * Vec3::X;
@@ -10451,6 +10491,15 @@ impl ApplicationHandler for App {
                 crate::demo::IDLE_ANIM,
                 Arc::new(crate::scene::anim::BoundAnim::bind(demo_anim, &rig)),
             );
+            // AURORA_DEMO_LINK's stand-in simulator signals the stock walk,
+            // run, fly and stand: drawn with the demo's own motions
+            if self.demo_link_cfg.is_some() {
+                for (id, anim) in crate::demo::link::animations() {
+                    self.scene
+                        .anims
+                        .insert(id, Arc::new(crate::scene::anim::BoundAnim::bind(anim, &rig)));
+                }
+            }
             // AURORA_DEMO_ENV_SELECT: the library's settings assets, known locally
             if crate::demo::env::enabled() {
                 for (id, settings, map) in crate::demo::env::settings_assets() {

@@ -117,9 +117,9 @@ are planned or in progress: they are not in the viewer yet.
   animations and sounds.
 - **Your own sky and water**, with EEP sky, water and day-cycle editors,
   personal previews and parcel or region environment settings.
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **RLVa and the clothing editors.**
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Smoother avatars**: movement of the people around you extrapolated and
+- **Smoother avatars**: movement of the people around you extrapolated and
   smoothed between two server updates.
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **RLVa and the clothing editors.**
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **A full pass on water**, and PBR terrain.
 
 ### An interface made for today

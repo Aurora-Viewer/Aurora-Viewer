@@ -19,8 +19,8 @@ pub enum Look {
     Firestorm,
 }
 
-/// Every choice of the Appearance and Gaze groups set to one look; the
-/// avatar plates' own settings are left as they are.
+/// Every choice of the Appearance, Gaze and Movement groups set to one
+/// look; the avatar plates' own settings are left as they are.
 pub fn set_all(s: &mut Settings, look: Look) {
     let aurora = look == Look::Aurora;
     s.chat_style = if aurora { ChatStyle::Aurora } else { ChatStyle::Legacy };
@@ -46,6 +46,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_pay_window = !aurora;
     s.classic_controls = !aurora;
     s.classic_restart_alert = !aurora;
+    s.predict_own_motion = aurora;
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -244,7 +245,22 @@ fn hero(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) -> b
 /// One setting of the page: its name over its description on the left,
 /// its control at the right edge, centred on the text.
 fn item(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, control: Vec2, draw: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
+    item_with(ui, p, name, None, description, control, draw)
+}
+
+/// `item` with a warning triangle after its name, `warning` its tooltip (an
+/// experimental setting).
+fn item_with(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    name: &str,
+    warning: Option<&str>,
+    description: &str,
+    control: Vec2,
+    draw: impl FnOnce(&mut egui::Ui) -> bool,
+) -> bool {
     const PAD: f32 = 9.0;
+    const MARK: f32 = 14.0;
     const GAP: f32 = 16.0;
     let width = ui.available_width();
     let text_w = (width - control.x - GAP).max(120.0);
@@ -261,8 +277,18 @@ fn item(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, control: 
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, text_h.max(control.y) + PAD * 2.0), Sense::hover());
     let top = rect.center().y - text_h / 2.0;
     let desc_top = top + name_g.size().y + 2.0;
-    ui.painter().galley(Pos2::new(rect.left(), top), name_g, p.ink);
+    let name_rect = Rect::from_min_size(Pos2::new(rect.left(), top), name_g.size());
+    ui.painter().galley(name_rect.min, name_g, p.ink);
     ui.painter().galley(Pos2::new(rect.left(), desc_top), desc_g, p.muted);
+    if let Some(tip) = warning {
+        let mark = Rect::from_center_size(
+            Pos2::new(name_rect.right() + 6.0 + MARK / 2.0, name_rect.center().y),
+            Vec2::splat(MARK),
+        );
+        crate::ui::sheet::icon_at(ui, "alert-triangle-filled", mark.center(), MARK, p.warn);
+        ui.interact(mark.expand(3.0), ui.id().with(("aurora_item_warning", name)), Sense::hover())
+            .on_hover_text(tip);
+    }
     let slot = Rect::from_center_size(Pos2::new(rect.right() - control.x / 2.0, rect.center().y), control);
     // a child that does not move the page's cursor: the row is already laid
     // out. Its own id: without it every row's child had the same, and the
@@ -298,9 +324,24 @@ fn plate_click_label(action: PlateClick) -> &'static str {
 
 /// A choice between Aurora's look (first, in the accent) and Firestorm's.
 fn look_choice(ui: &mut egui::Ui, p: &Palette, name: &str, description: &str, aurora: &str, firestorm: &str, legacy: &mut bool) -> bool {
+    look_choice_with(ui, p, name, None, description, aurora, firestorm, legacy)
+}
+
+/// `look_choice` with a warning triangle after its name (`item_with`).
+#[allow(clippy::too_many_arguments)]
+fn look_choice_with(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    name: &str,
+    warning: Option<&str>,
+    description: &str,
+    aurora: &str,
+    firestorm: &str,
+    legacy: &mut bool,
+) -> bool {
     let options = [(aurora, true), (firestorm, false)];
     let size = widgets::segmented_size(ui, &options);
-    item(ui, p, name, description, size, |ui| {
+    item_with(ui, p, name, warning, description, size, |ui| {
         let mut selected = usize::from(*legacy);
         let changed = widgets::segmented(ui, p, &mut selected, &options);
         *legacy = selected == 1;
@@ -519,6 +560,25 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             c = true;
         }
     });
+    group(ui, p, aurora_i18n::tr!("ui-options-aurora-movement"), |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        // Firestorm's until the human has tried it on the grid, marked
+        // experimental meanwhile
+        let mut legacy = !s.predict_own_motion;
+        if look_choice_with(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-own-motion"),
+            Some(aurora_i18n::tr!("ui-options-aurora-own-motion-experimental")),
+            aurora_i18n::tr!("ui-options-aurora-own-motion-help"),
+            aurora_i18n::tr!("ui-options-aurora-own-motion-instant"),
+            aurora_i18n::tr!("ui-options-aurora-own-motion-server"),
+            &mut legacy,
+        ) {
+            s.predict_own_motion = !legacy;
+            c = true;
+        }
+    });
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-avatar-plates"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         // the plates' settings mean nothing to the classic name tags
@@ -591,6 +651,7 @@ mod tests {
         assert!(s.classic_pay_window);
         assert!(s.classic_controls, "Firestorm's two control windows");
         assert!(s.classic_restart_alert, "Firestorm's yellow restart box");
+        assert!(!s.predict_own_motion, "the avatar waits for the simulator");
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
         set_all(&mut s, Look::Aurora);
         let fresh = Settings::default();
@@ -615,6 +676,8 @@ mod tests {
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
         assert!(!s.classic_controls && !fresh.classic_controls);
         assert!(!s.classic_restart_alert && !fresh.classic_restart_alert);
+        assert!(s.predict_own_motion, "Aurora's movement");
+        assert!(!fresh.predict_own_motion, "Firestorm's movement until tried on the grid");
         assert!(s.plates_friends_only_full);
     }
 
@@ -647,7 +710,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(620.0, 1200.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(620.0, 1400.0))),
                 ..Default::default()
             },
             |ui| {
@@ -691,6 +754,8 @@ mod tests {
             "ui-options-aurora-restart-alert",
             "ui-options-aurora-gaze",
             "ui-options-aurora-aim",
+            "ui-options-aurora-movement",
+            "ui-options-aurora-own-motion",
             "ui-options-aurora-avatar-plates",
             "ui-options-plates-hover-expand",
             "ui-options-full-plates-friends-only",

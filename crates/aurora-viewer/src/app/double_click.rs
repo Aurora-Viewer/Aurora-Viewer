@@ -101,7 +101,7 @@ impl App {
     /// Running while walking there, besides "Always run" and a double-tap
     /// run (SetAlwaysRun is one state for all three).
     fn sync_run(&mut self) {
-        let run = self.always_run || self.temp_run.is_some() || self.autopilot.as_ref().is_some_and(|a| a.run);
+        let run = self.running();
         self.send(NetCommand::SetAlwaysRun(run));
     }
 

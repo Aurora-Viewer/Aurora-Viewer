@@ -487,6 +487,11 @@ pub struct Settings {
     /// Firestorm's yellow region restart box (floater_region_restarting.xml)
     /// instead of the alert card of `ui/region_restart.rs`.
     pub classic_restart_alert: bool,
+    /// Aurora's movement of our avatar (Preferences › Aurora › Movement,
+    /// `own_motion.rs`): it moves as soon as a key is pressed and corrections
+    /// fade slowly. Off, the default until it has been tried on the grid:
+    /// Firestorm's, the avatar moves when the simulator's update comes back.
+    pub predict_own_motion: bool,
     /// The region restart alert (Preferences › Interface › Region restart).
     pub region_restart: crate::world::region_restart::Settings,
     /// "Reduce animations": the interface's pulses, shakes and spinners
@@ -986,6 +991,7 @@ impl Default for Settings {
             show_net_stats: false,
             classic_people: false,
             classic_restart_alert: false,
+            predict_own_motion: false,
             region_restart: Default::default(),
             reduce_motion: false,
             color_blindness: crate::colorblind::Deficiency::Off,
