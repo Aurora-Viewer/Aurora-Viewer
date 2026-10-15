@@ -161,8 +161,8 @@ pub fn apply_tab(tool: &mut BuildTool) {
         _ => tool.tab,
     };
     tool.ui.tex_tab = match sub.trim() {
-        "pbr" => 0,
-        "bp" => 1,
+        "pbr" => 1,
+        "bp" | "classic" => 0,
         "media" => 2,
         _ => tool.ui.tex_tab,
     };

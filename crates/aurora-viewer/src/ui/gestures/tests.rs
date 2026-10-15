@@ -1,6 +1,25 @@
 use super::*;
 use aurora_assets::gesture::Step;
 
+#[test]
+fn cascade_gesture_editors_follow_open_order_instead_of_uuid_sort_order() {
+    let mut f = Fixture::new();
+    let first = Uuid::from_u128(8106);
+    let second = Uuid::from_u128(8006);
+    let mut other = f.inv.items[&first].clone();
+    other.id = second;
+    f.inv.add_items(vec![other]);
+    // Both requests before a frame: the BTreeMap must not reverse creation order.
+    f.state.open(&f.inv, first);
+    f.state.open(&f.inv, second);
+    f.settle();
+    let rect = |id| {
+        f.ctx
+            .memory(|m| m.area_rect(egui::Id::new(format!("gesture_{id}"))).expect("gesture editor"))
+    };
+    assert!(((rect(second).min - rect(first).min) - Vec2::splat(32.0)).length() < 1.0);
+}
+
 struct Fixture {
     ctx: egui::Context,
     inv: Inventory,

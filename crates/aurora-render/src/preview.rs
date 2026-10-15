@@ -150,7 +150,16 @@ pub fn paint(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: &mut View
 /// Appearance hints are buttons in a scrolling list; they do not consume its
 /// wheel or change the camera when the user clicks a minimum/maximum image.
 pub fn paint_hint(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: View, size: egui::Vec2) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    paint_tile(ui, id, model, view, size, egui::Sense::click())
+}
+
+/// A material swatch supplies inventory cargo rather than rotating its camera.
+pub fn paint_swatch(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: View, size: egui::Vec2) -> egui::Response {
+    paint_tile(ui, id, model, view, size, egui::Sense::click_and_drag())
+}
+
+fn paint_tile(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: View, size: egui::Vec2, sense: egui::Sense) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(size, sense);
     if ui.is_rect_visible(rect) {
         ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
             rect,

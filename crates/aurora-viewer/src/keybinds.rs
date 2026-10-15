@@ -314,6 +314,8 @@ pub enum Action {
     TeleportHistory,
     /// World › Region / Estate (Firestorm's "Region Details", Alt+R).
     RegionEstate,
+    /// The compact texture/material library (Ctrl+Space).
+    TextureLibrary,
     /// "Search" (Firestorm Ctrl+F, menu_viewer.xml).
     Search,
     Performance,
@@ -415,6 +417,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Conversations, aurora_i18n::tr!("common-conversations")),
                     (Action::People, aurora_i18n::tr!("common-people")),
                     (Action::Inventory, aurora_i18n::tr!("common-inventory")),
+                    (Action::TextureLibrary, aurora_i18n::tr!("texture-library-title")),
                     (Action::Gestures, aurora_i18n::tr!("gesture-title")),
                     (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
                     (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
@@ -580,6 +583,7 @@ impl KeyBindings {
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
             (Action::Inventory, [kmod(K::KeyI, true, false), None]),
+            (Action::TextureLibrary, [kmod(K::Space, true, false), None]),
             (Action::Gestures, [kmod(K::KeyG, true, false), None]),
             (Action::Minimap, [kmod(K::KeyM, true, true), None]),
             (Action::WorldMap, [kmod(K::KeyM, true, false), None]),

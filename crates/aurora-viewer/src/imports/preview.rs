@@ -142,7 +142,7 @@ fn image(pixels: &DecodedImage, options: import_texture::Options) -> Result<Arc<
         rgba: rgba.into(),
     }))
 }
-fn sphere() -> (Vec<Vertex>, Vec<u32>) {
+pub(crate) fn sphere() -> (Vec<Vertex>, Vec<u32>) {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
     for y in 0..=32 {

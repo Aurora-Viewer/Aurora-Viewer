@@ -59,6 +59,7 @@ mod scripts;
 mod shape_editor;
 mod snapshot;
 mod task_notecards;
+mod texture_library;
 mod texture_refresh;
 mod worn_demo;
 
@@ -519,6 +520,9 @@ pub struct App {
     env_beacons_saved: Option<[bool; 2]>,
     demo: bool,
     inventory_ui: ui::inventory::InventoryUi,
+    texture_library: ui::texture_library::LibraryUi,
+    library_drag: texture_library::DragState,
+    library_demo_seeded: bool,
     gesture_state: gestures::State,
     imports: crate::imports::Imports,
     task_transfer: Option<ui::inventory::task_drop::PendingTransfer>,
@@ -918,6 +922,9 @@ impl App {
             env_beacons_saved: None,
             demo: false,
             inventory_ui: Default::default(),
+            texture_library: Default::default(),
+            library_demo_seeded: false,
+            library_drag: Default::default(),
             gesture_state: Default::default(),
             imports: Default::default(),
             task_transfer: None,
@@ -1642,6 +1649,9 @@ impl App {
         self.scene.jobs.discard(imports);
         self.record_inventory_logout();
         self.inventory_ui = Default::default();
+        self.texture_library.reset();
+        self.library_drag = Default::default();
+        self.library_demo_seeded = false;
         self.gesture_state = Default::default();
         self.buy_currency_ui = Default::default();
         // the next session signs in with its own cookie (the browser stops)
@@ -1822,6 +1832,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.texture_library_result(request, &result) {
+                return;
+            }
             if self.gesture_metadata_result(request, &result) {
                 return;
             }
@@ -2605,6 +2618,11 @@ impl App {
                 self.panels.people_tab = 0;
             }
             Action::Inventory => ui::widgets::toggle_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
+            Action::TextureLibrary => ui::widgets::toggle_floater(
+                &self.egui_ctx,
+                self.settings.texture_library.presentation.window(),
+                &mut self.panels.texture_library,
+            ),
             Action::Gestures => ui::widgets::toggle_floater(&self.egui_ctx, "gestures", &mut self.panels.gestures),
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
             Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
@@ -4643,6 +4661,7 @@ impl App {
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
+        images.extend(self.texture_library.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
         images.extend(self.day_editor.wanted_images.drain());
@@ -5934,6 +5953,8 @@ impl App {
         }
         let ctx = self.egui_ctx.clone();
         if self.demo {
+            self.texture_library_demo_input(&mut raw);
+            ui::inventory::drag::demo::input(&ctx, self.frame_count, &self.world.inventory, &self.inventory_ui, &mut raw);
             self.gesture_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
@@ -6037,6 +6058,7 @@ impl App {
             self.demo.then_some(self.frame_count),
         );
         let mut inventory_drop = None;
+        let mut library_drop = None;
         let t_pass = Instant::now();
         let mut windows_ms = 0.0;
         let mut full = ctx.run_ui(raw, |ui| {
@@ -6046,6 +6068,9 @@ impl App {
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
             if inventory_drop.is_none() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
+                if library_drop.is_none() {
+                    library_drop = self.texture_library_drag_input(ui.ctx(), &gfx.renderer);
+                }
             }
             // after every window: their text fields have been drawn
             self.text_menu.after(ui.ctx(), &self.palette);
@@ -6089,6 +6114,9 @@ impl App {
         full.platform_output.cursor_image = None;
         if let Some(drop) = inventory_drop {
             self.apply_inventory_drop(drop);
+        }
+        if let Some(drop) = library_drop {
+            self.apply_texture_library_drop(drop);
         }
         self.update_object_hold(&gfx.renderer);
         if let Some(url) = self.interactions.media_url.take() {
@@ -7009,7 +7037,7 @@ impl App {
                                 .picker
                                 .open_materials(aurora_i18n::tr!("build-ui-texture-choose-material"), uuid::Uuid::nil());
                             self.build.ui.pick_target = Some(crate::build::ui::PickTarget::PbrMaterial);
-                            self.build.ui.tex_tab = 0;
+                            self.build.ui.tex_tab = 1;
                         } else {
                             self.build.ui.picker.open_with_defaults(
                                 aurora_i18n::tr!("build-ui-texture-choose-texture"),
@@ -9206,6 +9234,7 @@ impl App {
                 }
                 self.panels.inventory = open;
                 self.show_gestures(&ctx, &p);
+                self.show_texture_library(&ctx, &p);
                 if self.settings.inventory != inventory_preferences {
                     self.settings.save();
                 }
@@ -11329,6 +11358,12 @@ impl ApplicationHandler for App {
                 if text.trim() != "1" {
                     *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
                 }
+            }
+            // AURORA_DEMO_CONV_SELECT=all|part: the conversation window open,
+            // its lines selected (Ctrl+A, or across three lines)
+            if let Ok(mode) = std::env::var("AURORA_DEMO_CONV_SELECT") {
+                self.panels.chat = true;
+                self.chat_ui.demo_select = Some(mode.trim().to_owned());
             }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)

@@ -127,7 +127,7 @@ pub struct FloaterState {
     pub color_picker: crate::ui::color_picker::ColorPicker,
     color_edit: Option<color::Session>,
     color_focused: bool,
-    /// Texture tab: 0 PBR, 1 Blinn-Phong, 2 Media.
+    /// Texture tab: 0 Classic (Blinn-Phong), 1 PBR, 2 Media.
     pub tex_tab: usize,
     /// PBR transform channel (All, Color, Normal, (O)RM, Emissive).
     pub pbr_channel: usize,

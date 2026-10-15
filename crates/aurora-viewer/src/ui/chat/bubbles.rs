@@ -15,7 +15,6 @@ use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu,
 use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
 use crate::world::{ChatKind, Origin};
-use aurora_net::ChatType;
 use egui::{Color32, RichText};
 
 /// Side of the sender's picture, and the column it takes on the left.
@@ -159,17 +158,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     let own = line.kind == ChatKind::Own;
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
-    let names_cache = &world.social.avatar_names;
-    let cached = if object || logged {
-        None
-    } else {
-        names_cache.get(if own { &world.agent_id } else { &line.source })
-    };
-    let name = match cached {
-        Some(n) => n.display(&names_cache.options),
-        None if own && !logged => env.own_name.to_owned(),
-        None => line.from.clone(),
-    };
+    let name = super::sender_name(world, env.own_name, line);
     let avatar = if logged || object {
         uuid::Uuid::nil()
     } else if own {
@@ -218,17 +207,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     }
 
     // the text: an emote is the name in italics, a shout or a whisper says so
-    let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
-    let (text, italics) = if emote {
-        (format!("{}{}", name, &line.text[3..]), true)
-    } else {
-        let prefix = match line.kind {
-            ChatKind::Local(ChatType::Shout) => aurora_i18n::tr!("status-shouts-2"),
-            ChatKind::Local(ChatType::Whisper) => aurora_i18n::tr!("status-whispers-2"),
-            _ => "",
-        };
-        (format!("{prefix}{}", line.text), false)
-    };
+    let (text, italics) = super::line_body(line, &name);
     let text_color = match (own, tone) {
         (true, None) => p.on_accent,
         (true, Some(_)) => p.on_accent.gamma_multiply(0.75),
@@ -253,6 +232,10 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
         let bubble = egui::Frame::new().inner_margin(PAD).show(ui, |ui| {
             // the width of the text, on the bubble's side of the row
             ui.set_max_width(width);
+            if own {
+                // the theme's selection is the accent the bubble is on
+                super::select::colors(p.on_accent, p.violet);
+            }
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 chat_text_marked(ui, p, env.emoji, world, env.want_names, &text, TEXT_SIZE, text_color, italics, mark);
             });
@@ -352,6 +335,7 @@ fn sender_picture(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aurora_net::ChatType;
 
     #[test]
     fn days_are_named_today_and_yesterday() {

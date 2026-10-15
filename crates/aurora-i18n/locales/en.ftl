@@ -7298,3 +7298,45 @@ shape-param-880-max = Corner Up
 shape-param-11001-label = Hover
 shape-param-11001-min = Lower
 shape-param-11001-max = Higher
+
+# Compact texture and material library
+texture-library-title = Textures & materials
+texture-library-side = Show on the side
+texture-library-bottom = Show at the bottom
+texture-library-empty = Place textures or materials in #Aurora/Textures Library.
+texture-library-preparing = Preparing the library folders…
+texture-library-loading = Loading folders…
+texture-library-retry = Try again
+texture-library-all = Entire library
+texture-library-textures = Textures
+texture-library-pbr = PBR
+texture-library-recent = Recently used
+texture-library-preview = Open preview
+texture-library-drag-hint = Drag onto a face. Shift: all faces. Ctrl: object contents.
+texture-library-copy = Copy allowed
+texture-library-no-copy = No copy: applying moves this item to the object.
+texture-library-wait-inventory = Loading the object contents. Try the drop again when they are ready.
+texture-library-locked = This surface cannot receive this texture or material.
+texture-library-applied = Texture or material applied.
+texture-library-no-results = No matching resources.
+texture-library-demo-wood = Wood
+texture-library-demo-stone = Stone
+texture-library-demo-metal = Metal
+texture-library-demo-fabric = Fabric
+texture-library-demo-oak = Natural oak
+texture-library-demo-marble = Calacatta marble
+texture-library-demo-brass = Brushed brass
+texture-library-demo-linen = Natural linen
+
+texture-library-demo-sources = Demo materials
+texture-library-folder-error = Some folders could not be loaded.
+texture-library-manage = Organize in inventory
+texture-library-content-hint = Move or copy textures, materials and folders into #Aurora/Textures Library. Subfolders are included.
+texture-library-demo-polished = Polished
+
+texture-library-click-hint = Click to apply to the faces selected in Edit mode.
+texture-library-no-copy-multiple = A no-copy texture or material can only be applied to one object at a time.
+texture-library-wait-selection = Loading object contents. Click the resource again once loading has finished.
+
+texture-library-material-drag = Drag
+texture-library-material-drag-hint = Drag this handle onto a face to apply the material. Drag the preview itself to rotate it.

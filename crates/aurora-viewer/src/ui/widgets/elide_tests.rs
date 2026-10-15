@@ -25,11 +25,17 @@ impl Frames {
 
     /// Run one frame of `body` in a 1280 × 900 screen; its texts are returned.
     pub fn run(&mut self, events: Vec<egui::Event>, body: impl FnMut(&mut egui::Ui)) -> Vec<Text> {
+        self.run_with_output(events, body).0
+    }
+
+    /// `run`, with what the frame asks of the platform (a copy...).
+    pub fn run_with_output(&mut self, events: Vec<egui::Event>, body: impl FnMut(&mut egui::Ui)) -> (Vec<Text>, egui::PlatformOutput) {
+        let (shapes, platform) = self.frame_output(events, body);
         let mut texts = Vec::new();
-        for shape in &self.frame(events, body) {
+        for shape in &shapes {
             collect_texts(shape, &mut texts);
         }
-        texts
+        (texts, platform)
     }
 
     /// The same frame, for what is painted besides texts: its shapes, the
@@ -42,7 +48,11 @@ impl Frames {
         flat
     }
 
-    fn frame(&mut self, events: Vec<egui::Event>, mut body: impl FnMut(&mut egui::Ui)) -> Vec<egui::Shape> {
+    fn frame(&mut self, events: Vec<egui::Event>, body: impl FnMut(&mut egui::Ui)) -> Vec<egui::Shape> {
+        self.frame_output(events, body).0
+    }
+
+    fn frame_output(&mut self, events: Vec<egui::Event>, mut body: impl FnMut(&mut egui::Ui)) -> (Vec<egui::Shape>, egui::PlatformOutput) {
         self.frame += 1;
         let mut output = self.ctx.run_ui(
             egui::RawInput {
@@ -54,7 +64,10 @@ impl Frames {
             |ui| body(ui),
         );
         output.textures_delta.clear();
-        output.shapes.into_iter().map(|clipped| clipped.shape).collect()
+        (
+            output.shapes.into_iter().map(|clipped| clipped.shape).collect(),
+            output.platform_output,
+        )
     }
 
     /// Leave the pointer still on `pos` long enough for a tooltip, drawing

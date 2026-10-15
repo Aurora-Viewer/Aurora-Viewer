@@ -16,6 +16,7 @@ mod delete;
 pub use delete::demo_events as delete_demo_events;
 mod dialogs;
 mod document;
+pub(crate) mod drag;
 mod embedded;
 mod move_to;
 pub use document::document_demo_events;
@@ -215,6 +216,7 @@ impl From<&aurora_net::inventory::InvItem> for PropertyEdit {
 
 pub struct InventoryWindow {
     pub id: Uuid,
+    /// Nil for a standalone document, otherwise a partial inventory tree.
     pub root: Uuid,
     pub state: Box<InventoryUi>,
     pub open: bool,
@@ -224,8 +226,7 @@ pub struct InventoryWindow {
 #[derive(Debug, Clone, Copy)]
 pub struct InvDrag(pub Uuid);
 
-/// A folder dragged from the inventory: only the Marketplace listings
-/// window takes it (LLFolderBridge::dragCategoryIntoFolder).
+/// A single folder dragged to inventory or Marketplace listings.
 #[derive(Debug, Clone, Copy)]
 pub struct FolderDrag(pub Uuid);
 
@@ -395,6 +396,12 @@ impl InventoryUi {
         }
     }
 
+    /// Reveal a folder with its contents expanded for direct inventory management.
+    pub fn show_folder(&mut self, inv: &Inventory, id: Uuid) {
+        self.show_original(inv, id);
+        self.reveal_path.insert(id);
+    }
+
     pub fn selected_ids(&self, id: Uuid) -> Vec<Uuid> {
         let mut ids: Vec<_> = if self.selection.contains(&id) {
             self.selection.iter().copied().collect()
@@ -512,9 +519,10 @@ fn item_row(
             .inner;
         // One response handles clicks and dragging; a separate drag-source
         // interaction overlay used to consume secondary clicks on the label.
-        r.dnd_set_drag_payload(InvDrag(it.id));
+        drag::source(ui, &r, it.id, false, st);
         clipboard::demo_row(&r, st, it.id);
         task_drop::target(ui, p, &r, inv, it.parent, prefs, actions);
+        drag::target(ui, p, &r, inv, it.parent, st, prefs, facts, actions);
         super::widgets::demo::rez_row(&r, it.id);
         let date = if it.created_at > 0 {
             aurora_net::inventory::created_date(it.created_at)
@@ -629,7 +637,7 @@ fn folder_row(
         if rename_row(ui, p, inv, id, state, prefs, actions) {
             return;
         }
-        // personal folders can be dragged to the Marketplace listings window
+        // Personal folders can move within inventory or to Marketplace listings.
         let draggable = rules::movable(inv, id, &prefs.protected) && folder.info.type_default == -1;
         let sense = if draggable {
             egui::Sense::click_and_drag()
@@ -638,10 +646,18 @@ fn folder_row(
         };
         let r = tree::label(ui, tree::name(&label, p), state.selection.contains(&id), sense, None);
         if draggable {
-            r.dnd_set_drag_payload(FolderDrag(id));
+            drag::source(ui, &r, id, true, state);
+        } else {
+            drag::record_row(ui.ctx(), state.ui_id, id, r.rect);
         }
         clipboard::demo_row(&r, state, id);
         task_drop::target(ui, p, &r, inv, id, prefs, actions);
+        // Include the caret and icon while dragging, keeping their normal
+        // click gestures independent from selection and drag initiation.
+        let mut destination = r.clone();
+        destination.rect = destination.rect.union(resp.rect);
+        drag::target(ui, p, &destination, inv, id, state, prefs, facts, actions);
+        drag::navigation::folder(ui, &destination, state.ui_id, id, open);
         if first_open {
             scroll_to_row(ui, &r, egui::Align::Min);
         }
@@ -670,7 +686,7 @@ fn folder_name(inv: &Inventory, id: Uuid) -> String {
     }
 }
 
-fn inventory_path(inv: &Inventory, mut id: Uuid) -> String {
+pub(crate) fn inventory_path(inv: &Inventory, mut id: Uuid) -> String {
     let mut parts = Vec::new();
     let mut seen = HashSet::new();
     while seen.insert(id) && inv.folders.contains_key(&id) {
@@ -763,12 +779,14 @@ fn folder_window_contents(
             search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
             return;
         }
-        list_scroll(ui, list_h).show(ui, |ui| {
+        let mut scroll = list_scroll(ui, list_h).show(ui, |ui| {
             let expand = st.expand_all.take();
             folder_contents(ui, p, icons, inv, root, 1, expand, st, prefs, facts, actions);
         });
+        drag::navigation::scroll(ui, &mut scroll, st.ui_id);
     });
     task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
+    drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
@@ -931,7 +949,7 @@ fn search_scroll(
     tree_spacing(ui);
     let total = st.result_tree.rows.len();
     let scroll = list_scroll(ui, height);
-    if total == 0 {
+    let mut out = if total == 0 {
         scroll.show(ui, |ui| {
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-inventory-no-results-in-the-loaded-folders"))
@@ -945,7 +963,9 @@ fn search_scroll(
             search_rows(ui, p, icons, inv, st, prefs, facts, actions, range);
             ui.set_min_width(st.result_width);
         })
-    }
+    };
+    drag::navigation::scroll(ui, &mut out, st.ui_id);
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1182,7 +1202,7 @@ fn inventory_contents(
             search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
             return;
         }
-        list_scroll(ui, list_h).show(ui, |ui| {
+        let mut scroll = list_scroll(ui, list_h).show(ui, |ui| {
             let expand = st.expand_all.take();
             if st.tab == RECEIVED_TAB {
                 folder_contents(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
@@ -1190,8 +1210,10 @@ fn inventory_contents(
                 folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
             }
         });
+        drag::navigation::scroll(ui, &mut scroll, st.ui_id);
     });
     task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
+    drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
@@ -1296,7 +1318,7 @@ pub fn show(
     let mut windows = std::mem::take(&mut st.windows);
     let mut spawned = Vec::new();
     for w in &mut windows {
-        if !world.inventory.folders.contains_key(&w.root) {
+        if !w.root.is_nil() && !world.inventory.folders.contains_key(&w.root) {
             w.open = false;
             continue;
         }
@@ -1397,6 +1419,11 @@ pub fn show(
     }
     actions
 }
+
+#[cfg(test)]
+mod drag_tests;
+#[cfg(test)]
+mod texture_tests;
 
 #[cfg(test)]
 fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
@@ -1502,7 +1529,7 @@ mod tests {
         assert_eq!(facts.worn_label(&world.inventory, link), None);
     }
 
-    fn view_inventory(large: bool) -> Inventory {
+    pub(super) fn view_inventory(large: bool) -> Inventory {
         let mut inv = Inventory {
             root: Uuid::from_u128(1),
             ..Default::default()

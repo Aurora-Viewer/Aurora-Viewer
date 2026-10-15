@@ -226,7 +226,8 @@ impl Emoji {
             if italics {
                 rt = rt.italics();
             }
-            ui.add(egui::Label::new(rt).wrap().selectable(true));
+            // (in a conversation, its selection is the conversation's)
+            super::chat::select::label(ui, rt);
             return;
         }
         text_rows(ui, size, |ui| self.inline(ui, text, size, color, italics));
@@ -257,7 +258,7 @@ impl Emoji {
                 if let Some(bg) = background {
                     rt = rt.background_color(bg);
                 }
-                ui.add(egui::Label::new(rt).wrap().selectable(true));
+                super::chat::select::label(ui, rt);
             }
         };
         for c in text.chars() {
@@ -274,8 +275,10 @@ impl Emoji {
                 // row instead of making a line with an emoji taller
                 let s = emoji_side(size);
                 let row = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(size)));
+                let behind = super::chat::select::atom_begin(ui);
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(s, row), egui::Sense::hover());
                 egui::Image::new(&t).paint_at(ui, egui::Rect::from_center_size(rect.center(), egui::vec2(s, s)));
+                super::chat::select::atom_end(ui, behind, c.encode_utf8(&mut [0; 4]), rect);
                 continue;
             }
             run.push(c);
