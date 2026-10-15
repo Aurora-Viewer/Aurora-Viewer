@@ -169,7 +169,7 @@ pub(super) fn show(
     let filter = st.side_filter.trim().to_lowercase();
     let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
     let voice = voice_panel_wanted(world, st);
-    let list_h = (column.bottom() - ui.cursor().top() - if voice { voice_panel_h(rail) } else { 0.0 } - 6.0).max(ENTRY_H);
+    let list_h = (column.bottom() - ui.cursor().top() - if voice { voice_panel_h(rail) + VOICE_PANEL_GAP } else { 0.0 } - 6.0).max(ENTRY_H);
     egui::ScrollArea::vertical()
         .id_salt("conversation_column")
         .max_height(list_h)
@@ -659,19 +659,24 @@ fn voice_panel_h(rail: bool) -> f32 {
     if rail {
         8.0 + 3.0 * VOICE_BUTTON_H + 2.0 * 4.0 + 8.0
     } else {
-        8.0 + 18.0 + 4.0 + 15.0 + 6.0 + VOICE_BUTTON_H + 8.0
+        // padding, the title row (its 14 px glyph) and 1 px, the
+        // conversation and its time, the mockup's 6 px, the buttons, padding
+        8.0 + 17.0 + 15.0 + 6.0 + VOICE_BUTTON_H + 8.0
     }
 }
 
 /// The call panel's buttons (the mockup's `.vpanel .rb`).
 const VOICE_BUTTON_H: f32 = 28.0;
 
+/// Room under the call panel, the same as under the conversation's field.
+const VOICE_PANEL_GAP: f32 = 12.0;
+
 fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, rail: bool) {
     let Some(call) = world.calls.active.as_ref() else {
         return;
     };
     let conversation = call.conversation();
-    let bottom = ui.max_rect().bottom() - 6.0;
+    let bottom = ui.max_rect().bottom() - VOICE_PANEL_GAP;
     let rect = egui::Rect::from_min_max(
         egui::pos2(ui.max_rect().left(), bottom - voice_panel_h(rail)),
         egui::pos2(ui.max_rect().right(), bottom),
@@ -685,14 +690,25 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
         egui::Stroke::new(1.0, p.ink.gamma_multiply(0.05)),
         egui::StrokeKind::Inside,
     );
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(rect.shrink(8.0))
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-    );
-    let ui = &mut child;
-    ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+    // the text at the top of the card, the row of buttons 8 px from its
+    // bottom, whatever the text's height (stacked in the rail)
+    let inner = rect.shrink(8.0);
+    let buttons_rect = if rail {
+        inner
+    } else {
+        egui::Rect::from_min_max(egui::pos2(inner.left(), inner.bottom() - VOICE_BUTTON_H), inner.max)
+    };
     if !rail {
+        let mut text = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(egui::Rect::from_min_max(inner.min, egui::pos2(inner.right(), buttons_rect.top())))
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        let ui = &mut text;
+        // the mockup's two lines held together (1 px apart): no minimum
+        // height of an interactive row for the title
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 1.0);
+        ui.spacing_mut().interact_size.y = 0.0;
         ui.horizontal(|ui| {
             crate::ui::widgets::glyph(ui, "phone-filled", p.success, 14.0);
             ui.label(
@@ -709,8 +725,10 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
             RichText::new(text).size(11.0).color(p.muted),
             ui.available_width(),
         ));
-        ui.add_space(2.0);
     }
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(buttons_rect));
+    let ui = &mut child;
+    ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
     let layout = if rail {
         egui::Layout::top_down(egui::Align::Center)
     } else {

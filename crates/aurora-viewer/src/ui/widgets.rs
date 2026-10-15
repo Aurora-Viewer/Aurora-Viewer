@@ -1293,7 +1293,8 @@ pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: 
         if let Some(face) = face {
             ui.painter().rect_filled(rect, inner_radius(ui.visuals()), face);
         }
-        ui.painter().galley(rect.center() - galley.size() / 2.0, galley, text);
+        let at = letters_in_middle(&galley, rect);
+        ui.painter().galley(at, galley, text);
         resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, sel, *label));
         if resp.clicked() && !sel {
             *selected = i;
@@ -1301,6 +1302,22 @@ pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: 
         }
     }
     changed
+}
+
+/// Where to paint a one-line galley so that its letters, from the baseline
+/// up to the capitals, sit in the middle of `rect` — not its whole line box,
+/// whose room for the descenders leaves a word without any ("Chuchoter",
+/// "Dire") visibly high in a short segment.
+fn letters_in_middle(galley: &egui::Galley, rect: egui::Rect) -> egui::Pos2 {
+    let left = rect.center().x - galley.size().x / 2.0;
+    let Some((row, glyph)) = galley.rows.first().and_then(|r| r.row.glyphs.first().map(|g| (r, g))) else {
+        return egui::pos2(left, rect.center().y - galley.size().y / 2.0);
+    };
+    let baseline = row.pos.y + glyph.pos.y;
+    // the capitals of the interface fonts reach about three quarters of
+    // the ascent
+    let middle = baseline - 0.75 * glyph.font_ascent / 2.0;
+    egui::pos2(left, (rect.center().y - middle).round())
 }
 
 /// Column header row for list views.
