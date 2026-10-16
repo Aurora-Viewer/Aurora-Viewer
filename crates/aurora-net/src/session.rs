@@ -2188,6 +2188,8 @@ impl Session<'_> {
             | NetCommand::LeaveGroup(_)
             | NetCommand::SetGroupFlags { .. }
             | NetCommand::TerminateFriendship(_)
+            | NetCommand::OfferCallingCard { .. }
+            | NetCommand::AnswerCallingCard { .. }
             | NetCommand::AgentAnimation { .. }
             | NetCommand::AgentAnimations { .. }
             | NetCommand::AnimationStateReset

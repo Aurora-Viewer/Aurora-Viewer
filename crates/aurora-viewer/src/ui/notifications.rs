@@ -392,7 +392,7 @@ pub(super) fn card(
                         ));
                     }
                 }
-                Data::Friend { .. } | Data::Group { .. } => {
+                Data::Friend { .. } | Data::Group { .. } | Data::CallingCard { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-accept").into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
                 }

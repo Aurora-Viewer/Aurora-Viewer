@@ -60,6 +60,7 @@ mod reset_skeleton;
 mod scripts;
 mod shape_editor;
 mod snapshot;
+mod social_menu_demo;
 mod task_notecards;
 mod texture_library;
 mod texture_refresh;
@@ -378,6 +379,9 @@ pub struct App {
     alt_codes: crate::alt_codes::AltCodes,
     alt_text: Vec<String>,
     people_ui: ui::people::PeopleUi,
+    /// People's friends tab as Conversations › Contacts shows it: its own
+    /// filter, selection and sheet.
+    contacts_people_ui: ui::people::PeopleUi,
     /// Avatars around us, swept once a second on `radar_clock`.
     radar: crate::world::radar::Radar,
     radar_clock: Instant,
@@ -855,6 +859,7 @@ impl App {
             alt_codes: Default::default(),
             alt_text: Vec::new(),
             people_ui: Default::default(),
+            contacts_people_ui: Default::default(),
             radar: Default::default(),
             radar_clock: Instant::now(),
             contacts_ui: Default::default(),
@@ -2136,6 +2141,14 @@ impl App {
                 } else {
                     crate::world::favorites::Favorites::load(crate::settings::account_dir(&l.agent_id).join(crate::world::favorites::FILE))
                 };
+                // LLAgent::init: the FLY control is set before the first
+                // AgentUpdate when the last session of this account ended
+                // flying (the arrival lands it where flying is blocked)
+                if !self.demo {
+                    self.world.agent.flying = crate::world::flying_at_exit::load(
+                        &crate::settings::account_dir(&l.agent_id).join(crate::world::flying_at_exit::FILE),
+                    );
+                }
                 self.restore_gestures(&l.raw);
                 self.net_profile.reset();
                 self.login_form.transition = None;
@@ -3558,6 +3571,12 @@ impl App {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs() as i64);
             self.settings.save();
+            // LLAppViewer::disconnectViewer: the next login flies if this
+            // session ends flying (world/flying_at_exit.rs)
+            crate::world::flying_at_exit::save(
+                &crate::settings::account_dir(&self.world.agent_id).join(crate::world::flying_at_exit::FILE),
+                self.world.agent.flying,
+            );
         }
     }
 
@@ -4664,6 +4683,7 @@ impl App {
         wanted.extend(self.search_ui.wanted_pics.drain());
         wanted.extend(self.group_profile_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
+        wanted.extend(self.contacts_people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
         wanted.extend(self.land_ui.wanted_pics.drain());
         wanted.extend(self.region_ui.wanted_pics.drain());
@@ -4722,7 +4742,9 @@ impl App {
         images.extend(self.region_ui.wanted_images.drain());
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
+        images.extend(self.chat_ui.wanted_images.drain());
         images.extend(self.people_ui.wanted_images.drain());
+        images.extend(self.contacts_people_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
@@ -6753,6 +6775,7 @@ impl App {
         }
         self.demo_worn_steps();
         self.demo_derender_steps();
+        self.demo_social_menu_steps();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -8230,6 +8253,13 @@ impl App {
                     log::info!("group invite: {} resident(s) invited", invites.len());
                     self.send(NetCommand::InviteToGroup { group, invites });
                 }
+                // showForGroup: sendAgentDataUpdateRequest, clearGroupData,
+                // then updateLists: the properties first, roles and members
+                GroupAction::ReloadForInvite(group) => {
+                    self.send(NetCommand::RequestGroups);
+                    self.world.search.request_group(group);
+                    self.world.group_data.reload_for_invite(group);
+                }
                 // LLGroupActions::startCall
                 GroupAction::Call(group) => self.on_ctx_action(ui::context::CtxAction::Call(group)),
                 GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
@@ -9173,6 +9203,9 @@ impl App {
                         self.settings.chat_toast_seconds,
                         self.settings.chat_timestamps,
                         !classic_bars,
+                        // AURORA_DEMO_CHAT_LINES=legacy: the one-line look
+                        // for the session, nothing saved
+                        !(self.settings.classic_chat_lines || crate::demo::chat_lines_scenario() == Some(true)),
                     );
                 }
                 // the hidden interface: how to bring it back (the islands), or
@@ -9225,6 +9258,7 @@ impl App {
                     self.chat_ui.output_device.clone_from(&self.settings.audio.output_device);
                 }
                 self.chat_ui.timestamps = self.settings.chat_timestamps;
+                self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 // who hears the nearby chat, and who of them types (the
                 // radar's avatars in chat range, their typing animation)
@@ -9270,6 +9304,25 @@ impl App {
                             .answer_call_invite(crate::demo::DEMO_GROUP1, crate::world::calls::InviteAnswer::Decline);
                     }
                 }
+                // Conversations › Contacts in Aurora's look of People: its
+                // friends tab
+                let people_aurora = !self.settings.classic_people && !(self.demo && crate::demo::people::legacy());
+                let friends_before = self.settings.friends_list.clone();
+                let contacts_radar = ui::people::RadarData {
+                    radar: &self.radar,
+                    settings: &mut self.settings.radar,
+                    voice: &voice_levels,
+                    draw_distance: self.settings.draw_distance,
+                    now: self.radar_clock.elapsed().as_secs_f64(),
+                    pics: &self.avatar_pics,
+                };
+                let friends = people_aurora.then_some(ui::people::FriendsPane {
+                    st: &mut self.contacts_people_ui,
+                    data: &contacts_radar,
+                    settings: &mut self.settings.friends_list,
+                    images: &self.ui_images,
+                });
+                let mut contacts_people = Vec::new();
                 for c in ui::chat::show(
                     &ctx,
                     &p,
@@ -9283,6 +9336,7 @@ impl App {
                     &mut self.contacts_ui,
                     &mut self.settings.contacts,
                     self.settings.show_contacts_tab,
+                    friends,
                     &mut open,
                 ) {
                     match c {
@@ -9323,6 +9377,7 @@ impl App {
                         }
                         ui::chat::ConvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::chat::ConvAction::Contacts(c) => contact_actions.push(c),
+                        ui::chat::ConvAction::People(pa) => contacts_people.push(pa),
                         ui::chat::ConvAction::OpenContacts => self.panels.contacts = true,
                         ui::chat::ConvAction::OpenIm(id) => self.world.start_text_conference(vec![id]),
                         ui::chat::ConvAction::StartGroupChat(group) => self.world.start_group_chat(group),
@@ -9345,7 +9400,6 @@ impl App {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
                         }
                         ui::chat::ConvAction::OpenInventory => self.panels.inventory = true,
-                        ui::chat::ConvAction::PlayGesture(id) => a.gestures.push(id),
                         ui::chat::ConvAction::SetOutputDevice(device) => {
                             self.settings.audio.output_device = device;
                             self.settings.save();
@@ -9356,6 +9410,9 @@ impl App {
                     }
                 }
                 self.panels.chat = open;
+                if self.settings.friends_list != friends_before {
+                    self.settings.save();
+                }
                 if let Some(ui::chat::history::HistoryAction::OpenFolder(dir)) = self.history_ui.show(
                     &ctx,
                     &p,
@@ -9445,7 +9502,8 @@ impl App {
                 if people_before != (self.settings.radar.clone(), self.settings.friends_list.clone()) {
                     self.settings.save();
                 }
-                for pa in people {
+                // (and those of Conversations › Contacts, the same tab)
+                for pa in people.into_iter().chain(contacts_people) {
                     match pa {
                         ui::people::PeopleAction::OpenIm(id) => {
                             // LLAvatarActions::startIM: they join the recent people
@@ -10773,6 +10831,14 @@ impl ApplicationHandler for App {
                 self.panels.minimap = false;
                 self.panels.perf = false;
             }
+            // AURORA_DEMO_CHAT_LINES: the lines above the chat bar, the
+            // Conversations window closed (it hides them while it shows the
+            // local chat)
+            if crate::demo::chat_lines_scenario().is_some() {
+                self.panels.chat = false;
+                self.panels.people = false;
+                self.panels.inventory = false;
+            }
             if std::env::var_os("AURORA_DEMO_UI").is_some() {
                 self.panels.people = true;
                 self.panels.people_tab = std::env::var("AURORA_DEMO_UI").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
@@ -10997,6 +11063,9 @@ impl ApplicationHandler for App {
                     self.chat_ui.selected = crate::demo::aurora_conversation(scene);
                     self.chat_ui.members_open = view == crate::demo::Bubbles::Group;
                     self.chat_ui.stage_mini = scene.call == Some(crate::demo::AuroraCall::Mini);
+                    self.chat_ui.demo_new_menu = scene.new_menu;
+                    self.chat_ui.demo_volume_menu = scene.volume_menu;
+                    self.chat_ui.demo_channel = scene.channel;
                     // the window alone, to compare with the mockups
                     self.panels.people = false;
                     self.panels.inventory = false;
@@ -11205,6 +11274,8 @@ impl ApplicationHandler for App {
             }
             if let Some(scene) = crate::demo::aurora_scenario() {
                 crate::demo::aurora_lines(&mut self.world, scene);
+                // the scene's unread lines as if they came while away
+                self.chat_ui.demo_lines_unseen();
             }
             // AURORA_DEMO_CONV=tp[:sent|reject]: the avatar menu's teleport
             // offer (its invitation, or sent as invited to the resident whose
@@ -11281,6 +11352,12 @@ impl ApplicationHandler for App {
                     self.history_ui.show_file(title, file);
                 }
                 self.chat_ui.selected = Some(chatlog::PEER);
+                if chatlog::find_flag("legacy") {
+                    self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
+                }
+                if chatlog::find_flag("narrow") {
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(480.0, 560.0));
+                }
             }
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("cycle,") || v.starts_with("cycle-linked,")) {
                 for ev in crate::demo::selection_cycle_events() {
@@ -11716,6 +11793,12 @@ impl ApplicationHandler for App {
             if let Ok(mode) = std::env::var("AURORA_DEMO_CONV_SELECT") {
                 self.panels.chat = true;
                 self.chat_ui.demo_select = Some(mode.trim().to_owned());
+            }
+            // AURORA_DEMO_CONV_MENU=local|im|group|conference: the right-click
+            // menu of a conversation of the list open (with AURORA_DEMO_CONV)
+            if let Ok(kind) = std::env::var("AURORA_DEMO_CONV_MENU") {
+                self.panels.chat = true;
+                self.chat_ui.demo_menu = Some(kind.trim().to_owned());
             }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)

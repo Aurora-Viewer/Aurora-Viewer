@@ -340,11 +340,21 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         !f.friend,
         CtxAction::AddFriend(id),
     );
-    ui.todo("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+    contact_set_entries(ui, f, id);
     ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
-    ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
+    // Avatar.GiveCard (enabled like RLV.CanShowName: always here)
+    ui.item(
+        "id-filled",
+        aurora_i18n::tr!("ui-context-give-my-calling-card"),
+        CtxAction::GiveCallingCard(id),
+    );
     ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
-    ui.todo("users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
+    // Avatar.InviteToGroup (enabled like RLV.CanShowName: always here)
+    ui.item(
+        "users-plus",
+        aurora_i18n::tr!("ui-context-invite-to-group"),
+        CtxAction::InviteToGroup(id),
+    );
     ui.item(
         "send-filled",
         aurora_i18n::tr!("common-offer-teleport"),
@@ -412,7 +422,16 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         CtxAction::RefreshAvatarTextures(id),
     );
     ui.separator();
-    ui.todo("sparkles-filled", aurora_i18n::tr!("common-block-particles"));
+    // only the particle flag of their block list entry, checked while it
+    // is on (the block list's "Block particles", LLMute::flagParticles);
+    // the Legacy Viewer's "Block Particle Owner" needs a clicked particle
+    ui.check(
+        "sparkles-filled",
+        aurora_i18n::tr!("common-block-particles"),
+        f.particles_blocked,
+        true,
+        CtxAction::ToggleParticleMute(id),
+    );
 }
 
 /// menu_attachment_other.xml: the avatar's entries, then those of the
@@ -428,11 +447,21 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         !f.friend,
         CtxAction::AddFriend(id),
     );
-    ui.todo("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+    contact_set_entries(ui, f, id);
     ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
-    ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
+    // Avatar.GiveCard (enabled like RLV.CanShowName: always here)
+    ui.item(
+        "id-filled",
+        aurora_i18n::tr!("ui-context-give-my-calling-card"),
+        CtxAction::GiveCallingCard(id),
+    );
     ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
-    ui.todo("users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
+    // Avatar.InviteToGroup (enabled like RLV.CanShowName: always here)
+    ui.item(
+        "users-plus",
+        aurora_i18n::tr!("ui-context-invite-to-group"),
+        CtxAction::InviteToGroup(id),
+    );
     ui.todo("eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
     ui.separator();
     reset_skeleton_items(ui, id);
@@ -602,6 +631,30 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
     });
 }
 
+/// "Add to contact set" (Avatar.AddToContactSet): the sets of
+/// FSFloaterAddToContactSet's list in a submenu, then its "+"
+/// (AddNewContactSet), as `contact_set_submenu` of the lists.
+fn contact_set_entries(ui: &mut Builder, f: &Facts, id: Uuid) {
+    ui.submenu("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"), true, |ui| {
+        if f.contact_sets.is_empty() {
+            ui.disabled("users-group", aurora_i18n::tr!("ui-contacts-no-contact-sets"));
+        }
+        for set in &f.contact_sets {
+            let add = crate::ui::contacts::SetEdit::Add {
+                set: set.clone(),
+                ids: vec![id],
+            };
+            ui.item("users-group", set, CtxAction::ContactSet(add));
+        }
+        ui.separator();
+        ui.item(
+            "plus",
+            aurora_i18n::tr!("ui-context-new-contact-set"),
+            CtxAction::NewContactSet(vec![id]),
+        );
+    });
+}
+
 /// Avatar.ResetSkeleton / Avatar.ResetSkeletonAndAnimations: enabled for
 /// any avatar (LLAvatarEnableResetSkeleton), ours included.
 fn reset_skeleton_items(ui: &mut Builder, avatar: Uuid) {
@@ -695,7 +748,7 @@ mod tests {
             let mut keys = vec![
                 "common-view-profile",
                 "common-become-friends",
-                "ui-context-add-to-contact-set",
+                "ui-context-add-to-contact-set>",
                 "ui-context-send-im",
                 "ui-context-give-my-calling-card",
                 "common-voice-call",
@@ -878,5 +931,74 @@ mod tests {
             seated: true,
             ..Facts::default()
         }));
+    }
+
+    #[test]
+    fn a_residents_menus_invite_add_to_contact_sets_and_block_particles() {
+        let id = Uuid::from_u128(7);
+        let find = |entries: Vec<Entry>, key: &'static str| {
+            entries
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::text(key))
+                .unwrap_or_else(|| panic!("{key} missing"))
+        };
+        for attachment in [None, Some(Uuid::from_u128(8))] {
+            let target = Target::Avatar {
+                id,
+                own: false,
+                attachment,
+            };
+            let f = Facts {
+                contact_sets: vec!["Family".into(), "Work".into()],
+                ..Facts::default()
+            };
+            // "Invite to group": enabled, the group picker for them
+            let invite = find(world_menu(&target, &f, Vec3::ZERO), "ui-context-invite-to-group");
+            assert!(invite.enabled);
+            assert!(matches!(invite.kind, Kind::Action(CtxAction::InviteToGroup(i)) if i == id));
+            // "Give my calling card": enabled, OfferCallingCard to them
+            let card = find(world_menu(&target, &f, Vec3::ZERO), "ui-context-give-my-calling-card");
+            assert!(card.enabled);
+            assert!(matches!(card.kind, Kind::Action(CtxAction::GiveCallingCard(i)) if i == id));
+            // "Add to contact set": each set, then a new one
+            let sets = find(world_menu(&target, &f, Vec3::ZERO), "ui-context-add-to-contact-set");
+            let Kind::Submenu(rows) = sets.kind else {
+                panic!("not a submenu");
+            };
+            let labels: Vec<&str> = rows.iter().map(|e| e.label.as_str()).collect();
+            assert_eq!(labels, ["Family", "Work", "", aurora_i18n::tr!("ui-context-new-contact-set")]);
+            assert!(matches!(
+                &rows[1].kind,
+                Kind::Action(CtxAction::ContactSet(crate::ui::contacts::SetEdit::Add { set, ids })) if set == "Work" && ids == &[id]
+            ));
+            assert!(matches!(&rows[3].kind, Kind::Action(CtxAction::NewContactSet(ids)) if ids == &[id]));
+            // no set yet: a greyed line, and still "New contact set…"
+            let none = find(world_menu(&target, &Facts::default(), Vec3::ZERO), "ui-context-add-to-contact-set");
+            let Kind::Submenu(rows) = none.kind else {
+                panic!("not a submenu");
+            };
+            assert!(!rows[0].enabled);
+            assert!(matches!(
+                rows.last().map(|e| &e.kind),
+                Some(Kind::Action(CtxAction::NewContactSet(_)))
+            ));
+        }
+        // "Block particles" of the avatar's menu: checked while their
+        // particles are blocked
+        let target = Target::Avatar {
+            id,
+            own: false,
+            attachment: None,
+        };
+        for blocked in [false, true] {
+            let f = Facts {
+                particles_blocked: blocked,
+                ..Facts::default()
+            };
+            let row = find(world_menu(&target, &f, Vec3::ZERO), "common-block-particles");
+            assert!(row.enabled);
+            assert_eq!(row.checked, Some(blocked));
+            assert!(matches!(row.kind, Kind::Action(CtxAction::ToggleParticleMute(i)) if i == id));
+        }
     }
 }

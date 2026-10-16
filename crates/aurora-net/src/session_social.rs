@@ -113,6 +113,49 @@ impl Session<'_> {
                 m.ex_block.other_id = *other;
                 self.send_main(&m, true);
             }
+            NetCommand::OfferCallingCard { handle, dest, transaction } => {
+                // LLAvatarGiveCard: to the simulator of the avatar's region
+                let mut m = OfferCallingCard::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.agent_block.dest_id = *dest;
+                m.agent_block.transaction_id = *transaction;
+                match self.sim_for_handle(*handle) {
+                    Some(addr) => self.send(addr, &m, true),
+                    None => log::warn!("calling card for {dest}: region {handle:#x} not connected"),
+                }
+            }
+            NetCommand::AnswerCallingCard {
+                handle,
+                transaction,
+                folder,
+            } => {
+                // callingcard_offer_callback, to the simulator of the offer
+                let addr = self.sim_for_handle(*handle);
+                match folder {
+                    Some(folder) => {
+                        let mut m = AcceptCallingCard::default();
+                        m.agent_data.agent_id = self.agent_id();
+                        m.agent_data.session_id = self.session_id();
+                        m.transaction_block.transaction_id = *transaction;
+                        m.folder_data = vec![accept_calling_card::FolderData { folder_id: *folder }];
+                        match addr {
+                            Some(addr) => self.send(addr, &m, true),
+                            None => self.send_main(&m, true),
+                        }
+                    }
+                    None => {
+                        let mut m = DeclineCallingCard::default();
+                        m.agent_data.agent_id = self.agent_id();
+                        m.agent_data.session_id = self.session_id();
+                        m.transaction_block.transaction_id = *transaction;
+                        match addr {
+                            Some(addr) => self.send(addr, &m, true),
+                            None => self.send_main(&m, true),
+                        }
+                    }
+                }
+            }
             NetCommand::ChatSession { method, session } => self.chat_session_request(*method, *session),
             NetCommand::Call {
                 method,
@@ -306,6 +349,22 @@ impl Session<'_> {
             // LLAvatarTracker::processTerminateFriendship
             let m: TerminateFriendship = pkt.decode()?;
             emit(self.sh, NetEvent::FriendshipTerminated(m.ex_block.other_id));
+        } else if id == OfferCallingCard::ID {
+            // process_offer_callingcard: the answer goes back to this simulator
+            let m: OfferCallingCard = pkt.decode()?;
+            let handle = self.sims.get(&from).map_or(0, |s| s.handle);
+            emit(
+                self.sh,
+                NetEvent::CallingCardOffered {
+                    from: m.agent_data.agent_id,
+                    transaction: m.agent_block.transaction_id,
+                    handle,
+                },
+            );
+        } else if id == AcceptCallingCard::ID {
+            emit(self.sh, NetEvent::CallingCardAnswered { accepted: true });
+        } else if id == DeclineCallingCard::ID {
+            emit(self.sh, NetEvent::CallingCardAnswered { accepted: false });
         } else {
             return Ok(false);
         }

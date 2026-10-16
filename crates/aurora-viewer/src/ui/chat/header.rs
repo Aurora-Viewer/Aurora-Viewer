@@ -96,62 +96,26 @@ pub(super) fn show(
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            let finding = st.searches.get(&st.selected).is_some_and(|s| s.find.is_some());
             ui.horizontal(|ui| {
                 let names_w = (ui.available_width() - tools as f32 * TOOL_W - PIC - 16.0).max(40.0);
-                // ---- picture and its status
-                let (rect, pic_resp) = ui.allocate_exact_size(egui::vec2(PIC, PIC), egui::Sense::click());
-                match (who.avatar, who.icon) {
-                    (Some(a), _) => {
-                        st.wanted_pics.insert(a);
-                        crate::ui::widgets::avatar_disc(ui, p, rect, pics.get(&a), &who.title, false);
-                        if let Some(s) = status {
-                            presence::paint_dot(ui.painter(), p, rect, s, p.bar);
-                            pic_resp.clone().on_hover_text(s.label());
-                        }
-                        if pic_resp.clicked() {
-                            actions.push(ConvAction::Profile(a));
-                        }
+                if finding {
+                    // the find field in the picture's and the names' place,
+                    // as tall as the picture (no strip under the lines)
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(PIC + 4.0 + names_w, PIC), egui::Sense::hover());
+                    let selected = st.selected;
+                    let ChatUi { searches, views, .. } = &mut *st;
+                    let view = views.entry(selected).or_default();
+                    if let Some(search) = searches.get_mut(&selected)
+                        && let Some(f) = search.find.as_mut()
+                        && find::field(ui, p, rect, p.field, f, view, true)
+                    {
+                        search.find = None;
+                        ui.ctx().memory_mut(|m| m.request_focus(egui::Id::new(("conv_input", selected))));
                     }
-                    (None, Some(icon)) => {
-                        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
-                        if let Some(t) = icons.get(icon) {
-                            ui.painter().image(
-                                t.id(),
-                                egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(20.0)),
-                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                p.violet_pale,
-                            );
-                        }
-                    }
-                    (None, None) => crate::ui::widgets::avatar_picture(ui, p, rect, None, &who.title, false),
+                } else {
+                    picture_and_names(ui, p, icons, pics, world, st, actions, &who, status, names_w);
                 }
-                ui.add_space(4.0);
-                // ---- names
-                ui.allocate_ui_with_layout(egui::vec2(names_w, PIC), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.add_space(if who.subtitle.is_some() { 2.0 } else { 11.0 });
-                    ui.horizontal(|ui| {
-                        let pill_w = if status.is_some_and(|s| s.pill()) { 110.0 } else { 0.0 };
-                        let title = RichText::new(&who.title).size(14.0).strong().color(p.ink);
-                        let r = ui.add(crate::ui::widgets::elided_label(ui, title, names_w - pill_w).sense(egui::Sense::click()));
-                        if let Some(a) = who.avatar {
-                            super::name_menu(&r, p, world, a);
-                            if r.on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(aurora_i18n::tr!("common-view-profile"))
-                                .clicked()
-                            {
-                                actions.push(ConvAction::Profile(a));
-                            }
-                        }
-                        if let Some(s) = status.filter(|s| s.pill()) {
-                            status_pill(ui, p, s);
-                        }
-                    });
-                    if let Some(sub) = &who.subtitle {
-                        let text = RichText::new(sub).size(11.5).color(p.muted);
-                        ui.add(crate::ui::widgets::elided_label(ui, text, names_w));
-                    }
-                });
                 // ---- actions, from the right edge
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
@@ -199,6 +163,77 @@ pub(super) fn show(
                 .desired_width(ui.available_width()),
         );
     }
+}
+
+/// The picture and its status, then the names (and the status pill), in
+/// `names_w`.
+#[allow(clippy::too_many_arguments)]
+fn picture_and_names(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &crate::ui::icons::Icons,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    world: &World,
+    st: &mut ChatUi,
+    actions: &mut Vec<ConvAction>,
+    who: &Identity,
+    status: Option<presence::Status>,
+    names_w: f32,
+) {
+    // ---- picture and its status
+    let (rect, pic_resp) = ui.allocate_exact_size(egui::vec2(PIC, PIC), egui::Sense::click());
+    match (who.avatar, who.icon) {
+        (Some(a), _) => {
+            st.wanted_pics.insert(a);
+            crate::ui::widgets::avatar_disc(ui, p, rect, pics.get(&a), &who.title, false);
+            if let Some(s) = status {
+                presence::paint_dot(ui.painter(), p, rect, s, p.bar);
+                pic_resp.clone().on_hover_text(s.label());
+            }
+            if pic_resp.clicked() {
+                actions.push(ConvAction::Profile(a));
+            }
+        }
+        (None, Some(icon)) => {
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+            if let Some(t) = icons.get(icon) {
+                ui.painter().image(
+                    t.id(),
+                    egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(20.0)),
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    p.violet_pale,
+                );
+            }
+        }
+        (None, None) => crate::ui::widgets::avatar_picture(ui, p, rect, None, &who.title, false),
+    }
+    ui.add_space(4.0);
+    // ---- names
+    ui.allocate_ui_with_layout(egui::vec2(names_w, PIC), egui::Layout::top_down(egui::Align::Min), |ui| {
+        ui.spacing_mut().item_spacing.y = 1.0;
+        ui.add_space(if who.subtitle.is_some() { 2.0 } else { 11.0 });
+        ui.horizontal(|ui| {
+            let pill_w = if status.is_some_and(|s| s.pill()) { 110.0 } else { 0.0 };
+            let title = RichText::new(&who.title).size(14.0).strong().color(p.ink);
+            let r = ui.add(crate::ui::widgets::elided_label(ui, title, names_w - pill_w).sense(egui::Sense::click()));
+            if let Some(a) = who.avatar {
+                super::name_menu(&r, p, world, a);
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(aurora_i18n::tr!("common-view-profile"))
+                    .clicked()
+                {
+                    actions.push(ConvAction::Profile(a));
+                }
+            }
+            if let Some(s) = status.filter(|s| s.pill()) {
+                status_pill(ui, p, s);
+            }
+        });
+        if let Some(sub) = &who.subtitle {
+            let text = RichText::new(sub).size(11.5).color(p.muted);
+            ui.add(crate::ui::widgets::elided_label(ui, text, names_w));
+        }
+    });
 }
 
 /// The call button of FSFloaterIM: calls the conversation, or hangs up
