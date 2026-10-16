@@ -2068,10 +2068,12 @@ pub fn show(
                         .show(ui.ctx(), |ui| {
                             super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                                 ui.set_width(300.0);
-                                if let Some(c) = emoji.picker(ui, p, icons) {
+                                let picked = emoji.picker(ui, p, icons);
+                                if let Some(c) = picked.chosen {
                                     draft.push(c);
                                     close = !ui.input(|i| i.modifiers.shift);
                                 }
+                                close |= picked.escape;
                             });
                         });
                     if close {
@@ -2527,7 +2529,12 @@ pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, gestures: &crate::ge
 
 /// `build`, then the chat field's id (the app gives it the keyboard).
 fn identified(build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>) -> impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_> {
-    move |edit| build(edit.id(egui::Id::new("nearby_chat_input")))
+    move |edit| build(edit.id(bar_input_id()))
+}
+
+/// The id of the local chat's field (`bar_input`).
+pub(crate) fn bar_input_id() -> egui::Id {
+    egui::Id::new("nearby_chat_input")
 }
 
 /// The text cursor of a field after the last character: the keyboard given

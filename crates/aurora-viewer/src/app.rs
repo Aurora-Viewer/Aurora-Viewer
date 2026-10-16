@@ -11817,12 +11817,15 @@ impl ApplicationHandler for App {
                 }
                 if let PhysicalKey::Code(code) = ke.physical_key {
                     let pressed = ke.state == ElementState::Pressed;
-                    // The color dialog owns Escape before camera shortcuts.
-                    // egui already received the event above.
+                    // The color dialog and an emoji picker own Escape before
+                    // camera shortcuts. egui already received the event above.
                     let eyedropper = ui::widgets::color::pipette::armed(&self.egui_ctx);
                     if pressed
                         && code == KeyCode::Escape
-                        && (self.build.ui.color_picker.is_open() || self.script_editors.color_open() || eyedropper)
+                        && (self.build.ui.color_picker.is_open()
+                            || self.script_editors.color_open()
+                            || eyedropper
+                            || ui::emoji::picker_open(&self.egui_ctx))
                     {
                         return;
                     }
