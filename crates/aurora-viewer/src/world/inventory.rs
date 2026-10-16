@@ -323,6 +323,21 @@ impl Inventory {
         }
     }
 
+    /// Ask again for every folder whose fetch failed: the agent's region
+    /// has its capabilities (LLInventoryModelBackgroundFetch::backgroundFetch
+    /// waits for capabilitiesReceived instead of giving up).
+    pub fn retry_failed(&mut self) {
+        let failed: Vec<Uuid> = self
+            .folders
+            .iter()
+            .filter(|(_, f)| f.state == FetchState::Failed)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in failed {
+            self.request(id);
+        }
+    }
+
     pub fn item_count(&self) -> usize {
         self.items.len()
     }

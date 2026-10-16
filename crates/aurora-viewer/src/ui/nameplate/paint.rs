@@ -3,7 +3,7 @@
 //! do not (the blur, the picture, the icons): each change of texture is a
 //! draw of its own.
 
-use super::mesh::{self, Border, Glow, Outline};
+use super::mesh::{self, Border, Glow, Outline, Ring};
 use super::{Badge, Badges, Content, Halo, Layout, Level, Metrics, Picture, Presence, Role, SCALE, SubLine, Tag, TextSize};
 use crate::theme::Palette;
 use egui::epaint::TextShape;
@@ -281,33 +281,102 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, cache
             spread: 0.0,
             color: p.navy.gamma_multiply(0.35),
         };
-        let mut lights = [shadow; 2];
-        let mut count = 1;
-        if let Some(halo) = key.halo {
-            lights[1] = Glow {
-                offset: Vec2::ZERO,
-                blur: halo.blur,
-                spread: halo.spread,
-                color: p.success.gamma_multiply(halo.alpha),
-            };
-            count = 2;
-        }
         let opacity = lerp((lerp(TINT_PLAIN, far), lerp(TINT_GLASS, far)), st.glass);
         let plain = p.ink.gamma_multiply(lerp(BORDER, far));
-        let border = match key.halo {
-            // only while the avatar speaks (the human's choice: no outline
-            // for a silent participant): the border and one more pixel
-            // around it, turning green with the halo's gate
-            Some(halo) => Border::Around(plain.lerp_to_gamma(p.success, halo.gate), s),
-            None => Border::Inside(plain, 1.0),
-        };
+        let voice = key.halo.map(|halo| voice_light(p, halo, plain, key.size.y));
         let mut plate = Mesh::default();
         let at_origin = Rect::from_min_size(Pos2::ZERO, rect.size());
         let fill = env.tint.gamma_multiply(opacity);
-        mesh::plate(&mut plate, at_origin, env.pixels_per_point, fill, border, &lights[..count]);
+        let ppp = env.pixels_per_point;
+        match voice {
+            Some(v) => mesh::plate(&mut plate, at_origin, ppp, fill, v.border, &[shadow, v.glow], &[v.ring]),
+            // no outline for a silent participant (the human's choice)
+            None => mesh::plate(&mut plate, at_origin, ppp, fill, Border::Inside(plain, 1.0), &[shadow], &[]),
+        }
         plate
     });
     surface.emit(env.painter, rect.min.to_vec2(), alpha);
+}
+
+/// What the voice adds to a plate, in points: a ring around it over a glow,
+/// and the plate's own border taking the ring's color.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct VoiceLight {
+    pub glow: Glow,
+    pub ring: Ring,
+    pub border: Border,
+}
+
+/// The speaking ring for a smoothed level `level` and an overdrive `heat`
+/// (both 0..1), in mockup pixels, before the gate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct LoudRing {
+    /// From the plate's edge to the ring, and its width.
+    pub gap: f32,
+    pub width: f32,
+    /// Opacity of the ring, of its glow, and how far the plate's own edge
+    /// takes the ring's color.
+    pub alpha: f32,
+    pub glow: f32,
+    pub edge: f32,
+    /// Blur of the glow around the ring.
+    pub blur: f32,
+    pub color: Color32,
+}
+
+/// Everything grows with the level, so that a whisper, a voice and a shout
+/// look different at a glance: a whisper (just above the speaking level) is
+/// a faint hairline hugging the plate with almost no glow, a normal voice a
+/// ring a few points away over a soft glow, a shout a thick bright ring
+/// pushed out with a wide glow. The glow grows with the square of the level:
+/// it stays out of the way until the voice is loud. The color is the
+/// microphone badge's green, a little brighter as the voice rises, sliding
+/// to the danger red only past the overdriven level (`overdrive`), through
+/// the amber: halfway between the green and the red directly is a muddy
+/// olive.
+pub(super) fn loud_ring(p: &Palette, level: f32, heat: f32) -> LoudRing {
+    let (l, h) = (level.clamp(0.0, 1.0), heat.clamp(0.0, 1.0));
+    let green = p.success.lerp_to_gamma(p.ink, 0.3 * l);
+    let color = if h < 0.5 {
+        green.lerp_to_gamma(p.amber, 2.0 * h)
+    } else {
+        p.amber.lerp_to_gamma(p.danger, 2.0 * h - 1.0)
+    };
+    LoudRing {
+        gap: 1.0 + 7.0 * l,
+        width: 0.9 + 2.7 * l,
+        alpha: 0.4 + 0.6 * l,
+        glow: 0.03 + 0.5 * l * l,
+        edge: 0.25 + 0.35 * l,
+        blur: 2.0 + 24.0 * l * l,
+        color,
+    }
+}
+
+/// The voice's light on a plate `height` points high, whose border is
+/// `plain` when silent: the `loud_ring`, a little tighter around the
+/// smaller plates, closing in on the plate as the voice starts (the gate).
+pub(super) fn voice_light(p: &Palette, halo: Halo, plain: Color32, height: f32) -> VoiceLight {
+    let g = halo.gate.clamp(0.0, 1.0);
+    // mockup pixels to points
+    let k = SCALE * (height / Metrics::of(Level::Full, SCALE).height).clamp(0.55, 1.0);
+    let r = loud_ring(p, halo.level, halo.heat);
+    let gap = r.gap + 4.0 * (1.0 - g);
+    VoiceLight {
+        glow: Glow {
+            offset: Vec2::ZERO,
+            blur: r.blur * k,
+            spread: (gap + r.width) * k,
+            color: r.color.gamma_multiply(g * r.glow),
+        },
+        ring: Ring {
+            gap: gap * k,
+            width: r.width * k,
+            color: r.color.gamma_multiply(g * r.alpha),
+        },
+        // the border and one more pixel around it
+        border: Border::Around(plain.lerp_to_gamma(r.color, g * r.edge), SCALE),
+    }
 }
 
 const WHOLE: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));

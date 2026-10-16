@@ -342,6 +342,9 @@ pub struct World {
     crossing: bool,
     /// The last arrival was a border crossing: the agent was not placed.
     pub arrived_by_crossing: bool,
+    /// Inventory folders asked again after a failed fetch since the agent
+    /// last changed region (`InventoryFetchFailed`).
+    inventory_retried: HashSet<Uuid>,
     origin_shift: Vec3,
     /// Since when our avatar wears objects the region it is in has not sent
     /// (`drop_left_behind`).
@@ -503,6 +506,7 @@ impl World {
             tp_record: None,
             crossing: false,
             arrived_by_crossing: false,
+            inventory_retried: HashSet::new(),
             origin_shift: Vec3::ZERO,
             left_behind_since: None,
             landmarks: Default::default(),
@@ -673,6 +677,7 @@ impl World {
         if old == Some(handle) {
             return false;
         }
+        self.inventory_retried.clear();
         if let Some(old) = old {
             let (ox, oy) = aurora_net::handle_to_origin(old);
             let (nx, ny) = aurora_net::handle_to_origin(handle);
@@ -1416,6 +1421,11 @@ impl World {
             }
             NetEvent::Capabilities { handle, caps } => {
                 self.ensure_region(handle, (256, 256)).caps = caps;
+                // the folders that failed without them (a crossing, a
+                // teleport) are asked again on the agent's new region
+                if Some(handle) == self.main_region {
+                    self.inventory.retry_failed();
+                }
                 None
             }
             NetEvent::SimulatorFeatures {
@@ -2331,6 +2341,16 @@ impl World {
             }
             NetEvent::InventoryFetchFailed { folders } => {
                 self.inventory.failed(&folders);
+                // BGFolderHttpHandler::processFailure puts a failed folder
+                // back in the queue. A fetch sent on the capabilities of the
+                // region just left fails once the agent is in the next one:
+                // asked again once per change of region, then on the new
+                // region's capabilities (`retry_failed`)
+                for id in folders {
+                    if self.inventory_retried.insert(id) {
+                        self.inventory.request(id);
+                    }
+                }
                 None
             }
             NetEvent::InventoryItems(items) => {
@@ -4687,6 +4707,49 @@ mod motion_tests {
         assert_eq!(world.agent.velocity, Vec3::new(-15.0, 0.0, 0.0));
         assert_eq!(world.agent.yaw, yaw);
         assert_eq!(world.take_origin_shift(), Vec3::ZERO);
+    }
+
+    #[test]
+    fn inventory_fetches_lost_in_a_crossing_are_asked_again() {
+        use inventory::{FetchState, Folder};
+        let (mut world, here) = teleport_fixture();
+        let there = west_of(here);
+        let cof = Uuid::from_u128(46);
+        world.inventory.folders.insert(
+            cof,
+            Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: cof,
+                    type_default: 46,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Unknown,
+                library: false,
+            },
+        );
+        world.inventory.request(cof);
+        world.inventory.queue.clear();
+        world.apply(NetEvent::MainRegionChanged { handle: there });
+        // sent on the capabilities of the region left: asked again once
+        world.apply(NetEvent::InventoryFetchFailed { folders: vec![cof] });
+        assert_eq!(world.inventory.queue, vec![(cof, false)]);
+        world.inventory.queue.clear();
+        // the region entered has no capabilities yet: it waits for them
+        world.apply(NetEvent::InventoryFetchFailed { folders: vec![cof] });
+        assert!(world.inventory.queue.is_empty());
+        assert_eq!(world.inventory.folders[&cof].state, FetchState::Failed);
+        // a neighbour's capabilities change nothing
+        let caps = std::sync::Arc::new(HashMap::from([("FetchInventoryDescendents2".to_owned(), "x".to_owned())]));
+        world.apply(NetEvent::Capabilities {
+            handle: here,
+            caps: caps.clone(),
+        });
+        assert!(world.inventory.queue.is_empty());
+        world.apply(NetEvent::Capabilities { handle: there, caps });
+        assert_eq!(world.inventory.queue, vec![(cof, false)]);
+        assert_eq!(world.inventory.folders[&cof].state, FetchState::Fetching);
     }
 
     #[test]

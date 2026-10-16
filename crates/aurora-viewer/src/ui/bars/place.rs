@@ -121,11 +121,22 @@ fn parcel_font(ctx: &egui::Context) -> FontId {
 /// the position.
 fn texts(st: &StatusInfo) -> (String, String, String) {
     let position = format!("({:.0}, {:.0}, {:.0})", st.position.x, st.position.y, st.position.z);
-    if st.parcel.is_empty() {
-        (st.region.to_owned(), String::new(), position)
+    let (parcel, region) = (one_line(st.parcel), one_line(st.region));
+    if parcel.is_empty() {
+        (region, String::new(), position)
     } else {
-        (st.parcel.to_owned(), st.region.to_owned(), position)
+        (parcel, region, position)
     }
+}
+
+/// A name as one line: line breaks, tabs and other control characters an
+/// owner typed become spaces, runs of spaces one (a name ending with a line
+/// break was laid out on two lines and stood off its row).
+fn one_line(name: &str) -> String {
+    name.split(|c: char| c.is_control() || c.is_whitespace())
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The widths of the levels for this frame.
@@ -365,11 +376,13 @@ fn place(
     job.wrap = egui::text::TextWrapping::truncate_at_width(parcel_room);
     let parcel_g = painter.layout_job(job);
     let parcel_w = parcel_g.size().x;
-    crate::ui::widgets::paint_ink_left(&painter, parcel_g, Pos2::new(x, cy), p.ink);
+    // both on one baseline, the parcel's capitals centred in the island
+    let baseline = crate::ui::widgets::centered_baseline(&painter, parcel_font(ui.ctx()), cy);
+    crate::ui::widgets::paint_on_baseline(&painter, parcel_g, x, baseline, p.ink);
     x += parcel_w + LOC_GAP;
     let region_room = (rights_left - LOC_GAP * 2.0 - x).max(0.0);
     if region_g.size().x <= region_room + 0.5 {
-        crate::ui::widgets::paint_ink_left(&painter, region_g, Pos2::new(x, cy), p.muted);
+        crate::ui::widgets::paint_on_baseline(&painter, region_g, x, baseline, p.muted);
     }
 
     // the rights: each one says what it is; a click opens About Land
@@ -421,8 +434,8 @@ fn place(
 }
 
 /// The place's menu: its head (rating, parcel, region, position and
-/// rating's name), the SLURL to copy, a destination to type, the rights in
-/// words, then About Land, the teleport history, home, Places and the
+/// rating's name), About Land, the SLURL to copy, a destination to type,
+/// the rights in words, then the teleport history, home, Places and the
 /// places seen last.
 fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels, st: &StatusInfo) -> Option<BarAction> {
     const WIDTH: f32 = 400.0;
@@ -480,6 +493,22 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
             }
         });
     });
+    ui.add_space(6.0);
+    // About Land first, the width of the menu: what this menu is opened for
+    // most (it was a row among the others, below the rights)
+    if crate::ui::widgets::action_button(
+        ui,
+        p,
+        "info-circle-filled",
+        aurora_i18n::tr!("common-about-land"),
+        crate::ui::widgets::ActionKind::Flat,
+        Vec2::new(WIDTH, 28.0),
+    )
+    .clicked()
+    {
+        panels.about_land = !panels.about_land;
+        ui.close();
+    }
     ui.add_space(6.0);
     // the SLURL, to copy
     crate::ui::widgets::pills::field_frame(ui, p).show(ui, |ui| {
@@ -541,9 +570,6 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
         menu::info_colored(ui, it.icon, text, icon_color, color).on_hover_text(&it.tip);
     }
     menu::separator(ui, p);
-    if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-about-land")) {
-        panels.about_land = !panels.about_land;
-    }
     if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), "Alt+H") {
         action = Some(BarAction::TeleportHistory);
     }
@@ -598,6 +624,58 @@ mod tests {
         assert_eq!(choose(&w, 5000.0, false), Detail::Position);
         assert_eq!(choose(&w, 700.0, false), Detail::Bare);
         assert_eq!(choose(&w, 10.0, false), Detail::Bare);
+    }
+
+    /// Names are drawn on one line: line breaks, tabs and runs of spaces an
+    /// owner typed become single spaces.
+    #[test]
+    fn a_name_is_one_line() {
+        assert_eq!(one_line("Moon\nGarden "), "Moon Garden");
+        assert_eq!(one_line("  Moon \t\r\n  Garden"), "Moon Garden");
+        assert_eq!(one_line("Lunaria Commons"), "Lunaria Commons");
+        assert_eq!(one_line("\n"), "");
+    }
+
+    /// The parcel's name and the region beside it share one baseline,
+    /// whatever their letters: a name with accents, or one starting with a
+    /// glyph from a fallback face, sits where a plain one does. Centring
+    /// each text on its own ink put them up to 3 px apart.
+    #[test]
+    fn the_parcel_and_the_region_share_a_baseline() {
+        let ctx = egui::Context::default();
+        let mut out = None;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.painter().clone();
+            let layout = |text: &str, size: f32| painter.layout_no_wrap(text.into(), FontId::proportional(size), Color32::WHITE);
+            let baseline = crate::ui::widgets::centered_baseline(&painter, FontId::proportional(13.0), 20.0);
+            let names = [
+                "Lunaria Commons",
+                "\u{c9}\u{c2}\u{ce} Tower",
+                "\u{2b50} Moon Garden",
+                "Glyph Bay jpq",
+            ];
+            let drawn: Vec<f32> = names
+                .iter()
+                .map(|n| layout(n, 13.0))
+                .chain([layout("Demo Region (132, 126, 33)", 12.0)])
+                .map(|g| crate::ui::widgets::baseline_origin(&g, 0.0, baseline).y + crate::ui::widgets::galley_baseline(&g))
+                .collect();
+            // the old placement: each text centred on its own ink at y 20
+            let inked: Vec<f32> = [layout("Lunaria Commons", 13.0), layout("\u{c9}\u{c2}\u{ce} Tower", 13.0)]
+                .iter()
+                .map(|g| (20.0 - crate::ui::widgets::ink_rect(g).center().y).round() + crate::ui::widgets::galley_baseline(g))
+                .collect();
+            out = Some((baseline, drawn, inked));
+        });
+        output.textures_delta.clear();
+        let (baseline, drawn, inked) = out.expect("a frame ran");
+        for (i, b) in drawn.iter().enumerate() {
+            assert!((b - baseline).abs() <= 0.5, "text {i} on {b}, not on {baseline}");
+        }
+        assert!(
+            (inked[0] - inked[1]).abs() >= 1.0,
+            "the ink-centred names were already aligned: {inked:?}"
+        );
     }
 
     #[test]
