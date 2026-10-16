@@ -24,6 +24,7 @@ pub mod land;
 pub mod manip;
 pub mod materials;
 pub mod replace;
+pub mod script_queue;
 #[cfg(test)]
 mod selection_tests;
 pub mod shapes;
@@ -1078,6 +1079,42 @@ impl BuildTool {
         }
         // derez_objects
         world.ui_sounds.push(crate::ui_sound::UiSound::ObjectRezOut);
+        if !copy {
+            self.deselect_all(world);
+        }
+    }
+
+    /// "Take as separate items" / "Take copies as separate items"
+    /// (derez_objects_separate): one DeRezObject per root, each its own
+    /// transaction and inventory item.
+    pub fn take_separate(&mut self, world: &mut World, copy: bool) {
+        if self.attachment_selected(world) {
+            return;
+        }
+        let roots = self.roots(world);
+        if self.group_by_region(world, &roots).len() > 1 {
+            self.status = aurora_i18n::tr!("build-mod-cannot-take-objects-from-multiple-regions-at-once").into();
+            return;
+        }
+        let objects = Self::folder_of_type(world, 6);
+        let destination = if copy {
+            derez::ACQUIRE_TO_AGENT_INVENTORY
+        } else {
+            derez::TAKE_INTO_AGENT_INVENTORY
+        };
+        for r in &roots {
+            if let Some(o) = world.objects.get(*r) {
+                let (handle, local_id) = (o.key.region, o.key.local_id);
+                self.send(BuildCmd::DeRez {
+                    handle,
+                    local_ids: vec![local_id],
+                    destination,
+                    destination_id: objects,
+                    group_id: Uuid::nil(),
+                });
+                world.ui_sounds.push(crate::ui_sound::UiSound::ObjectRezOut);
+            }
+        }
         if !copy {
             self.deselect_all(world);
         }

@@ -93,6 +93,7 @@ impl App {
             }
             None => Target::Ground,
         };
+        self.object_menu_pick(picked, point);
         if self.clicks.scripted() || self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
             log::info!("demo menu: {target:?}");
         }
@@ -133,12 +134,16 @@ impl App {
             hover_height: w.hover_height_available(),
             edit_linked: self.settings.build.edit_linked,
             voice: self.settings.audio.voice_enabled,
+            particle_owner: self.object_menu.particle_owner.filter(|o| *o != w.agent_id),
             ..Facts::default()
         };
         match self.context_menu.as_ref().map(|m| &m.target) {
             Some(Target::Object { key, .. } | Target::Attachment { key }) => {
                 if let Some(idx) = w.objects.index_of(key) {
                     f.object = self.object_facts(idx);
+                }
+                if matches!(self.context_menu.as_ref().map(|m| &m.target), Some(Target::Object { .. })) {
+                    f.attach_points = self.attach_choices();
                 }
             }
             Some(Target::Avatar { id, .. }) => {
@@ -200,6 +205,7 @@ impl App {
             f.local_hud_scale = Some(w.hud_scales.scale(root.full_id));
             f.saved_hud_scale = w.hud_scales.has_profile(root.full_id);
         }
+        self.object_menu_facts(idx, &mut f);
         f
     }
 
@@ -269,7 +275,7 @@ impl App {
                     self.apply_appearance_action(crate::world::appearance::Action::Remove(item));
                 }
             }
-            CtxAction::Touch(local_id) => self.send(NetCommand::Touch { local_id }),
+            CtxAction::Touch(local_id) => self.menu_touch(local_id),
             CtxAction::Sit { target, offset } => {
                 if let Some(idx) = self.world.objects.index_of_uuid(&target)
                     && let Some(object) = self.world.objects.get(idx)
@@ -440,6 +446,14 @@ impl App {
                     self.flush_build();
                 }
             }
+            CtxAction::Link(id) => self.menu_link(id),
+            CtxAction::TakeSeparate { id, copy } => self.take_separate(id, copy),
+            CtxAction::Return(id) => self.ask_return(id),
+            CtxAction::Wear { id, point, add } => self.wear_object(id, point, add),
+            CtxAction::Scripts { id, action } => self.ask_scripts(id, action),
+            CtxAction::Drop(key) => self.ask_drop(key),
+            CtxAction::BlockParticleOwner(owner) => self.block_particle_owner(owner),
+            CtxAction::AttachmentFavorite(item) => self.attachment_favorite(item),
             CtxAction::EditLinkedParts(on) => {
                 self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
                 self.settings.save();
