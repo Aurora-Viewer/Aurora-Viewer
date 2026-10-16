@@ -4984,6 +4984,7 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        aurora_render::frame_priority::apply();
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
         }
@@ -7490,6 +7491,13 @@ impl App {
             // AURORA_PROBE_WALK=alt: the whole probe list walked one second in three
             if aurora_render::probes::ProbeWalk::from_env() == aurora_render::probes::ProbeWalk::Alternate {
                 let old = self.frame_profile.probe_walk_list();
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
+            // AURORA_FRAME_PRIORITY=alt: the frame's threads at normal
+            // priority one second in three
+            if aurora_render::frame_priority::PriorityMode::from_env() == aurora_render::frame_priority::PriorityMode::Alternate {
+                let old = self.sync_alt.is_multiple_of(3);
+                aurora_render::frame_priority::set_raised(!old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three

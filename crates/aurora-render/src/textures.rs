@@ -178,6 +178,8 @@ impl PageWorker {
         let device = device.clone();
         let spawned = std::thread::Builder::new().name("aurora-pages".into()).spawn(move || {
             for job in rx {
+                // (the render thread can wait for it: frame_priority.rs)
+                crate::frame_priority::apply();
                 match job {
                     PageJob::Make { key, layers } => {
                         let t0 = Instant::now();
