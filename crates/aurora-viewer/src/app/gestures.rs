@@ -264,8 +264,7 @@ impl App {
                 _ => {}
             }
         }
-        let effects = self.gesture_state.manager.play(id, definition, key);
-        self.gesture_effects(effects);
+        self.gesture_state.manager.play(id, definition, key);
         self.tick_gestures();
     }
 
