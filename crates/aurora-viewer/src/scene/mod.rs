@@ -4614,14 +4614,16 @@ impl Scene {
                     pbr_mats.push(id);
                 }
             }
+            // a map of a PBR material with its load state, as a face's texture
+            let map = |t: Option<Uuid>| t.map_or_else(|| "none".to_string(), |t| format!("{t} ({})", self.textures.describe(&t)));
             for id in pbr_mats {
                 match self.materials.peek(&id) {
                     Some(m) => log::info!(
-                        "  pbr {id}: base {:?}, normal {:?}, orm {:?}, emissive {:?}, transforms (scale, offset, rotation) {:?}",
-                        m.base_color_texture,
-                        m.normal_texture,
-                        m.metallic_roughness_texture,
-                        m.emissive_texture,
+                        "  pbr {id}: base {}, normal {}, orm {}, emissive {}, transforms (scale, offset, rotation) {:?}",
+                        map(m.base_color_texture),
+                        map(m.normal_texture),
+                        map(m.metallic_roughness_texture),
+                        map(m.emissive_texture),
                         m.transforms.map(|t| (t.scale, t.offset, t.rotation))
                     ),
                     None => log::info!("  pbr {id}: {} (drawn with the default material)", self.materials.describe(&id)),
