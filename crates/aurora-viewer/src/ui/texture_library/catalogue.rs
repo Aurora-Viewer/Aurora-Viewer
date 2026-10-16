@@ -8,6 +8,8 @@ use uuid::Uuid;
 
 pub const AURORA: &str = "#Aurora";
 pub const LIBRARY: &str = "Textures Library";
+pub const OBJECTS_LIBRARY: &str = "Objects Library";
+pub const LIBRARIES: [&str; 2] = [LIBRARY, OBJECTS_LIBRARY];
 pub const BLANK_MATERIAL: Uuid = Uuid::from_u128(0x968cbad0_4dad_d64e_71b5_72bf13ad051a);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +26,7 @@ impl ResourceKind {
             57 => Some(Self::Material),
             // LLInventoryIcon::getIconName, using
             // II_FLAGS_OBJECT_HAS_MULTIPLE_ITEMS (Firestorm, LGPL 2.1).
-            6 if item.flags & 0x200000 != 0 => Some(Self::ObjectGroup),
+            6 if item.flags & super::super::inventory::OBJECT_HAS_MULTIPLE_ITEMS != 0 => Some(Self::ObjectGroup),
             6 => Some(Self::Object),
             _ => None,
         }
@@ -115,7 +117,8 @@ impl Entry {
 #[derive(Default)]
 pub struct Catalogue {
     key: Option<(Uuid, u64)>,
-    pub root: Option<Uuid>,
+    pub parent: Option<Uuid>,
+    pub roots: Vec<Uuid>,
     pub folders: Vec<Folder>,
     pub entries: Vec<Entry>,
     pub loading: bool,
@@ -130,13 +133,25 @@ impl Catalogue {
             return;
         }
         self.key = Some((inv.root, inv.generation));
-        self.root = root(inv);
+        self.parent = child(inv, inv.root, AURORA);
+        self.roots.clear();
+        if let Some(parent) = self.parent {
+            self.roots.extend(LIBRARIES.iter().filter_map(|name| child(inv, parent, name)));
+        }
         self.folders.clear();
         self.entries.clear();
         self.loading = false;
         self.failed.clear();
-        let Some(root) = self.root else { return };
-        let mut queue = VecDeque::from([(root, Vec::new(), String::new())]);
+        let mut queue = VecDeque::new();
+        for root in &self.roots {
+            let Some(folder) = inv.folders.get(root) else { continue };
+            let label = folder.info.name.clone();
+            self.folders.push(Folder {
+                id: *root,
+                label: label.clone(),
+            });
+            queue.push_back((*root, Vec::new(), label));
+        }
         let mut visited = HashSet::new();
         let mut fetches = 0;
         while let Some((id, mut ancestry, path)) = queue.pop_front() {
@@ -267,6 +282,64 @@ mod tests {
         assert!(catalogue.entries.iter().any(|entry| entry.matches(&folded("BETON"), None)));
     }
     #[test]
+    fn both_library_roots_accept_every_resource_type_and_track_moves_between_them() {
+        let (mut inv, textures) = fixture();
+        let aurora = inv.folders[&textures].info.parent;
+        let objects = folder(&mut inv, 4, aurora, OBJECTS_LIBRARY);
+        for (n, parent) in [textures, objects].into_iter().enumerate() {
+            for (k, kind) in [0, 57, 6].into_iter().enumerate() {
+                let number = 100 + n as u128 * 10 + k as u128;
+                item(
+                    &mut inv,
+                    number,
+                    parent,
+                    kind,
+                    &format!("Resource {number}"),
+                    Uuid::from_u128(200 + k as u128),
+                );
+            }
+        }
+        let mut catalogue = Catalogue::default();
+        catalogue.prepare(&mut inv);
+        assert_eq!(catalogue.parent, Some(aurora));
+        assert_eq!(catalogue.roots, vec![textures, objects]);
+        assert_eq!(
+            catalogue.entries.len(),
+            6,
+            "separate inventory items sharing an asset must remain separate"
+        );
+        for root in [textures, objects] {
+            assert_eq!(
+                catalogue
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.matches("resource", Some(root)))
+                    .count(),
+                3
+            );
+        }
+        let mut moved = inv.items[&Uuid::from_u128(100)].clone();
+        moved.parent = objects;
+        inv.server_updated(Vec::new(), vec![moved]);
+        catalogue.prepare(&mut inv);
+        assert_eq!(catalogue.entries.len(), 6);
+        let entry = catalogue.entries.iter().find(|entry| entry.id == Uuid::from_u128(100)).unwrap();
+        assert!(entry.matches("objects library", Some(objects)));
+        assert!(!entry.matches("", Some(textures)));
+        // An existing Objects Library works even without a Textures Library.
+        let mut renamed = inv.folders[&textures].info.clone();
+        renamed.name = "Unrelated".into();
+        inv.server_updated(vec![renamed], Vec::new());
+        catalogue.prepare(&mut inv);
+        assert_eq!(catalogue.roots, vec![objects]);
+        assert_eq!(catalogue.entries.len(), 4);
+        inv.folders.get_mut(&objects).unwrap().state = FetchState::Unknown;
+        inv.generation += 1;
+        catalogue.prepare(&mut inv);
+        assert!(catalogue.loading);
+        assert!(inv.queue.iter().any(|(id, _)| *id == objects));
+    }
+    #[test]
     fn actual_nested_folders_are_included_and_folder_links_are_ignored() {
         let (mut inv, root) = fixture();
         let source = folder(&mut inv, 4, root, "Stone");
@@ -285,11 +358,11 @@ mod tests {
         assert_eq!(catalogue.entries.len(), 1);
         assert_eq!(
             catalogue.folders.iter().map(|f| f.id).collect::<HashSet<_>>(),
-            HashSet::from([source, nested])
+            HashSet::from([root, source, nested])
         );
         assert!(catalogue.entries[0].matches("marble", Some(source)));
         assert!(catalogue.entries[0].matches("nested", Some(nested)));
-        assert_eq!(catalogue.entries[0].path, "Stone / Nested");
+        assert_eq!(catalogue.entries[0].path, "Textures Library / Stone / Nested");
     }
     #[test]
     fn library_objects_use_thumbnails_and_distinct_single_and_group_fallbacks() {
@@ -389,7 +462,8 @@ mod tests {
         inv.server_updated(vec![info], Vec::new());
         catalogue.prepare(&mut inv);
         assert!(catalogue.entries.is_empty());
-        assert!(catalogue.folders.is_empty());
+        assert_eq!(catalogue.folders.len(), 1);
+        assert_eq!(catalogue.folders[0].id, root);
     }
     #[test]
     fn an_unchanged_inventory_reuses_the_catalogue() {

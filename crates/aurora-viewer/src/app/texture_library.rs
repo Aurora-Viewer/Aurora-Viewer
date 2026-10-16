@@ -239,7 +239,11 @@ impl App {
                 self.camera.demo_orbit(0.0, 0.6, Some(9.0), &self.settings.camera);
             }
             let inventory_drag = crate::demo::texture_library::inventory_drag_enabled();
-            self.panels.inventory = mode == "inventory" || inventory_drag;
+            self.panels.inventory = matches!(mode.as_str(), "inventory" | "objects-inventory") || inventory_drag;
+            if mode == "objects-inventory" {
+                self.inventory_ui
+                    .show_original(&self.world.inventory, crate::demo::texture_library::first_object());
+            }
             if inventory_drag {
                 let item = crate::demo::texture_library::first_texture();
                 self.inventory_ui.show_original(&self.world.inventory, item);
@@ -250,7 +254,7 @@ impl App {
                     egui::vec2(360.0, 280.0),
                 );
             } else if mode == "inventory"
-                && let Some(root) = catalogue::root(&self.world.inventory)
+                && let Some(root) = catalogue::child(&self.world.inventory, self.world.inventory.root, catalogue::AURORA)
             {
                 self.inventory_ui.show_folder(&self.world.inventory, root);
             }

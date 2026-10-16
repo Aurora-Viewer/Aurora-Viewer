@@ -420,7 +420,7 @@ impl ViewCache {
                 if original.owner_mask & filters.permissions != filters.permissions {
                     return false;
                 }
-                if filters.coalesced && (original.asset_type != 6 || original.flags & 0x200000 == 0) {
+                if filters.coalesced && (original.asset_type != 6 || original.flags & super::OBJECT_HAS_MULTIPLE_ITEMS == 0) {
                     return false;
                 }
                 if (filters.creator == Creator::Me && original.creator != agent)

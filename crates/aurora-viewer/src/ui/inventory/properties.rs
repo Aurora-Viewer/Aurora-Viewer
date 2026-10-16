@@ -111,7 +111,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
         ui.spacing_mut().interact_size.y = 22.0;
         ui.horizontal(|ui| {
-            let name = item_icon(it.asset_type, it.inv_type);
+            let name = item_icon(it.asset_type, it.inv_type, it.flags);
             if let Some(icons) = icons {
                 icon(ui, icons, name, p);
             } else if let Some(texture) = crate::ui::icons::global(name) {

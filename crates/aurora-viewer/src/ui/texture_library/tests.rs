@@ -33,21 +33,58 @@ fn inventory() -> (Inventory, Uuid, Uuid) {
     let aurora = folder(&mut inv, 3, root, -1, catalogue::AURORA);
     let library = folder(&mut inv, 4, aurora, -1, catalogue::LIBRARY);
     let source = folder(&mut inv, 5, root, -1, "Stone");
+    folder(&mut inv, 6, aurora, -1, catalogue::OBJECTS_LIBRARY);
     (inv, library, source)
 }
 #[test]
 fn texture_library_root_creation_reuses_aurora_and_does_not_repeat() {
     let (mut inv, library, _) = inventory();
-    inv.remove(&[library]);
+    inv.remove(&[library, Uuid::from_u128(6)]);
     let mut ui = LibraryUi::default();
     let mut actions = Vec::new();
     ui.prepare_root(&mut inv, &mut actions);
     assert_eq!(actions.len(), 1);
     let Action::Change(change) = &actions[0] else { panic!("creation") };
-    assert_eq!(change.operations.len(), 1);
+    assert_eq!(change.operations.len(), 2);
     assert!(matches!(&change.operations[0],Operation::Folder {parent,name,..} if *parent==Uuid::from_u128(3)&&name==catalogue::LIBRARY));
+    assert!(
+        matches!(&change.operations[1],Operation::Folder {parent,name,..} if *parent==Uuid::from_u128(3)&&name==catalogue::OBJECTS_LIBRARY)
+    );
     ui.prepare_root(&mut inv, &mut actions);
     assert_eq!(actions.len(), 1);
+}
+#[test]
+fn library_creates_only_missing_roots_and_waits_for_the_parent_listing() {
+    for existing in catalogue::LIBRARIES {
+        let (mut inv, library, _) = inventory();
+        inv.remove(&[Uuid::from_u128(6)]);
+        let aurora = inv.folders[&library].info.parent;
+        inv.folders.get_mut(&library).unwrap().info.name = existing.into();
+        let mut ui = LibraryUi::default();
+        let mut actions = Vec::new();
+        inv.folders.get_mut(&aurora).unwrap().state = FetchState::Unknown;
+        ui.prepare_root(&mut inv, &mut actions);
+        assert!(actions.is_empty(), "load the parent before deciding that a root is missing");
+        assert!(inv.queue.iter().any(|(id, _)| *id == aurora));
+        inv.folders.get_mut(&aurora).unwrap().state = FetchState::Fetched;
+        ui.prepare_root(&mut inv, &mut actions);
+        let [Action::Change(change)] = actions.as_slice() else {
+            panic!("missing root creation")
+        };
+        let missing = catalogue::LIBRARIES.into_iter().find(|name| *name != existing).unwrap();
+        assert!(matches!(change.operations.as_slice(), [Operation::Folder { parent, name, .. }] if *parent == aurora && name == missing));
+    }
+    let (mut inv, library, _) = inventory();
+    let aurora = inv.folders[&library].info.parent;
+    let mut actions = Vec::new();
+    LibraryUi::default().prepare_root(&mut inv, &mut actions);
+    assert!(actions.is_empty(), "reuse both existing folders");
+    inv.remove(&[aurora]);
+    LibraryUi::default().prepare_root(&mut inv, &mut actions);
+    let [Action::Change(change)] = actions.as_slice() else {
+        panic!("library tree creation")
+    };
+    assert_eq!(change.operations.len(), 3, "create the parent and both roots together");
 }
 #[test]
 fn texture_library_presentation_changes_preserve_search_and_selection() {

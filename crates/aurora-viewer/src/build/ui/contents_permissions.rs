@@ -130,7 +130,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                                     ui.horizontal(|ui| {
                                         widgets::checkbox(ui, p, &mut b.types[i], "").on_hover_text(type_name(*t));
                                         if let Some(icon) =
-                                            crate::ui::icons::global(crate::ui::inventory::item_icon(i32::from(*t), i32::from(*t)))
+                                            crate::ui::icons::global(crate::ui::inventory::item_icon(i32::from(*t), i32::from(*t), 0))
                                         {
                                             ui.add(egui::Image::new(&icon).fit_to_exact_size(Vec2::splat(18.0)).tint(p.ink))
                                                 .on_hover_text(type_name(*t));

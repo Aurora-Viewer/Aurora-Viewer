@@ -7425,7 +7425,7 @@ shape-param-11001-max = Plus élevé
 texture-library-title = Bibliothèque
 texture-library-side = Afficher sur le côté
 texture-library-bottom = Afficher en bas
-texture-library-empty = Placez des textures, matériaux ou objets dans #Aurora/Textures Library.
+texture-library-empty = Placez des textures, matériaux ou objets dans #Aurora/Textures Library ou #Aurora/Objects Library.
 texture-library-preparing = Préparation des dossiers de la bibliothèque…
 texture-library-loading = Chargement des dossiers…
 texture-library-retry = Réessayer
@@ -7459,7 +7459,7 @@ texture-library-demo-linen = Lin naturel
 texture-library-demo-sources = Matériaux de démonstration
 texture-library-folder-error = Certains dossiers n’ont pas pu être chargés.
 texture-library-manage = Organiser dans l’inventaire
-texture-library-content-hint = Déplacez ou copiez des textures, matériaux, objets et dossiers dans #Aurora/Textures Library. Les sous-dossiers sont inclus.
+texture-library-content-hint = Déplacez ou copiez des textures, matériaux, objets et dossiers dans #Aurora/Textures Library ou #Aurora/Objects Library. Les deux dossiers et leurs sous-dossiers acceptent les trois types d’items.
 texture-library-demo-polished = Poli
 
 texture-library-click-hint = Cliquez pour appliquer aux faces sélectionnées en mode édition.

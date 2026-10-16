@@ -1,5 +1,5 @@
 //! Compact texture/material/object library: the human-selected lateral grid (V1)
-//! and bottom shelf (H3), backed by #Aurora/Textures Library in inventory.
+//! and bottom shelf (H3), backed by both library folders under #Aurora.
 
 pub(crate) mod catalogue;
 mod previews;
@@ -218,7 +218,7 @@ impl LibraryUi {
             floater.show(ctx, p, open, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
                 ui.spacing_mut().interact_size.y = 20.0;
-                if self.catalogue.root.is_none() {
+                if self.catalogue.roots.is_empty() {
                     ui.label(if self.pending.is_some() || !self.prepared {
                         aurora_i18n::tr!("texture-library-preparing")
                     } else {
@@ -368,6 +368,13 @@ impl LibraryUi {
                 if !self.message.is_empty() {
                     ui.add(egui::Label::new(RichText::new(&self.message).size(10.0).color(p.warn)).truncate())
                         .on_hover_text(&self.message);
+                    if self.catalogue.roots.len() < catalogue::LIBRARIES.len()
+                        && self.pending.is_none()
+                        && widgets::flat_button(ui, p, aurora_i18n::tr!("texture-library-retry")).clicked()
+                    {
+                        self.prepared = false;
+                        self.message.clear();
+                    }
                 }
             });
             if flip {
@@ -386,7 +393,7 @@ impl LibraryUi {
             self.request_root(inv, root);
             return;
         }
-        if catalogue::root(inv).is_some() || self.prepared || self.pending.is_some() {
+        if self.prepared || self.pending.is_some() {
             return;
         }
         let mut change = Mutation::default();
@@ -407,14 +414,23 @@ impl LibraryUi {
             change.refresh.push(inv.root);
             id
         };
-        let id = Uuid::new_v4();
-        change.operations.push(Operation::Folder {
-            id,
-            parent: aurora,
-            name: catalogue::LIBRARY.into(),
-            type_default: -1,
-        });
-        change.refresh.extend([aurora, id]);
+        for name in catalogue::LIBRARIES {
+            if catalogue::child(inv, aurora, name).is_some() {
+                continue;
+            }
+            let id = Uuid::new_v4();
+            change.operations.push(Operation::Folder {
+                id,
+                parent: aurora,
+                name: name.into(),
+                type_default: -1,
+            });
+            change.refresh.push(id);
+        }
+        if change.operations.is_empty() {
+            return;
+        }
+        change.refresh.push(aurora);
         self.prepared = true;
         actions.push(Action::Change(change));
     }
@@ -490,7 +506,7 @@ impl LibraryUi {
             let manage = icon_button(ui, p, "folder-filled", aurora_i18n::tr!("texture-library-manage"))
                 .on_hover_text(aurora_i18n::tr!("texture-library-content-hint"));
             if manage.clicked() {
-                reveal = this.catalogue.root;
+                reveal = this.catalogue.parent;
             }
         };
         if horizontal {

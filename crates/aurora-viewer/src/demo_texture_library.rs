@@ -75,6 +75,7 @@ pub fn inventory_drag_enabled() -> bool {
 pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
     let aurora = catalogue::child(inv, inv.root, catalogue::AURORA).unwrap_or(id(1));
     let root = catalogue::root(inv).unwrap_or(id(2));
+    let objects = catalogue::child(inv, aurora, catalogue::OBJECTS_LIBRARY).unwrap_or(id(4));
     inv.created_folders(vec![
         InvFolder {
             id: aurora,
@@ -87,6 +88,13 @@ pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
             id: root,
             parent: aurora,
             name: catalogue::LIBRARY.into(),
+            type_default: -1,
+            ..Default::default()
+        },
+        InvFolder {
+            id: objects,
+            parent: aurora,
+            name: catalogue::OBJECTS_LIBRARY.into(),
             type_default: -1,
             ..Default::default()
         },
@@ -109,7 +117,13 @@ pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
         let folder = id(10 + group as u128);
         inv.created_folders(vec![InvFolder {
             id: folder,
-            parent: if empty { id(3) } else { root },
+            parent: if empty {
+                id(3)
+            } else if group < 2 {
+                root
+            } else {
+                objects
+            },
             name: (*label).into(),
             type_default: -1,
             ..Default::default()
@@ -160,7 +174,7 @@ pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
     let folder = id(15);
     inv.created_folders(vec![InvFolder {
         id: folder,
-        parent: if empty { id(3) } else { root },
+        parent: if empty { id(3) } else { objects },
         name: aurora_i18n::tr!("texture-library-objects").into(),
         type_default: -1,
         ..Default::default()
@@ -176,7 +190,7 @@ pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
     {
         items.push(InvItem {
             id: id(900 + n as u128),
-            parent: folder,
+            parent: if n % 2 == 0 || empty { folder } else { root },
             asset_type: 6,
             inv_type: 6,
             name: format!("{} {label}", n + 1),

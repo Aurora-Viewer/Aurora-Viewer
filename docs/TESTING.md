@@ -1567,6 +1567,11 @@ modifiable demo surface at (480, 430), for a 1280 × 800 window. Library scenari
 make demo objects modifiable so manual surface drops can also be exercised.
 `objects` and `objects-horizontal` show the Objects filter, with a thumbnail,
 single-object and coalesced-object fallback icons, and a no-copy group with an image.
+The synthetic inventory uses both `#Aurora/Textures Library` and
+`#Aurora/Objects Library`, each containing textures, materials and objects.
+`objects-inventory` also reveals actual object rows in inventory: the group
+must use the same multi-cube icon as its library card. The folder picker lists
+both roots and their subfolders; organizing reveals their common parent.
 `objects-drop` drags the first object into the world at frame 650 through the
 inventory rez path, using a projected ground point and an elevated camera
 unless `AURORA_DEMO_CAM` is set (capture at frame 800). The offline simulator stands in with
