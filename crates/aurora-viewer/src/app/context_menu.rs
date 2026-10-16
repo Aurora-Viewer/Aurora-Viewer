@@ -150,6 +150,7 @@ impl App {
                 f.blocked = w.is_avatar_blocked(id);
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
+                f.worn = !super::inspect::worn_roots(w, id).is_empty();
             }
             _ => {}
         }
@@ -369,6 +370,8 @@ impl App {
                 }
             }
             CtxAction::Inspect(id) => self.inspect_object(id),
+            CtxAction::InspectAvatar(id) => self.inspect_avatar(id),
+            CtxAction::Derender { id, permanent } => self.derender(id, permanent),
             CtxAction::RefreshTextures(id) => self.refresh_object_textures(id),
             CtxAction::RefreshAvatarTextures(id) => self.refresh_avatar_textures(id),
             CtxAction::Rebake => self.rebake(),

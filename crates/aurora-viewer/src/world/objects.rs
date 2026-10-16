@@ -910,7 +910,7 @@ impl ObjectStore {
     }
 
     /// Make a root of an object whose parent goes away without it.
-    fn detach(&mut self, idx: usize) {
+    pub(crate) fn detach(&mut self, idx: usize) {
         self.unlink(idx);
         if let Some(o) = self.get_mut(idx) {
             o.parent_id = 0;

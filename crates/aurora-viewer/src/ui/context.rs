@@ -155,6 +155,8 @@ pub struct Facts {
     pub voice: bool,
     /// The avatar's voice row, when they are in our voice channel.
     pub voice_volume: Option<menu::VoiceVolume>,
+    /// The avatar is in view and wears something: "Inspect" lists it.
+    pub worn: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -229,6 +231,14 @@ pub enum CtxAction {
     Edit(Uuid),
     /// "Inspect": the window of the object's prims (Floater.Show "inspect").
     Inspect(Uuid),
+    /// "Inspect" of an avatar: the window on everything it wears.
+    InspectAvatar(Uuid),
+    /// "Derender temporarily" / "Derender & blacklist" of an avatar or an
+    /// object (Object.Derender / Object.DerenderPermanent, Avatar.Derender).
+    Derender {
+        id: Uuid,
+        permanent: bool,
+    },
     /// "Refresh textures" of an object or of something worn: every texture
     /// of its linkset is downloaded again (Object.TexRefresh).
     RefreshTextures(Uuid),
@@ -587,6 +597,16 @@ fn avatar_menu_reporting(
                 act(CtxAction::PayResident(id));
             }
             block(ui);
+            // menu_fs_radar.xml / menu_mini_map.xml: Avatar.Derender and
+            // Avatar.DerenderPermanent (LLAvatarActions::derender), always enabled
+            for (icon, label, permanent) in [
+                ("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"), false),
+                ("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"), true),
+            ] {
+                if menu::item(ui, p, icon, label) {
+                    act(CtxAction::Derender { id, permanent });
+                }
+            }
         }
         AvatarList::Friend => {
             profile(ui);

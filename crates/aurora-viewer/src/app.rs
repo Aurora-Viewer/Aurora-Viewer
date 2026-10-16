@@ -35,6 +35,7 @@ mod color_picker;
 mod context_menu;
 mod controls;
 mod cursor_hold;
+mod derender;
 mod dof;
 mod double_click;
 mod env_apply;
@@ -396,6 +397,8 @@ pub struct App {
     /// Photos: the window, the frames drawn at their size, the saves.
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
+    /// "Asset blacklist" (World menu).
+    blacklist_ui: ui::blacklist::BlacklistUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     /// The Pay window of a resident or a group (`ui/pay.rs`).
     pay_ui: ui::pay::PayUi,
@@ -864,6 +867,7 @@ impl App {
             dof_focus: Default::default(),
             snapshots: Default::default(),
             inspect_ui: Default::default(),
+            blacklist_ui: Default::default(),
             buy_currency_ui: Default::default(),
             pay_ui: Default::default(),
             buy_land_ui: Default::default(),
@@ -5081,6 +5085,7 @@ impl App {
             for id in self.world.take_profile_requests() {
                 self.send(NetCommand::RequestProfile(id));
             }
+            self.send_derender_requests();
             // outfit restore at login (queues the COF fetch below)
             let second_life = !matches!(self.settings.grid, crate::settings::GridChoice::Custom);
             self.world.update_outfit(second_life, Instant::now());
@@ -6747,6 +6752,7 @@ impl App {
             }
         }
         self.demo_worn_steps();
+        self.demo_derender_steps();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -9863,6 +9869,7 @@ impl App {
                         self.inspect_closed();
                     }
                 }
+                self.blacklist_window(&ctx, &p);
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)

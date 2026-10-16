@@ -218,8 +218,7 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         aurora_i18n::tr!("ui-context-refresh-textures"),
         CtxAction::RefreshTextures(id),
     );
-    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender"));
-    ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    derender_items(ui, id, aurora_i18n::tr!("ui-context-derender"), true);
     ui.todo("arrow-back-up", aurora_i18n::tr!("ui-context-return"));
     ui.item_if("hand-grab", aurora_i18n::tr!("ui-context-take"), o.take, CtxAction::Take(id));
     ui.item_if(
@@ -312,8 +311,12 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         CtxAction::Inspect(f.object.id),
     );
     ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
-    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
-    ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    derender_items(
+        ui,
+        f.object.id,
+        aurora_i18n::tr!("ui-context-derender-temporarily"),
+        !f.object.id.is_nil(),
+    );
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
     ui.item_if(
         "refresh",
@@ -392,10 +395,16 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     ] {
         ui.check(icon, label, f.render == mode, true, CtxAction::SetRender(id, mode));
     }
-    ui.todo("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"));
+    // the Inspect window on everything the avatar wears (each worn
+    // object's own menu inspects that one, menu_attachment_other.xml)
+    ui.item_if(
+        "zoom-scan-filled",
+        aurora_i18n::tr!("ui-context-inspect-2"),
+        f.worn,
+        CtxAction::InspectAvatar(id),
+    );
     ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
-    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
-    ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    derender_items(ui, id, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
     ui.item(
         "refresh",
@@ -476,8 +485,8 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         CtxAction::Inspect(attachment),
     );
     ui.todo("code", aurora_i18n::tr!("ui-context-script-info"));
-    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
-    ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    // the worn object, not its wearer (the selection's root)
+    derender_items(ui, attachment, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
     // the attachment's textures (Object.TexRefresh), not the avatar's bakes
     ui.item(
@@ -486,6 +495,19 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         CtxAction::RefreshTextures(attachment),
     );
     save_as_submenu(ui);
+}
+
+/// Object.Derender / Object.DerenderPermanent (derenderObject on the
+/// selection's root: the linkset, the worn object or the avatar), enabled
+/// like the Legacy Viewer's (Object.EnableDerender: always without RLVa).
+fn derender_items(ui: &mut Builder, id: Uuid, temporary: &str, enabled: bool) {
+    ui.item_if("eye-off", temporary, enabled, CtxAction::Derender { id, permanent: false });
+    ui.item_if(
+        "eye-closed",
+        aurora_i18n::tr!("ui-context-derender-blacklist"),
+        enabled,
+        CtxAction::Derender { id, permanent: true },
+    );
 }
 
 /// "Save as" (Export Menu): the export has its own task and
@@ -718,6 +740,58 @@ mod tests {
             attachment: None,
         };
         assert_ne!(labels(&world_menu(&avatar, &f, Vec3::ZERO)), expected(true));
+    }
+
+    #[test]
+    fn inspect_and_derender_act_on_the_avatar_or_on_the_worn_object() {
+        let find = |entries: Vec<Entry>, key: &str, permanent: bool| {
+            entries
+                .into_iter()
+                .find(|e| {
+                    e.label == aurora_i18n::text(key)
+                        && match &e.kind {
+                            Kind::Action(CtxAction::Derender { permanent: p, .. }) => *p == permanent,
+                            _ => true,
+                        }
+                })
+                .expect("entry")
+        };
+        let (avatar, worn) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let on_avatar = Target::Avatar {
+            id: avatar,
+            own: false,
+            attachment: None,
+        };
+        // "Inspect" lists what the avatar wears: greyed when it wears nothing in view
+        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-2", false);
+        assert!(!inspect(&Facts::default()).enabled);
+        let wearing = Facts {
+            worn: true,
+            ..Facts::default()
+        };
+        assert!(matches!(inspect(&wearing).kind, Kind::Action(CtxAction::InspectAvatar(id)) if id == avatar));
+        // the two derender entries, always enabled (Object.Derender)
+        for (key, permanent) in [("ui-context-derender-temporarily", false), ("ui-context-derender-blacklist", true)] {
+            let e = find(world_menu(&on_avatar, &wearing, Vec3::ZERO), key, permanent);
+            assert!(e.enabled);
+            assert!(matches!(e.kind, Kind::Action(CtxAction::Derender { id, permanent: p }) if id == avatar && p == permanent));
+            // on a worn object: that object, not its wearer
+            let on_worn = Target::Avatar {
+                id: avatar,
+                own: false,
+                attachment: Some(worn),
+            };
+            let e = find(world_menu(&on_worn, &wearing, Vec3::ZERO), key, permanent);
+            assert!(matches!(e.kind, Kind::Action(CtxAction::Derender { id, .. }) if id == worn));
+        }
+        // our own worn object: greyed until its prim is known
+        let key = ObjKey { region: 1, local_id: 3 };
+        let ours = find(
+            world_menu(&Target::Attachment { key }, &Facts::default(), Vec3::ZERO),
+            "ui-context-derender-temporarily",
+            false,
+        );
+        assert!(!ours.enabled);
     }
 
     #[test]
